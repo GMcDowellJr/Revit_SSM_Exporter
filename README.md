@@ -1,4 +1,4 @@
-# SSM Exporter (v4)
+# SSM Exporter
 
 ## Ground rules
 - PATCH-only by default.
