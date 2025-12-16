@@ -6,6 +6,7 @@ Behavior is governed by the project regression contract.
 
 import os
 import json
+import export_csv
 
 
 def _json_default(o):
@@ -7942,7 +7943,7 @@ def _export_timings_csv(results, config, logger):
         matrix_rows.append([r.get(h, "") for h in headers])
 
     try:
-        _append_csv_rows(csv_path, headers, matrix_rows, logger)
+        export_csv._append_csv_rows(csv_path, headers, matrix_rows, logger)
         logger.info("Appended {0} timing rows to {1}".format(len(rows), csv_path))
     except Exception as ex:
         logger.error("Failed to write timings CSV: {0}".format(ex))
@@ -8026,7 +8027,7 @@ def _export_view_level_csvs(views, results, run_start, config, logger, exporter_
 
     if not enable_rows:
         return
-    if not _ensure_dir(out_dir, logger):
+    if not export_csv._ensure_dir(out_dir, logger):
         return
 
     # Date string: either override from IN[5] or run_start date.
@@ -8342,9 +8343,9 @@ def _export_view_level_csvs(views, results, run_start, config, logger, exporter_
     # Append to CSVs
     # ------------------------------------------------------------------
     if core_rows:
-        _append_csv_rows(core_path, core_headers, core_rows, logger)
+        export_csv._append_csv_rows(core_path, core_headers, core_rows, logger)
     if vop_rows:
-        _append_csv_rows(vop_path, vop_headers, vop_rows, logger)
+        export_csv._append_csv_rows(vop_path, vop_headers, vop_rows, logger)
 
 def _build_views_out_for_dynamo(results):
     """
