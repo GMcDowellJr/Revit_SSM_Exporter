@@ -1143,15 +1143,11 @@ CONFIG = {
     
             # === SCALE-AWARE: ABSOLUTE THRESHOLDS ===
             "use_absolute_thresholds": False,
-            "auto_adjust_for_scale": False,            
-            "tiny_linear_threshold_ft": 2.0,          
-            "medium_threshold_ft": 5.0,              
+            "auto_adjust_for_scale": False,
+            "tiny_linear_threshold_ft": 2.0,
+            "medium_threshold_ft": 5.0,
             "large_threshold_ft": 10.0,
-            
-            "tiny_linear_threshold_cells": 2,
-            "medium_threshold_cells": 10,
-            "large_threshold_cells": 50,
-            
+
             "coarse_tess_max_verts_per_face": 20,
             "coarse_tess_triangulate_param": 0.5,
             
@@ -8604,9 +8600,7 @@ def main():
     except Exception as ex:
         LOGGER.info("Final cleanup warning: {0}".format(ex))
     # === END FINAL CLEANUP ===
-    
-    return _build_output(results, CONFIG, LOGGER)
-    
+
     return [out_dict]
 
 # ------------------------------------------------------------
