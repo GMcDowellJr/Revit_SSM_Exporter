@@ -7,6 +7,7 @@ Behavior is governed by the project regression contract.
 import os
 import json
 import export_csv
+import exporter_types
 
 
 def _json_default(o):
@@ -1156,10 +1157,10 @@ CONFIG = {
                 "Columns", "Beams", "Doors", "Windows"
             ],
             
-            "tier_tiny_linear": ["bbox"],
-            "tier_medium": ["category_api_shortcuts", "obb", "bbox"],
-            "tier_large": ["category_api_shortcuts", "obb", "bbox"],
-            "tier_very_large": ["category_api_shortcuts", "coarse_tessellation", "obb", "bbox"],
+            exporter_types.TIER_TINY_LINEAR: [exporter_types.STRATEGY_BBOX],
+            exporter_types.TIER_MEDIUM: [exporter_types.STRATEGY_CATEGORY_API, exporter_types.STRATEGY_OBB, exporter_types.STRATEGY_BBOX],
+            exporter_types.TIER_LARGE: [exporter_types.STRATEGY_CATEGORY_API, exporter_types.STRATEGY_OBB, exporter_types.STRATEGY_BBOX],
+            exporter_types.TIER_VERY_LARGE: [exporter_types.STRATEGY_CATEGORY_API, exporter_types.STRATEGY_COARSE_TESS, exporter_types.STRATEGY_OBB, exporter_types.STRATEGY_BBOX],
             
             "category_first": True,
             "track_strategy_usage": True,
@@ -1191,9 +1192,9 @@ CONFIG = {
         "enable_linear_fill": True,
     },
     "occupancy": {
-        "code_3d_only": 0,
-        "code_2d_only": 1,
-        "code_2d_over_3d": 2,
+        "code_3d_only": exporter_types.OCCUPANCY_CODE_3D_ONLY,
+        "code_2d_only": exporter_types.OCCUPANCY_CODE_2D_ONLY,
+        "code_2d_over_3d": exporter_types.OCCUPANCY_CODE_2D_OVER_3D,
     },
     "run": {
         "max_views": None,             # optional clamp for debug
