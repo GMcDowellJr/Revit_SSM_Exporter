@@ -8,6 +8,7 @@ import os
 import json
 import export_csv
 import exporter_types
+from debug import Logger
 
 
 def _json_default(o):
@@ -1259,34 +1260,7 @@ DRIVER2D_DEBUG_SIGS = set()
 # LOGGER
 # ------------------------------------------------------------
 
-class Logger(object):
-    def __init__(self, enabled=True):
-        self.enabled = enabled
-        self.lines = []
-
-    def _write(self, level, msg):
-        """Internal method to write formatted log messages."""
-        ts = datetime.datetime.now().strftime("%H:%M:%S")
-        line = "[{0}] {1}: {2}".format(ts, level, msg)
-        self.lines.append(line)
-        if self.enabled:
-            try:
-                print(line)
-            except Exception:
-                pass
-
-    def info(self, msg):
-        self._write("INFO", msg)
-
-    def warn(self, msg):
-        self._write("WARN", msg)
-
-    def error(self, msg):
-        self._write("ERROR", msg)
-
-    def dump(self):
-        return list(self.lines)
-
+# Logger class imported from debug.py
 LOGGER = Logger()
 
 # ------------------------------------------------------------
