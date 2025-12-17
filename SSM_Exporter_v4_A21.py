@@ -8652,4 +8652,7 @@ def _safe_main():
             "trace_hint": "Check Revit API imports, view collection, or process_view()"
         }
 
-OUT = _safe_main()
+# Only auto-run when executed as the primary Dynamo Python node script.
+# When imported from a thin loader, do not execute on import.
+if "IN" in globals():
+    OUT = _safe_main()
