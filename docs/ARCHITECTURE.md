@@ -414,25 +414,31 @@ Count:
 
 ---
 
-### ADR 2: AREAL-Only Occlusion
+### ADR 2: Uniform Occlusion for All Elements
 
-**Decision:** Only AREAL regions participate in Z-buffer occlusion. TINY and LINEAR regions are always visible.
+**Decision:** All 3D elements follow the same occlusion rules, regardless of size or region type.
 
 **Rationale:**
-- TINY/LINEAR represent **edges and outlines**, not surfaces
-- Example: A wall corner (LINEAR) should show even if technically "behind" a floor slab
-- Prevents thin elements from incorrectly occluding larger objects
-- Matches human perception of 2D drawings (edges always drawn)
+- Simplifies occlusion logic (single code path)
+- Prevents z-fighting artifacts
+- Matches physical reality (can't see through solid objects)
+- Reduces cell count by eliminating fully hidden geometry
+
+**Implementation:**
+- Front-to-back depth ordering
+- Element culled if bounding box fully occluded
+- No exemptions for tiny/linear elements
+- Occlusion happens before region classification
 
 **Trade-offs:**
-- More complex occlusion logic (filter by region type)
-- Possible false positives (thin surface might not occlude)
-- ✅ Better matches drawing conventions
-- ✅ Prevents pathological cases (thin wall blocking entire building)
+- Small details may be hidden if behind larger objects
+- More accurate 3D projection
+- ✅ Simpler, faster code
+- ✅ No z-fighting
+- ✅ Matches viewer perception (hidden = not visible)
 
-**Alternatives Considered:**
-- All regions occlude (rejected: thin elements block incorrectly)
-- No occlusion (rejected: background elements show through foreground)
+**Note on Small Elements:**
+Tiny/linear elements that are PARTIALLY visible will still project and create regions. They're only culled if COMPLETELY hidden, just like large elements.
 
 ---
 
