@@ -11,6 +11,7 @@ import exporter_types
 from debug import Logger
 from config import CONFIG
 import transforms
+import grid
 
 
 def _json_default(o):
@@ -200,6 +201,13 @@ except Exception:
     Drawing = None
     Bitmap = None
     ImageFormat = None
+
+# Initialize grid module with Revit API context
+grid.set_revit_context(
+    DOC, View, ViewType, CategoryType, ImportInstance,
+    FilteredElementCollector, BuiltInCategory, BuiltInParameter,
+    XYZ, DSPoint, DSPolyCurve
+)
 
 # ============================================================
 # ADAPTIVE THRESHOLD COMPUTATION
@@ -1091,9 +1099,6 @@ class SilhouetteExtractor(object):
 
 # CONFIG dictionary imported from config.py
 
-# Track which view-type/crop signatures have already emitted driver-2D debug
-DRIVER2D_DEBUG_SIGS = set()
-
 # ------------------------------------------------------------
 # LOGGER
 # ------------------------------------------------------------
@@ -1739,50 +1744,6 @@ def _apply_runtime_inputs_to_config(config, logger=None):
         png_cfg["enabled"] = png_enabled
         if logger:
             logger.info("Export: occupancy_png.enabled overridden to {0} via IN[4]".format(png_enabled))
-
-# ------------------------------------------------------------
-# VIEW SUPPORT
-# ------------------------------------------------------------
-
-def _is_supported_2d_view(view):
-    if DOC is None or not isinstance(view, View):
-        return False
-
-    if ViewType is None:
-        return True
-
-    vtype = getattr(view, "ViewType", None)
-    if vtype is None:
-        return False
-
-    unsupported = [
-        ViewType.ThreeD,
-        ViewType.DrawingSheet,
-        ViewType.Schedule,
-    ]
-    for attr in ("Walkthrough", "SystemBrowser", "ProjectBrowser", "Report"):
-        if hasattr(ViewType, attr):
-            unsupported.append(getattr(ViewType, attr))
-
-    if vtype in unsupported:
-        return False
-
-    supported = (
-        ViewType.FloorPlan,
-        ViewType.CeilingPlan,
-        ViewType.Section,
-        ViewType.Elevation,
-        ViewType.Detail,
-        ViewType.DraftingView,
-    )
-    if hasattr(ViewType, "Legend"):
-        supported = supported + (ViewType.Legend,)
-    if hasattr(ViewType, "EngineeringPlan"):
-        supported = supported + (ViewType.EngineeringPlan,)
-    if hasattr(ViewType, "AreaPlan"):
-        supported = supported + (ViewType.AreaPlan,)
-
-    return vtype in supported
 
 def _build_navigation_noise_cat_ids():
     """
@@ -2599,7 +2560,7 @@ def _build_occupancy_preview_rects(view, grid_data, occupancy, config, logger):
         except Exception:
             continue
 
-        pc = _make_cell_rect_polycurve(view, grid_data, i, j)
+        pc = grid._make_cell_rect_polycurve(view, grid_data, i, j)
         if pc is None:
             continue
 
@@ -2622,245 +2583,6 @@ def _build_occupancy_preview_rects(view, grid_data, occupancy, config, logger):
     )
 
     return rects_3d, rects_2d, rects_2d_over_3d
-
-def build_grid_for_view(view, config, logger, elems2d=None, clip_data=None):
-    view_id_val = getattr(getattr(view, "Id", None), "IntegerValue", "Unknown")
-    view_name = getattr(view, "Name", "<no name>")
-    logger.info("Grid: building grid for view Id={0}, Name='{1}'".format(view_id_val, view_name))
-
-    cell_size_paper_in = config["grid"]["cell_size_paper_in"]
-
-    grid_data = {
-        "cell_size_paper_in": cell_size_paper_in,
-        "cell_size_model": None,
-        "origin_model_xy": None,
-        "crop_box_model": None,
-        "crop_xy_min": None,
-        "crop_xy_max": None,
-        "grid_xy_min": None,
-        "grid_xy_max": None,
-        "grid_n_i": 0,
-        "grid_n_j": 0,
-        "valid_cells": [],
-        "view_type": str(getattr(view, "ViewType", "Unknown")),
-        "crop_rect_geom": None,
-        "grid_rect_geom": None,
-        "clip_kind": None,
-    }
-
-    if DOC is None or not isinstance(view, View):
-        logger.warn("Grid: DOC/View unavailable; returning empty grid")
-        return grid_data
-
-    if not _is_supported_2d_view(view):
-        logger.warn("Grid: view Id={0} not a supported 2D orthographic view; empty grid".format(view_id_val))
-        return grid_data
-
-    try:
-        crop_box = view.CropBox
-    except Exception as ex:
-        logger.warn("Grid: view Id={0} error accessing crop box; empty grid. {1}".format(view_id_val, ex))
-        return grid_data
-
-    if crop_box is None:
-        logger.warn("Grid: view Id={0} has no crop box; empty grid".format(view_id_val))
-        return grid_data
-
-    scale = getattr(view, "Scale", None)
-    if not isinstance(scale, int) or scale <= 0:
-        logger.warn("Grid: view Id={0} has invalid scale '{1}'; empty grid".format(view_id_val, scale))
-        return grid_data
-
-    cell_size_model = (cell_size_paper_in / 12.0) * float(scale)
-    if cell_size_model <= 0.0:
-        logger.warn("Grid: non-positive model cell size for view Id={0}".format(view_id_val))
-        return grid_data
-
-    # Stage-2 clip volume (prefer caller-provided to avoid recompute)
-    if clip_data is None:
-        clip = build_clip_volume_for_view(view, config, logger)
-    else:
-        clip = clip_data
-
-    clip_kind = clip.get("kind", None)
-    grid_data["clip_kind"] = clip_kind
-
-    # Helper: point-in-OBB (host model coords). OBB is a dict:
-    #   { "center": (x,y,z), "axes": [(..),(..),(..)], "extents": (ex,ey,ez) }
-    def _point_in_obb(p, obb):
-        try:
-            if obb is None:
-                return True
-            c = obb.get("center")
-            axes = obb.get("axes")
-            he = obb.get("extents")
-            if c is None or axes is None or he is None:
-                return True  # fail-open
-            dx = p.X - float(c[0]); dy = p.Y - float(c[1]); dz = p.Z - float(c[2])
-            # dot(d, axis)
-            def _dot(ax):
-                return dx * float(ax[0]) + dy * float(ax[1]) + dz * float(ax[2])
-            if abs(_dot(axes[0])) > float(he[0]): return False
-            if abs(_dot(axes[1])) > float(he[1]): return False
-            if abs(_dot(axes[2])) > float(he[2]): return False
-            return True
-        except Exception:
-            return True  # fail-open
-
-    obb_host = clip.get("obb_host", None)
-    require_clip = bool(clip.get("is_valid", False)) and clip_kind in ("plan", "vertical") and obb_host is not None
-
-    base_min_x, base_min_y, base_max_x, base_max_y = _compute_effective_xy_extents(view, crop_box, logger)
-
-    # Start from crop-based domain
-    min_x = base_min_x
-    min_y = base_min_y
-    max_x = base_max_x
-    max_y = base_max_y
-
-    # Annotation-driven extents (2D drivers)
-    ann_ext = None
-    if elems2d is not None and len(elems2d) > 0:
-        ann_ext = _compute_2d_annotation_extents(view, elems2d, logger)
-        if ann_ext is not None:
-            ax0, ay0, ax1, ay1 = ann_ext
-            min_x = min(min_x, ax0)
-            min_y = min(min_y, ay0)
-            max_x = max(max_x, ax1)
-            max_y = max(max_y, ay1)
-
-    if max_x <= min_x or max_y <= min_y:
-        logger.warn("Grid: degenerate effective extents in view Id={0}; empty grid".format(view_id_val))
-        return grid_data
-
-    origin_x = min_x + 0.5 * cell_size_model
-    origin_y = min_y + 0.5 * cell_size_model
-
-    eps = 1e-9
-    if origin_x > max_x + eps or origin_y > max_y + eps:
-        logger.warn("Grid: extents smaller than one cell in view Id={0}; empty grid".format(view_id_val))
-        return grid_data
-
-    width_x = max_x - origin_x
-    width_y = max_y - origin_y
-
-    n_i = int(math.floor(width_x / cell_size_model + eps)) + 1
-    n_j = int(math.floor(width_y / cell_size_model + eps)) + 1
-
-    logger.info(
-        "Grid: view Id={0} extents X=[{1:.3f},{2:.3f}] Y=[{3:.3f},{4:.3f}], grid {5}x{6} = {7} cells".format(
-            view_id_val, min_x, max_x, min_y, max_y, n_i, n_j, n_i * n_j
-        )
-    )
-
-    max_cells = config["grid"].get("max_cells", None)
-    if max_cells is not None:
-        total_cells = n_i * n_j
-        if total_cells > max_cells:
-            logger.warn(
-                "Grid: view Id={0} grid {1}x{2} ({3} cells) exceeds max_cells={4}; empty".format(
-                    view_id_val, n_i, n_j, total_cells, max_cells
-                )
-            )
-            return grid_data
-
-        # Choose representative center points for Stage-2 clip tests.
-    # IMPORTANT: the clip OBB is in HOST MODEL coordinates.
-    # Grid XY is in crop-local XY (CropBox space), so we must transform test points.
-    rep_z_model = None
-    rep_z_local = None
-
-    if clip_kind == "plan":
-        z0 = clip.get("z_min", None)
-        z1 = clip.get("z_max", None)
-        if z0 is not None and z1 is not None:
-            rep_z_model = 0.5 * (float(z0) + float(z1))
-
-    elif clip_kind == "vertical":
-        # Depth is along CropBox local Z. Prefer explicit local span from clip.
-        z0l = clip.get("z0_local", None)
-        z1l = clip.get("z1_local", None)
-        if z0l is None or z1l is None:
-            try:
-                z0l = float(crop_box.Min.Z)
-                z1l = float(crop_box.Max.Z)
-            except Exception:
-                z0l = 0.0
-                z1l = 0.0
-        rep_z_local = 0.5 * (float(z0l) + float(z1l))
-
-    # Fallbacks (fail-open behavior is in _point_in_obb)
-    if rep_z_model is None and clip_kind == "plan":
-        rep_z_model = 0.0
-    if rep_z_local is None and clip_kind == "vertical":
-        rep_z_local = 0.0
-
-    valid_cells = []
-    for i in range(n_i):
-        center_x = origin_x + i * cell_size_model
-        if center_x < min_x - eps or center_x > max_x + eps:
-            continue
-        for j in range(n_j):
-            center_y = origin_y + j * cell_size_model
-            if center_y < min_y - eps or center_y > max_y + eps:
-                continue
-
-            # Stage-2 clip validity: require cell center inside VOP clip volume (plans/vertical)
-            if require_clip:
-                # Build a host-model test point from crop-local XY.
-                if clip_kind == "plan":
-                    try:
-                        p0 = crop_box.Transform.OfPoint(XYZ(center_x, center_y, 0.0))
-                        p = XYZ(p0.X, p0.Y, rep_z_model)
-                    except Exception:
-                        p = XYZ(center_x, center_y, rep_z_model)
-                else:
-                    # vertical
-                    try:
-                        p = crop_box.Transform.OfPoint(XYZ(center_x, center_y, rep_z_local))
-                    except Exception:
-                        p = XYZ(center_x, center_y, rep_z_local)
-
-                if not _point_in_obb(p, obb_host):
-                    continue
-
-            valid_cells.append((i, j))
-
-    grid_data["cell_size_model"] = cell_size_model
-    grid_data["origin_model_xy"] = (origin_x, origin_y)
-    grid_data["crop_box_model"] = crop_box
-    grid_data["crop_xy_min"] = (base_min_x, base_min_y)
-    grid_data["crop_xy_max"] = (base_max_x, base_max_y)
-    grid_data["grid_xy_min"] = (min_x, min_y)
-    grid_data["grid_xy_max"] = (max_x, max_y)
-    grid_data["grid_n_i"] = n_i
-    grid_data["grid_n_j"] = n_j
-    grid_data["valid_cells"] = valid_cells
-
-    try:
-        grid_data["crop_rect_geom"] = _make_rect_polycurve(view, crop_box, base_min_x, base_min_y, base_max_x, base_max_y)
-        grid_data["grid_rect_geom"] = _make_rect_polycurve(view, crop_box, min_x, min_y, max_x, max_y)
-    except Exception as ex:
-        logger.warn("Grid: failed to build Dynamo rectangles for view Id={0}: {1}".format(view_id_val, ex))
-
-    logger.info(
-        "Grid-debug: view Id={0} cropXY={1}→{2}, annXY={3}→{4}, gridXY={5}→{6}".format(
-            view_id_val,
-            (base_min_x, base_min_y),
-            (base_max_x, base_max_y),
-            (ann_ext if ann_ext is not None else None),
-            None if ann_ext is None else (ann_ext[2], ann_ext[3]),
-            (min_x, min_y),
-            (max_x, max_y),
-        )
-    )
-    logger.info(
-        "Grid: view Id={0} -> cell_size_model={1:.6f} ft, grid {2}x{3}, {4} valid cell(s)".format(
-            view_id_val, cell_size_model, n_i, n_j, len(valid_cells)
-        )
-    )
-
-    return grid_data
 
 def _build_occupancy_png(view, grid_data, occupancy_map, config, logger):
     """
@@ -5648,7 +5370,7 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                 max_x = max(xs)
                 min_y = min(ys)
                 max_y = max(ys)
-                pc = _make_rect_polycurve(view, crop_box, min_x, min_y, max_x, max_y)
+                pc = grid._make_rect_polycurve(view, crop_box, min_x, min_y, max_x, max_y)
                 if pc is not None:
                     preview_2d_rects.append(pc)
                     count2d += 1
@@ -5676,7 +5398,7 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                 max_x = max(xs)
                 min_y = min(ys)
                 max_y = max(ys)
-                pc3 = _make_rect_polycurve(view, crop_box, min_x, min_y, max_x, max_y)
+                pc3 = grid._make_rect_polycurve(view, crop_box, min_x, min_y, max_x, max_y)
                 if pc3 is not None:
                     preview_3d_rects.append(pc3)
                     count3d += 1
@@ -6643,113 +6365,6 @@ def rasterize_regions_to_cells(regions, grid_data, config, logger):
     }
 
 # ------------------------------------------------------------
-# OCCUPANCY
-# ------------------------------------------------------------
-
-def compute_occupancy(grid_data, raster_data, config, logger):
-    """
-    Compute per-cell occupancy for a view, independent of annotation buckets.
-
-    Inputs
-    ------
-    grid_data : dict
-        Includes 'valid_cells' (list of (i,j) cell indices) and cell size info.
-    raster_data : dict
-        Expected keys:
-            - "cells_3d": {cell -> any payload}
-            - "cells_2d": {cell -> any payload}
-        Only the keys (cell ids) are used here.
-    config : dict
-        Uses config["occupancy"]["code_3d_only"],
-             config["occupancy"]["code_2d_only"],
-             config["occupancy"]["code_2d_over_3d"].
-    logger : logger-like
-        For INFO logging.
-
-    Returns
-    -------
-    dict with:
-        - "occupancy_map": {cell -> code}
-        - "code_3d_only", "code_2d_only", "code_2d_over_3d"
-        - "diagnostics": {
-              "num_cells_total",
-              "num_cells_3d_only",
-              "num_cells_2d_only",
-              "num_cells_2d_over_3d",
-              "num_cells_3d_layer",
-              "num_cells_2d_layer",
-          }
-
-    Notes
-    -----
-    This is intentionally agnostic to annotation categories
-    (TEXT / TAG / DIM / DETAIL / LINES / REGION / OTHER).
-    Those are handled separately via anno_cells[…].
-    """
-
-    logger.info("Occupancy: computing final occupancy from raster layers")
-
-    raster_data = raster_data or {}
-    cells_3d = raster_data.get("cells_3d") or {}
-    cells_2d = raster_data.get("cells_2d") or {}
-
-    code_3d = config["occupancy"]["code_3d_only"]
-    code_2d = config["occupancy"]["code_2d_only"]
-    code_2d_over_3d = config["occupancy"]["code_2d_over_3d"]
-
-    occupancy_map = {}
-
-    # First pass: mark 3D-only cells (or 2D-over-3D if 2D was already set)
-    for cell in cells_3d.keys():
-        existing = occupancy_map.get(cell)
-        if existing is None:
-            occupancy_map[cell] = code_3d
-        elif existing == code_2d:
-            occupancy_map[cell] = code_2d_over_3d
-
-    # Second pass: mark 2D-only cells (or 2D-over-3D if 3D was already set)
-    for cell in cells_2d.keys():
-        existing = occupancy_map.get(cell)
-        if existing is None:
-            occupancy_map[cell] = code_2d
-        elif existing == code_3d:
-            occupancy_map[cell] = code_2d_over_3d
-
-    n_total = len(occupancy_map)
-    n_3d_only = 0
-    n_2d_only = 0
-    n_2d_over_3d = 0
-
-    for code in occupancy_map.values():
-        if code == code_3d:
-            n_3d_only += 1
-        elif code == code_2d:
-            n_2d_only += 1
-        elif code == code_2d_over_3d:
-            n_2d_over_3d += 1
-
-    logger.info(
-        "Occupancy: {0} cells total ({1} 3D-only, {2} 2D-only, {3} 2D-over-3D)".format(
-            n_total, n_3d_only, n_2d_only, n_2d_over_3d
-        )
-    )
-
-    return {
-        "occupancy_map": occupancy_map,
-        "code_3d_only": code_3d,
-        "code_2d_only": code_2d,
-        "code_2d_over_3d": code_2d_over_3d,
-        "diagnostics": {
-            "num_cells_total": n_total,
-            "num_cells_3d_only": n_3d_only,
-            "num_cells_2d_only": n_2d_only,
-            "num_cells_2d_over_3d": n_2d_over_3d,
-            "num_cells_3d_layer": len(cells_3d),
-            "num_cells_2d_layer": len(cells_2d),
-        },
-    }
-
-# ------------------------------------------------------------
 # 2D annotation classification (TEXT / TAG / DIM / DETAIL / REGION / OTHER)
 # ------------------------------------------------------------
 
@@ -6978,7 +6593,7 @@ def _resolve_views_from_input():
         else:
             non_template_views.append(v)
 
-    filtered_views = [v for v in non_template_views if _is_supported_2d_view(v)]
+    filtered_views = [v for v in non_template_views if grid._is_supported_2d_view(v)]
 
     LOGGER.info(
         "Filtered to {0} supported 2D non-template view(s) from {1} total View elements "
@@ -7012,7 +6627,7 @@ def process_view(view, config, logger, grid_cache, cache_invalidate):
     elems3d = collect_3d_elements_for_view(view, config, logger) if include_3d else []
     elems2d = collect_2d_elements_for_view(view, config, logger) if include_2d else []
 
-    driver_elems2d = [e for e in elems2d if _is_extent_driver_2d(e)]
+    driver_elems2d = [e for e in elems2d if grid._is_extent_driver_2d(e)]
     logger.info(
         "Projection: view Id={0} has {1} driver 2D element(s) for grid extents".format(
             view_id_val, len(driver_elems2d)
@@ -7023,7 +6638,7 @@ def process_view(view, config, logger, grid_cache, cache_invalidate):
     clip_data = build_clip_volume_for_view(view, config, logger)
 
     t_grid0 = datetime.datetime.now()
-    grid_data = build_grid_for_view(view, config, logger, driver_elems2d, clip_data=clip_data)
+    grid_data = grid.build_grid_for_view(view, config, logger, driver_elems2d, clip_data=clip_data, build_clip_volume_for_view_fn=build_clip_volume_for_view)
     t_grid1 = datetime.datetime.now()
 
 
@@ -7070,7 +6685,7 @@ def process_view(view, config, logger, grid_cache, cache_invalidate):
     t_raster1 = datetime.datetime.now()
 
     t_occ0 = datetime.datetime.now()
-    occupancy = compute_occupancy(grid_data, raster, config, logger)
+    occupancy = grid.compute_occupancy(grid_data, raster, config, logger)
     t_occ1 = datetime.datetime.now()
 
     timings = {
