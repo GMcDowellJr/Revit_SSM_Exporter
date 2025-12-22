@@ -6,12 +6,12 @@ Behavior is governed by the project regression contract.
 
 import os
 import json
-import export_csv
-import exporter_types
-from debug import Logger
-from config import CONFIG
-import transforms
-import grid
+from export import csv as export_csv
+from core import types as exporter_types
+from core.debug import Logger
+from core.config import CONFIG
+from geometry import transforms
+from geometry import grid
 
 
 def _json_default(o):

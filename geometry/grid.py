@@ -4,7 +4,7 @@ Grid building and occupancy computation for SSM/VOP exporter.
 """
 
 import math
-from config import CONFIG
+from core.config import CONFIG
 
 # Track which view-type/crop signatures have already emitted driver-2D debug
 DRIVER2D_DEBUG_SIGS = set()
