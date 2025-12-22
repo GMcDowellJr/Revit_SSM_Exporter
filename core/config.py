@@ -12,7 +12,7 @@ extraction strategies, occupancy codes, export paths, and debug options.
 """
 
 import os
-import exporter_types
+from . import types as exporter_types
 
 
 CONFIG = {
