@@ -29,9 +29,21 @@ if missing:
         "missing": missing,
     }
 else:
-    # Ensure this repo wins import resolution
-    if REPO_DIR in sys.path:
-        sys.path.remove(REPO_DIR)
+    # Clean up sys.path: remove ALL paths that might interfere with standard library
+    # Keep only this repo's path at the front
+    paths_to_remove = [
+        p for p in sys.path
+        if p and (
+            "Revit_SSM_Exporter" in p or
+            "Revit_Fingerprint" in p or
+            "SSM_Exporter_Run" in p
+        )
+    ]
+    for p in paths_to_remove:
+        while p in sys.path:
+            sys.path.remove(p)
+
+    # Now insert ONLY the repo root at position 0
     sys.path.insert(0, REPO_DIR)
 
     try:
