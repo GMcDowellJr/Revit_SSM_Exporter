@@ -29,21 +29,21 @@ if missing:
         "missing": missing,
     }
 else:
-    # Clean up sys.path: remove ALL paths that might interfere with standard library
-    # Keep only this repo's path at the front
-    paths_to_remove = [
-        p for p in sys.path
-        if p and (
-            "Revit_SSM_Exporter" in p or
-            "Revit_Fingerprint" in p or
-            "SSM_Exporter_Run" in p
-        )
-    ]
+    # Clean up sys.path: remove old repo paths that might conflict
+    # But preserve Python stdlib paths (don't touch system Python paths)
+    paths_to_remove = []
+    for p in sys.path:
+        if not p:
+            continue
+        # Remove old SSM or Fingerprint repo paths, but keep everything else
+        if any(marker in p for marker in ["Revit_SSM_Exporter", "Revit_Fingerprint", "SSM_Exporter_Run"]):
+            paths_to_remove.append(p)
+
     for p in paths_to_remove:
         while p in sys.path:
             sys.path.remove(p)
 
-    # Now insert ONLY the repo root at position 0
+    # Insert this repo at the FRONT so it's found first, but keep stdlib paths intact
     sys.path.insert(0, REPO_DIR)
 
     try:
