@@ -8631,9 +8631,7 @@ def main():
     except Exception as ex:
         LOGGER.info("Final cleanup warning: {0}".format(ex))
     # === END FINAL CLEANUP ===
-    
-    return _build_output(results, CONFIG, LOGGER)
-    
+        
     return [out_dict]
 
 # ------------------------------------------------------------
