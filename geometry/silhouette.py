@@ -64,28 +64,32 @@ class SilhouetteExtractor(object):
         """Main entry point: select and apply best strategy for element."""
         if not self.sil_cfg.get("enabled", True):
             return {"loops": self._bbox_fallback(elem), "strategy": "bbox_disabled"}
-        
+
         # Get element metadata
         cat_name = self._get_category_name(elem)
         elem_id = self._get_elem_id(elem)
-        
+
         # Estimate element size in cells
         size_tier = self._determine_size_tier(elem)
-        
+
         # Select strategy list based on size tier
         strategies = self.sil_cfg.get("tier_{0}".format(size_tier), ["bbox"])
-        
+
         # Category-first override
         if self.sil_cfg.get("category_first", True) and cat_name:
             if self._is_simple_category(cat_name):
                 if "category_api_shortcuts" not in strategies:
                     strategies = ["category_api_shortcuts"] + list(strategies)
-        
+
+        # Track failed strategies for debugging
+        failed_strategies = []
+
         # Try strategies in order
         for strategy_name in strategies:
             if not self._is_strategy_enabled(strategy_name):
+                failed_strategies.append("{0}(disabled)".format(strategy_name))
                 continue
-            
+
             try:
                 loops = self._apply_strategy(strategy_name, elem, link_trf, cat_name)
                 if loops:
@@ -97,23 +101,40 @@ class SilhouetteExtractor(object):
                         "elem_id": elem_id,
                         "category": cat_name
                     }
+                else:
+                    failed_strategies.append("{0}(returned None)".format(strategy_name))
             except Exception as ex:
+                failed_strategies.append("{0}({1})".format(strategy_name, str(ex)[:50]))
                 self.logger.info(
                     "Silhouette: strategy '{0}' failed for elem {1}: {2}".format(
                         strategy_name, elem_id, ex
                     )
                 )
                 continue
-        
+
         # Ultimate fallback: BBox
         loops = self._bbox_fallback(elem)
         self._track_strategy_usage("bbox_fallback", size_tier)
+
+        # Log bbox fallback with reasons
+        debug_cfg = self.config.get("debug", {})
+        if debug_cfg.get("log_bbox_fallbacks", False):
+            self.logger.info(
+                "Silhouette: elem {0} ({1}) fell back to bbox. Tier: {2}. Failed strategies: {3}".format(
+                    elem_id,
+                    cat_name or "unknown",
+                    size_tier,
+                    ", ".join(failed_strategies) if failed_strategies else "none tried"
+                )
+            )
+
         return {
             "loops": loops,
             "strategy": "bbox_fallback",
             "size_tier": size_tier,
             "elem_id": elem_id,
-            "category": cat_name
+            "category": cat_name,
+            "failed_strategies": failed_strategies
         }
     
     def _determine_size_tier(self, elem):
@@ -251,7 +272,7 @@ class SilhouetteExtractor(object):
             "bbox": True,
             "bbox_fallback": True,
             "obb": self.sil_cfg.get("enable_obb", True),
-            # "silhouette_edges": self.sil_cfg.get("enable_silhouette_edges", True),
+            "silhouette_edges": self.sil_cfg.get("enable_silhouette_edges", True),
             "coarse_tessellation": self.sil_cfg.get("enable_coarse_tessellation", True),
             "category_api_shortcuts": self.sil_cfg.get("enable_category_api_shortcuts", True),
         }
@@ -262,6 +283,8 @@ class SilhouetteExtractor(object):
             return self._bbox_fallback(elem)
         elif strategy_name == "obb":
             return self._oriented_bbox(elem, link_trf)
+        elif strategy_name == "silhouette_edges":
+            return self._extract_silhouette_edges(elem, link_trf)
         elif strategy_name == "coarse_tessellation":
             return self._coarse_tessellation(elem, link_trf)
         elif strategy_name == "category_api_shortcuts":
@@ -603,8 +626,180 @@ class SilhouetteExtractor(object):
                 return None
         
         # Category not supported by shortcuts
-        return None   
-        
+        return None
+
+    # ============================================================
+    # STRATEGY: Silhouette Edges
+    # ============================================================
+
+    def _extract_silhouette_edges(self, elem, link_trf):
+        """
+        Extract true silhouette edges from element geometry using view direction.
+
+        This is the most accurate strategy but also the most expensive.
+        It extracts actual geometry faces and computes silhouette edges based
+        on face normals relative to the view direction.
+
+        Returns loops of edges that form the element's silhouette in this view.
+        """
+        if not self.view_direction:
+            return None
+
+        try:
+            from Autodesk.Revit.DB import Options, Solid, Face, Edge, Line
+        except Exception:
+            return None
+
+        # Get geometry
+        try:
+            opt = Options()
+            opt.ComputeReferences = False
+            opt.IncludeNonVisibleObjects = False
+            opt.DetailLevel = 1  # Medium detail
+            geom = elem.get_Geometry(opt)
+        except Exception:
+            return None
+
+        if not geom:
+            return None
+
+        # Collect all edges that are silhouettes
+        silhouette_edges = []
+
+        # Iterate through all solids
+        for solid in self._iter_solids(geom):
+            if not solid or getattr(solid, "Volume", 0) <= 1e-9:
+                continue
+
+            try:
+                faces = solid.Faces
+            except Exception:
+                continue
+
+            if not faces:
+                continue
+
+            # For each edge, check if it's a silhouette edge
+            # (shared by one front-facing and one back-facing face)
+            edge_face_map = {}  # edge -> list of (face, is_front_facing)
+
+            for face in faces:
+                try:
+                    # Get face normal at a point on the face
+                    # Use UV midpoint
+                    bbox_uv = face.GetBoundingBox()
+                    if not bbox_uv:
+                        continue
+
+                    u_mid = (bbox_uv.Min.U + bbox_uv.Max.U) / 2.0
+                    v_mid = (bbox_uv.Min.V + bbox_uv.Max.V) / 2.0
+
+                    try:
+                        from Autodesk.Revit.DB import UV
+                        uv = UV(u_mid, v_mid)
+                        normal = face.ComputeNormal(uv)
+                    except Exception:
+                        continue
+
+                    # Check if face is front-facing (normal dot view_direction < 0)
+                    # View direction points INTO the screen, so negative dot = facing us
+                    dot = normal.DotProduct(self.view_direction)
+                    is_front_facing = dot < 0
+
+                    # Get edges of this face
+                    edge_loops = face.EdgeLoops
+                    if not edge_loops:
+                        continue
+
+                    for edge_loop in edge_loops:
+                        for edge in edge_loop:
+                            # Create a hashable key for the edge
+                            # Use the edge's curve endpoints
+                            try:
+                                curve = edge.AsCurve()
+                                if not curve:
+                                    continue
+
+                                p0 = curve.GetEndPoint(0)
+                                p1 = curve.GetEndPoint(1)
+
+                                # Create key (order-independent)
+                                key = tuple(sorted([
+                                    (round(p0.X, 6), round(p0.Y, 6), round(p0.Z, 6)),
+                                    (round(p1.X, 6), round(p1.Y, 6), round(p1.Z, 6))
+                                ]))
+
+                                if key not in edge_face_map:
+                                    edge_face_map[key] = []
+
+                                edge_face_map[key].append((edge, is_front_facing))
+
+                            except Exception:
+                                continue
+
+                except Exception:
+                    continue
+
+            # Find silhouette edges (front-facing on one side, back-facing on other)
+            for edge_key, face_list in edge_face_map.items():
+                if len(face_list) != 2:
+                    # Boundary edge or degenerate - include it
+                    if len(face_list) >= 1:
+                        silhouette_edges.append(face_list[0][0])
+                    continue
+
+                # Check if one face is front-facing and one is back-facing
+                edge_obj, is_front_0 = face_list[0]
+                _, is_front_1 = face_list[1]
+
+                if is_front_0 != is_front_1:
+                    # This is a silhouette edge!
+                    silhouette_edges.append(edge_obj)
+
+        if not silhouette_edges:
+            return None
+
+        # Project edges to 2D and tessellate
+        all_points = []
+
+        for edge in silhouette_edges:
+            try:
+                curve = edge.AsCurve()
+                if not curve:
+                    continue
+
+                # Tessellate the curve
+                try:
+                    tess = curve.Tessellate()
+                    points_3d = list(tess)
+                except Exception:
+                    # Fallback: use endpoints
+                    points_3d = [curve.GetEndPoint(0), curve.GetEndPoint(1)]
+
+                # Apply link transform if needed
+                if link_trf:
+                    points_3d = [link_trf.OfPoint(p) for p in points_3d]
+
+                # Project to 2D
+                for pt in points_3d:
+                    xy = self._to_local_xy(pt)
+                    if xy:
+                        all_points.append(xy)
+
+            except Exception:
+                continue
+
+        if not all_points:
+            return None
+
+        # Compute convex hull of all projected points
+        hull = self._convex_hull_2d(all_points)
+
+        if len(hull) >= 3:
+            return [{"points": hull, "is_hole": False}]
+        else:
+            return None
+
     # ============================================================
     # HELPER METHODS
     # ============================================================
