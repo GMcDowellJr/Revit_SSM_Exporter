@@ -6,6 +6,7 @@ Element projection to view XY plane with silhouette extraction.
 
 import math
 from geometry.silhouette import SilhouetteExtractor
+from core.config import CONFIG
 
 # ------------------------------------------------------------
 # Revit API context (set by main file)
