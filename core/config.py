@@ -22,8 +22,6 @@ CONFIG = {
         "max_cells": 200000,           # hard safety cap per view
     },
     "clip_volume": {
-        "enable_view_range": True,
-        "enable_far_clip": True,
         # Optional refinement: use cut-plane slab instead of full conservative slab
         # True  = Plans: CUT_DOWN, RCPs: CUT_UP
         "use_cut_slab": False,
@@ -157,9 +155,8 @@ CONFIG = {
         "debug_view_ids": [],               # explicit view ids to always include
         "include_cached_views": False,      # usually we only care about non-cached
 
-        # driver-2D logging
-        "enable_driver2d_debug": False,
-        "driver2d_log_once_per_signature": False,
+        # Silhouette strategy fallback logging
+        "log_bbox_fallbacks": False,        # log elements that fall back to bbox with reasons
 
         "log_large_3d_regions": False,
         "large_region_fraction": 0.8,
