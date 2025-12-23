@@ -6,6 +6,23 @@ Hybrid silhouette extraction with pluggable strategies.
 
 import math
 
+# ------------------------------------------------------------
+# Revit API context (set by main file)
+# ------------------------------------------------------------
+
+View = None
+ViewType = None
+XYZ = None
+
+
+def set_revit_context(view_cls, view_type_cls, xyz_cls):
+    """Set the Revit API context for this module."""
+    global View, ViewType, XYZ
+
+    View = view_cls
+    ViewType = view_type_cls
+    XYZ = xyz_cls
+
 
 class SilhouetteExtractor(object):
     """

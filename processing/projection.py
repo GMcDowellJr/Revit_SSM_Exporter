@@ -11,24 +11,39 @@ from geometry.silhouette import SilhouetteExtractor
 # Revit API context (set by main file)
 # ------------------------------------------------------------
 
+DOC = None
+View = None
+ViewType = None
+CategoryType = None
+ImportInstance = None
 BuiltInCategory = None
 TextNote = None
 IndependentTag = None
 RoomTag = None
 FilledRegion = None
+PointCloudInstance = None
 XYZ = None
 
 
-def set_revit_context(built_in_category_cls, text_note_cls, independent_tag_cls,
-                      room_tag_cls, filled_region_cls, xyz_cls):
+def set_revit_context(doc, view_cls, view_type_cls, category_type_cls, import_instance_cls,
+                      built_in_category_cls, text_note_cls, independent_tag_cls,
+                      room_tag_cls, filled_region_cls, point_cloud_instance_cls, xyz_cls):
     """Set the Revit API context for this module."""
-    global BuiltInCategory, TextNote, IndependentTag, RoomTag, FilledRegion, XYZ
+    global DOC, View, ViewType, CategoryType, ImportInstance
+    global BuiltInCategory, TextNote, IndependentTag, RoomTag, FilledRegion
+    global PointCloudInstance, XYZ
 
+    DOC = doc
+    View = view_cls
+    ViewType = view_type_cls
+    CategoryType = category_type_cls
+    ImportInstance = import_instance_cls
     BuiltInCategory = built_in_category_cls
     TextNote = text_note_cls
     IndependentTag = independent_tag_cls
     RoomTag = room_tag_cls
     FilledRegion = filled_region_cls
+    PointCloudInstance = point_cloud_instance_cls
     XYZ = xyz_cls
 
 
