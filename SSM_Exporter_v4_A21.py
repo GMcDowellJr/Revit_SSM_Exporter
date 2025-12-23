@@ -215,6 +215,13 @@ grid.set_revit_context(
     XYZ, DSPoint, DSPolyCurve
 )
 
+# Initialize projection module with Revit API context
+from processing import projection
+projection.set_revit_context(
+    BuiltInCategory, TextNote, IndependentTag,
+    RoomTag, FilledRegion, XYZ
+)
+
 
 # ------------------------------------------------------------
 # CONFIG

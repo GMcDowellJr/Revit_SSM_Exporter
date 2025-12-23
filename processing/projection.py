@@ -7,6 +7,30 @@ Element projection to view XY plane with silhouette extraction.
 import math
 from geometry.silhouette import SilhouetteExtractor
 
+# ------------------------------------------------------------
+# Revit API context (set by main file)
+# ------------------------------------------------------------
+
+BuiltInCategory = None
+TextNote = None
+IndependentTag = None
+RoomTag = None
+FilledRegion = None
+XYZ = None
+
+
+def set_revit_context(built_in_category_cls, text_note_cls, independent_tag_cls,
+                      room_tag_cls, filled_region_cls, xyz_cls):
+    """Set the Revit API context for this module."""
+    global BuiltInCategory, TextNote, IndependentTag, RoomTag, FilledRegion, XYZ
+
+    BuiltInCategory = built_in_category_cls
+    TextNote = text_note_cls
+    IndependentTag = independent_tag_cls
+    RoomTag = room_tag_cls
+    FilledRegion = filled_region_cls
+    XYZ = xyz_cls
+
 
 def _compute_adaptive_thresholds(elements, view, sil_cfg, logger):
     """
@@ -489,15 +513,10 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
     
     # ---- 2D whitelist -----------------------------------------------------
     allowed_2d_cat_ids = set()
-    IndependentTag_cls = None
-    RoomTag_cls = None
-    try:
-        from Autodesk.Revit.DB import IndependentTag, RoomTag
-        IndependentTag_cls = IndependentTag
-        RoomTag_cls = RoomTag
-    except Exception:
-        IndependentTag_cls = None
-        RoomTag_cls = None
+
+    # Use global Revit API types set by set_revit_context()
+    IndependentTag_cls = IndependentTag
+    RoomTag_cls = RoomTag
 
     if BuiltInCategory is not None:
         # whitelist: only these annotation categories
