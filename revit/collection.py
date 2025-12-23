@@ -4,6 +4,7 @@ Revit element collection for SSM/VOP exporter.
 Handles collection of 3D/2D elements and linked model proxies.
 """
 
+import os
 from core.config import CONFIG
 from geometry import transforms
 from geometry import grid
@@ -32,6 +33,15 @@ DetailCurve = None
 CurveElement = None
 FamilyInstance = None
 XYZ = None
+
+# ------------------------------------------------------------
+# System.Drawing context for PNG export (set by main file)
+# ------------------------------------------------------------
+
+System = None
+Drawing = None
+Bitmap = None
+ImageFormat = None
 
 
 def set_revit_context(doc, view_cls, view_type_cls, category_type_cls, import_instance_cls,
@@ -66,6 +76,16 @@ def set_revit_context(doc, view_cls, view_type_cls, category_type_cls, import_in
     CurveElement = curve_element_cls
     FamilyInstance = family_instance_cls
     XYZ = xyz_cls
+
+
+def set_drawing_context(system, drawing, bitmap, image_format):
+    """Set the System.Drawing context for PNG export."""
+    global System, Drawing, Bitmap, ImageFormat
+
+    System = system
+    Drawing = drawing
+    Bitmap = bitmap
+    ImageFormat = image_format
 
 
 def _build_navigation_noise_cat_ids():

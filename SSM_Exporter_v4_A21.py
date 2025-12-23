@@ -249,6 +249,9 @@ collection.set_revit_context(
     FamilyInstance, XYZ
 )
 
+# Initialize collection module with System.Drawing context for PNG export
+collection.set_drawing_context(System, Drawing, Bitmap, ImageFormat)
+
 
 # ------------------------------------------------------------
 # CONFIG
