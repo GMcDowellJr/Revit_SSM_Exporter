@@ -11,7 +11,7 @@ import importlib
 
 sys.dont_write_bytecode = True
 
-# MUST be the repo root that contains: core/, geometry/, export/, processing/
+# MUST be the repo root that contains: core/, geometry/, export/, processing/, revit/
 REPO_DIR = r"C:\Users\gmcdowell\Documents\Revit_SSM_Exporter"
 
 # Basic validation to catch path mistakes
@@ -21,6 +21,7 @@ expected = [
     os.path.join(REPO_DIR, "geometry"),
     os.path.join(REPO_DIR, "export"),
     os.path.join(REPO_DIR, "processing"),
+    os.path.join(REPO_DIR, "revit"),
 ]
 missing = [p for p in expected if not os.path.exists(p)]
 if missing:
@@ -50,10 +51,10 @@ else:
     try:
         # ---- CPython 3: purge cached modules so edits on disk are picked up ----
         # Only purge the repo's packages to avoid destabilizing stdlib / Dynamo internals.
-        prefixes = ("core", "geometry", "export", "processing", "SSM_Exporter_v4_A21")
+        prefixes = ("core", "geometry", "export", "processing", "revit", "SSM_Exporter_v4_A21")
 
         for name in list(sys.modules.keys()):
-            if name in prefixes or name.startswith("core.") or name.startswith("geometry.") or name.startswith("export.") or name.startswith("processing."):
+            if name in prefixes or name.startswith("core.") or name.startswith("geometry.") or name.startswith("export.") or name.startswith("processing.") or name.startswith("revit."):
                 sys.modules.pop(name, None)
 
         # Import the main exporter module
