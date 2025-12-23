@@ -8,6 +8,174 @@ import math
 from geometry.silhouette import SilhouetteExtractor
 
 
+def _compute_adaptive_thresholds(elements, view, sil_cfg, logger):
+    """
+    Compute adaptive thresholds based on element size distribution in the view.
+    """
+
+    # Check if adaptive mode is enabled
+    if not sil_cfg.get("use_adaptive_thresholds", False):
+        return None
+
+    # Get crop box transform for this view
+    try:
+        crop_box = view.CropBox
+        if not crop_box:
+            return None
+        trf = crop_box.Transform
+        inv_trf = trf.Inverse
+    except Exception:
+        return None
+
+    def _to_local_xy_quick(point):
+        if point is None:
+            return None
+        try:
+            local_pt = inv_trf.OfPoint(point)
+            return (float(local_pt.X), float(local_pt.Y))
+        except Exception:
+            return None
+
+    # Get cell size
+    try:
+        cell_size = float(sil_cfg.get("cell_size_for_adaptive", 1.0))
+        if cell_size <= 0:
+            cell_size = 1.0
+    except Exception:
+        cell_size = 1.0
+
+    # Collect element sizes (max dimension in cells)
+    sizes = []
+
+    for elem in elements:
+        try:
+            bb = elem.get_BoundingBox(view)
+            if not bb or not bb.Min or not bb.Max:
+                continue
+
+            p0 = _to_local_xy_quick(bb.Min)
+            p1 = _to_local_xy_quick(bb.Max)
+
+            if not p0 or not p1:
+                continue
+
+            width_ft = abs(p1[0] - p0[0])
+            height_ft = abs(p1[1] - p0[1])
+
+            width_cells = width_ft / cell_size
+            height_cells = height_ft / cell_size
+
+            max_cells = max(width_cells, height_cells)
+
+            if max_cells > 0:
+                sizes.append(max_cells)
+
+        except Exception:
+            continue
+
+    # Check if we have enough elements
+    min_elements = sil_cfg.get("adaptive_min_elements", 50)
+    if len(sizes) < min_elements:
+        logger.info(
+            "Adaptive thresholds: too few elements ({0} < {1}), using fixed thresholds".format(
+                len(sizes), min_elements
+            )
+        )
+        return None
+
+    # Sort sizes
+    sizes.sort()
+
+    # Winsorize (remove outliers)
+    if sil_cfg.get("adaptive_winsorize", True):
+        lower_pct = float(sil_cfg.get("adaptive_winsorize_lower", 5))
+        upper_pct = float(sil_cfg.get("adaptive_winsorize_upper", 95))
+
+        n = len(sizes)
+        lower_idx = int(n * lower_pct / 100.0)
+        upper_idx = int(n * upper_pct / 100.0)
+
+        # Keep elements between lower and upper percentile
+        if upper_idx > lower_idx:
+            sizes_winsorized = sizes[lower_idx:upper_idx]
+            logger.info(
+                "Adaptive thresholds: winsorized {0} -> {1} elements (removed {2}%)".format(
+                    n, len(sizes_winsorized), lower_pct + (100 - upper_pct)
+                )
+            )
+            sizes = sizes_winsorized
+
+    # Compute percentiles
+    def _percentile(data, pct):
+        """Compute percentile of sorted data"""
+        if not data:
+            return None
+        n = len(data)
+        k = (n - 1) * pct / 100.0
+        f = int(k)
+        c = int(k) + 1
+        if c >= n:
+            return data[-1]
+        if f == c:
+            return data[int(k)]
+        # Linear interpolation
+        d0 = data[f] * (c - k)
+        d1 = data[c] * (k - f)
+        return d0 + d1
+
+    tiny_pct = float(sil_cfg.get("adaptive_percentile_tiny", 25))
+    medium_pct = float(sil_cfg.get("adaptive_percentile_medium", 50))
+    large_pct = float(sil_cfg.get("adaptive_percentile_large", 75))
+
+    tiny_threshold = _percentile(sizes, tiny_pct)
+    medium_threshold = _percentile(sizes, medium_pct)
+    large_threshold = _percentile(sizes, large_pct)
+
+    # Apply min/max bounds
+    min_tiny = float(sil_cfg.get("adaptive_min_tiny", 1))
+    min_medium = float(sil_cfg.get("adaptive_min_medium", 3))
+    min_large = float(sil_cfg.get("adaptive_min_large", 10))
+
+    max_tiny = float(sil_cfg.get("adaptive_max_tiny", 5))
+    max_medium = float(sil_cfg.get("adaptive_max_medium", 20))
+    max_large = float(sil_cfg.get("adaptive_max_large", 100))
+
+    tiny_threshold = max(min_tiny, min(max_tiny, tiny_threshold))
+    medium_threshold = max(min_medium, min(max_medium, medium_threshold))
+    large_threshold = max(min_large, min(max_large, large_threshold))
+
+    # Ensure monotonic ordering
+    if medium_threshold <= tiny_threshold:
+        medium_threshold = tiny_threshold + 1
+    if large_threshold <= medium_threshold:
+        large_threshold = medium_threshold + 1
+
+    logger.info(
+        "Adaptive thresholds computed: tiny={0:.1f}, medium={1:.1f}, large={2:.1f} (from {3} elements)".format(
+            tiny_threshold, medium_threshold, large_threshold, len(sizes)
+        )
+    )
+
+    # Log distribution stats
+    try:
+        min_size = sizes[0]
+        max_size = sizes[-1]
+        median_size = _percentile(sizes, 50)
+        logger.info(
+            "  Size distribution: min={0:.1f}, median={1:.1f}, max={2:.1f}".format(
+                min_size, median_size, max_size
+            )
+        )
+    except Exception:
+        pass
+
+    return {
+        "tiny": tiny_threshold,
+        "medium": medium_threshold,
+        "large": large_threshold,
+    }
+
+
 def _create_silhouette_extractor(view, grid_data, config, logger, adaptive_thresholds=None):
     """
     adaptive_thresholds: Pass in pre-computed thresholds (computed per-view)
