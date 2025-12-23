@@ -19,20 +19,11 @@ from processing.projection import (
     project_elements_to_view_xy
 )
 from revit.collection import (
-    _build_navigation_noise_cat_ids,
-    _build_model_suppression_cat_ids,
-    _get_excluded_3d_cat_ids,
     _build_occupancy_preview_rects,
     _build_occupancy_png,
     build_clip_volume_for_view,
-    _get_plan_view_vertical_range,
     _summarize_elements_by_type,
     _summarize_elements_by_category,
-    _get_host_visible_model_cat_ids,
-    _build_link_proxies_from_collector,
-    _collect_link_proxies_by_linked_view,
-    _collect_link_proxies_by_instance_bbox,
-    collect_link_3d_proxies,
     collect_3d_elements_for_view,
     collect_2d_elements_for_view
 )
