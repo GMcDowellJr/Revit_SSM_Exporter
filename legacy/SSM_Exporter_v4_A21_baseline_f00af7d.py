@@ -6,7 +6,6 @@ Behavior is governed by the project regression contract.
 
 import os
 import json
-import export_csv
 
 
 def _json_default(o):
@@ -1143,11 +1142,15 @@ CONFIG = {
     
             # === SCALE-AWARE: ABSOLUTE THRESHOLDS ===
             "use_absolute_thresholds": False,
-            "auto_adjust_for_scale": False,
-            "tiny_linear_threshold_ft": 2.0,
-            "medium_threshold_ft": 5.0,
+            "auto_adjust_for_scale": False,            
+            "tiny_linear_threshold_ft": 2.0,          
+            "medium_threshold_ft": 5.0,              
             "large_threshold_ft": 10.0,
-
+            
+            "tiny_linear_threshold_cells": 2,
+            "medium_threshold_cells": 10,
+            "large_threshold_cells": 50,
+            
             "coarse_tess_max_verts_per_face": 20,
             "coarse_tess_triangulate_param": 0.5,
             
@@ -1220,10 +1223,10 @@ CONFIG = {
     
     "debug": {
         "enable": True,
-        "write_debug_json": False,
+        "write_debug_json": True,
 
         "max_debug_views": 10,              # hard cap on views in debug JSON
-        "min_elapsed_for_debug_sec": 999.0,   # only keep debug if view took >= this
+        "min_elapsed_for_debug_sec": 0.0,   # only keep debug if view took >= this
         "debug_view_ids": [],               # explicit view ids to always include
         "include_cached_views": False,      # usually we only care about non-cached
         
@@ -1467,6 +1470,34 @@ def _collect_element_ids_for_signature(view, logger):
 
     ids = sorted(set(ids))
     return ids
+
+def _ensure_dir(path, logger):
+    if not path:
+        return False
+    try:
+        if not os.path.isdir(path):
+            os.makedirs(path)
+        return True
+    except Exception as ex:
+        logger.warn("Export: could not create directory '{0}': {1}".format(path, ex))
+        return False
+
+def _append_csv_rows(path, headers, rows, logger):
+    if not rows:
+        return
+
+    write_header = not os.path.exists(path) or os.path.getsize(path) == 0
+
+    try:
+        with open(path, "a", newline="") as f:
+            writer = csv.writer(f)
+            if write_header:
+                writer.writerow(headers)
+            for r in rows:
+                writer.writerow(r)
+        logger.info("Export: appended {0} row(s) to '{1}'".format(len(rows), path))
+    except Exception as ex:
+        logger.warn("Export: failed to append to CSV '{0}': {1}".format(path, ex))
 
 def _enum_to_name(val):
     """
@@ -7911,7 +7942,7 @@ def _export_timings_csv(results, config, logger):
         matrix_rows.append([r.get(h, "") for h in headers])
 
     try:
-        export_csv._append_csv_rows(csv_path, headers, matrix_rows, logger)
+        _append_csv_rows(csv_path, headers, matrix_rows, logger)
         logger.info("Appended {0} timing rows to {1}".format(len(rows), csv_path))
     except Exception as ex:
         logger.error("Failed to write timings CSV: {0}".format(ex))
@@ -7995,7 +8026,7 @@ def _export_view_level_csvs(views, results, run_start, config, logger, exporter_
 
     if not enable_rows:
         return
-    if not export_csv._ensure_dir(out_dir, logger):
+    if not _ensure_dir(out_dir, logger):
         return
 
     # Date string: either override from IN[5] or run_start date.
@@ -8311,9 +8342,9 @@ def _export_view_level_csvs(views, results, run_start, config, logger, exporter_
     # Append to CSVs
     # ------------------------------------------------------------------
     if core_rows:
-        export_csv._append_csv_rows(core_path, core_headers, core_rows, logger)
+        _append_csv_rows(core_path, core_headers, core_rows, logger)
     if vop_rows:
-        export_csv._append_csv_rows(vop_path, vop_headers, vop_rows, logger)
+        _append_csv_rows(vop_path, vop_headers, vop_rows, logger)
 
 def _build_views_out_for_dynamo(results):
     """
@@ -8600,7 +8631,9 @@ def main():
     except Exception as ex:
         LOGGER.info("Final cleanup warning: {0}".format(ex))
     # === END FINAL CLEANUP ===
-
+    
+    return _build_output(results, CONFIG, LOGGER)
+    
     return [out_dict]
 
 # ------------------------------------------------------------
@@ -8618,7 +8651,4 @@ def _safe_main():
             "trace_hint": "Check Revit API imports, view collection, or process_view()"
         }
 
-# Only auto-run when executed as the primary Dynamo Python node script.
-# When imported from a thin loader, do not execute on import.
-if "IN" in globals():
-    OUT = _safe_main()
+OUT = _safe_main()
