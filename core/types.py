@@ -47,6 +47,7 @@ TIER_VERY_LARGE = "tier_very_large"
 
 STRATEGY_BBOX = "bbox"
 STRATEGY_OBB = "obb"
+STRATEGY_SILHOUETTE_EDGES = "silhouette_edges"
 STRATEGY_CATEGORY_API = "category_api_shortcuts"
 STRATEGY_COARSE_TESS = "coarse_tessellation"
 

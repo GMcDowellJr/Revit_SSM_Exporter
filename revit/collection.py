@@ -302,17 +302,15 @@ def _build_occupancy_png(view, grid_data, occupancy_map, config, logger):
         export_cfg  = config.get("export", {}) or {}
         occ_png_cfg = config.get("occupancy_png", {}) or {}
 
-    # Optional flags (both must allow PNG)
-    enable_png_debug = bool(debug_cfg.get("enable_occupancy_png", True))
-    enable_png_cfg   = bool(occ_png_cfg.get("enabled", True))
-    if not (enable_png_debug and enable_png_cfg):
+    # Check if PNG export is enabled
+    if not bool(occ_png_cfg.get("enabled", True)):
         return None
 
     # pixels_per_cell from occupancy_png config
     try:
-        pixels_per_cell = int(occ_png_cfg.get("pixels_per_cell", 4))
+        pixels_per_cell = int(occ_png_cfg.get("pixels_per_cell", 10))
     except Exception:
-        pixels_per_cell = 4
+        pixels_per_cell = 10
 
     if pixels_per_cell < 1:
         pixels_per_cell = 1

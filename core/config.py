@@ -86,8 +86,8 @@ CONFIG = {
 
             exporter_types.TIER_TINY_LINEAR: [exporter_types.STRATEGY_BBOX],
             exporter_types.TIER_MEDIUM: [exporter_types.STRATEGY_CATEGORY_API, exporter_types.STRATEGY_OBB, exporter_types.STRATEGY_BBOX],
-            exporter_types.TIER_LARGE: [exporter_types.STRATEGY_CATEGORY_API, exporter_types.STRATEGY_OBB, exporter_types.STRATEGY_BBOX],
-            exporter_types.TIER_VERY_LARGE: [exporter_types.STRATEGY_CATEGORY_API, exporter_types.STRATEGY_COARSE_TESS, exporter_types.STRATEGY_OBB, exporter_types.STRATEGY_BBOX],
+            exporter_types.TIER_LARGE: [exporter_types.STRATEGY_CATEGORY_API, exporter_types.STRATEGY_SILHOUETTE_EDGES, exporter_types.STRATEGY_OBB, exporter_types.STRATEGY_BBOX],
+            exporter_types.TIER_VERY_LARGE: [exporter_types.STRATEGY_CATEGORY_API, exporter_types.STRATEGY_SILHOUETTE_EDGES, exporter_types.STRATEGY_COARSE_TESS, exporter_types.STRATEGY_OBB, exporter_types.STRATEGY_BBOX],
 
             "category_first": True,
             "track_strategy_usage": True,
