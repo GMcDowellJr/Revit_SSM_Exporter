@@ -486,6 +486,7 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
         "num_3d_loops": 0,
         "num_2d_loops": 0,
         "num_3d_skipped_link_floor": 0,
+        "num_3d_extraction_failed": 0,
     }
     
     # Force strategies_used to exist
@@ -1361,6 +1362,10 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                     )
                     hull_loops = []
         
+        # Track if hybrid extraction failed to produce loops
+        if use_hybrid and not hull_loops:
+            diagnostics["num_3d_extraction_failed"] += 1
+
         # Fallback: Original A19 full tessellation (if hybrid disabled or failed)
         if not hull_loops and not use_hybrid:
             try:
@@ -1871,7 +1876,30 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
 
     # DEBUG
     logger.info("DEBUG: strategies_used = {0}".format(diagnostics.get("strategies_used", "NOT PRESENT")))
-    
+
+    # Error budget warning: check if too many extractions failed
+    debug_cfg = CONFIG.get("debug", {})
+    enable_error_budget = bool(debug_cfg.get("enable_error_budget_warnings", True))
+    error_budget_threshold = float(debug_cfg.get("extraction_failure_threshold", 0.1))  # 10% default
+
+    if enable_error_budget:
+        num_input = diagnostics.get("num_3d_input", 0)
+        num_failed = diagnostics.get("num_3d_extraction_failed", 0)
+
+        if num_input > 0:
+            failure_rate = float(num_failed) / float(num_input)
+
+            if failure_rate > error_budget_threshold:
+                logger.warn(
+                    "Projection: view Id={0} extraction failure rate {1:.1%} exceeds threshold {2:.1%} "
+                    "({3}/{4} elements failed). Check silhouette strategy config or element geometry.".format(
+                        view_id_val,
+                        failure_rate,
+                        error_budget_threshold,
+                        num_failed,
+                        num_input
+                    )
+                )
 
     return {
         "projected_3d": projected_3d,
