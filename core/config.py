@@ -147,35 +147,74 @@ CONFIG = {
     },
 
     "debug": {
+        # Master switch
         "enable": True,
+
+        # === DIAGNOSTIC LOGGING ===
+        "logging": {
+            # Exception/error tracking
+            "grid_exceptions": False,          # Grid geometry collection failures
+            "bbox_fallbacks": False,           # Elements falling back to bbox (with reasons)
+
+            # Performance warnings
+            "error_budget_warnings": True,     # Extraction failure rate warnings
+            "extraction_failure_threshold": 0.1,  # 10% failure threshold
+            "large_regions": False,            # Regions > X% of grid
+            "large_region_threshold": 0.8,     # 80% threshold
+
+            # Element-level detail logging
+            "filled_region_loops": False,
+            "filled_region_loops_max": 5,
+            "floor_loops": False,
+            "floor_loops_max": 5,
+            "driver2d_debug": True,            # 2D annotation extent drivers
+            "driver2d_log_once_per_signature": False,  # Dedupe by view signature
+        },
+
+        # === GEOMETRY PREVIEWS (Dynamo output) ===
+        "previews": {
+            "enable_polys": False,
+            "max_projected_2d": 32,
+            "max_projected_3d": 64,
+            "enable_regions": False,
+            "max_region_cells": 2048,
+        },
+
+        # === FILE EXPORTS ===
+        "exports": {
+            "debug_json": False,               # Export debug.json with view details
+            "max_debug_views": 10,             # Cap on debug JSON entries
+            "min_elapsed_sec": 999.0,          # Only include slow views
+            "debug_view_ids": [],              # Explicit view IDs to include
+            "include_cached_views": False,     # Include cached views in debug
+            "include_run_log": False,          # Add log to output dict
+        },
+
+        # === BACKWARD COMPATIBILITY (deprecated, will be removed) ===
+        # Old flat keys still work but map to new structure
         "write_debug_json": False,
-
-        "max_debug_views": 10,              # hard cap on views in debug JSON
-        "min_elapsed_for_debug_sec": 999.0,   # only keep debug if view took >= this
-        "debug_view_ids": [],               # explicit view ids to always include
-        "include_cached_views": False,      # usually we only care about non-cached
-
-        # Silhouette strategy fallback logging
-        "log_bbox_fallbacks": False,        # log elements that fall back to bbox with reasons
-
+        "max_debug_views": 10,
+        "min_elapsed_for_debug_sec": 999.0,
+        "debug_view_ids": [],
+        "include_cached_views": False,
+        "log_bbox_fallbacks": False,
+        "log_grid_exceptions": False,
+        "enable_error_budget_warnings": True,
+        "extraction_failure_threshold": 0.1,
         "log_large_3d_regions": False,
         "large_region_fraction": 0.8,
-
-        # projection preview polys
-        "enable_preview_polys": False,      # <- turn ON when you want geometry
+        "enable_preview_polys": False,
         "max_preview_projected_2d": 32,
         "max_preview_projected_3d": 64,
-
-        # region preview controls (False later; harmless now)
         "enable_region_previews": False,
         "max_region_areal_cells": 2048,
-
         "include_run_log_in_out": False,
-        "filled_region_loops": False,       # enable/disable this debug
-        "filled_region_loops_max": 5,      # max filled regions to log per run
-        "floor_loops": False,          # enable per-floor loop debug
-        "floor_loops_max": 5,          # max 3D floor-like elems to log
-
+        "filled_region_loops": False,
+        "filled_region_loops_max": 5,
+        "floor_loops": False,
+        "floor_loops_max": 5,
+        "enable_driver2d_debug": True,
+        "driver2d_log_once_per_signature": False,
     },
 }
 

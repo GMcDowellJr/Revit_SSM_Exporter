@@ -1040,17 +1040,6 @@ def build_grid_for_view(view, config, logger, elems2d=None, clip_data=None, buil
         logger.warn("Grid: failed to build Dynamo rectangles for view Id={0}: {1}".format(view_id_val, ex))
 
     logger.info(
-        "Grid-debug: view Id={0} cropXY={1}→{2}, annXY={3}→{4}, gridXY={5}→{6}".format(
-            view_id_val,
-            (base_min_x, base_min_y),
-            (base_max_x, base_max_y),
-            (ann_ext if ann_ext is not None else None),
-            None if ann_ext is None else (ann_ext[2], ann_ext[3]),
-            (min_x, min_y),
-            (max_x, max_y),
-        )
-    )
-    logger.info(
         "Grid: view Id={0} -> cell_size_model={1:.6f} ft, grid {2}x{3}, {4} valid cell(s)".format(
             view_id_val, cell_size_model, n_i, n_j, len(valid_cells)
         )

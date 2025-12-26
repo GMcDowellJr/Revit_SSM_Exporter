@@ -1210,12 +1210,6 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                 diagnostics["strategies_used"]["import_extraction"] = \
                     diagnostics["strategies_used"].get("import_extraction", 0) + 1
                 # === END TRACKING ===
-                
-                logger.info(
-                    "Projection-debug: ImportInstance elem_id={0}, cat='{1}' "
-                    "produced no usable band loops; skipping from 3D occupancy"
-                    .format(eid, cat_name)
-                )
                 continue
 
             for loop in loops_xy:
@@ -1274,10 +1268,6 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
         if PointCloudInstance is not None and isinstance(e, PointCloudInstance):
             diagnostics.setdefault("num_3d_skipped_pointcloud", 0)
             diagnostics["num_3d_skipped_pointcloud"] += 1
-            logger.info(
-                "Projection-debug: skipping PointCloudInstance elem_id={0}, "
-                "cat='{1}' from 3D occupancy".format(eid, cat_name)
-            )
             continue
 
         # ============================================================
@@ -1287,8 +1277,6 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
         
         # Check if hybrid mode is enabled
         use_hybrid = config.get("projection", {}).get("silhouette", {}).get("enabled", False)
-        # DEBUG
-        logger.info("DEBUG: Hybrid mode enabled = {0}".format(use_hybrid))
         # make hybrid/strategies_used diagnosable in debug.json
         diagnostics["silhouette_hybrid_enabled"] = bool(use_hybrid)
         diagnostics.setdefault("silhouette_extractor_is_none", False)
@@ -1354,8 +1342,6 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
 
                     diagnostics["strategies_used"][composite_key] = \
                         diagnostics["strategies_used"].get(composite_key, 0) + 1
-                    # DEBUG
-                    logger.info("DEBUG: Tracked {0}".format(composite_key))   
                 except Exception as ex:
                     logger.info(
                         "Silhouette: hybrid extraction failed for elem {0}: {1}".format(eid, ex)
@@ -1496,11 +1482,6 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                     if not (is_tiny or is_linear):
                         diagnostics.setdefault("num_3d_bbox_suppressed_areal", 0)
                         diagnostics["num_3d_bbox_suppressed_areal"] += 1
-                        logger.info(
-                            "Projection-debug: suppressing AREAL BBox fallback for elem_id={0}, cat='{1}' (w={2}, h={3})".format(
-                                eid, cat_name, w_cells, h_cells
-                            )
-                        )
                         continue
                 except Exception:
                     # If we can't classify, fall through (fail-open) to existing BBox behavior.
@@ -1515,15 +1496,6 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
 
                 w = i_max - i_min + 1
                 h = j_max - j_min + 1
-
-                # threshold: spans at least 80% of grid in X or Y
-                if (w >= 0.8 * n_i) or (h >= 0.8 * n_j):
-                    logger.info(
-                        "Projection-debug: large 3D BBox elem_id={0}, cat='{1}', "
-                        "w={2}, h={3}, grid={4}x{5}".format(
-                            eid, cat_name, w, h, n_i, n_j
-                        )
-                    )
         except Exception:
             pass
         # --------------------------------------------------------------------
@@ -1854,17 +1826,6 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                         break
             if count3d >= max_preview_3d:
                 break
-                
-    logger.info(
-        "Projection-debug: view Id={0} 2D whitelist stats -> "
-        "input={1}, projected={2}, not_whitelisted={3}, outside_grid={4}".format(
-            view_id_val,
-            diagnostics.get("num_2d_input", 0),
-            diagnostics.get("num_2d_projected", 0),
-            diagnostics.get("num_2d_not_whitelisted", 0),
-            diagnostics.get("num_2d_outside_grid", 0),
-        )
-    )
 
     logger.info(
         "Projection: view Id={0} -> projected_3d={1} elem(s), projected_2d={2} elem(s)".format(
@@ -1873,9 +1834,6 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
             diagnostics["num_2d_projected"],
         )
     )
-
-    # DEBUG
-    logger.info("DEBUG: strategies_used = {0}".format(diagnostics.get("strategies_used", "NOT PRESENT")))
 
     # Error budget warning: check if too many extractions failed
     debug_cfg = CONFIG.get("debug", {})
@@ -1900,6 +1858,30 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                         num_input
                     )
                 )
+
+    # Collect strategy fallback statistics from extractor
+    if hasattr(project_elements_to_view_xy, '_extractor_cache'):
+        # Try to find the extractor for this view
+        try:
+            scale = int(getattr(view, "Scale", 96))
+            grid_size = float(cell_size)
+            cache_key = "{0}_{1:.3f}".format(scale, grid_size)
+            extractor = project_elements_to_view_xy._extractor_cache.get(cache_key)
+
+            if extractor and hasattr(extractor, 'get_statistics'):
+                stats = extractor.get_statistics()
+                if isinstance(stats, dict):
+                    # Merge strategy stats into diagnostics
+                    if "strategy_usage" in stats:
+                        for key, count in stats["strategy_usage"].items():
+                            diagnostics["strategies_used"][key] = \
+                                diagnostics["strategies_used"].get(key, 0) + count
+
+                    # Add fallback stats
+                    if "strategy_fallbacks" in stats and stats["strategy_fallbacks"]:
+                        diagnostics["strategy_fallbacks"] = stats["strategy_fallbacks"]
+        except Exception:
+            pass  # Silently fail if stats collection has issues
 
     return {
         "projected_3d": projected_3d,
