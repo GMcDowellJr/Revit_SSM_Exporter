@@ -811,7 +811,7 @@ def _save_view_cache(cache_path, cache_data, logger):
     try:
         # Ensure parent directory exists
         parent = os.path.dirname(cache_path)
-        if not _ensure_dir(parent, logger):
+        if not export_csv._ensure_dir(parent, logger):
             return
 
         views = cache_data.get("views") or {}
