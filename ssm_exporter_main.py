@@ -3155,8 +3155,9 @@ def main():
         results.append(res)
 
     # CSV export (view-level metrics)
+    # Use views_sorted to match the order of results (which were built from views_sorted)
     try:
-        _export_view_level_csvs(views, results, run_start, CONFIG, LOGGER, exporter_version)
+        _export_view_level_csvs(views_sorted, results, run_start, CONFIG, LOGGER, exporter_version)
     except Exception as ex:
         LOGGER.warn("Export: exception during CSV export: {0}".format(ex))
 

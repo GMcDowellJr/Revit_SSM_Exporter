@@ -1064,7 +1064,8 @@ def compute_occupancy(grid_data, raster_data, config, logger):
     occupancy_map = {}
 
     # First pass: mark 3D-only cells (or 2D-over-3D if 2D was already set)
-    for cell in cells_3d.keys():
+    # Use sorted iteration to ensure deterministic output order
+    for cell in sorted(cells_3d.keys()):
         existing = occupancy_map.get(cell)
         if existing is None:
             occupancy_map[cell] = code_3d
@@ -1072,7 +1073,8 @@ def compute_occupancy(grid_data, raster_data, config, logger):
             occupancy_map[cell] = code_2d_over_3d
 
     # Second pass: mark 2D-only cells (or 2D-over-3D if 3D was already set)
-    for cell in cells_2d.keys():
+    # Use sorted iteration to ensure deterministic output order
+    for cell in sorted(cells_2d.keys()):
         existing = occupancy_map.get(cell)
         if existing is None:
             occupancy_map[cell] = code_2d
