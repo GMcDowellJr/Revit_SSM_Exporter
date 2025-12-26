@@ -178,3 +178,125 @@ CONFIG = {
 
     },
 }
+
+
+def validate_config(config, logger=None):
+    """
+    Validate configuration dictionary for type correctness and reasonable ranges.
+
+    Args:
+        config: Configuration dictionary to validate
+        logger: Optional logger for warnings (if None, prints to console)
+
+    Returns:
+        List of validation error messages (empty if valid)
+    """
+    errors = []
+
+    def log_error(msg):
+        errors.append(msg)
+        if logger:
+            logger.warn("Config validation: {0}".format(msg))
+        else:
+            print("WARNING: Config validation: {0}".format(msg))
+
+    # Grid validation
+    grid_cfg = config.get("grid", {})
+
+    cell_size = grid_cfg.get("cell_size_paper_in")
+    if cell_size is not None:
+        try:
+            cell_size_float = float(cell_size)
+            if cell_size_float <= 0.0:
+                log_error("grid.cell_size_paper_in must be > 0, got {0}".format(cell_size))
+            elif cell_size_float > 2.0:
+                log_error("grid.cell_size_paper_in unusually large: {0} inches".format(cell_size))
+        except (TypeError, ValueError):
+            log_error("grid.cell_size_paper_in must be numeric, got {0}".format(type(cell_size).__name__))
+
+    max_cells = grid_cfg.get("max_cells")
+    if max_cells is not None:
+        try:
+            max_cells_int = int(max_cells)
+            if max_cells_int <= 0:
+                log_error("grid.max_cells must be > 0, got {0}".format(max_cells))
+            elif max_cells_int > 10000000:
+                log_error("grid.max_cells extremely large: {0} (risk of memory issues)".format(max_cells))
+        except (TypeError, ValueError):
+            log_error("grid.max_cells must be numeric, got {0}".format(type(max_cells).__name__))
+
+    # Projection validation
+    proj_cfg = config.get("projection", {})
+
+    for key in ["include_3d", "include_2d", "include_link_3d"]:
+        value = proj_cfg.get(key)
+        if value is not None and not isinstance(value, bool):
+            log_error("projection.{0} must be boolean, got {1}".format(key, type(value).__name__))
+
+    # Silhouette validation
+    sil_cfg = proj_cfg.get("silhouette", {})
+
+    for key in ["enabled", "enable_obb", "enable_silhouette_edges", "enable_coarse_tessellation", "enable_category_api_shortcuts"]:
+        value = sil_cfg.get(key)
+        if value is not None and not isinstance(value, bool):
+            log_error("projection.silhouette.{0} must be boolean, got {1}".format(key, type(value).__name__))
+
+    # Threshold validation
+    for key in ["tiny_linear_threshold_cells", "medium_threshold_cells", "large_threshold_cells"]:
+        value = sil_cfg.get(key)
+        if value is not None:
+            try:
+                val_int = int(value)
+                if val_int < 0:
+                    log_error("projection.silhouette.{0} must be >= 0, got {1}".format(key, value))
+            except (TypeError, ValueError):
+                log_error("projection.silhouette.{0} must be numeric, got {1}".format(key, type(value).__name__))
+
+    # Occupancy PNG validation
+    png_cfg = config.get("occupancy_png", {})
+
+    pixels_per_cell = png_cfg.get("pixels_per_cell")
+    if pixels_per_cell is not None:
+        try:
+            ppc_int = int(pixels_per_cell)
+            if ppc_int <= 0:
+                log_error("occupancy_png.pixels_per_cell must be > 0, got {0}".format(pixels_per_cell))
+            elif ppc_int > 100:
+                log_error("occupancy_png.pixels_per_cell very large: {0} (may create huge PNGs)".format(pixels_per_cell))
+        except (TypeError, ValueError):
+            log_error("occupancy_png.pixels_per_cell must be numeric, got {0}".format(type(pixels_per_cell).__name__))
+
+    # Regions validation
+    regions_cfg = config.get("regions", {})
+
+    for key in ["tiny_max_w", "tiny_max_h", "linear_band_thickness_cells"]:
+        value = regions_cfg.get(key)
+        if value is not None:
+            try:
+                val_num = float(value)
+                if val_num < 0:
+                    log_error("regions.{0} must be >= 0, got {1}".format(key, value))
+            except (TypeError, ValueError):
+                log_error("regions.{0} must be numeric, got {1}".format(key, type(value).__name__))
+
+    # Export validation
+    export_cfg = config.get("export", {})
+
+    output_dir = export_cfg.get("output_dir")
+    if output_dir is not None and not isinstance(output_dir, str):
+        log_error("export.output_dir must be string, got {0}".format(type(output_dir).__name__))
+
+    # Debug validation
+    debug_cfg = config.get("debug", {})
+
+    max_debug_views = debug_cfg.get("max_debug_views")
+    if max_debug_views is not None:
+        try:
+            mdv_int = int(max_debug_views)
+            if mdv_int < 0:
+                log_error("debug.max_debug_views must be >= 0, got {0}".format(max_debug_views))
+        except (TypeError, ValueError):
+            log_error("debug.max_debug_views must be numeric, got {0}".format(type(max_debug_views).__name__))
+
+    return errors
+

@@ -2994,8 +2994,15 @@ def main():
     # LOGGER.info("=== END HEALTH CHECK ===")
     
     # === END CLEANUP ===
-    
+
     LOGGER.info("Exporter start: {0}".format(run_start))
+
+    # Validate configuration
+    from core.config import validate_config
+    validation_errors = validate_config(CONFIG, LOGGER)
+    if validation_errors:
+        LOGGER.warn("Configuration validation found {0} issue(s)".format(len(validation_errors)))
+
     force_recompute, cache_enabled = _get_reset_and_cache_flags()
 
     # Apply any Dynamo-driven overrides to CONFIG (output_dir, cache, PNG)
