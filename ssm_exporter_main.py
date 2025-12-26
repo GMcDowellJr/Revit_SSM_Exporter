@@ -2300,6 +2300,9 @@ def process_view(view, config, logger, grid_cache, cache_invalidate):
     # --- Derive cell size in feet -----------------------------------------
     try:
         cell_size_ft = float(grid_data.get("cell_size_model") or 0.0)
+        # Round to 6 decimal places to ensure cache/fresh values match
+        # (avoids hash mismatches from floating point precision differences)
+        cell_size_ft = round(cell_size_ft, 6)
     except Exception:
         cell_size_ft = 0.0
 
