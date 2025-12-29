@@ -1465,7 +1465,7 @@ def build_regions_from_projected(projected, grid_data, config, logger):
         debug_label = None
         debug_enabled = False
 
-        # Optional: log floor-like elements’ loop sizes
+        # Optional: log floor-like elements' loop sizes
         if (
             floor_debug_enable
             and floor_debug_count < floor_debug_max
@@ -1475,7 +1475,14 @@ def build_regions_from_projected(projected, grid_data, config, logger):
             debug_enabled = True
             floor_debug_count += 1
 
-        elem_cells = _cells_from_loops_boundary_only(loops, debug_label, debug_enabled)
+        # Use interior-filled rasterization for floor-like elements (for occlusion)
+        # Use boundary-only for other 3D elements (walls, columns, etc.)
+        is_floor_like = category in ("Floors", "Roofs", "Ceilings", "Structural Foundations")
+
+        if is_floor_like:
+            elem_cells = _cells_from_loops_parity(loops, debug_label, debug_enabled)
+        else:
+            elem_cells = _cells_from_loops_boundary_only(loops, debug_label, debug_enabled)
 
         # Determine whether this element's boundary footprint is AREAL in grid space
         is_areal_3d = False
