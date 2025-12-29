@@ -395,11 +395,10 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                         crop_near_z = float(cut_pt_local.Z)
                         
                         logger.info(
-                            "Projection: {0} view W=0 at cut plane (model Z={1:.3f}, crop-local Z={2:.3f}){3}".format(
+                            "Projection: {0} view W=0 at cut plane (model Z={1:.3f}, crop-local Z={2:.3f}) [using abs distance for occlusion]".format(
                                 "RCP" if is_rcp else "Plan",
-                                cut_plane_z, 
-                                crop_near_z,
-                                " [depth will be negated for occlusion]" if is_rcp else ""
+                                cut_plane_z,
+                                crop_near_z
                             )
                         )
                     else:
@@ -430,10 +429,10 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
             return None
 
     def _to_local_xyz(pt):
-        """Return view-aligned (u,v,depth) with W=0 at cut plane for plans, crop plane for sections.
-        
-        For RCPs (Reflected Ceiling Plans), depth is negated so that elements closer to the 
-        view (lower in model Z) have lower depth values for proper front-to-back occlusion sorting.
+        """Return view-aligned (u,v,depth) where depth is distance from cut/crop plane.
+
+        Depth is absolute distance from reference plane - works for all view types
+        (floor plans, RCPs, sections, elevations) without special-casing.
         """
         if pt is None:
             return None
@@ -441,21 +440,12 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
             try:
                 lp = inv_trf.OfPoint(pt)
                 w_normalized = lp.Z - crop_near_z
-                
-                # For RCP views, negate depth so closer elements (lower Z) have lower depth
-                if is_rcp:
-                    w_normalized = -w_normalized
-                    
                 return (lp.X, lp.Y, w_normalized)
             except Exception:
                 pass
         try:
             # Fallback: use model Z directly (not ideal but better than crashing)
-            # For RCP, negate to maintain proper ordering
-            z_val = pt.Z
-            if is_rcp:
-                z_val = -z_val
-            return (pt.X, pt.Y, z_val)
+            return (pt.X, pt.Y, pt.Z)
         except Exception:
             return None
 
@@ -1150,8 +1140,8 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
             try:
                 if bb is not None and bb.Min is not None and bb.Max is not None:
 
-                    # Compute depth range from ALL 8 bounding-box corners (spec: corner transforms required).
-                    # This avoids incorrect ordering/culling when the bbox is not view-aligned.
+                    # Compute depth range from ALL 8 bounding-box corners.
+                    # Use absolute distance from cut/crop plane for occlusion.
                     try:
                         x0, y0, z0 = bb.Min.X, bb.Min.Y, bb.Min.Z
                         x1, y1, z1 = bb.Max.X, bb.Max.Y, bb.Max.Z
@@ -1165,23 +1155,13 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                         for _c in _corners:
                             _lp = _to_local_xyz(_c)
                             if _lp is not None:
-                                _ws.append(float(_lp[2]))
+                                _ws.append(abs(float(_lp[2])))  # Absolute distance from plane
                         if _ws:
                             depth_min = min(_ws)
                             depth_max = max(_ws)
                     except Exception:
                         pass
 
-            except Exception:
-                depth_min = depth_max = None
-            try:
-                if bb is not None and bb.Min is not None and bb.Max is not None:
-                    pmin = _to_local_xyz(bb.Min)
-                    pmax = _to_local_xyz(bb.Max)
-                    if pmin is not None and pmax is not None:
-                        z0 = float(pmin[2]); z1 = float(pmax[2])
-                        depth_min = z0 if z0 <= z1 else z1
-                        depth_max = z1 if z1 >= z0 else z0
             except Exception:
                 depth_min = depth_max = None
 
