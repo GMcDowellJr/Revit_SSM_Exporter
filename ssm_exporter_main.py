@@ -811,7 +811,7 @@ def _save_view_cache(cache_path, cache_data, logger):
     try:
         # Ensure parent directory exists
         parent = os.path.dirname(cache_path)
-        if not _ensure_dir(parent, logger):
+        if not export_csv._ensure_dir(parent, logger):
             return
 
         views = cache_data.get("views") or {}
@@ -2300,6 +2300,9 @@ def process_view(view, config, logger, grid_cache, cache_invalidate):
     # --- Derive cell size in feet -----------------------------------------
     try:
         cell_size_ft = float(grid_data.get("cell_size_model") or 0.0)
+        # Round to 6 decimal places to ensure cache/fresh values match
+        # (avoids hash mismatches from floating point precision differences)
+        cell_size_ft = round(cell_size_ft, 6)
     except Exception:
         cell_size_ft = 0.0
 
@@ -2994,8 +2997,15 @@ def main():
     # LOGGER.info("=== END HEALTH CHECK ===")
     
     # === END CLEANUP ===
-    
+
     LOGGER.info("Exporter start: {0}".format(run_start))
+
+    # Validate configuration
+    from core.config import validate_config
+    validation_errors = validate_config(CONFIG, LOGGER)
+    if validation_errors:
+        LOGGER.warn("Configuration validation found {0} issue(s)".format(len(validation_errors)))
+
     force_recompute, cache_enabled = _get_reset_and_cache_flags()
 
     # Apply any Dynamo-driven overrides to CONFIG (output_dir, cache, PNG)
