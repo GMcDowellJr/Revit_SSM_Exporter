@@ -1519,7 +1519,23 @@ def build_regions_from_projected(projected, grid_data, config, logger):
             elem_cells = [c for c in elem_cells if c in valid_cells_set]
 
         visible_cells = elem_cells
-        if occlusion_enable and (w_hit is not None):
+
+        # Special handling for floor-like elements:
+        # - They update depth buffer for occlusion (w_nearest)
+        # - But they don't contribute to occupancy (visible_cells = empty)
+        # This prevents floor interiors from showing as occupied space
+        if is_floor_like and occlusion_enable and can_occlude and (w_hit is not None):
+            try:
+                w_hit_f = float(w_hit)
+                # Update depth buffer for ALL cells (enables occlusion)
+                for c in elem_cells:
+                    if w_hit_f < w_nearest.get(c, INF):
+                        w_nearest[c] = w_hit_f
+                # But don't add to visible_cells (no occupancy contribution)
+                visible_cells = []
+            except Exception:
+                visible_cells = []
+        elif occlusion_enable and (w_hit is not None):
             try:
                 w_hit_f = float(w_hit)
                 vis = []
