@@ -1344,14 +1344,21 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
             extractor = project_elements_to_view_xy._extractor_cache.get(cache_key)
 
             if extractor:
-                logger.info("Reusing extractor for cache_key={0}".format(cache_key))
+                # Only update transform if this is a different view than last time
+                # (avoids calling _update_extractor_transform for every element)
+                current_view_id = getattr(getattr(view, "Id", None), "IntegerValue", None)
+                last_view_id = getattr(extractor, '_last_view_id', None)
 
-                # Update with THIS view's crop box transform and adaptive thresholds
-                _update_extractor_transform(extractor, view)
-                if adaptive_thresholds:
-                    extractor.adaptive_thresholds = adaptive_thresholds
+                if current_view_id != last_view_id:
+                    logger.info("Reusing extractor for cache_key={0}".format(cache_key))
 
-                extractor.view = view
+                    # Update with THIS view's crop box transform and adaptive thresholds
+                    _update_extractor_transform(extractor, view)
+                    if adaptive_thresholds:
+                        extractor.adaptive_thresholds = adaptive_thresholds
+
+                    extractor.view = view
+                    extractor._last_view_id = current_view_id
                 
             if extractor:
                 try:
