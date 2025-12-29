@@ -1880,6 +1880,10 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                     # Add fallback stats
                     if "strategy_fallbacks" in stats and stats["strategy_fallbacks"]:
                         diagnostics["strategy_fallbacks"] = stats["strategy_fallbacks"]
+
+                    # Add fallback element IDs (if tracking is enabled)
+                    if "strategy_fallback_elements" in stats and stats["strategy_fallback_elements"]:
+                        diagnostics["strategy_fallback_elements"] = stats["strategy_fallback_elements"]
         except Exception:
             pass  # Silently fail if stats collection has issues
 

@@ -156,6 +156,9 @@ CONFIG = {
             "grid_exceptions": False,          # Grid geometry collection failures
             "bbox_fallbacks": False,           # Elements falling back to bbox (with reasons)
 
+            # Strategy fallback tracking
+            "fallback_element_ids": False,     # Track element IDs for strategy fallbacks
+
             # Performance warnings
             "error_budget_warnings": True,     # Extraction failure rate warnings
             "extraction_failure_threshold": 0.1,  # 10% failure threshold

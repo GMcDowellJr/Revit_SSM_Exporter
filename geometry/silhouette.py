@@ -51,6 +51,7 @@ class SilhouetteExtractor(object):
         # Strategy usage tracking
         self.strategy_stats = {}
         self.fallback_stats = {}  # Track when elements fall back to non-first strategy
+        self.fallback_elements = {}  # Track element IDs for fallbacks (if enabled)
 
         # View direction for silhouette edge detection
         try:
@@ -103,7 +104,7 @@ class SilhouetteExtractor(object):
 
                     # Track fallback if this is NOT the first enabled strategy
                     if strategy_name != first_enabled_strategy:
-                        self._track_fallback(size_tier, first_enabled_strategy, strategy_name)
+                        self._track_fallback(size_tier, first_enabled_strategy, strategy_name, elem_id, cat_name)
 
                     return {
                         "loops": loops,
@@ -309,12 +310,25 @@ class SilhouetteExtractor(object):
         key = "{0}_{1}".format(size_tier, strategy_name)
         self.strategy_stats[key] = self.strategy_stats.get(key, 0) + 1
 
-    def _track_fallback(self, size_tier, first_strategy, actual_strategy):
+    def _track_fallback(self, size_tier, first_strategy, actual_strategy, elem_id=None, cat_name=None):
         """Track when an element falls back from first_strategy to actual_strategy."""
         if not self.sil_cfg.get("track_strategy_usage", True):
             return
+
         key = "{0}_fallback_{1}_to_{2}".format(size_tier, first_strategy, actual_strategy)
         self.fallback_stats[key] = self.fallback_stats.get(key, 0) + 1
+
+        # Track element IDs if enabled in debug config
+        debug_cfg = self.config.get("debug", {}).get("logging", {})
+        track_elem_ids = bool(debug_cfg.get("fallback_element_ids", False))
+
+        if track_elem_ids and elem_id is not None:
+            if key not in self.fallback_elements:
+                self.fallback_elements[key] = []
+            self.fallback_elements[key].append({
+                "elem_id": elem_id,
+                "category": cat_name
+            })
 
     # ============================================================
     # STRATEGY: BBox (baseline)
@@ -940,8 +954,14 @@ class SilhouetteExtractor(object):
     
     def get_statistics(self):
         """Return strategy usage and fallback statistics"""
-        return {
+        stats = {
             "strategy_usage": dict(self.strategy_stats),
             "strategy_fallbacks": dict(self.fallback_stats)
         }
+
+        # Include element IDs if tracking is enabled and we have data
+        if self.fallback_elements:
+            stats["strategy_fallback_elements"] = dict(self.fallback_elements)
+
+        return stats
 
