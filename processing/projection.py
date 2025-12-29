@@ -1422,7 +1422,8 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                         pmin = _to_local_xyz(bb.Min)
                         pmax = _to_local_xyz(bb.Max)
                         if pmin is not None and pmax is not None:
-                            z0 = float(pmin[2]); z1 = float(pmax[2])
+                            z0 = abs(float(pmin[2]))  # Absolute distance from cut plane
+                            z1 = abs(float(pmax[2]))
                             depth_min = z0 if z0 <= z1 else z1
                             depth_max = z1 if z1 >= z0 else z0
                 except Exception:
@@ -1549,7 +1550,8 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                 pmin = _to_local_xyz(bb.Min)
                 pmax = _to_local_xyz(bb.Max)
                 if pmin is not None and pmax is not None:
-                    z0 = float(pmin[2]); z1 = float(pmax[2])
+                    z0 = abs(float(pmin[2]))  # Absolute distance from cut plane
+                    z1 = abs(float(pmax[2]))
                     depth_min = z0 if z0 <= z1 else z1
                     depth_max = z1 if z1 >= z0 else z0
         except Exception:
