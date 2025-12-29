@@ -246,7 +246,7 @@ collection.set_revit_context(
     RevitLinkInstance, VisibleInViewFilter,
     Dimension, LinearDimension, TextNote, IndependentTag,
     RoomTag, FilledRegion, DetailCurve, CurveElement,
-    FamilyInstance, XYZ
+    FamilyInstance, XYZ, Outline, BoundingBoxIntersectsFilter
 )
 
 # Initialize collection module with System.Drawing context for PNG export
@@ -916,8 +916,9 @@ def build_regions_from_projected(projected, grid_data, config, logger):
 
     # Debug config (no view dependency)
     debug_cfg = (config or {}).get("debug", {})
-    debug_filled_loops = bool(debug_cfg.get("filled_region_loops", False))
-    debug_filled_loops_max = int(debug_cfg.get("filled_region_loops_max", 10))
+    logging_cfg = debug_cfg.get("logging", {})
+    debug_filled_loops = bool(logging_cfg.get("filled_region_loops", False))
+    debug_filled_loops_max = int(logging_cfg.get("filled_region_loops_max", 5))
     debug_filled_loops_count = 0
 
     def _point_in_poly(px, py, pts):
@@ -998,12 +999,13 @@ def build_regions_from_projected(projected, grid_data, config, logger):
         
     # Debug thresholds for "large" regions in grid space
     debug_cfg = (config or {}).get("debug", {})
-    large_reg_enable = bool(debug_cfg.get("log_large_3d_regions", False))
-    large_reg_frac = float(debug_cfg.get("large_region_fraction", 0.8))  # 80% by default
+    logging_cfg = debug_cfg.get("logging", {})
+    large_reg_enable = bool(logging_cfg.get("large_regions", False))
+    large_reg_frac = float(logging_cfg.get("large_region_threshold", 0.8))  # 80% by default
 
     # 3D floor/roof loop debug
-    floor_debug_enable = bool(debug_cfg.get("floor_loops", False))
-    floor_debug_max = int(debug_cfg.get("floor_loops_max", 5))
+    floor_debug_enable = bool(logging_cfg.get("floor_loops", False))
+    floor_debug_max = int(logging_cfg.get("floor_loops_max", 5))
     floor_debug_count = 0
 
     origin_x, origin_y = origin_xy
@@ -2348,7 +2350,8 @@ def process_view(view, config, logger, grid_cache, cache_invalidate):
     }
 
     debug_cfg = config.get("debug", {}) if isinstance(config, dict) else {}
-    enable_preview_polys = bool(debug_cfg.get("enable_preview_polys", False))
+    previews_cfg = debug_cfg.get("previews", {})
+    enable_preview_polys = bool(previews_cfg.get("enable_polys", False))
 
     debug = {
         "view": {
@@ -2434,7 +2437,8 @@ def process_view(view, config, logger, grid_cache, cache_invalidate):
 
 def _export_debug_json(results, config, logger):
     debug_cfg = config.get("debug", {}) or {}
-    if not (debug_cfg.get("enable", True) and debug_cfg.get("write_debug_json", True)):
+    exports_cfg = debug_cfg.get("exports", {})
+    if not (debug_cfg.get("enable", True) and exports_cfg.get("debug_json", False)):
         logger.info("Debug JSON export disabled by config.")
         return
 
@@ -2554,10 +2558,11 @@ def _select_debug_view_ids(results, config, logger):
       sorted by elapsed_sec descending.
     """
     debug_cfg = config.get("debug", {}) or {}
-    max_debug = debug_cfg.get("max_debug_views", 20)
-    min_elapsed = debug_cfg.get("min_elapsed_for_debug_sec", 0.0)
-    explicit_ids = set(debug_cfg.get("debug_view_ids", []) or [])
-    include_cached = bool(debug_cfg.get("include_cached_views", False))
+    exports_cfg = debug_cfg.get("exports", {})
+    max_debug = exports_cfg.get("max_debug_views", 10)
+    min_elapsed = exports_cfg.get("min_elapsed_sec", 999.0)
+    explicit_ids = set(exports_cfg.get("debug_view_ids", []) or [])
+    include_cached = bool(exports_cfg.get("include_cached_views", False))
 
     # First pass: collect candidates
     candidates = []

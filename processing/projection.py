@@ -216,6 +216,37 @@ def _compute_adaptive_thresholds(elements, view, sil_cfg, logger):
     }
 
 
+def _update_extractor_transform(extractor, view):
+    """
+    Update an extractor's transform function with the current view's crop box.
+    Must be called when reusing an extractor for a different view.
+    """
+    try:
+        crop_box = view.CropBox
+        if not crop_box:
+            return False
+        trf = crop_box.Transform
+        inv_trf = trf.Inverse
+    except Exception:
+        return False
+
+    # Create new transform closure with THIS view's crop box
+    def _to_local_xy(pt):
+        if pt is None:
+            return None
+        try:
+            lp = inv_trf.OfPoint(pt)
+            return (float(lp.X), float(lp.Y))
+        except Exception:
+            try:
+                return (float(pt.X), float(pt.Y))
+            except Exception:
+                return None
+
+    extractor._transform_fn = _to_local_xy
+    return True
+
+
 def _create_silhouette_extractor(view, grid_data, config, logger, adaptive_thresholds=None):
     """
     adaptive_thresholds: Pass in pre-computed thresholds (computed per-view)
@@ -231,7 +262,7 @@ def _create_silhouette_extractor(view, grid_data, config, logger, adaptive_thres
         inv_trf = trf.Inverse
     except Exception:
         return None
-    
+
     # Create extractor (now accepts adaptive_thresholds)
     extractor = SilhouetteExtractor(view, grid_data, config, logger, adaptive_thresholds)
     # Wire the view-local XY transform onto the extractor
@@ -519,8 +550,9 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
 
         extractor = project_elements_to_view_xy._extractor_cache.get(cache_key)
 
-        # UPDATE extractor with this view's adaptive thresholds
+        # UPDATE extractor with this view's adaptive thresholds AND transform
         if extractor is not None:
+            _update_extractor_transform(extractor, view)  # Update crop box transform for THIS view
             extractor.adaptive_thresholds = adaptive_thresholds  # Fresh per view!
             extractor.view = view  # Update view reference
         
@@ -1310,14 +1342,15 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                     logger.info("Created extractor for cache_key={0}".format(cache_key))
 
             extractor = project_elements_to_view_xy._extractor_cache.get(cache_key)
-            
+
             if extractor:
                 logger.info("Reusing extractor for cache_key={0}".format(cache_key))
-                
-                # Update with THIS view's adaptive thresholds
+
+                # Update with THIS view's crop box transform and adaptive thresholds
+                _update_extractor_transform(extractor, view)
                 if adaptive_thresholds:
                     extractor.adaptive_thresholds = adaptive_thresholds
-                
+
                 extractor.view = view
                 
             if extractor:
