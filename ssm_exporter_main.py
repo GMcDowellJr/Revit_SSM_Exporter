@@ -1321,14 +1321,14 @@ def build_regions_from_projected(projected, grid_data, config, logger):
     INF = 1.0e30
     w_nearest = {}  # dict((i,j) -> float)
 
-    # Tile-based occlusion acceleration (optional optimization)
+    # Tile-based occlusion acceleration (DISABLED by default due to over-culling bug)
     # Tiles group cells to speed up fully-occluded checks for large rectangles
-    tile_size = int(occ_cfg.get("tile_size", 16))  # 16x16 cells per tile
+    tile_size = int(occ_cfg.get("tile_size", 0))  # 0 = disabled
     tile_fully_occluded = {}  # dict((ti,tj) -> bool)
     tile_depth_gate = {}  # dict((ti,tj) -> float) MAXIMUM depth for fully occluded tiles
 
-    # Bbox UVW optimization (can be disabled for testing)
-    use_bbox_uvw = bool(occ_cfg.get("use_bbox_uvw", True))
+    # Bbox UVW optimization (DISABLED by default due to over-culling bug)
+    use_bbox_uvw = bool(occ_cfg.get("use_bbox_uvw", False))  # Changed to False
     # Legacy option - now fixed to compute tight link-space bounds for linked elements
     skip_bbox_uvw_for_links = bool(occ_cfg.get("skip_bbox_uvw_for_links", False))
 
