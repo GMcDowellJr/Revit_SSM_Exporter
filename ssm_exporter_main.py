@@ -1329,7 +1329,8 @@ def build_regions_from_projected(projected, grid_data, config, logger):
 
     # Bbox UVW optimization (can be disabled for testing)
     use_bbox_uvw = bool(occ_cfg.get("use_bbox_uvw", True))
-    skip_bbox_uvw_for_links = bool(occ_cfg.get("skip_bbox_uvw_for_links", True))  # Linked elements have oversized bboxes
+    # Legacy option - now fixed to compute tight link-space bounds for linked elements
+    skip_bbox_uvw_for_links = bool(occ_cfg.get("skip_bbox_uvw_for_links", False))
 
     diagnostics.setdefault("num_3d_culled_by_occlusion", 0)
     diagnostics.setdefault("num_3d_tested_for_occlusion", 0)

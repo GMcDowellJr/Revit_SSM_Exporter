@@ -449,7 +449,7 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
         except Exception:
             return None
 
-    def _compute_conservative_uvw_bounds(bb):
+    def _compute_conservative_uvw_bounds(bb, elem=None):
         """
         Compute conservative UVW bounding box from element's 3D bbox.
 
@@ -457,12 +457,70 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
         - UV bounds: axis-aligned rectangle in view-local XY (conservative footprint)
         - W_min: minimum depth from cut/crop plane (nearest point to camera)
 
+        For linked elements, if elem is provided and has _link_trf, computes tighter
+        bounds by transforming directly from link space to view space (avoiding
+        oversized host-space axis-aligned intermediate bbox).
+
         This enables cheap pre-check before expensive geometry projection:
         if UV rect is fully occluded at depth >= w_min, skip geometry extraction.
         """
         if bb is None or bb.Min is None or bb.Max is None:
             return None
 
+        # Check if this is a linked element with tighter bounds available
+        link_trf = None
+        bb_link = None
+        if elem is not None:
+            try:
+                link_trf = getattr(elem, "_link_trf", None)
+                if link_trf is not None:
+                    # Get link-space bbox (tighter than host-space for rotated links)
+                    elem_inner = getattr(elem, "_elem", None)
+                    if elem_inner is not None:
+                        bb_link = elem_inner.get_BoundingBox(None)
+            except Exception:
+                pass
+
+        # Use link-space bbox if available (tighter for rotated linked elements)
+        if bb_link is not None and bb_link.Min is not None and bb_link.Max is not None and link_trf is not None:
+            try:
+                # Combine transforms: link → host → view
+                # This gives tight view-aligned bounds without oversized host-space intermediate
+                x0, y0, z0 = bb_link.Min.X, bb_link.Min.Y, bb_link.Min.Z
+                x1, y1, z1 = bb_link.Max.X, bb_link.Max.Y, bb_link.Max.Z
+                corners_link = [
+                    XYZ(x0, y0, z0), XYZ(x0, y0, z1),
+                    XYZ(x0, y1, z0), XYZ(x0, y1, z1),
+                    XYZ(x1, y0, z0), XYZ(x1, y0, z1),
+                    XYZ(x1, y1, z0), XYZ(x1, y1, z1),
+                ]
+
+                u_vals = []
+                v_vals = []
+                w_vals = []
+
+                for c_link in corners_link:
+                    # Transform from link space to host space
+                    c_host = link_trf.OfPoint(c_link)
+                    # Then transform to view/UVW space
+                    lp = _to_local_xyz(c_host)
+                    if lp is not None:
+                        u_vals.append(float(lp[0]))
+                        v_vals.append(float(lp[1]))
+                        w_vals.append(abs(float(lp[2])))
+
+                if u_vals and v_vals and w_vals:
+                    u_min = min(u_vals)
+                    u_max = max(u_vals)
+                    v_min = min(v_vals)
+                    v_max = max(v_vals)
+                    w_min = min(w_vals)
+                    return (u_min, v_min, u_max, v_max, w_min)
+
+            except Exception:
+                pass  # Fall through to regular bbox
+
+        # Standard path: use host-space bbox
         try:
             # Generate all 8 corners of the 3D bounding box
             x0, y0, z0 = bb.Min.X, bb.Min.Y, bb.Min.Z
@@ -1188,7 +1246,8 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                 uv_min_x = uv_min_y = uv_max_x = uv_max_y = None
 
             # Compute bbox-derived conservative UVW bounds for occlusion culling
-            bbox_uvw_aabb = _compute_conservative_uvw_bounds(bb)
+            # Pass element to enable tight link-space bounds for linked elements
+            bbox_uvw_aabb = _compute_conservative_uvw_bounds(bb, e)
 
             depth_min = depth_max = None
             try:
@@ -1474,7 +1533,8 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                     bb = None
 
                 # Compute bbox-derived conservative UVW bounds for occlusion culling
-                bbox_uvw_aabb = _compute_conservative_uvw_bounds(bb)
+                # Pass element to enable tight link-space bounds for linked elements
+                bbox_uvw_aabb = _compute_conservative_uvw_bounds(bb, e)
 
                 try:
                     if bb is not None and bb.Min is not None and bb.Max is not None:
@@ -1605,7 +1665,8 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
             uv_min_x = uv_min_y = uv_max_x = uv_max_y = None
 
         # Compute bbox-derived conservative UVW bounds for occlusion culling
-        bbox_uvw_aabb = _compute_conservative_uvw_bounds(bb)
+        # Pass element to enable tight link-space bounds for linked elements
+        bbox_uvw_aabb = _compute_conservative_uvw_bounds(bb, e)
 
         depth_min = depth_max = None
         try:
