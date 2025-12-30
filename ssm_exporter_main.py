@@ -1321,9 +1321,9 @@ def build_regions_from_projected(projected, grid_data, config, logger):
     INF = 1.0e30
     w_nearest = {}  # dict((i,j) -> float)
 
-    # Tile-based occlusion acceleration (DISABLED by default due to over-culling bug)
+    # Tile-based occlusion acceleration (optional optimization)
     # Tiles group cells to speed up fully-occluded checks for large rectangles
-    tile_size = int(occ_cfg.get("tile_size", 0))  # 0 = disabled
+    tile_size = int(occ_cfg.get("tile_size", 16))  # 16x16 cells per tile
     tile_fully_occluded = {}  # dict((ti,tj) -> bool)
     tile_depth_gate = {}  # dict((ti,tj) -> float) MAXIMUM depth for fully occluded tiles
 
@@ -1551,11 +1551,15 @@ def build_regions_from_projected(projected, grid_data, config, logger):
                     if bbox_uvw:
                         try:
                             # Validate bbox UVW bounds
-                            u_min, v_min, u_max, v_max, w_min = bbox_uvw
+                            u_min, v_min, u_max, v_max, w_min_bbox = bbox_uvw
                             if (u_min is not None and v_min is not None and
-                                u_max is not None and v_max is not None and w_min is not None):
+                                u_max is not None and v_max is not None):
+                                # Use conservative UV from bbox
                                 uv_aabb = (u_min, v_min, u_max, v_max)
-                                wmin = w_min
+                                # But use LOOP-derived depth (more accurate than bbox corners)
+                                # Bbox w_min is from nearest corner, but actual visible surface
+                                # may be at a different depth due to element geometry/rotation
+                                wmin = ep.get("depth_min", None)
                                 use_bbox = True
                                 diagnostics.setdefault("num_3d_bbox_uvw_used", 0)
                                 diagnostics["num_3d_bbox_uvw_used"] += 1
