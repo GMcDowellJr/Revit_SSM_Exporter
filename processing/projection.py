@@ -216,6 +216,37 @@ def _compute_adaptive_thresholds(elements, view, sil_cfg, logger):
     }
 
 
+def _update_extractor_transform(extractor, view):
+    """
+    Update an extractor's transform function with the current view's crop box.
+    Must be called when reusing an extractor for a different view.
+    """
+    try:
+        crop_box = view.CropBox
+        if not crop_box:
+            return False
+        trf = crop_box.Transform
+        inv_trf = trf.Inverse
+    except Exception:
+        return False
+
+    # Create new transform closure with THIS view's crop box
+    def _to_local_xy(pt):
+        if pt is None:
+            return None
+        try:
+            lp = inv_trf.OfPoint(pt)
+            return (float(lp.X), float(lp.Y))
+        except Exception:
+            try:
+                return (float(pt.X), float(pt.Y))
+            except Exception:
+                return None
+
+    extractor._transform_fn = _to_local_xy
+    return True
+
+
 def _create_silhouette_extractor(view, grid_data, config, logger, adaptive_thresholds=None):
     """
     adaptive_thresholds: Pass in pre-computed thresholds (computed per-view)
@@ -231,7 +262,7 @@ def _create_silhouette_extractor(view, grid_data, config, logger, adaptive_thres
         inv_trf = trf.Inverse
     except Exception:
         return None
-    
+
     # Create extractor (now accepts adaptive_thresholds)
     extractor = SilhouetteExtractor(view, grid_data, config, logger, adaptive_thresholds)
     # Wire the view-local XY transform onto the extractor
@@ -364,11 +395,10 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                         crop_near_z = float(cut_pt_local.Z)
                         
                         logger.info(
-                            "Projection: {0} view W=0 at cut plane (model Z={1:.3f}, crop-local Z={2:.3f}){3}".format(
+                            "Projection: {0} view W=0 at cut plane (model Z={1:.3f}, crop-local Z={2:.3f}) [using abs distance for occlusion]".format(
                                 "RCP" if is_rcp else "Plan",
-                                cut_plane_z, 
-                                crop_near_z,
-                                " [depth will be negated for occlusion]" if is_rcp else ""
+                                cut_plane_z,
+                                crop_near_z
                             )
                         )
                     else:
@@ -399,10 +429,10 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
             return None
 
     def _to_local_xyz(pt):
-        """Return view-aligned (u,v,depth) with W=0 at cut plane for plans, crop plane for sections.
-        
-        For RCPs (Reflected Ceiling Plans), depth is negated so that elements closer to the 
-        view (lower in model Z) have lower depth values for proper front-to-back occlusion sorting.
+        """Return view-aligned (u,v,depth) where depth is distance from cut/crop plane.
+
+        Depth is absolute distance from reference plane - works for all view types
+        (floor plans, RCPs, sections, elevations) without special-casing.
         """
         if pt is None:
             return None
@@ -410,21 +440,12 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
             try:
                 lp = inv_trf.OfPoint(pt)
                 w_normalized = lp.Z - crop_near_z
-                
-                # For RCP views, negate depth so closer elements (lower Z) have lower depth
-                if is_rcp:
-                    w_normalized = -w_normalized
-                    
                 return (lp.X, lp.Y, w_normalized)
             except Exception:
                 pass
         try:
             # Fallback: use model Z directly (not ideal but better than crashing)
-            # For RCP, negate to maintain proper ordering
-            z_val = pt.Z
-            if is_rcp:
-                z_val = -z_val
-            return (pt.X, pt.Y, z_val)
+            return (pt.X, pt.Y, pt.Z)
         except Exception:
             return None
 
@@ -519,8 +540,9 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
 
         extractor = project_elements_to_view_xy._extractor_cache.get(cache_key)
 
-        # UPDATE extractor with this view's adaptive thresholds
+        # UPDATE extractor with this view's adaptive thresholds AND transform
         if extractor is not None:
+            _update_extractor_transform(extractor, view)  # Update crop box transform for THIS view
             extractor.adaptive_thresholds = adaptive_thresholds  # Fresh per view!
             extractor.view = view  # Update view reference
         
@@ -1118,8 +1140,8 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
             try:
                 if bb is not None and bb.Min is not None and bb.Max is not None:
 
-                    # Compute depth range from ALL 8 bounding-box corners (spec: corner transforms required).
-                    # This avoids incorrect ordering/culling when the bbox is not view-aligned.
+                    # Compute depth range from ALL 8 bounding-box corners.
+                    # Use absolute distance from cut/crop plane for occlusion.
                     try:
                         x0, y0, z0 = bb.Min.X, bb.Min.Y, bb.Min.Z
                         x1, y1, z1 = bb.Max.X, bb.Max.Y, bb.Max.Z
@@ -1133,23 +1155,13 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                         for _c in _corners:
                             _lp = _to_local_xyz(_c)
                             if _lp is not None:
-                                _ws.append(float(_lp[2]))
+                                _ws.append(abs(float(_lp[2])))  # Absolute distance from plane
                         if _ws:
                             depth_min = min(_ws)
                             depth_max = max(_ws)
                     except Exception:
                         pass
 
-            except Exception:
-                depth_min = depth_max = None
-            try:
-                if bb is not None and bb.Min is not None and bb.Max is not None:
-                    pmin = _to_local_xyz(bb.Min)
-                    pmax = _to_local_xyz(bb.Max)
-                    if pmin is not None and pmax is not None:
-                        z0 = float(pmin[2]); z1 = float(pmax[2])
-                        depth_min = z0 if z0 <= z1 else z1
-                        depth_max = z1 if z1 >= z0 else z0
             except Exception:
                 depth_min = depth_max = None
 
@@ -1310,15 +1322,23 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                     logger.info("Created extractor for cache_key={0}".format(cache_key))
 
             extractor = project_elements_to_view_xy._extractor_cache.get(cache_key)
-            
+
             if extractor:
-                logger.info("Reusing extractor for cache_key={0}".format(cache_key))
-                
-                # Update with THIS view's adaptive thresholds
-                if adaptive_thresholds:
-                    extractor.adaptive_thresholds = adaptive_thresholds
-                
-                extractor.view = view
+                # Only update transform if this is a different view than last time
+                # (avoids calling _update_extractor_transform for every element)
+                current_view_id = getattr(getattr(view, "Id", None), "IntegerValue", None)
+                last_view_id = getattr(extractor, '_last_view_id', None)
+
+                if current_view_id != last_view_id:
+                    logger.info("Reusing extractor for cache_key={0}".format(cache_key))
+
+                    # Update with THIS view's crop box transform and adaptive thresholds
+                    _update_extractor_transform(extractor, view)
+                    if adaptive_thresholds:
+                        extractor.adaptive_thresholds = adaptive_thresholds
+
+                    extractor.view = view
+                    extractor._last_view_id = current_view_id
                 
             if extractor:
                 try:
@@ -1402,7 +1422,8 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                         pmin = _to_local_xyz(bb.Min)
                         pmax = _to_local_xyz(bb.Max)
                         if pmin is not None and pmax is not None:
-                            z0 = float(pmin[2]); z1 = float(pmax[2])
+                            z0 = abs(float(pmin[2]))  # Absolute distance from cut plane
+                            z1 = abs(float(pmax[2]))
                             depth_min = z0 if z0 <= z1 else z1
                             depth_max = z1 if z1 >= z0 else z0
                 except Exception:
@@ -1529,7 +1550,8 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                 pmin = _to_local_xyz(bb.Min)
                 pmax = _to_local_xyz(bb.Max)
                 if pmin is not None and pmax is not None:
-                    z0 = float(pmin[2]); z1 = float(pmax[2])
+                    z0 = abs(float(pmin[2]))  # Absolute distance from cut plane
+                    z1 = abs(float(pmax[2]))
                     depth_min = z0 if z0 <= z1 else z1
                     depth_max = z1 if z1 >= z0 else z0
         except Exception:

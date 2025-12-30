@@ -246,7 +246,7 @@ collection.set_revit_context(
     RevitLinkInstance, VisibleInViewFilter,
     Dimension, LinearDimension, TextNote, IndependentTag,
     RoomTag, FilledRegion, DetailCurve, CurveElement,
-    FamilyInstance, XYZ
+    FamilyInstance, XYZ, Outline, BoundingBoxIntersectsFilter
 )
 
 # Initialize collection module with System.Drawing context for PNG export
@@ -1465,7 +1465,7 @@ def build_regions_from_projected(projected, grid_data, config, logger):
         debug_label = None
         debug_enabled = False
 
-        # Optional: log floor-like elements’ loop sizes
+        # Optional: log floor-like elements' loop sizes
         if (
             floor_debug_enable
             and floor_debug_count < floor_debug_max
@@ -1475,7 +1475,14 @@ def build_regions_from_projected(projected, grid_data, config, logger):
             debug_enabled = True
             floor_debug_count += 1
 
-        elem_cells = _cells_from_loops_boundary_only(loops, debug_label, debug_enabled)
+        # Use interior-filled rasterization for floor-like elements (for occlusion)
+        # Use boundary-only for other 3D elements (walls, columns, etc.)
+        is_floor_like = category in ("Floors", "Roofs", "Ceilings", "Structural Foundations")
+
+        if is_floor_like:
+            elem_cells = _cells_from_loops_parity(loops, debug_label, debug_enabled)
+        else:
+            elem_cells = _cells_from_loops_boundary_only(loops, debug_label, debug_enabled)
 
         # Determine whether this element's boundary footprint is AREAL in grid space
         is_areal_3d = False
@@ -1512,7 +1519,23 @@ def build_regions_from_projected(projected, grid_data, config, logger):
             elem_cells = [c for c in elem_cells if c in valid_cells_set]
 
         visible_cells = elem_cells
-        if occlusion_enable and (w_hit is not None):
+
+        # Special handling for floor-like elements:
+        # - They update depth buffer for occlusion (w_nearest)
+        # - But they don't contribute to occupancy (visible_cells = empty)
+        # This prevents floor interiors from showing as occupied space
+        if is_floor_like and occlusion_enable and can_occlude and (w_hit is not None):
+            try:
+                w_hit_f = float(w_hit)
+                # Update depth buffer for ALL cells (enables occlusion)
+                for c in elem_cells:
+                    if w_hit_f < w_nearest.get(c, INF):
+                        w_nearest[c] = w_hit_f
+                # But don't add to visible_cells (no occupancy contribution)
+                visible_cells = []
+            except Exception:
+                visible_cells = []
+        elif occlusion_enable and (w_hit is not None):
             try:
                 w_hit_f = float(w_hit)
                 vis = []
@@ -2434,7 +2457,7 @@ def process_view(view, config, logger, grid_cache, cache_invalidate):
 
 def _export_debug_json(results, config, logger):
     debug_cfg = config.get("debug", {}) or {}
-    if not (debug_cfg.get("enable", True) and debug_cfg.get("write_debug_json", True)):
+    if not (debug_cfg.get("enable", True) and debug_cfg.get("write_debug_json", False)):
         logger.info("Debug JSON export disabled by config.")
         return
 

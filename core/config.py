@@ -185,9 +185,9 @@ CONFIG = {
 
         # === FILE EXPORTS ===
         "exports": {
-            "debug_json": False,               # Export debug.json with view details
+            "debug_json": True,               # Export debug.json with view details
             "max_debug_views": 10,             # Cap on debug JSON entries
-            "min_elapsed_sec": 999.0,          # Only include slow views
+            "min_elapsed_sec": 5.0,          # Only include slow views
             "debug_view_ids": [],              # Explicit view IDs to include
             "include_cached_views": False,     # Include cached views in debug
             "include_run_log": False,          # Add log to output dict
@@ -195,9 +195,9 @@ CONFIG = {
 
         # === BACKWARD COMPATIBILITY (deprecated, will be removed) ===
         # Old flat keys still work but map to new structure
-        "write_debug_json": False,
+        "write_debug_json": True,
         "max_debug_views": 10,
-        "min_elapsed_for_debug_sec": 999.0,
+        "min_elapsed_for_debug_sec": 1.0,
         "debug_view_ids": [],
         "include_cached_views": False,
         "log_bbox_fallbacks": False,
@@ -216,7 +216,7 @@ CONFIG = {
         "filled_region_loops_max": 5,
         "floor_loops": False,
         "floor_loops_max": 5,
-        "enable_driver2d_debug": True,
+        "enable_driver2d_debug": False,
         "driver2d_log_once_per_signature": False,
     },
 }
