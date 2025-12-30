@@ -1475,11 +1475,33 @@ def build_regions_from_projected(projected, grid_data, config, logger):
             debug_enabled = True
             floor_debug_count += 1
 
-        # Use interior-filled rasterization for floor-like elements (for occlusion)
-        # Use boundary-only for other 3D elements (walls, columns, etc.)
+        # Determine if element is likely areal by checking loops bounding box
+        # This helps us choose the right rasterization strategy BEFORE creating elem_cells
         is_floor_like = category in ("Floors", "Roofs", "Ceilings", "Structural Foundations")
+        is_likely_areal = False
+        try:
+            # Compute bounding box from loops in grid space
+            if loops:
+                all_pts = []
+                for loop in loops:
+                    all_pts.extend(loop)
+                if all_pts:
+                    min_i = min(pt[0] for pt in all_pts)
+                    max_i = max(pt[0] for pt in all_pts)
+                    min_j = min(pt[1] for pt in all_pts)
+                    max_j = max(pt[1] for pt in all_pts)
+                    width = (max_i - min_i + 1)
+                    height = (max_j - min_j + 1)
+                    if width > 2 and height > 2:
+                        is_likely_areal = True
+        except Exception:
+            pass
 
-        if is_floor_like:
+        # Use interior-filled rasterization for:
+        # - Floor-like elements (floors, roofs, ceilings, foundations)
+        # - Elements that project as areal (e.g., walls in section/elevation)
+        # This ensures areal elements can properly occlude elements behind them
+        if is_floor_like or is_likely_areal:
             elem_cells = _cells_from_loops_parity(loops, debug_label, debug_enabled)
         else:
             elem_cells = _cells_from_loops_boundary_only(loops, debug_label, debug_enabled)
@@ -1520,11 +1542,12 @@ def build_regions_from_projected(projected, grid_data, config, logger):
 
         visible_cells = elem_cells
 
-        # Special handling for floor-like elements:
+        # Special handling for areal elements (floors in plan, walls in section, etc.):
         # - They update depth buffer for occlusion (w_nearest)
         # - But they don't contribute to occupancy (visible_cells = empty)
-        # This prevents floor interiors from showing as occupied space
-        if is_floor_like and occlusion_enable and can_occlude and (w_hit is not None):
+        # This prevents areal element interiors from showing as occupied space
+        # while still allowing them to occlude elements behind them
+        if is_areal_3d and occlusion_enable and can_occlude and (w_hit is not None):
             try:
                 w_hit_f = float(w_hit)
                 # Update depth buffer for ALL cells (enables occlusion)
