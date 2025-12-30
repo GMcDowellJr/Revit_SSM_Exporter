@@ -1245,6 +1245,12 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
             except Exception:
                 uv_min_x = uv_min_y = uv_max_x = uv_max_y = None
 
+            # Get bounding box for depth calculation and occlusion
+            try:
+                bb = e.get_BoundingBox(view)
+            except Exception:
+                bb = None
+
             # Compute bbox-derived conservative UVW bounds for occlusion culling
             # Pass element to enable tight link-space bounds for linked elements
             bbox_uvw_aabb = _compute_conservative_uvw_bounds(bb, e)
