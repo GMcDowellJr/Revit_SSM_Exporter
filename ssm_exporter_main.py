@@ -1325,7 +1325,11 @@ def build_regions_from_projected(projected, grid_data, config, logger):
     # Tiles group cells to speed up fully-occluded checks for large rectangles
     tile_size = int(occ_cfg.get("tile_size", 16))  # 16x16 cells per tile
     tile_fully_occluded = {}  # dict((ti,tj) -> bool)
-    tile_depth_gate = {}  # dict((ti,tj) -> float) minimum depth for fully occluded tiles
+    tile_depth_gate = {}  # dict((ti,tj) -> float) MAXIMUM depth for fully occluded tiles
+
+    # Bbox UVW optimization (can be disabled for testing)
+    use_bbox_uvw = bool(occ_cfg.get("use_bbox_uvw", True))
+    skip_bbox_uvw_for_links = bool(occ_cfg.get("skip_bbox_uvw_for_links", True))  # Linked elements have oversized bboxes
 
     diagnostics.setdefault("num_3d_culled_by_occlusion", 0)
     diagnostics.setdefault("num_3d_tested_for_occlusion", 0)
@@ -1409,8 +1413,11 @@ def build_regions_from_projected(projected, grid_data, config, logger):
                     if not tile_fully_occluded.get(t, False):
                         all_tiles_occluded = False
                         break
-                    # Also check depth gate - tile must occlude at this depth
-                    if tile_depth_gate.get(t, INF) < float(elem_wmin):
+                    # Check depth gate: tile occludes only if element is farther than ALL occluders
+                    # tile_depth_gate stores MAX depth (farthest occluder in tile)
+                    # Element must be farther: elem_wmin >= tile_depth_gate
+                    if tile_depth_gate.get(t, 0.0) > float(elem_wmin):
+                        # Element is CLOSER than farthest occluder, so not fully occluded
                         all_tiles_occluded = False
                         break
                 if not all_tiles_occluded:
@@ -1440,7 +1447,7 @@ def build_regions_from_projected(projected, grid_data, config, logger):
         """Update tile state after writing occlusion for areal elements.
 
         When all cells in a tile are occluded, mark the tile as fully occluded
-        with the minimum depth gate. This accelerates future occlusion checks.
+        with the maximum depth gate. This accelerates future occlusion checks.
         """
         if tile_size <= 0 or not cells:
             return
@@ -1462,7 +1469,7 @@ def build_regions_from_projected(projected, grid_data, config, logger):
 
             # Check if all valid cells in tile are occluded
             all_occluded = True
-            min_depth_in_tile = INF
+            max_depth_in_tile = 0.0  # Track MAXIMUM depth (farthest occluder)
 
             for jj in range(j0, j1 + 1):
                 for ii in range(i0, i1 + 1):
@@ -1472,13 +1479,13 @@ def build_regions_from_projected(projected, grid_data, config, logger):
                     if c not in w_nearest:
                         all_occluded = False
                         break
-                    min_depth_in_tile = min(min_depth_in_tile, w_nearest[c])
+                    max_depth_in_tile = max(max_depth_in_tile, w_nearest[c])
                 if not all_occluded:
                     break
 
-            if all_occluded and min_depth_in_tile < INF:
+            if all_occluded and max_depth_in_tile > 0.0:
                 tile_fully_occluded[(ti, tj)] = True
-                tile_depth_gate[(ti, tj)] = min_depth_in_tile
+                tile_depth_gate[(ti, tj)] = max_depth_in_tile  # Store MAX for conservative check
 
     # Front-to-back ordering (view-space AABB ordering)
     def _depth_sort_key(ep):
@@ -1532,14 +1539,29 @@ def build_regions_from_projected(projected, grid_data, config, logger):
 
             # Use bbox-derived conservative UVW bounds if available (cheaper, more conservative)
             # Format: (u_min, v_min, u_max, v_max, w_min)
-            bbox_uvw = ep.get("bbox_uvw_aabb")
-            if bbox_uvw:
-                u_min, v_min, u_max, v_max, w_min = bbox_uvw
-                uv_aabb = (u_min, v_min, u_max, v_max)
-                wmin = w_min
-                diagnostics.setdefault("num_3d_bbox_uvw_used", 0)
-                diagnostics["num_3d_bbox_uvw_used"] += 1
-            else:
+            use_bbox = False
+            if use_bbox_uvw:
+                # Skip bbox UVW for linked elements if configured (they have oversized bboxes)
+                if skip_bbox_uvw_for_links and source == "RVT_LINK":
+                    diagnostics.setdefault("num_3d_bbox_uvw_skipped_link", 0)
+                    diagnostics["num_3d_bbox_uvw_skipped_link"] += 1
+                else:
+                    bbox_uvw = ep.get("bbox_uvw_aabb")
+                    if bbox_uvw:
+                        try:
+                            # Validate bbox UVW bounds
+                            u_min, v_min, u_max, v_max, w_min = bbox_uvw
+                            if (u_min is not None and v_min is not None and
+                                u_max is not None and v_max is not None and w_min is not None):
+                                uv_aabb = (u_min, v_min, u_max, v_max)
+                                wmin = w_min
+                                use_bbox = True
+                                diagnostics.setdefault("num_3d_bbox_uvw_used", 0)
+                                diagnostics["num_3d_bbox_uvw_used"] += 1
+                        except (TypeError, ValueError):
+                            pass  # Fall through to loop-based bounds
+
+            if not use_bbox:
                 # Fallback to loop-derived bounds (post-projection)
                 uv_aabb = ep.get("uv_aabb") or _compute_uv_aabb_from_loops(loops)
                 wmin = ep.get("depth_min", None)
