@@ -449,6 +449,57 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
         except Exception:
             return None
 
+    def _compute_conservative_uvw_bounds(bb):
+        """
+        Compute conservative UVW bounding box from element's 3D bbox.
+
+        Returns (u_min, v_min, u_max, v_max, w_min) or None if bbox invalid.
+        - UV bounds: axis-aligned rectangle in view-local XY (conservative footprint)
+        - W_min: minimum depth from cut/crop plane (nearest point to camera)
+
+        This enables cheap pre-check before expensive geometry projection:
+        if UV rect is fully occluded at depth >= w_min, skip geometry extraction.
+        """
+        if bb is None or bb.Min is None or bb.Max is None:
+            return None
+
+        try:
+            # Generate all 8 corners of the 3D bounding box
+            x0, y0, z0 = bb.Min.X, bb.Min.Y, bb.Min.Z
+            x1, y1, z1 = bb.Max.X, bb.Max.Y, bb.Max.Z
+            corners = [
+                XYZ(x0, y0, z0), XYZ(x0, y0, z1),
+                XYZ(x0, y1, z0), XYZ(x0, y1, z1),
+                XYZ(x1, y0, z0), XYZ(x1, y0, z1),
+                XYZ(x1, y1, z0), XYZ(x1, y1, z1),
+            ]
+
+            # Transform all corners to crop-local UVW
+            u_vals = []
+            v_vals = []
+            w_vals = []
+
+            for c in corners:
+                lp = _to_local_xyz(c)
+                if lp is not None:
+                    u_vals.append(float(lp[0]))
+                    v_vals.append(float(lp[1]))
+                    w_vals.append(abs(float(lp[2])))  # Absolute distance from plane
+
+            if not u_vals or not v_vals or not w_vals:
+                return None
+
+            u_min = min(u_vals)
+            u_max = max(u_vals)
+            v_min = min(v_vals)
+            v_max = max(v_vals)
+            w_min = min(w_vals)  # Nearest point to camera
+
+            return (u_min, v_min, u_max, v_max, w_min)
+
+        except Exception:
+            return None
+
     def _rect_intersects_grid(min_x, min_y, max_x, max_y):
         if min_x > max_x or min_y > max_y:
             return False
@@ -1136,6 +1187,9 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
             except Exception:
                 uv_min_x = uv_min_y = uv_max_x = uv_max_y = None
 
+            # Compute bbox-derived conservative UVW bounds for occlusion culling
+            bbox_uvw_aabb = _compute_conservative_uvw_bounds(bb)
+
             depth_min = depth_max = None
             try:
                 if bb is not None and bb.Min is not None and bb.Max is not None:
@@ -1172,6 +1226,7 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                     "is_2d": False,
                     "loops": filtered_loops,
                     "uv_aabb": (uv_min_x, uv_min_y, uv_max_x, uv_max_y),
+                    "bbox_uvw_aabb": bbox_uvw_aabb,  # Conservative bounds from 8 bbox corners
                     "depth_min": depth_min,
                     "depth_max": depth_max,
                     "source": source,
@@ -1417,6 +1472,10 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                     bb = e.get_BoundingBox(view)
                 except Exception:
                     bb = None
+
+                # Compute bbox-derived conservative UVW bounds for occlusion culling
+                bbox_uvw_aabb = _compute_conservative_uvw_bounds(bb)
+
                 try:
                     if bb is not None and bb.Min is not None and bb.Max is not None:
                         pmin = _to_local_xyz(bb.Min)
@@ -1439,6 +1498,7 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                         "is_2d": False,
                         "loops": filtered_loops,
                         "uv_aabb": (uv_min_x, uv_min_y, uv_max_x, uv_max_y),
+                        "bbox_uvw_aabb": bbox_uvw_aabb,  # Conservative bounds from 8 bbox corners
                         "depth_min": depth_min,
                         "depth_max": depth_max,
                         "source": source,
@@ -1544,6 +1604,9 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
         except Exception:
             uv_min_x = uv_min_y = uv_max_x = uv_max_y = None
 
+        # Compute bbox-derived conservative UVW bounds for occlusion culling
+        bbox_uvw_aabb = _compute_conservative_uvw_bounds(bb)
+
         depth_min = depth_max = None
         try:
             if bb is not None and bb.Min is not None and bb.Max is not None:
@@ -1564,6 +1627,7 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                 "is_2d": False,
                 "loops": [loop],
                 "uv_aabb": (uv_min_x, uv_min_y, uv_max_x, uv_max_y),
+                "bbox_uvw_aabb": bbox_uvw_aabb,  # Conservative bounds from 8 bbox corners
                 "depth_min": depth_min,
                 "depth_max": depth_max,
                 "source": source,

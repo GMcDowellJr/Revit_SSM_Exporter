@@ -1321,8 +1321,16 @@ def build_regions_from_projected(projected, grid_data, config, logger):
     INF = 1.0e30
     w_nearest = {}  # dict((i,j) -> float)
 
+    # Tile-based occlusion acceleration (optional optimization)
+    # Tiles group cells to speed up fully-occluded checks for large rectangles
+    tile_size = int(occ_cfg.get("tile_size", 16))  # 16x16 cells per tile
+    tile_fully_occluded = {}  # dict((ti,tj) -> bool)
+    tile_depth_gate = {}  # dict((ti,tj) -> float) minimum depth for fully occluded tiles
+
     diagnostics.setdefault("num_3d_culled_by_occlusion", 0)
     diagnostics.setdefault("num_3d_tested_for_occlusion", 0)
+    diagnostics.setdefault("num_3d_tile_check_hits", 0)
+    diagnostics.setdefault("num_3d_tile_check_total", 0)
 
 
     def _compute_uv_aabb_from_loops(_loops):
@@ -1377,10 +1385,43 @@ def build_regions_from_projected(projected, grid_data, config, logger):
             return None
 
     def _rect_fully_occluded(rect, elem_wmin):
-        """True iff every valid cell in rect already has nearer-or-equal depth than elem_wmin."""
+        """True iff every valid cell in rect already has nearer-or-equal depth than elem_wmin.
+
+        Uses tile-based acceleration when available for faster large-rectangle checks.
+        """
         if rect is None or elem_wmin is None:
             return False  # fail-open
         i0, i1, j0, j1 = rect
+
+        # Tile-based acceleration: check if all covering tiles are fully occluded
+        if tile_size > 0:
+            ti0 = i0 // tile_size
+            ti1 = i1 // tile_size
+            tj0 = j0 // tile_size
+            tj1 = j1 // tile_size
+
+            diagnostics["num_3d_tile_check_total"] += 1
+            all_tiles_occluded = True
+
+            for tjj in range(tj0, tj1 + 1):
+                for tii in range(ti0, ti1 + 1):
+                    t = (tii, tjj)
+                    if not tile_fully_occluded.get(t, False):
+                        all_tiles_occluded = False
+                        break
+                    # Also check depth gate - tile must occlude at this depth
+                    if tile_depth_gate.get(t, INF) < float(elem_wmin):
+                        all_tiles_occluded = False
+                        break
+                if not all_tiles_occluded:
+                    break
+
+            if all_tiles_occluded and (ti1 >= ti0) and (tj1 >= tj0):
+                # All covering tiles are fully occluded with sufficient depth
+                diagnostics["num_3d_tile_check_hits"] += 1
+                return True
+
+        # Fallback to per-cell check (exact but slower)
         any_valid = False
         for jj in range(j0, j1 + 1):
             for ii in range(i0, i1 + 1):
@@ -1394,6 +1435,50 @@ def build_regions_from_projected(projected, grid_data, config, logger):
         if not any_valid:
             return False
         return True
+
+    def _update_tile_occlusion(cells, depth):
+        """Update tile state after writing occlusion for areal elements.
+
+        When all cells in a tile are occluded, mark the tile as fully occluded
+        with the minimum depth gate. This accelerates future occlusion checks.
+        """
+        if tile_size <= 0 or not cells:
+            return
+
+        # Group cells by tile
+        tiles_touched = set()
+        for (ii, jj) in cells:
+            ti = ii // tile_size
+            tj = jj // tile_size
+            tiles_touched.add((ti, tj))
+
+        # Check each touched tile to see if it's now fully occluded
+        for (ti, tj) in tiles_touched:
+            # Get all cells in this tile within grid bounds
+            i0 = ti * tile_size
+            i1 = min((ti + 1) * tile_size - 1, n_i - 1)
+            j0 = tj * tile_size
+            j1 = min((tj + 1) * tile_size - 1, n_j - 1)
+
+            # Check if all valid cells in tile are occluded
+            all_occluded = True
+            min_depth_in_tile = INF
+
+            for jj in range(j0, j1 + 1):
+                for ii in range(i0, i1 + 1):
+                    c = (ii, jj)
+                    if valid_cells_set and (c not in valid_cells_set):
+                        continue
+                    if c not in w_nearest:
+                        all_occluded = False
+                        break
+                    min_depth_in_tile = min(min_depth_in_tile, w_nearest[c])
+                if not all_occluded:
+                    break
+
+            if all_occluded and min_depth_in_tile < INF:
+                tile_fully_occluded[(ti, tj)] = True
+                tile_depth_gate[(ti, tj)] = min_depth_in_tile
 
     # Front-to-back ordering (view-space AABB ordering)
     def _depth_sort_key(ep):
@@ -1444,9 +1529,24 @@ def build_regions_from_projected(projected, grid_data, config, logger):
 
         if occlusion_enable and can_occlude:
             diagnostics["num_3d_tested_for_occlusion"] += 1
-            uv_aabb = ep.get("uv_aabb") or _compute_uv_aabb_from_loops(loops)
+
+            # Use bbox-derived conservative UVW bounds if available (cheaper, more conservative)
+            # Format: (u_min, v_min, u_max, v_max, w_min)
+            bbox_uvw = ep.get("bbox_uvw_aabb")
+            if bbox_uvw:
+                u_min, v_min, u_max, v_max, w_min = bbox_uvw
+                uv_aabb = (u_min, v_min, u_max, v_max)
+                wmin = w_min
+                diagnostics.setdefault("num_3d_bbox_uvw_used", 0)
+                diagnostics["num_3d_bbox_uvw_used"] += 1
+            else:
+                # Fallback to loop-derived bounds (post-projection)
+                uv_aabb = ep.get("uv_aabb") or _compute_uv_aabb_from_loops(loops)
+                wmin = ep.get("depth_min", None)
+                diagnostics.setdefault("num_3d_loop_uv_fallback", 0)
+                diagnostics["num_3d_loop_uv_fallback"] += 1
+
             rect = _uv_aabb_to_cell_rect(uv_aabb)
-            wmin = ep.get("depth_min", None)
             if _rect_fully_occluded(rect, wmin):
                 diagnostics["num_3d_culled_by_occlusion"] += 1
                 continue
@@ -1551,9 +1651,15 @@ def build_regions_from_projected(projected, grid_data, config, logger):
             try:
                 w_hit_f = float(w_hit)
                 # Update depth buffer for ALL cells (enables occlusion)
+                cells_updated = []
                 for c in elem_cells:
                     if w_hit_f < w_nearest.get(c, INF):
                         w_nearest[c] = w_hit_f
+                        cells_updated.append(c)
+
+                # Update tile occlusion state for acceleration
+                _update_tile_occlusion(cells_updated, w_hit_f)
+
                 # But don't add to visible_cells (no occupancy contribution)
                 visible_cells = []
             except Exception:
@@ -1562,11 +1668,18 @@ def build_regions_from_projected(projected, grid_data, config, logger):
             try:
                 w_hit_f = float(w_hit)
                 vis = []
+                cells_updated = []
                 for c in elem_cells:
                     if w_hit_f < w_nearest.get(c, INF):
                         vis.append(c)
                         if can_occlude:
                             w_nearest[c] = w_hit_f
+                            cells_updated.append(c)
+
+                # Update tile occlusion state for non-areal occluders
+                if can_occlude and cells_updated:
+                    _update_tile_occlusion(cells_updated, w_hit_f)
+
                 visible_cells = vis
             except Exception:
                 # fail-open
