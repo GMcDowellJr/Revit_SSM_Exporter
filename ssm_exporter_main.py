@@ -1535,48 +1535,22 @@ def build_regions_from_projected(projected, grid_data, config, logger):
         source = ep.get("source", "HOST")
         can_occlude = (source in ("HOST", "RVT_LINK"))
 
-        if occlusion_enable and can_occlude:
-            diagnostics["num_3d_tested_for_occlusion"] += 1
-
-            # Use bbox-derived conservative UVW bounds if available (cheaper, more conservative)
-            # Format: (u_min, v_min, u_max, v_max, w_min)
-            use_bbox = False
-            if use_bbox_uvw:
-                # Skip bbox UVW for linked elements if configured (they have oversized bboxes)
-                if skip_bbox_uvw_for_links and source == "RVT_LINK":
-                    diagnostics.setdefault("num_3d_bbox_uvw_skipped_link", 0)
-                    diagnostics["num_3d_bbox_uvw_skipped_link"] += 1
-                else:
-                    bbox_uvw = ep.get("bbox_uvw_aabb")
-                    if bbox_uvw:
-                        try:
-                            # Validate bbox UVW bounds
-                            u_min, v_min, u_max, v_max, w_min_bbox = bbox_uvw
-                            if (u_min is not None and v_min is not None and
-                                u_max is not None and v_max is not None):
-                                # Use conservative UV from bbox
-                                uv_aabb = (u_min, v_min, u_max, v_max)
-                                # But use LOOP-derived depth (more accurate than bbox corners)
-                                # Bbox w_min is from nearest corner, but actual visible surface
-                                # may be at a different depth due to element geometry/rotation
-                                wmin = ep.get("depth_min", None)
-                                use_bbox = True
-                                diagnostics.setdefault("num_3d_bbox_uvw_used", 0)
-                                diagnostics["num_3d_bbox_uvw_used"] += 1
-                        except (TypeError, ValueError):
-                            pass  # Fall through to loop-based bounds
-
-            if not use_bbox:
-                # Fallback to loop-derived bounds (post-projection)
-                uv_aabb = ep.get("uv_aabb") or _compute_uv_aabb_from_loops(loops)
-                wmin = ep.get("depth_min", None)
-                diagnostics.setdefault("num_3d_loop_uv_fallback", 0)
-                diagnostics["num_3d_loop_uv_fallback"] += 1
-
-            rect = _uv_aabb_to_cell_rect(uv_aabb)
-            if _rect_fully_occluded(rect, wmin):
-                diagnostics["num_3d_culled_by_occlusion"] += 1
-                continue
+        # Early-out occlusion test DISABLED - cannot work reliably with bbox-derived depth
+        #
+        # Problem: Both bbox_uvw w_min and ep["depth_min"] are computed from bbox corners,
+        # which don't accurately represent the depth of actual visible surfaces (especially
+        # for rotated elements). Using bbox corner depth causes massive over-culling.
+        #
+        # The fundamental issue: to know if an element is fully occluded, we need accurate
+        # depth of its visible surface. But getting that depth requires expensive geometry
+        # projection, which defeats the purpose of early culling.
+        #
+        # Occlusion still works correctly during per-cell rasterization (lines 1650-1690)
+        # where we have accurate depth values from actual projected geometry.
+        #
+        # if occlusion_enable and can_occlude:
+        #     diagnostics["num_3d_tested_for_occlusion"] += 1
+        #     ... early culling code disabled ...
 
         # optionally exclude floor-like 3D elements entirely
         if suppress_floor_like_3d and category in (
