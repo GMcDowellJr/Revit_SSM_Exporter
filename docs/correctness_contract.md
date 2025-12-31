@@ -36,15 +36,39 @@
   * Cell center ∈ XY domain **AND**
   * Cell center ∈ clip volume.
 
-### 2.3 Occupancy States (Exhaustive and Exclusive)
+### 2.3 View Space Definition (UVW)
 
-Each cell has **exactly one** state:
+**UV plane**
+- Defined by the view crop box.
+- UV axes are aligned to the crop box orientation.
 
-* `0` = 3D-only
-* `1` = 2D-only
-* `2` = 2D-over-3D
+**W axis (depth)**
+- W measures depth inward from the crop UV plane, along the view direction.
+- W = 0 at the crop UV plane.
+- W increases monotonically into the view.
+- W is clamped to [0, ViewDepth].
 
-No additional states, flags, or dual occupancy.
+**No view-type special cases**
+- Plan, RCP, section, elevation, and other orthographic views are handled identically.
+- View range cut planes and plan-specific semantics are not used to define W.
+
+### 2.4 Caching Policy
+
+**Allowed**
+- View-skipping cache.
+
+**Disallowed**
+- Geometry extractor caches.
+- Cross-view projection caches.
+- Caches keyed only by scale, grid size, or partial configuration.
+
+### 2.5 Occupancy States (Exhaustive and Exclusive)
+
+Each cell has exactly one state:
+
+- `0` = 3D-only
+- `1` = 2D-only
+- `2` = 2D-over-3D
 
 ---
 
