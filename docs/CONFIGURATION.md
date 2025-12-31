@@ -78,13 +78,14 @@ Controls the grid system that overlays each view.
 
 **Location:** `CONFIG["clip_volume"]`
 
-Controls how 3D geometry is clipped to the view's depth range.
+Controls how 3D geometry is clipped in depth.
 
-### `enable_view_range`
-- **Type:** `bool`
-- **Default:** `True`
-- **Description:** Use the view's View Range settings (Top/Cut/Bottom offsets) to clip 3D geometry.
-- **Applies to:** Floor Plans, RCPs
+All views use crop-relative depth semantics:
+- W = 0 at the crop UV plane.
+- Depth increases inward along the view direction.
+- Geometry is clipped to [0, ViewDepth].
+
+View-range-based depth semantics are deprecated.
 
 **Effect:**
 - `True`: Only geometry within the view range appears
@@ -439,7 +440,8 @@ Controls how projected geometries are classified into regions.
 ### `suppress_floor_roof_ceiling_3d`
 - **Type:** `bool`
 - **Default:** `False`
-- **Description:** Exclude floors, roofs, ceilings, and structural foundations from 3D regions.
+- **Status:** Deprecated.
+- **Description:** Category-based suppression is disallowed. All elements are processed uniformly.
 
 **Use case for `True`:**
 - Floor plan analysis where you don't want the floor slab itself to count as "model"
@@ -538,7 +540,7 @@ Performance optimization via view-level caching.
 - Configuration changes
 - Exporter version changes
 - Project GUID changes
-- Elements in view are modified
+Note: the only permitted cache is view-skipping. Cross-view extractor or projection caches are not allowed.
 
 ### `file_name`
 - **Type:** `str`
