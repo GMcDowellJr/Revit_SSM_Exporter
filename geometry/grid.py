@@ -5,6 +5,13 @@ Grid building and occupancy computation for SSM/VOP exporter.
 
 import math
 from core.config import CONFIG
+from core.types import (
+    INCHES_PER_FOOT,
+    CLUSTERING_PERCENTILE,
+    DEFAULT_CELL_SIZE_PAPER_IN,
+    DEFAULT_OVERLAY_EXPAND_CAP_CELLS,
+    DEFAULT_ANNO_CROP_MARGIN_IN,
+)
 
 # Track which view-type/crop signatures have already emitted driver-2D debug
 DRIVER2D_DEBUG_SIGS = set()
@@ -98,6 +105,10 @@ def _compute_model_geom_extents(view, logger):
     if DOC is None or FilteredElementCollector is None or CategoryType is None:
         return None
 
+    # Check if debug logging is enabled for grid exceptions
+    debug_cfg = CONFIG.get("debug", {})
+    log_exceptions = bool(debug_cfg.get("log_grid_exceptions", False))
+
     boxes = []
 
     try:
@@ -115,16 +126,32 @@ def _compute_model_geom_extents(view, logger):
 
             try:
                 bic = cat.Id.IntegerValue
-            except Exception:
+            except Exception as ex:
                 bic = None
+                if log_exceptions:
+                    logger.info(
+                        "Grid: view Id={0} elem category.Id.IntegerValue failed: {1}".format(
+                            view_id_val, ex
+                        )
+                    )
 
             if BuiltInCategory is not None and bic == int(BuiltInCategory.OST_Cameras):
                 continue
 
             try:
                 bb = e.get_BoundingBox(view)
-            except Exception:
+            except Exception as ex:
                 bb = None
+                if log_exceptions:
+                    try:
+                        eid_temp = getattr(getattr(e, "Id", None), "IntegerValue", "?")
+                    except Exception:
+                        eid_temp = "?"
+                    logger.info(
+                        "Grid: view Id={0} elem Id={1} get_BoundingBox failed: {2}".format(
+                            view_id_val, eid_temp, ex
+                        )
+                    )
             if bb is None or bb.Min is None or bb.Max is None:
                 continue
 
@@ -137,12 +164,24 @@ def _compute_model_geom_extents(view, logger):
 
             try:
                 eid = getattr(getattr(e, "Id", None), "IntegerValue", None)
-            except Exception:
+            except Exception as ex:
                 eid = None
+                if log_exceptions:
+                    logger.info(
+                        "Grid: view Id={0} elem.Id.IntegerValue failed: {1}".format(
+                            view_id_val, ex
+                        )
+                    )
             try:
                 cat_name = getattr(cat, "Name", "") or "<NoCat>"
-            except Exception:
+            except Exception as ex:
                 cat_name = "<NoCat>"
+                if log_exceptions:
+                    logger.info(
+                        "Grid: view Id={0} category.Name failed: {1}".format(
+                            view_id_val, ex
+                        )
+                    )
 
             boxes.append((cx, cy, min_x, min_y, max_x, max_y, eid, cat_name))
 
@@ -187,7 +226,7 @@ def _compute_model_geom_extents(view, logger):
 
     dist2_list.sort(key=lambda t: t[0])
 
-    k = max(1, int(0.999 * n))
+    k = max(1, int(CLUSTERING_PERCENTILE * n))
     keep_indices = set(idx for (_, idx) in dist2_list[:k])
 
     min_x = float("inf")
@@ -241,6 +280,10 @@ def _compute_drafting_geom_extents(view, crop_box, logger):
         bb_max = crop_box.Max
         return (bb_min.X, bb_min.Y, bb_max.X, bb_max.Y)
 
+    # Check if debug logging is enabled for grid exceptions
+    debug_cfg = CONFIG.get("debug", {})
+    log_exceptions = bool(debug_cfg.get("log_grid_exceptions", False))
+
     min_x = float("inf")
     min_y = float("inf")
     max_x = float("-inf")
@@ -252,8 +295,18 @@ def _compute_drafting_geom_extents(view, crop_box, logger):
         for e in col:
             try:
                 bb = e.get_BoundingBox(view)
-            except Exception:
+            except Exception as ex:
                 bb = None
+                if log_exceptions:
+                    try:
+                        eid_temp = getattr(getattr(e, "Id", None), "IntegerValue", "?")
+                    except Exception:
+                        eid_temp = "?"
+                    logger.info(
+                        "Grid: view Id={0} elem Id={1} get_BoundingBox failed (drafting): {2}".format(
+                            view_id_val, eid_temp, ex
+                        )
+                    )
             if bb is None or bb.Min is None or bb.Max is None:
                 continue
 
@@ -460,9 +513,9 @@ def _compute_2d_annotation_extents(view, elems2d, logger):
     # Hard cap for overlay-driven expansion (in cells)
     cap_cells = None
     try:
-        cap_cells = int((CONFIG.get("grid", {}) or {}).get("overlay_expand_cap_cells", 2000))
+        cap_cells = int((CONFIG.get("grid", {}) or {}).get("overlay_expand_cap_cells", DEFAULT_OVERLAY_EXPAND_CAP_CELLS))
     except Exception:
-        cap_cells = 2000
+        cap_cells = DEFAULT_OVERLAY_EXPAND_CAP_CELLS
     if cap_cells < 0:
         cap_cells = 0
 
@@ -471,8 +524,8 @@ def _compute_2d_annotation_extents(view, elems2d, logger):
     try:
         scale_val = getattr(view, "Scale", None)
         if isinstance(scale_val, int) and scale_val > 0:
-            paper_in = float((CONFIG.get("grid", {}) or {}).get("cell_size_paper_in", 0.25))
-            cell_size_model = (paper_in / 12.0) * float(scale_val)
+            paper_in = float((CONFIG.get("grid", {}) or {}).get("cell_size_paper_in", DEFAULT_CELL_SIZE_PAPER_IN))
+            cell_size_model = (paper_in / INCHES_PER_FOOT) * float(scale_val)
     except Exception:
         cell_size_model = None
 
@@ -486,15 +539,15 @@ def _compute_2d_annotation_extents(view, elems2d, logger):
     ann_margin_ft = None
     if ann_crop_active and base_min_x is not None:
         try:
-            margin_in = float((CONFIG.get("grid", {}) or {}).get("overlay_anno_crop_margin_in", 2.0))
+            margin_in = float((CONFIG.get("grid", {}) or {}).get("overlay_anno_crop_margin_in", DEFAULT_ANNO_CROP_MARGIN_IN))
         except Exception:
-            margin_in = 2.0
+            margin_in = DEFAULT_ANNO_CROP_MARGIN_IN
         if margin_in < 0.0:
             margin_in = 0.0
         try:
             scale_val = getattr(view, "Scale", None)
             if isinstance(scale_val, int) and scale_val > 0:
-                ann_margin_ft = (margin_in / 12.0) * float(scale_val)
+                ann_margin_ft = (margin_in / INCHES_PER_FOOT) * float(scale_val)
         except Exception:
             ann_margin_ft = None
         if ann_margin_ft is not None:
@@ -810,7 +863,7 @@ def build_grid_for_view(view, config, logger, elems2d=None, clip_data=None, buil
         logger.warn("Grid: view Id={0} has invalid scale '{1}'; empty grid".format(view_id_val, scale))
         return grid_data
 
-    cell_size_model = (cell_size_paper_in / 12.0) * float(scale)
+    cell_size_model = (cell_size_paper_in / INCHES_PER_FOOT) * float(scale)
     if cell_size_model <= 0.0:
         logger.warn("Grid: non-positive model cell size for view Id={0}".format(view_id_val))
         return grid_data
@@ -987,17 +1040,6 @@ def build_grid_for_view(view, config, logger, elems2d=None, clip_data=None, buil
         logger.warn("Grid: failed to build Dynamo rectangles for view Id={0}: {1}".format(view_id_val, ex))
 
     logger.info(
-        "Grid-debug: view Id={0} cropXY={1}→{2}, annXY={3}→{4}, gridXY={5}→{6}".format(
-            view_id_val,
-            (base_min_x, base_min_y),
-            (base_max_x, base_max_y),
-            (ann_ext if ann_ext is not None else None),
-            None if ann_ext is None else (ann_ext[2], ann_ext[3]),
-            (min_x, min_y),
-            (max_x, max_y),
-        )
-    )
-    logger.info(
         "Grid: view Id={0} -> cell_size_model={1:.6f} ft, grid {2}x{3}, {4} valid cell(s)".format(
             view_id_val, cell_size_model, n_i, n_j, len(valid_cells)
         )
@@ -1064,7 +1106,8 @@ def compute_occupancy(grid_data, raster_data, config, logger):
     occupancy_map = {}
 
     # First pass: mark 3D-only cells (or 2D-over-3D if 2D was already set)
-    for cell in cells_3d.keys():
+    # Use sorted iteration to ensure deterministic output order
+    for cell in sorted(cells_3d.keys()):
         existing = occupancy_map.get(cell)
         if existing is None:
             occupancy_map[cell] = code_3d
@@ -1072,7 +1115,8 @@ def compute_occupancy(grid_data, raster_data, config, logger):
             occupancy_map[cell] = code_2d_over_3d
 
     # Second pass: mark 2D-only cells (or 2D-over-3D if 3D was already set)
-    for cell in cells_2d.keys():
+    # Use sorted iteration to ensure deterministic output order
+    for cell in sorted(cells_2d.keys()):
         existing = occupancy_map.get(cell)
         if existing is None:
             occupancy_map[cell] = code_2d

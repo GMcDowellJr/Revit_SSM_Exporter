@@ -33,6 +33,8 @@ DetailCurve = None
 CurveElement = None
 FamilyInstance = None
 XYZ = None
+Outline = None
+BoundingBoxIntersectsFilter = None
 
 # ------------------------------------------------------------
 # System.Drawing context for PNG export (set by main file)
@@ -49,12 +51,12 @@ def set_revit_context(doc, view_cls, view_type_cls, category_type_cls, import_in
                       revit_link_instance_cls, visible_in_view_filter_cls,
                       dimension_cls, linear_dimension_cls, text_note_cls, independent_tag_cls,
                       room_tag_cls, filled_region_cls, detail_curve_cls, curve_element_cls,
-                      family_instance_cls, xyz_cls):
+                      family_instance_cls, xyz_cls, outline_cls, bounding_box_intersects_filter_cls):
     """Set the Revit API context for this module."""
     global DOC, View, ViewType, CategoryType, ImportInstance, FilteredElementCollector
     global BuiltInCategory, BuiltInParameter, RevitLinkInstance, VisibleInViewFilter
     global Dimension, LinearDimension, TextNote, IndependentTag, RoomTag, FilledRegion
-    global DetailCurve, CurveElement, FamilyInstance, XYZ
+    global DetailCurve, CurveElement, FamilyInstance, XYZ, Outline, BoundingBoxIntersectsFilter
 
     DOC = doc
     View = view_cls
@@ -76,6 +78,8 @@ def set_revit_context(doc, view_cls, view_type_cls, category_type_cls, import_in
     CurveElement = curve_element_cls
     FamilyInstance = family_instance_cls
     XYZ = xyz_cls
+    Outline = outline_cls
+    BoundingBoxIntersectsFilter = bounding_box_intersects_filter_cls
 
 
 def set_drawing_context(system, drawing, bitmap, image_format):
@@ -302,17 +306,15 @@ def _build_occupancy_png(view, grid_data, occupancy_map, config, logger):
         export_cfg  = config.get("export", {}) or {}
         occ_png_cfg = config.get("occupancy_png", {}) or {}
 
-    # Optional flags (both must allow PNG)
-    enable_png_debug = bool(debug_cfg.get("enable_occupancy_png", True))
-    enable_png_cfg   = bool(occ_png_cfg.get("enabled", True))
-    if not (enable_png_debug and enable_png_cfg):
+    # Check if PNG export is enabled
+    if not bool(occ_png_cfg.get("enabled", True)):
         return None
 
     # pixels_per_cell from occupancy_png config
     try:
-        pixels_per_cell = int(occ_png_cfg.get("pixels_per_cell", 4))
+        pixels_per_cell = int(occ_png_cfg.get("pixels_per_cell", 10))
     except Exception:
-        pixels_per_cell = 4
+        pixels_per_cell = 10
 
     if pixels_per_cell < 1:
         pixels_per_cell = 1

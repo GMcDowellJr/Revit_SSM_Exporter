@@ -216,6 +216,37 @@ def _compute_adaptive_thresholds(elements, view, sil_cfg, logger):
     }
 
 
+def _update_extractor_transform(extractor, view):
+    """
+    Update an extractor's transform function with the current view's crop box.
+    Must be called when reusing an extractor for a different view.
+    """
+    try:
+        crop_box = view.CropBox
+        if not crop_box:
+            return False
+        trf = crop_box.Transform
+        inv_trf = trf.Inverse
+    except Exception:
+        return False
+
+    # Create new transform closure with THIS view's crop box
+    def _to_local_xy(pt):
+        if pt is None:
+            return None
+        try:
+            lp = inv_trf.OfPoint(pt)
+            return (float(lp.X), float(lp.Y))
+        except Exception:
+            try:
+                return (float(pt.X), float(pt.Y))
+            except Exception:
+                return None
+
+    extractor._transform_fn = _to_local_xy
+    return True
+
+
 def _create_silhouette_extractor(view, grid_data, config, logger, adaptive_thresholds=None):
     """
     adaptive_thresholds: Pass in pre-computed thresholds (computed per-view)
@@ -231,7 +262,7 @@ def _create_silhouette_extractor(view, grid_data, config, logger, adaptive_thres
         inv_trf = trf.Inverse
     except Exception:
         return None
-    
+
     # Create extractor (now accepts adaptive_thresholds)
     extractor = SilhouetteExtractor(view, grid_data, config, logger, adaptive_thresholds)
     # Wire the view-local XY transform onto the extractor
@@ -364,11 +395,10 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                         crop_near_z = float(cut_pt_local.Z)
                         
                         logger.info(
-                            "Projection: {0} view W=0 at cut plane (model Z={1:.3f}, crop-local Z={2:.3f}){3}".format(
+                            "Projection: {0} view W=0 at cut plane (model Z={1:.3f}, crop-local Z={2:.3f}) [using abs distance for occlusion]".format(
                                 "RCP" if is_rcp else "Plan",
-                                cut_plane_z, 
-                                crop_near_z,
-                                " [depth will be negated for occlusion]" if is_rcp else ""
+                                cut_plane_z,
+                                crop_near_z
                             )
                         )
                     else:
@@ -399,10 +429,10 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
             return None
 
     def _to_local_xyz(pt):
-        """Return view-aligned (u,v,depth) with W=0 at cut plane for plans, crop plane for sections.
-        
-        For RCPs (Reflected Ceiling Plans), depth is negated so that elements closer to the 
-        view (lower in model Z) have lower depth values for proper front-to-back occlusion sorting.
+        """Return view-aligned (u,v,depth) where depth is distance from cut/crop plane.
+
+        Depth is absolute distance from reference plane - works for all view types
+        (floor plans, RCPs, sections, elevations) without special-casing.
         """
         if pt is None:
             return None
@@ -410,21 +440,121 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
             try:
                 lp = inv_trf.OfPoint(pt)
                 w_normalized = lp.Z - crop_near_z
-                
-                # For RCP views, negate depth so closer elements (lower Z) have lower depth
-                if is_rcp:
-                    w_normalized = -w_normalized
-                    
                 return (lp.X, lp.Y, w_normalized)
             except Exception:
                 pass
         try:
             # Fallback: use model Z directly (not ideal but better than crashing)
-            # For RCP, negate to maintain proper ordering
-            z_val = pt.Z
-            if is_rcp:
-                z_val = -z_val
-            return (pt.X, pt.Y, z_val)
+            return (pt.X, pt.Y, pt.Z)
+        except Exception:
+            return None
+
+    def _compute_conservative_uvw_bounds(bb, elem=None):
+        """
+        Compute conservative UVW bounding box from element's 3D bbox.
+
+        Returns (u_min, v_min, u_max, v_max, w_min) or None if bbox invalid.
+        - UV bounds: axis-aligned rectangle in view-local XY (conservative footprint)
+        - W_min: minimum depth from cut/crop plane (nearest point to camera)
+
+        For linked elements, if elem is provided and has _link_trf, computes tighter
+        bounds by transforming directly from link space to view space (avoiding
+        oversized host-space axis-aligned intermediate bbox).
+
+        This enables cheap pre-check before expensive geometry projection:
+        if UV rect is fully occluded at depth >= w_min, skip geometry extraction.
+        """
+        if bb is None or bb.Min is None or bb.Max is None:
+            return None
+
+        # Check if this is a linked element with tighter bounds available
+        link_trf = None
+        bb_link = None
+        if elem is not None:
+            try:
+                link_trf = getattr(elem, "_link_trf", None)
+                if link_trf is not None:
+                    # Get link-space bbox (tighter than host-space for rotated links)
+                    elem_inner = getattr(elem, "_elem", None)
+                    if elem_inner is not None:
+                        bb_link = elem_inner.get_BoundingBox(None)
+            except Exception:
+                pass
+
+        # Use link-space bbox if available (tighter for rotated linked elements)
+        if bb_link is not None and bb_link.Min is not None and bb_link.Max is not None and link_trf is not None:
+            try:
+                # Combine transforms: link → host → view
+                # This gives tight view-aligned bounds without oversized host-space intermediate
+                x0, y0, z0 = bb_link.Min.X, bb_link.Min.Y, bb_link.Min.Z
+                x1, y1, z1 = bb_link.Max.X, bb_link.Max.Y, bb_link.Max.Z
+                corners_link = [
+                    XYZ(x0, y0, z0), XYZ(x0, y0, z1),
+                    XYZ(x0, y1, z0), XYZ(x0, y1, z1),
+                    XYZ(x1, y0, z0), XYZ(x1, y0, z1),
+                    XYZ(x1, y1, z0), XYZ(x1, y1, z1),
+                ]
+
+                u_vals = []
+                v_vals = []
+                w_vals = []
+
+                for c_link in corners_link:
+                    # Transform from link space to host space
+                    c_host = link_trf.OfPoint(c_link)
+                    # Then transform to view/UVW space
+                    lp = _to_local_xyz(c_host)
+                    if lp is not None:
+                        u_vals.append(float(lp[0]))
+                        v_vals.append(float(lp[1]))
+                        w_vals.append(abs(float(lp[2])))
+
+                if u_vals and v_vals and w_vals:
+                    u_min = min(u_vals)
+                    u_max = max(u_vals)
+                    v_min = min(v_vals)
+                    v_max = max(v_vals)
+                    w_min = min(w_vals)
+                    return (u_min, v_min, u_max, v_max, w_min)
+
+            except Exception:
+                pass  # Fall through to regular bbox
+
+        # Standard path: use host-space bbox
+        try:
+            # Generate all 8 corners of the 3D bounding box
+            x0, y0, z0 = bb.Min.X, bb.Min.Y, bb.Min.Z
+            x1, y1, z1 = bb.Max.X, bb.Max.Y, bb.Max.Z
+            corners = [
+                XYZ(x0, y0, z0), XYZ(x0, y0, z1),
+                XYZ(x0, y1, z0), XYZ(x0, y1, z1),
+                XYZ(x1, y0, z0), XYZ(x1, y0, z1),
+                XYZ(x1, y1, z0), XYZ(x1, y1, z1),
+            ]
+
+            # Transform all corners to crop-local UVW
+            u_vals = []
+            v_vals = []
+            w_vals = []
+
+            for c in corners:
+                lp = _to_local_xyz(c)
+                if lp is not None:
+                    u_vals.append(float(lp[0]))
+                    v_vals.append(float(lp[1]))
+                    w_vals.append(abs(float(lp[2])))  # Absolute distance from plane
+
+            if not u_vals or not v_vals or not w_vals:
+                return None
+
+            u_min = min(u_vals)
+            u_max = max(u_vals)
+            v_min = min(v_vals)
+            v_max = max(v_vals)
+            w_min = min(w_vals)  # Nearest point to camera
+
+            return (u_min, v_min, u_max, v_max, w_min)
+
         except Exception:
             return None
 
@@ -486,6 +616,7 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
         "num_3d_loops": 0,
         "num_2d_loops": 0,
         "num_3d_skipped_link_floor": 0,
+        "num_3d_extraction_failed": 0,
     }
     
     # Force strategies_used to exist
@@ -518,8 +649,9 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
 
         extractor = project_elements_to_view_xy._extractor_cache.get(cache_key)
 
-        # UPDATE extractor with this view's adaptive thresholds
+        # UPDATE extractor with this view's adaptive thresholds AND transform
         if extractor is not None:
+            _update_extractor_transform(extractor, view)  # Update crop box transform for THIS view
             extractor.adaptive_thresholds = adaptive_thresholds  # Fresh per view!
             extractor.view = view  # Update view reference
         
@@ -1113,12 +1245,22 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
             except Exception:
                 uv_min_x = uv_min_y = uv_max_x = uv_max_y = None
 
+            # Get bounding box for depth calculation and occlusion
+            try:
+                bb = e.get_BoundingBox(view)
+            except Exception:
+                bb = None
+
+            # Compute bbox-derived conservative UVW bounds for occlusion culling
+            # Pass element to enable tight link-space bounds for linked elements
+            bbox_uvw_aabb = _compute_conservative_uvw_bounds(bb, e)
+
             depth_min = depth_max = None
             try:
                 if bb is not None and bb.Min is not None and bb.Max is not None:
 
-                    # Compute depth range from ALL 8 bounding-box corners (spec: corner transforms required).
-                    # This avoids incorrect ordering/culling when the bbox is not view-aligned.
+                    # Compute depth range from ALL 8 bounding-box corners.
+                    # Use absolute distance from cut/crop plane for occlusion.
                     try:
                         x0, y0, z0 = bb.Min.X, bb.Min.Y, bb.Min.Z
                         x1, y1, z1 = bb.Max.X, bb.Max.Y, bb.Max.Z
@@ -1132,23 +1274,13 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                         for _c in _corners:
                             _lp = _to_local_xyz(_c)
                             if _lp is not None:
-                                _ws.append(float(_lp[2]))
+                                _ws.append(abs(float(_lp[2])))  # Absolute distance from plane
                         if _ws:
                             depth_min = min(_ws)
                             depth_max = max(_ws)
                     except Exception:
                         pass
 
-            except Exception:
-                depth_min = depth_max = None
-            try:
-                if bb is not None and bb.Min is not None and bb.Max is not None:
-                    pmin = _to_local_xyz(bb.Min)
-                    pmax = _to_local_xyz(bb.Max)
-                    if pmin is not None and pmax is not None:
-                        z0 = float(pmin[2]); z1 = float(pmax[2])
-                        depth_min = z0 if z0 <= z1 else z1
-                        depth_max = z1 if z1 >= z0 else z0
             except Exception:
                 depth_min = depth_max = None
 
@@ -1159,6 +1291,7 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                     "is_2d": False,
                     "loops": filtered_loops,
                     "uv_aabb": (uv_min_x, uv_min_y, uv_max_x, uv_max_y),
+                    "bbox_uvw_aabb": bbox_uvw_aabb,  # Conservative bounds from 8 bbox corners
                     "depth_min": depth_min,
                     "depth_max": depth_max,
                     "source": source,
@@ -1209,12 +1342,6 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                 diagnostics["strategies_used"]["import_extraction"] = \
                     diagnostics["strategies_used"].get("import_extraction", 0) + 1
                 # === END TRACKING ===
-                
-                logger.info(
-                    "Projection-debug: ImportInstance elem_id={0}, cat='{1}' "
-                    "produced no usable band loops; skipping from 3D occupancy"
-                    .format(eid, cat_name)
-                )
                 continue
 
             for loop in loops_xy:
@@ -1273,10 +1400,6 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
         if PointCloudInstance is not None and isinstance(e, PointCloudInstance):
             diagnostics.setdefault("num_3d_skipped_pointcloud", 0)
             diagnostics["num_3d_skipped_pointcloud"] += 1
-            logger.info(
-                "Projection-debug: skipping PointCloudInstance elem_id={0}, "
-                "cat='{1}' from 3D occupancy".format(eid, cat_name)
-            )
             continue
 
         # ============================================================
@@ -1286,8 +1409,6 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
         
         # Check if hybrid mode is enabled
         use_hybrid = config.get("projection", {}).get("silhouette", {}).get("enabled", False)
-        # DEBUG
-        logger.info("DEBUG: Hybrid mode enabled = {0}".format(use_hybrid))
         # make hybrid/strategies_used diagnosable in debug.json
         diagnostics["silhouette_hybrid_enabled"] = bool(use_hybrid)
         diagnostics.setdefault("silhouette_extractor_is_none", False)
@@ -1321,15 +1442,23 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                     logger.info("Created extractor for cache_key={0}".format(cache_key))
 
             extractor = project_elements_to_view_xy._extractor_cache.get(cache_key)
-            
+
             if extractor:
-                logger.info("Reusing extractor for cache_key={0}".format(cache_key))
-                
-                # Update with THIS view's adaptive thresholds
-                if adaptive_thresholds:
-                    extractor.adaptive_thresholds = adaptive_thresholds
-                
-                extractor.view = view
+                # Only update transform if this is a different view than last time
+                # (avoids calling _update_extractor_transform for every element)
+                current_view_id = getattr(getattr(view, "Id", None), "IntegerValue", None)
+                last_view_id = getattr(extractor, '_last_view_id', None)
+
+                if current_view_id != last_view_id:
+                    logger.info("Reusing extractor for cache_key={0}".format(cache_key))
+
+                    # Update with THIS view's crop box transform and adaptive thresholds
+                    _update_extractor_transform(extractor, view)
+                    if adaptive_thresholds:
+                        extractor.adaptive_thresholds = adaptive_thresholds
+
+                    extractor.view = view
+                    extractor._last_view_id = current_view_id
                 
             if extractor:
                 try:
@@ -1353,14 +1482,16 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
 
                     diagnostics["strategies_used"][composite_key] = \
                         diagnostics["strategies_used"].get(composite_key, 0) + 1
-                    # DEBUG
-                    logger.info("DEBUG: Tracked {0}".format(composite_key))   
                 except Exception as ex:
                     logger.info(
                         "Silhouette: hybrid extraction failed for elem {0}: {1}".format(eid, ex)
                     )
                     hull_loops = []
         
+        # Track if hybrid extraction failed to produce loops
+        if use_hybrid and not hull_loops:
+            diagnostics["num_3d_extraction_failed"] += 1
+
         # Fallback: Original A19 full tessellation (if hybrid disabled or failed)
         if not hull_loops and not use_hybrid:
             try:
@@ -1406,12 +1537,18 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                     bb = e.get_BoundingBox(view)
                 except Exception:
                     bb = None
+
+                # Compute bbox-derived conservative UVW bounds for occlusion culling
+                # Pass element to enable tight link-space bounds for linked elements
+                bbox_uvw_aabb = _compute_conservative_uvw_bounds(bb, e)
+
                 try:
                     if bb is not None and bb.Min is not None and bb.Max is not None:
                         pmin = _to_local_xyz(bb.Min)
                         pmax = _to_local_xyz(bb.Max)
                         if pmin is not None and pmax is not None:
-                            z0 = float(pmin[2]); z1 = float(pmax[2])
+                            z0 = abs(float(pmin[2]))  # Absolute distance from cut plane
+                            z1 = abs(float(pmax[2]))
                             depth_min = z0 if z0 <= z1 else z1
                             depth_max = z1 if z1 >= z0 else z0
                 except Exception:
@@ -1427,6 +1564,7 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                         "is_2d": False,
                         "loops": filtered_loops,
                         "uv_aabb": (uv_min_x, uv_min_y, uv_max_x, uv_max_y),
+                        "bbox_uvw_aabb": bbox_uvw_aabb,  # Conservative bounds from 8 bbox corners
                         "depth_min": depth_min,
                         "depth_max": depth_max,
                         "source": source,
@@ -1491,11 +1629,6 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                     if not (is_tiny or is_linear):
                         diagnostics.setdefault("num_3d_bbox_suppressed_areal", 0)
                         diagnostics["num_3d_bbox_suppressed_areal"] += 1
-                        logger.info(
-                            "Projection-debug: suppressing AREAL BBox fallback for elem_id={0}, cat='{1}' (w={2}, h={3})".format(
-                                eid, cat_name, w_cells, h_cells
-                            )
-                        )
                         continue
                 except Exception:
                     # If we can't classify, fall through (fail-open) to existing BBox behavior.
@@ -1510,15 +1643,6 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
 
                 w = i_max - i_min + 1
                 h = j_max - j_min + 1
-
-                # threshold: spans at least 80% of grid in X or Y
-                if (w >= 0.8 * n_i) or (h >= 0.8 * n_j):
-                    logger.info(
-                        "Projection-debug: large 3D BBox elem_id={0}, cat='{1}', "
-                        "w={2}, h={3}, grid={4}x{5}".format(
-                            eid, cat_name, w, h, n_i, n_j
-                        )
-                    )
         except Exception:
             pass
         # --------------------------------------------------------------------
@@ -1546,13 +1670,18 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
         except Exception:
             uv_min_x = uv_min_y = uv_max_x = uv_max_y = None
 
+        # Compute bbox-derived conservative UVW bounds for occlusion culling
+        # Pass element to enable tight link-space bounds for linked elements
+        bbox_uvw_aabb = _compute_conservative_uvw_bounds(bb, e)
+
         depth_min = depth_max = None
         try:
             if bb is not None and bb.Min is not None and bb.Max is not None:
                 pmin = _to_local_xyz(bb.Min)
                 pmax = _to_local_xyz(bb.Max)
                 if pmin is not None and pmax is not None:
-                    z0 = float(pmin[2]); z1 = float(pmax[2])
+                    z0 = abs(float(pmin[2]))  # Absolute distance from cut plane
+                    z1 = abs(float(pmax[2]))
                     depth_min = z0 if z0 <= z1 else z1
                     depth_max = z1 if z1 >= z0 else z0
         except Exception:
@@ -1565,6 +1694,7 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                 "is_2d": False,
                 "loops": [loop],
                 "uv_aabb": (uv_min_x, uv_min_y, uv_max_x, uv_max_y),
+                "bbox_uvw_aabb": bbox_uvw_aabb,  # Conservative bounds from 8 bbox corners
                 "depth_min": depth_min,
                 "depth_max": depth_max,
                 "source": source,
@@ -1849,17 +1979,6 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
                         break
             if count3d >= max_preview_3d:
                 break
-                
-    logger.info(
-        "Projection-debug: view Id={0} 2D whitelist stats -> "
-        "input={1}, projected={2}, not_whitelisted={3}, outside_grid={4}".format(
-            view_id_val,
-            diagnostics.get("num_2d_input", 0),
-            diagnostics.get("num_2d_projected", 0),
-            diagnostics.get("num_2d_not_whitelisted", 0),
-            diagnostics.get("num_2d_outside_grid", 0),
-        )
-    )
 
     logger.info(
         "Projection: view Id={0} -> projected_3d={1} elem(s), projected_2d={2} elem(s)".format(
@@ -1869,9 +1988,57 @@ def project_elements_to_view_xy(view, grid_data, clip_data, elems3d, elems2d, co
         )
     )
 
-    # DEBUG
-    logger.info("DEBUG: strategies_used = {0}".format(diagnostics.get("strategies_used", "NOT PRESENT")))
-    
+    # Error budget warning: check if too many extractions failed
+    debug_cfg = CONFIG.get("debug", {})
+    enable_error_budget = bool(debug_cfg.get("enable_error_budget_warnings", True))
+    error_budget_threshold = float(debug_cfg.get("extraction_failure_threshold", 0.1))  # 10% default
+
+    if enable_error_budget:
+        num_input = diagnostics.get("num_3d_input", 0)
+        num_failed = diagnostics.get("num_3d_extraction_failed", 0)
+
+        if num_input > 0:
+            failure_rate = float(num_failed) / float(num_input)
+
+            if failure_rate > error_budget_threshold:
+                logger.warn(
+                    "Projection: view Id={0} extraction failure rate {1:.1%} exceeds threshold {2:.1%} "
+                    "({3}/{4} elements failed). Check silhouette strategy config or element geometry.".format(
+                        view_id_val,
+                        failure_rate,
+                        error_budget_threshold,
+                        num_failed,
+                        num_input
+                    )
+                )
+
+    # Collect strategy fallback statistics from extractor
+    if hasattr(project_elements_to_view_xy, '_extractor_cache'):
+        # Try to find the extractor for this view
+        try:
+            scale = int(getattr(view, "Scale", 96))
+            grid_size = float(cell_size)
+            cache_key = "{0}_{1:.3f}".format(scale, grid_size)
+            extractor = project_elements_to_view_xy._extractor_cache.get(cache_key)
+
+            if extractor and hasattr(extractor, 'get_statistics'):
+                stats = extractor.get_statistics()
+                if isinstance(stats, dict):
+                    # Merge strategy stats into diagnostics
+                    if "strategy_usage" in stats:
+                        for key, count in stats["strategy_usage"].items():
+                            diagnostics["strategies_used"][key] = \
+                                diagnostics["strategies_used"].get(key, 0) + count
+
+                    # Add fallback stats
+                    if "strategy_fallbacks" in stats and stats["strategy_fallbacks"]:
+                        diagnostics["strategy_fallbacks"] = stats["strategy_fallbacks"]
+
+                    # Add fallback element IDs (if tracking is enabled)
+                    if "strategy_fallback_elements" in stats and stats["strategy_fallback_elements"]:
+                        diagnostics["strategy_fallback_elements"] = stats["strategy_fallback_elements"]
+        except Exception:
+            pass  # Silently fail if stats collection has issues
 
     return {
         "projected_3d": projected_3d,

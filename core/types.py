@@ -47,6 +47,7 @@ TIER_VERY_LARGE = "tier_very_large"
 
 STRATEGY_BBOX = "bbox"
 STRATEGY_OBB = "obb"
+STRATEGY_SILHOUETTE_EDGES = "silhouette_edges"
 STRATEGY_CATEGORY_API = "category_api_shortcuts"
 STRATEGY_COARSE_TESS = "coarse_tessellation"
 
@@ -58,3 +59,27 @@ STRATEGY_COARSE_TESS = "coarse_tessellation"
 SOURCE_HOST = "HOST"
 SOURCE_RVT_LINK = "RVT_LINK"
 SOURCE_DWG_IMPORT = "DWG_IMPORT"
+
+# ============================================================
+# UNIT CONVERSION CONSTANTS
+# ============================================================
+# Standard conversion factors for imperial units
+
+INCHES_PER_FOOT = 12.0
+
+# ============================================================
+# GRID COMPUTATION CONSTANTS
+# ============================================================
+# Constants used in grid extent computation and clustering
+
+# Percentile for outlier removal in geometry clustering (keep 99.9% of elements)
+CLUSTERING_PERCENTILE = 0.999
+
+# Default cell size in paper inches (when not specified in config)
+DEFAULT_CELL_SIZE_PAPER_IN = 0.25
+
+# Default overlay expansion cap in cells (prevents runaway grid expansion)
+DEFAULT_OVERLAY_EXPAND_CAP_CELLS = 2000
+
+# Default annotation crop margin in paper inches
+DEFAULT_ANNO_CROP_MARGIN_IN = 2.0

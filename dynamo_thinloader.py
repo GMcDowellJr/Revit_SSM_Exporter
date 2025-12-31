@@ -16,7 +16,7 @@ REPO_DIR = r"C:\Users\gmcdowell\Documents\Revit_SSM_Exporter"
 
 # Basic validation to catch path mistakes
 expected = [
-    os.path.join(REPO_DIR, "SSM_Exporter_v4_A21.py"),
+    os.path.join(REPO_DIR, "ssm_exporter_main.py"),
     os.path.join(REPO_DIR, "core"),
     os.path.join(REPO_DIR, "geometry"),
     os.path.join(REPO_DIR, "export"),
@@ -51,14 +51,14 @@ else:
     try:
         # ---- CPython 3: purge cached modules so edits on disk are picked up ----
         # Only purge the repo's packages to avoid destabilizing stdlib / Dynamo internals.
-        prefixes = ("core", "geometry", "export", "processing", "revit", "SSM_Exporter_v4_A21")
+        prefixes = ("core", "geometry", "export", "processing", "revit", "ssm_exporter_main")
 
         for name in list(sys.modules.keys()):
             if name in prefixes or name.startswith("core.") or name.startswith("geometry.") or name.startswith("export.") or name.startswith("processing.") or name.startswith("revit."):
                 sys.modules.pop(name, None)
 
         # Import the main exporter module
-        exporter = importlib.import_module("SSM_Exporter_v4_A21")
+        exporter = importlib.import_module("ssm_exporter_main")
 
         # Forward Dynamo inputs
         exporter.IN = IN
@@ -72,5 +72,5 @@ else:
             "traceback": traceback.format_exc(),
             "REPO_DIR": REPO_DIR,
             "sys_path_head": sys.path[:8],
-            "exporter_file": getattr(sys.modules.get("SSM_Exporter_v4_A21", None), "__file__", None),
+            "exporter_file": getattr(sys.modules.get("ssm_exporter_main", None), "__file__", None),
         }

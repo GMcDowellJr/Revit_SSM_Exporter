@@ -246,7 +246,7 @@ collection.set_revit_context(
     RevitLinkInstance, VisibleInViewFilter,
     Dimension, LinearDimension, TextNote, IndependentTag,
     RoomTag, FilledRegion, DetailCurve, CurveElement,
-    FamilyInstance, XYZ
+    FamilyInstance, XYZ, Outline, BoundingBoxIntersectsFilter
 )
 
 # Initialize collection module with System.Drawing context for PNG export
@@ -811,7 +811,7 @@ def _save_view_cache(cache_path, cache_data, logger):
     try:
         # Ensure parent directory exists
         parent = os.path.dirname(cache_path)
-        if not _ensure_dir(parent, logger):
+        if not export_csv._ensure_dir(parent, logger):
             return
 
         views = cache_data.get("views") or {}
@@ -1321,8 +1321,21 @@ def build_regions_from_projected(projected, grid_data, config, logger):
     INF = 1.0e30
     w_nearest = {}  # dict((i,j) -> float)
 
+    # Tile-based occlusion acceleration (optional optimization)
+    # Tiles group cells to speed up fully-occluded checks for large rectangles
+    tile_size = int(occ_cfg.get("tile_size", 16))  # 16x16 cells per tile
+    tile_fully_occluded = {}  # dict((ti,tj) -> bool)
+    tile_depth_gate = {}  # dict((ti,tj) -> float) MAXIMUM depth for fully occluded tiles
+
+    # Bbox UVW optimization (DISABLED by default due to over-culling bug)
+    use_bbox_uvw = bool(occ_cfg.get("use_bbox_uvw", False))  # Changed to False
+    # Legacy option - now fixed to compute tight link-space bounds for linked elements
+    skip_bbox_uvw_for_links = bool(occ_cfg.get("skip_bbox_uvw_for_links", False))
+
     diagnostics.setdefault("num_3d_culled_by_occlusion", 0)
     diagnostics.setdefault("num_3d_tested_for_occlusion", 0)
+    diagnostics.setdefault("num_3d_tile_check_hits", 0)
+    diagnostics.setdefault("num_3d_tile_check_total", 0)
 
 
     def _compute_uv_aabb_from_loops(_loops):
@@ -1377,10 +1390,46 @@ def build_regions_from_projected(projected, grid_data, config, logger):
             return None
 
     def _rect_fully_occluded(rect, elem_wmin):
-        """True iff every valid cell in rect already has nearer-or-equal depth than elem_wmin."""
+        """True iff every valid cell in rect already has nearer-or-equal depth than elem_wmin.
+
+        Uses tile-based acceleration when available for faster large-rectangle checks.
+        """
         if rect is None or elem_wmin is None:
             return False  # fail-open
         i0, i1, j0, j1 = rect
+
+        # Tile-based acceleration: check if all covering tiles are fully occluded
+        if tile_size > 0:
+            ti0 = i0 // tile_size
+            ti1 = i1 // tile_size
+            tj0 = j0 // tile_size
+            tj1 = j1 // tile_size
+
+            diagnostics["num_3d_tile_check_total"] += 1
+            all_tiles_occluded = True
+
+            for tjj in range(tj0, tj1 + 1):
+                for tii in range(ti0, ti1 + 1):
+                    t = (tii, tjj)
+                    if not tile_fully_occluded.get(t, False):
+                        all_tiles_occluded = False
+                        break
+                    # Check depth gate: tile occludes only if element is farther than ALL occluders
+                    # tile_depth_gate stores MAX depth (farthest occluder in tile)
+                    # Element must be farther: elem_wmin >= tile_depth_gate
+                    if tile_depth_gate.get(t, 0.0) > float(elem_wmin):
+                        # Element is CLOSER than farthest occluder, so not fully occluded
+                        all_tiles_occluded = False
+                        break
+                if not all_tiles_occluded:
+                    break
+
+            if all_tiles_occluded and (ti1 >= ti0) and (tj1 >= tj0):
+                # All covering tiles are fully occluded with sufficient depth
+                diagnostics["num_3d_tile_check_hits"] += 1
+                return True
+
+        # Fallback to per-cell check (exact but slower)
         any_valid = False
         for jj in range(j0, j1 + 1):
             for ii in range(i0, i1 + 1):
@@ -1394,6 +1443,50 @@ def build_regions_from_projected(projected, grid_data, config, logger):
         if not any_valid:
             return False
         return True
+
+    def _update_tile_occlusion(cells, depth):
+        """Update tile state after writing occlusion for areal elements.
+
+        When all cells in a tile are occluded, mark the tile as fully occluded
+        with the maximum depth gate. This accelerates future occlusion checks.
+        """
+        if tile_size <= 0 or not cells:
+            return
+
+        # Group cells by tile
+        tiles_touched = set()
+        for (ii, jj) in cells:
+            ti = ii // tile_size
+            tj = jj // tile_size
+            tiles_touched.add((ti, tj))
+
+        # Check each touched tile to see if it's now fully occluded
+        for (ti, tj) in tiles_touched:
+            # Get all cells in this tile within grid bounds
+            i0 = ti * tile_size
+            i1 = min((ti + 1) * tile_size - 1, n_i - 1)
+            j0 = tj * tile_size
+            j1 = min((tj + 1) * tile_size - 1, n_j - 1)
+
+            # Check if all valid cells in tile are occluded
+            all_occluded = True
+            max_depth_in_tile = 0.0  # Track MAXIMUM depth (farthest occluder)
+
+            for jj in range(j0, j1 + 1):
+                for ii in range(i0, i1 + 1):
+                    c = (ii, jj)
+                    if valid_cells_set and (c not in valid_cells_set):
+                        continue
+                    if c not in w_nearest:
+                        all_occluded = False
+                        break
+                    max_depth_in_tile = max(max_depth_in_tile, w_nearest[c])
+                if not all_occluded:
+                    break
+
+            if all_occluded and max_depth_in_tile > 0.0:
+                tile_fully_occluded[(ti, tj)] = True
+                tile_depth_gate[(ti, tj)] = max_depth_in_tile  # Store MAX for conservative check
 
     # Front-to-back ordering (view-space AABB ordering)
     def _depth_sort_key(ep):
@@ -1442,14 +1535,22 @@ def build_regions_from_projected(projected, grid_data, config, logger):
         source = ep.get("source", "HOST")
         can_occlude = (source in ("HOST", "RVT_LINK"))
 
-        if occlusion_enable and can_occlude:
-            diagnostics["num_3d_tested_for_occlusion"] += 1
-            uv_aabb = ep.get("uv_aabb") or _compute_uv_aabb_from_loops(loops)
-            rect = _uv_aabb_to_cell_rect(uv_aabb)
-            wmin = ep.get("depth_min", None)
-            if _rect_fully_occluded(rect, wmin):
-                diagnostics["num_3d_culled_by_occlusion"] += 1
-                continue
+        # Early-out occlusion test DISABLED - cannot work reliably with bbox-derived depth
+        #
+        # Problem: Both bbox_uvw w_min and ep["depth_min"] are computed from bbox corners,
+        # which don't accurately represent the depth of actual visible surfaces (especially
+        # for rotated elements). Using bbox corner depth causes massive over-culling.
+        #
+        # The fundamental issue: to know if an element is fully occluded, we need accurate
+        # depth of its visible surface. But getting that depth requires expensive geometry
+        # projection, which defeats the purpose of early culling.
+        #
+        # Occlusion still works correctly during per-cell rasterization (lines 1650-1690)
+        # where we have accurate depth values from actual projected geometry.
+        #
+        # if occlusion_enable and can_occlude:
+        #     diagnostics["num_3d_tested_for_occlusion"] += 1
+        #     ... early culling code disabled ...
 
         # optionally exclude floor-like 3D elements entirely
         if suppress_floor_like_3d and category in (
@@ -1465,7 +1566,7 @@ def build_regions_from_projected(projected, grid_data, config, logger):
         debug_label = None
         debug_enabled = False
 
-        # Optional: log floor-like elements’ loop sizes
+        # Optional: log floor-like elements' loop sizes
         if (
             floor_debug_enable
             and floor_debug_count < floor_debug_max
@@ -1475,7 +1576,36 @@ def build_regions_from_projected(projected, grid_data, config, logger):
             debug_enabled = True
             floor_debug_count += 1
 
-        elem_cells = _cells_from_loops_boundary_only(loops, debug_label, debug_enabled)
+        # Determine if element is likely areal by checking loops bounding box
+        # This helps us choose the right rasterization strategy BEFORE creating elem_cells
+        is_floor_like = category in ("Floors", "Roofs", "Ceilings", "Structural Foundations")
+        is_likely_areal = False
+        try:
+            # Compute bounding box from loops in grid space
+            if loops:
+                all_pts = []
+                for loop in loops:
+                    all_pts.extend(loop)
+                if all_pts:
+                    min_i = min(pt[0] for pt in all_pts)
+                    max_i = max(pt[0] for pt in all_pts)
+                    min_j = min(pt[1] for pt in all_pts)
+                    max_j = max(pt[1] for pt in all_pts)
+                    width = (max_i - min_i + 1)
+                    height = (max_j - min_j + 1)
+                    if width > 2 and height > 2:
+                        is_likely_areal = True
+        except Exception:
+            pass
+
+        # Use interior-filled rasterization for:
+        # - Floor-like elements (floors, roofs, ceilings, foundations)
+        # - Elements that project as areal (e.g., walls in section/elevation)
+        # This ensures areal elements can properly occlude elements behind them
+        if is_floor_like or is_likely_areal:
+            elem_cells = _cells_from_loops_parity(loops, debug_label, debug_enabled)
+        else:
+            elem_cells = _cells_from_loops_boundary_only(loops, debug_label, debug_enabled)
 
         # Determine whether this element's boundary footprint is AREAL in grid space
         is_areal_3d = False
@@ -1512,15 +1642,45 @@ def build_regions_from_projected(projected, grid_data, config, logger):
             elem_cells = [c for c in elem_cells if c in valid_cells_set]
 
         visible_cells = elem_cells
-        if occlusion_enable and (w_hit is not None):
+
+        # Special handling for areal elements (floors in plan, walls in section, etc.):
+        # - They update depth buffer for occlusion (w_nearest)
+        # - But they don't contribute to occupancy (visible_cells = empty)
+        # This prevents areal element interiors from showing as occupied space
+        # while still allowing them to occlude elements behind them
+        if is_areal_3d and occlusion_enable and can_occlude and (w_hit is not None):
+            try:
+                w_hit_f = float(w_hit)
+                # Update depth buffer for ALL cells (enables occlusion)
+                cells_updated = []
+                for c in elem_cells:
+                    if w_hit_f < w_nearest.get(c, INF):
+                        w_nearest[c] = w_hit_f
+                        cells_updated.append(c)
+
+                # Update tile occlusion state for acceleration
+                _update_tile_occlusion(cells_updated, w_hit_f)
+
+                # But don't add to visible_cells (no occupancy contribution)
+                visible_cells = []
+            except Exception:
+                visible_cells = []
+        elif occlusion_enable and (w_hit is not None):
             try:
                 w_hit_f = float(w_hit)
                 vis = []
+                cells_updated = []
                 for c in elem_cells:
                     if w_hit_f < w_nearest.get(c, INF):
                         vis.append(c)
                         if can_occlude:
                             w_nearest[c] = w_hit_f
+                            cells_updated.append(c)
+
+                # Update tile occlusion state for non-areal occluders
+                if can_occlude and cells_updated:
+                    _update_tile_occlusion(cells_updated, w_hit_f)
+
                 visible_cells = vis
             except Exception:
                 # fail-open
@@ -2300,6 +2460,9 @@ def process_view(view, config, logger, grid_cache, cache_invalidate):
     # --- Derive cell size in feet -----------------------------------------
     try:
         cell_size_ft = float(grid_data.get("cell_size_model") or 0.0)
+        # Round to 6 decimal places to ensure cache/fresh values match
+        # (avoids hash mismatches from floating point precision differences)
+        cell_size_ft = round(cell_size_ft, 6)
     except Exception:
         cell_size_ft = 0.0
 
@@ -2431,7 +2594,7 @@ def process_view(view, config, logger, grid_cache, cache_invalidate):
 
 def _export_debug_json(results, config, logger):
     debug_cfg = config.get("debug", {}) or {}
-    if not (debug_cfg.get("enable", True) and debug_cfg.get("write_debug_json", True)):
+    if not (debug_cfg.get("enable", True) and debug_cfg.get("write_debug_json", False)):
         logger.info("Debug JSON export disabled by config.")
         return
 
@@ -2994,8 +3157,15 @@ def main():
     # LOGGER.info("=== END HEALTH CHECK ===")
     
     # === END CLEANUP ===
-    
+
     LOGGER.info("Exporter start: {0}".format(run_start))
+
+    # Validate configuration
+    from core.config import validate_config
+    validation_errors = validate_config(CONFIG, LOGGER)
+    if validation_errors:
+        LOGGER.warn("Configuration validation found {0} issue(s)".format(len(validation_errors)))
+
     force_recompute, cache_enabled = _get_reset_and_cache_flags()
 
     # Apply any Dynamo-driven overrides to CONFIG (output_dir, cache, PNG)
@@ -3155,8 +3325,9 @@ def main():
         results.append(res)
 
     # CSV export (view-level metrics)
+    # Use views_sorted to match the order of results (which were built from views_sorted)
     try:
-        _export_view_level_csvs(views, results, run_start, CONFIG, LOGGER, exporter_version)
+        _export_view_level_csvs(views_sorted, results, run_start, CONFIG, LOGGER, exporter_version)
     except Exception as ex:
         LOGGER.warn("Export: exception during CSV export: {0}".format(ex))
 
