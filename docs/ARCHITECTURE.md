@@ -91,11 +91,11 @@ This invariant is **authoritative** per `correctness_contract.md`.
 
 After projection, geometry is classified into regions:
 
-| Type | Criteria | Fill Behavior | Occlusion |
-|------|----------|---------------|-----------|
-| TINY | ≤ 2×2 cells | Boundary only | No |
-| LINEAR | Width OR height ≤ 1 cell | Boundary only | No |
-| AREAL | Width AND height > threshold | Interior fill | Yes |
+| Type | Criteria | 3D Occupancy Contribution | Occlusion Contribution |
+|------|----------|----------------------------|-----------------------|
+| TINY | ≤ 2×2 cells | Boundary only | None |
+| LINEAR | Not TINY AND min(width, height) ≤ 2 | Boundary only | None |
+| AREAL | width > 2 AND height > 2 | Boundary only | Builds occlusion mask via parity-filled interior |
 
 **Rationale:**
 - TINY/LINEAR represent edges, outlines, small details
@@ -126,7 +126,7 @@ After projection, geometry is classified into regions:
 │    │ 2b. 3D Element Collection                               │ │
 │    │     - Collect host model elements                       │ │
 │    │     - Collect link model elements                       │ │
-│    │     - Build clip volume from view range                 │ │
+│    │     - Build clip slab from crop UV plane (W=0) and ViewDepth │ │
 │    └─────────────────────────────────────────────────────────┘ │
 │    ┌─────────────────────────────────────────────────────────┐ │
 │    │ 2c. 3D Projection                                       │ │
@@ -261,17 +261,14 @@ For specific categories (Walls, Columns, etc.), use fast APIs:
 
 **Purpose:** Prevent background geometry from incorrectly appearing when occluded by foreground geometry.
 
-**Z-Buffer Algorithm:**
+** Algorithm (Mask + Containment):**
 ```python
-1. Separate 3D regions into AREAL (occluding) and TINY/LINEAR (non-occluding)
-2. Sort AREAL regions by Z-depth (view-forward coordinate)
-3. Initialize empty Z-buffer (set of occupied cells)
-4. For each AREAL region (front to back):
-   a. Rasterize region to cells
-   b. For each cell:
-      - If cell already in Z-buffer: SKIP (occluded)
-      - Else: Mark cell, add to Z-buffer
-5. Rasterize TINY/LINEAR regions without occlusion check
+1. Build an occlusion mask from parity-filled interiors of AREAL 3D regions.
+2. For each candidate 3D element:
+   a. Compute its UV-aligned AABB footprint.
+   b. Exclude the element iff the footprint is fully contained in the occlusion mask.
+3. Fail-open if containment cannot be evaluated.
+4. 2D geometry is never occluded.
 ```
 
 **Key Design Decision:**
@@ -342,16 +339,16 @@ For each cell in bounding box:
 
 **Purpose:** Convert regions (rectangles) to grid cell indices.
 
-**Simple Algorithm:**
+**Simple Algorithm (Contract-aligned):**
 ```python
-For each region:
-  1. Get bounding box (x_min, y_min, x_max, y_max) in cells
-  2. For AREAL regions (if fill enabled):
-       Mark all cells in [x_min, x_max] × [y_min, y_max]
-  3. For LINEAR regions (if fill enabled):
-       Mark all cells in [x_min, x_max] × [y_min, y_max]
-  4. For TINY regions:
-       Mark boundary cells only
+For 3D regions:
+  - Rasterize boundary-only occupancy for all region types.
+
+For 2D filled regions:
+  - Rasterize boundary plus parity-filled interior.
+
+For occlusion mask:
+  - Rasterize parity-filled interior for AREAL 3D regions only.
 ```
 
 **Optimization:** Uses set operations for fast cell marking.
@@ -414,9 +411,9 @@ Count:
 
 ---
 
-### ADR 2: Uniform Occlusion for All Elements
+### ADR 2: Occlusion Mask + AABB Containment
 
-**Decision:** All 3D elements follow the same occlusion rules, regardless of size or region type.
+**Decision:** Occlusion is applied via a mask built from AREAL 3D interiors.
 
 **Rationale:**
 - Simplifies occlusion logic (single code path)
@@ -425,10 +422,10 @@ Count:
 - Reduces cell count by eliminating fully hidden geometry
 
 **Implementation:**
-- Front-to-back depth ordering
-- Element culled if bounding box fully occluded
-- No exemptions for tiny/linear elements
-- Occlusion happens before region classification
+- Build occlusion mask from parity-filled interiors of AREAL 3D regions.
+- Cull a 3D element only if its UV-aligned AABB is fully contained.
+- Fail-open on uncertainty.
+- 2D geometry is never occluded.
 
 **Trade-offs:**
 - Small details may be hidden if behind larger objects
