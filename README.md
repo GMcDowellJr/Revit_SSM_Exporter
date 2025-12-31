@@ -4,6 +4,11 @@
 
 A specialized tool for analyzing 2D orthographic views in Revit and generating occupancy maps that show where 3D model geometry and 2D annotations appear on a configurable grid.
 
+## Design Principle
+
+- All views share the same UVW depth semantics (W=0 at crop UV plane).
+- All elements are processed through a uniform pipeline.
+- The only permitted cache is view-skipping.
 ## Quick Start
 
 ```python
@@ -26,7 +31,7 @@ Check output in: `~/Documents/_metrics/`
 - **Adaptive thresholds** - Automatic element size classification per view
 - **CSV export** - Comprehensive metrics with view-level and element-level breakdowns
 - **PNG visualization** - Optional color-coded occupancy maps
-- **Occlusion handling** - Z-buffer based 3D geometry occlusion
+- **Occlusion handling** - AREAL 3D occlusion mask with AABB containment culling
 
 ## Output
 
