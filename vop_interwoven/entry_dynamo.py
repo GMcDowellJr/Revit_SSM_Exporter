@@ -3,16 +3,18 @@ Dynamo entry point for VOP Interwoven Pipeline.
 
 Provides a simple interface for testing the pipeline from Dynamo Python nodes.
 
-Usage in Dynamo:
+Compatible with both IronPython (Dynamo 2.x) and CPython3 (Dynamo 3.3+).
+
+Usage in Dynamo CPython3 (3.3+):
     import sys
     sys.path.append(r'C:\path\to\Revit_SSM_Exporter')
 
-    from vop_interwoven.entry_dynamo import run_vop_pipeline
+    from vop_interwoven.entry_dynamo import run_vop_pipeline, get_current_document
     from vop_interwoven.config import Config
 
-    # Get current Revit document
-    doc = __revit__.ActiveUIDocument.Document
-    view = __revit__.ActiveUIDocument.ActiveView
+    # Get current Revit document (CPython3-compatible)
+    doc = get_current_document()
+    view = IN[0]  # Pass view as input, or use get_current_view()
 
     # Configure pipeline
     cfg = Config(
@@ -29,11 +31,93 @@ Usage in Dynamo:
 
     # Output result for Dynamo
     OUT = result
+
+Usage in Dynamo IronPython (2.x - legacy):
+    # Same as above, but __revit__ global is available
+    doc = __revit__.ActiveUIDocument.Document
+    view = __revit__.ActiveUIDocument.ActiveView
 """
 
 import json
 from .config import Config
 from .pipeline import process_document_views
+
+
+# ============================================================
+# REVIT CONTEXT HELPERS (CPython3-compatible)
+# ============================================================
+
+
+def get_current_document():
+    """Get current Revit document (works in both IronPython and CPython3).
+
+    Returns:
+        Revit Document object
+
+    Raises:
+        RuntimeError: If not running in Revit/Dynamo context
+    """
+    # Try CPython3 approach first (Dynamo 3.3+)
+    try:
+        from Autodesk.Revit.DB import Document
+        # Import Revit services for CPython3
+        import RevitServices
+        from RevitServices.Persistence import DocumentManager
+
+        doc = DocumentManager.Instance.CurrentDBDocument
+        if doc is not None:
+            return doc
+    except ImportError:
+        pass  # Fall through to IronPython approach
+
+    # Try IronPython approach (Dynamo 2.x)
+    try:
+        doc = __revit__.ActiveUIDocument.Document
+        return doc
+    except NameError:
+        pass
+
+    raise RuntimeError(
+        "Not running in Revit/Dynamo context. "
+        "Use get_current_document() in Dynamo Python node, "
+        "or pass Document directly to run_vop_pipeline()."
+    )
+
+
+def get_current_view():
+    """Get current active view (works in both IronPython and CPython3).
+
+    Returns:
+        Revit View object
+
+    Raises:
+        RuntimeError: If not running in Revit/Dynamo context
+    """
+    # Try CPython3 approach first
+    try:
+        import RevitServices
+        from RevitServices.Persistence import DocumentManager
+
+        doc = DocumentManager.Instance.CurrentDBDocument
+        if doc is not None:
+            # Get active view from document
+            active_view = doc.ActiveView
+            if active_view is not None:
+                return active_view
+    except (ImportError, AttributeError):
+        pass
+
+    # Try IronPython approach
+    try:
+        view = __revit__.ActiveUIDocument.ActiveView
+        return view
+    except NameError:
+        pass
+
+    raise RuntimeError(
+        "Not running in Revit/Dynamo context. "
+        "Pass view as input (IN[0]) or get from Document."
+    )
 
 
 def run_vop_pipeline(doc, view_ids, cfg=None):
@@ -175,7 +259,7 @@ def get_test_config_areal_heavy():
 
 # Convenience function for quick testing
 def quick_test_current_view():
-    """Quick test on current active view (for Dynamo console testing).
+    """Quick test on current active view (CPython3-compatible).
 
     Usage in Dynamo Python console:
         >>> from vop_interwoven.entry_dynamo import quick_test_current_view
@@ -186,33 +270,32 @@ def quick_test_current_view():
         Result dictionary from run_vop_pipeline
     """
     try:
-        # Import Revit API
-        import clr
-
-        clr.AddReference("RevitAPI")
-        clr.AddReference("RevitAPIUI")
-        from Autodesk.Revit.UI import TaskDialog
-
-        # Get current document and view
-        doc = __revit__.ActiveUIDocument.Document
-        view = __revit__.ActiveUIDocument.ActiveView
+        # Get current document and view (CPython3-compatible)
+        doc = get_current_document()
+        view = get_current_view()
 
         # Run with default config
         result = run_vop_pipeline(doc, [view.Id])
 
-        # Show summary dialog
-        summary = result["summary"]
-        msg = "VOP Pipeline Test:\\n\\n"
-        msg += f"Views requested: {summary['num_views_requested']}\\n"
-        msg += f"Views processed: {summary['num_views_processed']}\\n"
-        msg += f"Errors: {summary['num_errors']}\\n"
+        # Try to show summary dialog (works in both IronPython and CPython3)
+        try:
+            from Autodesk.Revit.UI import TaskDialog
 
-        if result["views"]:
-            diag = result["views"][0].get("diagnostics", {})
-            msg += f"\\nElements: {diag.get('num_elements', 0)}\\n"
-            msg += f"Filled cells: {diag.get('num_filled_cells', 0)}"
+            summary = result["summary"]
+            msg = "VOP Pipeline Test:\n\n"
+            msg += f"Views requested: {summary['num_views_requested']}\n"
+            msg += f"Views processed: {summary['num_views_processed']}\n"
+            msg += f"Errors: {summary['num_errors']}\n"
 
-        TaskDialog.Show("VOP Test Result", msg)
+            if result["views"]:
+                diag = result["views"][0].get("diagnostics", {})
+                msg += f"\nElements: {diag.get('num_elements', 0)}\n"
+                msg += f"Filled cells: {diag.get('num_filled_cells', 0)}"
+
+            TaskDialog.Show("VOP Test Result", msg)
+        except ImportError:
+            # TaskDialog not available, just return result
+            pass
 
         return result
 

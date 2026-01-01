@@ -129,8 +129,11 @@ def init_view_raster(doc, view, cfg):
     W = max(1, math.ceil(width_ft / cell_size_ft))
     H = max(1, math.ceil(height_ft / cell_size_ft))
 
+    # Compute adaptive tile size based on grid dimensions
+    tile_size = cfg.compute_adaptive_tile_size(W, H)
+
     raster = ViewRaster(
-        width=W, height=H, cell_size=cell_size_ft, bounds=bounds_xy, tile_size=cfg.tile_size
+        width=W, height=H, cell_size=cell_size_ft, bounds=bounds_xy, tile_size=tile_size
     )
 
     return raster

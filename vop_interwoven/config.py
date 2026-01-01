@@ -5,6 +5,8 @@ Defines the Config class with all parameters for the interwoven model pass,
 proxy stamping, and depth-buffer occlusion logic.
 """
 
+import math
+
 
 class Config:
     """Configuration for VOP interwoven pipeline.
@@ -42,6 +44,7 @@ class Config:
     def __init__(
         self,
         tile_size=16,
+        adaptive_tile_size=True,
         over_model_includes_proxies=True,
         proxy_mask_mode="minmask",
         depth_eps_ft=0.01,
@@ -51,7 +54,8 @@ class Config:
         """Initialize VOP configuration.
 
         Args:
-            tile_size: Tile size for early-out acceleration
+            tile_size: Base tile size for early-out acceleration (default: 16)
+            adaptive_tile_size: Auto-adjust tile size based on grid dimensions (default: True)
             over_model_includes_proxies: Include proxy presence in "over model" check
             proxy_mask_mode: "edges" or "minmask" for proxy stamping
             depth_eps_ft: Depth tolerance for edge visibility (feet)
@@ -59,6 +63,7 @@ class Config:
             thin_max: Max thin dimension for LINEAR classification (cells)
         """
         self.tile_size = int(tile_size)
+        self.adaptive_tile_size = bool(adaptive_tile_size)
         self.over_model_includes_proxies = bool(over_model_includes_proxies)
         self.proxy_mask_mode = str(proxy_mask_mode)
         self.depth_eps_ft = float(depth_eps_ft)
@@ -75,9 +80,59 @@ class Config:
         if self.tiny_max < 0 or self.thin_max < 0:
             raise ValueError("tiny_max and thin_max must be non-negative")
 
+    def compute_adaptive_tile_size(self, grid_width, grid_height):
+        """Compute optimal tile size based on grid dimensions.
+
+        Args:
+            grid_width: Grid width in cells
+            grid_height: Grid height in cells
+
+        Returns:
+            Optimal tile size (power of 2 between 8 and 64)
+
+        Commentary:
+            ✔ Targets ~1K-4K tiles for optimal early-out granularity
+            ✔ Clamps to power-of-2 for efficient indexing
+            ✔ Small grids (64x64): 8x8 tiles → 64 tiles
+            ✔ Medium grids (256x256): 16x16 tiles → 256 tiles
+            ✔ Large grids (1024x1024): 32x32 tiles → 1024 tiles
+            ✔ Very large grids (4096x4096): 64x64 tiles → 4096 tiles
+
+        Examples:
+            >>> cfg = Config(adaptive_tile_size=True)
+            >>> cfg.compute_adaptive_tile_size(64, 64)
+            8
+            >>> cfg.compute_adaptive_tile_size(256, 256)
+            16
+            >>> cfg.compute_adaptive_tile_size(1024, 1024)
+            32
+        """
+        if not self.adaptive_tile_size:
+            return self.tile_size
+
+        # Total cells
+        total_cells = grid_width * grid_height
+
+        # Target: 1K-4K tiles for good early-out granularity
+        # Solve: (W/tile_size) * (H/tile_size) ≈ target_tiles
+        # tile_size ≈ sqrt(W*H / target_tiles)
+
+        # Use geometric mean of dimensions
+        avg_dim = math.sqrt(total_cells)
+
+        # Target 2K tiles
+        target_tiles = 2000
+        ideal_tile_size = avg_dim / math.sqrt(target_tiles)
+
+        # Clamp to power of 2 in range [8, 64]
+        tile_size = max(8, min(64, 2 ** round(math.log2(ideal_tile_size))))
+
+        return int(tile_size)
+
     def __repr__(self):
         return (
             f"Config(tile_size={self.tile_size}, "
+            f"adaptive_tile_size={self.adaptive_tile_size}, "
             f"over_model_includes_proxies={self.over_model_includes_proxies}, "
             f"proxy_mask_mode='{self.proxy_mask_mode}', "
             f"depth_eps_ft={self.depth_eps_ft}, "
@@ -88,6 +143,7 @@ class Config:
         """Export configuration as dictionary for JSON serialization."""
         return {
             "tile_size": self.tile_size,
+            "adaptive_tile_size": self.adaptive_tile_size,
             "over_model_includes_proxies": self.over_model_includes_proxies,
             "proxy_mask_mode": self.proxy_mask_mode,
             "depth_eps_ft": self.depth_eps_ft,
@@ -100,6 +156,7 @@ class Config:
         """Create Config from dictionary (e.g., from JSON)."""
         return cls(
             tile_size=d.get("tile_size", 16),
+            adaptive_tile_size=d.get("adaptive_tile_size", True),
             over_model_includes_proxies=d.get("over_model_includes_proxies", True),
             proxy_mask_mode=d.get("proxy_mask_mode", "minmask"),
             depth_eps_ft=d.get("depth_eps_ft", 0.01),
