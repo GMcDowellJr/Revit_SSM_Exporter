@@ -451,17 +451,246 @@ def make_envelopes_links(link_insts, view, clip, config) -> list[Envelope]:
 
 def project_loops_view_contextual(env: Envelope, view, clip, config) -> LoopSet | None:
     """
-    EXPENSIVE path: view-contextual geometry extraction and UV loop projection.
-    Must use:
-      Options.View = view
-      Options.DetailLevel = view.DetailLevel
-      IncludeNonVisibleObjects = False
-    Must apply full transforms for links: link XYZ -> host XYZ -> view UVW.
+    EXPENSIVE (relative) path: view-contextual footprint extraction -> UV loops.
+
+    GOALS (structure, not policy):
+      - Preserve current hybrid behavior:
+          1) category API footprint (preferred)
+          2) silhouette edges (from view-context GeometryElement)
+          3) coarse tessellation / face sampling (from same GeometryElement)
+          4) OBB/Envelope proxy (last resort)
+      - Must apply full transforms for links: link XYZ -> host XYZ -> view UVW.
+      - Must use Options.View=view for geometry fetch used by silhouette/tess fallbacks.
+      - Must return normalized UV loops + hole classification suitable for parity fill.
     """
-    # ... implementation not shown ...
+
+    # --------------------------------------------------------
+    # 0) Resolve element + transforms
+    # --------------------------------------------------------
+    elem, link_to_host_tf = resolve_element_and_link_transform(env)  # Identity if HOST
+    view_tf = get_view_world_to_view_transform(view)                # host world XYZ -> view UVW (crop-local)
+
+    # Helper: map any XYZ point into view UV (host world assumed)
+    def xyz_to_uv(p_host_xyz):
+        uvw = view_tf.OfPoint(p_host_xyz)
+        return (uvw.X, uvw.Y)
+
+    # Helper: apply transforms in correct chain to bring points into host world
+    def to_host_world(p_elem_xyz, inst_tf):
+        # inst_tf: instance-local -> element-local (or vice versa depending on extraction);
+        # contract: output is host-world XYZ
+        p_world = inst_tf.OfPoint(p_elem_xyz)
+        return link_to_host_tf.OfPoint(p_world)
+
+    # --------------------------------------------------------
+    # 1) Category API attempt (preferred; may bypass geom)
+    # --------------------------------------------------------
+    # Returns loops already in host world XYZ OR directly in view-local UV,
+    # depending on your current implementation; normalize below.
+    cat_loops = try_category_api_footprint(elem, view, clip, config)
+    if cat_loops:
+        loops_uv = normalize_loops_to_uv(cat_loops, link_to_host_tf, view_tf, clip, config)
+        loops_uv = sanitize_and_classify_loops(loops_uv, config)
+        if loops_uv:
+            return LoopSet(loops=loops_uv, uv_aabb=compute_uv_aabb(loops_uv))
+
+    # --------------------------------------------------------
+    # 2) Fetch view-contextual geometry ONCE for hybrid fallbacks
+    # --------------------------------------------------------
+    opts = Options()
+    opts.View = view
+    opts.DetailLevel = view.DetailLevel
+    opts.IncludeNonVisibleObjects = False
+    opts.ComputeReferences = False
+
+    geom = elem.get_Geometry(opts)
+    if geom is None:
+        # No geometry to derive from; last resort proxy
+        obb_loops = loops_from_obb_proxy(env, view, clip, config)
+        loops_uv = sanitize_and_classify_loops(obb_loops, config)
+        return LoopSet(loops=loops_uv, uv_aabb=compute_uv_aabb(loops_uv)) if loops_uv else None
+
+    # --------------------------------------------------------
+    # 3) Silhouette edges fallback (uses geom)
+    # --------------------------------------------------------
+    # Output expectation: list of polylines in host world XYZ (each polyline is ordered XYZ pts)
+    sil_loops_xyz = try_extract_silhouette_loops_from_geom(
+        geom=geom,
+        view=view,
+        clip=clip,
+        config=config,
+        link_to_host_tf=link_to_host_tf,
+    )
+
+    if sil_loops_xyz:
+        loops_uv = []
+        for loop_xyz in sil_loops_xyz:
+            loop_uv = [xyz_to_uv(p_host) for p_host in loop_xyz]
+            loops_uv.append(loop_uv)
+        loops_uv = sanitize_and_classify_loops(loops_uv, config)
+        if loops_uv:
+            return LoopSet(loops=loops_uv, uv_aabb=compute_uv_aabb(loops_uv))
+
+    # --------------------------------------------------------
+    # 4) Coarse tessellation / face boundary fallback (uses same geom)
+    # --------------------------------------------------------
+    # Output: list of boundary loops in host world XYZ
+    tess_loops_xyz = try_extract_boundary_loops_from_geom_coarse(
+        geom=geom,
+        view=view,
+        clip=clip,
+        config=config,
+        link_to_host_tf=link_to_host_tf,
+    )
+
+    if tess_loops_xyz:
+        loops_uv = []
+        for loop_xyz in tess_loops_xyz:
+            loop_uv = [xyz_to_uv(p_host) for p_host in loop_xyz]
+            loops_uv.append(loop_uv)
+        loops_uv = sanitize_and_classify_loops(loops_uv, config)
+        if loops_uv:
+            return LoopSet(loops=loops_uv, uv_aabb=compute_uv_aabb(loops_uv))
+
+    # --------------------------------------------------------
+    # 5) Last resort: OBB / Envelope proxy
+    # --------------------------------------------------------
+    obb_loops = loops_from_obb_proxy(env, view, clip, config)  # should return UV loops or host-world XYZ loops
+    loops_uv = sanitize_and_classify_loops(obb_loops, config)
+    if loops_uv:
+        return LoopSet(loops=loops_uv, uv_aabb=compute_uv_aabb(loops_uv))
+
     return None
 
+# ============================================================
+# Supporting pseudo-code (hybrid helpers)
+# ============================================================
 
+def normalize_loops_to_uv(raw_loops, link_to_host_tf, view_tf, clip, config):
+    """
+    Normalize raw loop output from category API to UV loops:
+      - If raw_loops are XYZ: apply link_to_host_tf then view_tf
+      - If already UV: pass through
+      - Apply clipping if needed (optional, depending on how raw_loops were produced)
+    """
+    loops_uv = []
+    for loop in raw_loops:
+        if loop_is_uv(loop):
+            loops_uv.append(loop)
+        else:
+            pts_host = [link_to_host_tf.OfPoint(p) for p in loop]  # safe even if Identity
+            pts_host = clip_polyline_to_clip_volume(pts_host, clip)
+            loops_uv.append([to_uv(view_tf, p) for p in pts_host])
+    return loops_uv
+
+
+def sanitize_and_classify_loops(loops_uv, config):
+    """
+    - Ensure closed loops (snap last to first within tolerance)
+    - Remove degenerate loops (area ~ 0, too few points)
+    - Simplify near-collinear points if allowed
+    - Classify holes vs outers deterministically (containment in UV)
+    Output format: list of {points:[(u,v)...], is_hole:bool}
+    """
+    cleaned = []
+    for loop in loops_uv:
+        loop = close_loop(loop, config)
+        loop = simplify_loop(loop, config)
+        if not is_valid_loop(loop, config):
+            continue
+        cleaned.append(loop)
+
+    if not cleaned:
+        return None
+
+    return classify_outer_and_holes_by_containment(cleaned, config)
+
+
+def try_extract_silhouette_loops_from_geom(geom, view, clip, config, link_to_host_tf):
+    """
+    Silhouette extraction (high-level):
+      - Walk GeometryElement, expanding GeometryInstance
+      - For Solids:
+          * determine candidate edges forming silhouette wrt view direction
+          * tessellate those edges coarsely into XYZ polylines
+      - Transform into host world via link_to_host_tf and instance transforms
+      - Optionally stitch edges into closed polylines
+    """
+    view_dir_host = get_view_direction_in_host_world(view)  # normalized XYZ
+
+    polylines = []  # list[list[XYZ]]
+    for (gobj, inst_tf) in iter_geom_with_instance_transform(geom):
+        if is_solid(gobj) and gobj.Volume > 0:
+            edge_polylines = solid_silhouette_edges_to_polylines(
+                solid=gobj,
+                view_dir=view_dir_host,
+                config=config,
+            )
+            for pl in edge_polylines:
+                pts_host = [link_to_host_tf.OfPoint(inst_tf.OfPoint(p)) for p in pl]
+                pts_host = clip_polyline_to_clip_volume(pts_host, clip)
+                polylines.append(pts_host)
+
+        elif is_mesh(gobj):
+            edge_polylines = mesh_silhouette_edges_to_polylines(
+                mesh=gobj,
+                view_dir=view_dir_host,
+                config=config,
+            )
+            for pl in edge_polylines:
+                pts_host = [link_to_host_tf.OfPoint(inst_tf.OfPoint(p)) for p in pl]
+                pts_host = clip_polyline_to_clip_volume(pts_host, clip)
+                polylines.append(pts_host)
+
+    # Stitch open polylines into closed loops (tolerance-based endpoint welding)
+    loops_xyz = stitch_polylines_into_loops(polylines, config)
+    return loops_xyz if loops_xyz else None
+
+
+def try_extract_boundary_loops_from_geom_coarse(geom, view, clip, config, link_to_host_tf):
+    """
+    Coarse tessellation fallback (high-level):
+      - Walk GeometryElement, expanding GeometryInstance
+      - For each Solid:
+          * pick candidate faces relevant to view (policy-dependent)
+          * take face edge loops (CurveLoops), tessellate coarsely
+      - Transform to host world
+      - Optionally take a 2D hull / merge loops to reduce noise (policy-dependent)
+    """
+    loops_xyz = []
+
+    for (gobj, inst_tf) in iter_geom_with_instance_transform(geom):
+        if is_solid(gobj) and gobj.Volume > 0:
+            for face in gobj.Faces:
+                if not face_relevant_to_view(face, view, config):
+                    continue
+                for curve_loop in face.GetEdgesAsCurveLoops():
+                    pts = tessellate_curve_loop(curve_loop, config)
+                    pts_host = [link_to_host_tf.OfPoint(inst_tf.OfPoint(p)) for p in pts]
+                    pts_host = clip_polyline_to_clip_volume(pts_host, clip)
+                    if len(pts_host) >= 3:
+                        loops_xyz.append(pts_host)
+
+    # Optional: reduce to outer boundary by projecting to UV and taking a hull/union
+    # Keep as placeholder to preserve current behavior (if you already do this).
+    loops_xyz = maybe_reduce_loops_to_outer_boundary(loops_xyz, view, config)
+
+    return loops_xyz if loops_xyz else None
+
+
+def iter_geom_with_instance_transform(geom):
+    """
+    Yield (gobj, inst_tf) pairs where inst_tf maps gobj points into the element's geometry space.
+    For non-instance objects, inst_tf = Identity.
+    """
+    for gobj in geom:
+        if is_geometry_instance(gobj):
+            inst_tf = gobj.Transform
+            inst_geom = gobj.GetInstanceGeometry()
+            for child in inst_geom:
+                yield (child, inst_tf)
+        else:
+            yield (gobj, Transform.Identity)
 # ============================================================
 # Depth construction helpers (per-cell)
 # ============================================================
