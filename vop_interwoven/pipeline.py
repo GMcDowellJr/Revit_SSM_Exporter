@@ -355,6 +355,10 @@ def export_view_raster(view, raster, cfg):
     return {
         "view_id": view.Id.IntegerValue,
         "view_name": view.Name,
+        "width": raster.W,
+        "height": raster.H,
+        "cell_size": raster.cell_size_ft,
+        "tile_size": raster.tile.tile_size,
         "raster": raster.to_dict(),
         "config": cfg.to_dict(),
         "diagnostics": {
