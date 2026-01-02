@@ -816,8 +816,10 @@ Currently `anno_key` and `anno_over_model` are empty. Need to:
 
        Categories:
            - TextNote (TEXT)
+           - User Keynotes (TEXT)
            - Dimension (DIM)
            - IndependentTag, RoomTag (TAG)
+           - Material Element Keynotes (TAG)
            - FilledRegion (REGION)
            - DetailCurve, CurveElement (LINES)
            - FamilyInstance (view-specific) (DETAIL)
@@ -831,6 +833,10 @@ Currently `anno_key` and `anno_over_model` are empty. Need to:
    ```python
    def classify_annotation(elem):
        """Classify annotation element into type.
+
+       Keynote handling:
+           - Material Element Keynote → TAG
+           - User Keynote → TEXT
 
        Returns:
            "TEXT" | "TAG" | "DIM" | "DETAIL" | "LINES" | "REGION" | "OTHER"
