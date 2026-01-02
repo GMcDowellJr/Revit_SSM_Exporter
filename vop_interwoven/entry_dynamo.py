@@ -175,6 +175,65 @@ def run_vop_pipeline(doc, view_ids, cfg=None):
     }
 
 
+def run_vop_pipeline_with_png(doc, view_ids, cfg=None, output_dir=None, pixels_per_cell=4):
+    """Run VOP pipeline and export both JSON and PNG files.
+
+    Args:
+        doc: Revit Document
+        view_ids: List of View ElementIds (or ints)
+        cfg: Config object (optional)
+        output_dir: Directory for output files (default: C:\\temp\\vop_output)
+        pixels_per_cell: Pixels per raster cell for PNG (default: 4)
+
+    Returns:
+        Dictionary with:
+        {
+            'pipeline_result': {...},
+            'json_path': 'path/to/export.json',
+            'png_files': ['path/to/view1.png', ...]
+        }
+
+    Example:
+        >>> from vop_interwoven.entry_dynamo import run_vop_pipeline_with_png
+        >>> result = run_vop_pipeline_with_png(doc, [view.Id], output_dir=r'C:\temp\vop')
+        >>> OUT = f"Exported {len(result['png_files'])} PNGs"
+    """
+    import os
+    import json
+    from .png_export import export_pipeline_results_to_pngs
+
+    # Default output directory
+    if output_dir is None:
+        output_dir = r"C:\temp\vop_output"
+
+    # Run pipeline
+    pipeline_result = run_vop_pipeline(doc, view_ids, cfg)
+
+    # Export JSON
+    json_filename = "vop_export.json"
+    json_path = os.path.join(output_dir, json_filename)
+
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    with open(json_path, 'w') as f:
+        json.dump(pipeline_result, f, indent=2)
+
+    # Export PNGs (with cut vs projection distinction)
+    png_files = export_pipeline_results_to_pngs(
+        pipeline_result,
+        output_dir,
+        pixels_per_cell=pixels_per_cell,
+        cut_vs_projection=True  # Use dark gray for cut, light gray for projection
+    )
+
+    return {
+        'pipeline_result': pipeline_result,
+        'json_path': json_path,
+        'png_files': png_files
+    }
+
+
 def run_vop_pipeline_json(doc, view_ids, cfg=None, output_path=None):
     """Run VOP pipeline and export results to JSON file.
 
