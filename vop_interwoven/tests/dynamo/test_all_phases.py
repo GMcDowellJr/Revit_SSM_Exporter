@@ -8,7 +8,7 @@ This will run tests for all phases and report which are working.
 """
 
 import sys
-sys.path.append(r'C:\path\to\Revit_SSM_Exporter')  # UPDATE THIS PATH
+sys.path.append(r'C:\Users\gmcdowell\Documents\Revit_SSM_Exporter')
 
 from vop_interwoven.entry_dynamo import get_current_document, get_current_view
 from vop_interwoven.config import Config
