@@ -27,7 +27,7 @@ from .revit.collection import (
     sort_front_to_back,
     is_element_visible_in_view,
 )
-from .revit.annotation import rasterize_annotations
+from .revit.annotation import rasterize_annotations, compute_annotation_extents
 
 
 def process_document_views(doc, view_ids, cfg):
@@ -105,6 +105,7 @@ def init_view_raster(doc, view, cfg):
         ✔ Cell size: 1/8" on sheet -> model feet (scale-dependent)
         ✔ Bounds: prefer cropbox (transform all 8 corners)
         ✔ Fallback to synthetic bounds if crop off
+        ✔ Expands bounds to include extent-driver annotations (text, tags, dims)
     """
     # Cell size: 1/8" on sheet -> model feet
     scale = view.Scale  # e.g., 96 for 1/8" = 1'-0"
@@ -113,22 +114,31 @@ def init_view_raster(doc, view, cfg):
     # View basis
     basis = make_view_basis(view)
 
-    # Bounds from cropbox or synthetic
+    # Bounds from cropbox or synthetic (base bounds without annotations)
     try:
         crop_active = view.CropBoxActive
     except:
         crop_active = True
 
     if crop_active:
-        bounds_xy = xy_bounds_from_crop_box_all_corners(
+        base_bounds_xy = xy_bounds_from_crop_box_all_corners(
             view, basis, buffer=cell_size_ft * 2
         )
     else:
         from .revit.view_basis import synthetic_bounds_from_visible_extents
 
-        bounds_xy = synthetic_bounds_from_visible_extents(
+        base_bounds_xy = synthetic_bounds_from_visible_extents(
             doc, view, basis, buffer=cell_size_ft * 4
         )
+
+    # Expand bounds to include extent-driver annotations (text, tags, dimensions)
+    # These annotations can exist outside the crop box and need to be captured
+    anno_bounds = compute_annotation_extents(
+        doc, view, basis, base_bounds_xy, cell_size_ft, cfg
+    )
+
+    # Use expanded bounds if available, otherwise use base bounds
+    bounds_xy = anno_bounds if anno_bounds is not None else base_bounds_xy
 
     width_ft = bounds_xy.width()
     height_ft = bounds_xy.height()

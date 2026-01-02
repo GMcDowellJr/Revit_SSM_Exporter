@@ -24,10 +24,14 @@ class Config:
         depth_eps_ft (float): Depth buffer tolerance in feet (default: 0.01)
         tiny_max (int): Tiny threshold - Tiny if U<=tiny_max AND V<=tiny_max (default: 2)
         thin_max (int): Linear threshold - Linear if min(U,V)<=thin_max AND max(U,V)>thin_max (default: 2)
+        anno_crop_margin_in (float): Printed margin in inches when annotation crop active (default: 6.0)
+        anno_expand_cap_cells (int): Max cells to expand bounds when annotation crop inactive (default: 500)
 
     Commentary:
         ✔ overModelIncludesProxies controls whether tiny/linear proxies count as "model presence"
         ✔ proxyMaskMode="minmask" provides minimal footprint for OverModel semantics
+        ✔ anno_crop_margin_in prevents annotation crop from clipping near-crop annotations
+        ✔ anno_expand_cap_cells prevents far-away annotations from exploding grid size
         ⚠ Setting proxy_mask_mode="edges" means proxies won't contribute to model presence mask
         ⚠ depth_eps_ft should match your model precision (0.01 ft ≈ 1/8 inch tolerance)
 
@@ -50,6 +54,8 @@ class Config:
         depth_eps_ft=0.01,
         tiny_max=2,
         thin_max=2,
+        anno_crop_margin_in=6.0,
+        anno_expand_cap_cells=500,
     ):
         """Initialize VOP configuration.
 
@@ -61,6 +67,8 @@ class Config:
             depth_eps_ft: Depth tolerance for edge visibility (feet)
             tiny_max: Max dimension for TINY classification (cells)
             thin_max: Max thin dimension for LINEAR classification (cells)
+            anno_crop_margin_in: Margin in printed inches when annotation crop active (default: 6.0)
+            anno_expand_cap_cells: Max cells to expand when annotation crop inactive (default: 500)
         """
         self.tile_size = int(tile_size)
         self.adaptive_tile_size = bool(adaptive_tile_size)
@@ -69,6 +77,8 @@ class Config:
         self.depth_eps_ft = float(depth_eps_ft)
         self.tiny_max = int(tiny_max)
         self.thin_max = int(thin_max)
+        self.anno_crop_margin_in = float(anno_crop_margin_in)
+        self.anno_expand_cap_cells = int(anno_expand_cap_cells)
 
         # Validate
         if self.tile_size <= 0:
@@ -79,6 +89,10 @@ class Config:
             raise ValueError("depth_eps_ft must be non-negative")
         if self.tiny_max < 0 or self.thin_max < 0:
             raise ValueError("tiny_max and thin_max must be non-negative")
+        if self.anno_crop_margin_in < 0:
+            raise ValueError("anno_crop_margin_in must be non-negative")
+        if self.anno_expand_cap_cells < 0:
+            raise ValueError("anno_expand_cap_cells must be non-negative")
 
     def compute_adaptive_tile_size(self, grid_width, grid_height):
         """Compute optimal tile size based on grid dimensions.
@@ -136,7 +150,9 @@ class Config:
             f"over_model_includes_proxies={self.over_model_includes_proxies}, "
             f"proxy_mask_mode='{self.proxy_mask_mode}', "
             f"depth_eps_ft={self.depth_eps_ft}, "
-            f"tiny_max={self.tiny_max}, thin_max={self.thin_max})"
+            f"tiny_max={self.tiny_max}, thin_max={self.thin_max}, "
+            f"anno_crop_margin_in={self.anno_crop_margin_in}, "
+            f"anno_expand_cap_cells={self.anno_expand_cap_cells})"
         )
 
     def to_dict(self):
@@ -149,6 +165,8 @@ class Config:
             "depth_eps_ft": self.depth_eps_ft,
             "tiny_max": self.tiny_max,
             "thin_max": self.thin_max,
+            "anno_crop_margin_in": self.anno_crop_margin_in,
+            "anno_expand_cap_cells": self.anno_expand_cap_cells,
         }
 
     @classmethod
@@ -162,4 +180,6 @@ class Config:
             depth_eps_ft=d.get("depth_eps_ft", 0.01),
             tiny_max=d.get("tiny_max", 2),
             thin_max=d.get("thin_max", 2),
+            anno_crop_margin_in=d.get("anno_crop_margin_in", 6.0),
+            anno_expand_cap_cells=d.get("anno_expand_cap_cells", 500),
         )

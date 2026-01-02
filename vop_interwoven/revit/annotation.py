@@ -2,10 +2,217 @@
 Annotation collection and rasterization for VOP interwoven pipeline.
 
 Provides functions to collect 2D annotation elements, classify them by type,
-and rasterize their bounding boxes to the anno_key layer.
+rasterize their bounding boxes to the anno_key layer, and compute annotation
+extents for grid bounds expansion.
 
 Phase 8a: Annotation Collection & Rasterization
 """
+
+
+def is_extent_driver_annotation(elem):
+    """Check if annotation is an extent driver (can exist outside crop).
+
+    Extent drivers are annotations that can exist beyond the view crop:
+        - Text (TextNote, keynotes)
+        - Tags (all tag types)
+        - Dimensions
+
+    Non-drivers are crop-clipped annotations:
+        - FilledRegion (clipped by crop)
+        - DetailCurves (clipped by crop)
+        - DetailComponents (clipped by crop)
+
+    Args:
+        elem: Revit annotation element
+
+    Returns:
+        True if element is an extent driver (should expand grid bounds)
+
+    Commentary:
+        ✔ Matches SSM _is_extent_driver_2d logic
+        ✔ Uses category name matching for robustness
+    """
+    try:
+        cat = elem.Category
+        if cat is None:
+            return False
+
+        name = cat.Name.lower() if cat.Name else ""
+
+        # Text, tags, and dimensions can extend beyond crop
+        if "tag" in name:
+            return True
+        if "dimension" in name:
+            return True
+        if "text" in name:
+            return True
+
+    except:
+        pass
+
+    return False
+
+
+def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_ft, cfg=None):
+    """Compute annotation extents for grid bounds expansion.
+
+    Collects extent-driver annotations (text, tags, dimensions) and computes
+    their combined bounding box, respecting annotation crop and hard caps.
+
+    Args:
+        doc: Revit Document
+        view: Revit View
+        view_basis: ViewBasis (for coordinate transformation)
+        base_bounds_xy: Bounds2D from crop box (model crop)
+        cell_size_ft: Cell size in model units (feet)
+        cfg: Config (optional, for cap configuration)
+
+    Returns:
+        Bounds2D with expanded extents, or None if no driver annotations
+        Returns (min_x, min_y, max_x, max_y) that includes both base and annotations
+
+    Commentary:
+        ✔ Only processes extent drivers (text, tags, dimensions)
+        ✔ Respects annotation crop when active (with configurable margin)
+        ✔ Enforces hard cap on expansion when annotation crop inactive
+        ✔ Matches SSM _compute_2d_annotation_extents logic
+    """
+    from vop_interwoven.core.math_utils import Bounds2D
+
+    # Default configuration values
+    ANNO_CROP_MARGIN_IN = 6.0  # Printed inches margin when annotation crop active
+    HARD_CAP_CELLS = 500  # Maximum cells to expand when no annotation crop
+
+    # Get config values if provided
+    anno_crop_margin_in = ANNO_CROP_MARGIN_IN
+    hard_cap_cells = HARD_CAP_CELLS
+
+    if cfg and hasattr(cfg, 'anno_crop_margin_in'):
+        anno_crop_margin_in = cfg.anno_crop_margin_in
+    if cfg and hasattr(cfg, 'anno_expand_cap_cells'):
+        hard_cap_cells = cfg.anno_expand_cap_cells
+
+    # Detect annotation crop active
+    ann_crop_active = False
+    try:
+        ann_crop_active = bool(getattr(view, 'AnnotationCropActive', False))
+    except:
+        try:
+            from Autodesk.Revit.DB import BuiltInParameter
+            p = view.get_Parameter(BuiltInParameter.VIEWER_ANNOTATION_CROP_ACTIVE)
+            if p is not None:
+                ann_crop_active = bool(p.AsInteger() == 1)
+        except:
+            pass
+
+    # Compute allowed expansion envelope
+    allow_min_x = allow_min_y = allow_max_x = allow_max_y = None
+
+    if ann_crop_active:
+        # When annotation crop is ACTIVE: expand model crop by fixed margin
+        scale = view.Scale if hasattr(view, 'Scale') else 96
+        ann_margin_ft = (anno_crop_margin_in / 12.0) * float(scale)
+
+        allow_min_x = base_bounds_xy.min_x - ann_margin_ft
+        allow_min_y = base_bounds_xy.min_y - ann_margin_ft
+        allow_max_x = base_bounds_xy.max_x + ann_margin_ft
+        allow_max_y = base_bounds_xy.max_y + ann_margin_ft
+    else:
+        # When annotation crop is NOT active: allow expansion up to hard cap
+        cap_ft = float(hard_cap_cells) * float(cell_size_ft)
+
+        allow_min_x = base_bounds_xy.min_x - cap_ft
+        allow_min_y = base_bounds_xy.min_y - cap_ft
+        allow_max_x = base_bounds_xy.max_x + cap_ft
+        allow_max_y = base_bounds_xy.max_y + cap_ft
+
+    # Collect all annotations
+    all_annotations = collect_2d_annotations(doc, view)
+
+    # Filter to extent drivers only
+    driver_annotations = [(elem, atype) for elem, atype in all_annotations
+                          if is_extent_driver_annotation(elem)]
+
+    if not driver_annotations:
+        # No driver annotations - return None (no expansion needed)
+        return None
+
+    # Compute bounding box of all driver annotations
+    anno_min_x = anno_min_y = None
+    anno_max_x = anno_max_y = None
+
+    for elem, anno_type in driver_annotations:
+        try:
+            # Get bounding box in view coordinates
+            bbox = elem.get_BoundingBox(view)
+            if bbox is None:
+                continue
+
+            # For dimensions, also include curve endpoints and text position
+            from Autodesk.Revit.DB import Dimension
+
+            pts_to_check = []
+
+            if isinstance(elem, Dimension):
+                # Include dimension curve endpoints
+                try:
+                    curve = elem.Curve
+                    if curve is not None:
+                        pts_to_check.append(curve.GetEndPoint(0))
+                        pts_to_check.append(curve.GetEndPoint(1))
+                except:
+                    pass
+
+                # Include text position
+                try:
+                    text_pos = elem.TextPosition
+                    if text_pos is not None:
+                        pts_to_check.append(text_pos)
+                except:
+                    pass
+
+            # Add bbox corners
+            pts_to_check.append(bbox.Min)
+            pts_to_check.append(bbox.Max)
+
+            # Find min/max across all points
+            for pt in pts_to_check:
+                if pt is None:
+                    continue
+
+                # Project to view-local coordinates (X, Y)
+                x, y = pt.X, pt.Y
+
+                # Clip to allowed envelope
+                if allow_min_x is not None:
+                    x = max(allow_min_x, min(allow_max_x, x))
+                    y = max(allow_min_y, min(allow_max_y, y))
+
+                # Update annotation extents
+                if anno_min_x is None:
+                    anno_min_x = anno_max_x = x
+                    anno_min_y = anno_max_y = y
+                else:
+                    anno_min_x = min(anno_min_x, x)
+                    anno_min_y = min(anno_min_y, y)
+                    anno_max_x = max(anno_max_x, x)
+                    anno_max_y = max(anno_max_y, y)
+
+        except:
+            # Skip annotations that fail to process
+            continue
+
+    if anno_min_x is None:
+        # No valid annotation extents found
+        return None
+
+    # Combine base bounds with annotation extents
+    final_min_x = min(base_bounds_xy.min_x, anno_min_x)
+    final_min_y = min(base_bounds_xy.min_y, anno_min_y)
+    final_max_x = max(base_bounds_xy.max_x, anno_max_x)
+    final_max_y = max(base_bounds_xy.max_y, anno_max_y)
+
+    return Bounds2D(final_min_x, final_min_y, final_max_x, final_max_y)
 
 
 def collect_2d_annotations(doc, view):
