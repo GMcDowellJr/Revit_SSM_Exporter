@@ -186,22 +186,39 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
         ✔ Simplified Phase 5 implementation using bbox filling
         ✔ Classifies elements as TINY/LINEAR/AREAL
         ✔ Fills raster cells from bounding boxes
+        ✔ Handles linked/imported elements with transforms
         ⚠ Triangle rasterization (Phase 4) deferred
     """
-    from .revit.collection import _project_element_bbox_to_cell_rect
+    from .revit.collection import _project_element_bbox_to_cell_rect, expand_host_link_import_model_elements
 
     # Get view basis for transformations
     vb = make_view_basis(view)
 
-    # Process each element
+    # Expand to include linked/imported elements
+    expanded_elements = expand_host_link_import_model_elements(doc, view, elements, cfg)
+
+    # Process each element (host + linked)
     processed = 0
-    for elem in elements:
+    for elem_wrapper in expanded_elements:
+        elem = elem_wrapper["element"]
+        doc_key = elem_wrapper["doc_key"]
+        world_transform = elem_wrapper["world_transform"]
+
         # Get element metadata
-        elem_id = elem.Id.IntegerValue
-        category = elem.Category.Name if elem.Category else "Unknown"
-        key_index = raster.get_or_create_element_meta_index(elem_id, category, "HOST")
+        try:
+            elem_id = elem.Id.IntegerValue
+        except Exception:
+            continue
+
+        try:
+            category = elem.Category.Name if elem.Category else "Unknown"
+        except Exception:
+            category = "Unknown"
+
+        key_index = raster.get_or_create_element_meta_index(elem_id, category, doc_key)
 
         # Project element bbox to cell rect
+        # Note: bbox is already in host-space for linked elements (via LinkedElementProxy)
         rect = _project_element_bbox_to_cell_rect(elem, vb, raster)
         if rect is None or rect.empty:
             continue

@@ -123,13 +123,14 @@ def is_element_visible_in_view(elem, view):
     return True
 
 
-def expand_host_link_import_model_elements(doc, view, elements):
+def expand_host_link_import_model_elements(doc, view, elements, cfg):
     """Expand element list to include linked/imported model elements.
 
     Args:
         doc: Revit Document
         view: Revit View
         elements: List of host document elements
+        cfg: Config object with linked document settings
 
     Returns:
         List of element wrappers with transform info:
@@ -142,33 +143,45 @@ def expand_host_link_import_model_elements(doc, view, elements):
 
     Commentary:
         ✔ Includes host elements (identity transform)
-        ✔ Optional: expand RevitLinkInstance to access linked elements
-        ⚠ This is a placeholder - full implementation requires Revit API
-
-    Example:
-        >>> # Pseudo-code with Revit API:
-        >>> # for e in elements:
-        >>> #     if isinstance(e, RevitLinkInstance):
-        >>> #         link_doc = e.GetLinkDocument()
-        >>> #         link_transform = e.GetTotalTransform()
-        >>> #         link_elems = get_elements_from_link(link_doc, view)
-        >>> #         for le in link_elems:
-        >>> #             yield wrap_linked_element(le, link_transform, e.Id)
-        >>> #     else:
-        >>> #         yield wrap_host_element(e)
+        ✔ Expands RevitLinkInstance and ImportInstance to access linked elements
+        ✔ Uses linked_documents module for production-ready link handling
     """
-    # TODO: Implement link expansion
-    # Placeholder: return host elements only with identity transform
+    from Autodesk.Revit.DB import Transform
+    from .linked_documents import collect_all_linked_elements
+
     result = []
+
+    # Add host elements with identity transform
+    identity_trf = Transform.Identity
     for e in elements:
         result.append(
             {
                 "element": e,
-                "world_transform": None,  # Identity transform (placeholder)
+                "world_transform": identity_trf,
                 "doc_key": "HOST",
                 "link_inst_id": None,
             }
         )
+
+    # Collect and add linked/imported elements
+    try:
+        linked_proxies = collect_all_linked_elements(doc, view, cfg)
+
+        for proxy in linked_proxies:
+            result.append(
+                {
+                    "element": proxy,  # LinkedElementProxy
+                    "world_transform": proxy.transform,
+                    "doc_key": proxy.doc_key,
+                    "link_inst_id": proxy.LinkInstanceId,
+                }
+            )
+    except Exception as e:
+        # Log warning but don't fail the whole export
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to collect linked elements: {e}", exc_info=True)
+
     return result
 
 
