@@ -222,7 +222,7 @@ def run_pipeline_from_dynamo_input(
     config=None,
     verbose=False,
     export_csv=True,
-    export_json=True,
+    export_json=False,
     export_png=True
 ):
     """Run VOP pipeline with Dynamo-friendly inputs.
@@ -234,7 +234,7 @@ def run_pipeline_from_dynamo_input(
         config: Config object (default: None, uses defaults)
         verbose: If True, include filtering info in result
         export_csv: Export CSV files (default: True)
-        export_json: Export JSON file (default: True)
+        export_json: Export JSON file (default: False - disabled for production due to large file size)
         export_png: Export PNG files (default: True)
 
     Returns:

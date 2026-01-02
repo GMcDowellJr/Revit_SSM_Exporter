@@ -122,13 +122,13 @@ def init_view_raster(doc, view, cfg):
 
     if crop_active:
         base_bounds_xy = xy_bounds_from_crop_box_all_corners(
-            view, basis, buffer=cell_size_ft * 2
+            view, basis, buffer=cfg.bounds_buffer_ft
         )
     else:
         from .revit.view_basis import synthetic_bounds_from_visible_extents
 
         base_bounds_xy = synthetic_bounds_from_visible_extents(
-            doc, view, basis, buffer=cell_size_ft * 4
+            doc, view, basis, buffer=cfg.bounds_buffer_ft
         )
 
     # Expand bounds to include extent-driver annotations (text, tags, dimensions)
@@ -145,6 +145,26 @@ def init_view_raster(doc, view, cfg):
 
     W = max(1, math.ceil(width_ft / cell_size_ft))
     H = max(1, math.ceil(height_ft / cell_size_ft))
+
+    # Apply grid size cap based on max sheet size (Arch E: 384x288 @ 1/8")
+    max_W = cfg.max_grid_cells_width
+    max_H = cfg.max_grid_cells_height
+
+    if W > max_W or H > max_H:
+        # Log warning about capping
+        print(f"WARNING: Grid size {W}x{H} exceeds max {max_W}x{max_H} "
+              f"(based on {cfg.max_sheet_width_in}x{cfg.max_sheet_height_in}\" sheet @ "
+              f"{cfg.cell_size_paper_in}\" cell size). Capping to max.")
+        W = min(W, max_W)
+        H = min(H, max_H)
+
+        # Adjust bounds to match capped grid
+        bounds_xy = bounds_xy.__class__(
+            bounds_xy.xmin,
+            bounds_xy.ymin,
+            bounds_xy.xmin + W * cell_size_ft,
+            bounds_xy.ymin + H * cell_size_ft
+        )
 
     # Compute adaptive tile size based on grid dimensions
     tile_size = cfg.compute_adaptive_tile_size(W, H)

@@ -234,7 +234,7 @@ def run_vop_pipeline_with_png(doc, view_ids, cfg=None, output_dir=None, pixels_p
     }
 
 
-def run_vop_pipeline_with_csv(doc, view_ids, cfg=None, output_dir=None, pixels_per_cell=4, export_json=True, export_png=True):
+def run_vop_pipeline_with_csv(doc, view_ids, cfg=None, output_dir=None, pixels_per_cell=4, export_json=False, export_png=True):
     """Run VOP pipeline and export JSON + PNG + CSV files.
 
     Args:
@@ -243,7 +243,7 @@ def run_vop_pipeline_with_csv(doc, view_ids, cfg=None, output_dir=None, pixels_p
         cfg: Config object (optional)
         output_dir: Directory for output files (default: C:\\temp\\vop_output)
         pixels_per_cell: Pixels per raster cell for PNG (default: 4)
-        export_json: Export JSON file (default: True)
+        export_json: Export JSON file (default: False - disabled for production due to large file size)
         export_png: Export PNG files (default: True)
 
     Returns:

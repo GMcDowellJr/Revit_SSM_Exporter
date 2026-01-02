@@ -251,7 +251,9 @@ def compute_config_hash(config):
     config_str = f"{config.tiny_max}|{config.thin_max}|" \
                  f"{config.adaptive_tile_size}|{config.proxy_mask_mode}|" \
                  f"{config.over_model_includes_proxies}|{config.tile_size}|" \
-                 f"{config.depth_eps_ft}|{config.anno_crop_margin_in}|{config.anno_expand_cap_cells}"
+                 f"{config.depth_eps_ft}|{config.anno_crop_margin_in}|{config.anno_expand_cap_cells}|" \
+                 f"{config.cell_size_paper_in}|{config.max_sheet_width_in}|{config.max_sheet_height_in}|" \
+                 f"{config.bounds_buffer_in}"
 
     # Compute hash
     hash_obj = hashlib.sha256(config_str.encode('utf-8'))
