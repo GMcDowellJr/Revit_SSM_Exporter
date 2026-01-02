@@ -37,7 +37,7 @@ try:
     results.append(f"✅ Raster initialized: {raster.width}x{raster.height} cells")
     results.append(f"   Cell size: {raster.cell_size:.2f} ft")
     results.append(f"   Tile size: {raster.tile.tile_size}x{raster.tile.tile_size}")
-    results.append(f"   Bounds: ({raster.bounds.x_min:.1f}, {raster.bounds.y_min:.1f}) to ({raster.bounds.x_max:.1f}, {raster.bounds.y_max:.1f})")
+    results.append(f"   Bounds: ({raster.bounds.xmin:.1f}, {raster.bounds.ymin:.1f}) to ({raster.bounds.xmax:.1f}, {raster.bounds.ymax:.1f})")
 
     # Test 2: Create view basis
     vb = make_view_basis(view)
