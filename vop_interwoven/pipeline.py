@@ -202,10 +202,37 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
 
 
 def _is_supported_2d_view(view):
-    """Check if view type is supported (2D-ish views only)."""
-    # TODO: Implement view type check
-    # For now, accept all views (placeholder)
-    return True
+    """Check if view type is supported (2D-ish views only).
+
+    Args:
+        view: Revit View
+
+    Returns:
+        True if view is supported (2D orthographic), False otherwise
+
+    Commentary:
+        ✔ Supports: Floor plans, ceiling plans, sections, elevations, area plans
+        ✘ Rejects: 3D views, schedules, sheets, legends
+    """
+    from Autodesk.Revit.DB import ViewType
+
+    # Supported 2D view types
+    supported_types = [
+        ViewType.FloorPlan,
+        ViewType.CeilingPlan,
+        ViewType.Elevation,
+        ViewType.Section,
+        ViewType.AreaPlan,
+        ViewType.EngineeringPlan,
+        ViewType.Detail,
+    ]
+
+    try:
+        view_type = view.ViewType
+        return view_type in supported_types
+    except:
+        # If we can't determine type, reject it
+        return False
 
 
 def _project_element_bbox_to_cell_rect(elem, transform, view, raster):
