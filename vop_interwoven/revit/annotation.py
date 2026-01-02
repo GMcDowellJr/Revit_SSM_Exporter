@@ -113,18 +113,18 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
         scale = view.Scale if hasattr(view, 'Scale') else 96
         ann_margin_ft = (anno_crop_margin_in / 12.0) * float(scale)
 
-        allow_min_x = base_bounds_xy.min_x - ann_margin_ft
-        allow_min_y = base_bounds_xy.min_y - ann_margin_ft
-        allow_max_x = base_bounds_xy.max_x + ann_margin_ft
-        allow_max_y = base_bounds_xy.max_y + ann_margin_ft
+        allow_min_x = base_bounds_xy.xmin - ann_margin_ft
+        allow_min_y = base_bounds_xy.ymin - ann_margin_ft
+        allow_max_x = base_bounds_xy.xmax + ann_margin_ft
+        allow_max_y = base_bounds_xy.ymax + ann_margin_ft
     else:
         # When annotation crop is NOT active: allow expansion up to hard cap
         cap_ft = float(hard_cap_cells) * float(cell_size_ft)
 
-        allow_min_x = base_bounds_xy.min_x - cap_ft
-        allow_min_y = base_bounds_xy.min_y - cap_ft
-        allow_max_x = base_bounds_xy.max_x + cap_ft
-        allow_max_y = base_bounds_xy.max_y + cap_ft
+        allow_min_x = base_bounds_xy.xmin - cap_ft
+        allow_min_y = base_bounds_xy.ymin - cap_ft
+        allow_max_x = base_bounds_xy.xmax + cap_ft
+        allow_max_y = base_bounds_xy.ymax + cap_ft
 
     # Collect all annotations
     all_annotations = collect_2d_annotations(doc, view)
@@ -207,10 +207,10 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
         return None
 
     # Combine base bounds with annotation extents
-    final_min_x = min(base_bounds_xy.min_x, anno_min_x)
-    final_min_y = min(base_bounds_xy.min_y, anno_min_y)
-    final_max_x = max(base_bounds_xy.max_x, anno_max_x)
-    final_max_y = max(base_bounds_xy.max_y, anno_max_y)
+    final_min_x = min(base_bounds_xy.xmin, anno_min_x)
+    final_min_y = min(base_bounds_xy.ymin, anno_min_y)
+    final_max_x = max(base_bounds_xy.xmax, anno_max_x)
+    final_max_y = max(base_bounds_xy.ymax, anno_max_y)
 
     return Bounds2D(final_min_x, final_min_y, final_max_x, final_max_y)
 
@@ -638,10 +638,10 @@ def _project_element_bbox_to_cell_rect_for_anno(elem_or_bbox, view_basis, raster
         max_y_view = max_pt.Y
 
         # Convert to cell coordinates relative to view bounds
-        x0_cell = int((min_x_view - bounds.min_x) / cell_size)
-        y0_cell = int((min_y_view - bounds.min_y) / cell_size)
-        x1_cell = int((max_x_view - bounds.min_x) / cell_size) + 1
-        y1_cell = int((max_y_view - bounds.min_y) / cell_size) + 1
+        x0_cell = int((min_x_view - bounds.xmin) / cell_size)
+        y0_cell = int((min_y_view - bounds.ymin) / cell_size)
+        x1_cell = int((max_x_view - bounds.xmin) / cell_size) + 1
+        y1_cell = int((max_y_view - bounds.ymin) / cell_size) + 1
 
         # Create result object
         class CellRect:
