@@ -90,10 +90,8 @@ def process_document_views(doc, view_ids, cfg):
 
         except Exception as e:
             # Log error but continue processing other views
-            import logging
-            logger = logging.getLogger(__name__)
             view_name = getattr(view, 'Name', 'Unknown') if 'view' in locals() else 'Unknown'
-            logger.error("Failed to process view {0}: {1}".format(view_name, e), exc_info=True)
+            print("[ERROR] vop.pipeline: Failed to process view {0}: {1}".format(view_name, e))
             continue
 
     return results
@@ -222,9 +220,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
             # Log the error but continue processing other elements
             skipped += 1
             if skipped <= 5:  # Log first 5 errors to avoid spam
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.warning("Skipping element from {0}: {1}".format(doc_key, e))
+                print("[WARN] vop.pipeline: Skipping element from {0}: {1}".format(doc_key, e))
             continue
 
         key_index = raster.get_or_create_element_meta_index(elem_id, category, doc_key)
@@ -252,9 +248,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
 
     # Log summary
     if skipped > 0:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.warning("Processed {0} elements, skipped {1} due to errors".format(processed, skipped))
+        print("[WARN] vop.pipeline: Processed {0} elements, skipped {1} due to errors".format(processed, skipped))
 
     return processed
 

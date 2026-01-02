@@ -178,9 +178,7 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg):
             )
     except Exception as e:
         # Log warning but don't fail the whole export
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.warning("Failed to collect linked elements: {0}".format(e), exc_info=True)
+        print("[WARN] vop.collection: Failed to collect linked elements: {0}".format(e))
 
     return result
 
