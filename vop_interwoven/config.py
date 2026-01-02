@@ -24,8 +24,8 @@ class Config:
         depth_eps_ft (float): Depth buffer tolerance in feet (default: 0.01)
         tiny_max (int): Tiny threshold - Tiny if U<=tiny_max AND V<=tiny_max (default: 2)
         thin_max (int): Linear threshold - Linear if min(U,V)<=thin_max AND max(U,V)>thin_max (default: 2)
-        anno_crop_margin_in (float): Printed margin in inches when annotation crop active (default: 6.0)
-        anno_expand_cap_cells (int): Max cells to expand bounds when annotation crop inactive (default: 500)
+        anno_crop_margin_in (float): Printed margin in inches when annotation crop active (default: tied to bounds_buffer_in)
+        anno_expand_cap_cells (int): Max cells to expand bounds when annotation crop inactive (default: tied to bounds_buffer_in ÷ cell_size_paper_in)
         cell_size_paper_in (float): Cell size on printed sheet in inches (default: 0.125 = 1/8")
         max_sheet_width_in (float): Maximum sheet width in inches (default: 48.0 = Arch E)
         max_sheet_height_in (float): Maximum sheet height in inches (default: 36.0 = Arch E)
@@ -60,8 +60,8 @@ class Config:
         depth_eps_ft=0.01,
         tiny_max=2,
         thin_max=2,
-        anno_crop_margin_in=6.0,
-        anno_expand_cap_cells=500,
+        anno_crop_margin_in=None,
+        anno_expand_cap_cells=None,
         cell_size_paper_in=0.125,
         max_sheet_width_in=48.0,
         max_sheet_height_in=36.0,
@@ -77,8 +77,8 @@ class Config:
             depth_eps_ft: Depth tolerance for edge visibility (feet)
             tiny_max: Max dimension for TINY classification (cells)
             thin_max: Max thin dimension for LINEAR classification (cells)
-            anno_crop_margin_in: Margin in printed inches when annotation crop active (default: 6.0)
-            anno_expand_cap_cells: Max cells to expand when annotation crop inactive (default: 500)
+            anno_crop_margin_in: Margin in printed inches when annotation crop active (default: None = bounds_buffer_in)
+            anno_expand_cap_cells: Max cells to expand when annotation crop inactive (default: None = auto-calculate from buffer)
             cell_size_paper_in: Cell size on printed sheet in inches (default: 0.125 = 1/8")
             max_sheet_width_in: Maximum sheet width in inches (default: 48.0 = Arch E)
             max_sheet_height_in: Maximum sheet height in inches (default: 36.0 = Arch E)
@@ -91,12 +91,23 @@ class Config:
         self.depth_eps_ft = float(depth_eps_ft)
         self.tiny_max = int(tiny_max)
         self.thin_max = int(thin_max)
-        self.anno_crop_margin_in = float(anno_crop_margin_in)
-        self.anno_expand_cap_cells = int(anno_expand_cap_cells)
         self.cell_size_paper_in = float(cell_size_paper_in)
         self.max_sheet_width_in = float(max_sheet_width_in)
         self.max_sheet_height_in = float(max_sheet_height_in)
         self.bounds_buffer_in = float(bounds_buffer_in)
+
+        # Tie anno_crop_margin_in to bounds_buffer_in if not specified
+        if anno_crop_margin_in is None:
+            self.anno_crop_margin_in = self.bounds_buffer_in
+        else:
+            self.anno_crop_margin_in = float(anno_crop_margin_in)
+
+        # Calculate anno_expand_cap_cells from bounds_buffer if not specified
+        # Use bounds_buffer_in / cell_size_paper_in to get cells equivalent
+        if anno_expand_cap_cells is None:
+            self.anno_expand_cap_cells = int(self.bounds_buffer_in / self.cell_size_paper_in)
+        else:
+            self.anno_expand_cap_cells = int(anno_expand_cap_cells)
 
         # Validate
         if self.tile_size <= 0:
@@ -238,8 +249,8 @@ class Config:
             depth_eps_ft=d.get("depth_eps_ft", 0.01),
             tiny_max=d.get("tiny_max", 2),
             thin_max=d.get("thin_max", 2),
-            anno_crop_margin_in=d.get("anno_crop_margin_in", 6.0),
-            anno_expand_cap_cells=d.get("anno_expand_cap_cells", 500),
+            anno_crop_margin_in=d.get("anno_crop_margin_in"),  # None = tied to bounds_buffer_in
+            anno_expand_cap_cells=d.get("anno_expand_cap_cells"),  # None = auto-calculate
             cell_size_paper_in=d.get("cell_size_paper_in", 0.125),
             max_sheet_width_in=d.get("max_sheet_width_in", 48.0),
             max_sheet_height_in=d.get("max_sheet_height_in", 36.0),

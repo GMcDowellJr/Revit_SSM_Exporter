@@ -236,23 +236,100 @@ def xy_bounds_from_crop_box_all_corners(view, basis, buffer=0.0):
 def synthetic_bounds_from_visible_extents(doc, view, basis, buffer=0.0):
     """Compute synthetic bounds from visible element extents (for crop-off views).
 
+    Approximates clicking "Crop View" in Revit by calculating bounds from:
+    - 3D model geometry (for plan/section/elevation views)
+    - 2D annotation elements (for drafting views)
+
     Args:
         doc: Revit Document
         view: Revit View
         basis: ViewBasis
-        buffer: Additional margin
+        buffer: Additional margin in feet
 
     Returns:
         Bounds2D in view-local XY coordinates
 
     Commentary:
-        ⚠ This is a placeholder. Full implementation requires:
-           - Element collection in view
-           - Bounding box aggregation
-           - Outlier filtering (clustering by percentile)
-        ✔ Only needed when CropBoxActive is False
+        ✔ Collects visible elements and computes aggregate bounds
+        ✔ Handles drafting views (use 2D elements only)
+        ✔ Handles plan/section/elevation (use 3D model geometry)
+        ✔ Falls back to default bounds if no elements found
     """
-    # TODO: Implement visible extent calculation
     from ..core.math_utils import Bounds2D
+    from Autodesk.Revit.DB import FilteredElementCollector, View3D, ViewDrafting, ViewSchedule, ViewSheet
 
-    return Bounds2D(-100.0 - buffer, -100.0 - buffer, 100.0 + buffer, 100.0 + buffer)
+    # Check if this is a drafting view (no 3D model geometry)
+    is_drafting = isinstance(view, ViewDrafting)
+
+    # Initialize bounds tracking
+    min_x = float('inf')
+    min_y = float('inf')
+    max_x = float('-inf')
+    max_y = float('-inf')
+    found_elements = 0
+
+    try:
+        if is_drafting:
+            # Drafting views: collect 2D annotation elements only
+            collector = FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType()
+
+            for elem in collector:
+                # Get bounding box in view coordinates
+                try:
+                    bbox = elem.get_BoundingBox(view)
+                    if bbox is None:
+                        continue
+
+                    # Transform to view-local XY
+                    min_pt = basis.world_to_view_local(bbox.Min)
+                    max_pt = basis.world_to_view_local(bbox.Max)
+
+                    min_x = min(min_x, min_pt[0], max_pt[0])
+                    min_y = min(min_y, min_pt[1], max_pt[1])
+                    max_x = max(max_x, min_pt[0], max_pt[0])
+                    max_y = max(max_y, min_pt[1], max_pt[1])
+
+                    found_elements += 1
+                except:
+                    continue
+        else:
+            # Plan/section/elevation: collect 3D model geometry
+            collector = FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType()
+
+            for elem in collector:
+                # Get bounding box in view coordinates
+                try:
+                    bbox = elem.get_BoundingBox(view)
+                    if bbox is None:
+                        continue
+
+                    # Skip view-specific annotations (not model geometry)
+                    try:
+                        if bool(getattr(elem, 'ViewSpecific', False)):
+                            continue
+                    except:
+                        pass
+
+                    # Transform to view-local XY
+                    min_pt = basis.world_to_view_local(bbox.Min)
+                    max_pt = basis.world_to_view_local(bbox.Max)
+
+                    min_x = min(min_x, min_pt[0], max_pt[0])
+                    min_y = min(min_y, min_pt[1], max_pt[1])
+                    max_x = max(max_x, min_pt[0], max_pt[0])
+                    max_y = max(max_y, min_pt[1], max_pt[1])
+
+                    found_elements += 1
+                except:
+                    continue
+
+    except Exception as e:
+        print(f"WARNING: synthetic_bounds_from_visible_extents failed: {e}")
+
+    # If no elements found, use default bounds
+    if found_elements == 0 or min_x == float('inf'):
+        print(f"WARNING: No elements found for synthetic bounds in view '{view.Name}'. Using default 200x200ft bounds.")
+        return Bounds2D(-100.0 - buffer, -100.0 - buffer, 100.0 + buffer, 100.0 + buffer)
+
+    # Add buffer and return
+    return Bounds2D(min_x - buffer, min_y - buffer, max_x + buffer, max_y + buffer)

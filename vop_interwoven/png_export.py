@@ -8,7 +8,16 @@ import os
 
 
 def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_projection=False):
-    """Export VOP raster to PNG image.
+    """Export VOP raster to PNG image with color-coded occupancy.
+
+    Color Legend:
+        - White: Empty (no model, no annotation)
+        - Gray: Model geometry only
+          - Light gray (192): Projection (if cut_vs_projection=True)
+          - Dark gray (64): Cut (if cut_vs_projection=True)
+          - Medium gray (128): Model (if cut_vs_projection=False)
+        - Blue (cornflower): Annotation only (no model underneath)
+        - Orange: Annotation over model (overlap)
 
     Args:
         view_result: View result dictionary from pipeline
@@ -42,8 +51,9 @@ def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_pro
         raster_dict = view_result['raster']
         model_mask = raster_dict['model_mask']
 
-        # Get anno_over_model if available (for cut vs projection)
+        # Get anno_over_model and anno_key for annotation visualization
         anno_over_model = raster_dict.get('anno_over_model', [])
+        anno_key = raster_dict.get('anno_key', [])
 
         # Calculate bitmap size
         width_px = width * pixels_per_cell
@@ -54,6 +64,8 @@ def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_pro
         col_projection = Color.FromArgb(192, 192, 192)  # Light gray (RGB: 192, 192, 192)
         col_cut = Color.FromArgb(64, 64, 64)            # Dark gray (RGB: 64, 64, 64)
         col_model = Color.FromArgb(128, 128, 128)       # Medium gray (default if not distinguishing)
+        col_anno_only = Color.FromArgb(100, 149, 237)   # Cornflower blue (annotations only)
+        col_anno_over_model = Color.FromArgb(255, 165, 0)  # Orange (annotation over model)
 
         # Create bitmap
         bmp = Bitmap(width_px, height_px)
@@ -71,18 +83,26 @@ def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_pro
                 if idx >= len(model_mask):
                     continue
 
-                if not model_mask[idx]:
-                    continue  # Empty cell
+                # Check if cell has model or annotation
+                has_model = model_mask[idx] if idx < len(model_mask) else False
+                has_anno = (anno_key[idx] >= 0) if idx < len(anno_key) else False
 
-                # Determine color based on cut vs projection
-                if cut_vs_projection and idx < len(anno_over_model):
-                    # anno_over_model indicates cut (True) vs projection (False)
-                    # In VOP: anno_over_model means annotation over model (2D over 3D)
-                    # We'll use this as a proxy for cut vs projection:
-                    # - If anno_over_model: treat as cut (dark gray)
-                    # - If not: treat as projection (light gray)
+                # Skip completely empty cells
+                if not has_model and not has_anno:
+                    continue
+
+                # Determine color based on what's present
+                if has_anno and has_model:
+                    # Annotation over model = orange
+                    col = col_anno_over_model
+                elif has_anno:
+                    # Annotation only = blue
+                    col = col_anno_only
+                elif cut_vs_projection and idx < len(anno_over_model):
+                    # Model only: distinguish cut vs projection
                     col = col_cut if anno_over_model[idx] else col_projection
                 else:
+                    # Model only: default gray
                     col = col_model
 
                 # Map cell (i, j) to pixel block
