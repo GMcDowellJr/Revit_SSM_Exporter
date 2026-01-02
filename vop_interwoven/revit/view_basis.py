@@ -130,26 +130,45 @@ def make_view_basis(view):
         ViewBasis with origin and basis vectors
 
     Commentary:
-        ⚠ This is a placeholder implementation. Full implementation requires:
-           - Access to view.Origin, view.RightDirection, view.UpDirection, view.ViewDirection
-           - Handling of different view types (plans, sections, elevations, 3D)
-           - Fallback for views without explicit basis (e.g., drafting views)
-        ✔ For now, returns identity basis for testing
+        ✔ Extracts view coordinate system from Revit View
+        ✔ Handles plan views, sections, elevations, and 3D views
+        ✔ Forward vector computed as Right × Up (into screen)
+        ⚠ For drafting views or views without orientation, falls back to identity
 
-    Example (with actual Revit API):
+    Example:
         >>> # view = some Revit FloorPlan view
-        >>> # basis = make_view_basis(view)
-        >>> # basis.is_plan_like()
-        >>> # True
+        >>> basis = make_view_basis(view)
+        >>> basis.is_plan_like()
+        >>> # True for plan views (forward points down)
     """
-    # TODO: Implement actual Revit API access
-    # For now, return identity basis as placeholder
-    return ViewBasis(
-        origin=(0.0, 0.0, 0.0),
-        right=(1.0, 0.0, 0.0),
-        up=(0.0, 1.0, 0.0),
-        forward=(0.0, 0.0, -1.0),
-    )
+    from Autodesk.Revit.DB import View
+
+    try:
+        # Get view origin and direction vectors
+        origin = view.Origin
+        right = view.RightDirection
+        up = view.UpDirection
+
+        # Compute forward vector (into screen) as right × up
+        # Note: Revit's ViewDirection points opposite to our forward
+        forward = right.CrossProduct(up).Normalize()
+
+        return ViewBasis(
+            origin=(origin.X, origin.Y, origin.Z),
+            right=(right.X, right.Y, right.Z),
+            up=(up.X, up.Y, up.Z),
+            forward=(forward.X, forward.Y, forward.Z),
+        )
+
+    except AttributeError:
+        # Fallback for views without explicit basis (e.g., drafting views)
+        # Return identity basis (plan-like view looking down Z)
+        return ViewBasis(
+            origin=(0.0, 0.0, 0.0),
+            right=(1.0, 0.0, 0.0),
+            up=(0.0, 1.0, 0.0),
+            forward=(0.0, 0.0, -1.0),
+        )
 
 
 def xy_bounds_from_crop_box_all_corners(view, basis, buffer=0.0):
@@ -164,17 +183,54 @@ def xy_bounds_from_crop_box_all_corners(view, basis, buffer=0.0):
         Bounds2D in view-local XY coordinates
 
     Commentary:
-        ⚠ This is a placeholder. Full implementation requires:
-           - Access to view.CropBox (BoundingBoxXYZ)
-           - Transformation of all 8 corners using view transform
-           - Computation of axis-aligned bounds in view UV space
-        ✔ Prefer this method over CropBox.Min/Max for rotated views
+        ✔ Extracts view crop box (BoundingBoxXYZ)
+        ✔ Transforms all 8 corners to view UV space
+        ✔ Computes axis-aligned bounds (handles rotated views correctly)
+        ✔ Adds buffer margin for safety
+        ⚠ Falls back to synthetic bounds if crop box unavailable
     """
-    # TODO: Implement actual crop box extraction
     from ..core.math_utils import Bounds2D
 
-    # Placeholder: return 100x100 bounds
-    return Bounds2D(-50.0 - buffer, -50.0 - buffer, 50.0 + buffer, 50.0 + buffer)
+    try:
+        # Get crop box in world coordinates
+        crop_box = view.CropBox
+
+        if crop_box is None:
+            # No crop box - use synthetic bounds
+            return Bounds2D(-100.0 - buffer, -100.0 - buffer, 100.0 + buffer, 100.0 + buffer)
+
+        # Extract 8 corners of bounding box in world coordinates
+        min_pt = crop_box.Min
+        max_pt = crop_box.Max
+
+        corners_world = [
+            (min_pt.X, min_pt.Y, min_pt.Z),
+            (max_pt.X, min_pt.Y, min_pt.Z),
+            (min_pt.X, max_pt.Y, min_pt.Z),
+            (max_pt.X, max_pt.Y, min_pt.Z),
+            (min_pt.X, min_pt.Y, max_pt.Z),
+            (max_pt.X, min_pt.Y, max_pt.Z),
+            (min_pt.X, max_pt.Y, max_pt.Z),
+            (max_pt.X, max_pt.Y, max_pt.Z),
+        ]
+
+        # Transform all corners to view UV coordinates
+        corners_uv = [basis.transform_to_view_uv(pt) for pt in corners_world]
+
+        # Find axis-aligned bounds in view space
+        u_coords = [uv[0] for uv in corners_uv]
+        v_coords = [uv[1] for uv in corners_uv]
+
+        u_min = min(u_coords) - buffer
+        u_max = max(u_coords) + buffer
+        v_min = min(v_coords) - buffer
+        v_max = max(v_coords) + buffer
+
+        return Bounds2D(u_min, v_min, u_max, v_max)
+
+    except AttributeError:
+        # Fallback for views without crop box
+        return Bounds2D(-100.0 - buffer, -100.0 - buffer, 100.0 + buffer, 100.0 + buffer)
 
 
 def synthetic_bounds_from_visible_extents(doc, view, basis, buffer=0.0):
