@@ -240,10 +240,10 @@ def _project_element_bbox_to_cell_rect(elem, vb, raster):
 
     # Convert to cell indices
     # Cell i = floor((u - u_min) / cell_size)
-    i_min = int((u_min - raster.bounds.x_min) / raster.cell_size)
-    i_max = int((u_max - raster.bounds.x_min) / raster.cell_size)
-    j_min = int((v_min - raster.bounds.y_min) / raster.cell_size)
-    j_max = int((v_max - raster.bounds.y_min) / raster.cell_size)
+    i_min = int((u_min - raster.bounds.xmin) / raster.cell_size)
+    i_max = int((u_max - raster.bounds.xmin) / raster.cell_size)
+    j_min = int((v_min - raster.bounds.ymin) / raster.cell_size)
+    j_max = int((v_max - raster.bounds.ymin) / raster.cell_size)
 
     # Clamp to raster bounds
     i_min = max(0, min(i_min, raster.W - 1))
