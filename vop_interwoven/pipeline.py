@@ -34,7 +34,7 @@ def process_document_views(doc, view_ids, cfg):
 
     Args:
         doc: Revit Document
-        view_ids: List of Revit View ElementIds to process
+        view_ids: List of Revit View ElementIds (or ints) to process
         cfg: Config object
 
     Returns:
@@ -55,7 +55,14 @@ def process_document_views(doc, view_ids, cfg):
     results = []
 
     for view_id in view_ids:
-        view = doc.GetElement(view_id)
+        # Convert int to ElementId if needed (Revit API requires ElementId object)
+        from Autodesk.Revit.DB import ElementId
+        if isinstance(view_id, int):
+            elem_id = ElementId(view_id)
+        else:
+            elem_id = view_id
+
+        view = doc.GetElement(elem_id)
 
         # 0) Validate supported view types (2D-ish)
         if not _is_supported_2d_view(view):

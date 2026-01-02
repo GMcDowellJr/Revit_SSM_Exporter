@@ -125,7 +125,7 @@ def run_vop_pipeline(doc, view_ids, cfg=None):
 
     Args:
         doc: Revit Document (from __revit__.ActiveUIDocument.Document)
-        view_ids: List of Revit View ElementIds, or single ElementId
+        view_ids: List of Revit View ElementIds (or ints), or single ElementId/int
         cfg: Config object (optional, uses defaults if None)
 
     Returns:
@@ -180,7 +180,7 @@ def run_vop_pipeline_json(doc, view_ids, cfg=None, output_path=None):
 
     Args:
         doc: Revit Document
-        view_ids: List of View ElementIds
+        view_ids: List of View ElementIds (or ints)
         cfg: Config object (optional)
         output_path: Path to output JSON file (optional)
 
