@@ -198,6 +198,26 @@ class ViewRaster:
         self.anno_meta_index_by_key = {}
         self.anno_meta = []
 
+    @property
+    def width(self):
+        """Raster width in cells (alias for W)."""
+        return self.W
+
+    @property
+    def height(self):
+        """Raster height in cells (alias for H)."""
+        return self.H
+
+    @property
+    def cell_size(self):
+        """Cell size in model units (alias for cell_size_ft)."""
+        return self.cell_size_ft
+
+    @property
+    def bounds(self):
+        """Bounds in view-local XY (alias for bounds_xy)."""
+        return self.bounds_xy
+
     def get_cell_index(self, i, j):
         """Get linear index for cell (i, j).
 

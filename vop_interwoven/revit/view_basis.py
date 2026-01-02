@@ -102,6 +102,24 @@ class ViewBasis:
         return f"ViewBasis(origin={self.origin}, right={self.right}, up={self.up}, forward={self.forward})"
 
 
+def world_to_view(pt, vb):
+    """Transform world point to view coordinates (standalone helper).
+
+    Args:
+        pt: (x, y, z) point in world coordinates
+        vb: ViewBasis object
+
+    Returns:
+        (u, v, w) in view-local coordinates (w is depth)
+
+    Example:
+        >>> vb = ViewBasis((0,0,0), (1,0,0), (0,1,0), (0,0,-1))
+        >>> world_to_view((5, 10, 3), vb)
+        (5.0, 10.0, -3.0)
+    """
+    return vb.transform_to_view_uvw(pt)
+
+
 def make_view_basis(view):
     """Extract view basis from Revit View.
 

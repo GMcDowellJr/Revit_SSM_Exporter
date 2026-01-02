@@ -158,3 +158,44 @@ def estimate_nearest_depth_from_bbox(elem, transform, view, raster):
     """
     # TODO: Implement depth estimation
     return 0.0
+
+
+def _project_element_bbox_to_cell_rect(elem, vb, raster):
+    """Project element bounding box to cell rectangle (helper for classification).
+
+    Args:
+        elem: Revit Element
+        vb: ViewBasis for coordinate transformation
+        raster: ViewRaster with bounds and cell size
+
+    Returns:
+        CellRect in grid coordinates, or None if no bbox
+
+    Commentary:
+        ✔ Gets world-space bounding box
+        ✔ Transforms to view coordinates
+        ✔ Projects to cell indices
+        ⚠ This is a placeholder - full implementation requires:
+           - Access to elem.get_BoundingBox(None)
+           - Transformation of bbox corners to view space
+           - Conversion to cell coordinates
+
+    Example (with actual Revit API):
+        >>> # bbox = elem.get_BoundingBox(None)  # World coordinates
+        >>> # if bbox is None:
+        >>> #     return None
+        >>> # min_pt = world_to_view((bbox.Min.X, bbox.Min.Y, bbox.Min.Z), vb)
+        >>> # max_pt = world_to_view((bbox.Max.X, bbox.Max.Y, bbox.Max.Z), vb)
+        >>> # u_min = int((min_pt[0] - raster.bounds.x_min) / raster.cell_size)
+        >>> # v_min = int((min_pt[1] - raster.bounds.y_min) / raster.cell_size)
+        >>> # u_max = int((max_pt[0] - raster.bounds.x_min) / raster.cell_size)
+        >>> # v_max = int((max_pt[1] - raster.bounds.y_min) / raster.cell_size)
+        >>> # return CellRect(u_min, v_min, u_max, v_max)
+    """
+    from ..core.math_utils import CellRect
+    from .view_basis import world_to_view
+
+    # TODO: Implement actual bbox projection
+    # Placeholder: return None (no bbox)
+    # This will be implemented in Phase 2
+    return None
