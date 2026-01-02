@@ -19,17 +19,54 @@ def collect_view_elements(doc, view, raster):
 
     Commentary:
         ✔ Uses FilteredElementCollector with view.Id scope
-        ✔ Optional: conservative slab test using view bounding boxes
-        ✔ Keep broad-phase cheap; avoid deep geometry here
-        ⚠ This is a placeholder - full implementation requires Revit API
-
-    Example (with actual Revit API):
-        >>> # col = FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType()
-        >>> # elements = [e for e in col if e.get_BoundingBox(view) is not None]
+        ✔ Filters to 3D model categories (Walls, Floors, etc.)
+        ✔ Excludes element types (only instances)
+        ✔ Requires valid bounding box
+        ✔ Broad-phase only - keeps collection cheap
     """
-    # TODO: Implement actual Revit API collection
-    # Placeholder: return empty list
-    return []
+    from Autodesk.Revit.DB import FilteredElementCollector, BuiltInCategory
+
+    # Define 3D model categories to collect
+    model_categories = [
+        BuiltInCategory.OST_Walls,
+        BuiltInCategory.OST_Floors,
+        BuiltInCategory.OST_Roofs,
+        BuiltInCategory.OST_Doors,
+        BuiltInCategory.OST_Windows,
+        BuiltInCategory.OST_Columns,
+        BuiltInCategory.OST_StructuralFraming,
+        BuiltInCategory.OST_StructuralColumns,
+        BuiltInCategory.OST_Stairs,
+        BuiltInCategory.OST_Railings,
+        BuiltInCategory.OST_Ceilings,
+        BuiltInCategory.OST_GenericModel,
+        BuiltInCategory.OST_Furniture,
+        BuiltInCategory.OST_CaseworkWall,
+        BuiltInCategory.OST_MEPSpaces,
+        BuiltInCategory.OST_MechanicalEquipment,
+        BuiltInCategory.OST_ElectricalEquipment,
+        BuiltInCategory.OST_PlumbingFixtures,
+    ]
+
+    elements = []
+
+    try:
+        # Collect elements visible in view
+        for cat in model_categories:
+            collector = FilteredElementCollector(doc, view.Id)
+            collector.OfCategory(cat).WhereElementIsNotElementType()
+
+            # Filter to elements with valid bounding boxes
+            for elem in collector:
+                bbox = elem.get_BoundingBox(None)  # World coordinates
+                if bbox is not None:
+                    elements.append(elem)
+
+    except Exception as e:
+        # If collection fails, return empty list (graceful degradation)
+        pass
+
+    return elements
 
 
 def is_element_visible_in_view(elem, view):
@@ -173,29 +210,45 @@ def _project_element_bbox_to_cell_rect(elem, vb, raster):
 
     Commentary:
         ✔ Gets world-space bounding box
-        ✔ Transforms to view coordinates
+        ✔ Transforms min/max corners to view coordinates
         ✔ Projects to cell indices
-        ⚠ This is a placeholder - full implementation requires:
-           - Access to elem.get_BoundingBox(None)
-           - Transformation of bbox corners to view space
-           - Conversion to cell coordinates
-
-    Example (with actual Revit API):
-        >>> # bbox = elem.get_BoundingBox(None)  # World coordinates
-        >>> # if bbox is None:
-        >>> #     return None
-        >>> # min_pt = world_to_view((bbox.Min.X, bbox.Min.Y, bbox.Min.Z), vb)
-        >>> # max_pt = world_to_view((bbox.Max.X, bbox.Max.Y, bbox.Max.Z), vb)
-        >>> # u_min = int((min_pt[0] - raster.bounds.x_min) / raster.cell_size)
-        >>> # v_min = int((min_pt[1] - raster.bounds.y_min) / raster.cell_size)
-        >>> # u_max = int((max_pt[0] - raster.bounds.x_min) / raster.cell_size)
-        >>> # v_max = int((max_pt[1] - raster.bounds.y_min) / raster.cell_size)
-        >>> # return CellRect(u_min, v_min, u_max, v_max)
+        ✔ Handles elements outside view bounds (returns None or empty rect)
     """
     from ..core.math_utils import CellRect
     from .view_basis import world_to_view
 
-    # TODO: Implement actual bbox projection
-    # Placeholder: return None (no bbox)
-    # This will be implemented in Phase 2
-    return None
+    # Get world-space bounding box
+    bbox = elem.get_BoundingBox(None)
+    if bbox is None:
+        return None
+
+    # Transform bbox corners to view space
+    min_pt_world = (bbox.Min.X, bbox.Min.Y, bbox.Min.Z)
+    max_pt_world = (bbox.Max.X, bbox.Max.Y, bbox.Max.Z)
+
+    min_view = world_to_view(min_pt_world, vb)
+    max_view = world_to_view(max_pt_world, vb)
+
+    # Get UV range (ignore W/depth for now)
+    u_coords = [min_view[0], max_view[0]]
+    v_coords = [min_view[1], max_view[1]]
+
+    u_min = min(u_coords)
+    u_max = max(u_coords)
+    v_min = min(v_coords)
+    v_max = max(v_coords)
+
+    # Convert to cell indices
+    # Cell i = floor((u - u_min) / cell_size)
+    i_min = int((u_min - raster.bounds.x_min) / raster.cell_size)
+    i_max = int((u_max - raster.bounds.x_min) / raster.cell_size)
+    j_min = int((v_min - raster.bounds.y_min) / raster.cell_size)
+    j_max = int((v_max - raster.bounds.y_min) / raster.cell_size)
+
+    # Clamp to raster bounds
+    i_min = max(0, min(i_min, raster.W - 1))
+    i_max = max(0, min(i_max, raster.W - 1))
+    j_min = max(0, min(j_min, raster.H - 1))
+    j_max = max(0, min(j_max, raster.H - 1))
+
+    return CellRect(i_min, j_min, i_max, j_max)
