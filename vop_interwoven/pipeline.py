@@ -20,7 +20,7 @@ from .config import Config
 from .core.raster import ViewRaster, TileMap
 from .core.geometry import Mode, classify_by_uv, make_uv_aabb, make_obb_or_skinny_aabb
 from .core.math_utils import Bounds2D, CellRect
-from .revit.view_basis import make_view_basis, xy_bounds_from_crop_box_all_corners
+from .revit.view_basis import make_view_basis, xy_bounds_effective
 from .revit.collection import (
     collect_view_elements,
     expand_host_link_import_model_elements,
@@ -114,22 +114,12 @@ def init_view_raster(doc, view, cfg):
     # View basis
     basis = make_view_basis(view)
 
-    # Bounds from cropbox or synthetic (base bounds without annotations)
-    try:
-        crop_active = view.CropBoxActive
-    except:
-        crop_active = True
-
-    if crop_active:
-        base_bounds_xy = xy_bounds_from_crop_box_all_corners(
-            view, basis, buffer=cfg.bounds_buffer_ft
-        )
-    else:
-        from .revit.view_basis import synthetic_bounds_from_visible_extents
-
-        base_bounds_xy = synthetic_bounds_from_visible_extents(
-            doc, view, basis, buffer=cfg.bounds_buffer_ft
-        )
+    # Base bounds in VIEW-LOCAL UV:
+    # - crop box if available/active (with CropBox.Transform applied)
+    # - otherwise synthetic bounds from elements in the view (drafting-safe)
+    base_bounds_xy = xy_bounds_effective(
+        doc, view, basis, buffer=cfg.bounds_buffer_ft
+    )
 
     # Expand bounds to include extent-driver annotations (text, tags, dimensions)
     # These annotations can exist outside the crop box and need to be captured

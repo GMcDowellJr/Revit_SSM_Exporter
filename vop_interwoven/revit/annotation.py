@@ -171,19 +171,37 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
                 except:
                     pass
 
-            # Add bbox corners
-            pts_to_check.append(bbox.Min)
-            pts_to_check.append(bbox.Max)
+            # Add bbox corners (respect BoundingBoxXYZ.Transform if present)
+            from Autodesk.Revit.DB import XYZ
 
-            # Find min/max across all points
+            mn = bbox.Min
+            mx = bbox.Max
+
+            corners_local = [
+                XYZ(mn.X, mn.Y, mn.Z),
+                XYZ(mx.X, mn.Y, mn.Z),
+                XYZ(mn.X, mx.Y, mn.Z),
+                XYZ(mx.X, mx.Y, mn.Z),
+                XYZ(mn.X, mn.Y, mx.Z),
+                XYZ(mx.X, mn.Y, mx.Z),
+                XYZ(mn.X, mx.Y, mx.Z),
+                XYZ(mx.X, mx.Y, mx.Z),
+            ]
+
+            TB = getattr(bbox, "Transform", None)
+            if TB is not None:
+                pts_to_check.extend([TB.OfPoint(p) for p in corners_local])
+            else:
+                pts_to_check.extend(corners_local)
+
+            # Find min/max across all points (IN VIEW-LOCAL UV)
             for pt in pts_to_check:
                 if pt is None:
                     continue
 
-                # Project to view-local coordinates (X, Y)
-                x, y = pt.X, pt.Y
+                x, y = view_basis.transform_to_view_uv((pt.X, pt.Y, pt.Z))
 
-                # Clip to allowed envelope
+                # Clip to allowed envelope (also in view-local UV)
                 if allow_min_x is not None:
                     x = max(allow_min_x, min(allow_max_x, x))
                     y = max(allow_min_y, min(allow_max_y, y))

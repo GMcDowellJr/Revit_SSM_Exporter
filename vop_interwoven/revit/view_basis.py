@@ -97,6 +97,16 @@ class ViewBasis:
         w = dx * self.forward[0] + dy * self.forward[1] + dz * self.forward[2]
 
         return (u, v, w)
+    
+    def world_to_view_local(self, p):
+        """Back-compat helper: accept XYZ or tuple, return view-local (u, v, w)."""
+        try:
+            # Autodesk.Revit.DB.XYZ
+            x, y, z = p.X, p.Y, p.Z
+        except Exception:
+            # tuple/list
+            x, y, z = p[0], p[1], p[2]
+        return self.transform_to_view_uvw((x, y, z))
 
     def __repr__(self):
         return f"ViewBasis(origin={self.origin}, right={self.right}, up={self.up}, forward={self.forward})"
@@ -192,62 +202,37 @@ def xy_bounds_from_crop_box_all_corners(view, basis, buffer=0.0):
     try:
         crop_box = view.CropBox
         if crop_box is None:
-            return Bounds2D(-100.0 - buffer, -100.0 - buffer, 100.0 + buffer, 100.0 + buffer)
+            raise AttributeError("View has no CropBox")
 
-        # BoundingBoxXYZ: Min/Max are in the box local space; Transform maps them to model space.
         T = getattr(crop_box, "Transform", None)
 
         min_pt = crop_box.Min
         max_pt = crop_box.Max
 
-        # Build 8 corners in crop-box-local coordinates.
-        try:
-            from Autodesk.Revit.DB import XYZ
-            corners_local = [
-                XYZ(min_pt.X, min_pt.Y, min_pt.Z),
-                XYZ(max_pt.X, min_pt.Y, min_pt.Z),
-                XYZ(min_pt.X, max_pt.Y, min_pt.Z),
-                XYZ(max_pt.X, max_pt.Y, min_pt.Z),
-                XYZ(min_pt.X, min_pt.Y, max_pt.Z),
-                XYZ(max_pt.X, min_pt.Y, max_pt.Z),
-                XYZ(min_pt.X, max_pt.Y, max_pt.Z),
-                XYZ(max_pt.X, max_pt.Y, max_pt.Z),
-            ]
-        except Exception:
-            # Very defensive fallback: treat Min/Max as tuples if XYZ isn't available.
-            corners_local = [
-                (min_pt.X, min_pt.Y, min_pt.Z),
-                (max_pt.X, min_pt.Y, min_pt.Z),
-                (min_pt.X, max_pt.Y, min_pt.Z),
-                (max_pt.X, max_pt.Y, min_pt.Z),
-                (min_pt.X, min_pt.Y, max_pt.Z),
-                (max_pt.X, min_pt.Y, max_pt.Z),
-                (min_pt.X, max_pt.Y, max_pt.Z),
-                (max_pt.X, max_pt.Y, max_pt.Z),
-            ]
+        # In Revit runtime, XYZ should always be available.
+        from Autodesk.Revit.DB import XYZ
 
-        # Transform to model/world coordinates if a transform is present.
-        corners_world = []
+        corners_local = [
+            XYZ(min_pt.X, min_pt.Y, min_pt.Z),
+            XYZ(max_pt.X, min_pt.Y, min_pt.Z),
+            XYZ(min_pt.X, max_pt.Y, min_pt.Z),
+            XYZ(max_pt.X, max_pt.Y, min_pt.Z),
+            XYZ(min_pt.X, min_pt.Y, max_pt.Z),
+            XYZ(max_pt.X, min_pt.Y, max_pt.Z),
+            XYZ(min_pt.X, max_pt.Y, max_pt.Z),
+            XYZ(max_pt.X, max_pt.Y, max_pt.Z),
+        ]
+
         if T is not None:
-            for p in corners_local:
-                try:
-                    pw = T.OfPoint(p)  # XYZ -> XYZ
-                    corners_world.append((pw.X, pw.Y, pw.Z))
-                except Exception:
-                    # If p is tuple or OfPoint fails, fall back to original coords.
-                    if isinstance(p, tuple):
-                        corners_world.append(p)
-                    else:
-                        corners_world.append((p.X, p.Y, p.Z))
+            corners_world_xyz = [T.OfPoint(p) for p in corners_local]
         else:
-            for p in corners_local:
-                if isinstance(p, tuple):
-                    corners_world.append(p)
-                else:
-                    corners_world.append((p.X, p.Y, p.Z))
+            corners_world_xyz = corners_local
 
-        # Project to view UV and compute axis-aligned bounds.
-        corners_uv = [basis.transform_to_view_uv(p) for p in corners_world]
+        # Always project using view-local basis (pass tuples if your basis expects tuples)
+        corners_uv = [
+            basis.transform_to_view_uv((p.X, p.Y, p.Z))
+            for p in corners_world_xyz
+        ]
 
         u_coords = [uv[0] for uv in corners_uv]
         v_coords = [uv[1] for uv in corners_uv]
@@ -262,103 +247,116 @@ def xy_bounds_from_crop_box_all_corners(view, basis, buffer=0.0):
     except AttributeError:
         # Fallback for views without crop box
         return Bounds2D(-100.0 - buffer, -100.0 - buffer, 100.0 + buffer, 100.0 + buffer)
-def synthetic_bounds_from_visible_extents(doc, view, basis, buffer=0.0):
-    """Compute synthetic bounds from visible element extents (for crop-off views).
 
-    Approximates clicking "Crop View" in Revit by calculating bounds from:
-    - 3D model geometry (for plan/section/elevation views)
-    - 2D annotation elements (for drafting views)
+def xy_bounds_effective(doc, view, basis, buffer=0.0):
+    """Compute EFFECTIVE view bounds in view-local UV.
+
+    Behaves as if the view had a usable crop box:
+    - If CropBox is active & available -> use CropBox (correctly applying CropBox.Transform)
+    - Otherwise -> compute bounds from visible element extents (synthetic crop)
+      This is required for DraftingView (no CropBox at all).
 
     Args:
         doc: Revit Document
         view: Revit View
         basis: ViewBasis
-        buffer: Additional margin in feet
+        buffer: margin in feet
 
     Returns:
-        Bounds2D in view-local XY coordinates
+        Bounds2D in view-local UV coordinates
+    """
+    # Prefer crop box when the view supports it and crop is active
+    try:
+        crop_active = bool(view.CropBoxActive)
+    except Exception:
+        crop_active = False
 
-    Commentary:
-        ✔ Collects visible elements and computes aggregate bounds
-        ✔ Handles drafting views (use 2D elements only)
-        ✔ Handles plan/section/elevation (use 3D model geometry)
-        ✔ Falls back to default bounds if no elements found
+    if crop_active:
+        try:
+            return xy_bounds_from_crop_box_all_corners(view, basis, buffer=buffer)
+        except Exception:
+            # fall through to synthetic extents
+            pass
+
+    # Fallback: extents derived from what is in the view (drafting-safe)
+    return synthetic_bounds_from_visible_extents(doc, view, basis, buffer=buffer)
+
+def synthetic_bounds_from_visible_extents(doc, view, basis, buffer=0.0):
+    """Compute synthetic bounds from element extents in a view (crop-off / no-crop views).
+
+    Returns Bounds2D in *view-local UV* coordinates.
+
+    Notes:
+    - Works for DraftingView (no CropBox): uses view-owned elements.
+    - For BoundingBoxXYZ: Min/Max are in bbox-local space; Transform maps to model space.
     """
     from ..core.math_utils import Bounds2D
-    from Autodesk.Revit.DB import FilteredElementCollector, View3D, ViewDrafting, ViewSchedule, ViewSheet
+    from Autodesk.Revit.DB import FilteredElementCollector, ViewDrafting, XYZ
 
-    # Check if this is a drafting view (no 3D model geometry)
     is_drafting = isinstance(view, ViewDrafting)
 
-    # Initialize bounds tracking
-    min_x = float('inf')
-    min_y = float('inf')
-    max_x = float('-inf')
-    max_y = float('-inf')
-    found_elements = 0
+    min_u = float("inf")
+    min_v = float("inf")
+    max_u = float("-inf")
+    max_v = float("-inf")
+    found = 0
 
     try:
-        if is_drafting:
-            # Drafting views: collect 2D annotation elements only
-            collector = FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType()
+        collector = (
+            FilteredElementCollector(doc, view.Id)
+            .WhereElementIsNotElementType()
+        )
 
-            for elem in collector:
-                # Get bounding box in view coordinates
-                try:
-                    bbox = elem.get_BoundingBox(view)
-                    if bbox is None:
-                        continue
-
-                    # Transform to view-local XY
-                    min_pt = basis.world_to_view_local(bbox.Min)
-                    max_pt = basis.world_to_view_local(bbox.Max)
-
-                    min_x = min(min_x, min_pt[0], max_pt[0])
-                    min_y = min(min_y, min_pt[1], max_pt[1])
-                    max_x = max(max_x, min_pt[0], max_pt[0])
-                    max_y = max(max_y, min_pt[1], max_pt[1])
-
-                    found_elements += 1
-                except:
+        for elem in collector:
+            try:
+                bbox = elem.get_BoundingBox(view)
+                if bbox is None:
                     continue
-        else:
-            # Plan/section/elevation: collect 3D model geometry
-            collector = FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType()
 
-            for elem in collector:
-                # Get bounding box in view coordinates
-                try:
-                    bbox = elem.get_BoundingBox(view)
-                    if bbox is None:
-                        continue
-
-                    # Skip view-specific annotations (not model geometry)
+                # In model views, skip view-specific annotations for the *model* extents
+                if not is_drafting:
                     try:
-                        if bool(getattr(elem, 'ViewSpecific', False)):
+                        if bool(getattr(elem, "ViewSpecific", False)):
                             continue
-                    except:
+                    except Exception:
                         pass
 
-                    # Transform to view-local XY
-                    min_pt = basis.world_to_view_local(bbox.Min)
-                    max_pt = basis.world_to_view_local(bbox.Max)
+                mn = bbox.Min
+                mx = bbox.Max
 
-                    min_x = min(min_x, min_pt[0], max_pt[0])
-                    min_y = min(min_y, min_pt[1], max_pt[1])
-                    max_x = max(max_x, min_pt[0], max_pt[0])
-                    max_y = max(max_y, min_pt[1], max_pt[1])
+                corners_local = [
+                    XYZ(mn.X, mn.Y, mn.Z),
+                    XYZ(mx.X, mn.Y, mn.Z),
+                    XYZ(mn.X, mx.Y, mn.Z),
+                    XYZ(mx.X, mx.Y, mn.Z),
+                    XYZ(mn.X, mn.Y, mx.Z),
+                    XYZ(mx.X, mn.Y, mx.Z),
+                    XYZ(mn.X, mx.Y, mx.Z),
+                    XYZ(mx.X, mx.Y, mx.Z),
+                ]
 
-                    found_elements += 1
-                except:
-                    continue
+                TB = getattr(bbox, "Transform", None)
+                if TB is not None:
+                    corners_world = [TB.OfPoint(p) for p in corners_local]
+                else:
+                    corners_world = corners_local
+
+                for p in corners_world:
+                    u, v = basis.transform_to_view_uv((p.X, p.Y, p.Z))
+                    min_u = min(min_u, u)
+                    min_v = min(min_v, v)
+                    max_u = max(max_u, u)
+                    max_v = max(max_v, v)
+
+                found += 1
+            except Exception:
+                continue
 
     except Exception as e:
-        print(f"WARNING: synthetic_bounds_from_visible_extents failed: {e}")
+        print("WARNING: synthetic_bounds_from_visible_extents failed: {}".format(e))
 
-    # If no elements found, use default bounds
-    if found_elements == 0 or min_x == float('inf'):
-        print(f"WARNING: No elements found for synthetic bounds in view '{view.Name}'. Using default 200x200ft bounds.")
+    if found == 0 or min_u == float("inf"):
+        print("WARNING: No elements found for synthetic bounds in view '{}'. Using default 200x200ft bounds.".format(view.Name))
         return Bounds2D(-100.0 - buffer, -100.0 - buffer, 100.0 + buffer, 100.0 + buffer)
 
-    # Add buffer and return
-    return Bounds2D(min_x - buffer, min_y - buffer, max_x + buffer, max_y + buffer)
+    return Bounds2D(min_u - buffer, min_v - buffer, max_u + buffer, max_v + buffer)
