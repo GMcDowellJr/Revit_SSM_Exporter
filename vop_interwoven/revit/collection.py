@@ -26,9 +26,10 @@ def collect_view_elements(doc, view, raster):
     """
     from Autodesk.Revit.DB import FilteredElementCollector, BuiltInCategory
 
-    # Define 3D model categories to collect (with version compatibility)
+    # Define model categories to collect (3D model + symbolic lines)
     # Using category name strings to handle different Revit versions gracefully
     category_names = [
+        # 3D Model elements
         'OST_Walls',
         'OST_Floors',
         'OST_Roofs',
@@ -48,6 +49,10 @@ def collect_view_elements(doc, view, raster):
         'OST_PlumbingFixtures',
         'OST_DuctCurves',
         'OST_PipeCurves',
+        # Symbolic geometry (contributes to MODEL occupancy, TINY/LINEAR classification)
+        'OST_Lines',  # DetailCurves, CurveElements (symbolic lines in families)
+        # NOTE: DetailComponents NOT included here - user-placed ones go to ANNOTATION
+        # Detail items embedded in model families are part of family geometry (collected via FamilyInstance)
     ]
 
     # Convert category names to BuiltInCategory enums (skip if not available in this Revit version)
@@ -67,6 +72,15 @@ def collect_view_elements(doc, view, raster):
 
                 # Filter to elements with valid bounding boxes
                 for elem in collector:
+                    # For OST_Lines: Only collect MODEL lines (ViewSpecific=False)
+                    # Detail lines (ViewSpecific=True) go to ANNOTATION
+                    if cat == getattr(BuiltInCategory, 'OST_Lines', None):
+                        try:
+                            if bool(getattr(elem, 'ViewSpecific', False)):
+                                continue  # Skip detail lines (they're annotations)
+                        except:
+                            pass
+
                     bbox = elem.get_BoundingBox(None)  # World coordinates
                     if bbox is not None:
                         elements.append(elem)

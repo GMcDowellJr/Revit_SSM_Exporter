@@ -216,17 +216,29 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
 
 
 def collect_2d_annotations(doc, view):
-    """Collect view-specific 2D annotation elements by whitelist.
+    """Collect USER-ADDED 2D annotation elements by whitelist.
 
-    Categories collected:
+    IMPORTANT: This collects ONLY user annotations for anno_key layer.
+
+    Categories collected (USER ANNOTATIONS):
         - TextNote (TEXT)
         - User Keynotes (TEXT)
         - Dimension (DIM)
         - IndependentTag, RoomTag, SpaceTag, etc. (TAG)
         - Material Element Keynotes (TAG)
         - FilledRegion (REGION)
-        - DetailCurve, CurveElement (LINES)
-        - FamilyInstance (view-specific) (DETAIL)
+        - Detail lines (LINES) - ViewSpecific=True from OST_Lines
+        - DetailComponents (DETAIL) - user-placed detail items
+
+    NOT collected here (go to MODEL occupancy):
+        - Model lines → MODEL (OST_Lines with ViewSpecific=False)
+        - Detail items embedded in model families → MODEL (part of FamilyInstance geometry)
+
+    Key distinctions:
+        - Detail lines (ViewSpecific=True) → ANNOTATION (collected here)
+        - Model lines (ViewSpecific=False) → MODEL (excluded by ViewSpecific filter)
+        - User-placed detail items → ANNOTATION (collected here)
+        - Detail items nested in model families → MODEL (part of family geometry)
 
     Args:
         doc: Revit Document
@@ -234,10 +246,13 @@ def collect_2d_annotations(doc, view):
 
     Returns:
         List of tuples: [(element, anno_type), ...]
-        where anno_type is one of: TEXT, TAG, DIM, DETAIL, LINES, REGION, OTHER
+        where anno_type is one of: TEXT, TAG, DIM, REGION, LINES, DETAIL, OTHER
 
     Commentary:
-        ✔ Only collects 2D view-specific elements
+        ✔ ViewSpecific=True filter automatically separates detail lines from model lines
+        ✔ User-placed detail items are annotations (DetailComponents)
+        ✔ Model lines go to MODEL occupancy (ViewSpecific=False)
+        ✔ Nested detail items in families are part of family geometry (MODEL)
         ✔ Uses category whitelist approach (explicit is better than implicit)
         ✔ Classifies annotations during collection
         ✔ Handles keynotes via KeynoteElement API
@@ -309,11 +324,12 @@ def collect_2d_annotations(doc, view):
     if hasattr(BuiltInCategory, 'OST_FilledRegion'):
         collect_category(BuiltInCategory.OST_FilledRegion, "REGION")
 
-    # LINES: Detail curves
+    # LINES: Detail lines (ViewSpecific=True from OST_Lines)
+    # NOTE: Model lines (ViewSpecific=False) go to MODEL occupancy
     if hasattr(BuiltInCategory, 'OST_Lines'):
         collect_category(BuiltInCategory.OST_Lines, "LINES")
 
-    # DETAIL: Detail components (view-specific family instances)
+    # DETAIL: Detail components (user-placed detail items)
     if hasattr(BuiltInCategory, 'OST_DetailComponents'):
         collect_category(BuiltInCategory.OST_DetailComponents, "DETAIL")
 
@@ -348,6 +364,8 @@ def classify_annotation(elem):
     Commentary:
         ✔ Uses element category for classification
         ✔ Handles keynotes via classify_keynote()
+        ✔ LINES = detail lines (ViewSpecific=True from OST_Lines)
+        ✔ Model lines (ViewSpecific=False) not classified here - they go to MODEL
         ✔ Matches SSM exporter classification logic
     """
     from Autodesk.Revit.DB import BuiltInCategory
@@ -385,12 +403,12 @@ def classify_annotation(elem):
             if cat_id == int(BuiltInCategory.OST_FilledRegion):
                 return "REGION"
 
-        # LINES: Detail curves
+        # LINES: Detail lines (ViewSpecific=True from OST_Lines)
         if hasattr(BuiltInCategory, 'OST_Lines'):
             if cat_id == int(BuiltInCategory.OST_Lines):
                 return "LINES"
 
-        # DETAIL: Detail components
+        # DETAIL: Detail components (user-placed detail items)
         if hasattr(BuiltInCategory, 'OST_DetailComponents'):
             if cat_id == int(BuiltInCategory.OST_DetailComponents):
                 return "DETAIL"
