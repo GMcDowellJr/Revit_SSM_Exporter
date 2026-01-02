@@ -247,9 +247,11 @@ def compute_config_hash(config):
         ✔ Hashes relevant config parameters for reproducibility
         ✔ Stable: same config → same hash
     """
-    # Build config payload string
-    config_str = f"{config.cell_size_paper_in}|{config.tiny_max}|{config.thin_max}|" \
-                 f"{config.adaptive_tile_size}|{config.proxy_mask_mode}|{config.anno_proxies_in_overmodel}"
+    # Build config payload string using actual Config attributes
+    config_str = f"{config.tiny_max}|{config.thin_max}|" \
+                 f"{config.adaptive_tile_size}|{config.proxy_mask_mode}|" \
+                 f"{config.over_model_includes_proxies}|{config.tile_size}|" \
+                 f"{config.depth_eps_ft}|{config.anno_crop_margin_in}|{config.anno_expand_cap_cells}"
 
     # Compute hash
     hash_obj = hashlib.sha256(config_str.encode('utf-8'))
