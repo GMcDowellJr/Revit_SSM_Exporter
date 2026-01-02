@@ -180,7 +180,7 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg):
         # Log warning but don't fail the whole export
         import logging
         logger = logging.getLogger(__name__)
-        logger.warning(f"Failed to collect linked elements: {e}", exc_info=True)
+        logger.warning("Failed to collect linked elements: {0}".format(e), exc_info=True)
 
     return result
 
