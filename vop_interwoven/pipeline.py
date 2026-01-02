@@ -27,6 +27,7 @@ from .revit.collection import (
     sort_front_to_back,
     is_element_visible_in_view,
 )
+from .revit.annotation import rasterize_annotations
 
 
 def process_document_views(doc, view_ids, cfg):
@@ -78,8 +79,7 @@ def process_document_views(doc, view_ids, cfg):
         render_model_front_to_back(doc, view, raster, elements, cfg)
 
         # 4) ANNO PASS (2D only, no occlusion effect)
-        # rasterize_2d_annotations(doc, view, raster, cfg)
-        # TODO: Implement annotation rasterization
+        rasterize_annotations(doc, view, raster, cfg)
 
         # 5) Derive annoOverModel with explicit OverModel semantics
         raster.finalize_anno_over_model(cfg)
@@ -142,6 +142,9 @@ def init_view_raster(doc, view, cfg):
     raster = ViewRaster(
         width=W, height=H, cell_size=cell_size_ft, bounds=bounds_xy, tile_size=tile_size
     )
+
+    # Store view basis for annotation rasterization
+    raster.view_basis = basis
 
     return raster
 
