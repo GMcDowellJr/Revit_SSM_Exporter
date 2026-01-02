@@ -160,57 +160,45 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
         None (modifies raster in-place)
 
     Commentary:
-        ✔ Includes host + optional link/import expansion
-        ✔ Front-to-back sort by approximate depth (bbox min depth)
-        ✔ For each element:
-          - Classify by UV (TINY/LINEAR/AREAL)
-          - Safe early-out using tile coverage + depth
-          - AREAL: full triangle raster + depth + edges
-          - TINY/LINEAR: proxy edges + optional minimal mask
+        ✔ Simplified Phase 5 implementation using bbox filling
+        ✔ Classifies elements as TINY/LINEAR/AREAL
+        ✔ Fills raster cells from bounding boxes
+        ⚠ Triangle rasterization (Phase 4) deferred
     """
-    # Expand to include linked elements
-    model_elems = expand_host_link_import_model_elements(doc, view, elements)
+    from .revit.collection import _project_element_bbox_to_cell_rect
 
-    # Front-to-back sort
-    model_elems = sort_front_to_back(model_elems, view, raster)
+    # Get view basis for transformations
+    vb = make_view_basis(view)
 
-    for item in model_elems:
-        elem = item["element"]
-        T = item["world_transform"]  # Identity for host, transform for linked
-
-        # Visibility check
-        if not is_element_visible_in_view(elem, view):
-            continue
-
-        # Get element metadata index
+    # Process each element
+    processed = 0
+    for elem in elements:
+        # Get element metadata
         elem_id = elem.Id.IntegerValue
         category = elem.Category.Name if elem.Category else "Unknown"
-        source = item["doc_key"]
-        key_index = raster.get_or_create_element_meta_index(elem_id, category, source)
+        key_index = raster.get_or_create_element_meta_index(elem_id, category, "HOST")
 
         # Project element bbox to cell rect
-        rect = _project_element_bbox_to_cell_rect(elem, T, view, raster)
-        if rect.empty:
+        rect = _project_element_bbox_to_cell_rect(elem, vb, raster)
+        if rect is None or rect.empty:
             continue
 
+        # Classify by UV
         U = rect.width_cells
         V = rect.height_cells
         mode = classify_by_uv(U, V, cfg)
 
-        # Estimate nearest depth
-        elem_near_z = _estimate_nearest_depth_from_bbox(elem, T, view, raster)
+        # Simplified rendering: fill bounding box cells
+        # (Phase 4 will add proper triangle rasterization)
+        for i, j in rect.cells():
+            raster.set_cell_filled(i, j, depth=0.0)
+            idx = raster.get_cell_index(i, j)
+            if idx is not None:
+                raster.model_edge_key[idx] = key_index
 
-        # Safe early-out: check if tiles fully covered AND nearer
-        if _tiles_fully_covered_and_nearer(raster.tile, rect, elem_near_z):
-            continue
+        processed += 1
 
-        if mode == Mode.AREAL:
-            # AREAL = Heavy: triangles + z-buffer + edges
-            _render_areal_element(elem, T, view, raster, rect, key_index, cfg)
-
-        else:
-            # TINY/LINEAR = Proxy-only (UV_AABB/OBB)
-            _render_proxy_element(elem, T, view, raster, rect, mode, key_index, cfg)
+    return processed
 
 
 def _is_supported_2d_view(view):
@@ -352,6 +340,8 @@ def export_view_raster(view, raster, cfg):
     Returns:
         Dictionary with all view data
     """
+    num_filled = sum(1 for m in raster.model_mask if m)
+
     return {
         "view_id": view.Id.IntegerValue,
         "view_name": view.Name,
@@ -359,11 +349,13 @@ def export_view_raster(view, raster, cfg):
         "height": raster.H,
         "cell_size": raster.cell_size_ft,
         "tile_size": raster.tile.tile_size,
+        "total_elements": len(raster.element_meta),
+        "filled_cells": num_filled,
         "raster": raster.to_dict(),
         "config": cfg.to_dict(),
         "diagnostics": {
             "num_elements": len(raster.element_meta),
             "num_annotations": len(raster.anno_meta),
-            "num_filled_cells": sum(1 for m in raster.model_mask if m),
+            "num_filled_cells": num_filled,
         },
     }
