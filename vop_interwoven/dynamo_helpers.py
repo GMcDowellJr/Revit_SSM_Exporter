@@ -17,6 +17,7 @@ def get_views_from_input_or_current(views_input=None):
 
     Args:
         views_input: Views from IN[0] (can be single view, list of views, or None)
+                    Handles nested lists (e.g., [[views...]] from Dynamo)
 
     Returns:
         List of View ElementIds
@@ -43,17 +44,25 @@ def get_views_from_input_or_current(views_input=None):
     if isinstance(views_input, int):
         return [views_input]
 
-    # Handle list
+    # Handle list (including nested lists from Dynamo)
     if isinstance(views_input, list):
-        view_ids = []
-        for item in views_input:
-            if isinstance(item, View):
-                view_ids.append(item.Id)
-            elif isinstance(item, ElementId):
-                view_ids.append(item)
-            elif isinstance(item, int):
-                view_ids.append(item)
-        return view_ids
+        # Flatten nested lists (Dynamo sometimes wraps in extra list)
+        def flatten_views(items):
+            result = []
+            for item in items:
+                if isinstance(item, list):
+                    result.extend(flatten_views(item))
+                elif isinstance(item, View):
+                    result.append(item.Id)
+                elif isinstance(item, ElementId):
+                    result.append(item)
+                elif isinstance(item, int):
+                    result.append(item)
+            return result
+
+        view_ids = flatten_views(views_input)
+        if view_ids:
+            return view_ids
 
     # Fallback to current view
     current_view = get_current_view()
@@ -142,11 +151,76 @@ def get_all_sections(doc=None, include_templates=False):
     return sections
 
 
+def filter_supported_views(views_input):
+    """Filter views to only supported types and provide feedback.
+
+    Args:
+        views_input: Views from IN[0] (after get_views_from_input_or_current)
+
+    Returns:
+        Dictionary with:
+            - 'view_ids': List of supported view ElementIds
+            - 'total': Total views provided
+            - 'supported': Number of supported views
+            - 'skipped': Number of skipped views
+            - 'skipped_types': List of (view_name, view_type) that were skipped
+
+    Supported view types:
+        - FloorPlan, CeilingPlan, Elevation, Section, AreaPlan, EngineeringPlan, Detail
+
+    Unsupported (will be skipped):
+        - 3D views (AxonometricView)
+        - Schedules
+        - Legends
+        - DraftingViews
+        - Sheets
+    """
+    from Autodesk.Revit.DB import ViewType
+
+    doc = get_current_document()
+    view_ids = get_views_from_input_or_current(views_input)
+
+    supported_types = [
+        ViewType.FloorPlan,
+        ViewType.CeilingPlan,
+        ViewType.Elevation,
+        ViewType.Section,
+        ViewType.AreaPlan,
+        ViewType.EngineeringPlan,
+        ViewType.Detail,
+    ]
+
+    supported_ids = []
+    skipped_info = []
+
+    for view_id in view_ids:
+        view = doc.GetElement(view_id)
+        if view is None:
+            continue
+
+        try:
+            if view.ViewType in supported_types:
+                supported_ids.append(view_id)
+            else:
+                skipped_info.append((view.Name, view.ViewType.ToString()))
+        except:
+            skipped_info.append((view.Name, "Unknown"))
+
+    return {
+        'view_ids': supported_ids,
+        'total': len(view_ids),
+        'supported': len(supported_ids),
+        'skipped': len(skipped_info),
+        'skipped_types': skipped_info
+    }
+
+
 def run_pipeline_from_dynamo_input(
     views_input=None,
     output_dir=None,
     pixels_per_cell=4,
-    config=None
+    config=None,
+    verbose=False
 ):
     """Run VOP pipeline with Dynamo-friendly inputs.
 
@@ -155,9 +229,11 @@ def run_pipeline_from_dynamo_input(
         output_dir: Output directory (default: C:\\temp\\vop_output)
         pixels_per_cell: PNG resolution (default: 4)
         config: Config object (default: None, uses defaults)
+        verbose: If True, include filtering info in result
 
     Returns:
         Dictionary with pipeline_result, json_path, png_files
+        If verbose=True, also includes 'filter_info' with view filtering details
 
     Usage in Dynamo Python node:
         >>> # Use views from IN[0], or current view if empty
@@ -182,5 +258,10 @@ def run_pipeline_from_dynamo_input(
         output_dir=output_dir,
         pixels_per_cell=pixels_per_cell
     )
+
+    # Add filtering info if verbose
+    if verbose:
+        filter_info = filter_supported_views(views_input)
+        result['filter_info'] = filter_info
 
     return result
