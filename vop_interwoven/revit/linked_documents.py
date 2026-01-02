@@ -105,18 +105,18 @@ def collect_all_linked_elements(doc, view, cfg):
         try:
             rvt_elements = _collect_from_revit_links(doc, view, cfg)
             elements.extend(rvt_elements)
-            logger.info(f"Collected {len(rvt_elements)} elements from RVT links")
+            logger.info("Collected {0} elements from RVT links".format(len(rvt_elements)))
         except Exception as e:
-            logger.error(f"Error collecting from RVT links: {e}", exc_info=True)
+            logger.error("Error collecting from RVT links: {0}".format(e), exc_info=True)
 
     # Collect from DWG/DXF imports
     if getattr(cfg, 'include_dwg_imports', False):
         try:
             dwg_elements = _collect_from_dwg_imports(doc, view, cfg)
             elements.extend(dwg_elements)
-            logger.info(f"Collected {len(dwg_elements)} elements from DWG imports")
+            logger.info("Collected {0} elements from DWG imports".format(len(dwg_elements)))
         except Exception as e:
-            logger.error(f"Error collecting from DWG imports: {e}", exc_info=True)
+            logger.error("Error collecting from DWG imports: {0}".format(e), exc_info=True)
 
     return elements
 
@@ -157,14 +157,14 @@ def _collect_from_revit_links(doc, view, cfg):
         collector = FilteredElementCollector(doc, view.Id)
         link_instances = collector.OfClass(RevitLinkInstance).ToElements()
     except Exception as e:
-        logger.warning(f"Failed to collect RevitLinkInstance elements: {e}")
+        logger.warning("Failed to collect RevitLinkInstance elements: {0}".format(e))
         return proxies
 
     if not link_instances:
         logger.debug("No RVT links found in view")
         return proxies
 
-    logger.info(f"Found {len(link_instances)} RVT link instance(s) in view")
+    logger.info("Found {0} RVT link instance(s) in view".format(len(link_instances)))
 
     # Build host view clip volume for spatial filtering
     clip_volume = _build_clip_volume(view, cfg)
@@ -178,16 +178,16 @@ def _collect_from_revit_links(doc, view, cfg):
             # Get linked document
             link_doc = link_inst.GetLinkDocument()
             if link_doc is None:
-                logger.warning(f"Link instance {link_inst.Id} has no linked document (unloaded?)")
+                logger.warning("Link instance {0} has no linked document (unloaded?)".format(link_inst.Id))
                 continue
 
             link_title = link_doc.Title
-            logger.debug(f"Processing RVT link: {link_title}")
+            logger.debug("Processing RVT link: {0}".format(link_title))
 
             # Get link transform
             link_trf = link_inst.GetTransform()
             if link_trf is None:
-                logger.warning(f"Link {link_title} has no transform")
+                logger.warning("Link {0} has no transform".format(link_title))
                 continue
 
             # Collect elements from link with spatial clipping
@@ -203,10 +203,10 @@ def _collect_from_revit_links(doc, view, cfg):
             )
 
             proxies.extend(link_proxies)
-            logger.info(f"Collected {len(link_proxies)} elements from link '{link_title}'")
+            logger.info("Collected {0} elements from link '{1}'".format(len(link_proxies), link_title))
 
         except Exception as e:
-            logger.error(f"Error processing RVT link instance {link_inst.Id}: {e}", exc_info=True)
+            logger.error("Error processing RVT link instance {0}: {1}".format(link_inst.Id, e), exc_info=True)
             continue
 
     return proxies
@@ -240,14 +240,14 @@ def _collect_from_dwg_imports(doc, view, cfg):
         collector = FilteredElementCollector(doc, view.Id)
         import_instances = collector.OfClass(ImportInstance).ToElements()
     except Exception as e:
-        logger.warning(f"Failed to collect ImportInstance elements: {e}")
+        logger.warning("Failed to collect ImportInstance elements: {0}".format(e))
         return proxies
 
     if not import_instances:
         logger.debug("No DWG/DXF imports found in view")
         return proxies
 
-    logger.info(f"Found {len(import_instances)} import instance(s) in view")
+    logger.info("Found {0} import instance(s) in view".format(len(import_instances)))
 
     # Process each import
     for import_inst in import_instances:
@@ -255,13 +255,13 @@ def _collect_from_dwg_imports(doc, view, cfg):
             # Only include model-level imports (not view-specific)
             is_view_specific = getattr(import_inst, "ViewSpecific", False)
             if is_view_specific:
-                logger.debug(f"Skipping view-specific import {import_inst.Id}")
+                logger.debug("Skipping view-specific import {0}".format(import_inst.Id))
                 continue
 
             # Get import geometry bbox
             bbox = import_inst.get_BoundingBox(None)
             if bbox is None or bbox.Min is None or bbox.Max is None:
-                logger.debug(f"Import {import_inst.Id} has no valid bbox")
+                logger.debug("Import {0} has no valid bbox".format(import_inst.Id))
                 continue
 
             # Get import name/path for doc_key
@@ -291,10 +291,10 @@ def _collect_from_dwg_imports(doc, view, cfg):
             proxies.append(proxy)
 
         except Exception as e:
-            logger.error(f"Error processing import instance {import_inst.Id}: {e}", exc_info=True)
+            logger.error("Error processing import instance {0}: {1}".format(import_inst.Id, e), exc_info=True)
             continue
 
-    logger.info(f"Collected {len(proxies)} DWG/DXF import elements")
+    logger.info("Collected {0} DWG/DXF import elements".format(len(proxies)))
     return proxies
 
 
@@ -335,7 +335,7 @@ def _collect_link_elements_with_clipping(link_inst, link_doc, link_trf, view,
                 .WhereElementIsNotElementType()
             )
         except Exception as e:
-            logger.error(f"Failed to create collector for link doc: {e}")
+            logger.error("Failed to create collector for link doc: {0}".format(e))
             return proxies
     else:
         # Build spatial filter in link coordinates
@@ -348,7 +348,7 @@ def _collect_link_elements_with_clipping(link_inst, link_doc, link_trf, view,
         try:
             inv_trf = link_trf.Inverse
         except Exception as e:
-            logger.error(f"Failed to invert link transform: {e}")
+            logger.error("Failed to invert link transform: {0}".format(e))
             return proxies
 
         corners_link = [inv_trf.OfPoint(p) for p in corners_host]
@@ -371,7 +371,7 @@ def _collect_link_elements_with_clipping(link_inst, link_doc, link_trf, view,
                 .WherePasses(bbox_filter)
             )
         except Exception as e:
-            logger.error(f"Failed to create spatial filter: {e}")
+            logger.error("Failed to create spatial filter: {0}".format(e))
             # Fall back to unfiltered collection
             collector = (
                 FilteredElementCollector(link_doc)
@@ -431,7 +431,7 @@ def _collect_link_elements_with_clipping(link_inst, link_doc, link_trf, view,
             proxies.append(proxy)
 
         except Exception as e:
-            logger.debug(f"Error processing link element {getattr(elem, 'Id', '?')}: {e}")
+            logger.debug("Error processing link element {0}: {1}".format(getattr(elem, 'Id', '?'), e))
             continue
 
     return proxies
@@ -484,7 +484,7 @@ def _build_clip_volume(view, cfg):
         crop_box = None
 
     if crop_box is None or crop_box.Min is None or crop_box.Max is None:
-        logger.warning(f"View {view.Name} has no valid CropBox")
+        logger.warning("View {0} has no valid CropBox".format(view.Name))
         return clip
 
     # Plans/RCP: Vertical range from ViewRange
@@ -508,7 +508,7 @@ def _build_clip_volume(view, cfg):
         trf = None
 
     if trf is None:
-        logger.warning(f"View {view.Name} CropBox has no Transform")
+        logger.warning("View {0} CropBox has no Transform".format(view.Name))
         return clip
 
     # Local crop extents
@@ -548,7 +548,7 @@ def _build_clip_volume(view, cfg):
         ]
         corners_host = [trf.OfPoint(p) for p in local_corners]
     except Exception as e:
-        logger.error(f"Failed to build vertical clip corners: {e}")
+        logger.error("Failed to build vertical clip corners: {0}".format(e))
         return clip
 
     clip["is_valid"] = True
