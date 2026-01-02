@@ -26,41 +26,53 @@ def collect_view_elements(doc, view, raster):
     """
     from Autodesk.Revit.DB import FilteredElementCollector, BuiltInCategory
 
-    # Define 3D model categories to collect
-    model_categories = [
-        BuiltInCategory.OST_Walls,
-        BuiltInCategory.OST_Floors,
-        BuiltInCategory.OST_Roofs,
-        BuiltInCategory.OST_Doors,
-        BuiltInCategory.OST_Windows,
-        BuiltInCategory.OST_Columns,
-        BuiltInCategory.OST_StructuralFraming,
-        BuiltInCategory.OST_StructuralColumns,
-        BuiltInCategory.OST_Stairs,
-        BuiltInCategory.OST_Railings,
-        BuiltInCategory.OST_Ceilings,
-        BuiltInCategory.OST_GenericModel,
-        BuiltInCategory.OST_Furniture,
-        BuiltInCategory.OST_CaseworkWall,
-        BuiltInCategory.OST_MEPSpaces,
-        BuiltInCategory.OST_MechanicalEquipment,
-        BuiltInCategory.OST_ElectricalEquipment,
-        BuiltInCategory.OST_PlumbingFixtures,
+    # Define 3D model categories to collect (with version compatibility)
+    # Using category name strings to handle different Revit versions gracefully
+    category_names = [
+        'OST_Walls',
+        'OST_Floors',
+        'OST_Roofs',
+        'OST_Doors',
+        'OST_Windows',
+        'OST_Columns',
+        'OST_StructuralFraming',
+        'OST_StructuralColumns',
+        'OST_Stairs',
+        'OST_Railings',
+        'OST_Ceilings',
+        'OST_GenericModel',
+        'OST_Furniture',
+        'OST_Casework',  # Note: some versions use OST_Casework, others OST_CaseworkWall
+        'OST_MechanicalEquipment',
+        'OST_ElectricalEquipment',
+        'OST_PlumbingFixtures',
+        'OST_DuctCurves',
+        'OST_PipeCurves',
     ]
+
+    # Convert category names to BuiltInCategory enums (skip if not available in this Revit version)
+    model_categories = []
+    for cat_name in category_names:
+        if hasattr(BuiltInCategory, cat_name):
+            model_categories.append(getattr(BuiltInCategory, cat_name))
 
     elements = []
 
     try:
         # Collect elements visible in view
         for cat in model_categories:
-            collector = FilteredElementCollector(doc, view.Id)
-            collector.OfCategory(cat).WhereElementIsNotElementType()
+            try:
+                collector = FilteredElementCollector(doc, view.Id)
+                collector.OfCategory(cat).WhereElementIsNotElementType()
 
-            # Filter to elements with valid bounding boxes
-            for elem in collector:
-                bbox = elem.get_BoundingBox(None)  # World coordinates
-                if bbox is not None:
-                    elements.append(elem)
+                # Filter to elements with valid bounding boxes
+                for elem in collector:
+                    bbox = elem.get_BoundingBox(None)  # World coordinates
+                    if bbox is not None:
+                        elements.append(elem)
+            except:
+                # Skip categories that cause errors
+                continue
 
     except Exception as e:
         # If collection fails, return empty list (graceful degradation)
