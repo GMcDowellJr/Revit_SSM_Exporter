@@ -56,36 +56,45 @@ def process_document_views(doc, view_ids, cfg):
     results = []
 
     for view_id in view_ids:
-        # Convert int to ElementId if needed (Revit API requires ElementId object)
-        from Autodesk.Revit.DB import ElementId
-        if isinstance(view_id, int):
-            elem_id = ElementId(view_id)
-        else:
-            elem_id = view_id
+        try:
+            # Convert int to ElementId if needed (Revit API requires ElementId object)
+            from Autodesk.Revit.DB import ElementId
+            if isinstance(view_id, int):
+                elem_id = ElementId(view_id)
+            else:
+                elem_id = view_id
 
-        view = doc.GetElement(elem_id)
+            view = doc.GetElement(elem_id)
 
-        # 0) Validate supported view types (2D-ish)
-        if not _is_supported_2d_view(view):
+            # 0) Validate supported view types (2D-ish)
+            if not _is_supported_2d_view(view):
+                continue
+
+            # 1) Init raster bounds/resolution
+            raster = init_view_raster(doc, view, cfg)
+
+            # 2) Broad-phase visible elements
+            elements = collect_view_elements(doc, view, raster)
+
+            # 3) MODEL PASS (INTERWOVEN A+B): front-to-back, AreaL gets triangles+z, tiny/linear proxies
+            render_model_front_to_back(doc, view, raster, elements, cfg)
+
+            # 4) ANNO PASS (2D only, no occlusion effect)
+            rasterize_annotations(doc, view, raster, cfg)
+
+            # 5) Derive annoOverModel with explicit OverModel semantics
+            raster.finalize_anno_over_model(cfg)
+
+            # 6) Export
+            results.append(export_view_raster(view, raster, cfg))
+
+        except Exception as e:
+            # Log error but continue processing other views
+            import logging
+            logger = logging.getLogger(__name__)
+            view_name = getattr(view, 'Name', 'Unknown') if 'view' in locals() else 'Unknown'
+            logger.error("Failed to process view {0}: {1}".format(view_name, e), exc_info=True)
             continue
-
-        # 1) Init raster bounds/resolution
-        raster = init_view_raster(doc, view, cfg)
-
-        # 2) Broad-phase visible elements
-        elements = collect_view_elements(doc, view, raster)
-
-        # 3) MODEL PASS (INTERWOVEN A+B): front-to-back, AreaL gets triangles+z, tiny/linear proxies
-        render_model_front_to_back(doc, view, raster, elements, cfg)
-
-        # 4) ANNO PASS (2D only, no occlusion effect)
-        rasterize_annotations(doc, view, raster, cfg)
-
-        # 5) Derive annoOverModel with explicit OverModel semantics
-        raster.finalize_anno_over_model(cfg)
-
-        # 6) Export
-        results.append(export_view_raster(view, raster, cfg))
 
     return results
 
@@ -199,6 +208,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
 
     # Process each element (host + linked)
     processed = 0
+    skipped = 0
     for elem_wrapper in expanded_elements:
         elem = elem_wrapper["element"]
         doc_key = elem_wrapper["doc_key"]
@@ -207,13 +217,15 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
         # Get element metadata
         try:
             elem_id = elem.Id.IntegerValue
-        except Exception:
-            continue
-
-        try:
             category = elem.Category.Name if elem.Category else "Unknown"
-        except Exception:
-            category = "Unknown"
+        except Exception as e:
+            # Log the error but continue processing other elements
+            skipped += 1
+            if skipped <= 5:  # Log first 5 errors to avoid spam
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning("Skipping element from {0}: {1}".format(doc_key, e))
+            continue
 
         key_index = raster.get_or_create_element_meta_index(elem_id, category, doc_key)
 
@@ -237,6 +249,12 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
                 raster.model_edge_key[idx] = key_index
 
         processed += 1
+
+    # Log summary
+    if skipped > 0:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning("Processed {0} elements, skipped {1} due to errors".format(processed, skipped))
 
     return processed
 
