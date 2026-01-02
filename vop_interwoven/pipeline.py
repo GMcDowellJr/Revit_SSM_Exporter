@@ -224,7 +224,7 @@ def _is_supported_2d_view(view):
         True if view is supported (2D orthographic), False otherwise
 
     Commentary:
-        ✔ Supports: Floor plans, ceiling plans, sections, elevations, area plans
+        ✔ Supports: Floor plans, ceiling plans, sections, elevations, area plans, drafting views
         ✘ Rejects: 3D views, schedules, sheets, legends
     """
     from Autodesk.Revit.DB import ViewType
@@ -238,6 +238,7 @@ def _is_supported_2d_view(view):
         ViewType.AreaPlan,
         ViewType.EngineeringPlan,
         ViewType.Detail,
+        ViewType.DraftingView,  # Drafting views (detail sheets, assembly drawings)
     ]
 
     try:
