@@ -174,6 +174,11 @@ def make_view_basis(view):
 def xy_bounds_from_crop_box_all_corners(view, basis, buffer=0.0):
     """Compute XY bounds from view crop box (all 8 corners method).
 
+    Notes on API correctness:
+        Revit's BoundingBoxXYZ (e.g. View.CropBox) may have a non-identity Transform.
+        Min/Max are expressed in the crop box's local coordinates, so we must transform
+        the 8 corners to model coordinates before projecting into view UV space.
+
     Args:
         view: Revit View object
         basis: ViewBasis for coordinate transformation
@@ -181,58 +186,82 @@ def xy_bounds_from_crop_box_all_corners(view, basis, buffer=0.0):
 
     Returns:
         Bounds2D in view-local XY coordinates
-
-    Commentary:
-        ✔ Extracts view crop box (BoundingBoxXYZ)
-        ✔ Transforms all 8 corners to view UV space
-        ✔ Computes axis-aligned bounds (handles rotated views correctly)
-        ✔ Adds buffer margin for safety
-        ⚠ Falls back to synthetic bounds if crop box unavailable
     """
     from ..core.math_utils import Bounds2D
 
     try:
-        # Get crop box in world coordinates
         crop_box = view.CropBox
-
         if crop_box is None:
-            # No crop box - use synthetic bounds
             return Bounds2D(-100.0 - buffer, -100.0 - buffer, 100.0 + buffer, 100.0 + buffer)
 
-        # Extract 8 corners of bounding box in world coordinates
+        # BoundingBoxXYZ: Min/Max are in the box local space; Transform maps them to model space.
+        T = getattr(crop_box, "Transform", None)
+
         min_pt = crop_box.Min
         max_pt = crop_box.Max
 
-        corners_world = [
-            (min_pt.X, min_pt.Y, min_pt.Z),
-            (max_pt.X, min_pt.Y, min_pt.Z),
-            (min_pt.X, max_pt.Y, min_pt.Z),
-            (max_pt.X, max_pt.Y, min_pt.Z),
-            (min_pt.X, min_pt.Y, max_pt.Z),
-            (max_pt.X, min_pt.Y, max_pt.Z),
-            (min_pt.X, max_pt.Y, max_pt.Z),
-            (max_pt.X, max_pt.Y, max_pt.Z),
-        ]
+        # Build 8 corners in crop-box-local coordinates.
+        try:
+            from Autodesk.Revit.DB import XYZ
+            corners_local = [
+                XYZ(min_pt.X, min_pt.Y, min_pt.Z),
+                XYZ(max_pt.X, min_pt.Y, min_pt.Z),
+                XYZ(min_pt.X, max_pt.Y, min_pt.Z),
+                XYZ(max_pt.X, max_pt.Y, min_pt.Z),
+                XYZ(min_pt.X, min_pt.Y, max_pt.Z),
+                XYZ(max_pt.X, min_pt.Y, max_pt.Z),
+                XYZ(min_pt.X, max_pt.Y, max_pt.Z),
+                XYZ(max_pt.X, max_pt.Y, max_pt.Z),
+            ]
+        except Exception:
+            # Very defensive fallback: treat Min/Max as tuples if XYZ isn't available.
+            corners_local = [
+                (min_pt.X, min_pt.Y, min_pt.Z),
+                (max_pt.X, min_pt.Y, min_pt.Z),
+                (min_pt.X, max_pt.Y, min_pt.Z),
+                (max_pt.X, max_pt.Y, min_pt.Z),
+                (min_pt.X, min_pt.Y, max_pt.Z),
+                (max_pt.X, min_pt.Y, max_pt.Z),
+                (min_pt.X, max_pt.Y, max_pt.Z),
+                (max_pt.X, max_pt.Y, max_pt.Z),
+            ]
 
-        # Transform all corners to view UV coordinates
-        corners_uv = [basis.transform_to_view_uv(pt) for pt in corners_world]
+        # Transform to model/world coordinates if a transform is present.
+        corners_world = []
+        if T is not None:
+            for p in corners_local:
+                try:
+                    pw = T.OfPoint(p)  # XYZ -> XYZ
+                    corners_world.append((pw.X, pw.Y, pw.Z))
+                except Exception:
+                    # If p is tuple or OfPoint fails, fall back to original coords.
+                    if isinstance(p, tuple):
+                        corners_world.append(p)
+                    else:
+                        corners_world.append((p.X, p.Y, p.Z))
+        else:
+            for p in corners_local:
+                if isinstance(p, tuple):
+                    corners_world.append(p)
+                else:
+                    corners_world.append((p.X, p.Y, p.Z))
 
-        # Find axis-aligned bounds in view space
+        # Project to view UV and compute axis-aligned bounds.
+        corners_uv = [basis.transform_to_view_uv(p) for p in corners_world]
+
         u_coords = [uv[0] for uv in corners_uv]
         v_coords = [uv[1] for uv in corners_uv]
 
-        u_min = min(u_coords) - buffer
-        u_max = max(u_coords) + buffer
-        v_min = min(v_coords) - buffer
-        v_max = max(v_coords) + buffer
-
-        return Bounds2D(u_min, v_min, u_max, v_max)
+        return Bounds2D(
+            min(u_coords) - buffer,
+            min(v_coords) - buffer,
+            max(u_coords) + buffer,
+            max(v_coords) + buffer,
+        )
 
     except AttributeError:
         # Fallback for views without crop box
         return Bounds2D(-100.0 - buffer, -100.0 - buffer, 100.0 + buffer, 100.0 + buffer)
-
-
 def synthetic_bounds_from_visible_extents(doc, view, basis, buffer=0.0):
     """Compute synthetic bounds from visible element extents (for crop-off views).
 

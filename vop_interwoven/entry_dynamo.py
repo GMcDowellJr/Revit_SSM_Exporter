@@ -120,12 +120,65 @@ def get_current_view():
     )
 
 
+def _normalize_view_ids(view_ids):
+    """Normalize Dynamo/Revit view inputs into a list of Revit ElementIds/ints.
+
+    Accepts:
+      - single view Element / View / ElementId / int
+      - list/tuple/set of the above
+      - Dynamo Revit wrapper elements (with .Id or .InternalElement/.InternalElementId)
+    """
+    if view_ids is None:
+        return []
+
+    if isinstance(view_ids, (list, tuple, set)):
+        items = list(view_ids)
+    else:
+        items = [view_ids]
+
+    normalized = []
+    for v in items:
+        if v is None:
+            continue
+
+        # Revit View/Element -> use .Id
+        if hasattr(v, "Id"):
+            try:
+                normalized.append(v.Id)
+                continue
+            except Exception:
+                pass
+
+        # Dynamo wrapper: try InternalElement / InternalElementId
+        for attr in ("InternalElementId", "InternalElement"):
+            if hasattr(v, attr):
+                try:
+                    inner = getattr(v, attr)
+                    if inner is None:
+                        continue
+                    if attr == "InternalElement":
+                        # inner is a Revit element
+                        if hasattr(inner, "Id"):
+                            normalized.append(inner.Id)
+                            break
+                    else:
+                        normalized.append(inner)
+                        break
+                except Exception:
+                    pass
+        else:
+            # ElementId has IntegerValue; keep as-is
+            normalized.append(v)
+
+    return normalized
+
+
 def run_vop_pipeline(doc, view_ids, cfg=None):
     """Run VOP interwoven pipeline on specified views.
 
     Args:
         doc: Revit Document (from __revit__.ActiveUIDocument.Document)
-        view_ids: List of Revit View ElementIds (or ints), or single ElementId/int
+        view_ids: List of View ElementIds (or ints), or single View/ElementId/int
         cfg: Config object (optional, uses defaults if None)
 
     Returns:
@@ -134,31 +187,25 @@ def run_vop_pipeline(doc, view_ids, cfg=None):
             'success': bool,
             'views': list of view results,
             'config': config dict,
-            'errors': list of error messages
+            'errors': list of error messages,
+            'summary': dict
         }
-
-    Example (in Dynamo Python node):
-        >>> doc = __revit__.ActiveUIDocument.Document
-        >>> view = __revit__.ActiveUIDocument.ActiveView
-        >>> result = run_vop_pipeline(doc, [view.Id])
-        >>> OUT = result
     """
+    if doc is None:
+        return {"success": False, "views": [], "config": {}, "errors": ["doc is None"], "summary": {}}
+
     # Default config if not provided
     if cfg is None:
         cfg = Config()
 
-    # Normalize view_ids to list
-    if not isinstance(view_ids, list):
-        view_ids = [view_ids]
+    # Normalize view_ids
+    view_ids = _normalize_view_ids(view_ids)
 
     errors = []
     views = []
 
     try:
-        # Run pipeline
-        results = process_document_views(doc, view_ids, cfg)
-        views = results
-
+        views = process_document_views(doc, view_ids, cfg)
     except Exception as e:
         errors.append(f"Pipeline error: {str(e)}")
 
@@ -173,7 +220,6 @@ def run_vop_pipeline(doc, view_ids, cfg=None):
             "num_errors": len(errors),
         },
     }
-
 
 def run_vop_pipeline_with_png(doc, view_ids, cfg=None, output_dir=None, pixels_per_cell=4):
     """Run VOP pipeline and export both JSON and PNG files.
