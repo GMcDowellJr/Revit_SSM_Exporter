@@ -74,10 +74,11 @@ try:
         results.append("Sample TINY element proxies:")
         for elem, rect in tiny_elements[:5]:
             proxy = make_uv_aabb(rect)
+            center = proxy.center()
             results.append(f"   Element {elem.Id}: {rect.width_cells}x{rect.height_cells} cells")
-            results.append(f"      UV_AABB center: ({proxy.u_center:.1f}, {proxy.v_center:.1f})")
-            results.append(f"      UV_AABB size: {proxy.u_width}x{proxy.v_height}")
-            results.append(f"      Edges: {len(proxy.edges)} edge segments")
+            results.append(f"      UV_AABB center: ({center[0]:.1f}, {center[1]:.1f})")
+            results.append(f"      UV_AABB size: {proxy.width():.1f}x{proxy.height():.1f}")
+            results.append(f"      Edges: {len(proxy.edges())} edge segments")
     else:
         results.append("⚠ No TINY elements found")
 
