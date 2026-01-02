@@ -220,7 +220,10 @@ def run_pipeline_from_dynamo_input(
     output_dir=None,
     pixels_per_cell=4,
     config=None,
-    verbose=False
+    verbose=False,
+    export_csv=True,
+    export_json=True,
+    export_png=True
 ):
     """Run VOP pipeline with Dynamo-friendly inputs.
 
@@ -230,16 +233,32 @@ def run_pipeline_from_dynamo_input(
         pixels_per_cell: PNG resolution (default: 4)
         config: Config object (default: None, uses defaults)
         verbose: If True, include filtering info in result
+        export_csv: Export CSV files (default: True)
+        export_json: Export JSON file (default: True)
+        export_png: Export PNG files (default: True)
 
     Returns:
-        Dictionary with pipeline_result, json_path, png_files
-        If verbose=True, also includes 'filter_info' with view filtering details
+        Dictionary with:
+            - pipeline_result: Full pipeline result
+            - json_path: Path to JSON (if export_json=True)
+            - png_files: List of PNG paths (if export_png=True)
+            - core_csv_path: Path to core CSV (if export_csv=True)
+            - vop_csv_path: Path to VOP CSV (if export_csv=True)
+            - rows_exported: Number of rows (if export_csv=True)
+            - filter_info: View filtering details (if verbose=True)
 
     Usage in Dynamo Python node:
         >>> # Use views from IN[0], or current view if empty
         >>> result = run_pipeline_from_dynamo_input(IN[0] if len(IN) > 0 else None)
-        >>> OUT = result['png_files']
+        >>> OUT = result['vop_csv_path']  # Or png_files, json_path, etc.
+
+    Commentary:
+        ✔ One-stop function for Dynamo users
+        ✔ Handles IN[0] input automatically
+        ✔ Exports JSON + PNG + CSV by default
     """
+    from vop_interwoven.entry_dynamo import run_vop_pipeline_with_csv, run_vop_pipeline_with_png
+
     # Get document
     doc = get_current_document()
 
@@ -250,14 +269,27 @@ def run_pipeline_from_dynamo_input(
     if config is None:
         config = Config()
 
-    # Run pipeline
-    result = run_vop_pipeline_with_png(
-        doc,
-        view_ids,
-        cfg=config,
-        output_dir=output_dir,
-        pixels_per_cell=pixels_per_cell
-    )
+    # Run pipeline with appropriate exporter
+    if export_csv:
+        # Use CSV exporter (also exports JSON and PNG)
+        result = run_vop_pipeline_with_csv(
+            doc,
+            view_ids,
+            cfg=config,
+            output_dir=output_dir,
+            pixels_per_cell=pixels_per_cell,
+            export_json=export_json,
+            export_png=export_png
+        )
+    else:
+        # Use PNG-only exporter (legacy)
+        result = run_vop_pipeline_with_png(
+            doc,
+            view_ids,
+            cfg=config,
+            output_dir=output_dir,
+            pixels_per_cell=pixels_per_cell
+        )
 
     # Add filtering info if verbose
     if verbose:

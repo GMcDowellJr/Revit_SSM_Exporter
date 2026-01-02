@@ -234,6 +234,95 @@ def run_vop_pipeline_with_png(doc, view_ids, cfg=None, output_dir=None, pixels_p
     }
 
 
+def run_vop_pipeline_with_csv(doc, view_ids, cfg=None, output_dir=None, pixels_per_cell=4, export_json=True, export_png=True):
+    """Run VOP pipeline and export JSON + PNG + CSV files.
+
+    Args:
+        doc: Revit Document
+        view_ids: List of View ElementIds (or ints)
+        cfg: Config object (optional)
+        output_dir: Directory for output files (default: C:\\temp\\vop_output)
+        pixels_per_cell: Pixels per raster cell for PNG (default: 4)
+        export_json: Export JSON file (default: True)
+        export_png: Export PNG files (default: True)
+
+    Returns:
+        Dictionary with:
+        {
+            'pipeline_result': {...},
+            'json_path': 'path/to/export.json' (if export_json=True),
+            'png_files': ['path/to/view1.png', ...] (if export_png=True),
+            'core_csv_path': 'path/to/views_core_YYYY-MM-DD.csv',
+            'vop_csv_path': 'path/to/views_vop_YYYY-MM-DD.csv',
+            'rows_exported': int
+        }
+
+    Example:
+        >>> from vop_interwoven.entry_dynamo import run_vop_pipeline_with_csv
+        >>> result = run_vop_pipeline_with_csv(doc, [view.Id])
+        >>> print(f"Exported {result['rows_exported']} rows to CSV")
+        >>> print(f"Core CSV: {result['core_csv_path']}")
+        >>> print(f"VOP CSV: {result['vop_csv_path']}")
+
+    Commentary:
+        ✔ One-stop export for JSON + PNG + CSV
+        ✔ Matches SSM exporter CSV format
+        ✔ CSV invariant validated automatically
+    """
+    import os
+    import json
+    from vop_interwoven.png_export import export_pipeline_results_to_pngs
+    from vop_interwoven.csv_export import export_pipeline_to_csv
+
+    # Default output directory
+    if output_dir is None:
+        output_dir = r"C:\temp\vop_output"
+
+    # Ensure output directory exists
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    # Use default config if not provided
+    if cfg is None:
+        cfg = Config()
+
+    # Run pipeline
+    pipeline_result = run_vop_pipeline(doc, view_ids, cfg)
+
+    result = {
+        'pipeline_result': pipeline_result
+    }
+
+    # Export JSON (optional)
+    if export_json:
+        json_filename = "vop_export.json"
+        json_path = os.path.join(output_dir, json_filename)
+
+        with open(json_path, 'w') as f:
+            json.dump(pipeline_result, f, indent=2)
+
+        result['json_path'] = json_path
+
+    # Export PNGs (optional)
+    if export_png:
+        png_files = export_pipeline_results_to_pngs(
+            pipeline_result,
+            output_dir,
+            pixels_per_cell=pixels_per_cell,
+            cut_vs_projection=True
+        )
+        result['png_files'] = png_files
+
+    # Export CSVs (always)
+    csv_result = export_pipeline_to_csv(pipeline_result, output_dir, cfg, doc)
+
+    result['core_csv_path'] = csv_result['core_csv_path']
+    result['vop_csv_path'] = csv_result['vop_csv_path']
+    result['rows_exported'] = csv_result['rows_exported']
+
+    return result
+
+
 def run_vop_pipeline_json(doc, view_ids, cfg=None, output_path=None):
     """Run VOP pipeline and export results to JSON file.
 
