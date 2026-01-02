@@ -7,8 +7,8 @@ This directory contains Dynamo Python node test scripts for progressive testing 
 1. **Open Dynamo** in Revit with your test model loaded
 2. **Create a Python Script node** in Dynamo
 3. **Copy the test script** content into the Python node
-4. **Update the path** at the top: `sys.path.append(r'C:\path\to\Revit_SSM_Exporter')`
-5. **Run the script** and check the output
+4. **Run the script** - all paths are pre-configured for `C:\Users\gmcdowell\Documents\Revit_SSM_Exporter`
+5. Check the output
 
 ## Test Scripts
 
@@ -51,6 +51,42 @@ Tests UV classification and proxy generation.
 - UV_AABB proxy generation
 - Proxy dimensions
 
+### `test_phase7_csv_export.py` - Phase 7
+Tests CSV export with invariant validation.
+
+**Prerequisites**: Phases 1-7 implementation complete
+
+**Checks**:
+- Core CSV creation (views_core_YYYY-MM-DD.csv)
+- VOP CSV creation (views_vop_YYYY-MM-DD.csv)
+- CSV invariant validation (ModelCells + AnnoCells ≤ TotalCells)
+- Export to `C:\temp\vop_output`
+
+### `test_phase8a_annotations.py` - Phase 8a
+Tests annotation collection, classification, and rasterization.
+
+**Prerequisites**: Phase 8a implementation complete
+
+**Checks**:
+- Annotation collection by category whitelist
+- Classification into 7 types (TEXT/TAG/DIM/DETAIL/LINES/REGION/OTHER)
+- Keynote handling (Material Element→TAG, User→TEXT)
+- ViewSpecific filter (detail lines vs model lines)
+- Anno_key array population
+- CSV export with AnnoCells_* metrics
+
+### `thinrunner.py` - Quick Iteration Runner
+**Use this for rapid development iteration** with automatic module reloading.
+
+**Features**:
+- Accepts IN[0] as list of views (or uses current view)
+- Automatic module reloading (no need to restart Dynamo)
+- Concise output summary
+- CSV and JSON export
+- Error handling with full traceback
+
+**Perfect for**: Active development, testing code changes without restarting Dynamo
+
 ## Recommended Testing Workflow
 
 1. Start with `test_all_phases.py` to see current status
@@ -66,7 +102,7 @@ Tests UV classification and proxy generation.
 # Dynamo Python Script node
 
 import sys
-sys.path.append(r'C:\Users\YourName\Projects\Revit_SSM_Exporter')  # ← UPDATE THIS
+sys.path.append(r'C:\Users\gmcdowell\Documents\Revit_SSM_Exporter')  # ✅ Pre-configured
 
 # Paste test script content here
 # ...
@@ -74,6 +110,8 @@ sys.path.append(r'C:\Users\YourName\Projects\Revit_SSM_Exporter')  # ← UPDATE 
 # Output goes to OUT variable
 OUT = results
 ```
+
+**Note**: All test scripts are pre-configured with the correct path. No manual updates needed!
 
 ## Troubleshooting
 
@@ -94,6 +132,16 @@ OUT = results
 - Check that your view isn't empty
 - Try a different view with visible model elements
 - Check category filters in `collect_view_elements()`
+
+### "0 views processed"
+- **FIXED**: DraftingViews now supported (commit 16eb3a7)
+- Supported view types: FloorPlan, CeilingPlan, Elevation, Section, AreaPlan, EngineeringPlan, Detail, DraftingView
+- Not supported: 3D views, schedules, sheets, legends
+
+### AttributeError: 'Bounds2D' object has no attribute 'min_x'
+- **FIXED**: Bounds2D attribute names corrected (commit c0f55af)
+- If still occurring, ensure you have the latest code
+- Use `thinrunner.py` with module reloading to pick up fixes
 
 ## Output Format
 
