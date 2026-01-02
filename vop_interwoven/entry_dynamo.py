@@ -200,7 +200,7 @@ def run_vop_pipeline_with_png(doc, view_ids, cfg=None, output_dir=None, pixels_p
     """
     import os
     import json
-    from .png_export import export_pipeline_results_to_pngs
+    from vop_interwoven.png_export import export_pipeline_results_to_pngs  # Absolute import for Dynamo
 
     # Default output directory
     if output_dir is None:
