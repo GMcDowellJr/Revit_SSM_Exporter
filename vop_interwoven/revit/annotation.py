@@ -258,6 +258,16 @@ def collect_2d_annotations(doc, view):
             collector.OfCategory(built_in_cat).WhereElementIsNotElementType()
 
             for elem in collector:
+                # CRITICAL: Only collect view-specific 2D elements
+                # This filters out model elements and ensures we get true annotations
+                # including symbolic lines from families and nested family components
+                try:
+                    if not bool(getattr(elem, 'ViewSpecific', False)):
+                        continue
+                except:
+                    # If ViewSpecific property unavailable, skip element
+                    continue
+
                 # Get bounding box to ensure element is visible in view
                 bbox = elem.get_BoundingBox(view)
                 if bbox is not None:
