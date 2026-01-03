@@ -157,6 +157,53 @@ class ViewRaster:
         5.0
     """
 
+    def rasterize_open_polylines(self, polylines, key_index, depth=0.0):
+        """
+        Rasterize OPEN polyline paths as edges only (no interior fill).
+        Each polyline dict: {'points': [(u,v), ...], 'open': True}
+        """
+        filled = 0
+
+        for pl in polylines:
+            pts = pl.get("points", [])
+            if not pts or len(pts) < 2:
+                continue
+
+            # Convert UV floats -> ij ints
+            pts_ij = []
+            for (u, v) in pts:
+                i = int((u - self.bounds.xmin) / self.cell_size)
+                j = int((v - self.bounds.ymin) / self.cell_size)
+                if 0 <= i < self.W and 0 <= j < self.H:
+                    pts_ij.append((i, j))
+
+            if len(pts_ij) < 2:
+                continue
+
+            # Draw segments
+            for k in range(len(pts_ij) - 1):
+                i0, j0 = pts_ij[k]
+                i1, j1 = pts_ij[k + 1]
+                for (ii, jj) in _bresenham_line(i0, j0, i1, j1):
+                    idx = self.get_cell_index(ii, jj)
+                    if idx is None:
+                        continue
+
+                    # edge presence
+                    z_here = self.z_min[idx]
+
+                    # Only stamp the edge if this element is nearer than what's already there.
+                    if z_here == float("inf") or depth <= z_here:
+                        self.model_edge_key[idx] = key_index
+
+                        # If you want DWG/edges to contribute to occlusion along the curve:
+                        if depth < z_here:
+                            self.z_min[idx] = depth
+                        self.model_mask[idx] = True
+                    filled += 1
+
+        return filled
+    
     def __init__(self, width, height, cell_size, bounds, tile_size=16):
         """Initialize view raster.
 
@@ -371,19 +418,23 @@ class ViewRaster:
                 points_ij.append((i, j))
 
             # Rasterize edges
+            # 1) Fill interior FIRST (writes z_min for occlusion)
+            if not is_hole:
+                filled_count += self._scanline_fill(points_ij, key_index, depth)
+
+            # 2) Then rasterize edges with depth-test against updated z-buffer
             for k in range(len(points_ij) - 1):
                 i0, j0 = points_ij[k]
                 i1, j1 = points_ij[k + 1]
 
-                # Draw line using Bresenham
                 for i, j in _bresenham_line(i0, j0, i1, j1):
                     idx = self.get_cell_index(i, j)
-                    if idx is not None:
-                        self.model_edge_key[idx] = key_index
+                    if idx is None:
+                        continue
 
-            # Fill interior (if not a hole)
-            if not is_hole:
-                filled_count += self._scanline_fill(points_ij, key_index, depth)
+                    z_here = self.z_min[idx]
+                    if z_here == float("inf") or depth <= z_here:
+                        self.model_edge_key[idx] = key_index
 
         return filled_count
 

@@ -240,6 +240,17 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
         if processed < 10:
             print("[DEBUG] Element {0} ({1}): depth = {2}".format(elem_id, category, elem_depth))
 
+        # Safe early-out occlusion using bbox footprint + tile z-min (front-to-back streaming)
+        try:
+            rect = _project_element_bbox_to_cell_rect(elem, vb, raster)
+            if rect and not rect.empty:
+                if _tiles_fully_covered_and_nearer(raster.tile, rect, elem_depth):
+                    skipped += 1
+                    continue
+        except Exception:
+            # Never skip on failure (must stay conservative)
+            pass
+
         # Try silhouette extraction
         try:
             loops = get_element_silhouette(elem, view, vb, raster, cfg)
@@ -247,6 +258,16 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
             if loops:
                 # Get strategy used from first loop
                 strategy = loops[0].get('strategy', 'unknown')
+                
+                # If any loop is marked open (e.g., DWG curves), rasterize as edges only
+                try:
+                    if any(loop.get("open", False) for loop in loops):
+                        filled = raster.rasterize_open_polylines(loops, key_index, depth=elem_depth)
+                        silhouette_success += 1
+                        processed += 1
+                        continue
+                except Exception:
+                    pass
 
                 # Rasterize silhouette loops with actual depth for occlusion
                 filled = raster.rasterize_silhouette_loops(loops, key_index, depth=elem_depth)
@@ -340,24 +361,6 @@ def _is_supported_2d_view(view):
     except:
         # If we can't determine type, reject it
         return False
-
-
-def _project_element_bbox_to_cell_rect(elem, transform, view, raster):
-    """Project element's view-space bounding box to grid cell rectangle.
-
-    Returns:
-        CellRect with cell indices (i_min, j_min, i_max, j_max)
-    """
-    # TODO: Implement bbox projection
-    # Placeholder: return 5x5 rect at origin
-    return CellRect(0, 0, 4, 4)
-
-
-def _estimate_nearest_depth_from_bbox(elem, transform, view, raster):
-    """Estimate nearest depth from element's bounding box."""
-    # TODO: Implement depth estimation
-    return 0.0
-
 
 def _tiles_fully_covered_and_nearer(tile_map, rect, elem_near_z):
     """Check if all tiles overlapping rect are fully covered AND nearer than elem_near_z.

@@ -184,7 +184,10 @@ def _collect_from_revit_links(doc, view, cfg):
             _log("DEBUG", "Processing RVT link: {0}".format(link_title))
 
             # Get link transform
-            link_trf = link_inst.GetTransform()
+            try:
+                link_trf = link_inst.GetTotalTransform()
+            except Exception:
+                link_trf = link_inst.GetTransform()
             if link_trf is None:
                 _log("WARN", "Link {0} has no transform".format(link_title))
                 continue
@@ -257,9 +260,11 @@ def _collect_from_dwg_imports(doc, view, cfg):
                 _log("DEBUG", "Skipping view-specific import {0}".format(import_inst.Id))
                 continue
 
-            # Get import geometry bbox
-            bbox = import_inst.get_BoundingBox(None)
+            # Get import geometry bbox (prefer view-specific bbox so crop/section is respected)
+            bbox = import_inst.get_BoundingBox(view)
             if bbox is None or bbox.Min is None or bbox.Max is None:
+                # Fallback to model bbox
+                bbox = import_inst.get_BoundingBox(None)
                 _log("DEBUG", "Import {0} has no valid bbox".format(import_inst.Id))
                 continue
 

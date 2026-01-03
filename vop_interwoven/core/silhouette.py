@@ -4,12 +4,336 @@ Silhouette extraction for VOP interwoven pipeline.
 Provides simplified silhouette extraction with adaptive strategies:
 - bbox: Axis-aligned bounding box (baseline)
 - obb: Oriented bounding box (projected 3D corners)
-- coarse_tess: Coarse tessellation with convex hull
+- silhouette_edges: Edge silhouette (most accurate, most expensive)
+- cad_curves: ImportInstance curve extraction (DWG/DXF, open polylines)
 
 Falls back gracefully to bbox when strategies fail.
 Compatible with IronPython (no logging module, no f-strings).
 """
 
+import math
+
+def _bbox_corners_world(bbox):
+    """
+    Return 8 bbox corners in world coords, honoring bbox.Transform when present.
+    bbox.Min/Max are in bbox-local coords.
+    """
+    try:
+        from Autodesk.Revit.DB import XYZ, Transform
+    except Exception:
+        XYZ = None
+
+    if not bbox or not bbox.Min or not bbox.Max:
+        return []
+
+    mn = bbox.Min
+    mx = bbox.Max
+
+    # local corners
+    if XYZ is None:
+        return []
+    local = [
+        XYZ(mn.X, mn.Y, mn.Z),
+        XYZ(mx.X, mn.Y, mn.Z),
+        XYZ(mx.X, mx.Y, mn.Z),
+        XYZ(mn.X, mx.Y, mn.Z),
+        XYZ(mn.X, mn.Y, mx.Z),
+        XYZ(mx.X, mn.Y, mx.Z),
+        XYZ(mx.X, mx.Y, mx.Z),
+        XYZ(mn.X, mx.Y, mx.Z),
+    ]
+
+    trf = getattr(bbox, "Transform", None)
+    if trf is None:
+        return local
+
+    try:
+        return [trf.OfPoint(p) for p in local]
+    except Exception:
+        return local
+
+
+def _pca_obb_uv(points_uv):
+    """
+    Compute an oriented rectangle in UV using PCA (good for “linear-ish” detection).
+    Returns: (rect_points, len_u, len_v) where rect_points is a closed loop in UV.
+    """
+    if not points_uv or len(points_uv) < 2:
+        return ([], 0.0, 0.0)
+
+    # mean
+    sx = 0.0
+    sy = 0.0
+    n = float(len(points_uv))
+    for (x, y) in points_uv:
+        sx += float(x)
+        sy += float(y)
+    mx = sx / n
+    my = sy / n
+
+    # covariance
+    cxx = 0.0
+    cxy = 0.0
+    cyy = 0.0
+    for (x, y) in points_uv:
+        dx = float(x) - mx
+        dy = float(y) - my
+        cxx += dx * dx
+        cxy += dx * dy
+        cyy += dy * dy
+
+    # principal axis angle (2D PCA)
+    # angle = 0.5 * atan2(2*cxy, cxx - cyy)
+    ang = 0.5 * math.atan2(2.0 * cxy, (cxx - cyy))
+    ux = math.cos(ang)
+    uy = math.sin(ang)
+    vx = -uy
+    vy = ux
+
+    # project extents
+    umin = 1e100
+    umax = -1e100
+    vmin = 1e100
+    vmax = -1e100
+    for (x, y) in points_uv:
+        dx = float(x) - mx
+        dy = float(y) - my
+        u = dx * ux + dy * uy
+        v = dx * vx + dy * vy
+        if u < umin: umin = u
+        if u > umax: umax = u
+        if v < vmin: vmin = v
+        if v > vmax: vmax = v
+
+    len_u = (umax - umin)
+    len_v = (vmax - vmin)
+
+    # rectangle corners back in UV
+    # p = mean + u*U + v*V
+    a = (mx + umin * ux + vmin * vx, my + umin * uy + vmin * vy)
+    b = (mx + umax * ux + vmin * vx, my + umax * uy + vmin * vy)
+    c = (mx + umax * ux + vmax * vx, my + umax * uy + vmax * vy)
+    d = (mx + umin * ux + vmax * vx, my + umin * uy + vmax * vy)
+    rect = [a, b, c, d, a]
+
+    return (rect, abs(len_u), abs(len_v))
+
+
+def _uv_obb_rect_from_bbox(elem, view, view_basis):
+    """
+    Build a UV OBB rectangle loop from bbox corners (using bbox.Transform if present).
+    Returns: (loop_points_uv, len_u, len_v)
+    """
+    try:
+        bbox = elem.get_BoundingBox(view)
+        if not bbox or not bbox.Min or not bbox.Max:
+            return ([], 0.0, 0.0)
+
+        corners_w = _bbox_corners_world(bbox)
+        if not corners_w:
+            return ([], 0.0, 0.0)
+
+        pts_uv = []
+        for p in corners_w:
+            # NOTE: if you already added _to_host_point earlier, bbox for proxies is host already,
+            # but this is harmless for normal elems.
+            p2 = _to_host_point(elem, p) if "_to_host_point" in globals() else p
+            uv = view_basis.transform_to_view_uv((p2.X, p2.Y, p2.Z))
+            pts_uv.append((uv[0], uv[1]))
+
+        rect, lu, lv = _pca_obb_uv(pts_uv)
+        return (rect, lu, lv)
+
+    except Exception:
+        return ([], 0.0, 0.0)
+
+
+def _determine_uv_mode(elem, view, view_basis, raster, cfg):
+    """
+    Classify element by UV mode (shape): TINY, LINEAR, or AREAL
+    using an OBB in UV derived from bbox.Transform when possible.
+    Falls back to the previous AABB behavior on failure.
+    """
+    try:
+        # thresholds in cells
+        tiny_max = cfg.tiny_max
+        thin_max = cfg.thin_max
+
+        rect, lu_ft, lv_ft = _uv_obb_rect_from_bbox(elem, view, view_basis)
+        if lu_ft > 0.0 and lv_ft > 0.0:
+            U = int(lu_ft / raster.cell_size_ft)
+            V = int(lv_ft / raster.cell_size_ft)
+
+            if U <= tiny_max and V <= tiny_max:
+                return 'TINY'
+            elif min(U, V) <= thin_max:
+                return 'LINEAR'
+            else:
+                return 'AREAL'
+
+        # Fallback: old AABB in UV
+        bbox = elem.get_BoundingBox(view)
+        if not bbox or not bbox.Min or not bbox.Max:
+            return 'AREAL'
+        min_uv = view_basis.transform_to_view_uv((bbox.Min.X, bbox.Min.Y, bbox.Min.Z))
+        max_uv = view_basis.transform_to_view_uv((bbox.Max.X, bbox.Max.Y, bbox.Max.Z))
+        u_extent = abs(max_uv[0] - min_uv[0])
+        v_extent = abs(max_uv[1] - min_uv[1])
+        U = int(u_extent / raster.cell_size_ft)
+        V = int(v_extent / raster.cell_size_ft)
+
+        if U <= tiny_max and V <= tiny_max:
+            return 'TINY'
+        elif min(U, V) <= thin_max:
+            return 'LINEAR'
+        else:
+            return 'AREAL'
+
+    except Exception:
+        return 'AREAL'
+
+def _location_curve_obb_silhouette(elem, view, view_basis, cfg=None):
+    """
+    Build a thin oriented quad around the projected LocationCurve.
+    Great for diagonal thin elements (beams/brace/pipe runs) so they rasterize as lines.
+    """
+    try:
+        thin = getattr(cfg, "thin_max", 1.0) if cfg else 1.0  # in *view UV units*
+        loc = getattr(elem, "Location", None)
+        if loc is None or not hasattr(loc, "Curve"):
+            return []
+
+        c = loc.Curve
+        p0 = _to_host_point(elem, c.GetEndPoint(0))
+        p1 = _to_host_point(elem, c.GetEndPoint(1))
+
+        u0, v0 = view_basis.transform_to_view_uv((p0.X, p0.Y, p0.Z))
+        u1, v1 = view_basis.transform_to_view_uv((p1.X, p1.Y, p1.Z))
+
+        du = (u1 - u0)
+        dv = (v1 - v0)
+        L = (du * du + dv * dv) ** 0.5
+        if L <= 1e-9:
+            return []
+
+        # perpendicular unit
+        nx = -dv / L
+        ny = du / L
+
+        # thickness = thin (half on each side)
+        t = thin * 0.5
+
+        a = (u0 + nx * t, v0 + ny * t)
+        b = (u1 + nx * t, v1 + ny * t)
+        c2 = (u1 - nx * t, v1 - ny * t)
+        d = (u0 - nx * t, v0 - ny * t)
+
+        return [{
+            "points": [a, b, c2, d, a],
+            "is_hole": False
+        }]
+
+    except Exception:
+        return []
+        
+def _cad_curves_silhouette(elem, view, view_basis, cfg=None):
+    """
+    For ImportInstance (DWG/DXF): extract curve primitives and return as OPEN polylines.
+    These should be rasterized as edges only (no interior fill).
+    """
+    try:
+        from Autodesk.Revit.DB import Options
+        opts = Options()
+        try:
+            opts.View = view
+        except Exception:
+            pass
+
+        geom = elem.get_Geometry(opts)
+        if geom is None:
+            return []
+
+        max_paths = getattr(cfg, "cad_max_paths", 500) if cfg else 500
+        max_pts = getattr(cfg, "cad_max_pts_per_path", 200) if cfg else 200
+
+        loops = []
+        count = 0
+
+        for g in _iter_curve_primitives(geom):
+            if count >= max_paths:
+                break
+
+            pts_uv = []
+
+            # PolyLine
+            if g.__class__.__name__ == "PolyLine":
+                try:
+                    coords = g.GetCoordinates()
+                    for k in range(min(len(coords), max_pts)):
+                        p = _to_host_point(elem, coords[k])
+                        uv = view_basis.transform_to_view_uv((p.X, p.Y, p.Z))
+                        pts_uv.append((uv[0], uv[1]))
+                except Exception:
+                    continue
+
+            # Curve-like (Line/Arc/NurbSpline etc.)
+            elif hasattr(g, "Tessellate"):
+                try:
+                    tess = g.Tessellate()
+                    for k in range(min(len(tess), max_pts)):
+                        p = _to_host_point(elem, tess[k])
+                        uv = view_basis.transform_to_view_uv((p.X, p.Y, p.Z))
+                        pts_uv.append((uv[0], uv[1]))
+                except Exception:
+                    continue
+
+            if len(pts_uv) >= 2:
+                loops.append({"points": pts_uv, "is_hole": False, "open": True})
+                count += 1
+
+        return loops
+
+    except Exception:
+        return []
+
+def _iter_curve_primitives(geom):
+    """Yield Curve / PolyLine-like primitives from GeometryElement recursively."""
+    try:
+        it = geom.GetEnumerator()
+    except Exception:
+        it = None
+    if it:
+        while it.MoveNext():
+            g = it.Current
+            if g is None:
+                continue
+            # GeometryInstance: recurse into instance geometry
+            if hasattr(g, "GetInstanceGeometry"):
+                try:
+                    ig = g.GetInstanceGeometry()
+                    for x in _iter_curve_primitives(ig):
+                        yield x
+                except Exception:
+                    pass
+                continue
+
+            # Curves / Polylines
+            if hasattr(g, "GetEndPoint") or g.__class__.__name__ == "PolyLine":
+                yield g
+                continue
+
+def _to_host_point(elem, xyz):
+    """
+    If elem is a LinkedElementProxy (or anything with .transform),
+    map link-space XYZ -> host-space XYZ.
+    """
+    trf = getattr(elem, "transform", None)
+    if trf is None:
+        return xyz
+    try:
+        return trf.OfPoint(xyz)
+    except Exception:
+        return xyz
 
 def get_element_silhouette(elem, view, view_basis, raster, cfg=None):
     """Extract element silhouette as 2D loops.
@@ -26,33 +350,47 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None):
         {
             'points': [(u, v), ...],  # View-local UV coordinates
             'is_hole': False,          # Whether this loop is a hole
-            'strategy': 'bbox'|'obb'|'coarse_tess'|'silhouette_edges'  # Which strategy was used
+            'strategy': 'bbox'|'obb'|'uv_obb_rect'|'silhouette_edges'|'cad_curves'  # Which strategy was used
         }
 
-    Commentary:
+   'strategy': 'bbox'|'obb'|'uv_obb_rect'|'silhouette_edges'|'cad_curves' Commentary:
         - Returns empty list if element has no geometry
         - Tries strategies in order based on element UV mode (TINY/LINEAR/AREAL)
         - bbox is the ultimate fallback (always succeeds if element has bbox)
     """
     if cfg is None:
-        # Default: try silhouette_edges first for accuracy, then bbox
-        strategies = ['silhouette_edges', 'bbox']
+        # No config: accuracy-first default
+        strategies = ['silhouette_edges', 'obb', 'bbox']
     else:
-        # Get UV mode (shape-based) strategy list from config
+        # Cheap shape classification using UV-OBB first (grid-aware)
         uv_mode = _determine_uv_mode(elem, view, view_basis, raster, cfg)
-        strategies = cfg.get_silhouette_strategies(uv_mode)
+
+        if uv_mode == 'TINY':
+            # Don’t waste time; bbox/obb is plenty at this scale
+            strategies = ['bbox', 'obb']
+        elif uv_mode == 'LINEAR':
+            # Key point: LINEAR means “too small for curves/L to matter at this grid”
+            # So avoid silhouette_edges; use uv_obb_rect to prevent diagonal fattening
+            strategies = ['uv_obb_rect', 'bbox']
+        else:
+            # AREAL: now it’s worth paying for silhouette_edges
+            strategies = ['silhouette_edges', 'obb', 'bbox']
+            # or config-driven:
+            # strategies = cfg.get_silhouette_strategies(uv_mode)
 
     # Try each strategy in order
     for strategy_name in strategies:
         try:
-            if strategy_name == 'bbox':
+            if strategy_name == 'uv_obb_rect':
+                loops = _uv_obb_rect_silhouette(elem, view, view_basis)
+            elif strategy_name == 'bbox':
                 loops = _bbox_silhouette(elem, view, view_basis)
             elif strategy_name == 'obb':
                 loops = _obb_silhouette(elem, view, view_basis)
-            elif strategy_name == 'coarse_tess':
-                loops = _coarse_tess_silhouette(elem, view, view_basis, cfg)
             elif strategy_name == 'silhouette_edges':
                 loops = _silhouette_edges(elem, view, view_basis, cfg)
+            elif strategy_name == 'cad_curves':
+                loops = _cad_curves_silhouette(elem, view, view_basis, cfg)
             else:
                 continue
 
@@ -75,57 +413,16 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None):
     except Exception:
         return []
 
-
-def _determine_uv_mode(elem, view, view_basis, raster, cfg):
-    """Classify element by UV mode (shape): TINY, LINEAR, or AREAL.
-
-    Args:
-        elem: Revit Element
-        view: Revit View
-        view_basis: ViewBasis for UV projection
-        raster: ViewRaster (provides bounds and cell size)
-        cfg: Config object
-
-    Returns:
-        'TINY', 'LINEAR', or 'AREAL'
-
-    Commentary:
-        Uses same classification logic as classify_by_uv from geometry.py:
-        - TINY: U <= tiny_max AND V <= tiny_max (small in both dimensions)
-        - LINEAR: min(U,V) <= thin_max AND max(U,V) > tiny_max (thin but long)
-        - AREAL: Large area elements (everything else)
+def _uv_obb_rect_silhouette(elem, view, view_basis):
     """
-    try:
-        bbox = elem.get_BoundingBox(view)
-        if not bbox or not bbox.Min or not bbox.Max:
-            return 'AREAL'  # Default to AREAL (most conservative)
-
-        # Project bbox to view UV and get cell dimensions
-        min_uv = view_basis.transform_to_view_uv((bbox.Min.X, bbox.Min.Y, bbox.Min.Z))
-        max_uv = view_basis.transform_to_view_uv((bbox.Max.X, bbox.Max.Y, bbox.Max.Z))
-
-        # Get UV extents in feet
-        u_extent = abs(max_uv[0] - min_uv[0])
-        v_extent = abs(max_uv[1] - min_uv[1])
-
-        # Convert to cells
-        U = int(u_extent / raster.cell_size_ft)
-        V = int(v_extent / raster.cell_size_ft)
-
-        # Get thresholds from config
-        tiny_max = cfg.tiny_max
-        thin_max = cfg.thin_max
-
-        # Classify using same logic as classify_by_uv
-        if U <= tiny_max and V <= tiny_max:
-            return 'TINY'
-        elif min(U, V) <= thin_max:
-            return 'LINEAR'
-        else:
-            return 'AREAL'
-
-    except Exception:
-        return 'AREAL'  # Default to AREAL (most conservative)
+    Return a single closed loop representing the UV OBB rectangle from bbox corners.
+    This is used for LINEAR classification so diagonals render as thin oriented boxes,
+    not fat axis-aligned rectangles.
+    """
+    rect, lu, lv = _uv_obb_rect_from_bbox(elem, view, view_basis)
+    if not rect or len(rect) < 4:
+        return []
+    return [{"points": rect, "is_hole": False}]
 
 
 def _bbox_silhouette(elem, view, view_basis):
@@ -149,7 +446,8 @@ def _bbox_silhouette(elem, view, view_basis):
         max_pt = (bbox.Max.X, bbox.Max.Y, bbox.Max.Z)
 
         # Project to view UV
-        min_uv = view_basis.transform_to_view_uv(min_pt)
+        corner_h = _to_host_point(elem, corner)
+        uv = view_basis.transform_to_view_uv((corner_h.X, corner_h.Y, corner_h.Z))
         max_uv = view_basis.transform_to_view_uv(max_pt)
 
         # Build rectangle
@@ -218,89 +516,6 @@ def _obb_silhouette(elem, view, view_basis):
 
         # Compute convex hull
         hull = _convex_hull_2d(corners_uv)
-
-        if len(hull) < 3:
-            return []
-
-        return [{'points': hull, 'is_hole': False}]
-
-    except Exception:
-        return []
-
-
-def _coarse_tess_silhouette(elem, view, view_basis, cfg):
-    """Extract silhouette from coarse tessellation.
-
-    Args:
-        elem: Revit Element
-        view: Revit View
-        view_basis: ViewBasis
-        cfg: Config object
-
-    Returns:
-        List with one loop (convex hull of tessellated points)
-    """
-    try:
-        from Autodesk.Revit.DB import Options, ViewDetailLevel
-
-        if not hasattr(elem, 'get_Geometry'):
-            return []
-
-        # Coarse geometry options
-        opts = Options()
-        opts.ComputeReferences = False
-        opts.IncludeNonVisibleObjects = False
-        opts.DetailLevel = ViewDetailLevel.Coarse
-
-        try:
-            opts.View = view
-        except Exception:
-            pass
-
-        geom = elem.get_Geometry(opts)
-        if geom is None:
-            return []
-
-        # Collect tessellated points
-        points_uv = []
-        max_verts = getattr(cfg, 'coarse_tess_max_verts', 20) if cfg else 20
-
-        for solid in _iter_solids(geom):
-            try:
-                faces = solid.Faces
-            except Exception:
-                continue
-
-            for face in faces:
-                try:
-                    mesh = face.Triangulate(0.5)  # Coarse tessellation
-                except Exception:
-                    continue
-
-                if mesh is None:
-                    continue
-
-                try:
-                    vcount = int(mesh.NumVertices)
-                except Exception:
-                    continue
-
-                # Sample vertices (skip some if too many)
-                step = max(1, vcount // max_verts)
-
-                for i in range(0, vcount, step):
-                    try:
-                        p = mesh.get_Vertex(i)
-                        uv = view_basis.transform_to_view_uv((p.X, p.Y, p.Z))
-                        points_uv.append(uv)
-                    except Exception:
-                        continue
-
-        if len(points_uv) < 3:
-            return []
-
-        # Compute convex hull
-        hull = _convex_hull_2d(points_uv)
 
         if len(hull) < 3:
             return []
@@ -464,7 +679,8 @@ def _silhouette_edges(elem, view, view_basis, cfg):
 
                     # Project to view UV
                     for pt in points_3d:
-                        uv = view_basis.transform_to_view_uv((pt.X, pt.Y, pt.Z))
+                        pt_h = _to_host_point(elem, pt)
+                        uv = view_basis.transform_to_view_uv((pt_h.X, pt_h.Y, pt_h.Z))
                         silhouette_points.append(uv)
 
                 except Exception:
