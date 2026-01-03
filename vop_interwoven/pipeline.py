@@ -252,12 +252,18 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
             if rect is None or rect.empty:
                 continue
 
-            # Simplified rendering: fill bounding box cells
+            # Fill bbox with proper occlusion vs occupancy separation
             for i, j in rect.cells():
+                # Set occlusion for all cells (interior + boundary)
                 raster.set_cell_filled(i, j, depth=0.0)
-                idx = raster.get_cell_index(i, j)
-                if idx is not None:
-                    raster.model_edge_key[idx] = key_index
+
+                # Set occupancy ONLY for boundary cells
+                is_boundary = (i == rect.i_min or i == rect.i_max or
+                              j == rect.j_min or j == rect.j_max)
+                if is_boundary:
+                    idx = raster.get_cell_index(i, j)
+                    if idx is not None:
+                        raster.model_edge_key[idx] = key_index
 
             bbox_fallback += 1
             processed += 1
