@@ -137,7 +137,8 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg):
         Each item: {
             'element': Element,
             'world_transform': Transform (identity for host, link transform for linked),
-            'doc_key': str (host doc path or link doc path),
+            'doc_key': str (unique key for indexing),
+            'doc_label': str (friendly label for logging),
             'link_inst_id': ElementId or None
         }
 
@@ -145,6 +146,8 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg):
         ✔ Includes host elements (identity transform)
         ✔ Expands RevitLinkInstance and ImportInstance to access linked elements
         ✔ Uses linked_documents module for production-ready link handling
+        ✔ Provides unique doc_key for multiple link instances (includes instance ID)
+        ✔ Provides friendly doc_label for logging/display
     """
     from Autodesk.Revit.DB import Transform
     from .linked_documents import collect_all_linked_elements
@@ -159,6 +162,7 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg):
                 "element": e,
                 "world_transform": identity_trf,
                 "doc_key": "HOST",
+                "doc_label": "HOST",
                 "link_inst_id": None,
             }
         )
@@ -172,7 +176,8 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg):
                 {
                     "element": proxy,  # LinkedElementProxy
                     "world_transform": proxy.transform,
-                    "doc_key": proxy.doc_key,
+                    "doc_key": proxy.doc_key,          # Unique key (includes instance ID)
+                    "doc_label": proxy.doc_label,      # Friendly label for logging
                     "link_inst_id": proxy.LinkInstanceId,
                 }
             )

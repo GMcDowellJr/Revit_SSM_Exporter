@@ -24,13 +24,14 @@ class LinkedElementProxy:
     - get_BoundingBox(view): Returns host-space bbox
     - get_Geometry(options): Returns link-space geometry
     - transform: Link transform (link → host)
-    - doc_key: Document key for metadata tracking
+    - doc_key: Unique document key for metadata indexing (includes instance ID)
+    - doc_label: Human-friendly document label for logging/display
     """
 
     __slots__ = ("_bb", "_elem", "_link_trf", "Id", "Category",
-                 "LinkInstanceId", "transform", "doc_key")
+                 "LinkInstanceId", "transform", "doc_key", "doc_label")
 
-    def __init__(self, element, link_inst, host_min, host_max, link_trf, doc_key):
+    def __init__(self, element, link_inst, host_min, host_max, link_trf, doc_key, doc_label=None):
         """Initialize proxy with host-space bbox and link transform.
 
         Args:
@@ -39,7 +40,8 @@ class LinkedElementProxy:
             host_min: BBox minimum in host coordinates (XYZ)
             host_max: BBox maximum in host coordinates (XYZ)
             link_trf: Transform from link to host
-            doc_key: Document key string (e.g., link title or import name)
+            doc_key: Unique document key (e.g., "RVT_LINK:{UniqueId}:{InstanceId}")
+            doc_label: Optional friendly label (e.g., "RVT_LINK:LinkTitle"), defaults to doc_key
         """
         # Create simple bbox wrapper
         class _BB:
@@ -56,6 +58,7 @@ class LinkedElementProxy:
         self.LinkInstanceId = getattr(link_inst, "Id", None)
         self.transform = link_trf
         self.doc_key = doc_key
+        self.doc_label = doc_label if doc_label is not None else doc_key
 
     def get_BoundingBox(self, view):
         """Return host-space bounding box (view parameter ignored)."""
@@ -120,6 +123,112 @@ def collect_all_linked_elements(doc, view, cfg):
     return elements
 
 
+def _has_revit_2024_link_collector(doc, view):
+    """Detect if Revit 2024+ FilteredElementCollector(doc, viewId, linkId) is available.
+
+    Args:
+        doc: Revit Document
+        view: Revit View
+
+    Returns:
+        True if Revit 2024+ collector is available, False otherwise
+
+    Commentary:
+        Tests if the 3-parameter FilteredElementCollector overload exists.
+        This overload was added in Revit 2024 to collect visible elements from links.
+    """
+    try:
+        from Autodesk.Revit.DB import FilteredElementCollector, ElementId
+
+        # Try to create a FilteredElementCollector with 3 parameters
+        # Use a dummy ElementId to test the signature
+        dummy_id = ElementId(-1)
+        test_collector = FilteredElementCollector(doc, view.Id, dummy_id)
+
+        # If we get here, the overload exists (Revit 2024+)
+        _log("INFO", "Revit 2024+ FilteredElementCollector overload detected")
+        return True
+
+    except Exception:
+        # Overload doesn't exist (Revit < 2024) or other error
+        _log("INFO", "Revit 2024+ collector not available, using clip volume fallback")
+        return False
+
+
+def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, link_trf, cfg):
+    """Collect visible elements from link using Revit 2024+ collector.
+
+    Args:
+        doc: Host Revit Document
+        view: Host View
+        link_inst: RevitLinkInstance
+        link_doc: Linked Document
+        link_trf: Transform (link → host)
+        cfg: Config object
+
+    Returns:
+        Tuple of (proxies list, source_key, source_label)
+
+    Commentary:
+        Uses FilteredElementCollector(doc, viewId, linkId) overload added in Revit 2024.
+        This directly enumerates elements visible from the link in the host view,
+        eliminating the need for bbox clipping approximations.
+    """
+    from Autodesk.Revit.DB import FilteredElementCollector
+
+    # Build unique source key (includes instance ID for uniqueness)
+    link_inst_id = link_inst.Id.IntegerValue
+    try:
+        link_doc_uid = link_doc.UniqueId
+    except Exception:
+        link_doc_uid = link_doc.Title  # Fallback if UniqueId not available
+
+    source_key = "RVT_LINK:{0}:{1}".format(link_doc_uid, link_inst_id)
+    source_label = "RVT_LINK:{0}".format(link_doc.Title)
+
+    _log("DEBUG", "Using Revit 2024+ collector for link '{0}'".format(link_doc.Title))
+
+    proxies = []
+    try:
+        # Revit 2024+ overload: collect visible elements from link instance in view
+        fec = FilteredElementCollector(doc, view.Id, link_inst.Id)
+        fec.WhereElementIsNotElementType()
+
+        for elem in fec:
+            try:
+                # Get element bbox in link space
+                bbox_link = elem.get_BoundingBox(None)
+                if bbox_link is None or bbox_link.Min is None or bbox_link.Max is None:
+                    continue
+
+                # Transform bbox to host space
+                host_min, host_max = _transform_bbox_to_host(bbox_link, link_trf)
+                if host_min is None or host_max is None:
+                    continue
+
+                # Create proxy
+                proxy = LinkedElementProxy(
+                    element=elem,
+                    link_inst=link_inst,
+                    host_min=host_min,
+                    host_max=host_max,
+                    link_trf=link_trf,
+                    doc_key=source_key,
+                    doc_label=source_label
+                )
+                proxies.append(proxy)
+
+            except Exception as e:
+                _log("DEBUG", "Error processing link element {0}: {1}".format(getattr(elem, 'Id', '?'), e))
+                continue
+
+    except Exception as e:
+        _log("ERROR", "Revit 2024+ collector failed for link '{0}': {1}".format(link_doc.Title, e))
+        return [], source_key, source_label
+
+    return proxies, source_key, source_label
+
+
 def _collect_from_revit_links(doc, view, cfg):
     """Collect elements from linked Revit files.
 
@@ -131,13 +240,17 @@ def _collect_from_revit_links(doc, view, cfg):
     Returns:
         List of LinkedElementProxy objects
 
-    Process:
+    Process (Revit 2024+):
         1. Find all RevitLinkInstance elements in view
-        2. For each link, get linked document
-        3. Build clip volume from host view
-        4. Transform clip volume to link space
-        5. Collect elements intersecting clip volume
-        6. Create proxies with host-space bboxes
+        2. For each link, use FilteredElementCollector(doc, viewId, linkId)
+        3. Create proxies with unique source keys
+
+    Process (Revit < 2024):
+        1. Find all RevitLinkInstance elements in view
+        2. Build clip volume from host view
+        3. Transform clip volume to link space
+        4. Collect elements intersecting clip volume
+        5. Create proxies with host-space bboxes
     """
     from Autodesk.Revit.DB import (
         FilteredElementCollector,
@@ -165,11 +278,15 @@ def _collect_from_revit_links(doc, view, cfg):
 
     _log("INFO", "Found {0} RVT link instance(s) in view".format(len(link_instances)))
 
-    # Build host view clip volume for spatial filtering
-    clip_volume = _build_clip_volume(view, cfg)
+    # Detect if Revit 2024+ collector is available
+    use_2024_collector = _has_revit_2024_link_collector(doc, view)
 
-    # Get host visible categories (for By Host View filtering)
-    host_visible_cats = _get_host_visible_model_categories(view)
+    # Build clip volume for fallback (Revit < 2024)
+    clip_volume = None
+    host_visible_cats = None
+    if not use_2024_collector:
+        clip_volume = _build_clip_volume(view, cfg)
+        host_visible_cats = _get_host_visible_model_categories(view)
 
     # Process each link instance
     for link_inst in link_instances:
@@ -192,17 +309,35 @@ def _collect_from_revit_links(doc, view, cfg):
                 _log("WARN", "Link {0} has no transform".format(link_title))
                 continue
 
-            # Collect elements from link with spatial clipping
-            link_proxies = _collect_link_elements_with_clipping(
-                link_inst=link_inst,
-                link_doc=link_doc,
-                link_trf=link_trf,
-                view=view,
-                clip_volume=clip_volume,
-                host_visible_cats=host_visible_cats,
-                doc_key=link_title,
-                cfg=cfg
-            )
+            # Try Revit 2024+ collector first
+            link_proxies = []
+            if use_2024_collector:
+                link_proxies, source_key, source_label = _collect_visible_link_elements_2024_plus(
+                    doc, view, link_inst, link_doc, link_trf, cfg
+                )
+            else:
+                # Fallback: Use clip volume approach for Revit < 2024
+                # Build unique source key even for older versions
+                link_inst_id = link_inst.Id.IntegerValue
+                try:
+                    link_doc_uid = link_doc.UniqueId
+                except Exception:
+                    link_doc_uid = link_title
+
+                source_key = "RVT_LINK:{0}:{1}".format(link_doc_uid, link_inst_id)
+                source_label = "RVT_LINK:{0}".format(link_title)
+
+                link_proxies = _collect_link_elements_with_clipping(
+                    link_inst=link_inst,
+                    link_doc=link_doc,
+                    link_trf=link_trf,
+                    view=view,
+                    clip_volume=clip_volume,
+                    host_visible_cats=host_visible_cats,
+                    doc_key=source_key,
+                    doc_label=source_label,
+                    cfg=cfg
+                )
 
             proxies.extend(link_proxies)
             _log("INFO", "Collected {0} elements from link '{1}'".format(len(link_proxies), link_title))
@@ -268,14 +403,19 @@ def _collect_from_dwg_imports(doc, view, cfg):
                 _log("DEBUG", "Import {0} has no valid bbox".format(import_inst.Id))
                 continue
 
-            # Get import name/path for doc_key
+            # Get import name/path for doc_key and label
             try:
                 # Try to get CAD link type for name
                 type_id = import_inst.GetTypeId()
                 import_type = doc.GetElement(type_id)
-                doc_key = getattr(import_type, "Name", "DWG_Import")
+                import_name = getattr(import_type, "Name", "DWG_Import")
             except Exception:
-                doc_key = "DWG_Import"
+                import_name = "DWG_Import"
+
+            # Build unique source key (includes instance ID)
+            import_inst_id = import_inst.Id.IntegerValue
+            source_key = "DWG_IMPORT:{0}:{1}".format(import_name, import_inst_id)
+            source_label = "DWG_IMPORT:{0}".format(import_name)
 
             # ImportInstance geometry is already in host coordinates
             # Create identity transform
@@ -289,7 +429,8 @@ def _collect_from_dwg_imports(doc, view, cfg):
                 host_min=bbox.Min,
                 host_max=bbox.Max,
                 link_trf=identity_trf,
-                doc_key=doc_key
+                doc_key=source_key,
+                doc_label=source_label
             )
 
             proxies.append(proxy)
@@ -303,7 +444,7 @@ def _collect_from_dwg_imports(doc, view, cfg):
 
 
 def _collect_link_elements_with_clipping(link_inst, link_doc, link_trf, view,
-                                          clip_volume, host_visible_cats, doc_key, cfg):
+                                          clip_volume, host_visible_cats, doc_key, doc_label, cfg):
     """Collect elements from a link document with spatial clipping.
 
     Args:
@@ -313,7 +454,8 @@ def _collect_link_elements_with_clipping(link_inst, link_doc, link_trf, view,
         view: Host view
         clip_volume: Clip volume dict from _build_clip_volume
         host_visible_cats: Set of visible category IDs in host view
-        doc_key: Document key for metadata
+        doc_key: Unique document key for metadata indexing
+        doc_label: Human-friendly document label for logging
         cfg: Config object
 
     Returns:
@@ -429,7 +571,8 @@ def _collect_link_elements_with_clipping(link_inst, link_doc, link_trf, view,
                 host_min=host_min,
                 host_max=host_max,
                 link_trf=link_trf,
-                doc_key=doc_key
+                doc_key=doc_key,
+                doc_label=doc_label
             )
 
             proxies.append(proxy)
