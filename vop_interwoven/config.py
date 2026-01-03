@@ -250,23 +250,26 @@ class Config:
             List of strategy names to try in order
 
         Commentary:
-            - Tiny elements: bbox only (fast, good enough for small elements)
-            - Medium elements: silhouette_edges for accuracy (preserves L-shapes, U-shapes)
-            - Large elements: silhouette_edges for accuracy (critical for concave shapes)
-            - All strategies fall back to bbox if they fail
+            3-tier fallback chain for accuracy → performance → reliability:
+            1. silhouette_edges: Preserves concave shapes (L, U, C)
+            2. obb: Tighter bounds for rotated elements (walls, beams at angles)
+            3. bbox: Ultimate fallback (always works)
+
+            - Tiny elements: bbox only (fast, sufficient for <3ft elements)
+            - Medium/Large: Full 3-tier chain for best accuracy
         """
         if size_tier == 'tiny_linear':
             # Tiny: bbox is good enough (< 3ft)
             return ['bbox']
         elif size_tier == 'medium':
-            # Medium: true silhouette edges to preserve concavity, with bbox fallback
-            return ['silhouette_edges', 'bbox']
+            # Medium: accuracy → tight bounds → safe fallback
+            return ['silhouette_edges', 'obb', 'bbox']
         elif size_tier == 'large':
-            # Large: true silhouette edges critical for accuracy
-            return ['silhouette_edges', 'bbox']
+            # Large: accuracy → tight bounds → safe fallback
+            return ['silhouette_edges', 'obb', 'bbox']
         else:
             # Default fallback
-            return ['silhouette_edges', 'bbox']
+            return ['silhouette_edges', 'obb', 'bbox']
 
     def __repr__(self):
         return (
