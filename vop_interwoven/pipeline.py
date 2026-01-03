@@ -217,7 +217,8 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
 
     for elem_wrapper in expanded_elements:
         elem = elem_wrapper["element"]
-        doc_key = elem_wrapper["doc_key"]
+        doc_key = elem_wrapper["doc_key"]           # Unique key for indexing
+        doc_label = elem_wrapper.get("doc_label", doc_key)  # Friendly label for logging
         world_transform = elem_wrapper["world_transform"]
 
         # Get element metadata
@@ -228,10 +229,10 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
             # Log the error but continue processing other elements
             skipped += 1
             if skipped <= 5:  # Log first 5 errors to avoid spam
-                print("[WARN] vop.pipeline: Skipping element from {0}: {1}".format(doc_key, e))
+                print("[WARN] vop.pipeline: Skipping element from {0}: {1}".format(doc_label, e))
             continue
 
-        key_index = raster.get_or_create_element_meta_index(elem_id, category, doc_key)
+        key_index = raster.get_or_create_element_meta_index(elem_id, category, source=doc_key, source_label=doc_label)
 
         # Calculate element depth for z-buffer occlusion
         elem_depth = estimate_nearest_depth_from_bbox(elem, world_transform, view, raster)

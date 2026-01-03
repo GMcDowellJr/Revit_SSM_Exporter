@@ -312,16 +312,21 @@ class ViewRaster:
 
         return True
 
-    def get_or_create_element_meta_index(self, elem_id, category, source="HOST"):
+    def get_or_create_element_meta_index(self, elem_id, category, source="HOST", source_label=None):
         """Get or create metadata index for element.
 
         Args:
             elem_id: Revit element ID (integer)
             category: Element category name (string)
-            source: Source type ("HOST", "RVT_LINK", etc.)
+            source: Unique source key for indexing ("HOST", "RVT_LINK:{uid}:{id}", etc.)
+            source_label: Optional friendly label for display (defaults to source)
 
         Returns:
             Integer index for this element's metadata
+
+        Commentary:
+            source: Used as unique key for indexing (must be unique per element)
+            source_label: Used for display/logging (can be friendly, non-unique)
         """
         key = (elem_id, source)
         if key in self.element_meta_index_by_key:
@@ -330,7 +335,12 @@ class ViewRaster:
         idx = len(self.element_meta)
         self.element_meta_index_by_key[key] = idx
         self.element_meta.append(
-            {"elem_id": elem_id, "category": category, "source": source}
+            {
+                "elem_id": elem_id,
+                "category": category,
+                "source": source,
+                "source_label": source_label if source_label is not None else source
+            }
         )
         return idx
 
