@@ -254,6 +254,11 @@ class ViewRaster:
             if depth < self.z_min[idx]:
                 self.z_min[idx] = depth
                 self.tile.update_z_min(i, j, depth)
+            # DEBUG: Log if depth wasn't updated
+            elif getattr(self, '_debug_depth_log_count', 0) < 5:
+                self._debug_depth_log_count = getattr(self, '_debug_depth_log_count', 0) + 1
+                print("[DEBUG] set_cell_filled({0},{1}): depth={2} NOT < z_min[{3}]={4}".format(
+                    i, j, depth, idx, self.z_min[idx]))
 
         if was_empty:
             self.tile.update_filled_count(i, j, increment=1)

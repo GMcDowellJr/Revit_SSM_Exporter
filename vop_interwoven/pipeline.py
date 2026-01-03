@@ -236,6 +236,10 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
         # Calculate element depth for z-buffer occlusion
         elem_depth = estimate_nearest_depth_from_bbox(elem, world_transform, view, raster)
 
+        # DEBUG: Log depth values for first few elements
+        if processed < 10:
+            print("[DEBUG] Element {0} ({1}): depth = {2}".format(elem_id, category, elem_depth))
+
         # Try silhouette extraction
         try:
             loops = get_element_silhouette(elem, view, vb, raster, cfg)
