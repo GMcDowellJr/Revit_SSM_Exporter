@@ -160,15 +160,19 @@ def make_view_basis(view):
         right = view.RightDirection
         up = view.UpDirection
 
-        # Use Revit's ViewDirection directly (points into view)
-        # For plan views: ViewDirection = (0, 0, -1) pointing down
-        # For sections/elevations: ViewDirection points into the cut plane
+        # Use Revit's ViewDirection, but negate it for correct depth sorting
+        # Revit's ViewDirection points "away from view" (opposite of camera direction)
+        # For plan views: ViewDirection = (0, 0, 1) pointing UP, but we need (0, 0, -1) DOWN
+        # For sections: ViewDirection points away from cut, but we need into cut
         try:
-            view_direction = view.ViewDirection
-            forward = view_direction.Normalize()
+            view_direction = view.ViewDirection.Normalize()
+            # Negate to get direction INTO the view (camera/depth direction)
+            forward = (-view_direction.X, -view_direction.Y, -view_direction.Z)
         except Exception:
             # Fallback: compute as right × up if ViewDirection not available
-            forward = right.CrossProduct(up).Normalize()
+            # This gives upward direction for plans, so negate it
+            cross = right.CrossProduct(up).Normalize()
+            forward = (-cross.X, -cross.Y, -cross.Z)
 
         # For plan views (FloorPlan, CeilingPlan), adjust origin to cut plane
         origin_z = origin.Z
