@@ -234,10 +234,17 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
             loops = get_element_silhouette(elem, view, vb, raster, cfg)
 
             if loops:
+                # Get strategy used from first loop
+                strategy = loops[0].get('strategy', 'unknown')
+
                 # Rasterize silhouette loops
                 filled = raster.rasterize_silhouette_loops(loops, key_index, depth=0.0)
 
                 if filled > 0:
+                    # Tag element metadata with strategy used
+                    if key_index < len(raster.element_meta):
+                        raster.element_meta[key_index]['strategy'] = strategy
+
                     silhouette_success += 1
                     processed += 1
                     continue
@@ -264,6 +271,10 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
                     idx = raster.get_cell_index(i, j)
                     if idx is not None:
                         raster.model_edge_key[idx] = key_index
+
+            # Tag element metadata with bbox fallback strategy
+            if key_index < len(raster.element_meta):
+                raster.element_meta[key_index]['strategy'] = 'bbox_fallback'
 
             bbox_fallback += 1
             processed += 1
