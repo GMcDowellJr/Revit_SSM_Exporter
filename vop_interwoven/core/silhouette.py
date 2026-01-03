@@ -25,17 +25,17 @@ def get_element_silhouette(elem, view, view_basis, cfg=None):
         {
             'points': [(u, v), ...],  # View-local UV coordinates
             'is_hole': False,          # Whether this loop is a hole
-            'strategy': 'bbox'|'obb'|'coarse_tess'  # Which strategy was used
+            'strategy': 'bbox'|'obb'|'coarse_tess'|'silhouette_edges'  # Which strategy was used
         }
 
     Commentary:
         - Returns empty list if element has no geometry
-        - Tries strategies in order: obb -> coarse_tess -> bbox
+        - Tries strategies in order based on element size
         - bbox is the ultimate fallback (always succeeds if element has bbox)
     """
     if cfg is None:
-        # Default: try obb first, then bbox
-        strategies = ['obb', 'bbox']
+        # Default: try silhouette_edges first for accuracy, then bbox
+        strategies = ['silhouette_edges', 'bbox']
     else:
         # Get size-based strategy list from config
         size_tier = _determine_size_tier(elem, view, cfg)
@@ -50,6 +50,8 @@ def get_element_silhouette(elem, view, view_basis, cfg=None):
                 loops = _obb_silhouette(elem, view, view_basis)
             elif strategy_name == 'coarse_tess':
                 loops = _coarse_tess_silhouette(elem, view, view_basis, cfg)
+            elif strategy_name == 'silhouette_edges':
+                loops = _silhouette_edges(elem, view, view_basis, cfg)
             else:
                 continue
 
@@ -291,6 +293,234 @@ def _coarse_tess_silhouette(elem, view, view_basis, cfg):
 
     except Exception:
         return []
+
+
+def _silhouette_edges(elem, view, view_basis, cfg):
+    """Extract true silhouette edges based on view direction.
+
+    This preserves concave shapes (L, U, C, etc.) by extracting actual
+    visible edges rather than using convex hull approximation.
+
+    Args:
+        elem: Revit Element
+        view: Revit View
+        view_basis: ViewBasis
+        cfg: Config object
+
+    Returns:
+        List with loops representing actual silhouette (preserves concavity)
+    """
+    try:
+        from Autodesk.Revit.DB import Options, ViewDetailLevel, UV
+    except Exception:
+        return []
+
+    if not hasattr(elem, 'get_Geometry'):
+        return []
+
+    # Get view direction for silhouette detection
+    try:
+        view_direction = view.ViewDirection
+    except Exception:
+        # Can't determine view direction, fall back
+        return []
+
+    # Get geometry with appropriate detail level
+    try:
+        opts = Options()
+        opts.ComputeReferences = False
+        opts.IncludeNonVisibleObjects = False
+        opts.DetailLevel = ViewDetailLevel.Medium
+
+        try:
+            opts.View = view
+        except Exception:
+            pass
+
+        geom = elem.get_Geometry(opts)
+        if geom is None:
+            return []
+    except Exception:
+        return []
+
+    # Collect silhouette edges
+    silhouette_points = []
+
+    for solid in _iter_solids(geom):
+        if not solid or getattr(solid, 'Volume', 0) <= 1e-9:
+            continue
+
+        try:
+            faces = solid.Faces
+        except Exception:
+            continue
+
+        if not faces:
+            continue
+
+        # Build edge -> faces mapping to identify silhouette edges
+        edge_face_map = {}
+
+        for face in faces:
+            try:
+                # Get face normal at center
+                bbox_uv = face.GetBoundingBox()
+                if not bbox_uv:
+                    continue
+
+                u_mid = (bbox_uv.Min.U + bbox_uv.Max.U) / 2.0
+                v_mid = (bbox_uv.Min.V + bbox_uv.Max.V) / 2.0
+
+                try:
+                    uv = UV(u_mid, v_mid)
+                    normal = face.ComputeNormal(uv)
+                except Exception:
+                    continue
+
+                # Check if face is front-facing
+                # View direction points INTO screen, so negative dot = facing us
+                dot = normal.DotProduct(view_direction)
+                is_front_facing = dot < 0
+
+                # Get edges of this face
+                try:
+                    edge_loops = face.EdgeLoops
+                except Exception:
+                    continue
+
+                if not edge_loops:
+                    continue
+
+                for edge_loop in edge_loops:
+                    for edge in edge_loop:
+                        try:
+                            curve = edge.AsCurve()
+                            if not curve:
+                                continue
+
+                            # Create edge key (order-independent)
+                            p0 = curve.GetEndPoint(0)
+                            p1 = curve.GetEndPoint(1)
+
+                            key = tuple(sorted([
+                                (round(p0.X, 6), round(p0.Y, 6), round(p0.Z, 6)),
+                                (round(p1.X, 6), round(p1.Y, 6), round(p1.Z, 6))
+                            ]))
+
+                            if key not in edge_face_map:
+                                edge_face_map[key] = []
+
+                            edge_face_map[key].append((edge, is_front_facing))
+
+                        except Exception:
+                            continue
+
+            except Exception:
+                continue
+
+        # Find silhouette edges (boundary or front/back transition)
+        for edge_key, face_list in edge_face_map.items():
+            is_silhouette = False
+
+            if len(face_list) == 1:
+                # Boundary edge - always silhouette
+                is_silhouette = True
+            elif len(face_list) == 2:
+                # Check if front/back transition
+                _, is_front_0 = face_list[0]
+                _, is_front_1 = face_list[1]
+                is_silhouette = (is_front_0 != is_front_1)
+
+            if is_silhouette and len(face_list) > 0:
+                edge_obj = face_list[0][0]
+                try:
+                    curve = edge_obj.AsCurve()
+                    if not curve:
+                        continue
+
+                    # Tessellate edge
+                    try:
+                        tess = curve.Tessellate()
+                        points_3d = list(tess)
+                    except Exception:
+                        # Fallback: use endpoints
+                        points_3d = [curve.GetEndPoint(0), curve.GetEndPoint(1)]
+
+                    # Project to view UV
+                    for pt in points_3d:
+                        uv = view_basis.transform_to_view_uv((pt.X, pt.Y, pt.Z))
+                        silhouette_points.append(uv)
+
+                except Exception:
+                    continue
+
+    if len(silhouette_points) < 3:
+        return []
+
+    # Build polygon from silhouette points
+    # For now, use simplified approach: order by connectivity
+    # TODO: Implement proper edge chaining for multiple loops
+    loop_points = _order_points_by_connectivity(silhouette_points)
+
+    if len(loop_points) >= 3:
+        return [{'points': loop_points, 'is_hole': False}]
+    else:
+        return []
+
+
+def _order_points_by_connectivity(points):
+    """Order points by spatial connectivity (simple greedy approach).
+
+    Args:
+        points: List of (u, v) points
+
+    Returns:
+        Ordered list of points forming a closed loop
+    """
+    if len(points) < 3:
+        return []
+
+    # Remove duplicates
+    unique_points = []
+    seen = set()
+    for p in points:
+        key = (round(p[0], 6), round(p[1], 6))
+        if key not in seen:
+            seen.add(key)
+            unique_points.append(p)
+
+    if len(unique_points) < 3:
+        return []
+
+    # Greedy nearest-neighbor ordering
+    ordered = [unique_points[0]]
+    remaining = set(range(1, len(unique_points)))
+
+    while remaining:
+        current = ordered[-1]
+        best_idx = None
+        best_dist = float('inf')
+
+        for idx in remaining:
+            pt = unique_points[idx]
+            dist = (pt[0] - current[0]) ** 2 + (pt[1] - current[1]) ** 2
+
+            if dist < best_dist:
+                best_dist = dist
+                best_idx = idx
+
+        if best_idx is not None:
+            ordered.append(unique_points[best_idx])
+            remaining.remove(best_idx)
+        else:
+            break
+
+    # Close the loop
+    if len(ordered) >= 3:
+        if ordered[0] != ordered[-1]:
+            ordered.append(ordered[0])
+
+    return ordered
 
 
 def _iter_solids(geom):

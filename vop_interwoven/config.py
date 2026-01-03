@@ -251,18 +251,22 @@ class Config:
 
         Commentary:
             - Tiny elements: bbox only (fast, good enough for small elements)
-            - Medium elements: try obb first, then bbox
-            - Large elements: try coarse_tess first, then obb, then bbox
+            - Medium elements: silhouette_edges for accuracy (preserves L-shapes, U-shapes)
+            - Large elements: silhouette_edges for accuracy (critical for concave shapes)
+            - All strategies fall back to bbox if they fail
         """
         if size_tier == 'tiny_linear':
+            # Tiny: bbox is good enough (< 3ft)
             return ['bbox']
         elif size_tier == 'medium':
-            return ['obb', 'bbox']
+            # Medium: true silhouette edges to preserve concavity, with bbox fallback
+            return ['silhouette_edges', 'bbox']
         elif size_tier == 'large':
-            return ['coarse_tess', 'obb', 'bbox']
+            # Large: true silhouette edges critical for accuracy
+            return ['silhouette_edges', 'bbox']
         else:
             # Default fallback
-            return ['obb', 'bbox']
+            return ['silhouette_edges', 'bbox']
 
     def __repr__(self):
         return (
