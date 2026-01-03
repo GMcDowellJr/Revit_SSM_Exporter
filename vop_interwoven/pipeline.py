@@ -27,6 +27,7 @@ from .revit.collection import (
     expand_host_link_import_model_elements,
     sort_front_to_back,
     is_element_visible_in_view,
+    estimate_nearest_depth_from_bbox,
 )
 from .revit.annotation import rasterize_annotations, compute_annotation_extents
 
@@ -205,6 +206,9 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
     # Expand to include linked/imported elements
     expanded_elements = expand_host_link_import_model_elements(doc, view, elements, cfg)
 
+    # Sort elements front-to-back by depth for proper occlusion
+    expanded_elements = sort_front_to_back(expanded_elements, view, raster)
+
     # Process each element (host + linked)
     processed = 0
     skipped = 0
@@ -229,6 +233,9 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
 
         key_index = raster.get_or_create_element_meta_index(elem_id, category, doc_key)
 
+        # Calculate element depth for z-buffer occlusion
+        elem_depth = estimate_nearest_depth_from_bbox(elem, world_transform, view, raster)
+
         # Try silhouette extraction
         try:
             loops = get_element_silhouette(elem, view, vb, raster, cfg)
@@ -237,8 +244,8 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
                 # Get strategy used from first loop
                 strategy = loops[0].get('strategy', 'unknown')
 
-                # Rasterize silhouette loops
-                filled = raster.rasterize_silhouette_loops(loops, key_index, depth=0.0)
+                # Rasterize silhouette loops with actual depth for occlusion
+                filled = raster.rasterize_silhouette_loops(loops, key_index, depth=elem_depth)
 
                 if filled > 0:
                     # Tag element metadata with strategy used
@@ -261,8 +268,8 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
 
             # Fill bbox with proper occlusion vs occupancy separation
             for i, j in rect.cells():
-                # Set occlusion for all cells (interior + boundary)
-                raster.set_cell_filled(i, j, depth=0.0)
+                # Set occlusion for all cells (interior + boundary) with actual depth
+                raster.set_cell_filled(i, j, depth=elem_depth)
 
                 # Set occupancy ONLY for boundary cells
                 is_boundary = (i == rect.i_min or i == rect.i_max or

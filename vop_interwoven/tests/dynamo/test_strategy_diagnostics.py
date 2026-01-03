@@ -4,14 +4,17 @@ Diagnostic script to test silhouette strategy selection and occlusion vs occupan
 USAGE: Copy this entire script into a Dynamo Python Script node and run.
 """
 
-# Minimal imports - no sys.path manipulation needed when run from Dynamo
+# Minimal imports for Dynamo Python 3 compatibility
 import clr
 clr.AddReference('RevitAPI')
+clr.AddReference('RevitServices')
 from Autodesk.Revit.DB import FilteredElementCollector, ViewType
+from RevitServices.Persistence import DocumentManager
 
-# Get document and view from Dynamo/Revit context
-doc = IN[0] if IN and len(IN) > 0 else __revit__.ActiveUIDocument.Document
-active_view = __revit__.ActiveUIDocument.ActiveView
+# Get document and view from Dynamo context (Python 3 compatible)
+doc = DocumentManager.Instance.CurrentDBDocument
+uiapp = DocumentManager.Instance.CurrentUIApplication
+active_view = doc.ActiveView
 
 print("=" * 80)
 print("OCCLUSION VS OCCUPANCY LAYER CHECK")

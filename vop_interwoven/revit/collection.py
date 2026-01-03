@@ -197,20 +197,22 @@ def sort_front_to_back(model_elems, view, raster):
     Commentary:
         ✔ Uses bbox minimum depth as sorting key (fast approximation)
         ✔ Front-to-back order enables early-out occlusion testing
-        ⚠ This is a placeholder - full implementation requires:
-           - View basis extraction
-           - BBox min depth calculation in view space
-           - Stable sort for deterministic output
-
-    Example:
-        >>> # sorted_elems = sorted(
-        >>> #     model_elems,
-        >>> #     key=lambda item: estimate_nearest_depth_from_bbox(item['element'], item['world_transform'], view, raster)
-        >>> # )
+        ✔ Stable sort for deterministic output
+        ✔ Elements with smaller depth values are closer to view plane
     """
-    # TODO: Implement front-to-back sorting
-    # Placeholder: return unsorted (no-op)
-    return model_elems
+    # Sort by depth (nearest first)
+    # Use stable sort to ensure deterministic output for elements with equal depth
+    sorted_elems = sorted(
+        model_elems,
+        key=lambda item: estimate_nearest_depth_from_bbox(
+            item['element'],
+            item['world_transform'],
+            view,
+            raster
+        )
+    )
+
+    return sorted_elems
 
 
 def estimate_nearest_depth_from_bbox(elem, transform, view, raster):
@@ -228,10 +230,43 @@ def estimate_nearest_depth_from_bbox(elem, transform, view, raster):
     Commentary:
         ✔ Computes minimum depth across all 8 bbox corners
         ✔ Used for front-to-back sorting
-        ⚠ Placeholder returns 0.0
+        ✔ Returns depth in view space (w coordinate)
     """
-    # TODO: Implement depth estimation
-    return 0.0
+    from .view_basis import world_to_view
+
+    # Get world-space bounding box
+    bbox = elem.get_BoundingBox(None)
+    if bbox is None:
+        return float('inf')  # Elements without bbox go to back
+
+    # Get view basis from raster (stored during init_view_raster)
+    vb = getattr(raster, 'view_basis', None)
+    if vb is None:
+        return 0.0  # Fallback if view basis not available
+
+    # Get all 8 corners of bounding box in world space
+    min_x, min_y, min_z = bbox.Min.X, bbox.Min.Y, bbox.Min.Z
+    max_x, max_y, max_z = bbox.Max.X, bbox.Max.Y, bbox.Max.Z
+
+    corners = [
+        (min_x, min_y, min_z),
+        (min_x, min_y, max_z),
+        (min_x, max_y, min_z),
+        (min_x, max_y, max_z),
+        (max_x, min_y, min_z),
+        (max_x, min_y, max_z),
+        (max_x, max_y, min_z),
+        (max_x, max_y, max_z),
+    ]
+
+    # Transform all corners to view space and get minimum depth (w coordinate)
+    min_depth = float('inf')
+    for corner in corners:
+        u, v, w = world_to_view(corner, vb)
+        if w < min_depth:
+            min_depth = w
+
+    return min_depth
 
 
 def _project_element_bbox_to_cell_rect(elem, vb, raster):
