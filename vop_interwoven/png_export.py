@@ -49,7 +49,9 @@ def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_pro
         width = view_result['width']
         height = view_result['height']
         raster_dict = view_result['raster']
-        model_mask = raster_dict['model_mask']
+
+        # Use model_edge_key (OCCUPANCY - boundary only) instead of model_mask (OCCLUSION - interior + boundary)
+        model_edge_key = raster_dict.get('model_edge_key', [])
 
         # Get anno_over_model and anno_key for annotation visualization
         anno_over_model = raster_dict.get('anno_over_model', [])
@@ -80,11 +82,11 @@ def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_pro
             for j in range(height):
                 idx = j * width + i
 
-                if idx >= len(model_mask):
+                if idx >= len(model_edge_key):
                     continue
 
-                # Check if cell has model or annotation
-                has_model = model_mask[idx] if idx < len(model_mask) else False
+                # Check if cell has model edge (occupancy - boundary only) or annotation
+                has_model = (model_edge_key[idx] != -1) if idx < len(model_edge_key) else False
                 has_anno = (anno_key[idx] >= 0) if idx < len(anno_key) else False
 
                 # Skip completely empty cells
