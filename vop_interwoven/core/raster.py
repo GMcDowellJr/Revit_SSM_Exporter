@@ -392,6 +392,10 @@ class ViewRaster:
 
         Returns:
             Number of cells filled
+
+        Commentary:
+            - Sets model_mask and z_min for OCCLUSION (interior blocks visibility)
+            - Does NOT set model_edge_key (only boundary marks occupancy)
         """
         if len(points_ij) < 3:
             return 0
@@ -433,12 +437,9 @@ class ViewRaster:
                 i_end = intersections[k + 1] if k + 1 < len(intersections) else intersections[k]
 
                 for i in range(i_start, i_end + 1):
+                    # Set occlusion (model_mask, z_min) but NOT occupancy (model_edge_key)
+                    # Interior fills space and blocks visibility, but doesn't mark edges
                     if self.set_cell_filled(i, j, depth=depth):
-                        idx = self.get_cell_index(i, j)
-                        if idx is not None:
-                            # Only set edge key if not already set (preserve edges from loop outline)
-                            if self.model_edge_key[idx] == -1:
-                                self.model_edge_key[idx] = key_index
                         filled += 1
 
         return filled
