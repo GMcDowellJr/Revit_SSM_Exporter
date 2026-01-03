@@ -11,13 +11,14 @@ Compatible with IronPython (no logging module, no f-strings).
 """
 
 
-def get_element_silhouette(elem, view, view_basis, cfg=None):
+def get_element_silhouette(elem, view, view_basis, raster, cfg=None):
     """Extract element silhouette as 2D loops.
 
     Args:
         elem: Revit Element
         view: Revit View
         view_basis: ViewBasis object for coordinate transformation
+        raster: ViewRaster (provides cell size for UV mode classification)
         cfg: Optional Config object (provides strategy settings)
 
     Returns:
@@ -30,16 +31,16 @@ def get_element_silhouette(elem, view, view_basis, cfg=None):
 
     Commentary:
         - Returns empty list if element has no geometry
-        - Tries strategies in order based on element size
+        - Tries strategies in order based on element UV mode (TINY/LINEAR/AREAL)
         - bbox is the ultimate fallback (always succeeds if element has bbox)
     """
     if cfg is None:
         # Default: try silhouette_edges first for accuracy, then bbox
         strategies = ['silhouette_edges', 'bbox']
     else:
-        # Get size-based strategy list from config
-        size_tier = _determine_size_tier(elem, view, cfg)
-        strategies = cfg.get_silhouette_strategies(size_tier)
+        # Get UV mode (shape-based) strategy list from config
+        uv_mode = _determine_uv_mode(elem, view, view_basis, raster, cfg)
+        strategies = cfg.get_silhouette_strategies(uv_mode)
 
     # Try each strategy in order
     for strategy_name in strategies:
@@ -75,41 +76,56 @@ def get_element_silhouette(elem, view, view_basis, cfg=None):
         return []
 
 
-def _determine_size_tier(elem, view, cfg):
-    """Classify element by size: tiny_linear, medium, large.
+def _determine_uv_mode(elem, view, view_basis, raster, cfg):
+    """Classify element by UV mode (shape): TINY, LINEAR, or AREAL.
 
     Args:
         elem: Revit Element
         view: Revit View
+        view_basis: ViewBasis for UV projection
+        raster: ViewRaster (provides bounds and cell size)
         cfg: Config object
 
     Returns:
-        'tiny_linear', 'medium', or 'large'
+        'TINY', 'LINEAR', or 'AREAL'
+
+    Commentary:
+        Uses same classification logic as classify_by_uv from geometry.py:
+        - TINY: U <= tiny_max AND V <= tiny_max (small in both dimensions)
+        - LINEAR: min(U,V) <= thin_max AND max(U,V) > tiny_max (thin but long)
+        - AREAL: Large area elements (everything else)
     """
     try:
         bbox = elem.get_BoundingBox(view)
         if not bbox or not bbox.Min or not bbox.Max:
-            return 'medium'
+            return 'AREAL'  # Default to AREAL (most conservative)
 
-        # Compute max dimension in feet
-        dx = abs(bbox.Max.X - bbox.Min.X)
-        dy = abs(bbox.Max.Y - bbox.Min.Y)
-        dz = abs(bbox.Max.Z - bbox.Min.Z)
-        max_dim_ft = max(dx, dy, dz)
+        # Project bbox to view UV and get cell dimensions
+        min_uv = view_basis.transform_to_view_uv((bbox.Min.X, bbox.Min.Y, bbox.Min.Z))
+        max_uv = view_basis.transform_to_view_uv((bbox.Max.X, bbox.Max.Y, bbox.Max.Z))
 
-        # Use absolute thresholds (scale-independent)
-        tiny_thresh = getattr(cfg, 'silhouette_tiny_thresh_ft', 3.0)
-        large_thresh = getattr(cfg, 'silhouette_large_thresh_ft', 20.0)
+        # Get UV extents in feet
+        u_extent = abs(max_uv[0] - min_uv[0])
+        v_extent = abs(max_uv[1] - min_uv[1])
 
-        if max_dim_ft <= tiny_thresh:
-            return 'tiny_linear'
-        elif max_dim_ft <= large_thresh:
-            return 'medium'
+        # Convert to cells
+        U = int(u_extent / raster.cell_size_ft)
+        V = int(v_extent / raster.cell_size_ft)
+
+        # Get thresholds from config
+        tiny_max = cfg.tiny_max
+        thin_max = cfg.thin_max
+
+        # Classify using same logic as classify_by_uv
+        if U <= tiny_max and V <= tiny_max:
+            return 'TINY'
+        elif min(U, V) <= thin_max:
+            return 'LINEAR'
         else:
-            return 'large'
+            return 'AREAL'
 
     except Exception:
-        return 'medium'
+        return 'AREAL'  # Default to AREAL (most conservative)
 
 
 def _bbox_silhouette(elem, view, view_basis):

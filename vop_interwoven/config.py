@@ -240,35 +240,36 @@ class Config:
         """
         return getattr(self, '_coarse_tess_max_verts', 20)
 
-    def get_silhouette_strategies(self, size_tier):
-        """Get silhouette extraction strategies for a given size tier.
+    def get_silhouette_strategies(self, uv_mode):
+        """Get silhouette extraction strategies for a given UV mode (shape).
 
         Args:
-            size_tier: 'tiny_linear', 'medium', or 'large'
+            uv_mode: 'TINY', 'LINEAR', or 'AREAL'
 
         Returns:
             List of strategy names to try in order
 
         Commentary:
-            3-tier fallback chain for accuracy → performance → reliability:
-            1. silhouette_edges: Preserves concave shapes (L, U, C)
-            2. obb: Tighter bounds for rotated elements (walls, beams at angles)
-            3. bbox: Ultimate fallback (always works)
+            Shape-based strategy selection:
+            - TINY: Small in both U and V → bbox (fast, sufficient)
+            - LINEAR: Thin beams/columns/pipes → obb → bbox (captures rotation, no concavity)
+            - AREAL: Large area elements → silhouette_edges → obb → bbox (preserves L-shapes)
 
-            - Tiny elements: bbox only (fast, sufficient for <3ft elements)
-            - Medium/Large: Full 3-tier chain for best accuracy
+            Key insight: LINEAR elements (beams, columns) are rarely concave,
+            so OBB is perfect. AREAL elements (floors, walls) can be concave (L, U, C),
+            so they need true silhouette extraction.
         """
-        if size_tier == 'tiny_linear':
-            # Tiny: bbox is good enough (< 3ft)
+        if uv_mode == 'TINY':
+            # Small elements: bbox is good enough
             return ['bbox']
-        elif size_tier == 'medium':
-            # Medium: accuracy → tight bounds → safe fallback
-            return ['silhouette_edges', 'obb', 'bbox']
-        elif size_tier == 'large':
-            # Large: accuracy → tight bounds → safe fallback
+        elif uv_mode == 'LINEAR':
+            # Thin/long elements (beams, columns, pipes): OBB captures rotation
+            return ['obb', 'bbox']
+        elif uv_mode == 'AREAL':
+            # Large area elements: need silhouette for concave shapes
             return ['silhouette_edges', 'obb', 'bbox']
         else:
-            # Default fallback
+            # Default fallback: full chain
             return ['silhouette_edges', 'obb', 'bbox']
 
     def __repr__(self):

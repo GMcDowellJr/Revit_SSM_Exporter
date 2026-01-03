@@ -231,7 +231,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
 
         # Try silhouette extraction
         try:
-            loops = get_element_silhouette(elem, view, vb, cfg)
+            loops = get_element_silhouette(elem, view, vb, raster, cfg)
 
             if loops:
                 # Rasterize silhouette loops
