@@ -323,6 +323,126 @@ class ViewRaster:
 
             self.anno_over_model[i] = has_anno and has_model
 
+    def rasterize_silhouette_loops(self, loops, key_index, depth=0.0):
+        """Rasterize element silhouette loops into model layers.
+
+        Args:
+            loops: List of loop dicts from silhouette.get_element_silhouette()
+                   Each loop has: {'points': [(u, v), ...], 'is_hole': bool}
+            key_index: Element metadata index (for edge tracking)
+            depth: Depth value for z-buffer (default: 0.0)
+
+        Returns:
+            Number of cells filled
+
+        Commentary:
+            - Converts loop points from view UV to cell indices
+            - Rasterizes loop edges using Bresenham line algorithm
+            - Fills interior using scanline fill
+            - Updates model_mask, z_min, and model_edge_key
+        """
+        if not loops:
+            return 0
+
+        filled_count = 0
+
+        for loop in loops:
+            points_uv = loop.get('points', [])
+            is_hole = loop.get('is_hole', False)
+
+            if len(points_uv) < 3:
+                continue
+
+            # Convert UV points to cell indices
+            points_ij = []
+            for u, v in points_uv:
+                i = int((u - self.bounds_xy.xmin) / self.cell_size_ft)
+                j = int((v - self.bounds_xy.ymin) / self.cell_size_ft)
+
+                # Clamp to bounds
+                i = max(0, min(i, self.W - 1))
+                j = max(0, min(j, self.H - 1))
+
+                points_ij.append((i, j))
+
+            # Rasterize edges
+            for k in range(len(points_ij) - 1):
+                i0, j0 = points_ij[k]
+                i1, j1 = points_ij[k + 1]
+
+                # Draw line using Bresenham
+                for i, j in _bresenham_line(i0, j0, i1, j1):
+                    idx = self.get_cell_index(i, j)
+                    if idx is not None:
+                        self.model_edge_key[idx] = key_index
+
+            # Fill interior (if not a hole)
+            if not is_hole:
+                filled_count += self._scanline_fill(points_ij, key_index, depth)
+
+        return filled_count
+
+    def _scanline_fill(self, points_ij, key_index, depth):
+        """Fill polygon interior using scanline algorithm.
+
+        Args:
+            points_ij: List of (i, j) cell coordinates forming closed polygon
+            key_index: Element metadata index
+            depth: Depth value for z-buffer
+
+        Returns:
+            Number of cells filled
+        """
+        if len(points_ij) < 3:
+            return 0
+
+        filled = 0
+
+        # Find vertical extent
+        j_coords = [j for i, j in points_ij]
+        j_min = min(j_coords)
+        j_max = max(j_coords)
+
+        # For each scanline
+        for j in range(j_min, j_max + 1):
+            # Find intersections with polygon edges
+            intersections = []
+
+            for k in range(len(points_ij) - 1):
+                i0, j0 = points_ij[k]
+                i1, j1 = points_ij[k + 1]
+
+                # Skip horizontal edges
+                if j0 == j1:
+                    continue
+
+                # Check if scanline intersects this edge
+                if min(j0, j1) <= j <= max(j0, j1):
+                    # Compute intersection i coordinate
+                    if j1 != j0:
+                        t = float(j - j0) / float(j1 - j0)
+                        i_intersect = int(i0 + t * (i1 - i0))
+                        intersections.append(i_intersect)
+
+            # Sort intersections
+            intersections.sort()
+
+            # Fill between pairs
+            for k in range(0, len(intersections) - 1, 2):
+                i_start = intersections[k]
+                i_end = intersections[k + 1] if k + 1 < len(intersections) else intersections[k]
+
+                for i in range(i_start, i_end + 1):
+                    if self.set_cell_filled(i, j, depth=depth):
+                        idx = self.get_cell_index(i, j)
+                        if idx is not None:
+                            # Only set edge key if not already set (preserve edges from loop outline)
+                            if self.model_edge_key[idx] == -1:
+                                self.model_edge_key[idx] = key_index
+                        filled += 1
+
+        return filled
+
     def to_dict(self):
         """Export raster to dictionary for JSON serialization.
 
@@ -350,3 +470,38 @@ class ViewRaster:
             "element_meta": self.element_meta,
             "anno_meta": self.anno_meta,
         }
+
+
+def _bresenham_line(i0, j0, i1, j1):
+    """Generate cell coordinates along a line using Bresenham's algorithm.
+
+    Args:
+        i0, j0: Start cell coordinates
+        i1, j1: End cell coordinates
+
+    Yields:
+        (i, j) cell coordinates along the line
+    """
+    di = abs(i1 - i0)
+    dj = abs(j1 - j0)
+    si = 1 if i0 < i1 else -1
+    sj = 1 if j0 < j1 else -1
+    err = di - dj
+
+    i, j = i0, j0
+
+    while True:
+        yield (i, j)
+
+        if i == i1 and j == j1:
+            break
+
+        e2 = 2 * err
+
+        if e2 > -dj:
+            err -= dj
+            i += si
+
+        if e2 < di:
+            err += di
+            j += sj

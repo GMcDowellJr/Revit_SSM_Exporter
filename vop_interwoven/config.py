@@ -213,6 +213,57 @@ class Config:
         """
         return self.bounds_buffer_in / 12.0
 
+    @property
+    def silhouette_tiny_thresh_ft(self):
+        """Threshold for tiny elements in feet (default: 3.0 ft).
+
+        Returns:
+            float: Threshold in feet
+        """
+        return getattr(self, '_silhouette_tiny_thresh_ft', 3.0)
+
+    @property
+    def silhouette_large_thresh_ft(self):
+        """Threshold for large elements in feet (default: 20.0 ft).
+
+        Returns:
+            float: Threshold in feet
+        """
+        return getattr(self, '_silhouette_large_thresh_ft', 20.0)
+
+    @property
+    def coarse_tess_max_verts(self):
+        """Maximum vertices per face for coarse tessellation (default: 20).
+
+        Returns:
+            int: Maximum vertices
+        """
+        return getattr(self, '_coarse_tess_max_verts', 20)
+
+    def get_silhouette_strategies(self, size_tier):
+        """Get silhouette extraction strategies for a given size tier.
+
+        Args:
+            size_tier: 'tiny_linear', 'medium', or 'large'
+
+        Returns:
+            List of strategy names to try in order
+
+        Commentary:
+            - Tiny elements: bbox only (fast, good enough for small elements)
+            - Medium elements: try obb first, then bbox
+            - Large elements: try coarse_tess first, then obb, then bbox
+        """
+        if size_tier == 'tiny_linear':
+            return ['bbox']
+        elif size_tier == 'medium':
+            return ['obb', 'bbox']
+        elif size_tier == 'large':
+            return ['coarse_tess', 'obb', 'bbox']
+        else:
+            # Default fallback
+            return ['obb', 'bbox']
+
     def __repr__(self):
         return (
             f"Config(tile_size={self.tile_size}, "

@@ -20,6 +20,7 @@ from .config import Config
 from .core.raster import ViewRaster, TileMap
 from .core.geometry import Mode, classify_by_uv, make_uv_aabb, make_obb_or_skinny_aabb
 from .core.math_utils import Bounds2D, CellRect
+from .core.silhouette import get_element_silhouette
 from .revit.view_basis import make_view_basis, xy_bounds_effective
 from .revit.collection import (
     collect_view_elements,
@@ -190,11 +191,11 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
         None (modifies raster in-place)
 
     Commentary:
-        ✔ Simplified Phase 5 implementation using bbox filling
+        ✔ Uses silhouette extraction for accurate element boundaries
+        ✔ Falls back to bbox if silhouette extraction fails
         ✔ Classifies elements as TINY/LINEAR/AREAL
-        ✔ Fills raster cells from bounding boxes
+        ✔ Rasterizes silhouette loops with edge tracking
         ✔ Handles linked/imported elements with transforms
-        ⚠ Triangle rasterization (Phase 4) deferred
     """
     from .revit.collection import _project_element_bbox_to_cell_rect, expand_host_link_import_model_elements
 
@@ -207,6 +208,9 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
     # Process each element (host + linked)
     processed = 0
     skipped = 0
+    silhouette_success = 0
+    bbox_fallback = 0
+
     for elem_wrapper in expanded_elements:
         elem = elem_wrapper["element"]
         doc_key = elem_wrapper["doc_key"]
@@ -225,30 +229,52 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
 
         key_index = raster.get_or_create_element_meta_index(elem_id, category, doc_key)
 
-        # Project element bbox to cell rect
-        # Note: bbox is already in host-space for linked elements (via LinkedElementProxy)
-        rect = _project_element_bbox_to_cell_rect(elem, vb, raster)
-        if rect is None or rect.empty:
+        # Try silhouette extraction
+        try:
+            loops = get_element_silhouette(elem, view, vb, cfg)
+
+            if loops:
+                # Rasterize silhouette loops
+                filled = raster.rasterize_silhouette_loops(loops, key_index, depth=0.0)
+
+                if filled > 0:
+                    silhouette_success += 1
+                    processed += 1
+                    continue
+
+        except Exception as e:
+            # Silhouette extraction failed, fall back to bbox
+            pass
+
+        # Fallback: Use simple bbox filling
+        try:
+            rect = _project_element_bbox_to_cell_rect(elem, vb, raster)
+            if rect is None or rect.empty:
+                continue
+
+            # Simplified rendering: fill bounding box cells
+            for i, j in rect.cells():
+                raster.set_cell_filled(i, j, depth=0.0)
+                idx = raster.get_cell_index(i, j)
+                if idx is not None:
+                    raster.model_edge_key[idx] = key_index
+
+            bbox_fallback += 1
+            processed += 1
+
+        except Exception as e:
+            skipped += 1
+            if skipped <= 5:
+                print("[WARN] vop.pipeline: Failed to render element {0}: {1}".format(elem_id, e))
             continue
 
-        # Classify by UV
-        U = rect.width_cells
-        V = rect.height_cells
-        mode = classify_by_uv(U, V, cfg)
-
-        # Simplified rendering: fill bounding box cells
-        # (Phase 4 will add proper triangle rasterization)
-        for i, j in rect.cells():
-            raster.set_cell_filled(i, j, depth=0.0)
-            idx = raster.get_cell_index(i, j)
-            if idx is not None:
-                raster.model_edge_key[idx] = key_index
-
-        processed += 1
-
     # Log summary
+    if processed > 0:
+        print("[INFO] vop.pipeline: Processed {0} elements ({1} silhouette, {2} bbox fallback)".format(
+            processed, silhouette_success, bbox_fallback))
+
     if skipped > 0:
-        print("[WARN] vop.pipeline: Processed {0} elements, skipped {1} due to errors".format(processed, skipped))
+        print("[WARN] vop.pipeline: Skipped {0} elements due to errors".format(skipped))
 
     return processed
 
