@@ -248,6 +248,14 @@ def estimate_nearest_depth_from_bbox(elem, transform, view, raster):
     min_x, min_y, min_z = bbox.Min.X, bbox.Min.Y, bbox.Min.Z
     max_x, max_y, max_z = bbox.Max.X, bbox.Max.Y, bbox.Max.Z
 
+    # DEBUG: Log bbox and view basis for first few elements
+    debug_count = getattr(estimate_nearest_depth_from_bbox, '_debug_count', 0)
+    if debug_count < 2:
+        estimate_nearest_depth_from_bbox._debug_count = debug_count + 1
+        print("[DEBUG] estimate_depth: bbox Z range: [{0:.3f}, {1:.3f}]".format(min_z, max_z))
+        print("[DEBUG] estimate_depth: view_basis.origin = {0}".format(vb.origin))
+        print("[DEBUG] estimate_depth: view_basis.forward = {0}".format(vb.forward))
+
     corners = [
         (min_x, min_y, min_z),
         (min_x, min_y, max_z),
@@ -261,10 +269,18 @@ def estimate_nearest_depth_from_bbox(elem, transform, view, raster):
 
     # Transform all corners to view space and get minimum depth (w coordinate)
     min_depth = float('inf')
+    max_depth = float('-inf')
     for corner in corners:
         u, v, w = world_to_view(corner, vb)
         if w < min_depth:
             min_depth = w
+        if w > max_depth:
+            max_depth = w
+
+    # DEBUG: Log depth range for first few elements
+    if debug_count < 2:
+        print("[DEBUG] estimate_depth: depth range: [{0:.3f}, {1:.3f}], using min={2:.3f}".format(
+            min_depth, max_depth, min_depth))
 
     return min_depth
 
