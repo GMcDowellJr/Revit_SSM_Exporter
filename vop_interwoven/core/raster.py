@@ -171,7 +171,9 @@ class ViewRaster:
 
             # Convert UV floats -> ij ints
             pts_ij = []
-            for (u, v) in pts:
+            for pt in pts:
+                # Handle both 2-tuples (u, v) and 3-tuples (u, v, w)
+                u, v = pt[0], pt[1]
                 i = int((u - self.bounds.xmin) / self.cell_size)
                 j = int((v - self.bounds.ymin) / self.cell_size)
                 if 0 <= i < self.W and 0 <= j < self.H:
@@ -417,7 +419,9 @@ class ViewRaster:
 
             # Convert UV points to cell indices
             points_ij = []
-            for u, v in points_uv:
+            for pt in points_uv:
+                # Handle both 2-tuples (u, v) and 3-tuples (u, v, w)
+                u, v = pt[0], pt[1]
                 i = int((u - self.bounds_xy.xmin) / self.cell_size_ft)
                 j = int((v - self.bounds_xy.ymin) / self.cell_size_ft)
 
