@@ -462,6 +462,101 @@ def _project_element_bbox_to_cell_rect(elem, vb, raster):
     return CellRect(i_min, j_min, i_max, j_max)
 
 
+def _extract_geometry_footprint_uv(elem, vb):
+    """Extract actual geometry footprint vertices in UV space.
+
+    Extracts solid geometry faces/edges and projects all vertices to UV.
+    Works in all view types (plan, elevation, section, 3D).
+
+    Args:
+        elem: Revit Element
+        vb: ViewBasis for coordinate transformation
+
+    Returns:
+        List of (u, v) points representing element footprint, or None if failed
+    """
+    from .view_basis import world_to_view
+
+    try:
+        from Autodesk.Revit.DB import Options, Solid, Face, Edge, GeometryInstance
+
+        # Create geometry options (don't set View to avoid linked element issues)
+        opts = Options()
+        opts.ComputeReferences = False
+        opts.IncludeNonVisibleObjects = False
+        opts.DetailLevel = 2  # Medium detail
+
+        # Get geometry
+        geom = elem.get_Geometry(opts)
+        if not geom:
+            return None
+
+        # Collect all vertices from solid geometry
+        points_uv = []
+
+        def process_geometry(geo, transform=None):
+            """Recursively process geometry to extract vertices."""
+            for obj in geo:
+                # Handle geometry instances (e.g., family instances)
+                if isinstance(obj, GeometryInstance):
+                    inst_geom = obj.GetInstanceGeometry()
+                    if inst_geom:
+                        inst_transform = obj.Transform
+                        process_geometry(inst_geom, inst_transform)
+
+                # Handle solids
+                elif isinstance(obj, Solid):
+                    if obj.Volume > 0.0001:  # Non-degenerate solid
+                        # Extract vertices from faces
+                        for face in obj.Faces:
+                            try:
+                                # Get face boundary edges
+                                for edge_loop in face.EdgeLoops:
+                                    for edge in edge_loop:
+                                        # Sample edge endpoints
+                                        curve = edge.AsCurve()
+                                        if curve:
+                                            for t in [0.0, 1.0]:  # Start and end
+                                                try:
+                                                    pt = curve.Evaluate(t, True)
+
+                                                    # Apply instance transform if present
+                                                    if transform:
+                                                        pt = transform.OfPoint(pt)
+
+                                                    # Project to UV
+                                                    uvw = world_to_view((pt.X, pt.Y, pt.Z), vb)
+                                                    points_uv.append((uvw[0], uvw[1]))
+                                                except:
+                                                    pass
+                            except:
+                                pass
+
+        # Process geometry tree
+        process_geometry(geom)
+
+        # Return unique points (remove duplicates)
+        if len(points_uv) >= 3:
+            # Remove duplicates with tolerance
+            unique_points = []
+            tolerance = 0.01  # 0.01 ft tolerance
+            for pt in points_uv:
+                is_duplicate = False
+                for existing in unique_points:
+                    if abs(pt[0] - existing[0]) < tolerance and abs(pt[1] - existing[1]) < tolerance:
+                        is_duplicate = True
+                        break
+                if not is_duplicate:
+                    unique_points.append(pt)
+
+            return unique_points if len(unique_points) >= 3 else None
+
+        return None
+
+    except Exception:
+        return None
+
+
 def get_element_obb_loops(elem, vb, raster):
     """Get element OBB as polygon loops for accurate rasterization.
 
@@ -474,30 +569,35 @@ def get_element_obb_loops(elem, vb, raster):
         List of loop dicts with OBB polygon, or None if bbox unavailable
 
     Commentary:
-        ✔ Returns actual OBB polygon for rasterization (not axis-aligned rect)
-        ✔ Used for bbox fallback to get tight diagonal bounds
-        ✔ Returns same format as silhouette loops for uniform rasterization
+        ✔ Extracts ACTUAL geometry footprint (not bbox corners)
+        ✔ For walls: uses location curve + thickness (diagonal walls)
+        ✔ For other elements: extracts geometry faces/edges
+        ✔ Falls back to bbox corners only if geometry extraction fails
     """
     from .view_basis import world_to_view
 
-    # Get world-space bounding box
-    bbox = elem.get_BoundingBox(None)
-    if bbox is None:
-        return None
+    # STEP 1: Try to extract actual geometry footprint
+    points_uv = _extract_geometry_footprint_uv(elem, vb)
 
-    # Get all 8 corners and project to UV
-    min_x, min_y, min_z = bbox.Min.X, bbox.Min.Y, bbox.Min.Z
-    max_x, max_y, max_z = bbox.Max.X, bbox.Max.Y, bbox.Max.Z
+    # STEP 2: Fallback to bbox corners if geometry extraction failed
+    if not points_uv or len(points_uv) < 3:
+        bbox = elem.get_BoundingBox(None)
+        if bbox is None:
+            return None
 
-    corners = [
-        (min_x, min_y, min_z), (min_x, min_y, max_z),
-        (min_x, max_y, min_z), (min_x, max_y, max_z),
-        (max_x, min_y, min_z), (max_x, min_y, max_z),
-        (max_x, max_y, min_z), (max_x, max_y, max_z),
-    ]
+        # Get all 8 corners and project to UV
+        min_x, min_y, min_z = bbox.Min.X, bbox.Min.Y, bbox.Min.Z
+        max_x, max_y, max_z = bbox.Max.X, bbox.Max.Y, bbox.Max.Z
 
-    uvs = [world_to_view(corner, vb) for corner in corners]
-    points_uv = [(uv[0], uv[1]) for uv in uvs]
+        corners = [
+            (min_x, min_y, min_z), (min_x, min_y, max_z),
+            (min_x, max_y, min_z), (min_x, max_y, max_z),
+            (max_x, min_y, min_z), (max_x, min_y, max_z),
+            (max_x, max_y, min_z), (max_x, max_y, max_z),
+        ]
+
+        uvs = [world_to_view(corner, vb) for corner in corners]
+        points_uv = [(uv[0], uv[1]) for uv in uvs]
 
     # DEBUG: Log unique UV points for diagonal wall
     try:
@@ -506,9 +606,9 @@ def get_element_obb_loops(elem, vb, raster):
             elem_id_val = getattr(elem_id, 'IntegerValue', elem_id)
             if elem_id_val == 1619124:  # Target diagonal wall
                 unique_uv = list(set(points_uv))
-                print("[DEBUG BBOX] Element {0}: {1} bbox corners -> {2} unique UV points".format(
+                print("[DEBUG GEOM] Element {0}: Extracted {1} footprint points -> {2} unique UV".format(
                     elem_id_val, len(points_uv), len(unique_uv)))
-                print("  UV points: {0}".format([(round(u, 2), round(v, 2)) for u, v in unique_uv[:6]]))
+                print("  UV points: {0}".format([(round(u, 2), round(v, 2)) for u, v in unique_uv[:8]]))
     except:
         pass
 
