@@ -622,20 +622,27 @@ def get_element_obb_loops(elem, vb, raster):
     used_geometry = (points_uv != bbox_points_uv)  # Did geometry extraction succeed?
 
     if used_geometry:
-        # Use actual geometry vertices - compute convex hull for clean polygon
-        from ..core.silhouette import _convex_hull_2d
-        hull_uv = _convex_hull_2d(points_uv)
+        # Use actual geometry vertices directly (preserves concave shapes like L-shapes)
+        # Don't use convex hull - it destroys concave corners!
 
-        if hull_uv and len(hull_uv) >= 3:
-            # Close the loop
-            if hull_uv[0] != hull_uv[-1]:
-                hull_uv.append(hull_uv[0])
+        # Remove consecutive duplicates (keep vertex order from geometry extraction)
+        polygon_uv = []
+        tolerance = 0.01
+        for pt in points_uv:
+            if not polygon_uv or (abs(pt[0] - polygon_uv[-1][0]) > tolerance or
+                                  abs(pt[1] - polygon_uv[-1][1]) > tolerance):
+                polygon_uv.append(pt)
 
-            polygon_uv = hull_uv
-            strategy_name = 'geometry_hull'
+        # Close the loop if not already closed
+        if polygon_uv and len(polygon_uv) >= 3:
+            if abs(polygon_uv[0][0] - polygon_uv[-1][0]) > tolerance or \
+               abs(polygon_uv[0][1] - polygon_uv[-1][1]) > tolerance:
+                polygon_uv.append(polygon_uv[0])
+
+            strategy_name = 'geometry_polygon'
             angle_deg = 0.0  # Not applicable for arbitrary polygons
         else:
-            # Convex hull failed, fall back to bbox OBB
+            # Not enough vertices, fall back to bbox OBB
             used_geometry = False
 
     if not used_geometry:
