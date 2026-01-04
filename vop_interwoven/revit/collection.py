@@ -388,7 +388,7 @@ def estimate_depth_range_from_bbox(elem, transform, view, raster):
 
 
 def _project_element_bbox_to_cell_rect(elem, vb, raster):
-    """Project element bounding box to cell rectangle (helper for classification).
+    """Project element bounding box to cell rectangle using OBB (oriented bounds).
 
     Args:
         elem: Revit Element
@@ -400,9 +400,10 @@ def _project_element_bbox_to_cell_rect(elem, vb, raster):
 
     Commentary:
         ✔ Gets world-space bounding box
-        ✔ Projects ALL 8 corners to view coordinates (fixes rotated elements)
-        ✔ Computes tight UV AABB from projected corners
-        ✔ Projects to cell indices
+        ✔ Projects ALL 8 corners to view UV
+        ✔ Fits UV OBB (oriented bounding box) using PCA for tighter bounds
+        ✔ Computes AABB of OBB rectangle for cell indices
+        ✔ CRITICAL: OBB is much tighter than AABB for rotated elements
         ✔ Handles elements outside view bounds (returns None or empty rect)
     """
     from ..core.math_utils import CellRect
@@ -424,20 +425,29 @@ def _project_element_bbox_to_cell_rect(elem, vb, raster):
         (max_x, max_y, min_z), (max_x, max_y, max_z),
     ]
 
-    # For linked elements (with .transform), corners may already be in link space
-    # but get_BoundingBox(None) returns host-space bbox, so no transform needed here
-
     # Project all 8 corners to view UV
     uvs = [world_to_view(corner, vb) for corner in corners]
 
-    # Compute tight UV AABB (min/max across all projected points)
-    u_min = min(uv[0] for uv in uvs)
-    u_max = max(uv[0] for uv in uvs)
-    v_min = min(uv[1] for uv in uvs)
-    v_max = max(uv[1] for uv in uvs)
+    # Extract just UV (ignore W for footprint calculation)
+    points_uv = [(uv[0], uv[1]) for uv in uvs]
+
+    # Fit OBB to UV points using PCA for tighter bounds
+    obb_rect, len_u, len_v = _pca_obb_uv(points_uv)
+
+    if not obb_rect or len(obb_rect) < 4:
+        # Fallback to AABB if OBB fitting fails
+        u_min = min(uv[0] for uv in uvs)
+        u_max = max(uv[0] for uv in uvs)
+        v_min = min(uv[1] for uv in uvs)
+        v_max = max(uv[1] for uv in uvs)
+    else:
+        # Compute AABB of OBB rectangle (tighter than world AABB projection!)
+        u_min = min(pt[0] for pt in obb_rect)
+        u_max = max(pt[0] for pt in obb_rect)
+        v_min = min(pt[1] for pt in obb_rect)
+        v_max = max(pt[1] for pt in obb_rect)
 
     # Convert to cell indices
-    # Cell i = floor((u - u_min) / cell_size)
     i_min = int((u_min - raster.bounds.xmin) / raster.cell_size)
     i_max = int((u_max - raster.bounds.xmin) / raster.cell_size)
     j_min = int((v_min - raster.bounds.ymin) / raster.cell_size)
@@ -450,3 +460,77 @@ def _project_element_bbox_to_cell_rect(elem, vb, raster):
     j_max = max(0, min(j_max, raster.H - 1))
 
     return CellRect(i_min, j_min, i_max, j_max)
+
+
+def _pca_obb_uv(points_uv):
+    """Compute oriented bounding box in UV using PCA.
+
+    Args:
+        points_uv: List of (u, v) points
+
+    Returns:
+        (rect_points, len_u, len_v) where rect_points is closed loop in UV
+        Returns ([], 0.0, 0.0) on failure
+
+    Commentary:
+        ✔ Fits oriented rectangle to point cloud using PCA
+        ✔ Much tighter than AABB for rotated/diagonal elements
+        ✔ Returns rectangle as 5-point closed loop
+    """
+    import math
+
+    if not points_uv or len(points_uv) < 2:
+        return ([], 0.0, 0.0)
+
+    # Compute mean
+    n = float(len(points_uv))
+    mean_u = sum(p[0] for p in points_uv) / n
+    mean_v = sum(p[1] for p in points_uv) / n
+
+    # Compute covariance matrix
+    cxx = sum((p[0] - mean_u) ** 2 for p in points_uv)
+    cxy = sum((p[0] - mean_u) * (p[1] - mean_v) for p in points_uv)
+    cyy = sum((p[1] - mean_v) ** 2 for p in points_uv)
+
+    # Principal axis angle (2D PCA)
+    angle = 0.5 * math.atan2(2.0 * cxy, (cxx - cyy))
+
+    # Principal axes (unit vectors)
+    ux = math.cos(angle)
+    uy = math.sin(angle)
+    vx = -uy
+    vy = ux
+
+    # Project points onto principal axes to get extents
+    u_min = float('inf')
+    u_max = float('-inf')
+    v_min = float('inf')
+    v_max = float('-inf')
+
+    for pt in points_uv:
+        du = pt[0] - mean_u
+        dv = pt[1] - mean_v
+
+        # Project onto principal axes
+        u_proj = du * ux + dv * uy
+        v_proj = du * vx + dv * vy
+
+        u_min = min(u_min, u_proj)
+        u_max = max(u_max, u_proj)
+        v_min = min(v_min, v_proj)
+        v_max = max(v_max, v_proj)
+
+    len_u = abs(u_max - u_min)
+    len_v = abs(v_max - v_min)
+
+    # Build rectangle corners in original UV space
+    # p = mean + u_proj * U_axis + v_proj * V_axis
+    corners = [
+        (mean_u + u_min * ux + v_min * vx, mean_v + u_min * uy + v_min * vy),
+        (mean_u + u_max * ux + v_min * vx, mean_v + u_max * uy + v_min * vy),
+        (mean_u + u_max * ux + v_max * vx, mean_v + u_max * uy + v_max * vy),
+        (mean_u + u_min * ux + v_max * vx, mean_v + u_min * uy + v_max * vy),
+        (mean_u + u_min * ux + v_min * vx, mean_v + u_min * uy + v_min * vy),  # Close loop
+    ]
+
+    return (corners, len_u, len_v)
