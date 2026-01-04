@@ -315,13 +315,30 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
                 # Rasterization failed, fall through to bbox fallback
                 pass
 
-        # Fallback: Use simple bbox filling
+        # Fallback: Use OBB polygon (oriented bounds, not axis-aligned rect)
         try:
+            from .revit.collection import get_element_obb_loops
+            obb_loops = get_element_obb_loops(elem, vb, raster)
+
+            if obb_loops:
+                # Rasterize OBB polygon (same as silhouette loops)
+                filled = raster.rasterize_silhouette_loops(obb_loops, key_index, depth=elem_depth)
+
+                if filled > 0:
+                    # Tag with OBB strategy
+                    if key_index < len(raster.element_meta):
+                        raster.element_meta[key_index]['strategy'] = 'uv_obb'
+
+                    bbox_fallback += 1
+                    processed += 1
+                    continue
+
+            # Ultimate fallback: axis-aligned rect (if OBB fails)
             rect = _project_element_bbox_to_cell_rect(elem, vb, raster)
             if rect is None or rect.empty:
                 continue
 
-            # Fill bbox with proper occlusion vs occupancy separation
+            # Fill axis-aligned rect with proper occlusion vs occupancy separation
             for i, j in rect.cells():
                 # Set occlusion for all cells (interior + boundary) with actual depth
                 raster.set_cell_filled(i, j, depth=elem_depth)
@@ -334,9 +351,9 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
                     if idx is not None:
                         raster.model_edge_key[idx] = key_index
 
-            # Tag element metadata with bbox fallback strategy
+            # Tag element metadata with axis-aligned fallback strategy
             if key_index < len(raster.element_meta):
-                raster.element_meta[key_index]['strategy'] = 'bbox_fallback'
+                raster.element_meta[key_index]['strategy'] = 'aabb_fallback'
 
             bbox_fallback += 1
             processed += 1

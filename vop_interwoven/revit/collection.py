@@ -462,6 +462,72 @@ def _project_element_bbox_to_cell_rect(elem, vb, raster):
     return CellRect(i_min, j_min, i_max, j_max)
 
 
+def get_element_obb_loops(elem, vb, raster):
+    """Get element OBB as polygon loops for accurate rasterization.
+
+    Args:
+        elem: Revit Element
+        vb: ViewBasis for coordinate transformation
+        raster: ViewRaster with bounds and cell size
+
+    Returns:
+        List of loop dicts with OBB polygon, or None if bbox unavailable
+
+    Commentary:
+        ✔ Returns actual OBB polygon for rasterization (not axis-aligned rect)
+        ✔ Used for bbox fallback to get tight diagonal bounds
+        ✔ Returns same format as silhouette loops for uniform rasterization
+    """
+    from .view_basis import world_to_view
+
+    # Get world-space bounding box
+    bbox = elem.get_BoundingBox(None)
+    if bbox is None:
+        return None
+
+    # Get all 8 corners and project to UV
+    min_x, min_y, min_z = bbox.Min.X, bbox.Min.Y, bbox.Min.Z
+    max_x, max_y, max_z = bbox.Max.X, bbox.Max.Y, bbox.Max.Z
+
+    corners = [
+        (min_x, min_y, min_z), (min_x, min_y, max_z),
+        (min_x, max_y, min_z), (min_x, max_y, max_z),
+        (max_x, min_y, min_z), (max_x, min_y, max_z),
+        (max_x, max_y, min_z), (max_x, max_y, max_z),
+    ]
+
+    uvs = [world_to_view(corner, vb) for corner in corners]
+    points_uv = [(uv[0], uv[1]) for uv in uvs]
+
+    # Fit OBB using PCA
+    obb_rect, len_u, len_v = _pca_obb_uv(points_uv)
+
+    if not obb_rect or len(obb_rect) < 4:
+        # Fallback: use axis-aligned rect from min/max UV
+        u_min = min(uv[0] for uv in uvs)
+        u_max = max(uv[0] for uv in uvs)
+        v_min = min(uv[1] for uv in uvs)
+        v_max = max(uv[1] for uv in uvs)
+        w_min = min(uv[2] for uv in uvs)
+
+        # Build axis-aligned rectangle
+        obb_rect = [
+            (u_min, v_min),
+            (u_max, v_min),
+            (u_max, v_max),
+            (u_min, v_max),
+            (u_min, v_min),  # Close loop
+        ]
+
+    # Get minimum depth for occlusion
+    w_min = min(uv[2] for uv in uvs)
+
+    # Convert to loop format with depth
+    points_uvw = [(pt[0], pt[1], w_min) for pt in obb_rect]
+
+    return [{'points': points_uvw, 'is_hole': False, 'strategy': 'uv_obb'}]
+
+
 def _pca_obb_uv(points_uv):
     """Compute oriented bounding box in UV using PCA.
 
