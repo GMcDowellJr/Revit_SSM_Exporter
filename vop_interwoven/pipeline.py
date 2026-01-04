@@ -252,12 +252,25 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
 
         key_index = raster.get_or_create_element_meta_index(elem_id, category, source=doc_key, source_label=doc_label)
 
-        # Calculate element depth for z-buffer occlusion
-        elem_depth = estimate_nearest_depth_from_bbox(elem, world_transform, view, raster)
+        # CRITICAL FIX: Extract silhouette FIRST to get accurate geometry
+        # (depth calculation moved AFTER silhouette extraction)
+        loops = None
+        try:
+            loops = get_element_silhouette(elem, view, vb, raster, cfg)
+        except Exception as e:
+            # Silhouette extraction failed, loops will be None
+            pass
+
+        # Calculate element depth from silhouette geometry OR bbox fallback
+        # CRITICAL FIX: Use accurate geometry depth instead of bbox-only depth
+        from .revit.collection import estimate_depth_from_loops_or_bbox
+        elem_depth = estimate_depth_from_loops_or_bbox(elem, loops, world_transform, view, raster)
 
         # DEBUG: Log depth values for first few elements
         if processed < 10:
-            print("[DEBUG] Element {0} ({1}): depth = {2}".format(elem_id, category, elem_depth))
+            depth_source = "geometry" if loops else "bbox"
+            print("[DEBUG] Element {0} ({1}): depth = {2} (from {3})".format(
+                elem_id, category, elem_depth, depth_source))
 
         # Safe early-out occlusion using bbox footprint + tile z-min (front-to-back streaming)
         try:
@@ -270,14 +283,12 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
             # Never skip on failure (must stay conservative)
             pass
 
-        # Try silhouette extraction
-        try:
-            loops = get_element_silhouette(elem, view, vb, raster, cfg)
-
-            if loops:
+        # Rasterize silhouette loops if we have them
+        if loops:
+            try:
                 # Get strategy used from first loop
                 strategy = loops[0].get('strategy', 'unknown')
-                
+
                 # If any loop is marked open (e.g., DWG curves), rasterize as edges only
                 try:
                     if any(loop.get("open", False) for loop in loops):
@@ -300,9 +311,9 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
                     processed += 1
                     continue
 
-        except Exception as e:
-            # Silhouette extraction failed, fall back to bbox
-            pass
+            except Exception as e:
+                # Rasterization failed, fall through to bbox fallback
+                pass
 
         # Fallback: Use simple bbox filling
         try:

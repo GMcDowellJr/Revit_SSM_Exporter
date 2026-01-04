@@ -290,6 +290,47 @@ def estimate_nearest_depth_from_bbox(elem, transform, view, raster):
     return min_depth
 
 
+def estimate_depth_from_loops_or_bbox(elem, loops, transform, view, raster):
+    """Get element depth from silhouette geometry or bbox fallback.
+
+    Args:
+        elem: Revit Element
+        loops: Silhouette loops (may contain w coordinates)
+        transform: World transform
+        view: Revit View
+        raster: ViewRaster
+
+    Returns:
+        Float depth value (nearest point to view plane)
+
+    Commentary:
+        ✔ Extracts depth from silhouette loop points if w coordinate available
+        ✔ Falls back to bbox depth if loops unavailable/empty or no w coordinate
+        ✔ CRITICAL FIX: Use accurate geometry depth instead of inflated bbox depth
+    """
+    # Try to extract depth from loops first (accurate geometry)
+    if loops:
+        min_w = float('inf')
+        found_depth = False
+
+        for loop in loops:
+            points = loop.get('points', [])
+            for pt in points:
+                # Check if point has w coordinate (3-tuple)
+                if len(pt) >= 3:
+                    w = pt[2]
+                    if w < min_w:
+                        min_w = w
+                    found_depth = True
+
+        # If we found depth in loops, use it (accurate!)
+        if found_depth and min_w < float('inf'):
+            return min_w
+
+    # Fallback: use bbox (less accurate for rotated elements, but better than nothing)
+    return estimate_nearest_depth_from_bbox(elem, transform, view, raster)
+
+
 def estimate_depth_range_from_bbox(elem, transform, view, raster):
     """Estimate depth range (min, max) of element from its bounding box.
 
@@ -359,7 +400,8 @@ def _project_element_bbox_to_cell_rect(elem, vb, raster):
 
     Commentary:
         ✔ Gets world-space bounding box
-        ✔ Transforms min/max corners to view coordinates
+        ✔ Projects ALL 8 corners to view coordinates (fixes rotated elements)
+        ✔ Computes tight UV AABB from projected corners
         ✔ Projects to cell indices
         ✔ Handles elements outside view bounds (returns None or empty rect)
     """
@@ -371,21 +413,28 @@ def _project_element_bbox_to_cell_rect(elem, vb, raster):
     if bbox is None:
         return None
 
-    # Transform bbox corners to view space
-    min_pt_world = (bbox.Min.X, bbox.Min.Y, bbox.Min.Z)
-    max_pt_world = (bbox.Max.X, bbox.Max.Y, bbox.Max.Z)
+    # Get all 8 corners of 3D bounding box
+    min_x, min_y, min_z = bbox.Min.X, bbox.Min.Y, bbox.Min.Z
+    max_x, max_y, max_z = bbox.Max.X, bbox.Max.Y, bbox.Max.Z
 
-    min_view = world_to_view(min_pt_world, vb)
-    max_view = world_to_view(max_pt_world, vb)
+    corners = [
+        (min_x, min_y, min_z), (min_x, min_y, max_z),
+        (min_x, max_y, min_z), (min_x, max_y, max_z),
+        (max_x, min_y, min_z), (max_x, min_y, max_z),
+        (max_x, max_y, min_z), (max_x, max_y, max_z),
+    ]
 
-    # Get UV range (ignore W/depth for now)
-    u_coords = [min_view[0], max_view[0]]
-    v_coords = [min_view[1], max_view[1]]
+    # For linked elements (with .transform), corners may already be in link space
+    # but get_BoundingBox(None) returns host-space bbox, so no transform needed here
 
-    u_min = min(u_coords)
-    u_max = max(u_coords)
-    v_min = min(v_coords)
-    v_max = max(v_coords)
+    # Project all 8 corners to view UV
+    uvs = [world_to_view(corner, vb) for corner in corners]
+
+    # Compute tight UV AABB (min/max across all projected points)
+    u_min = min(uv[0] for uv in uvs)
+    u_max = max(uv[0] for uv in uvs)
+    v_min = min(uv[1] for uv in uvs)
+    v_max = max(uv[1] for uv in uvs)
 
     # Convert to cell indices
     # Cell i = floor((u - u_min) / cell_size)
