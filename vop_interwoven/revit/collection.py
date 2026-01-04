@@ -623,7 +623,7 @@ def get_element_obb_loops(elem, vb, raster):
 
     if used_geometry:
         # Use actual geometry vertices - compute convex hull for clean polygon
-        from .core.silhouette import _convex_hull_2d
+        from ..core.silhouette import _convex_hull_2d
         hull_uv = _convex_hull_2d(points_uv)
 
         if hull_uv and len(hull_uv) >= 3:
