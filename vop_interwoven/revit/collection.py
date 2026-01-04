@@ -499,6 +499,19 @@ def get_element_obb_loops(elem, vb, raster):
     uvs = [world_to_view(corner, vb) for corner in corners]
     points_uv = [(uv[0], uv[1]) for uv in uvs]
 
+    # DEBUG: Log unique UV points for diagonal wall
+    try:
+        elem_id = getattr(elem, 'Id', None)
+        if elem_id:
+            elem_id_val = getattr(elem_id, 'IntegerValue', elem_id)
+            if elem_id_val == 1619124:  # Target diagonal wall
+                unique_uv = list(set(points_uv))
+                print("[DEBUG BBOX] Element {0}: {1} bbox corners -> {2} unique UV points".format(
+                    elem_id_val, len(points_uv), len(unique_uv)))
+                print("  UV points: {0}".format([(round(u, 2), round(v, 2)) for u, v in unique_uv[:6]]))
+    except:
+        pass
+
     # Fit OBB using PCA
     obb_rect, len_u, len_v, angle_deg = _pca_obb_uv(points_uv)
 
@@ -528,17 +541,20 @@ def get_element_obb_loops(elem, vb, raster):
     # Convert to loop format with depth
     points_uvw = [(pt[0], pt[1], w_min) for pt in obb_rect]
 
-    # DEBUG: Log first few OBB calculations
+    # DEBUG: Log OBB calculations
     try:
         elem_id = getattr(elem, 'Id', None)
         if elem_id:
             elem_id_val = getattr(elem_id, 'IntegerValue', elem_id)
-            # Print first 5 OBB calculations for debugging
+            # Always log element 1619124 (diagonal wall), 5% sample for others
             import random
-            if random.random() < 0.05:  # 5% sampling
+            should_log = (elem_id_val == 1619124) or (random.random() < 0.05)
+            if should_log:
                 strategy_tag = 'uv_aabb' if used_aabb_fallback else 'uv_obb'
                 print("[DEBUG OBB] Element {0}: strategy={1}, angle={2:.1f}deg, vertices={3}".format(
                     elem_id_val, strategy_tag, angle_deg, len(obb_rect)))
+                if elem_id_val == 1619124:
+                    print("  OBB corners: {0}".format([(round(pt[0], 2), round(pt[1], 2)) for pt in obb_rect[:4]]))
     except:
         pass
 
