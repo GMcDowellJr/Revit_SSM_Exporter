@@ -30,6 +30,8 @@ class Config:
         max_sheet_width_in (float): Maximum sheet width in inches (default: 48.0 = Arch E)
         max_sheet_height_in (float): Maximum sheet height in inches (default: 36.0 = Arch E)
         bounds_buffer_in (float): Buffer around bounds in inches (default: 0.5)
+        include_linked_rvt (bool): Include elements from linked RVT files (default: True)
+        include_dwg_imports (bool): Include elements from DWG/DXF imports (default: True)
 
     Commentary:
         ✔ overModelIncludesProxies controls whether tiny/linear proxies count as "model presence"
@@ -66,6 +68,8 @@ class Config:
         max_sheet_width_in=48.0,
         max_sheet_height_in=36.0,
         bounds_buffer_in=0.5,
+        include_linked_rvt=True,
+        include_dwg_imports=True,
     ):
         """Initialize VOP configuration.
 
@@ -83,6 +87,8 @@ class Config:
             max_sheet_width_in: Maximum sheet width in inches (default: 48.0 = Arch E)
             max_sheet_height_in: Maximum sheet height in inches (default: 36.0 = Arch E)
             bounds_buffer_in: Buffer around bounds in inches (default: 0.5)
+            include_linked_rvt: Include elements from linked RVT files (default: True)
+            include_dwg_imports: Include elements from DWG/DXF imports (default: True)
         """
         self.tile_size = int(tile_size)
         self.adaptive_tile_size = bool(adaptive_tile_size)
@@ -95,6 +101,8 @@ class Config:
         self.max_sheet_width_in = float(max_sheet_width_in)
         self.max_sheet_height_in = float(max_sheet_height_in)
         self.bounds_buffer_in = float(bounds_buffer_in)
+        self.include_linked_rvt = bool(include_linked_rvt)
+        self.include_dwg_imports = bool(include_dwg_imports)
 
         # Tie anno_crop_margin_in to bounds_buffer_in if not specified
         if anno_crop_margin_in is None:
@@ -205,6 +213,65 @@ class Config:
         """
         return self.bounds_buffer_in / 12.0
 
+    @property
+    def silhouette_tiny_thresh_ft(self):
+        """Threshold for tiny elements in feet (default: 3.0 ft).
+
+        Returns:
+            float: Threshold in feet
+        """
+        return getattr(self, '_silhouette_tiny_thresh_ft', 3.0)
+
+    @property
+    def silhouette_large_thresh_ft(self):
+        """Threshold for large elements in feet (default: 20.0 ft).
+
+        Returns:
+            float: Threshold in feet
+        """
+        return getattr(self, '_silhouette_large_thresh_ft', 20.0)
+
+    @property
+    def coarse_tess_max_verts(self):
+        """Maximum vertices per face for coarse tessellation (default: 20).
+
+        Returns:
+            int: Maximum vertices
+        """
+        return getattr(self, '_coarse_tess_max_verts', 20)
+
+    def get_silhouette_strategies(self, uv_mode):
+        """Get silhouette extraction strategies for a given UV mode (shape).
+
+        Args:
+            uv_mode: 'TINY', 'LINEAR', or 'AREAL'
+
+        Returns:
+            List of strategy names to try in order
+
+        Commentary:
+            Shape-based strategy selection:
+            - TINY: Small in both U and V → bbox (fast, sufficient)
+            - LINEAR: Thin beams/columns/pipes → obb → bbox (captures rotation, no concavity)
+            - AREAL: Large area elements → silhouette_edges → obb → bbox (preserves L-shapes)
+
+            Key insight: LINEAR elements (beams, columns) are rarely concave,
+            so OBB is perfect. AREAL elements (floors, walls) can be concave (L, U, C),
+            so they need true silhouette extraction.
+        """
+        if uv_mode == 'TINY':
+            # Small elements: bbox is good enough
+            return ['bbox']
+        elif uv_mode == 'LINEAR':
+            # Thin/long elements (beams, columns, pipes): OBB captures rotation
+            return ['obb', 'bbox']
+        elif uv_mode == 'AREAL':
+            # Large area elements: need silhouette for concave shapes
+            return ['silhouette_edges', 'obb', 'bbox']
+        else:
+            # Default fallback: full chain
+            return ['silhouette_edges', 'obb', 'bbox']
+
     def __repr__(self):
         return (
             f"Config(tile_size={self.tile_size}, "
@@ -236,6 +303,8 @@ class Config:
             "max_sheet_width_in": self.max_sheet_width_in,
             "max_sheet_height_in": self.max_sheet_height_in,
             "bounds_buffer_in": self.bounds_buffer_in,
+            "include_linked_rvt": self.include_linked_rvt,
+            "include_dwg_imports": self.include_dwg_imports,
         }
 
     @classmethod
@@ -255,4 +324,6 @@ class Config:
             max_sheet_width_in=d.get("max_sheet_width_in", 48.0),
             max_sheet_height_in=d.get("max_sheet_height_in", 36.0),
             bounds_buffer_in=d.get("bounds_buffer_in", 0.5),
+            include_linked_rvt=d.get("include_linked_rvt", True),
+            include_dwg_imports=d.get("include_dwg_imports", True),
         )

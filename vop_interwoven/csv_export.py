@@ -19,7 +19,7 @@ def compute_cell_metrics(raster):
         Dict with:
             - TotalCells: int (W * H)
             - Empty: int (neither model nor anno)
-            - ModelOnly: int (model but no anno)
+            - ModelOnly: int (model edge but no anno)
             - AnnoOnly: int (anno but no model)
             - Overlap: int (both model and anno)
 
@@ -27,6 +27,7 @@ def compute_cell_metrics(raster):
         AssertionError: If invariant fails (TotalCells != sum of categories)
 
     Commentary:
+        ✔ Uses model_edge_key (OCCUPANCY - boundary only) instead of model_mask (OCCLUSION - interior)
         ✔ Validates critical invariant: TotalCells = Empty + ModelOnly + AnnoOnly + Overlap
         ✔ Iterates once over all cells for efficiency
     """
@@ -37,8 +38,9 @@ def compute_cell_metrics(raster):
     overlap = 0
 
     for i in range(total):
-        has_model = raster.model_mask[i]
-        has_anno = raster.anno_over_model[i]
+        # Use model_edge_key (occupancy - boundary only) instead of model_mask (occlusion - interior)
+        has_model = (raster.model_edge_key[i] != -1) if i < len(raster.model_edge_key) else False
+        has_anno = raster.anno_over_model[i] if i < len(raster.anno_over_model) else False
 
         if has_model and has_anno:
             overlap += 1
@@ -52,7 +54,7 @@ def compute_cell_metrics(raster):
     # Validate invariant
     computed_total = empty + model_only + anno_only + overlap
     assert total == computed_total, \
-        f"CSV invariant failed: TotalCells ({total}) != Empty + ModelOnly + AnnoOnly + Overlap ({computed_total})"
+        "CSV invariant failed: TotalCells ({0}) != Empty + ModelOnly + AnnoOnly + Overlap ({1})".format(total, computed_total)
 
     return {
         "TotalCells": total,

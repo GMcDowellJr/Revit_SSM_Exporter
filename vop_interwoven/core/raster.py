@@ -157,6 +157,53 @@ class ViewRaster:
         5.0
     """
 
+    def rasterize_open_polylines(self, polylines, key_index, depth=0.0):
+        """
+        Rasterize OPEN polyline paths as edges only (no interior fill).
+        Each polyline dict: {'points': [(u,v), ...], 'open': True}
+        """
+        filled = 0
+
+        for pl in polylines:
+            pts = pl.get("points", [])
+            if not pts or len(pts) < 2:
+                continue
+
+            # Convert UV floats -> ij ints
+            pts_ij = []
+            for (u, v) in pts:
+                i = int((u - self.bounds.xmin) / self.cell_size)
+                j = int((v - self.bounds.ymin) / self.cell_size)
+                if 0 <= i < self.W and 0 <= j < self.H:
+                    pts_ij.append((i, j))
+
+            if len(pts_ij) < 2:
+                continue
+
+            # Draw segments
+            for k in range(len(pts_ij) - 1):
+                i0, j0 = pts_ij[k]
+                i1, j1 = pts_ij[k + 1]
+                for (ii, jj) in _bresenham_line(i0, j0, i1, j1):
+                    idx = self.get_cell_index(ii, jj)
+                    if idx is None:
+                        continue
+
+                    # edge presence
+                    z_here = self.z_min[idx]
+
+                    # Only stamp the edge if this element is nearer than what's already there.
+                    if z_here == float("inf") or depth <= z_here:
+                        self.model_edge_key[idx] = key_index
+
+                        # If you want DWG/edges to contribute to occlusion along the curve:
+                        if depth < z_here:
+                            self.z_min[idx] = depth
+                        self.model_mask[idx] = True
+                    filled += 1
+
+        return filled
+    
     def __init__(self, width, height, cell_size, bounds, tile_size=16):
         """Initialize view raster.
 
@@ -254,22 +301,32 @@ class ViewRaster:
             if depth < self.z_min[idx]:
                 self.z_min[idx] = depth
                 self.tile.update_z_min(i, j, depth)
+            # DEBUG: Log if depth wasn't updated
+            elif getattr(self, '_debug_depth_log_count', 0) < 5:
+                self._debug_depth_log_count = getattr(self, '_debug_depth_log_count', 0) + 1
+                print("[DEBUG] set_cell_filled({0},{1}): depth={2} NOT < z_min[{3}]={4}".format(
+                    i, j, depth, idx, self.z_min[idx]))
 
         if was_empty:
             self.tile.update_filled_count(i, j, increment=1)
 
         return True
 
-    def get_or_create_element_meta_index(self, elem_id, category, source="HOST"):
+    def get_or_create_element_meta_index(self, elem_id, category, source="HOST", source_label=None):
         """Get or create metadata index for element.
 
         Args:
             elem_id: Revit element ID (integer)
             category: Element category name (string)
-            source: Source type ("HOST", "RVT_LINK", etc.)
+            source: Unique source key for indexing ("HOST", "RVT_LINK:{uid}:{id}", etc.)
+            source_label: Optional friendly label for display (defaults to source)
 
         Returns:
             Integer index for this element's metadata
+
+        Commentary:
+            source: Used as unique key for indexing (must be unique per element)
+            source_label: Used for display/logging (can be friendly, non-unique)
         """
         key = (elem_id, source)
         if key in self.element_meta_index_by_key:
@@ -278,7 +335,12 @@ class ViewRaster:
         idx = len(self.element_meta)
         self.element_meta_index_by_key[key] = idx
         self.element_meta.append(
-            {"elem_id": elem_id, "category": category, "source": source}
+            {
+                "elem_id": elem_id,
+                "category": category,
+                "source": source,
+                "source_label": source_label if source_label is not None else source
+            }
         )
         return idx
 
@@ -323,6 +385,131 @@ class ViewRaster:
 
             self.anno_over_model[i] = has_anno and has_model
 
+    def rasterize_silhouette_loops(self, loops, key_index, depth=0.0):
+        """Rasterize element silhouette loops into model layers.
+
+        Args:
+            loops: List of loop dicts from silhouette.get_element_silhouette()
+                   Each loop has: {'points': [(u, v), ...], 'is_hole': bool}
+            key_index: Element metadata index (for edge tracking)
+            depth: Depth value for z-buffer (default: 0.0)
+
+        Returns:
+            Number of cells filled
+
+        Commentary:
+            - Converts loop points from view UV to cell indices
+            - Rasterizes loop edges using Bresenham line algorithm
+            - Fills interior using scanline fill
+            - Updates model_mask, z_min, and model_edge_key
+        """
+        if not loops:
+            return 0
+
+        filled_count = 0
+
+        for loop in loops:
+            points_uv = loop.get('points', [])
+            is_hole = loop.get('is_hole', False)
+
+            if len(points_uv) < 3:
+                continue
+
+            # Convert UV points to cell indices
+            points_ij = []
+            for u, v in points_uv:
+                i = int((u - self.bounds_xy.xmin) / self.cell_size_ft)
+                j = int((v - self.bounds_xy.ymin) / self.cell_size_ft)
+
+                # Clamp to bounds
+                i = max(0, min(i, self.W - 1))
+                j = max(0, min(j, self.H - 1))
+
+                points_ij.append((i, j))
+
+            # Rasterize edges
+            # 1) Fill interior FIRST (writes z_min for occlusion)
+            if not is_hole:
+                filled_count += self._scanline_fill(points_ij, key_index, depth)
+
+            # 2) Then rasterize edges with depth-test against updated z-buffer
+            for k in range(len(points_ij) - 1):
+                i0, j0 = points_ij[k]
+                i1, j1 = points_ij[k + 1]
+
+                for i, j in _bresenham_line(i0, j0, i1, j1):
+                    idx = self.get_cell_index(i, j)
+                    if idx is None:
+                        continue
+
+                    z_here = self.z_min[idx]
+                    if z_here == float("inf") or depth <= z_here:
+                        self.model_edge_key[idx] = key_index
+
+        return filled_count
+
+    def _scanline_fill(self, points_ij, key_index, depth):
+        """Fill polygon interior using scanline algorithm.
+
+        Args:
+            points_ij: List of (i, j) cell coordinates forming closed polygon
+            key_index: Element metadata index
+            depth: Depth value for z-buffer
+
+        Returns:
+            Number of cells filled
+
+        Commentary:
+            - Sets model_mask and z_min for OCCLUSION (interior blocks visibility)
+            - Does NOT set model_edge_key (only boundary marks occupancy)
+        """
+        if len(points_ij) < 3:
+            return 0
+
+        filled = 0
+
+        # Find vertical extent
+        j_coords = [j for i, j in points_ij]
+        j_min = min(j_coords)
+        j_max = max(j_coords)
+
+        # For each scanline
+        for j in range(j_min, j_max + 1):
+            # Find intersections with polygon edges
+            intersections = []
+
+            for k in range(len(points_ij) - 1):
+                i0, j0 = points_ij[k]
+                i1, j1 = points_ij[k + 1]
+
+                # Skip horizontal edges
+                if j0 == j1:
+                    continue
+
+                # Check if scanline intersects this edge
+                if min(j0, j1) <= j <= max(j0, j1):
+                    # Compute intersection i coordinate
+                    if j1 != j0:
+                        t = float(j - j0) / float(j1 - j0)
+                        i_intersect = int(i0 + t * (i1 - i0))
+                        intersections.append(i_intersect)
+
+            # Sort intersections
+            intersections.sort()
+
+            # Fill between pairs
+            for k in range(0, len(intersections) - 1, 2):
+                i_start = intersections[k]
+                i_end = intersections[k + 1] if k + 1 < len(intersections) else intersections[k]
+
+                for i in range(i_start, i_end + 1):
+                    # Set occlusion (model_mask, z_min) but NOT occupancy (model_edge_key)
+                    # Interior fills space and blocks visibility, but doesn't mark edges
+                    if self.set_cell_filled(i, j, depth=depth):
+                        filled += 1
+
+        return filled
+
     def to_dict(self):
         """Export raster to dictionary for JSON serialization.
 
@@ -350,3 +537,38 @@ class ViewRaster:
             "element_meta": self.element_meta,
             "anno_meta": self.anno_meta,
         }
+
+
+def _bresenham_line(i0, j0, i1, j1):
+    """Generate cell coordinates along a line using Bresenham's algorithm.
+
+    Args:
+        i0, j0: Start cell coordinates
+        i1, j1: End cell coordinates
+
+    Yields:
+        (i, j) cell coordinates along the line
+    """
+    di = abs(i1 - i0)
+    dj = abs(j1 - j0)
+    si = 1 if i0 < i1 else -1
+    sj = 1 if j0 < j1 else -1
+    err = di - dj
+
+    i, j = i0, j0
+
+    while True:
+        yield (i, j)
+
+        if i == i1 and j == j1:
+            break
+
+        e2 = 2 * err
+
+        if e2 > -dj:
+            err -= dj
+            i += si
+
+        if e2 < di:
+            err += di
+            j += sj

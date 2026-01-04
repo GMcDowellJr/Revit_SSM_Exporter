@@ -123,52 +123,68 @@ def is_element_visible_in_view(elem, view):
     return True
 
 
-def expand_host_link_import_model_elements(doc, view, elements):
+def expand_host_link_import_model_elements(doc, view, elements, cfg):
     """Expand element list to include linked/imported model elements.
 
     Args:
         doc: Revit Document
         view: Revit View
         elements: List of host document elements
+        cfg: Config object with linked document settings
 
     Returns:
         List of element wrappers with transform info:
         Each item: {
             'element': Element,
             'world_transform': Transform (identity for host, link transform for linked),
-            'doc_key': str (host doc path or link doc path),
+            'doc_key': str (unique key for indexing),
+            'doc_label': str (friendly label for logging),
             'link_inst_id': ElementId or None
         }
 
     Commentary:
         ✔ Includes host elements (identity transform)
-        ✔ Optional: expand RevitLinkInstance to access linked elements
-        ⚠ This is a placeholder - full implementation requires Revit API
-
-    Example:
-        >>> # Pseudo-code with Revit API:
-        >>> # for e in elements:
-        >>> #     if isinstance(e, RevitLinkInstance):
-        >>> #         link_doc = e.GetLinkDocument()
-        >>> #         link_transform = e.GetTotalTransform()
-        >>> #         link_elems = get_elements_from_link(link_doc, view)
-        >>> #         for le in link_elems:
-        >>> #             yield wrap_linked_element(le, link_transform, e.Id)
-        >>> #     else:
-        >>> #         yield wrap_host_element(e)
+        ✔ Expands RevitLinkInstance and ImportInstance to access linked elements
+        ✔ Uses linked_documents module for production-ready link handling
+        ✔ Provides unique doc_key for multiple link instances (includes instance ID)
+        ✔ Provides friendly doc_label for logging/display
     """
-    # TODO: Implement link expansion
-    # Placeholder: return host elements only with identity transform
+    from Autodesk.Revit.DB import Transform
+    from .linked_documents import collect_all_linked_elements
+
     result = []
+
+    # Add host elements with identity transform
+    identity_trf = Transform.Identity
     for e in elements:
         result.append(
             {
                 "element": e,
-                "world_transform": None,  # Identity transform (placeholder)
+                "world_transform": identity_trf,
                 "doc_key": "HOST",
+                "doc_label": "HOST",
                 "link_inst_id": None,
             }
         )
+
+    # Collect and add linked/imported elements
+    try:
+        linked_proxies = collect_all_linked_elements(doc, view, cfg)
+
+        for proxy in linked_proxies:
+            result.append(
+                {
+                    "element": proxy,  # LinkedElementProxy
+                    "world_transform": proxy.transform,
+                    "doc_key": proxy.doc_key,          # Unique key (includes instance ID)
+                    "doc_label": proxy.doc_label,      # Friendly label for logging
+                    "link_inst_id": proxy.LinkInstanceId,
+                }
+            )
+    except Exception as e:
+        # Log warning but don't fail the whole export
+        print("[WARN] vop.collection: Failed to collect linked elements: {0}".format(e))
+
     return result
 
 
@@ -186,20 +202,22 @@ def sort_front_to_back(model_elems, view, raster):
     Commentary:
         ✔ Uses bbox minimum depth as sorting key (fast approximation)
         ✔ Front-to-back order enables early-out occlusion testing
-        ⚠ This is a placeholder - full implementation requires:
-           - View basis extraction
-           - BBox min depth calculation in view space
-           - Stable sort for deterministic output
-
-    Example:
-        >>> # sorted_elems = sorted(
-        >>> #     model_elems,
-        >>> #     key=lambda item: estimate_nearest_depth_from_bbox(item['element'], item['world_transform'], view, raster)
-        >>> # )
+        ✔ Stable sort for deterministic output
+        ✔ Elements with smaller depth values are closer to view plane
     """
-    # TODO: Implement front-to-back sorting
-    # Placeholder: return unsorted (no-op)
-    return model_elems
+    # Sort by depth (nearest first)
+    # Use stable sort to ensure deterministic output for elements with equal depth
+    sorted_elems = sorted(
+        model_elems,
+        key=lambda item: estimate_nearest_depth_from_bbox(
+            item['element'],
+            item['world_transform'],
+            view,
+            raster
+        )
+    )
+
+    return sorted_elems
 
 
 def estimate_nearest_depth_from_bbox(elem, transform, view, raster):
@@ -217,10 +235,115 @@ def estimate_nearest_depth_from_bbox(elem, transform, view, raster):
     Commentary:
         ✔ Computes minimum depth across all 8 bbox corners
         ✔ Used for front-to-back sorting
-        ⚠ Placeholder returns 0.0
+        ✔ Returns depth in view space (w coordinate)
     """
-    # TODO: Implement depth estimation
-    return 0.0
+    from .view_basis import world_to_view
+
+    # Get world-space bounding box
+    bbox = elem.get_BoundingBox(None)
+    if bbox is None:
+        return float('inf')  # Elements without bbox go to back
+
+    # Get view basis from raster (stored during init_view_raster)
+    vb = getattr(raster, 'view_basis', None)
+    if vb is None:
+        return 0.0  # Fallback if view basis not available
+
+    # Get all 8 corners of bounding box in world space
+    min_x, min_y, min_z = bbox.Min.X, bbox.Min.Y, bbox.Min.Z
+    max_x, max_y, max_z = bbox.Max.X, bbox.Max.Y, bbox.Max.Z
+
+    # DEBUG: Log bbox and view basis for first few elements
+    debug_count = getattr(estimate_nearest_depth_from_bbox, '_debug_count', 0)
+    if debug_count < 2:
+        estimate_nearest_depth_from_bbox._debug_count = debug_count + 1
+        print("[DEBUG] estimate_depth: bbox Z range: [{0:.3f}, {1:.3f}]".format(min_z, max_z))
+        print("[DEBUG] estimate_depth: view_basis.origin = {0}".format(vb.origin))
+        print("[DEBUG] estimate_depth: view_basis.forward = {0}".format(vb.forward))
+
+    corners = [
+        (min_x, min_y, min_z),
+        (min_x, min_y, max_z),
+        (min_x, max_y, min_z),
+        (min_x, max_y, max_z),
+        (max_x, min_y, min_z),
+        (max_x, min_y, max_z),
+        (max_x, max_y, min_z),
+        (max_x, max_y, max_z),
+    ]
+
+    # Transform all corners to view space and get minimum depth (w coordinate)
+    min_depth = float('inf')
+    max_depth = float('-inf')
+    for corner in corners:
+        u, v, w = world_to_view(corner, vb)
+        if w < min_depth:
+            min_depth = w
+        if w > max_depth:
+            max_depth = w
+
+    # DEBUG: Log depth range for first few elements
+    if debug_count < 2:
+        print("[DEBUG] estimate_depth: depth range: [{0:.3f}, {1:.3f}], using min={2:.3f}".format(
+            min_depth, max_depth, min_depth))
+
+    return min_depth
+
+
+def estimate_depth_range_from_bbox(elem, transform, view, raster):
+    """Estimate depth range (min, max) of element from its bounding box.
+
+    Args:
+        elem: Revit Element
+        transform: World transform (identity for host, link transform for linked)
+        view: Revit View
+        raster: ViewRaster
+
+    Returns:
+        Tuple (min_depth, max_depth) - range of depths in view space
+
+    Commentary:
+        Used for ambiguity detection in selective z-buffer phase.
+        Returns full depth extent across all 8 bbox corners.
+    """
+    from .view_basis import world_to_view
+
+    # Get world-space bounding box
+    bbox = elem.get_BoundingBox(None)
+    if bbox is None:
+        return (float('inf'), float('inf'))  # Elements without bbox
+
+    # Get view basis from raster
+    vb = getattr(raster, 'view_basis', None)
+    if vb is None:
+        return (0.0, 0.0)  # Fallback
+
+    # Get all 8 corners of bounding box in world space
+    min_x, min_y, min_z = bbox.Min.X, bbox.Min.Y, bbox.Min.Z
+    max_x, max_y, max_z = bbox.Max.X, bbox.Max.Y, bbox.Max.Z
+
+    corners = [
+        (min_x, min_y, min_z),
+        (min_x, min_y, max_z),
+        (min_x, max_y, min_z),
+        (min_x, max_y, max_z),
+        (max_x, min_y, min_z),
+        (max_x, min_y, max_z),
+        (max_x, max_y, min_z),
+        (max_x, max_y, max_z),
+    ]
+
+    # Transform all corners to view space and get min/max depth (w coordinate)
+    min_depth = float('inf')
+    max_depth = float('-inf')
+    for corner in corners:
+        u, v, w = world_to_view(corner, vb)
+        if w < min_depth:
+            min_depth = w
+        if w > max_depth:
+            max_depth = w
+
+    return (min_depth, max_depth)
 
 
 def _project_element_bbox_to_cell_rect(elem, vb, raster):
