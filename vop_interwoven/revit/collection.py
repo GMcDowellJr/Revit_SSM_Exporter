@@ -432,7 +432,7 @@ def _project_element_bbox_to_cell_rect(elem, vb, raster):
     points_uv = [(uv[0], uv[1]) for uv in uvs]
 
     # Fit OBB to UV points using PCA for tighter bounds
-    obb_rect, len_u, len_v = _pca_obb_uv(points_uv)
+    obb_rect, len_u, len_v, angle_deg = _pca_obb_uv(points_uv)
 
     if not obb_rect or len(obb_rect) < 4:
         # Fallback to AABB if OBB fitting fails
@@ -500,8 +500,9 @@ def get_element_obb_loops(elem, vb, raster):
     points_uv = [(uv[0], uv[1]) for uv in uvs]
 
     # Fit OBB using PCA
-    obb_rect, len_u, len_v = _pca_obb_uv(points_uv)
+    obb_rect, len_u, len_v, angle_deg = _pca_obb_uv(points_uv)
 
+    used_aabb_fallback = False
     if not obb_rect or len(obb_rect) < 4:
         # Fallback: use axis-aligned rect from min/max UV
         u_min = min(uv[0] for uv in uvs)
@@ -518,6 +519,8 @@ def get_element_obb_loops(elem, vb, raster):
             (u_min, v_max),
             (u_min, v_min),  # Close loop
         ]
+        used_aabb_fallback = True
+        angle_deg = 0.0
 
     # Get minimum depth for occlusion
     w_min = min(uv[2] for uv in uvs)
@@ -525,7 +528,23 @@ def get_element_obb_loops(elem, vb, raster):
     # Convert to loop format with depth
     points_uvw = [(pt[0], pt[1], w_min) for pt in obb_rect]
 
-    return [{'points': points_uvw, 'is_hole': False, 'strategy': 'uv_obb'}]
+    # DEBUG: Log first few OBB calculations
+    try:
+        elem_id = getattr(elem, 'Id', None)
+        if elem_id:
+            elem_id_val = getattr(elem_id, 'IntegerValue', elem_id)
+            # Print first 5 OBB calculations for debugging
+            import random
+            if random.random() < 0.05:  # 5% sampling
+                strategy_tag = 'uv_aabb' if used_aabb_fallback else 'uv_obb'
+                print("[DEBUG OBB] Element {0}: strategy={1}, angle={2:.1f}deg, vertices={3}".format(
+                    elem_id_val, strategy_tag, angle_deg, len(obb_rect)))
+    except:
+        pass
+
+    # Tag with correct strategy (uv_obb if PCA succeeded, uv_aabb if fallback)
+    strategy = 'uv_aabb' if used_aabb_fallback else 'uv_obb'
+    return [{'points': points_uvw, 'is_hole': False, 'strategy': strategy}]
 
 
 def _pca_obb_uv(points_uv):
@@ -535,8 +554,8 @@ def _pca_obb_uv(points_uv):
         points_uv: List of (u, v) points
 
     Returns:
-        (rect_points, len_u, len_v) where rect_points is closed loop in UV
-        Returns ([], 0.0, 0.0) on failure
+        (rect_points, len_u, len_v, angle_deg) where rect_points is closed loop in UV
+        Returns ([], 0.0, 0.0, 0.0) on failure
 
     Commentary:
         ✔ Fits oriented rectangle to point cloud using PCA
@@ -546,7 +565,7 @@ def _pca_obb_uv(points_uv):
     import math
 
     if not points_uv or len(points_uv) < 2:
-        return ([], 0.0, 0.0)
+        return ([], 0.0, 0.0, 0.0)
 
     # Compute mean
     n = float(len(points_uv))
@@ -560,6 +579,7 @@ def _pca_obb_uv(points_uv):
 
     # Principal axis angle (2D PCA)
     angle = 0.5 * math.atan2(2.0 * cxy, (cxx - cyy))
+    angle_deg = angle * 180.0 / math.pi
 
     # Principal axes (unit vectors)
     ux = math.cos(angle)
@@ -599,4 +619,4 @@ def _pca_obb_uv(points_uv):
         (mean_u + u_min * ux + v_min * vx, mean_v + u_min * uy + v_min * vy),  # Close loop
     ]
 
-    return (corners, len_u, len_v)
+    return (corners, len_u, len_v, angle_deg)
