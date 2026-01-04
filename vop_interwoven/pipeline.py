@@ -409,8 +409,11 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
             skipped += 1
             if skipped <= 10:
                 print("[ERROR] vop.pipeline: Catastrophic failure for element {0}: {1}".format(elem_id, e))
-                import traceback
-                traceback.print_exc()
+                try:
+                    import traceback
+                    traceback.print_exc()
+                except:
+                    pass  # traceback not available in IronPython
 
     # Phase 4.5: Ambiguity detection (selective z-buffer prep)
     # Build tile bins and detect ambiguous tiles where depth conflicts exist

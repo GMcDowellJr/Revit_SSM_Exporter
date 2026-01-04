@@ -576,28 +576,31 @@ def get_element_obb_loops(elem, vb, raster):
     """
     from .view_basis import world_to_view
 
+    # Always get bbox for depth calculation
+    bbox = elem.get_BoundingBox(None)
+    if bbox is None:
+        return None
+
+    # Get all 8 corners and project to UV (needed for depth regardless of geometry extraction)
+    min_x, min_y, min_z = bbox.Min.X, bbox.Min.Y, bbox.Min.Z
+    max_x, max_y, max_z = bbox.Max.X, bbox.Max.Y, bbox.Max.Z
+
+    corners = [
+        (min_x, min_y, min_z), (min_x, min_y, max_z),
+        (min_x, max_y, min_z), (min_x, max_y, max_z),
+        (max_x, min_y, min_z), (max_x, min_y, max_z),
+        (max_x, max_y, min_z), (max_x, max_y, max_z),
+    ]
+
+    uvs = [world_to_view(corner, vb) for corner in corners]
+    bbox_points_uv = [(uv[0], uv[1]) for uv in uvs]
+
     # STEP 1: Try to extract actual geometry footprint
     points_uv = _extract_geometry_footprint_uv(elem, vb)
 
     # STEP 2: Fallback to bbox corners if geometry extraction failed
     if not points_uv or len(points_uv) < 3:
-        bbox = elem.get_BoundingBox(None)
-        if bbox is None:
-            return None
-
-        # Get all 8 corners and project to UV
-        min_x, min_y, min_z = bbox.Min.X, bbox.Min.Y, bbox.Min.Z
-        max_x, max_y, max_z = bbox.Max.X, bbox.Max.Y, bbox.Max.Z
-
-        corners = [
-            (min_x, min_y, min_z), (min_x, min_y, max_z),
-            (min_x, max_y, min_z), (min_x, max_y, max_z),
-            (max_x, min_y, min_z), (max_x, min_y, max_z),
-            (max_x, max_y, min_z), (max_x, max_y, max_z),
-        ]
-
-        uvs = [world_to_view(corner, vb) for corner in corners]
-        points_uv = [(uv[0], uv[1]) for uv in uvs]
+        points_uv = bbox_points_uv
 
     # DEBUG: Log unique UV points for diagonal wall
     try:
