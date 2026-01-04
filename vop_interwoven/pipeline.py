@@ -316,53 +316,101 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
                 pass
 
         # Fallback: Use OBB polygon (oriented bounds, not axis-aligned rect)
+        obb_success = False
+        obb_error = None
+        aabb_success = False
+        aabb_error = None
+
         try:
             from .revit.collection import get_element_obb_loops
             obb_loops = get_element_obb_loops(elem, vb, raster)
 
             if obb_loops:
-                # Rasterize OBB polygon (same as silhouette loops)
-                filled = raster.rasterize_silhouette_loops(obb_loops, key_index, depth=elem_depth)
+                try:
+                    # Rasterize OBB polygon (same as silhouette loops)
+                    filled = raster.rasterize_silhouette_loops(obb_loops, key_index, depth=elem_depth)
 
-                if filled > 0:
-                    # Tag with OBB strategy
+                    if filled > 0:
+                        # Tag with OBB strategy
+                        if key_index < len(raster.element_meta):
+                            raster.element_meta[key_index]['strategy'] = 'uv_obb'
+                            raster.element_meta[key_index]['filled_cells'] = filled
+
+                        bbox_fallback += 1
+                        processed += 1
+                        obb_success = True
+                    else:
+                        obb_error = "OBB rasterization returned 0 filled cells"
+                except Exception as e:
+                    obb_error = "OBB rasterization failed: {0}".format(e)
+            else:
+                obb_error = "OBB loop generation returned None (no bbox?)"
+
+            if obb_success:
+                continue
+
+            # Ultimate fallback: axis-aligned rect (if OBB fails)
+            try:
+                rect = _project_element_bbox_to_cell_rect(elem, vb, raster)
+                if rect is None:
+                    aabb_error = "CellRect projection returned None (no bbox?)"
+                elif rect.empty:
+                    aabb_error = "CellRect is empty (element outside bounds?)"
+                else:
+                    # Fill axis-aligned rect with proper occlusion vs occupancy separation
+                    filled_count = 0
+                    for i, j in rect.cells():
+                        # Set occlusion for all cells (interior + boundary) with actual depth
+                        raster.set_cell_filled(i, j, depth=elem_depth)
+                        filled_count += 1
+
+                        # Set occupancy ONLY for boundary cells
+                        is_boundary = (i == rect.i_min or i == rect.i_max or
+                                      j == rect.j_min or j == rect.j_max)
+                        if is_boundary:
+                            idx = raster.get_cell_index(i, j)
+                            if idx is not None:
+                                raster.model_edge_key[idx] = key_index
+
+                    # Tag element metadata with axis-aligned fallback strategy
                     if key_index < len(raster.element_meta):
-                        raster.element_meta[key_index]['strategy'] = 'uv_obb'
+                        raster.element_meta[key_index]['strategy'] = 'aabb_fallback'
+                        raster.element_meta[key_index]['filled_cells'] = filled_count
+                        if obb_error:
+                            raster.element_meta[key_index]['obb_error'] = obb_error
 
                     bbox_fallback += 1
                     processed += 1
-                    continue
+                    aabb_success = True
 
-            # Ultimate fallback: axis-aligned rect (if OBB fails)
-            rect = _project_element_bbox_to_cell_rect(elem, vb, raster)
-            if rect is None or rect.empty:
-                continue
+            except Exception as e:
+                aabb_error = "AABB fallback failed: {0}".format(e)
 
-            # Fill axis-aligned rect with proper occlusion vs occupancy separation
-            for i, j in rect.cells():
-                # Set occlusion for all cells (interior + boundary) with actual depth
-                raster.set_cell_filled(i, j, depth=elem_depth)
+            if not aabb_success:
+                # Complete failure - tag element with error info
+                if key_index < len(raster.element_meta):
+                    raster.element_meta[key_index]['strategy'] = 'FAILED'
+                    raster.element_meta[key_index]['obb_error'] = obb_error
+                    raster.element_meta[key_index]['aabb_error'] = aabb_error
 
-                # Set occupancy ONLY for boundary cells
-                is_boundary = (i == rect.i_min or i == rect.i_max or
-                              j == rect.j_min or j == rect.j_max)
-                if is_boundary:
-                    idx = raster.get_cell_index(i, j)
-                    if idx is not None:
-                        raster.model_edge_key[idx] = key_index
-
-            # Tag element metadata with axis-aligned fallback strategy
-            if key_index < len(raster.element_meta):
-                raster.element_meta[key_index]['strategy'] = 'aabb_fallback'
-
-            bbox_fallback += 1
-            processed += 1
+                skipped += 1
+                if skipped <= 10:
+                    print("[ERROR] Element {0} ({1}) from {2} completely failed:".format(
+                        elem_id, category, doc_label))
+                    print("  OBB error: {0}".format(obb_error))
+                    print("  AABB error: {0}".format(aabb_error))
 
         except Exception as e:
+            # Catastrophic failure
+            if key_index < len(raster.element_meta):
+                raster.element_meta[key_index]['strategy'] = 'CATASTROPHIC_FAILURE'
+                raster.element_meta[key_index]['error'] = str(e)
+
             skipped += 1
-            if skipped <= 5:
-                print("[WARN] vop.pipeline: Failed to render element {0}: {1}".format(elem_id, e))
-            continue
+            if skipped <= 10:
+                print("[ERROR] vop.pipeline: Catastrophic failure for element {0}: {1}".format(elem_id, e))
+                import traceback
+                traceback.print_exc()
 
     # Phase 4.5: Ambiguity detection (selective z-buffer prep)
     # Build tile bins and detect ambiguous tiles where depth conflicts exist
