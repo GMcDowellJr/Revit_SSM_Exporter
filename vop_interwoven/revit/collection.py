@@ -615,36 +615,61 @@ def get_element_obb_loops(elem, vb, raster):
     except:
         pass
 
-    # Fit OBB using PCA
-    obb_rect, len_u, len_v, angle_deg = _pca_obb_uv(points_uv)
+    # STEP 3: Compute polygon for rasterization
+    # If we extracted actual geometry, use it directly (preserve actual shape)
+    # If we're using bbox, fit OBB to get rotated rectangle
 
-    used_aabb_fallback = False
-    if not obb_rect or len(obb_rect) < 4:
-        # Fallback: use axis-aligned rect from min/max UV
-        u_min = min(uv[0] for uv in uvs)
-        u_max = max(uv[0] for uv in uvs)
-        v_min = min(uv[1] for uv in uvs)
-        v_max = max(uv[1] for uv in uvs)
-        w_min = min(uv[2] for uv in uvs)
+    used_geometry = (points_uv != bbox_points_uv)  # Did geometry extraction succeed?
 
-        # Build axis-aligned rectangle
-        obb_rect = [
-            (u_min, v_min),
-            (u_max, v_min),
-            (u_max, v_max),
-            (u_min, v_max),
-            (u_min, v_min),  # Close loop
-        ]
-        used_aabb_fallback = True
-        angle_deg = 0.0
+    if used_geometry:
+        # Use actual geometry vertices - compute convex hull for clean polygon
+        from .core.silhouette import _convex_hull_2d
+        hull_uv = _convex_hull_2d(points_uv)
+
+        if hull_uv and len(hull_uv) >= 3:
+            # Close the loop
+            if hull_uv[0] != hull_uv[-1]:
+                hull_uv.append(hull_uv[0])
+
+            polygon_uv = hull_uv
+            strategy_name = 'geometry_hull'
+            angle_deg = 0.0  # Not applicable for arbitrary polygons
+        else:
+            # Convex hull failed, fall back to bbox OBB
+            used_geometry = False
+
+    if not used_geometry:
+        # Using bbox corners - fit OBB for rotated rectangle
+        obb_rect, len_u, len_v, angle_deg = _pca_obb_uv(points_uv)
+
+        if not obb_rect or len(obb_rect) < 4:
+            # Fallback: use axis-aligned rect from min/max UV
+            u_min = min(uv[0] for uv in uvs)
+            u_max = max(uv[0] for uv in uvs)
+            v_min = min(uv[1] for uv in uvs)
+            v_max = max(uv[1] for uv in uvs)
+
+            # Build axis-aligned rectangle
+            polygon_uv = [
+                (u_min, v_min),
+                (u_max, v_min),
+                (u_max, v_max),
+                (u_min, v_max),
+                (u_min, v_min),  # Close loop
+            ]
+            strategy_name = 'uv_aabb'
+            angle_deg = 0.0
+        else:
+            polygon_uv = obb_rect
+            strategy_name = 'uv_obb'
 
     # Get minimum depth for occlusion
     w_min = min(uv[2] for uv in uvs)
 
     # Convert to loop format with depth
-    points_uvw = [(pt[0], pt[1], w_min) for pt in obb_rect]
+    points_uvw = [(pt[0], pt[1], w_min) for pt in polygon_uv]
 
-    # DEBUG: Log OBB calculations
+    # DEBUG: Log polygon calculations
     try:
         elem_id = getattr(elem, 'Id', None)
         if elem_id:
@@ -653,17 +678,15 @@ def get_element_obb_loops(elem, vb, raster):
             import random
             should_log = (elem_id_val == 1619124) or (random.random() < 0.05)
             if should_log:
-                strategy_tag = 'uv_aabb' if used_aabb_fallback else 'uv_obb'
-                print("[DEBUG OBB] Element {0}: strategy={1}, angle={2:.1f}deg, vertices={3}".format(
-                    elem_id_val, strategy_tag, angle_deg, len(obb_rect)))
-                if elem_id_val == 1619124:
-                    print("  OBB corners: {0}".format([(round(pt[0], 2), round(pt[1], 2)) for pt in obb_rect[:4]]))
+                print("[DEBUG POLY] Element {0}: strategy={1}, vertices={2}, geom_extracted={3}".format(
+                    elem_id_val, strategy_name, len(polygon_uv), used_geometry))
+                if elem_id_val == 1619124 or used_geometry:
+                    print("  Polygon: {0}".format([(round(pt[0], 2), round(pt[1], 2)) for pt in polygon_uv[:8]]))
     except:
         pass
 
-    # Tag with correct strategy (uv_obb if PCA succeeded, uv_aabb if fallback)
-    strategy = 'uv_aabb' if used_aabb_fallback else 'uv_obb'
-    return [{'points': points_uvw, 'is_hole': False, 'strategy': strategy}]
+    # Return polygon loop with correct strategy tag
+    return [{'points': points_uvw, 'is_hole': False, 'strategy': strategy_name}]
 
 
 def _pca_obb_uv(points_uv):
