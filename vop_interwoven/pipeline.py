@@ -255,22 +255,27 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
         # CRITICAL FIX: Extract silhouette FIRST to get accurate geometry
         # (depth calculation moved AFTER silhouette extraction)
         loops = None
+        silhouette_error = None
         try:
             loops = get_element_silhouette(elem, view, vb, raster, cfg)
         except Exception as e:
             # Silhouette extraction failed, loops will be None
-            pass
+            silhouette_error = str(e)
+            if processed < 10:
+                print("[DEBUG] Silhouette extraction failed for element {0} ({1}): {2}".format(
+                    elem_id, category, silhouette_error))
 
         # Calculate element depth from silhouette geometry OR bbox fallback
         # CRITICAL FIX: Use accurate geometry depth instead of bbox-only depth
         from .revit.collection import estimate_depth_from_loops_or_bbox
         elem_depth = estimate_depth_from_loops_or_bbox(elem, loops, world_transform, view, raster)
 
-        # DEBUG: Log depth values for first few elements
+        # DEBUG: Log depth values and silhouette status for first few elements
         if processed < 10:
             depth_source = "geometry" if loops else "bbox"
-            print("[DEBUG] Element {0} ({1}): depth = {2} (from {3})".format(
-                elem_id, category, elem_depth, depth_source))
+            silhouette_status = "SUCCESS ({0} loops)".format(len(loops)) if loops else "FAILED (bbox fallback)"
+            print("[DEBUG] Element {0} ({1}): silhouette={2}, depth={3} (from {4})".format(
+                elem_id, category, silhouette_status, elem_depth, depth_source))
 
         # Safe early-out occlusion using bbox footprint + tile z-min (front-to-back streaming)
         try:
