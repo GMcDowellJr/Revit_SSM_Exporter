@@ -290,6 +290,62 @@ def estimate_nearest_depth_from_bbox(elem, transform, view, raster):
     return min_depth
 
 
+def estimate_depth_range_from_bbox(elem, transform, view, raster):
+    """Estimate depth range (min, max) of element from its bounding box.
+
+    Args:
+        elem: Revit Element
+        transform: World transform (identity for host, link transform for linked)
+        view: Revit View
+        raster: ViewRaster
+
+    Returns:
+        Tuple (min_depth, max_depth) - range of depths in view space
+
+    Commentary:
+        Used for ambiguity detection in selective z-buffer phase.
+        Returns full depth extent across all 8 bbox corners.
+    """
+    from .view_basis import world_to_view
+
+    # Get world-space bounding box
+    bbox = elem.get_BoundingBox(None)
+    if bbox is None:
+        return (float('inf'), float('inf'))  # Elements without bbox
+
+    # Get view basis from raster
+    vb = getattr(raster, 'view_basis', None)
+    if vb is None:
+        return (0.0, 0.0)  # Fallback
+
+    # Get all 8 corners of bounding box in world space
+    min_x, min_y, min_z = bbox.Min.X, bbox.Min.Y, bbox.Min.Z
+    max_x, max_y, max_z = bbox.Max.X, bbox.Max.Y, bbox.Max.Z
+
+    corners = [
+        (min_x, min_y, min_z),
+        (min_x, min_y, max_z),
+        (min_x, max_y, min_z),
+        (min_x, max_y, max_z),
+        (max_x, min_y, min_z),
+        (max_x, min_y, max_z),
+        (max_x, max_y, min_z),
+        (max_x, max_y, max_z),
+    ]
+
+    # Transform all corners to view space and get min/max depth (w coordinate)
+    min_depth = float('inf')
+    max_depth = float('-inf')
+    for corner in corners:
+        u, v, w = world_to_view(corner, vb)
+        if w < min_depth:
+            min_depth = w
+        if w > max_depth:
+            max_depth = w
+
+    return (min_depth, max_depth)
+
+
 def _project_element_bbox_to_cell_rect(elem, vb, raster):
     """Project element bounding box to cell rectangle (helper for classification).
 

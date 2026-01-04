@@ -209,6 +209,24 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
     # Sort elements front-to-back by depth for proper occlusion
     expanded_elements = sort_front_to_back(expanded_elements, view, raster)
 
+    # Enrich elements with depth range and bbox for ambiguity detection
+    from .revit.collection import estimate_depth_range_from_bbox
+    for wrapper in expanded_elements:
+        try:
+            elem = wrapper["element"]
+            world_transform = wrapper["world_transform"]
+
+            # Calculate depth range for ambiguity detection
+            depth_range = estimate_depth_range_from_bbox(elem, world_transform, view, raster)
+            wrapper['depth_range'] = depth_range
+
+            # Get projected bbox for tile binning
+            rect = _project_element_bbox_to_cell_rect(elem, vb, raster)
+            wrapper['uv_bbox_rect'] = rect
+        except Exception:
+            wrapper['depth_range'] = (0.0, 0.0)
+            wrapper['uv_bbox_rect'] = None
+
     # Process each element (host + linked)
     processed = 0
     skipped = 0
@@ -318,6 +336,22 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
                 print("[WARN] vop.pipeline: Failed to render element {0}: {1}".format(elem_id, e))
             continue
 
+    # Phase 4.5: Ambiguity detection (selective z-buffer prep)
+    # Build tile bins and detect ambiguous tiles where depth conflicts exist
+    if getattr(cfg, 'enable_ambiguity_detection', True):
+        try:
+            tile_bins = _bin_elements_to_tiles(expanded_elements, raster)
+            ambiguous_tiles = _get_ambiguous_tiles(tile_bins, cfg)
+
+            # TODO: Phase 4.5 triangle resolution will go here
+            # For now, just log ambiguous tile count
+            if getattr(cfg, 'debug_ambiguous_tiles', False) and ambiguous_tiles:
+                print("[DEBUG] Ambiguous tiles detected: {0}".format(len(ambiguous_tiles)))
+                print("[DEBUG] These tiles have depth conflicts and may need triangle resolution")
+
+        except Exception as e:
+            print("[WARN] vop.pipeline: Ambiguity detection failed: {0}".format(e))
+
     # Log summary
     if processed > 0:
         print("[INFO] vop.pipeline: Processed {0} elements ({1} silhouette, {2} bbox fallback)".format(
@@ -381,6 +415,100 @@ def _tiles_fully_covered_and_nearer(tile_map, rect, elem_near_z):
             return False
 
     return True
+
+
+def _bin_elements_to_tiles(elem_wrappers, raster):
+    """Bin elements to tiles based on their projected bbox.
+
+    Args:
+        elem_wrappers: List of element wrapper dicts with enriched data
+        raster: ViewRaster with tile map
+
+    Returns:
+        Dict {tile_id: [elem_wrappers]} mapping tiles to elements
+
+    Commentary:
+        Each element is added to all tiles its uv_bbox_px intersects.
+        Used for ambiguity detection and selective z-buffer resolution.
+    """
+    tile_bins = {}
+
+    for wrapper in elem_wrappers:
+        rect = wrapper.get('uv_bbox_rect')
+        if rect is None or rect.empty:
+            continue
+
+        # Get all tiles overlapping this element's bbox
+        tiles = raster.tile.get_tiles_for_rect(rect.i_min, rect.j_min, rect.i_max, rect.j_max)
+
+        for tile_id in tiles:
+            if tile_id not in tile_bins:
+                tile_bins[tile_id] = []
+            tile_bins[tile_id].append(wrapper)
+
+    return tile_bins
+
+
+def _tile_has_depth_conflict(elem_wrappers):
+    """Check if tile has depth range conflicts (ambiguity).
+
+    Args:
+        elem_wrappers: List of element wrappers touching this tile
+
+    Returns:
+        True if any pair of elements has overlapping depth ranges
+
+    Commentary:
+        Depth conflict occurs when: A.depth_min < B.depth_max AND B.depth_min < A.depth_max
+        This indicates elements may be interleaved in depth (passing through each other).
+    """
+    if len(elem_wrappers) < 2:
+        return False
+
+    # Check all pairs for depth range overlap
+    for i in range(len(elem_wrappers)):
+        for j in range(i + 1, len(elem_wrappers)):
+            a = elem_wrappers[i]
+            b = elem_wrappers[j]
+
+            depth_min_a, depth_max_a = a.get('depth_range', (0, 0))
+            depth_min_b, depth_max_b = b.get('depth_range', (0, 0))
+
+            # Check for range overlap
+            if depth_min_a < depth_max_b and depth_min_b < depth_max_a:
+                return True  # Ambiguous!
+
+    return False
+
+
+def _get_ambiguous_tiles(tile_bins, cfg):
+    """Identify tiles with depth conflicts that need triangle resolution.
+
+    Args:
+        tile_bins: Dict {tile_id: [elem_wrappers]}
+        cfg: Config object with debug flags
+
+    Returns:
+        List of tile_ids that are ambiguous
+
+    Commentary:
+        Ambiguous tiles are those where depth-based ordering is insufficient.
+        These tiles will use triangle z-buffer resolution in Phase 4.5.
+    """
+    ambiguous = []
+
+    for tile_id, elems in tile_bins.items():
+        if _tile_has_depth_conflict(elems):
+            ambiguous.append(tile_id)
+
+    # Debug logging
+    if getattr(cfg, 'debug_ambiguous_tiles', False):
+        print("[DEBUG] Ambiguous tiles: {0} / {1} total tiles ({2:.1f}%)".format(
+            len(ambiguous), len(tile_bins),
+            100.0 * len(ambiguous) / len(tile_bins) if tile_bins else 0
+        ))
+
+    return ambiguous
 
 
 def _render_areal_element(elem, transform, view, raster, rect, key_index, cfg):
