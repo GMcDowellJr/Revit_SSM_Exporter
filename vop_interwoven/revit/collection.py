@@ -78,18 +78,22 @@ def collect_view_elements(doc, view, raster):
                         try:
                             if bool(getattr(elem, 'ViewSpecific', False)):
                                 continue  # Skip detail lines (they're annotations)
-                        except:
+                        except Exception as e:
+                            # Preserve prior behavior (don't skip element), but do not fail silently.
+                            print(f"[WARN] revit.collection:ViewSpecific check failed (elem_id={getattr(elem,'Id',None)}) ({type(e).__name__}: {e})")
                             pass
 
                     bbox = elem.get_BoundingBox(None)  # World coordinates
                     if bbox is not None:
                         elements.append(elem)
-            except:
+            except Exception as e:
                 # Skip categories that cause errors
+                print(f"[WARN] revit.collection:category collection failed (view_id={getattr(view,'Id',None)}, cat={cat}) ({type(e).__name__}: {e})")
                 continue
 
     except Exception as e:
-        # If collection fails, return empty list (graceful degradation)
+        # If collection fails, return empty list (graceful degradation) but do not fail silently.
+        print(f"[WARN] revit.collection:element collection failed (view_id={getattr(view,'Id',None)}) ({type(e).__name__}: {e})")
         pass
 
     return elements
@@ -506,6 +510,10 @@ def _extract_geometry_footprint_uv(elem, vb):
                     if obj.Volume > 0.0001:  # Non-degenerate solid
                         # Extract vertices from faces
                         for face in obj.Faces:
+                            # Best-effort geometry sampling: count failures, emit one summary line.
+                            edge_sample_failures = 0
+                            edge_loop_failures = 0
+
                             try:
                                 # Get face boundary edges
                                 for edge_loop in face.EdgeLoops:
@@ -513,7 +521,7 @@ def _extract_geometry_footprint_uv(elem, vb):
                                         # Sample edge endpoints
                                         curve = edge.AsCurve()
                                         if curve:
-                                            for t in [0.0, 1.0]:  # Start and end
+                                            for t in (0.0, 1.0):  # Start and end
                                                 try:
                                                     pt = curve.Evaluate(t, True)
 
@@ -524,10 +532,20 @@ def _extract_geometry_footprint_uv(elem, vb):
                                                     # Project to UV
                                                     uvw = world_to_view((pt.X, pt.Y, pt.Z), vb)
                                                     points_uv.append((uvw[0], uvw[1]))
-                                                except:
-                                                    pass
-                            except:
+                                                except Exception:
+                                                    edge_sample_failures += 1
+                                                    continue
+                            except Exception:
+                                edge_loop_failures += 1
                                 pass
+
+                            if edge_sample_failures or edge_loop_failures:
+                                print(
+                                    "[WARN] revit.collection: geometry sampling incomplete "
+                                    f"(elem_id={getattr(elem,'Id',None)}, "
+                                    f"edge_sample_failures={edge_sample_failures}, "
+                                    f"edge_loop_failures={edge_loop_failures})"
+                                )
 
         # Process geometry tree
         process_geometry(geom)
@@ -609,7 +627,8 @@ def get_element_obb_loops(elem, vb, raster):
                 print("[DEBUG GEOM] Element {0}: Extracted {1} footprint points -> {2} unique UV".format(
                     elem_id_val, len(points_uv), len(unique_uv)))
                 print("  UV points: {0}".format([(round(u, 2), round(v, 2)) for u, v in unique_uv[:8]]))
-    except:
+    except Exception as e:
+        print(f"[WARN] revit.collection:debug geom logging failed ({type(e).__name__}: {e})")
         pass
 
     # STEP 3: Compute polygon for rasterization
@@ -686,7 +705,8 @@ def get_element_obb_loops(elem, vb, raster):
                     elem_id_val, strategy_name, len(polygon_uv), used_geometry))
                 if elem_id_val == 1619124 or used_geometry:
                     print("  Polygon: {0}".format([(round(pt[0], 2), round(pt[1], 2)) for pt in polygon_uv[:8]]))
-    except:
+    except Exception as e:
+        print(f"[WARN] revit.collection:debug poly logging failed ({type(e).__name__}: {e})")
         pass
 
     # Return polygon loop with correct strategy tag

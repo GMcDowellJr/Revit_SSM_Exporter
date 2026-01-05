@@ -75,11 +75,12 @@ class LinkedElementProxy:
             return self._elem.get_Geometry(options)
         except Exception as e:
             # Log failure for debugging (silent failures hide problems)
+            elem_id = getattr(self._elem, 'Id', '?')
             try:
-                elem_id = getattr(self._elem, 'Id', '?')
                 _log("DEBUG", "Geometry extraction failed for link element {0}: {1}".format(elem_id, e))
-            except:
-                pass
+            except Exception as log_e:
+                # Last-resort fallback; do not fail silently.
+                print(f"[WARN] revit.linked_documents: _log failed for geometry extraction failure (elem_id={elem_id}) ({type(log_e).__name__}: {log_e})")
             return None
 
 
