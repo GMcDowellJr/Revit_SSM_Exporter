@@ -17,7 +17,7 @@ Core principles:
 
 import math
 from .config import Config
-from .core.raster import ViewRaster, TileMap
+from .core.raster import ViewRaster, TileMap, _extract_source_type
 from .core.geometry import Mode, classify_by_uv, make_uv_aabb, make_obb_or_skinny_aabb
 from .core.math_utils import Bounds2D, CellRect
 from .core.silhouette import get_element_silhouette
@@ -169,7 +169,7 @@ def init_view_raster(doc, view, cfg):
     tile_size = cfg.compute_adaptive_tile_size(W, H)
 
     raster = ViewRaster(
-        width=W, height=H, cell_size=cell_size_ft, bounds=bounds_xy, tile_size=tile_size
+        width=W, height=H, cell_size=cell_size_ft, bounds=bounds_xy, tile_size=tile_size, cfg=cfg
     )
 
     # Store view basis for annotation rasterization
@@ -252,6 +252,9 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
 
         key_index = raster.get_or_create_element_meta_index(elem_id, category, source=doc_key, source_label=doc_label)
 
+        # Extract simple source type for depth-tested rasterization
+        source_type = _extract_source_type(doc_key)
+
         # CRITICAL FIX: Extract silhouette FIRST to get accurate geometry
         # (depth calculation moved AFTER silhouette extraction)
         loops = None
@@ -274,16 +277,73 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
         if processed < 10:
             depth_source = "geometry" if loops else "bbox"
             silhouette_status = "SUCCESS ({0} loops)".format(len(loops)) if loops else "FAILED (bbox fallback)"
-            print("[DEBUG] Element {0} ({1}): silhouette={2}, depth={3} (from {4})".format(
-                elem_id, category, silhouette_status, elem_depth, depth_source))
+            print("[DEBUG] Element {0} ({1}): silhouette={2}, depth={3} (from {4}), source={5}".format(
+                elem_id, category, silhouette_status, elem_depth, depth_source, source_type))
 
         # Safe early-out occlusion using bbox footprint + tile z-min (front-to-back streaming)
         try:
             rect = _project_element_bbox_to_cell_rect(elem, vb, raster)
             if rect and not rect.empty:
-                if _tiles_fully_covered_and_nearer(raster.tile, rect, elem_depth):
+                from .core.footprint import CellRectFootprint
+                fp = CellRectFootprint(rect)
+                if _tiles_fully_covered_and_nearer(raster.tile, fp, elem_depth):
                     skipped += 1
                     continue
+                    
+                # Tier-A measures for ambiguity trigger (Tier-B in next commit)
+                width_cells = rect.width()
+                height_cells = rect.height()
+                minor_cells = min(width_cells, height_cells)
+                aabb_area_cells = width_cells * height_cells
+                grid_area = raster.W * raster.H
+                # cell_size_world must be world-units-per-cell (already known in init_view_raster)
+                # For now, use cfg.cell_size_world_ft if present; otherwise inject from raster/meta in Commit 4.
+                cell_size_world = getattr(cfg, "cell_size_world_ft", 1.0)
+                from .core.geometry import tier_a_is_ambiguous
+                tier_a_ambig = tier_a_is_ambiguous(minor_cells, aabb_area_cells, grid_area, cell_size_world, cfg)
+
+            uvw_pts = None
+            footprint = fp_a
+
+            # Tier-B proxy path (geometry-based)
+            if tier_a_ambig:
+                from .revit.tierb_proxy import sample_element_uvw_points
+                uvw_pts = sample_element_uvw_points(elem, view, vb, cfg)
+
+                if uvw_pts:
+                    points_uv = [(u, v) for (u, v, w) in uvw_pts]
+
+                    from .core.geometry import classify_by_uv_pca
+                    mode = classify_by_uv_pca(points_uv, cfg, cell_size_uv=1.0)
+
+                    from .core.hull import convex_hull_uv
+                    hull_uv = convex_hull_uv(points_uv)
+
+                    from .core.footprint import HullFootprint
+                    footprint = HullFootprint(hull_uv, raster)
+                    elem_min_w = min(w for (_, _, w) in uvw_pts)
+
+            # Stage 5: depth-aware early-out using footprint
+            if _tiles_fully_covered_and_nearer(raster.tile, footprint, elem_min_w):
+                skipped += 1
+                continue
+
+            # Stage 6: rasterization via TryWriteCell ONLY
+            depth_by_cell = None
+            if uvw_pts:
+                depth_by_cell = {}
+                for (u, v, w) in uvw_pts:
+                    i = int(round(u))
+                    j = int(round(v))
+                    key = (i, j)
+                    prev = depth_by_cell.get(key)
+                    if prev is None or w < prev:
+                        depth_by_cell[key] = w
+
+            for (i, j) in footprint.cells():
+                w_depth = depth_by_cell.get((i, j), elem_min_w) if depth_by_cell else elem_min_w
+                raster.try_write_cell(i, j, w_depth=w_depth, source=source_type)
+
         except Exception:
             # Never skip on failure (must stay conservative)
             pass
@@ -297,7 +357,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
                 # If any loop is marked open (e.g., DWG curves), rasterize as edges only
                 try:
                     if any(loop.get("open", False) for loop in loops):
-                        filled = raster.rasterize_open_polylines(loops, key_index, depth=elem_depth)
+                        filled = raster.rasterize_open_polylines(loops, key_index, depth=elem_depth, source=source_type)
                         silhouette_success += 1
                         processed += 1
                         continue
@@ -305,7 +365,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
                     pass
 
                 # Rasterize silhouette loops with actual depth for occlusion
-                filled = raster.rasterize_silhouette_loops(loops, key_index, depth=elem_depth)
+                filled = raster.rasterize_silhouette_loops(loops, key_index, depth=elem_depth, source=source_type)
 
                 if filled > 0:
                     # Tag element metadata with strategy used
@@ -333,7 +393,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
             if obb_loops:
                 try:
                     # Rasterize OBB polygon (same as silhouette loops)
-                    filled = raster.rasterize_silhouette_loops(obb_loops, key_index, depth=elem_depth)
+                    filled = raster.rasterize_silhouette_loops(obb_loops, key_index, depth=elem_depth, source=source_type)
 
                     if filled > 0:
                         # Tag with OBB strategy
@@ -362,12 +422,12 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
                 elif rect.empty:
                     aabb_error = "CellRect is empty (element outside bounds?)"
                 else:
-                    # Fill axis-aligned rect with proper occlusion vs occupancy separation
+                    # Fill axis-aligned rect with depth-tested occlusion and occupancy
                     filled_count = 0
                     for i, j in rect.cells():
-                        # Set occlusion for all cells (interior + boundary) with actual depth
-                        raster.set_cell_filled(i, j, depth=elem_depth)
-                        filled_count += 1
+                        # Use try_write_cell for depth-tested occlusion with per-source occupancy
+                        if raster.try_write_cell(i, j, w_depth=elem_depth, source=source_type):
+                            filled_count += 1
 
                         # Set occupancy ONLY for boundary cells
                         is_boundary = (i == rect.i_min or i == rect.i_max or
@@ -444,6 +504,42 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
     if skipped > 0:
         print("[WARN] vop.pipeline: Skipped {0} elements due to errors".format(skipped))
 
+    # Print depth test statistics
+    if raster.depth_test_attempted > 0:
+        win_rate = 100.0 * raster.depth_test_wins / raster.depth_test_attempted
+        reject_rate = 100.0 * raster.depth_test_rejects / raster.depth_test_attempted
+        print("[INFO] vop.pipeline: Depth tests: {0} attempted, {1} wins ({2:.1f}%), {3} rejects ({4:.1f}%)".format(
+            raster.depth_test_attempted, raster.depth_test_wins, win_rate,
+            raster.depth_test_rejects, reject_rate))
+
+    # Debug dump occlusion layers if requested
+    if cfg.debug_dump_occlusion:
+        try:
+            import os, re, time
+
+            view_name = re.sub(r'[<>:"/\\|?*]', "_", view.Name)
+            view_id = view.Id.IntegerValue
+
+            if getattr(cfg, "debug_dump_prefix", None):
+                prefix = cfg.debug_dump_prefix
+                dump_dir = os.path.dirname(prefix)
+                if dump_dir:
+                    os.makedirs(dump_dir, exist_ok=True)
+            else:
+                dump_dir = getattr(cfg, "debug_dump_path", None)
+                base_name = f"occlusion_{view_name}_{view_id}"
+
+                if dump_dir:
+                    os.makedirs(dump_dir, exist_ok=True)
+                    prefix = os.path.join(dump_dir, base_name)
+                else:
+                    prefix = base_name  # explicit CWD fallback
+
+            raster.dump_occlusion_debug(prefix)
+
+        except Exception as e:
+            print("[WARN] vop.pipeline: Failed to dump occlusion debug: {0}".format(e))
+
     return processed
 
 
@@ -481,21 +577,32 @@ def _is_supported_2d_view(view):
         # If we can't determine type, reject it
         return False
 
-def _tiles_fully_covered_and_nearer(tile_map, rect, elem_near_z):
-    """Check if all tiles overlapping rect are fully covered AND nearer than elem_near_z.
+def _tiles_fully_covered_and_nearer(tile_map, footprint, elem_min_w):
+    """Check if all tiles overlapping rect are fully covered AND nearer than element.
+
+    Args:
+        tile_map: TileMap acceleration structure
+        footprint: footprint object with tiles(tile_map)
+        elem_min_w: Element's minimum W-depth (view-space depth)
 
     Returns:
         True if element is guaranteed occluded (safe to skip)
+
+    Commentary:
+        Early-out occlusion test using tile-level W-depth buffer.
+        Element is occluded if ALL tiles overlapping its footprint are:
+        1. Fully filled (no empty cells)
+        2. Nearer than element's minimum W-depth (w_min_tile < elem_min_w)
     """
-    tiles = tile_map.get_tiles_for_rect(rect.i_min, rect.j_min, rect.i_max, rect.j_max)
+    tiles = footprint.tiles(tile_map)
 
     for t in tiles:
         # Check if tile is fully filled
         if not tile_map.is_tile_full(t):
             return False
 
-        # Check if tile's nearest depth is closer than element
-        if tile_map.z_min_tile[t] >= elem_near_z:
+        # SAFE occlusion: ALL cells in tile must be nearer => tile max depth < elem_min_w
+        if tile_map.w_max_tile[t] >= elem_min_w:
             return False
 
     return True
@@ -604,13 +711,10 @@ def _render_areal_element(elem, transform, view, raster, rect, key_index, cfg):
         ✔ Edges depth-tested vs zMin
         ⚠ Placeholder implementation - requires geometry API access
     """
-    # TODO: Implement triangle rasterization
-    # Placeholder: fill rect with depth = 0.0
-    for i, j in rect.cells():
-        raster.set_cell_filled(i, j, depth=0.0)
-        idx = raster.get_cell_index(i, j)
-        if idx is not None:
-            raster.model_edge_key[idx] = key_index
+    raise NotImplementedError(
+        "Areal rasterization must route all writes through ViewRaster.try_write_cell() "
+        "with view-space W-depth per cell (no set_cell_filled fallback)."
+    )
 
 
 def _render_proxy_element(elem, transform, view, raster, rect, mode, key_index, cfg):

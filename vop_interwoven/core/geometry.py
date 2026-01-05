@@ -20,6 +20,32 @@ class Mode(Enum):
     LINEAR = 2
     AREAL = 3
 
+def tier_a_is_ambiguous(minor_cells, aabb_area_cells, grid_area, cell_size_world, cfg):
+    t = cfg.thin_max  # required t=2 unless cfg changes
+    margin_cells = max(cfg.tierb_margin_cells_min,
+                       min(int(round(cell_size_world / cfg.tierb_cell_size_ref_ft)),
+                           cfg.tierb_margin_cells_max))
+    thickness_ambig = (t < minor_cells <= (t + margin_cells))
+
+    area_thresh = max(cfg.tierb_area_thresh_min,
+                      min(int(round(cfg.tierb_area_fraction * grid_area)),
+                          cfg.tierb_area_thresh_max))
+    area_ambig = (aabb_area_cells >= area_thresh)
+
+    return thickness_ambig or area_ambig
+
+
+def classify_by_uv_pca(points_uv, cfg, cell_size_uv=1.0):
+    from .pca2d import pca_oriented_extents_uv
+    major, minor = pca_oriented_extents_uv(points_uv)
+    major_cells = major / cell_size_uv
+    minor_cells = minor / cell_size_uv
+
+    if minor_cells <= cfg.tiny_max and major_cells <= cfg.tiny_max:
+        return Mode.TINY
+    if minor_cells <= cfg.thin_max:
+        return Mode.LINEAR
+    return Mode.AREAL
 
 def classify_by_uv(u, v, cfg):
     """Classify element mode based on UV cell dimensions.

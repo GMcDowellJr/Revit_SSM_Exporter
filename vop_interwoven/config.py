@@ -70,6 +70,21 @@ class Config:
         bounds_buffer_in=0.5,
         include_linked_rvt=True,
         include_dwg_imports=True,
+        # Debug and diagnostics
+        debug_dump_occlusion=False,
+        debug_dump_path=r"C:\temp\vop_output",
+        # Dump w_occ as grayscale image (PGM)
+        debug_dump_occlusion_image = True,
+    
+        # Debug dump prefix (optional override)
+        debug_dump_prefix=None,
+        # Tier-B adaptive configuration
+        tierb_cell_size_ref_ft=1.0,
+        tierb_area_fraction=0.005,
+        tierb_margin_cells_min=1,
+        tierb_margin_cells_max=4,
+        tierb_area_thresh_min=50,
+        tierb_area_thresh_max=2000,
     ):
         """Initialize VOP configuration.
 
@@ -103,6 +118,21 @@ class Config:
         self.bounds_buffer_in = float(bounds_buffer_in)
         self.include_linked_rvt = bool(include_linked_rvt)
         self.include_dwg_imports = bool(include_dwg_imports)
+
+        # Debug and diagnostics
+        self.debug_dump_occlusion = bool(debug_dump_occlusion)
+        self.debug_dump_path = debug_dump_path  # None = auto-generate from view name
+        self.debug_dump_prefix = debug_dump_prefix
+        self.debug_dump_occlusion_image = bool(debug_dump_occlusion_image)
+
+
+        # Tier-B adaptive configuration
+        self.tierb_cell_size_ref_ft = float(tierb_cell_size_ref_ft)
+        self.tierb_area_fraction = float(tierb_area_fraction)
+        self.tierb_margin_cells_min = int(tierb_margin_cells_min)
+        self.tierb_margin_cells_max = int(tierb_margin_cells_max)
+        self.tierb_area_thresh_min = int(tierb_area_thresh_min)
+        self.tierb_area_thresh_max = int(tierb_area_thresh_max)
 
         # Tie anno_crop_margin_in to bounds_buffer_in if not specified
         if anno_crop_margin_in is None:
