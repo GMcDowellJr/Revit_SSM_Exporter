@@ -152,47 +152,32 @@ def make_view_basis(view):
         >>> basis.is_plan_like()
         >>> # True for plan views (forward points down)
     """
-    from Autodesk.Revit.DB import View, ViewType
+    from Autodesk.Revit.DB import ViewType
 
     try:
-        # Get view origin and direction vectors
         origin = view.Origin
         right = view.RightDirection
         up = view.UpDirection
 
-        # Use Revit's ViewDirection, but negate it for correct depth sorting
-        # Revit's ViewDirection points "away from view" (opposite of camera direction)
-        # For plan views: ViewDirection = (0, 0, 1) pointing UP, but we need (0, 0, -1) DOWN
-        # For sections: ViewDirection points away from cut, but we need into cut
+        # Forward = ViewDirection (keep as XYZ)
         try:
-            view_direction = view.ViewDirection.Normalize()
-            # Negate to get direction INTO the view (camera/depth direction)
-            forward = (-view_direction.X, -view_direction.Y, -view_direction.Z)
+            forward = view.ViewDirection.Normalize()
         except Exception:
-            # Fallback: compute as right × up if ViewDirection not available
-            # This gives upward direction for plans, so negate it
-            cross = right.CrossProduct(up).Normalize()
-            forward = (-cross.X, -cross.Y, -cross.Z)
+            forward = right.CrossProduct(up).Normalize()
 
-        # For plan views (FloorPlan, CeilingPlan), adjust origin to cut plane
+        # Plan views: origin on cut plane
         origin_z = origin.Z
         try:
             if view.ViewType in [ViewType.FloorPlan, ViewType.CeilingPlan, ViewType.EngineeringPlan]:
-                # Get cut plane height from view range
-                view_range = view.GetViewRange()
-                if view_range is not None:
-                    # CutPlane is the level ID + offset
-                    cut_level_id = view_range.GetLevelId(0)  # 0 = Cut plane
-                    cut_offset = view_range.GetOffset(0)  # Offset from level
-
-                    # Get the cut level elevation
+                vr = view.GetViewRange()
+                if vr is not None:
+                    cut_level_id = vr.GetLevelId(0)
+                    cut_offset = vr.GetOffset(0)
                     cut_level = view.Document.GetElement(cut_level_id)
                     if cut_level is not None:
-                        cut_elevation = cut_level.Elevation + cut_offset
-                        origin_z = cut_elevation
-                        print("[DEBUG] make_view_basis: Plan view - cut plane at Z = {0:.3f}".format(cut_elevation))
+                        origin_z = cut_level.Elevation + cut_offset
+                        print("[DEBUG] make_view_basis: Plan view - cut plane at Z = {0:.3f}".format(origin_z))
         except Exception as e:
-            # If we can't get cut plane, use original origin Z
             print("[DEBUG] make_view_basis: Could not get cut plane, using origin.Z = {0:.3f}: {1}".format(origin.Z, e))
 
         return ViewBasis(
@@ -202,9 +187,8 @@ def make_view_basis(view):
             forward=(forward.X, forward.Y, forward.Z),
         )
 
-    except AttributeError:
-        # Fallback for views without explicit basis (e.g., drafting views)
-        # Return identity basis (plan-like view looking down Z)
+    except Exception as e:
+        print("[ERROR] make_view_basis failed, falling back:", type(e).__name__, e)
         return ViewBasis(
             origin=(0.0, 0.0, 0.0),
             right=(1.0, 0.0, 0.0),

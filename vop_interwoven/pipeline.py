@@ -122,6 +122,7 @@ def init_view_raster(doc, view, cfg):
 
     # View basis
     basis = make_view_basis(view)
+    print("[DEBUG] make_view_basis returned:", basis)
 
     # Base bounds in VIEW-LOCAL UV:
     # - crop box if available/active (with CropBox.Transform applied)

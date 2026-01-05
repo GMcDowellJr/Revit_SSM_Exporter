@@ -179,8 +179,8 @@ def _has_revit_2024_link_collector(doc, view):
             error_msg = str(e)
             error_type = type(e).__name__
             _log("WARN", "[Revit 2024+] Collector overload exists but test failed - {0}: {1}".format(error_type, error_msg))
-            _log("INFO", "[Revit 2024+] Assuming new collector path available (signature matched)")
-            return True
+            _log("INFO", "[Revit 2024+] Falling back to legacy clip volume path for safety")
+            return False
 
     except Exception as e:
         # Import error or doc/view unavailable
@@ -227,9 +227,32 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
         # Revit 2024+ overload: collect visible elements from link instance in view
         fec = FilteredElementCollector(doc, view.Id, link_inst.Id)
         fec.WhereElementIsNotElementType()
+        
+        # Apply same category hygiene as legacy clipping path (exclude rooms/areas/grids etc.)
+        excluded_cat_ids = _get_excluded_3d_category_ids(link_doc)
+        from Autodesk.Revit.DB import CategoryType
 
         for elem in fec:
             try:
+                # Skip nested links and imports (avoid recursion/noise)
+                from Autodesk.Revit.DB import RevitLinkInstance, ImportInstance
+                if isinstance(elem, RevitLinkInstance) or isinstance(elem, ImportInstance):
+                    continue
+
+                cat = elem.Category
+                if cat is None:
+                    continue
+
+                cat_id_val = cat.Id.IntegerValue
+
+                # Global 3D exclusion (rooms, areas, grids, etc.)
+                if cat_id_val in excluded_cat_ids:
+                    continue
+
+                # Only model categories (ignore annotations, analytical, etc.)
+                if cat.CategoryType != CategoryType.Model:
+                    continue
+
                 # Get element bbox in link space
                 bbox_link = elem.get_BoundingBox(None)
                 if bbox_link is None or bbox_link.Min is None or bbox_link.Max is None:

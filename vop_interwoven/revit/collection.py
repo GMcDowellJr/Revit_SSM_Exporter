@@ -209,12 +209,9 @@ def sort_front_to_back(model_elems, view, raster):
     # Use stable sort to ensure deterministic output for elements with equal depth
     sorted_elems = sorted(
         model_elems,
-        key=lambda item: estimate_nearest_depth_from_bbox(
-            item['element'],
-            item['world_transform'],
-            view,
-            raster
-        )
+        key=lambda item: item.get("depth_sort", estimate_nearest_depth_from_bbox(
+            item["element"], item["world_transform"], view, raster
+        ))
     )
 
     return sorted_elems
