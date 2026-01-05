@@ -535,10 +535,6 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
                 else:
                     prefix = base_name  # explicit CWD fallback
 
-            # Add a 10-second confirmation delay (optional)
-            print(f"[INFO] About to dump occlusion data to {prefix}...")
-            time.sleep(10)  # Pause for 10 seconds to confirm config
-
             raster.dump_occlusion_debug(prefix)
 
         except Exception as e:
