@@ -59,7 +59,8 @@ class TileMap:
 
         # Per-tile statistics for early-out testing
         self.filled_count = [0] * num_tiles  # Count of filled cells in tile
-        self.w_min_tile = [float("inf")] * num_tiles  # Minimum W-depth in tile (view-space depth)
+        self.w_min_tile = [float("inf")] * num_tiles
+        self.w_max_tile = [float("-inf")] * num_tiles  # Minimum W-depth in tile (view-space depth)
 
     def get_tile_index(self, cell_i, cell_j):
         """Get tile index for cell (i, j).
@@ -130,6 +131,8 @@ class TileMap:
         if 0 <= tile_idx < len(self.w_min_tile):
             if depth < self.w_min_tile[tile_idx]:
                 self.w_min_tile[tile_idx] = depth
+            if depth > self.w_max_tile[tile_idx]:
+                self.w_max_tile[tile_idx] = depth
 
 
 class ViewRaster:
@@ -386,6 +389,10 @@ class ViewRaster:
             self.model_mask[idx] = True
 
             # Mark exactly one occupancy layer based on source
+            # Enforce "exactly one occupancy layer" on depth win
+            self.occ_host[idx] = False
+            self.occ_link[idx] = False
+            self.occ_dwg[idx] = False
             if source == "HOST":
                 self.occ_host[idx] = True
             elif source == "LINK":
@@ -404,42 +411,6 @@ class ViewRaster:
             # Depth rejected - element is behind existing geometry
             self.depth_test_rejects += 1
             return False
-
-    def set_cell_filled(self, i, j, depth=None):
-        """Mark cell as filled with optional depth.
-
-        DEPRECATED: Use try_write_cell() instead for depth-tested writes.
-        This method is kept for backward compatibility only.
-
-        Args:
-            i, j: Cell indices
-            depth: Optional depth value (updates w_occ if provided and nearer)
-
-        Returns:
-            True if cell was updated, False if out of bounds
-        """
-        idx = self.get_cell_index(i, j)
-        if idx is None:
-            return False
-
-        was_empty = not self.model_mask[idx]
-
-        self.model_mask[idx] = True
-
-        if depth is not None:
-            if depth < self.w_occ[idx]:
-                self.w_occ[idx] = depth
-                self.tile.update_w_min(i, j, depth)
-            # DEBUG: Log if depth wasn't updated
-            elif getattr(self, '_debug_depth_log_count', 0) < 5:
-                self._debug_depth_log_count = getattr(self, '_debug_depth_log_count', 0) + 1
-                print("[DEBUG] set_cell_filled({0},{1}): depth={2} NOT < w_occ[{3}]={4}".format(
-                    i, j, depth, idx, self.w_occ[idx]))
-
-        if was_empty:
-            self.tile.update_filled_count(i, j, increment=1)
-
-        return True
 
     def get_or_create_element_meta_index(self, elem_id, category, source="HOST", source_label=None):
         """Get or create metadata index for element.

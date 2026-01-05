@@ -635,13 +635,10 @@ def _render_areal_element(elem, transform, view, raster, rect, key_index, cfg):
         ✔ Edges depth-tested vs zMin
         ⚠ Placeholder implementation - requires geometry API access
     """
-    # TODO: Implement triangle rasterization
-    # Placeholder: fill rect with depth = 0.0
-    for i, j in rect.cells():
-        raster.set_cell_filled(i, j, depth=0.0)
-        idx = raster.get_cell_index(i, j)
-        if idx is not None:
-            raster.model_edge_key[idx] = key_index
+    raise NotImplementedError(
+        "Areal rasterization must route all writes through ViewRaster.try_write_cell() "
+        "with view-space W-depth per cell (no set_cell_filled fallback)."
+    )
 
 
 def _render_proxy_element(elem, transform, view, raster, rect, mode, key_index, cfg):

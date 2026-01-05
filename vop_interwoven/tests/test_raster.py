@@ -138,7 +138,7 @@ class TestViewRaster(unittest.TestCase):
         # Out of bounds -> None
         self.assertIsNone(self.raster.get_cell_index(100, 100))
 
-    def test_set_cell_filled(self):
+    def test_try_write_cell_depth(self):
         """Test cell filling with depth (deprecated method)."""
         # Initially empty
         idx = self.raster.get_cell_index(10, 10)
@@ -146,17 +146,17 @@ class TestViewRaster(unittest.TestCase):
         self.assertEqual(self.raster.w_occ[idx], float("inf"))
 
         # Fill cell with depth
-        result = self.raster.set_cell_filled(10, 10, depth=5.0)
+        result = self.raster.try_write_cell(10, 10, w_depth=5.0, source="HOST")
         self.assertTrue(result)
         self.assertTrue(self.raster.model_mask[idx])
         self.assertEqual(self.raster.w_occ[idx], 5.0)
 
         # Update with nearer depth
-        self.raster.set_cell_filled(10, 10, depth=3.0)
+        self.raster.try_write_cell(10, 10, w_depth=3.0, source="HOST")
         self.assertEqual(self.raster.w_occ[idx], 3.0)
 
         # Update with farther depth (should not change w_occ)
-        self.raster.set_cell_filled(10, 10, depth=10.0)
+        self.raster.try_write_cell(10, 10, w_depth=10.0, source="HOST")
         self.assertEqual(self.raster.w_occ[idx], 3.0)
 
     def test_try_write_cell(self):
@@ -262,7 +262,7 @@ class TestViewRaster(unittest.TestCase):
     def test_to_dict(self):
         """Test raster export to dictionary."""
         # Fill some cells
-        self.raster.set_cell_filled(5, 5, depth=10.0)
+        self.raster.try_write_cell(10, 10, w_depth=10.0, source="HOST")
         self.raster.get_or_create_element_meta_index(123, "Walls", "HOST")
 
         # Export
