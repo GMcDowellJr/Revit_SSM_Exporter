@@ -47,8 +47,9 @@ def is_extent_driver_annotation(elem):
         if "text" in name:
             return True
 
-    except:
-        pass
+    except Exception as e:
+        print(f"[WARN] revit.annotation:is_extent_driver_annotation: failed ({type(e).__name__}: {e})")
+        return False
 
     return False
 
@@ -96,13 +97,16 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
     ann_crop_active = False
     try:
         ann_crop_active = bool(getattr(view, 'AnnotationCropActive', False))
-    except:
+    except Exception as e1:
+        print(f"[WARN] revit.annotation:AnnotationCropActive getattr failed ({type(e1).__name__}: {e1})")
         try:
             from Autodesk.Revit.DB import BuiltInParameter
             p = view.get_Parameter(BuiltInParameter.VIEWER_ANNOTATION_CROP_ACTIVE)
             if p is not None:
                 ann_crop_active = bool(p.AsInteger() == 1)
-        except:
+        except Exception as e2:
+            print(f"[WARN] revit.annotation:VIEWER_ANNOTATION_CROP_ACTIVE fallback failed ({type(e2).__name__}: {e2})")
+            # leave ann_crop_active as-is (caller should have defaulted it)
             pass
 
     # Compute allowed expansion envelope
@@ -160,7 +164,8 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
                     if curve is not None:
                         pts_to_check.append(curve.GetEndPoint(0))
                         pts_to_check.append(curve.GetEndPoint(1))
-                except:
+                except Exception as e:
+                    print(f"[WARN] revit.annotation:Dimension.Curve read failed (elem_id={getattr(elem,'Id',None)}) ({type(e).__name__}: {e})")
                     pass
 
                 # Include text position
@@ -168,7 +173,8 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
                     text_pos = elem.TextPosition
                     if text_pos is not None:
                         pts_to_check.append(text_pos)
-                except:
+                except Exception as e:
+                    print(f"[WARN] revit.annotation:Dimension.TextPosition read failed (elem_id={getattr(elem,'Id',None)}) ({type(e).__name__}: {e})")
                     pass
 
             # Add bbox corners (respect BoundingBoxXYZ.Transform if present)
@@ -216,8 +222,9 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
                     anno_max_x = max(anno_max_x, x)
                     anno_max_y = max(anno_max_y, y)
 
-        except:
-            # Skip annotations that fail to process
+        except Exception as e:
+            # Skip annotations that fail to process, but do not fail silently.
+            print(f"[WARN] revit.annotation:anno extents update failed (elem_id={getattr(elem,'Id',None)}) ({type(e).__name__}: {e})")
             continue
 
     if anno_min_x is None:
@@ -297,8 +304,9 @@ def collect_2d_annotations(doc, view):
                 try:
                     if not bool(getattr(elem, 'ViewSpecific', False)):
                         continue
-                except:
+                except Exception as e:
                     # If ViewSpecific property unavailable, skip element
+                    print(f"[WARN] revit.annotation:ViewSpecific check failed (elem_id={getattr(elem,'Id',None)}) ({type(e).__name__}: {e})")
                     continue
 
                 # Get bounding box to ensure element is visible in view
@@ -311,8 +319,9 @@ def collect_2d_annotations(doc, view):
                         anno_type = classify_annotation(elem)
 
                     annotations.append((elem, anno_type))
-        except:
+        except Exception as e:
             # Skip categories that cause errors (not available in this view/version)
+            print(f"[WARN] revit.annotation:collector failed (view_id={getattr(view,'Id',None)}, cat={built_in_cat}) ({type(e).__name__}: {e})")
             pass
 
     # TEXT: TextNote
@@ -364,7 +373,8 @@ def collect_2d_annotations(doc, view):
                     # Classify keynote as TAG or TEXT based on type
                     anno_type = classify_keynote(elem)
                     annotations.append((elem, anno_type))
-        except:
+        except Exception as e:
+            print(f"[WARN] revit.annotation:keynote collector failed (view_id={getattr(view,'Id',None)}) ({type(e).__name__}: {e})")
             pass
 
     return annotations
@@ -436,8 +446,9 @@ def classify_annotation(elem):
             if cat_id == int(BuiltInCategory.OST_KeynoteTags):
                 return classify_keynote(elem)
 
-    except:
-        pass
+    except Exception as e:
+        print(f"[WARN] revit.annotation:classify_annotation failed (elem_id={getattr(elem,'Id',None)}) ({type(e).__name__}: {e})")
+        return "OTHER"
 
     return "OTHER"
 
@@ -481,14 +492,16 @@ def classify_keynote(elem):
                 if tagged_id is not None and tagged_id.IntegerValue > 0:
                     # If it has a tagged element, it's likely an element or material keynote (TAG)
                     return "TAG"
-            except:
+            except Exception as e:
+                print(f"[WARN] revit.annotation:keynote tagged element check failed (elem_id={getattr(elem,'Id',None)}) ({type(e).__name__}: {e})")
                 pass
 
         # Default to TAG for structured keynotes
         return "TAG"
 
-    except:
+    except Exception as e:
         # If we can't determine, default to TAG
+        print(f"[WARN] revit.annotation:classify_keynote failed (elem_id={getattr(elem,'Id',None)}) ({type(e).__name__}: {e})")
         return "TAG"
 
 
@@ -518,7 +531,8 @@ def get_annotation_bbox(elem, view):
     try:
         bbox = elem.get_BoundingBox(view)
         return bbox
-    except:
+    except Exception as e:
+        print(f"[WARN] revit.annotation:get_BoundingBox(view) failed (elem_id={getattr(elem,'Id',None)}) ({type(e).__name__}: {e})")
         return None
 
 
@@ -673,5 +687,6 @@ def _project_element_bbox_to_cell_rect_for_anno(elem_or_bbox, view_basis, raster
 
         return CellRect(x0_cell, y0_cell, x1_cell, y1_cell)
 
-    except:
+    except Exception as e:
+        print(f"[WARN] revit.annotation:project_bbox_to_cell_rect failed (input={type(elem_or_bbox).__name__}) ({type(e).__name__}: {e})")
         return None

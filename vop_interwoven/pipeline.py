@@ -478,8 +478,9 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
                 try:
                     import traceback
                     traceback.print_exc()
-                except:
-                    pass  # traceback not available in IronPython
+                except Exception as e:
+                    # Last-ditch diagnostic; keep pipeline moving, but do not fail silently.
+                    print(f"[WARN] pipeline: traceback.print_exc() failed ({type(e).__name__}: {e})")
 
     # Phase 4.5: Ambiguity detection (selective z-buffer prep)
     # Build tile bins and detect ambiguous tiles where depth conflicts exist
@@ -574,8 +575,11 @@ def _is_supported_2d_view(view):
     try:
         view_type = view.ViewType
         return view_type in supported_types
-    except:
-        # If we can't determine type, reject it
+    except Exception as e:
+        # If we can't determine type, reject it. Record diagnostic to avoid silent misclassification.
+        vid = getattr(view, "Id", None)
+        vname = getattr(view, "Name", None)
+        print(f"[WARN] pipeline: failed to read view.ViewType (view_id={vid}, name={vname}) ({type(e).__name__}: {e})")
         return False
 
 def _tiles_fully_covered_and_nearer(tile_map, footprint, elem_min_w):
