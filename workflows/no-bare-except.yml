@@ -12,16 +12,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Run bare-except check
+      - name: Run bare-except check (pwsh)
+        shell: pwsh
         run: |
-          python tools/check_no_bare_except.py \
-            --paths \
-              vop_interwoven/pipeline.py \
-              vop_interwoven/revit \
-              vop_interwoven/core \
-            --whitelist tools/bare_except_whitelist.txt
+          ./tools/check_no_bare_except.ps1 `
+            -Paths @(
+              "vop_interwoven/pipeline.py",
+              "vop_interwoven/revit",
+              "vop_interwoven/core"
+            ) `
+            -Whitelist "tools/bare_except_whitelist.txt"
