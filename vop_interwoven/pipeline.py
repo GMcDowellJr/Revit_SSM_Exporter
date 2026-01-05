@@ -169,7 +169,7 @@ def init_view_raster(doc, view, cfg):
     tile_size = cfg.compute_adaptive_tile_size(W, H)
 
     raster = ViewRaster(
-        width=W, height=H, cell_size=cell_size_ft, bounds=bounds_xy, tile_size=tile_size
+        width=W, height=H, cell_size=cell_size_ft, bounds=bounds_xy, tile_size=tile_size, cfg=cfg
     )
 
     # Store view basis for annotation rasterization
@@ -515,9 +515,32 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
     # Debug dump occlusion layers if requested
     if cfg.debug_dump_occlusion:
         try:
-            view_name = view.Name if hasattr(view, 'Name') else "unknown_view"
-            dump_prefix = cfg.debug_dump_path if cfg.debug_dump_path else "/tmp/vop_debug"
-            raster.dump_occlusion_debug(dump_prefix, view_name)
+            import os, re, time
+
+            view_name = re.sub(r'[<>:"/\\|?*]', "_", view.Name)
+            view_id = view.Id.IntegerValue
+
+            if getattr(cfg, "debug_dump_prefix", None):
+                prefix = cfg.debug_dump_prefix
+                dump_dir = os.path.dirname(prefix)
+                if dump_dir:
+                    os.makedirs(dump_dir, exist_ok=True)
+            else:
+                dump_dir = getattr(cfg, "debug_dump_path", None)
+                base_name = f"occlusion_{view_name}_{view_id}"
+
+                if dump_dir:
+                    os.makedirs(dump_dir, exist_ok=True)
+                    prefix = os.path.join(dump_dir, base_name)
+                else:
+                    prefix = base_name  # explicit CWD fallback
+
+            # Add a 10-second confirmation delay (optional)
+            print(f"[INFO] About to dump occlusion data to {prefix}...")
+            time.sleep(10)  # Pause for 10 seconds to confirm config
+
+            raster.dump_occlusion_debug(prefix)
+
         except Exception as e:
             print("[WARN] vop.pipeline: Failed to dump occlusion debug: {0}".format(e))
 

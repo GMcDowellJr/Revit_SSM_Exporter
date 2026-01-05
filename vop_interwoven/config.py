@@ -72,7 +72,12 @@ class Config:
         include_dwg_imports=True,
         # Debug and diagnostics
         debug_dump_occlusion=False,
-        debug_dump_path=None,
+        debug_dump_path=r"C:\temp\vop_output",
+        # Dump w_occ as grayscale image (PGM)
+        debug_dump_occlusion_image = True,
+    
+        # Debug dump prefix (optional override)
+        debug_dump_prefix=None,
         # Tier-B adaptive configuration
         tierb_cell_size_ref_ft=1.0,
         tierb_area_fraction=0.005,
@@ -117,6 +122,9 @@ class Config:
         # Debug and diagnostics
         self.debug_dump_occlusion = bool(debug_dump_occlusion)
         self.debug_dump_path = debug_dump_path  # None = auto-generate from view name
+        self.debug_dump_prefix = debug_dump_prefix
+        self.debug_dump_occlusion_image = bool(debug_dump_occlusion_image)
+
 
         # Tier-B adaptive configuration
         self.tierb_cell_size_ref_ft = float(tierb_cell_size_ref_ft)

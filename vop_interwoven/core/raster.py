@@ -253,7 +253,7 @@ class ViewRaster:
 
         return filled
     
-    def __init__(self, width, height, cell_size, bounds, tile_size=16):
+    def __init__(self, width, height, cell_size, bounds, tile_size=16, cfg=None):
         """Initialize view raster.
 
         Args:
@@ -267,6 +267,7 @@ class ViewRaster:
         self.H = int(height)
         self.cell_size_ft = float(cell_size)
         self.bounds_xy = bounds
+        self.cfg = cfg
 
         N = self.W * self.H
 
@@ -633,6 +634,7 @@ class ViewRaster:
             CSV format: one row per cell with u,v,value
         """
         import os
+        import math
 
         # Sanitize view name for filename
         safe_view_name = view_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
@@ -678,11 +680,46 @@ class ViewRaster:
                     if self.occ_dwg[idx]:
                         f.write("{0},{1},1\n".format(i, j))
 
+        # Optional: dump w_occ as grayscale image (PGM)
+        if getattr(self.cfg, "debug_dump_occlusion_image", False):
+            finite_depths = [d for d in self.w_occ if math.isfinite(d)]
+            if finite_depths:
+                d_min = min(finite_depths)
+                d_max = max(finite_depths)
+            else:
+                d_min = 0.0
+                d_max = 1.0
+
+            scale = (d_max - d_min) if d_max > d_min else 1.0
+
+            prefix = "{0}_{1}".format(output_path_prefix, safe_view_name)
+            pgm_path = prefix + "_w_occ.pgm"
+
+            with open(pgm_path, "w") as f:
+                f.write("P2\n")
+                f.write(f"{self.W} {self.H}\n")
+                f.write("255\n")
+
+                for j in range(self.H):
+                    row = []
+                    for i in range(self.W):
+                        idx = self.get_cell_index(i, j)
+                        d = self.w_occ[idx]
+                        if not math.isfinite(d):
+                            g = 255
+                        else:
+                            t = (d - d_min) / scale
+                            g = int(max(0, min(255, 255 * t)))
+                        row.append(str(g))
+                    f.write(" ".join(row) + "\n")
+
         print("[DEBUG] Dumped occlusion layers:")
         print("  - {0}".format(w_occ_path))
         print("  - {0}".format(occ_host_path))
         print("  - {0}".format(occ_link_path))
         print("  - {0}".format(occ_dwg_path))
+        if getattr(self.cfg, "debug_dump_occlusion_image", False):
+            print("  - {0}".format(pgm_path))
 
     def to_dict(self):
         """Export raster to dictionary for JSON serialization.
