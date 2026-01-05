@@ -284,7 +284,9 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
         try:
             rect = _project_element_bbox_to_cell_rect(elem, vb, raster)
             if rect and not rect.empty:
-                if _tiles_fully_covered_and_nearer(raster.tile, rect, elem_depth):
+                from .core.footprint import CellRectFootprint
+                fp = CellRectFootprint(rect)
+                if _tiles_fully_covered_and_nearer(raster.tile, fp, elem_depth):
                     skipped += 1
                     continue
         except Exception:
@@ -501,12 +503,12 @@ def _is_supported_2d_view(view):
         # If we can't determine type, reject it
         return False
 
-def _tiles_fully_covered_and_nearer(tile_map, rect, elem_min_w):
+def _tiles_fully_covered_and_nearer(tile_map, footprint, elem_min_w):
     """Check if all tiles overlapping rect are fully covered AND nearer than element.
 
     Args:
         tile_map: TileMap acceleration structure
-        rect: CellRect footprint of element
+        footprint: footprint object with tiles(tile_map)
         elem_min_w: Element's minimum W-depth (view-space depth)
 
     Returns:
@@ -518,15 +520,15 @@ def _tiles_fully_covered_and_nearer(tile_map, rect, elem_min_w):
         1. Fully filled (no empty cells)
         2. Nearer than element's minimum W-depth (w_min_tile < elem_min_w)
     """
-    tiles = tile_map.get_tiles_for_rect(rect.i_min, rect.j_min, rect.i_max, rect.j_max)
+    tiles = footprint.tiles(tile_map)
 
     for t in tiles:
         # Check if tile is fully filled
         if not tile_map.is_tile_full(t):
             return False
 
-        # Check if tile's nearest W-depth is closer than element
-        if tile_map.w_min_tile[t] >= elem_min_w:
+        # SAFE occlusion: ALL cells in tile must be nearer => tile max depth < elem_min_w
+        if tile_map.w_max_tile[t] >= elem_min_w:
             return False
 
     return True
