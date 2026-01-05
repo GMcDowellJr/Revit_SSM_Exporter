@@ -289,6 +289,19 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
                 if _tiles_fully_covered_and_nearer(raster.tile, fp, elem_depth):
                     skipped += 1
                     continue
+                    
+                # Tier-A measures for ambiguity trigger (Tier-B in next commit)
+                width_cells = rect.width()
+                height_cells = rect.height()
+                minor_cells = min(width_cells, height_cells)
+                aabb_area_cells = width_cells * height_cells
+                grid_area = raster.W * raster.H
+                # cell_size_world must be world-units-per-cell (already known in init_view_raster)
+                # For now, use cfg.cell_size_world_ft if present; otherwise inject from raster/meta in Commit 4.
+                cell_size_world = getattr(cfg, "cell_size_world_ft", 1.0)
+                from .core.geometry import tier_a_is_ambiguous
+                tier_a_ambig = tier_a_is_ambiguous(minor_cells, aabb_area_cells, grid_area, cell_size_world, cfg)
+
         except Exception:
             # Never skip on failure (must stay conservative)
             pass
