@@ -302,6 +302,48 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
                 from .core.geometry import tier_a_is_ambiguous
                 tier_a_ambig = tier_a_is_ambiguous(minor_cells, aabb_area_cells, grid_area, cell_size_world, cfg)
 
+            uvw_pts = None
+            footprint = fp_a
+
+            # Tier-B proxy path (geometry-based)
+            if tier_a_ambig:
+                from .revit.tierb_proxy import sample_element_uvw_points
+                uvw_pts = sample_element_uvw_points(elem, view, vb, cfg)
+
+                if uvw_pts:
+                    points_uv = [(u, v) for (u, v, w) in uvw_pts]
+
+                    from .core.geometry import classify_by_uv_pca
+                    mode = classify_by_uv_pca(points_uv, cfg, cell_size_uv=1.0)
+
+                    from .core.hull import convex_hull_uv
+                    hull_uv = convex_hull_uv(points_uv)
+
+                    from .core.footprint import HullFootprint
+                    footprint = HullFootprint(hull_uv, raster)
+                    elem_min_w = min(w for (_, _, w) in uvw_pts)
+
+            # Stage 5: depth-aware early-out using footprint
+            if _tiles_fully_covered_and_nearer(raster.tile, footprint, elem_min_w):
+                skipped += 1
+                continue
+
+            # Stage 6: rasterization via TryWriteCell ONLY
+            depth_by_cell = None
+            if uvw_pts:
+                depth_by_cell = {}
+                for (u, v, w) in uvw_pts:
+                    i = int(round(u))
+                    j = int(round(v))
+                    key = (i, j)
+                    prev = depth_by_cell.get(key)
+                    if prev is None or w < prev:
+                        depth_by_cell[key] = w
+
+            for (i, j) in footprint.cells():
+                w_depth = depth_by_cell.get((i, j), elem_min_w) if depth_by_cell else elem_min_w
+                raster.try_write_cell(i, j, w_depth=w_depth, source=source_type)
+
         except Exception:
             # Never skip on failure (must stay conservative)
             pass
