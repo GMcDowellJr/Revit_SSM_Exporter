@@ -144,20 +144,48 @@ def _has_revit_2024_link_collector(doc, view):
         This overload was added in Revit 2024 to collect visible elements from links.
     """
     try:
-        from Autodesk.Revit.DB import FilteredElementCollector, ElementId
+        from Autodesk.Revit.DB import FilteredElementCollector, ElementId, RevitLinkInstance
 
-        # Try to create a FilteredElementCollector with 3 parameters
-        # Use a dummy ElementId to test the signature
-        dummy_id = ElementId(-1)
-        test_collector = FilteredElementCollector(doc, view.Id, dummy_id)
+        # Try to find a real RevitLinkInstance to test with (more reliable)
+        link_collector = FilteredElementCollector(doc).OfClass(RevitLinkInstance)
+        real_link_id = None
 
-        # If we get here, the overload exists (Revit 2024+)
-        _log("INFO", "Revit 2024+ FilteredElementCollector overload detected")
-        return True
+        for link in link_collector:
+            if link is not None and link.Id is not None:
+                real_link_id = link.Id
+                break
 
-    except Exception:
-        # Overload doesn't exist (Revit < 2024) or other error
-        _log("INFO", "Revit 2024+ collector not available, using clip volume fallback")
+        # Use real link ID if available, otherwise fall back to dummy
+        test_id = real_link_id if real_link_id is not None else ElementId(-1)
+        test_id_desc = "real RevitLinkInstance.Id" if real_link_id is not None else "dummy ElementId(-1)"
+
+        # Try to create collector with the Revit 2024+ overload
+        try:
+            test_collector = FilteredElementCollector(doc, view.Id, test_id)
+            # If we get here, the overload exists (Revit 2024+)
+            _log("INFO", "[Revit 2024+] FilteredElementCollector(doc, viewId, linkId) overload DETECTED (tested with {0})".format(test_id_desc))
+            _log("INFO", "[Revit 2024+] Using new collector path for linked elements")
+            return True
+
+        except TypeError as e:
+            # TypeError = signature doesn't match (overload missing)
+            error_msg = str(e)
+            _log("INFO", "[Revit <2024] FilteredElementCollector overload NOT FOUND - TypeError: {0}".format(error_msg))
+            _log("INFO", "[Revit <2024] Using legacy clip volume path for linked elements")
+            return False
+
+        except Exception as e:
+            # Other exception = signature exists but runtime error
+            error_msg = str(e)
+            error_type = type(e).__name__
+            _log("WARN", "[Revit 2024+] Collector overload exists but test failed - {0}: {1}".format(error_type, error_msg))
+            _log("INFO", "[Revit 2024+] Assuming new collector path available (signature matched)")
+            return True
+
+    except Exception as e:
+        # Import error or doc/view unavailable
+        _log("WARN", "Failed to check Revit 2024+ collector availability: {0}".format(e))
+        _log("INFO", "Defaulting to legacy clip volume path for safety")
         return False
 
 

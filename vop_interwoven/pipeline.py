@@ -455,6 +455,15 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
             raster.depth_test_attempted, raster.depth_test_wins, win_rate,
             raster.depth_test_rejects, reject_rate))
 
+    # Debug dump occlusion layers if requested
+    if cfg.debug_dump_occlusion:
+        try:
+            view_name = view.Name if hasattr(view, 'Name') else "unknown_view"
+            dump_prefix = cfg.debug_dump_path if cfg.debug_dump_path else "/tmp/vop_debug"
+            raster.dump_occlusion_debug(dump_prefix, view_name)
+        except Exception as e:
+            print("[WARN] vop.pipeline: Failed to dump occlusion debug: {0}".format(e))
+
     return processed
 
 
@@ -492,11 +501,22 @@ def _is_supported_2d_view(view):
         # If we can't determine type, reject it
         return False
 
-def _tiles_fully_covered_and_nearer(tile_map, rect, elem_near_z):
-    """Check if all tiles overlapping rect are fully covered AND nearer than elem_near_z.
+def _tiles_fully_covered_and_nearer(tile_map, rect, elem_min_w):
+    """Check if all tiles overlapping rect are fully covered AND nearer than element.
+
+    Args:
+        tile_map: TileMap acceleration structure
+        rect: CellRect footprint of element
+        elem_min_w: Element's minimum W-depth (view-space depth)
 
     Returns:
         True if element is guaranteed occluded (safe to skip)
+
+    Commentary:
+        Early-out occlusion test using tile-level W-depth buffer.
+        Element is occluded if ALL tiles overlapping its footprint are:
+        1. Fully filled (no empty cells)
+        2. Nearer than element's minimum W-depth (w_min_tile < elem_min_w)
     """
     tiles = tile_map.get_tiles_for_rect(rect.i_min, rect.j_min, rect.i_max, rect.j_max)
 
@@ -506,7 +526,7 @@ def _tiles_fully_covered_and_nearer(tile_map, rect, elem_near_z):
             return False
 
         # Check if tile's nearest W-depth is closer than element
-        if tile_map.w_min_tile[t] >= elem_near_z:
+        if tile_map.w_min_tile[t] >= elem_min_w:
             return False
 
     return True

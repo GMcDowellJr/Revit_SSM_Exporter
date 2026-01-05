@@ -644,6 +644,75 @@ class ViewRaster:
 
         return filled
 
+    def dump_occlusion_debug(self, output_path_prefix, view_name="view"):
+        """Dump w_occ and occupancy layers for debugging.
+
+        Args:
+            output_path_prefix: Path prefix for output files (e.g., "/tmp/debug")
+            view_name: View name to include in filenames
+
+        Outputs:
+            {prefix}_{view}_w_occ.csv - W-depth buffer (u, v, w_depth)
+            {prefix}_{view}_occ_host.csv - Host occupancy mask
+            {prefix}_{view}_occ_link.csv - Link occupancy mask
+            {prefix}_{view}_occ_dwg.csv - DWG occupancy mask
+
+        Commentary:
+            This is for visual debugging and regression checking.
+            CSV format: one row per cell with u,v,value
+        """
+        import os
+
+        # Sanitize view name for filename
+        safe_view_name = view_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
+
+        # Dump w_occ (W-depth buffer)
+        w_occ_path = "{0}_{1}_w_occ.csv".format(output_path_prefix, safe_view_name)
+        with open(w_occ_path, 'w') as f:
+            f.write("u,v,w_depth\n")
+            for j in range(self.H):
+                for i in range(self.W):
+                    idx = j * self.W + i
+                    w = self.w_occ[idx]
+                    if w != float("inf"):
+                        f.write("{0},{1},{2:.6f}\n".format(i, j, w))
+
+        # Dump occ_host
+        occ_host_path = "{0}_{1}_occ_host.csv".format(output_path_prefix, safe_view_name)
+        with open(occ_host_path, 'w') as f:
+            f.write("u,v,occupied\n")
+            for j in range(self.H):
+                for i in range(self.W):
+                    idx = j * self.W + i
+                    if self.occ_host[idx]:
+                        f.write("{0},{1},1\n".format(i, j))
+
+        # Dump occ_link
+        occ_link_path = "{0}_{1}_occ_link.csv".format(output_path_prefix, safe_view_name)
+        with open(occ_link_path, 'w') as f:
+            f.write("u,v,occupied\n")
+            for j in range(self.H):
+                for i in range(self.W):
+                    idx = j * self.W + i
+                    if self.occ_link[idx]:
+                        f.write("{0},{1},1\n".format(i, j))
+
+        # Dump occ_dwg
+        occ_dwg_path = "{0}_{1}_occ_dwg.csv".format(output_path_prefix, safe_view_name)
+        with open(occ_dwg_path, 'w') as f:
+            f.write("u,v,occupied\n")
+            for j in range(self.H):
+                for i in range(self.W):
+                    idx = j * self.W + i
+                    if self.occ_dwg[idx]:
+                        f.write("{0},{1},1\n".format(i, j))
+
+        print("[DEBUG] Dumped occlusion layers:")
+        print("  - {0}".format(w_occ_path))
+        print("  - {0}".format(occ_host_path))
+        print("  - {0}".format(occ_link_path))
+        print("  - {0}".format(occ_dwg_path))
+
     def to_dict(self):
         """Export raster to dictionary for JSON serialization.
 
