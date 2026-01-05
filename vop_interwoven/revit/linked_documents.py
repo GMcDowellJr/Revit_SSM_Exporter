@@ -73,7 +73,13 @@ class LinkedElementProxy:
             return None
         try:
             return self._elem.get_Geometry(options)
-        except Exception:
+        except Exception as e:
+            # Log failure for debugging (silent failures hide problems)
+            try:
+                elem_id = getattr(self._elem, 'Id', '?')
+                _log("DEBUG", "Geometry extraction failed for link element {0}: {1}".format(elem_id, e))
+            except:
+                pass
             return None
 
 

@@ -244,10 +244,15 @@ def _cad_curves_silhouette(elem, view, view_basis, cfg=None):
     try:
         from Autodesk.Revit.DB import Options
         opts = Options()
-        try:
-            opts.View = view
-        except Exception:
-            pass
+
+        # CRITICAL: Never set opts.View for linked elements - causes geometry extraction failure
+        # Linked elements (LinkedElementProxy) have .transform attribute
+        if not hasattr(elem, 'transform'):  # Host element only
+            try:
+                opts.View = view
+            except Exception:
+                pass
+        # For linked elements: leave opts.View = None (extract in link coordinates)
 
         geom = elem.get_Geometry(opts)
         if geom is None:
@@ -434,37 +439,50 @@ def _bbox_silhouette(elem, view, view_basis):
         view_basis: ViewBasis
 
     Returns:
-        List with one loop (rectangle in view UV coordinates)
+        List with one loop (rectangle in view UVW coordinates, W for depth)
     """
     try:
+        from .view_basis import world_to_view
+
         bbox = elem.get_BoundingBox(view)
         if not bbox or not bbox.Min or not bbox.Max:
             return []
 
-        # Get min/max corners
-        min_pt = (bbox.Min.X, bbox.Min.Y, bbox.Min.Z)
-        max_pt = (bbox.Max.X, bbox.Max.Y, bbox.Max.Z)
+        # Get min/max corners and transform to host space if needed
+        min_pt_local = (bbox.Min.X, bbox.Min.Y, bbox.Min.Z)
+        max_pt_local = (bbox.Max.X, bbox.Max.Y, bbox.Max.Z)
 
-        # Project to view UV
-        corner_h = _to_host_point(elem, corner)
-        uv = view_basis.transform_to_view_uv((corner_h.X, corner_h.Y, corner_h.Z))
-        max_uv = view_basis.transform_to_view_uv(max_pt)
+        # Transform to host coordinates for linked elements
+        from Autodesk.Revit.DB import XYZ
+        min_xyz = XYZ(min_pt_local[0], min_pt_local[1], min_pt_local[2])
+        max_xyz = XYZ(max_pt_local[0], max_pt_local[1], max_pt_local[2])
 
-        # Build rectangle
-        u_min = min(min_uv[0], max_uv[0])
-        u_max = max(min_uv[0], max_uv[0])
-        v_min = min(min_uv[1], max_uv[1])
-        v_max = max(min_uv[1], max_uv[1])
+        min_pt = _to_host_point(elem, min_xyz)
+        max_pt = _to_host_point(elem, max_xyz)
+        min_pt_tuple = (min_pt.X, min_pt.Y, min_pt.Z)
+        max_pt_tuple = (max_pt.X, max_pt.Y, max_pt.Z)
+
+        # Project to view UVW (with depth)
+        min_uvw = world_to_view(min_pt_tuple, view_basis)
+        max_uvw = world_to_view(max_pt_tuple, view_basis)
+
+        # Build rectangle (use min depth for occlusion)
+        u_min = min(min_uvw[0], max_uvw[0])
+        u_max = max(min_uvw[0], max_uvw[0])
+        v_min = min(min_uvw[1], max_uvw[1])
+        v_max = max(min_uvw[1], max_uvw[1])
+        w_min = min(min_uvw[2], max_uvw[2])  # Nearest depth
 
         if u_min >= u_max or v_min >= v_max:
             return []
 
+        # Store (u, v, w) tuples - all points at same depth for bbox
         points = [
-            (u_min, v_min),
-            (u_max, v_min),
-            (u_max, v_max),
-            (u_min, v_max),
-            (u_min, v_min)  # Close the loop
+            (u_min, v_min, w_min),
+            (u_max, v_min, w_min),
+            (u_max, v_max, w_min),
+            (u_min, v_max, w_min),
+            (u_min, v_min, w_min)  # Close the loop
         ]
 
         return [{'points': points, 'is_hole': False}]
@@ -482,10 +500,11 @@ def _obb_silhouette(elem, view, view_basis):
         view_basis: ViewBasis
 
     Returns:
-        List with one loop (convex hull of projected bbox corners)
+        List with one loop (convex hull of projected bbox corners, with depth)
     """
     try:
         from Autodesk.Revit.DB import XYZ
+        from .view_basis import world_to_view
 
         bbox = elem.get_BoundingBox(view)
         if not bbox or not bbox.Min or not bbox.Max:
@@ -505,22 +524,30 @@ def _obb_silhouette(elem, view, view_basis):
             XYZ(mx.X, mx.Y, mx.Z),
         ]
 
-        # Project to view UV
-        corners_uv = []
+        # Transform to host coordinates for linked elements and project to view UVW
+        corners_uvw = []
+        min_w = float('inf')
         for corner in corners_3d:
-            uv = view_basis.transform_to_view_uv((corner.X, corner.Y, corner.Z))
-            corners_uv.append(uv)
+            corner_h = _to_host_point(elem, corner)
+            uvw = world_to_view((corner_h.X, corner_h.Y, corner_h.Z), view_basis)
+            corners_uvw.append(uvw)
+            if uvw[2] < min_w:
+                min_w = uvw[2]
 
-        if len(corners_uv) < 3:
+        if len(corners_uvw) < 3:
             return []
 
-        # Compute convex hull
-        hull = _convex_hull_2d(corners_uv)
+        # Compute convex hull in UV (ignoring W for hull computation)
+        corners_uv = [(uvw[0], uvw[1]) for uvw in corners_uvw]
+        hull_uv = _convex_hull_2d(corners_uv)
 
-        if len(hull) < 3:
+        if len(hull_uv) < 3:
             return []
 
-        return [{'points': hull, 'is_hole': False}]
+        # Add minimum depth to hull points
+        hull_uvw = [(u, v, min_w) for (u, v) in hull_uv]
+
+        return [{'points': hull_uvw, 'is_hole': False}]
 
     except Exception:
         return []
@@ -563,10 +590,14 @@ def _silhouette_edges(elem, view, view_basis, cfg):
         opts.IncludeNonVisibleObjects = False
         opts.DetailLevel = ViewDetailLevel.Medium
 
-        try:
-            opts.View = view
-        except Exception:
-            pass
+        # CRITICAL: Never set opts.View for linked elements - causes geometry extraction failure
+        # Linked elements (LinkedElementProxy) have .transform attribute
+        if not hasattr(elem, 'transform'):  # Host element only
+            try:
+                opts.View = view
+            except Exception:
+                pass
+        # For linked elements: leave opts.View = None (extract in link coordinates)
 
         geom = elem.get_Geometry(opts)
         if geom is None:
@@ -677,11 +708,12 @@ def _silhouette_edges(elem, view, view_basis, cfg):
                         # Fallback: use endpoints
                         points_3d = [curve.GetEndPoint(0), curve.GetEndPoint(1)]
 
-                    # Project to view UV
+                    # Project to view UVW (with depth)
+                    from .view_basis import world_to_view
                     for pt in points_3d:
                         pt_h = _to_host_point(elem, pt)
-                        uv = view_basis.transform_to_view_uv((pt_h.X, pt_h.Y, pt_h.Z))
-                        silhouette_points.append(uv)
+                        uvw = world_to_view((pt_h.X, pt_h.Y, pt_h.Z), view_basis)
+                        silhouette_points.append(uvw)
 
                 except Exception:
                     continue
@@ -704,7 +736,7 @@ def _order_points_by_connectivity(points):
     """Order points by spatial connectivity (simple greedy approach).
 
     Args:
-        points: List of (u, v) points
+        points: List of (u, v) or (u, v, w) points
 
     Returns:
         Ordered list of points forming a closed loop
@@ -712,7 +744,7 @@ def _order_points_by_connectivity(points):
     if len(points) < 3:
         return []
 
-    # Remove duplicates
+    # Remove duplicates (use UV for comparison, preserve W if present)
     unique_points = []
     seen = set()
     for p in points:
@@ -724,7 +756,7 @@ def _order_points_by_connectivity(points):
     if len(unique_points) < 3:
         return []
 
-    # Greedy nearest-neighbor ordering
+    # Greedy nearest-neighbor ordering (use UV distance only)
     ordered = [unique_points[0]]
     remaining = set(range(1, len(unique_points)))
 
@@ -735,6 +767,7 @@ def _order_points_by_connectivity(points):
 
         for idx in remaining:
             pt = unique_points[idx]
+            # Distance in UV plane only
             dist = (pt[0] - current[0]) ** 2 + (pt[1] - current[1]) ** 2
 
             if dist < best_dist:
