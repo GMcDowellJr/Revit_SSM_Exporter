@@ -17,7 +17,7 @@ Core principles:
 
 import math
 from .config import Config
-from .core.raster import ViewRaster, TileMap
+from .core.raster import ViewRaster, TileMap, _extract_source_type
 from .core.geometry import Mode, classify_by_uv, make_uv_aabb, make_obb_or_skinny_aabb
 from .core.math_utils import Bounds2D, CellRect
 from .core.silhouette import get_element_silhouette
@@ -252,6 +252,9 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
 
         key_index = raster.get_or_create_element_meta_index(elem_id, category, source=doc_key, source_label=doc_label)
 
+        # Extract simple source type for depth-tested rasterization
+        source_type = _extract_source_type(doc_key)
+
         # CRITICAL FIX: Extract silhouette FIRST to get accurate geometry
         # (depth calculation moved AFTER silhouette extraction)
         loops = None
@@ -274,8 +277,8 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
         if processed < 10:
             depth_source = "geometry" if loops else "bbox"
             silhouette_status = "SUCCESS ({0} loops)".format(len(loops)) if loops else "FAILED (bbox fallback)"
-            print("[DEBUG] Element {0} ({1}): silhouette={2}, depth={3} (from {4})".format(
-                elem_id, category, silhouette_status, elem_depth, depth_source))
+            print("[DEBUG] Element {0} ({1}): silhouette={2}, depth={3} (from {4}), source={5}".format(
+                elem_id, category, silhouette_status, elem_depth, depth_source, source_type))
 
         # Safe early-out occlusion using bbox footprint + tile z-min (front-to-back streaming)
         try:
@@ -297,7 +300,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
                 # If any loop is marked open (e.g., DWG curves), rasterize as edges only
                 try:
                     if any(loop.get("open", False) for loop in loops):
-                        filled = raster.rasterize_open_polylines(loops, key_index, depth=elem_depth)
+                        filled = raster.rasterize_open_polylines(loops, key_index, depth=elem_depth, source=source_type)
                         silhouette_success += 1
                         processed += 1
                         continue
@@ -305,7 +308,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
                     pass
 
                 # Rasterize silhouette loops with actual depth for occlusion
-                filled = raster.rasterize_silhouette_loops(loops, key_index, depth=elem_depth)
+                filled = raster.rasterize_silhouette_loops(loops, key_index, depth=elem_depth, source=source_type)
 
                 if filled > 0:
                     # Tag element metadata with strategy used
@@ -333,7 +336,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
             if obb_loops:
                 try:
                     # Rasterize OBB polygon (same as silhouette loops)
-                    filled = raster.rasterize_silhouette_loops(obb_loops, key_index, depth=elem_depth)
+                    filled = raster.rasterize_silhouette_loops(obb_loops, key_index, depth=elem_depth, source=source_type)
 
                     if filled > 0:
                         # Tag with OBB strategy
@@ -362,12 +365,12 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
                 elif rect.empty:
                     aabb_error = "CellRect is empty (element outside bounds?)"
                 else:
-                    # Fill axis-aligned rect with proper occlusion vs occupancy separation
+                    # Fill axis-aligned rect with depth-tested occlusion and occupancy
                     filled_count = 0
                     for i, j in rect.cells():
-                        # Set occlusion for all cells (interior + boundary) with actual depth
-                        raster.set_cell_filled(i, j, depth=elem_depth)
-                        filled_count += 1
+                        # Use try_write_cell for depth-tested occlusion with per-source occupancy
+                        if raster.try_write_cell(i, j, w_depth=elem_depth, source=source_type):
+                            filled_count += 1
 
                         # Set occupancy ONLY for boundary cells
                         is_boundary = (i == rect.i_min or i == rect.i_max or
@@ -444,6 +447,14 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
     if skipped > 0:
         print("[WARN] vop.pipeline: Skipped {0} elements due to errors".format(skipped))
 
+    # Print depth test statistics
+    if raster.depth_test_attempted > 0:
+        win_rate = 100.0 * raster.depth_test_wins / raster.depth_test_attempted
+        reject_rate = 100.0 * raster.depth_test_rejects / raster.depth_test_attempted
+        print("[INFO] vop.pipeline: Depth tests: {0} attempted, {1} wins ({2:.1f}%), {3} rejects ({4:.1f}%)".format(
+            raster.depth_test_attempted, raster.depth_test_wins, win_rate,
+            raster.depth_test_rejects, reject_rate))
+
     return processed
 
 
@@ -494,8 +505,8 @@ def _tiles_fully_covered_and_nearer(tile_map, rect, elem_near_z):
         if not tile_map.is_tile_full(t):
             return False
 
-        # Check if tile's nearest depth is closer than element
-        if tile_map.z_min_tile[t] >= elem_near_z:
+        # Check if tile's nearest W-depth is closer than element
+        if tile_map.w_min_tile[t] >= elem_near_z:
             return False
 
     return True

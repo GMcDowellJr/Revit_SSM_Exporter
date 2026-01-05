@@ -28,7 +28,7 @@ class TestTileMap(unittest.TestCase):
         self.assertEqual(self.tile_map.tiles_x, 4)  # 64 / 16
         self.assertEqual(self.tile_map.tiles_y, 4)
         self.assertEqual(len(self.tile_map.filled_count), 16)  # 4x4 tiles
-        self.assertEqual(len(self.tile_map.z_min_tile), 16)
+        self.assertEqual(len(self.tile_map.w_min_tile), 16)
 
     def test_get_tile_index(self):
         """Test tile index calculation."""
@@ -81,22 +81,22 @@ class TestTileMap(unittest.TestCase):
         self.tile_map.update_filled_count(5, 5, increment=1)
         self.assertEqual(self.tile_map.filled_count[0], 2)
 
-    def test_update_z_min(self):
-        """Test minimum depth updates."""
+    def test_update_w_min(self):
+        """Test minimum W-depth updates."""
         # Initial depth is +inf
-        self.assertEqual(self.tile_map.z_min_tile[0], float("inf"))
+        self.assertEqual(self.tile_map.w_min_tile[0], float("inf"))
 
         # Update with depth 10.0
-        self.tile_map.update_z_min(5, 5, depth=10.0)
-        self.assertEqual(self.tile_map.z_min_tile[0], 10.0)
+        self.tile_map.update_w_min(5, 5, depth=10.0)
+        self.assertEqual(self.tile_map.w_min_tile[0], 10.0)
 
         # Update with smaller depth
-        self.tile_map.update_z_min(5, 5, depth=5.0)
-        self.assertEqual(self.tile_map.z_min_tile[0], 5.0)
+        self.tile_map.update_w_min(5, 5, depth=5.0)
+        self.assertEqual(self.tile_map.w_min_tile[0], 5.0)
 
         # Update with larger depth (should not change)
-        self.tile_map.update_z_min(5, 5, depth=20.0)
-        self.assertEqual(self.tile_map.z_min_tile[0], 5.0)
+        self.tile_map.update_w_min(5, 5, depth=20.0)
+        self.assertEqual(self.tile_map.w_min_tile[0], 5.0)
 
 
 class TestViewRaster(unittest.TestCase):
@@ -115,7 +115,10 @@ class TestViewRaster(unittest.TestCase):
         self.assertEqual(self.raster.H, 64)
         self.assertEqual(self.raster.cell_size_ft, 1.0)
         self.assertEqual(len(self.raster.model_mask), 64 * 64)
-        self.assertEqual(len(self.raster.z_min), 64 * 64)
+        self.assertEqual(len(self.raster.w_occ), 64 * 64)
+        self.assertEqual(len(self.raster.occ_host), 64 * 64)
+        self.assertEqual(len(self.raster.occ_link), 64 * 64)
+        self.assertEqual(len(self.raster.occ_dwg), 64 * 64)
         self.assertIsNotNone(self.raster.tile)
 
     def test_get_cell_index(self):
@@ -136,25 +139,56 @@ class TestViewRaster(unittest.TestCase):
         self.assertIsNone(self.raster.get_cell_index(100, 100))
 
     def test_set_cell_filled(self):
-        """Test cell filling with depth."""
+        """Test cell filling with depth (deprecated method)."""
         # Initially empty
         idx = self.raster.get_cell_index(10, 10)
         self.assertFalse(self.raster.model_mask[idx])
-        self.assertEqual(self.raster.z_min[idx], float("inf"))
+        self.assertEqual(self.raster.w_occ[idx], float("inf"))
 
         # Fill cell with depth
         result = self.raster.set_cell_filled(10, 10, depth=5.0)
         self.assertTrue(result)
         self.assertTrue(self.raster.model_mask[idx])
-        self.assertEqual(self.raster.z_min[idx], 5.0)
+        self.assertEqual(self.raster.w_occ[idx], 5.0)
 
         # Update with nearer depth
         self.raster.set_cell_filled(10, 10, depth=3.0)
-        self.assertEqual(self.raster.z_min[idx], 3.0)
+        self.assertEqual(self.raster.w_occ[idx], 3.0)
 
-        # Update with farther depth (should not change z_min)
+        # Update with farther depth (should not change w_occ)
         self.raster.set_cell_filled(10, 10, depth=10.0)
-        self.assertEqual(self.raster.z_min[idx], 3.0)
+        self.assertEqual(self.raster.w_occ[idx], 3.0)
+
+    def test_try_write_cell(self):
+        """Test centralized cell write with depth testing."""
+        idx = self.raster.get_cell_index(10, 10)
+
+        # Initially empty
+        self.assertEqual(self.raster.w_occ[idx], float("inf"))
+        self.assertFalse(self.raster.occ_host[idx])
+
+        # Write HOST element at depth 5.0
+        result = self.raster.try_write_cell(10, 10, w_depth=5.0, source="HOST")
+        self.assertTrue(result)
+        self.assertEqual(self.raster.w_occ[idx], 5.0)
+        self.assertTrue(self.raster.occ_host[idx])
+        self.assertFalse(self.raster.occ_link[idx])
+        self.assertEqual(self.raster.depth_test_wins, 1)
+
+        # Try to write LINK element at depth 10.0 (behind HOST - should reject)
+        result = self.raster.try_write_cell(10, 10, w_depth=10.0, source="LINK")
+        self.assertFalse(result)
+        self.assertEqual(self.raster.w_occ[idx], 5.0)  # Unchanged
+        self.assertTrue(self.raster.occ_host[idx])  # Still HOST
+        self.assertFalse(self.raster.occ_link[idx])  # LINK rejected
+        self.assertEqual(self.raster.depth_test_rejects, 1)
+
+        # Write LINK element at depth 3.0 (in front - should win)
+        result = self.raster.try_write_cell(10, 10, w_depth=3.0, source="LINK")
+        self.assertTrue(result)
+        self.assertEqual(self.raster.w_occ[idx], 3.0)
+        self.assertTrue(self.raster.occ_link[idx])  # LINK wins
+        self.assertEqual(self.raster.depth_test_wins, 2)
 
     def test_element_metadata(self):
         """Test element metadata tracking."""

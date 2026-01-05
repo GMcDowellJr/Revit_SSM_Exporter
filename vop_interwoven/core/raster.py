@@ -6,6 +6,25 @@ depth buffers, and edge/annotation layers per view.
 """
 
 
+def _extract_source_type(doc_key):
+    """Extract simple source type from doc_key.
+
+    Args:
+        doc_key: Source key ("HOST", "RVT_LINK:...", "DWG_IMPORT:...")
+
+    Returns:
+        "HOST", "LINK", or "DWG"
+    """
+    if not doc_key:
+        return "HOST"
+    if doc_key.startswith("RVT_LINK:"):
+        return "LINK"
+    elif doc_key.startswith("DWG_IMPORT:") or doc_key.startswith("DWG_") or doc_key.startswith("DXF_"):
+        return "DWG"
+    else:
+        return "HOST"
+
+
 class TileMap:
     """Tile-based spatial acceleration structure for early-out occlusion testing.
 
@@ -13,7 +32,7 @@ class TileMap:
         tile_size: Size of each tile in cells (e.g., 16x16)
         tiles_x, tiles_y: Number of tiles in X and Y dimensions
         filled_count: List of filled cell counts per tile
-        z_min_tile: List of minimum depth values per tile
+        w_min_tile: List of minimum W-depth values per tile (view-space depth)
 
     Example:
         >>> tm = TileMap(tile_size=16, width=64, height=64)
@@ -40,7 +59,7 @@ class TileMap:
 
         # Per-tile statistics for early-out testing
         self.filled_count = [0] * num_tiles  # Count of filled cells in tile
-        self.z_min_tile = [float("inf")] * num_tiles  # Minimum depth in tile
+        self.w_min_tile = [float("inf")] * num_tiles  # Minimum W-depth in tile (view-space depth)
 
     def get_tile_index(self, cell_i, cell_j):
         """Get tile index for cell (i, j).
@@ -100,17 +119,17 @@ class TileMap:
         if 0 <= tile_idx < len(self.filled_count):
             self.filled_count[tile_idx] += increment
 
-    def update_z_min(self, cell_i, cell_j, depth):
-        """Update minimum depth for tile containing cell.
+    def update_w_min(self, cell_i, cell_j, depth):
+        """Update minimum W-depth for tile containing cell.
 
         Args:
             cell_i, cell_j: Cell indices
-            depth: Depth value to compare
+            depth: W-depth value to compare
         """
         tile_idx = self.get_tile_index(cell_i, cell_j)
-        if 0 <= tile_idx < len(self.z_min_tile):
-            if depth < self.z_min_tile[tile_idx]:
-                self.z_min_tile[tile_idx] = depth
+        if 0 <= tile_idx < len(self.w_min_tile):
+            if depth < self.w_min_tile[tile_idx]:
+                self.w_min_tile[tile_idx] = depth
 
 
 class ViewRaster:
@@ -124,10 +143,17 @@ class ViewRaster:
         cell_size_ft: Cell size in model units (feet)
         bounds_xy: Bounds2D in view-local XY
 
-        # AreaL truth occlusion from 3D model
-        model_mask: Boolean array [W*H] - interior coverage
-        z_min: Float array [W*H] - nearest depth (+inf if empty)
+        # Global per-cell occlusion depth buffer (W-depth from view-space UVW)
+        w_occ: Float array [W*H] - nearest W-depth per cell (+inf if empty)
         tile: TileMap for early-out testing
+
+        # Per-source occupancy layers (depth-tested, only mark when depth wins)
+        occ_host: Boolean array [W*H] - host document element occupancy
+        occ_link: Boolean array [W*H] - linked RVT element occupancy
+        occ_dwg: Boolean array [W*H] - DWG/DXF import occupancy
+
+        # Legacy model presence (unified, for backward compatibility)
+        model_mask: Boolean array [W*H] - interior coverage
 
         # Edge rasters
         model_edge_key: Int array [W*H] - depth-tested visible edges (AreaL)
@@ -146,21 +172,39 @@ class ViewRaster:
         anno_meta_index_by_key: Dict[key -> index]
         anno_meta: List of annotation metadata dicts
 
+        # Depth test statistics
+        depth_test_attempted: Count of attempted cell writes
+        depth_test_wins: Count of writes that won depth test
+        depth_test_rejects: Count of writes rejected by depth test
+
     Example:
         >>> from .math_utils import Bounds2D
         >>> bounds = Bounds2D(0.0, 0.0, 100.0, 100.0)
         >>> raster = ViewRaster(width=64, height=64, cell_size=1.0, bounds=bounds, tile_size=16)
         >>> raster.W, raster.H
         (64, 64)
-        >>> raster.set_cell_filled(10, 10, depth=5.0)
-        >>> raster.z_min[10 * 64 + 10]
+        >>> raster.try_write_cell(10, 10, w_depth=5.0, source="HOST")
+        True
+        >>> raster.w_occ[10 * 64 + 10]
         5.0
     """
 
-    def rasterize_open_polylines(self, polylines, key_index, depth=0.0):
-        """
-        Rasterize OPEN polyline paths as edges only (no interior fill).
-        Each polyline dict: {'points': [(u,v), ...], 'open': True}
+    def rasterize_open_polylines(self, polylines, key_index, depth=0.0, source="HOST"):
+        """Rasterize OPEN polyline paths as edges only (no interior fill).
+
+        Args:
+            polylines: List of polyline dicts with {'points': [(u,v), ...], 'open': True}
+            key_index: Element metadata index (for edge tracking)
+            depth: W-depth value for occlusion testing (default: 0.0)
+            source: Source type - "HOST", "LINK", or "DWG" (default: "HOST")
+
+        Returns:
+            Number of edge cells stamped
+
+        Commentary:
+            - Used for DWG/DXF curves and other open paths
+            - Stamps edges only, no interior fill
+            - Updates model_edge_key and contributes to w_occ occlusion
         """
         filled = 0
 
@@ -191,17 +235,17 @@ class ViewRaster:
                     if idx is None:
                         continue
 
-                    # edge presence
-                    z_here = self.z_min[idx]
+                    # edge presence - check current occlusion depth
+                    w_here = self.w_occ[idx]
 
-                    # Only stamp the edge if this element is nearer than what's already there.
-                    if z_here == float("inf") or depth <= z_here:
+                    # Only stamp the edge if this element is nearer than what's already there
+                    if w_here == float("inf") or depth <= w_here:
                         self.model_edge_key[idx] = key_index
 
-                        # If you want DWG/edges to contribute to occlusion along the curve:
-                        if depth < z_here:
-                            self.z_min[idx] = depth
-                        self.model_mask[idx] = True
+                        # Contribute to occlusion along the curve using try_write_cell
+                        # This ensures DWG curves participate in depth testing
+                        if depth < w_here:
+                            self.try_write_cell(ii, jj, w_depth=depth, source=source)
                     filled += 1
 
         return filled
@@ -223,12 +267,19 @@ class ViewRaster:
 
         N = self.W * self.H
 
-        # AreaL truth occlusion
-        self.model_mask = [False] * N
-        self.z_min = [float("inf")] * N
+        # Global per-cell occlusion depth buffer (W-depth from view-space UVW)
+        self.w_occ = [float("inf")] * N
 
         # Tile acceleration
         self.tile = TileMap(tile_size, self.W, self.H)
+
+        # Per-source occupancy layers (depth-tested)
+        self.occ_host = [False] * N
+        self.occ_link = [False] * N
+        self.occ_dwg = [False] * N
+
+        # Legacy model presence (unified, for backward compatibility)
+        self.model_mask = [False] * N
 
         # Edge rasters
         self.model_edge_key = [-1] * N
@@ -246,6 +297,11 @@ class ViewRaster:
         self.element_meta = []
         self.anno_meta_index_by_key = {}
         self.anno_meta = []
+
+        # Depth test statistics
+        self.depth_test_attempted = 0
+        self.depth_test_wins = 0
+        self.depth_test_rejects = 0
 
     @property
     def width(self):
@@ -281,12 +337,83 @@ class ViewRaster:
             return j * self.W + i
         return None
 
+    def try_write_cell(self, i, j, w_depth, source):
+        """Centralized cell write with depth testing (MANDATORY contract).
+
+        This is the ONLY function that should write to w_occ and occupancy layers.
+        All rasterization code must route writes through this function.
+
+        Args:
+            i, j: Cell indices (column, row)
+            w_depth: W-depth from view-space UVW transform (depth = dot(p - O, forward))
+            source: Source identifier ("HOST", "LINK", or "DWG")
+
+        Returns:
+            True if depth won and cell was updated, False otherwise
+
+        Behavior:
+            1. Compare w_depth to w_occ[u,v]
+            2. If nearer (w_depth < w_occ):
+                - Update w_occ
+                - Mark exactly ONE occupancy layer (occ_host, occ_link, or occ_dwg)
+                - Update model_mask (unified legacy layer)
+                - Update tile acceleration
+                - Increment depth_test_wins
+            3. If not nearer:
+                - Do nothing
+                - Increment depth_test_rejects
+            4. Always increment depth_test_attempted
+
+        Commentary:
+            This enforces the depth-tested occupancy contract:
+            - Behind geometry never marks occupancy
+            - Per-source layers only mark winning depth
+            - All sources share the same w_occ buffer
+        """
+        idx = self.get_cell_index(i, j)
+        if idx is None:
+            return False
+
+        self.depth_test_attempted += 1
+
+        # Depth test: is this element nearer than what's already there?
+        if w_depth < self.w_occ[idx]:
+            # Check if this is first write to cell (for tile filled count)
+            was_empty = self.w_occ[idx] == float("inf")
+
+            # Depth wins - update occlusion and occupancy
+            self.w_occ[idx] = w_depth
+            self.model_mask[idx] = True
+
+            # Mark exactly one occupancy layer based on source
+            if source == "HOST":
+                self.occ_host[idx] = True
+            elif source == "LINK":
+                self.occ_link[idx] = True
+            elif source == "DWG":
+                self.occ_dwg[idx] = True
+
+            # Update tile acceleration
+            self.tile.update_w_min(i, j, w_depth)
+            if was_empty:
+                self.tile.update_filled_count(i, j, increment=1)
+
+            self.depth_test_wins += 1
+            return True
+        else:
+            # Depth rejected - element is behind existing geometry
+            self.depth_test_rejects += 1
+            return False
+
     def set_cell_filled(self, i, j, depth=None):
         """Mark cell as filled with optional depth.
 
+        DEPRECATED: Use try_write_cell() instead for depth-tested writes.
+        This method is kept for backward compatibility only.
+
         Args:
             i, j: Cell indices
-            depth: Optional depth value (updates z_min if provided and nearer)
+            depth: Optional depth value (updates w_occ if provided and nearer)
 
         Returns:
             True if cell was updated, False if out of bounds
@@ -300,14 +427,14 @@ class ViewRaster:
         self.model_mask[idx] = True
 
         if depth is not None:
-            if depth < self.z_min[idx]:
-                self.z_min[idx] = depth
-                self.tile.update_z_min(i, j, depth)
+            if depth < self.w_occ[idx]:
+                self.w_occ[idx] = depth
+                self.tile.update_w_min(i, j, depth)
             # DEBUG: Log if depth wasn't updated
             elif getattr(self, '_debug_depth_log_count', 0) < 5:
                 self._debug_depth_log_count = getattr(self, '_debug_depth_log_count', 0) + 1
-                print("[DEBUG] set_cell_filled({0},{1}): depth={2} NOT < z_min[{3}]={4}".format(
-                    i, j, depth, idx, self.z_min[idx]))
+                print("[DEBUG] set_cell_filled({0},{1}): depth={2} NOT < w_occ[{3}]={4}".format(
+                    i, j, depth, idx, self.w_occ[idx]))
 
         if was_empty:
             self.tile.update_filled_count(i, j, increment=1)
@@ -387,14 +514,15 @@ class ViewRaster:
 
             self.anno_over_model[i] = has_anno and has_model
 
-    def rasterize_silhouette_loops(self, loops, key_index, depth=0.0):
-        """Rasterize element silhouette loops into model layers.
+    def rasterize_silhouette_loops(self, loops, key_index, depth=0.0, source="HOST"):
+        """Rasterize element silhouette loops into model layers with depth testing.
 
         Args:
             loops: List of loop dicts from silhouette.get_element_silhouette()
                    Each loop has: {'points': [(u, v), ...], 'is_hole': bool}
             key_index: Element metadata index (for edge tracking)
-            depth: Depth value for z-buffer (default: 0.0)
+            depth: W-depth value for occlusion testing (default: 0.0)
+            source: Source type - "HOST", "LINK", or "DWG" (default: "HOST")
 
         Returns:
             Number of cells filled
@@ -402,8 +530,8 @@ class ViewRaster:
         Commentary:
             - Converts loop points from view UV to cell indices
             - Rasterizes loop edges using Bresenham line algorithm
-            - Fills interior using scanline fill
-            - Updates model_mask, z_min, and model_edge_key
+            - Fills interior using depth-tested scanline fill (try_write_cell)
+            - Updates w_occ, per-source occupancy, and model_edge_key
         """
         if not loops:
             return 0
@@ -432,11 +560,11 @@ class ViewRaster:
                 points_ij.append((i, j))
 
             # Rasterize edges
-            # 1) Fill interior FIRST (writes z_min for occlusion)
+            # 1) Fill interior FIRST (writes w_occ and per-source occupancy for occlusion)
             if not is_hole:
-                filled_count += self._scanline_fill(points_ij, key_index, depth)
+                filled_count += self._scanline_fill(points_ij, key_index, depth, source)
 
-            # 2) Then rasterize edges with depth-test against updated z-buffer
+            # 2) Then rasterize edges with depth-test against updated w_occ buffer
             for k in range(len(points_ij) - 1):
                 i0, j0 = points_ij[k]
                 i1, j1 = points_ij[k + 1]
@@ -446,25 +574,27 @@ class ViewRaster:
                     if idx is None:
                         continue
 
-                    z_here = self.z_min[idx]
-                    if z_here == float("inf") or depth <= z_here:
+                    w_here = self.w_occ[idx]
+                    if w_here == float("inf") or depth <= w_here:
                         self.model_edge_key[idx] = key_index
 
         return filled_count
 
-    def _scanline_fill(self, points_ij, key_index, depth):
-        """Fill polygon interior using scanline algorithm.
+    def _scanline_fill(self, points_ij, key_index, depth, source):
+        """Fill polygon interior using scanline algorithm with depth testing.
 
         Args:
             points_ij: List of (i, j) cell coordinates forming closed polygon
             key_index: Element metadata index
-            depth: Depth value for z-buffer
+            depth: W-depth value for occlusion testing
+            source: Source type ("HOST", "LINK", or "DWG")
 
         Returns:
             Number of cells filled
 
         Commentary:
-            - Sets model_mask and z_min for OCCLUSION (interior blocks visibility)
+            - Uses try_write_cell for depth-tested occlusion
+            - Sets w_occ and per-source occupancy for OCCLUSION (interior blocks visibility)
             - Does NOT set model_edge_key (only boundary marks occupancy)
         """
         if len(points_ij) < 3:
@@ -507,9 +637,9 @@ class ViewRaster:
                 i_end = intersections[k + 1] if k + 1 < len(intersections) else intersections[k]
 
                 for i in range(i_start, i_end + 1):
-                    # Set occlusion (model_mask, z_min) but NOT occupancy (model_edge_key)
-                    # Interior fills space and blocks visibility, but doesn't mark edges
-                    if self.set_cell_filled(i, j, depth=depth):
+                    # Use try_write_cell for depth-tested occlusion
+                    # Interior fills space and blocks visibility via per-source occupancy
+                    if self.try_write_cell(i, j, w_depth=depth, source=source):
                         filled += 1
 
         return filled
@@ -531,8 +661,11 @@ class ViewRaster:
                 "ymax": self.bounds_xy.ymax,
             },
             # Note: Full array export - consider RLE compression for production
+            "w_occ": [w if w != float("inf") else None for w in self.w_occ],
+            "occ_host": self.occ_host,
+            "occ_link": self.occ_link,
+            "occ_dwg": self.occ_dwg,
             "model_mask": self.model_mask,
-            "z_min": [z if z != float("inf") else None for z in self.z_min],
             "model_edge_key": self.model_edge_key,
             "model_proxy_key": self.model_proxy_key,
             "model_proxy_mask": self.model_proxy_mask,
@@ -540,6 +673,11 @@ class ViewRaster:
             "anno_over_model": self.anno_over_model,
             "element_meta": self.element_meta,
             "anno_meta": self.anno_meta,
+            "depth_test_stats": {
+                "attempted": self.depth_test_attempted,
+                "wins": self.depth_test_wins,
+                "rejects": self.depth_test_rejects,
+            },
         }
 
 
