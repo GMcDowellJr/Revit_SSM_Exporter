@@ -49,6 +49,25 @@ def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_pro
         width = view_result['width']
         height = view_result['height']
         raster_dict = view_result['raster']
+        
+        def _has_model(idx):
+            mode = (model_presence_mode or "occ").lower()
+            if mode == "occ":
+                mm = raster_dict.get("model_mask", [])
+                return (idx < len(mm)) and bool(mm[idx])
+            if mode == "edge":
+                mek = raster_dict.get("model_edge_key", [])
+                return (idx < len(mek)) and (mek[idx] != -1)
+            if mode == "proxy":
+                pm = raster_dict.get("model_proxy_mask", raster_dict.get("model_proxy_presence", []))
+                return (idx < len(pm)) and bool(pm[idx])
+            if mode == "any":
+                mm = raster_dict.get("model_mask", [])
+                mek = raster_dict.get("model_edge_key", [])
+                pm = raster_dict.get("model_proxy_mask", raster_dict.get("model_proxy_presence", []))
+                present = ((idx < len(mm)) and bool(mm[idx])) or ((idx < len(mek)) and (mek[idx] != -1))
+                return present or ((idx < len(pm)) and bool(pm[idx]))
+            raise ValueError("Unknown model_presence_mode: {0}".format(mode))
 
         # Use model_edge_key (OCCUPANCY - boundary only) instead of model_mask (OCCLUSION - interior + boundary)
         model_edge_key = raster_dict.get('model_edge_key', [])
@@ -86,7 +105,7 @@ def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_pro
                     continue
 
                 # Check if cell has model edge (occupancy - boundary only) or annotation
-                has_model = (model_edge_key[idx] != -1) if idx < len(model_edge_key) else False
+                has_model = _has_model(idx)
                 has_anno = (anno_key[idx] >= 0) if idx < len(anno_key) else False
 
                 # Skip completely empty cells
@@ -100,9 +119,9 @@ def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_pro
                 elif has_anno:
                     # Annotation only = blue
                     col = col_anno_only
-                elif cut_vs_projection and idx < len(anno_over_model):
-                    # Model only: distinguish cut vs projection
-                    col = col_cut if anno_over_model[idx] else col_projection
+                elif cut_vs_projection:
+                    # If/when a real cut mask exists, wire it here; until then, fall back.
+                    col = col_model
                 else:
                     # Model only: default gray
                     col = col_model

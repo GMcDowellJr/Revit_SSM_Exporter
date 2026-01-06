@@ -9,27 +9,28 @@ import hashlib
 from datetime import datetime
 
 
-def compute_cell_metrics(raster):
+def compute_cell_metrics(raster, model_presence_mode="occ", diag=None):
     """Compute occupancy metrics from raster arrays.
 
-    Args:
+    Args:# Restore raster arrays
         raster: ViewRaster object
+        model_presence_mode: "occ" | "edge" | "proxy" | "any"
+            - "occ"  : depth-tested interior occupancy (default; triangles/occlusion truth)
+            - "edge" : visible edge labeling (boundary only)
+            - "proxy": heuristic proxy presence only (tiny/linear)
+            - "any"  : occ OR edge (optionally proxy if caller chooses)
+        diag: optional diagnostics collector
 
     Returns:
         Dict with:
             - TotalCells: int (W * H)
             - Empty: int (neither model nor anno)
-            - ModelOnly: int (model edge but no anno)
-            - AnnoOnly: int (anno but no model)
+            - ModelOnly: int (model present but no anno)
+            - AnnoOnly: int (anno present but no model)
             - Overlap: int (both model and anno)
 
     Raises:
         AssertionError: If invariant fails (TotalCells != sum of categories)
-
-    Commentary:
-        ✔ Uses model_edge_key (OCCUPANCY - boundary only) instead of model_mask (OCCLUSION - interior)
-        ✔ Validates critical invariant: TotalCells = Empty + ModelOnly + AnnoOnly + Overlap
-        ✔ Iterates once over all cells for efficiency
     """
     total = raster.W * raster.H
     empty = 0
@@ -37,10 +38,9 @@ def compute_cell_metrics(raster):
     anno_only = 0
     overlap = 0
 
-    for i in range(total):
-        # Use model_edge_key (occupancy - boundary only) instead of model_mask (occlusion - interior)
-        has_model = (raster.model_edge_key[i] != -1) if i < len(raster.model_edge_key) else False
-        has_anno = raster.anno_over_model[i] if i < len(raster.anno_over_model) else False
+    for idx in range(total):
+        has_model = raster.has_model_present(idx, mode=model_presence_mode)
+        has_anno = raster.anno_over_model[idx] if idx < len(raster.anno_over_model) else False
 
         if has_model and has_anno:
             overlap += 1
@@ -51,7 +51,6 @@ def compute_cell_metrics(raster):
         else:
             empty += 1
 
-    # Validate invariant
     computed_total = empty + model_only + anno_only + overlap
     if total != computed_total:
         msg = (
@@ -71,7 +70,7 @@ def compute_cell_metrics(raster):
         "Empty": empty,
         "ModelOnly": model_only,
         "AnnoOnly": anno_only,
-        "Overlap": overlap
+        "Overlap": overlap,
     }
 
 
@@ -521,6 +520,8 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
         )
 
         # Restore raster arrays
+        raster.model_edge_key = raster_dict.get("model_edge_key", [])
+        raster.model_proxy_mask = raster_dict.get("model_proxy_mask", raster_dict.get("model_proxy_presence", []))
         raster.model_mask = raster_dict.get("model_mask", [])
         raster.anno_over_model = raster_dict.get("anno_over_model", [])
         raster.anno_key = raster_dict.get("anno_key", [])
@@ -528,7 +529,12 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
 
         # Compute metrics (must not be silent)
         try:
-            metrics = compute_cell_metrics(raster)
+            model_presence_mode = getattr(config, "model_presence_mode", "occ")
+            metrics = compute_cell_metrics(
+                raster,
+                model_presence_mode=model_presence_mode,
+                diag=diag,
+            )
             anno_metrics = compute_annotation_type_metrics(raster)
         except Exception as e:
             if diag is not None:
@@ -540,12 +546,14 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
                     extra={
                         "view_id": view_result.get("view_id", 0),
                         "view_name": view_result.get("view_name", ""),
-                        "width": raster_dict.get("width", 0),
-                        "height": raster_dict.get("height", 0),
+                        "width": raster_dict.get("width", raster_dict.get("W", 0)),
+                        "height": raster_dict.get("height", raster_dict.get("H", 0)),
+                        "model_presence_mode": model_presence_mode,
                     },
                 )
             # Do not recover here: metrics failure should fail the export deterministically
             raise
+
 
         # Build run_info
         run_info = {
