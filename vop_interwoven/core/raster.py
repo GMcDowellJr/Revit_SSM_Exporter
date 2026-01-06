@@ -340,6 +340,68 @@ class ViewRaster:
         if 0 <= i < self.W and 0 <= j < self.H:
             return j * self.W + i
         return None
+    # --- PR4: explicit "model present" semantics (unify across modules) ---
+
+    @property
+    def model_occ_mask(self):
+        """Depth-tested interior occupancy ('truth'). Backed by legacy model_mask."""
+        return self.model_mask
+
+    @model_occ_mask.setter
+    def model_occ_mask(self, value):
+        self.model_mask = value
+
+    @property
+    def model_proxy_presence(self):
+        """Heuristic presence mask (Tiny/Linear proxies). Backed by legacy model_proxy_mask."""
+        return self.model_proxy_mask
+
+    @model_proxy_presence.setter
+    def model_proxy_presence(self, value):
+        self.model_proxy_mask = value
+
+    def has_model_occ(self, idx):
+        """True if depth-tested interior occupancy is present at idx."""
+        return (0 <= idx < len(self.model_mask)) and bool(self.model_mask[idx])
+
+    def has_model_edge(self, idx):
+        """True if a visible model edge label is present at idx."""
+        return (0 <= idx < len(self.model_edge_key)) and (self.model_edge_key[idx] != -1)
+
+    def has_model_proxy(self, idx):
+        """True if proxy presence is present at idx."""
+        return (0 <= idx < len(self.model_proxy_mask)) and bool(self.model_proxy_mask[idx])
+
+    def has_model_present(self, idx, mode="occ", include_proxy_if_any=True):
+        """
+        Unified "model present" predicate with explicit mode.
+
+        mode:
+          - "occ"   : depth-tested interior (default)
+          - "edge"  : boundary/edge labeling
+          - "proxy" : heuristic proxy presence only
+          - "any"   : occ OR edge (optionally OR proxy)
+
+        include_proxy_if_any:
+          - only applies when mode=="any"
+          - default True because "any" should mean any model signal (occ/edge/proxy)
+
+        """
+        mode = (mode or "occ").lower()
+
+        if mode == "occ":
+            return self.has_model_occ(idx)
+        if mode == "edge":
+            return self.has_model_edge(idx)
+        if mode == "proxy":
+            return self.has_model_proxy(idx)
+        if mode == "any":
+            present = self.has_model_occ(idx) or self.has_model_edge(idx)
+            if include_proxy_if_any:
+                present = present or self.has_model_proxy(idx)
+            return present
+
+        raise ValueError("Unknown model-present mode: {0}".format(mode))
 
     def try_write_cell(self, i, j, w_depth, source):
         """Centralized cell write with depth testing (MANDATORY contract).
