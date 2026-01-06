@@ -71,33 +71,102 @@ def process_document_views(doc, view_ids, cfg):
 
             view = doc.GetElement(elem_id)
 
-            # 0) Validate supported view types (2D-ish)
-            if not _is_supported_2d_view(view, diag=diag):
-                # Record skip reason for traceability (optional but useful)
-                if diag is not None:
-                    diag.warn(
-                        phase="pipeline",
-                        callsite="process_document_views",
-                        message="Skipping unsupported view type",
-                        view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
-                        extra={"view_name": getattr(view, "Name", None)},
-                    )
+            # 0) Capability gating / mode selection (PR6)
+            from .revit.view_basis import resolve_view_mode, VIEW_MODE_MODEL_AND_ANNOTATION, VIEW_MODE_ANNOTATION_ONLY, VIEW_MODE_REJECTED
 
+            view_mode, mode_reason = resolve_view_mode(view, diag=diag)
+
+            if diag is not None:
+                # Diagnostics implementations differ (some do not implement .info()).
+                # This must never crash the view loop.
+                payload = {
+                    "mode": view_mode,
+                    "reason": mode_reason,
+                    "view_name": getattr(view, "Name", None),
+                }
+                try:
+                    if hasattr(diag, "debug"):
+                        diag.debug(
+                            phase="pipeline",
+                            callsite="process_document_views.mode",
+                            message="Resolved view processing mode",
+                            view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                            extra=payload,
+                        )
+                    elif hasattr(diag, "warn"):
+                        diag.warn(
+                            phase="pipeline",
+                            callsite="process_document_views.mode",
+                            message="Resolved view processing mode",
+                            view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                            extra=payload,
+                        )
+                except Exception:
+                    # Never allow diagnostics logging to fail the pipeline
+                    pass
+
+            if view_mode == VIEW_MODE_REJECTED:
+                # Do not silently drop rejected views — always emit a per-view result
+                if diag is not None:
+                    try:
+                        diag.warn(
+                            phase="pipeline",
+                            callsite="process_document_views",
+                            message="View rejected by capability gating",
+                            view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                            extra={
+                                "view_name": getattr(view, "Name", None),
+                                "mode_reason": mode_reason,
+                            },
+                        )
+                    except Exception:
+                        # Diagnostics must never break the pipeline
+                        pass
+
+                results.append(
+                    {
+                        "view_id": getattr(getattr(view, "Id", None), "IntegerValue", None),
+                        "view_name": getattr(view, "Name", None),
+                        "success": False,
+                        "view_mode": view_mode,
+                        "view_mode_reason": mode_reason,
+                        "diag": diag.to_dict() if diag is not None else None,
+                    }
+                )
                 continue
 
             # 1) Init raster bounds/resolution
             raster = init_view_raster(doc, view, cfg, diag=diag)
+            
+            # Persist view mode for downstream exports/diagnostics
+            try:
+                raster.view_mode = view_mode
+                raster.view_mode_reason = mode_reason
+            except Exception:
+                pass
 
-            # 2) Broad-phase visible elements
-            elements = collect_view_elements(doc, view, raster, diag=diag)
+            if view_mode == VIEW_MODE_MODEL_AND_ANNOTATION:
+                # 2) Broad-phase visible elements
+                elements = collect_view_elements(doc, view, raster, diag=diag)
 
-            # 3) MODEL PASS
-            render_model_front_to_back(doc, view, raster, elements, cfg, diag=diag)
+                # 3) MODEL PASS
+                render_model_front_to_back(doc, view, raster, elements, cfg, diag=diag)
 
-            # 4) ANNO PASS
+            elif view_mode == VIEW_MODE_ANNOTATION_ONLY:
+                # Annotation-only: do NOT attempt model collection, depth sorting, or link expansion
+                if diag is not None:
+                    diag.warn(
+                        phase="pipeline",
+                        callsite="process_document_views",
+                        message="Annotation-only mode: skipping model pipeline phases",
+                        view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                        extra={"view_name": getattr(view, "Name", None), "mode_reason": mode_reason},
+                    )
+
+            # 4) ANNO PASS (always allowed)
             rasterize_annotations(doc, view, raster, cfg, diag=diag)
 
-            # 5) Derive annoOverModel
+            # 5) Derive annoOverModel (safe even if model is empty)
             raster.finalize_anno_over_model(cfg)
 
             # 6) Export
@@ -143,20 +212,47 @@ def init_view_raster(doc, view, cfg, diag=None):
     # View basis
     basis = make_view_basis(view, diag=diag)
 
-    # Resolve bounds centrally (crop/extents/fallback + optional anno expansion + cap reporting)
-    bounds_result = resolve_view_bounds(
-        view,
-        diag=diag,
-        policy={
-            "doc": doc,
-            "basis": basis,
-            "cfg": cfg,
-            "buffer_ft": cfg.bounds_buffer_ft,
+    # Resolve bounds centrally
+    # NOTE: Drafting/annotation-only views require annotation-only bounds; otherwise fallback base bounds dominate.
+    from .revit.view_basis import resolve_view_mode, VIEW_MODE_ANNOTATION_ONLY, resolve_annotation_only_bounds
+
+    view_mode, _mode_reason = resolve_view_mode(view, diag=diag)
+
+    if view_mode == VIEW_MODE_ANNOTATION_ONLY:
+        anno_bounds = resolve_annotation_only_bounds(doc, view, basis, cell_size_ft, cfg=cfg, diag=diag)
+
+        if anno_bounds is None:
+            # No driver annotations → deterministic small fallback to avoid huge grids
+            from .core.math_utils import Bounds2D
+            anno_bounds = Bounds2D(-10.0, -10.0, 10.0, 10.0)
+
+        bounds_result = {
+            "bounds_uv": anno_bounds,
+            "reason": "annotation_only",
+            "confidence": "med",
+            "anno_expanded": True,
+            "capped": False,
+            "cap_before": None,
+            "cap_after": None,
+            "grid_W": int(max(1, math.ceil(float(anno_bounds.width()) / cell_size_ft))),
+            "grid_H": int(max(1, math.ceil(float(anno_bounds.height()) / cell_size_ft))),
+            "buffer_ft": 0.0,
             "cell_size_ft": cell_size_ft,
-            "max_W": cfg.max_grid_cells_width,
-            "max_H": cfg.max_grid_cells_height,
-        },
-    )
+        }
+    else:
+        bounds_result = resolve_view_bounds(
+            view,
+            diag=diag,
+            policy={
+                "doc": doc,
+                "basis": basis,
+                "cfg": cfg,
+                "buffer_ft": cfg.bounds_buffer_ft,
+                "cell_size_ft": cell_size_ft,
+                "max_W": cfg.max_grid_cells_width,
+                "max_H": cfg.max_grid_cells_height,
+            },
+        )
 
     bounds_xy = bounds_result["bounds_uv"]
     W = int(bounds_result.get("grid_W", 1) or 1)
@@ -376,7 +472,11 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None):
                     message="Early-out/stamp block failed; continuing without early-out",
                     view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
                     elem_id=getattr(getattr(elem, "Id", None), "IntegerValue", None),
-                    extra={"doc_key": doc_key, "exc": str(e)},
+                    extra={
+                        # doc_key is not defined in this scope; never allow diagnostics to raise
+                        "doc_key": None,
+                        "exc": str(e),
+                    },
                 )
 
         # Rasterize silhouette loops if we have them
@@ -873,6 +973,8 @@ def export_view_raster(view, raster, cfg, diag=None):
     return {
         "view_id": view.Id.IntegerValue,
         "view_name": view.Name,
+        "view_mode": getattr(raster, "view_mode", None),
+        "view_mode_reason": getattr(raster, "view_mode_reason", None),
         "width": int(getattr(raster, "W", 0) or 0),
         "height": int(getattr(raster, "H", 0) or 0),
         "cell_size": raster.cell_size_ft,

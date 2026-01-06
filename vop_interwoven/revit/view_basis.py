@@ -703,3 +703,279 @@ def resolve_view_bounds(view, diag=None, policy=None):
         "buffer_ft": buffer_ft,
         "cell_size_ft": cell_size_ft,
     }
+
+def _view_type_name(view):
+    """
+    Best-effort, Revit-free view type name extraction for gating + tests.
+    Returns a stable string (e.g., 'FloorPlan', 'DraftingView') or ''.
+
+    NOTE: In Dynamo/Revit, View.ViewType may stringify as a number (e.g. '1').
+    We include a conservative numeric mapping to avoid rejecting valid plan/section views.
+    """
+    if view is None:
+        return ""
+
+    try:
+        vt = getattr(view, "ViewType", None)
+        if vt is None:
+            return ""
+
+        # 1) If the enum stringifies to a meaningful name, use it.
+        try:
+            s = str(vt) or ""
+            s_clean = s.split(".")[-1]
+            # If it's not purely numeric, assume it's already a name like "FloorPlan"
+            if s_clean and not s_clean.isdigit():
+                return s_clean
+        except Exception:
+            pass
+
+        # 2) Some stubs expose Name on the enum
+        try:
+            name = getattr(vt, "Name", "") or ""
+            if name:
+                return name
+        except Exception:
+            pass
+
+        # 3) Fallback: numeric mapping (covers int-valued enums or numeric stringification)
+        # This mapping is conservative and can be extended as you encounter more values.
+        try:
+            if isinstance(vt, int):
+                code = vt
+            else:
+                code = int(str(vt))
+        except Exception:
+            return ""
+
+        # Common Revit ViewType codes (observed in some Dynamo contexts)
+        # If a code is unknown, return numeric string to keep it visible in diagnostics.
+        code_map = {
+            1: "FloorPlan",
+            2: "CeilingPlan",
+            3: "Elevation",
+            4: "ThreeD",
+            5: "Schedule",
+            6: "DrawingSheet",
+            7: "ProjectBrowser",
+            8: "Report",
+            9: "DraftingView",
+            10: "Legend",
+            11: "Section",
+            12: "Detail",
+            13: "Rendering",
+            14: "Walkthrough",
+            15: "SystemBrowser",
+            16: "CostReport",
+            17: "LoadReport",
+            18: "ColumnSchedule",
+            19: "PanelSchedule",
+            20: "PresureLossReport",
+            21: "AreaPlan",
+            22: "EngineeringPlan",
+        }
+        return code_map.get(code, str(code))
+
+    except Exception:
+        return ""
+
+def supports_model_geometry(view, diag=None):
+    """
+    Capability: view can reasonably be expected to host model geometry in this pipeline.
+
+    IMPORTANT: Drafting views are explicitly treated as 'no model truth' even if some APIs exist.
+    """
+    if view is None:
+        return False
+
+    try:
+        if bool(getattr(view, "IsTemplate", False)):
+            return False
+    except Exception:
+        # If we cannot read IsTemplate, do not assume it's safe
+        return False
+
+    vt = _view_type_name(view)
+    if vt in ("DraftingView",):
+        return False
+
+    # Conservative allow-list: if it looks like a 2D model view, treat as model-capable.
+    # (We avoid Autodesk imports so unit tests can run.)
+    if vt in (
+        "FloorPlan",
+        "CeilingPlan",
+        "EngineeringPlan",
+        "AreaPlan",
+        "Section",
+        "Elevation",
+        "Detail",  # callouts/detail views can still show model geometry
+    ):
+        return True
+
+    # Unknown types: do NOT assume model truth.
+    return False
+
+
+def supports_crop_bounds(view, diag=None):
+    """
+    Capability: view supports crop-based bounds (not whether crop is active).
+    Drafting views are treated as NO for crop-model-bounds purposes.
+    """
+    if view is None:
+        return False
+
+    if not supports_model_geometry(view, diag=diag):
+        return False
+
+    # If CropBox can be accessed without throwing, we treat crop-bounds as supported.
+    try:
+        _ = getattr(view, "CropBox", None)
+        return True
+    except Exception:
+        return False
+
+
+def supports_depth(view, diag=None):
+    """
+    Capability: pipeline depth semantics are meaningful.
+    In this pipeline, depth is only meaningful if model geometry is meaningful.
+    """
+    return bool(supports_model_geometry(view, diag=diag))
+
+
+# Explicit “modes”
+VIEW_MODE_MODEL_AND_ANNOTATION = "MODEL_AND_ANNOTATION"
+VIEW_MODE_ANNOTATION_ONLY = "ANNOTATION_ONLY"
+VIEW_MODE_REJECTED = "REJECTED"
+
+
+def resolve_view_mode(view, diag=None, policy=None):
+    """
+    Decide how this view should be processed, and WHY.
+    Returns: (mode, reason_dict)
+    """
+    reason = {
+        "view_type": _view_type_name(view),
+        "is_template": None,
+        "supports_model_geometry": None,
+        "supports_crop_bounds": None,
+        "supports_depth": None,
+    }
+
+    if view is None:
+        return VIEW_MODE_REJECTED, {**reason, "why": "view_is_none"}
+
+    try:
+        reason["is_template"] = bool(getattr(view, "IsTemplate", False))
+        if reason["is_template"]:
+            return VIEW_MODE_REJECTED, {**reason, "why": "view_is_template"}
+    except Exception:
+        # Hard-fail conservative: we cannot safely classify this view
+        return VIEW_MODE_REJECTED, {**reason, "why": "cannot_read_is_template"}
+
+    reason["supports_model_geometry"] = supports_model_geometry(view, diag=diag)
+    reason["supports_crop_bounds"] = supports_crop_bounds(view, diag=diag)
+    reason["supports_depth"] = supports_depth(view, diag=diag)
+
+    vt = reason["view_type"]
+
+    # Drafting view is explicitly annotation-only (PR6 contract)
+    if vt == "DraftingView":
+        return VIEW_MODE_ANNOTATION_ONLY, {**reason, "why": "drafting_view_forced_annotation_only"}
+
+    # If it is not model-capable, reject rather than “pretend” (prevents silent semantic drift)
+    if not reason["supports_model_geometry"]:
+        return VIEW_MODE_REJECTED, {**reason, "why": "no_model_geometry_capability"}
+
+    # Model-capable views run full pipeline
+    return VIEW_MODE_MODEL_AND_ANNOTATION, {**reason, "why": "model_capable_view"}
+
+
+def resolve_annotation_only_bounds(doc, view, basis, cell_size_ft, cfg=None, diag=None):
+    """
+    Produce bounds from annotation extents ONLY (no union with model/crop).
+    This is required for drafting views; otherwise fallback base bounds dominate.
+    """
+    from ..core.math_utils import Bounds2D
+    from .annotation import collect_2d_annotations, is_extent_driver_annotation
+
+    view_id = None
+    try:
+        view_id = getattr(getattr(view, "Id", None), "IntegerValue", None)
+    except Exception:
+        view_id = None
+
+    # Collect view-specific annotations and compute UV extents
+    try:
+        annos = collect_2d_annotations(doc, view)
+    except Exception as e:
+        if diag is not None:
+            diag.warn(
+                phase="bounds",
+                callsite="resolve_annotation_only_bounds.collect",
+                message="Failed to collect annotations for annotation-only bounds",
+                view_id=view_id,
+                extra={"exc_type": type(e).__name__, "exc": str(e)},
+            )
+        return None
+
+    drivers = []
+    for elem, _atype in annos:
+        try:
+            if is_extent_driver_annotation(elem):
+                drivers.append(elem)
+        except Exception:
+            continue
+
+    if not drivers:
+        return None
+
+    min_u = min_v = max_u = max_v = None
+
+    for elem in drivers:
+        try:
+            bbox = elem.get_BoundingBox(view)
+            if bbox is None:
+                continue
+            mn = bbox.Min
+            mx = bbox.Max
+
+            # Project bbox corners to UV (best-effort)
+            pts = [
+                (mn.X, mn.Y, mn.Z),
+                (mx.X, mn.Y, mn.Z),
+                (mn.X, mx.Y, mn.Z),
+                (mx.X, mx.Y, mn.Z),
+                (mn.X, mn.Y, mx.Z),
+                (mx.X, mn.Y, mx.Z),
+                (mn.X, mx.Y, mx.Z),
+                (mx.X, mx.Y, mx.Z),
+            ]
+            for p in pts:
+                u, v = basis.transform_to_view_uv(p)
+                if min_u is None:
+                    min_u = max_u = u
+                    min_v = max_v = v
+                else:
+                    min_u = min(min_u, u)
+                    min_v = min(min_v, v)
+                    max_u = max(max_u, u)
+                    max_v = max(max_v, v)
+        except Exception as e:
+            if diag is not None:
+                diag.warn(
+                    phase="bounds",
+                    callsite="resolve_annotation_only_bounds.bbox",
+                    message="Failed to process annotation bbox for annotation-only bounds; skipping element",
+                    view_id=view_id,
+                    elem_id=getattr(getattr(elem, "Id", None), "IntegerValue", None),
+                    extra={"exc_type": type(e).__name__, "exc": str(e)},
+                )
+            continue
+
+    if min_u is None:
+        return None
+
+    # Apply a small padding (1 cell) so edge-touching annotations do not clip
+    pad = float(cell_size_ft)
+    return Bounds2D(min_u - pad, min_v - pad, max_u + pad, max_v + pad)
