@@ -46,27 +46,91 @@ def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_pro
             return None
 
         # Extract raster data
-        width = view_result['width']
-        height = view_result['height']
-        raster_dict = view_result['raster']
-        
+        # Accept either:
+        #   - full view_result dict: {"width","height","raster",...}
+        #   - raw raster dict: {"width","height",...} (common in Dynamo glue)
+        if isinstance(view_result, dict) and ("raster" in view_result):
+            raster_dict = view_result.get("raster") or {}
+            width = view_result.get("width")
+            height = view_result.get("height")
+            cfg = view_result.get("config") or {}
+        else:
+            raster_dict = view_result if isinstance(view_result, dict) else {}
+            width = None
+            height = None
+            cfg = {}
+
+        # Fallback to raster_dict width/height (ViewRaster.to_dict may include them)
+        def _pick_int(*vals):
+            for v in vals:
+                try:
+                    iv = int(v)
+                    if iv > 0:
+                        return iv
+                except Exception:
+                    continue
+            return 0
+
+        width = _pick_int(
+            width,
+            raster_dict.get("width", None),
+            view_result.get("grid_W", None) if isinstance(view_result, dict) else None,
+            raster_dict.get("grid_W", None),
+        )
+        height = _pick_int(
+            height,
+            raster_dict.get("height", None),
+            view_result.get("grid_H", None) if isinstance(view_result, dict) else None,
+            raster_dict.get("grid_H", None),
+        )
+
+        if width <= 0 or height <= 0:
+            vr_keys = list(view_result.keys()) if isinstance(view_result, dict) else [type(view_result).__name__]
+            rd_keys = list(raster_dict.keys()) if isinstance(raster_dict, dict) else [type(raster_dict).__name__]
+            raise KeyError(
+                "width/height missing or invalid in PNG export input; "
+                "view_result keys={0}; raster_dict keys={1}".format(vr_keys, rd_keys)
+            )
+
+        # Model presence mode (PR4): drives _has_model()
+        model_presence_mode = None
+        try:
+            if isinstance(cfg, dict):
+                model_presence_mode = cfg.get("model_presence_mode", None)
+            else:
+                model_presence_mode = getattr(cfg, "model_presence_mode", None)
+        except Exception:
+            model_presence_mode = None
+
+        model_edge_key = raster_dict.get("model_edge_key", [])
+        model_mask = raster_dict.get("model_mask", [])
+        model_proxy_mask = raster_dict.get(
+            "model_proxy_mask",
+            raster_dict.get("model_proxy_presence", []),
+        )
+
         def _has_model(idx):
             mode = (model_presence_mode or "occ").lower()
+
             if mode == "occ":
-                mm = raster_dict.get("model_mask", [])
-                return (idx < len(mm)) and bool(mm[idx])
+                return (idx < len(model_mask)) and bool(model_mask[idx])
+
             if mode == "edge":
-                mek = raster_dict.get("model_edge_key", [])
-                return (idx < len(mek)) and (mek[idx] != -1)
+                return (idx < len(model_edge_key)) and (model_edge_key[idx] != -1)
+
             if mode == "proxy":
-                pm = raster_dict.get("model_proxy_mask", raster_dict.get("model_proxy_presence", []))
-                return (idx < len(pm)) and bool(pm[idx])
+                return (idx < len(model_proxy_mask)) and bool(model_proxy_mask[idx])
+
             if mode == "any":
-                mm = raster_dict.get("model_mask", [])
-                mek = raster_dict.get("model_edge_key", [])
-                pm = raster_dict.get("model_proxy_mask", raster_dict.get("model_proxy_presence", []))
-                present = ((idx < len(mm)) and bool(mm[idx])) or ((idx < len(mek)) and (mek[idx] != -1))
-                return present or ((idx < len(pm)) and bool(pm[idx]))
+                present = False
+                if idx < len(model_mask):
+                    present = present or bool(model_mask[idx])
+                if idx < len(model_edge_key):
+                    present = present or (model_edge_key[idx] != -1)
+                if idx < len(model_proxy_mask):
+                    present = present or bool(model_proxy_mask[idx])
+                return present
+
             raise ValueError("Unknown model_presence_mode: {0}".format(mode))
 
         # Use model_edge_key (OCCUPANCY - boundary only) instead of model_mask (OCCLUSION - interior + boundary)
@@ -100,9 +164,6 @@ def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_pro
         for i in range(width):
             for j in range(height):
                 idx = j * width + i
-
-                if idx >= len(model_edge_key):
-                    continue
 
                 # Check if cell has model edge (occupancy - boundary only) or annotation
                 has_model = _has_model(idx)
@@ -187,6 +248,28 @@ def export_pipeline_results_to_pngs(pipeline_result, output_dir, pixels_per_cell
             os.makedirs(output_dir)
 
         for view_data in pipeline_result.get('views', []):
+            
+            # Skip views that did not produce raster payload (e.g., per-view failure stub)
+            # These have keys like: {'view_id','view_name','success','diag'} and cannot be exported to PNG.
+            if not isinstance(view_data, dict) or ("raster" not in view_data):
+                if diag is not None:
+                    diag.warn(
+                        phase="export_png",
+                        callsite="export_pipeline_results_to_pngs",
+                        message="Skipping PNG export for view without raster payload",
+                        extra={
+                            "view_keys": list(view_data.keys()) if isinstance(view_data, dict) else [type(view_data).__name__],
+                            "view_id": (view_data.get("view_id") if isinstance(view_data, dict) else None),
+                            "view_name": (view_data.get("view_name") if isinstance(view_data, dict) else None),
+                            "success": (view_data.get("success") if isinstance(view_data, dict) else None),
+                        },
+                    )
+                else:
+                    print("Skipping PNG export for view without raster payload: {0}".format(
+                        view_data.get("view_name", "<unknown>") if isinstance(view_data, dict) else type(view_data).__name__
+                    ))
+                continue
+
             view_name = view_data['view_name']
             view_id = view_data['view_id']
 
