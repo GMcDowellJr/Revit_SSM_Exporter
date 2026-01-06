@@ -42,8 +42,37 @@ def _sample_geom_object(obj, emit_point):
              mesh = face.Triangulate()
          except Exception:
              continue
-         for i in range(mesh.NumVertices):
-             emit_point(mesh.get_Vertex(i))
+
+         # Mesh API varies across Revit wrappers:
+         # - Some meshes expose Vertices (iterable or Size + indexer)
+         # - Some expose get_Vertex(i) but not NumVertices
+         # Tier-B is optional; must not throw.
+         verts = getattr(mesh, "Vertices", None)
+         if verts is not None:
+             try:
+                 for vtx in verts:
+                     emit_point(vtx)
+             except Exception:
+                 # Some Vertex collections aren't iterable; try index access.
+                 try:
+                     size = getattr(verts, "Size", None)
+                     if isinstance(size, int):
+                         for i in range(size):
+                             emit_point(verts[i])
+                 except Exception:
+                     pass
+         else:
+             # Fallback: use best-effort vertex count helper + get_Vertex(i)
+             try:
+                 from vop_interwoven.core.geometry import meshvertexcount
+                 n = meshvertexcount(mesh)
+                 get_v = getattr(mesh, "get_Vertex", None)
+                 if callable(get_v) and isinstance(n, int) and n > 0:
+                     for i in range(n):
+                         emit_point(get_v(i))
+             except Exception:
+                 pass
+
      return
 
  # Curves

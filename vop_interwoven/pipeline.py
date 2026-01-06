@@ -409,8 +409,9 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None):
                     continue
 
                 # Tier-A ambiguity trigger (selectively enable Tier-B proxy)
-                width_cells = rect.width()
-                height_cells = rect.height()
+                # NOTE: multiple CellRect implementations exist; derive dimensions via helper.
+                from .core.math_utils import cellrect_dims
+                width_cells, height_cells = cellrect_dims(rect)
                 minor_cells = min(width_cells, height_cells)
                 aabb_area_cells = width_cells * height_cells
                 grid_area = raster.W * raster.H
@@ -465,19 +466,28 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None):
 
         except Exception as e:
             # Must be observable, and must remain conservative (do not skip element).
+            # Early-out is an optimization; failures must not change raster results.
             if diag is not None:
-                diag.warn(
-                    phase="pipeline",
-                    callsite="render_model_front_to_back.early_out",
-                    message="Early-out/stamp block failed; continuing without early-out",
-                    view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
-                    elem_id=getattr(getattr(elem, "Id", None), "IntegerValue", None),
-                    extra={
-                        # doc_key is not defined in this scope; never allow diagnostics to raise
-                        "doc_key": None,
-                        "exc": str(e),
-                    },
-                )
+                try:
+                    view_id = getattr(getattr(view, "Id", None), "IntegerValue", None)
+                    elem_id = getattr(getattr(elem, "Id", None), "IntegerValue", None)
+                    dedupe_key = "early_out_failed|{}".format(view_id)
+                    diag.debug_dedupe(
+                        dedupe_key=dedupe_key,
+                        phase="pipeline",
+                        callsite="render_model_front_to_back.early_out",
+                        message="Early-out/stamp block failed; continuing without early-out",
+                        view_id=view_id,
+                        elem_id=elem_id,
+                        extra={
+                            # doc_key is not defined in this scope; never allow diagnostics to raise
+                            "doc_key": None,
+                            "exc": str(e),
+                        },
+                    )
+                except Exception:
+                    # Diagnostics must never throw.
+                    pass
 
         # Rasterize silhouette loops if we have them
         if loops:

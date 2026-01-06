@@ -70,3 +70,23 @@ def test_to_dict_is_json_serializable():
     payload = diag.to_dict()
     # Must not throw:
     json.dumps(payload)
+
+def test_debug_dedupe_records_once_and_updates_suppressed_count():
+    diag = Diagnostics(max_events=10, capture_traceback=False)
+
+    for i in range(5):
+        diag.debug_dedupe(
+            dedupe_key="k",
+            phase="unit",
+            callsite="dedupe",
+            message="m",
+            view_id=1,
+            elem_id=100 + i,
+            extra={"x": "y"},
+        )
+
+    d = diag.to_dict()
+    assert d["num_events"] == 1
+    ev = d["events"][0]
+    assert ev["level"] == "DEBUG"
+    assert ev["extra"]["suppressed_count"] == 4
