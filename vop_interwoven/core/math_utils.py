@@ -97,6 +97,14 @@ class CellRect:
         """Total number of cells in rectangle."""
         return self.width_cells * self.height_cells
 
+    # Back-compat with older callsites that treated CellRect like Bounds2D
+    # and expected width()/height() methods.
+    def width(self):
+        return self.width_cells
+
+    def height(self):
+        return self.height_cells
+
     def center_cell(self):
         """Return (i, j) of center cell."""
         i_center = (self.i_min + self.i_max) // 2
@@ -105,6 +113,49 @@ class CellRect:
 
     def __repr__(self):
         return f"CellRect(i={self.i_min}..{self.i_max}, j={self.j_min}..{self.j_max}, {self.width_cells}x{self.height_cells})"
+
+def cellrect_dims(rect):
+    """Return (width_cells, height_cells) for any supported CellRect-like object.
+
+    This is the single source of truth for deriving dimensions from a projected
+    cell-rectangle, because multiple implementations exist (e.g. i_min/i_max vs
+    x0/x1). Returns non-negative ints.
+
+    Supported shapes:
+      - core.math_utils.CellRect: i_min/i_max/j_min/j_max or width_cells/height_cells
+      - annotation.project_bbox_to_cell_rect CellRect: x0/x1/y0/y1 or width_cells/height_cells
+    """
+    if rect is None:
+        raise ValueError("rect is None")
+
+    w = getattr(rect, "width_cells", None)
+    h = getattr(rect, "height_cells", None)
+    if isinstance(w, int) and isinstance(h, int):
+        return (max(0, w), max(0, h))
+
+    # Inclusive index form
+    i_min = getattr(rect, "i_min", None)
+    i_max = getattr(rect, "i_max", None)
+    j_min = getattr(rect, "j_min", None)
+    j_max = getattr(rect, "j_max", None)
+    if all(v is not None for v in (i_min, i_max, j_min, j_max)):
+        try:
+            return (max(0, int(i_max) - int(i_min) + 1), max(0, int(j_max) - int(j_min) + 1))
+        except Exception as e:
+            raise ValueError("unusable i_min/i_max/j_min/j_max") from e
+
+    # Half-open coordinate form
+    x0 = getattr(rect, "x0", None)
+    x1 = getattr(rect, "x1", None)
+    y0 = getattr(rect, "y0", None)
+    y1 = getattr(rect, "y1", None)
+    if all(v is not None for v in (x0, x1, y0, y1)):
+        try:
+            return (max(0, int(x1) - int(x0)), max(0, int(y1) - int(y0)))
+        except Exception as e:
+            raise ValueError("unusable x0/x1/y0/y1") from e
+
+    raise ValueError("unsupported CellRect-like object")
 
 
 def rect_intersects_bounds(rect_xmin, rect_ymin, rect_xmax, rect_ymax, bounds):
