@@ -39,7 +39,7 @@ def test_csv_export_records_error_on_metrics_failure(monkeypatch, tmp_path):
     import vop_interwoven.csv_export as csv_export
 
     # Simulate the "CSV invariant failed" style error.
-    def boom_metrics(_raster):
+    def boom_metrics(_raster, *args, **kwargs):
         raise AssertionError("CSV invariant failed: TotalCells (4) != ... (3)")
 
     monkeypatch.setattr(csv_export, "compute_cell_metrics", boom_metrics, raising=True)

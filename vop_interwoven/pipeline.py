@@ -21,7 +21,7 @@ from .core.raster import ViewRaster, TileMap
 from .core.geometry import Mode, classify_by_uv, make_uv_aabb, make_obb_or_skinny_aabb
 from .core.math_utils import Bounds2D, CellRect
 from .core.silhouette import get_element_silhouette
-from .revit.view_basis import make_view_basis, xy_bounds_effective
+from .revit.view_basis import make_view_basis, resolve_view_bounds
 from .revit.collection import (
     collect_view_elements,
     expand_host_link_import_model_elements,
@@ -29,7 +29,7 @@ from .revit.collection import (
     is_element_visible_in_view,
     estimate_nearest_depth_from_bbox,
 )
-from .revit.annotation import rasterize_annotations, compute_annotation_extents
+from .revit.annotation import rasterize_annotations
 from .revit.safe_api import safe_call
 
 
@@ -134,19 +134,7 @@ def process_document_views(doc, view_ids, cfg):
 def init_view_raster(doc, view, cfg, diag=None):
     """Initialize ViewRaster for a view.
 
-    Args:
-        doc: Revit Document
-        view: Revit View
-        cfg: Config
-
-    Returns:
-        ViewRaster initialized with grid dimensions and bounds
-
-    Commentary:
-        ✔ Cell size: 1/8" on sheet -> model feet (scale-dependent)
-        ✔ Bounds: prefer cropbox (transform all 8 corners)
-        ✔ Fallback to synthetic bounds if crop off
-        ✔ Expands bounds to include extent-driver annotations (text, tags, dims)
+    Centralizes bounds resolution through resolve_view_bounds() so bounds behavior is auditable.
     """
     # Cell size: 1/8" on sheet -> model feet
     scale = view.Scale  # e.g., 96 for 1/8" = 1'-0"
@@ -155,57 +143,24 @@ def init_view_raster(doc, view, cfg, diag=None):
     # View basis
     basis = make_view_basis(view, diag=diag)
 
-    # Base bounds in VIEW-LOCAL UV:
-    # - crop box if available/active (with CropBox.Transform applied)
-    # - otherwise synthetic bounds from elements in the view (drafting-safe)
-    base_bounds_xy = xy_bounds_effective(doc, view, basis, buffer=cfg.bounds_buffer_ft, diag=diag)
+    # Resolve bounds centrally (crop/extents/fallback + optional anno expansion + cap reporting)
+    bounds_result = resolve_view_bounds(
+        view,
+        diag=diag,
+        policy={
+            "doc": doc,
+            "basis": basis,
+            "cfg": cfg,
+            "buffer_ft": cfg.bounds_buffer_ft,
+            "cell_size_ft": cell_size_ft,
+            "max_W": cfg.max_grid_cells_width,
+            "max_H": cfg.max_grid_cells_height,
+        },
+    )
 
-    # Expand bounds to include extent-driver annotations (text, tags, dimensions)
-    # These annotations can exist outside the crop box and need to be captured
-    anno_bounds = compute_annotation_extents(doc, view, basis, base_bounds_xy, cell_size_ft, cfg, diag=diag)
-
-    # Use expanded bounds if available, otherwise use base bounds
-    bounds_xy = anno_bounds if anno_bounds is not None else base_bounds_xy
-
-    width_ft = bounds_xy.width()
-    height_ft = bounds_xy.height()
-
-    W = max(1, math.ceil(width_ft / cell_size_ft))
-    H = max(1, math.ceil(height_ft / cell_size_ft))
-
-    # Apply grid size cap based on max sheet size (Arch E: 384x288 @ 1/8")
-    max_W = cfg.max_grid_cells_width
-    max_H = cfg.max_grid_cells_height
-
-    if W > max_W or H > max_H:
-        try:
-            diag.warn(
-                phase="raster_init",
-                callsite="init_view_raster",
-                message="Grid size exceeds maximum; capping",
-                view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
-                extra={
-                    "W": W,
-                    "H": H,
-                    "max_W": max_W,
-                    "max_H": max_H,
-                    "max_sheet_width_in": cfg.max_sheet_width_in,
-                    "max_sheet_height_in": cfg.max_sheet_height_in,
-                    "cell_size_paper_in": cfg.cell_size_paper_in,
-                },
-            )
-        except Exception:
-            pass
-
-        W = min(W, max_W)
-        H = min(H, max_H)
-
-        bounds_xy = bounds_xy.__class__(
-            bounds_xy.xmin,
-            bounds_xy.ymin,
-            bounds_xy.xmin + W * cell_size_ft,
-            bounds_xy.ymin + H * cell_size_ft
-        )
+    bounds_xy = bounds_result["bounds_uv"]
+    W = int(bounds_result.get("grid_W", 1) or 1)
+    H = int(bounds_result.get("grid_H", 1) or 1)
 
     # Compute adaptive tile size based on grid dimensions
     tile_size = cfg.compute_adaptive_tile_size(W, H)
@@ -213,6 +168,19 @@ def init_view_raster(doc, view, cfg, diag=None):
     raster = ViewRaster(
         width=W, height=H, cell_size=cell_size_ft, bounds=bounds_xy, tile_size=tile_size, cfg=cfg
     )
+
+    # Persist bounds metadata for export diagnostics (never silent)
+    raster.bounds_meta = {
+        "reason": bounds_result.get("reason"),
+        "confidence": bounds_result.get("confidence"),
+        "buffer_ft": bounds_result.get("buffer_ft"),
+        "anno_expanded": bounds_result.get("anno_expanded"),
+        "capped": bounds_result.get("capped"),
+        "cap_before": bounds_result.get("cap_before"),
+        "cap_after": bounds_result.get("cap_after"),
+        "grid_W": W,
+        "grid_H": H,
+    }
 
     # Store view basis for annotation rasterization
     raster.view_basis = basis
@@ -246,7 +214,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None):
     vb = make_view_basis(view, diag=diag)
 
     # Expand to include linked/imported elements
-    expanded_elements = expand_host_link_import_model_elements(doc, view, elems, cfg, diag=diag)
+    expanded_elements = expand_host_link_import_model_elements(doc, view, elements, cfg, diag=diag)
 
     # Sort elements front-to-back by depth for proper occlusion
     expanded_elements = sort_front_to_back(expanded_elements, view, raster)
@@ -915,6 +883,7 @@ def export_view_raster(view, raster, cfg, diag=None):
         "config": cfg.to_dict(),
         "diagnostics": {
             "diag": (diag.to_dict() if diag is not None else None),
+            "bounds": getattr(raster, "bounds_meta", None),
             "num_elements": len(raster.element_meta),
             "num_annotations": len(raster.anno_meta),
             "num_filled_cells": num_filled,
