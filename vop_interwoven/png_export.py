@@ -130,9 +130,25 @@ def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_pro
         return output_path
 
     except Exception as e:
-        print(f"Error exporting PNG: {e}")
-        import traceback
-        traceback.print_exc()
+        # Dynamo CPython may not include stdlib traceback; keep this minimal and non-silent.
+        try:
+            if diag is not None:
+                diag.error(
+                    phase="export_png",
+                    callsite="png_export",
+                    message="PNG export failed",
+                    exc=e,
+                )
+        except Exception:
+            pass
+
+        try:
+            print("Error exporting PNG: {0}: {1}".format(type(e).__name__, e))
+        except Exception:
+            pass
+
+        return None
+
         return None
 
 
@@ -173,8 +189,23 @@ def export_pipeline_results_to_pngs(pipeline_result, output_dir, pixels_per_cell
                 print(f"Saved: {png_path}")
 
     except Exception as e:
-        print(f"Error exporting PNGs: {e}")
-        import traceback
-        traceback.print_exc()
+        # Dynamo CPython may not include stdlib traceback; keep this minimal and non-silent.
+        try:
+            if diag is not None:
+                diag.error(
+                    phase="export_png",
+                    callsite="png_export_many",
+                    message="PNG export failed",
+                    exc=e,
+                )
+        except Exception:
+            pass
+
+        try:
+            print("Error exporting PNGs: {0}: {1}".format(type(e).__name__, e))
+        except Exception:
+            pass
+
+        return None
 
     return saved_files

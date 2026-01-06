@@ -54,7 +54,7 @@ def is_extent_driver_annotation(elem):
     return False
 
 
-def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_ft, cfg=None):
+def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_ft, cfg=None, diag=None):
     """Compute annotation extents for grid bounds expansion.
 
     Collects extent-driver annotations (text, tags, dimensions) and computes
@@ -536,76 +536,58 @@ def get_annotation_bbox(elem, view):
         return None
 
 
-def rasterize_annotations(doc, view, raster, cfg):
-    """Rasterize 2D annotations to anno_key layer.
+def rasterize_annotations(doc, view, raster, cfg, diag=None):
+    """Rasterize 2D annotations to anno_key layer."""
+    view_id = None
+    try:
+        view_id = getattr(getattr(view, "Id", None), "IntegerValue", None)
+    except Exception:
+        view_id = None
 
-    For each annotation:
-        1. Get bounding box in view coordinates
-        2. Project to cell rectangle
-        3. Fill cells in anno_key with metadata index
-        4. Track metadata in anno_meta
-
-    Args:
-        doc: Revit Document
-        view: Revit View
-        raster: ViewRaster (has anno_key, anno_meta arrays)
-        cfg: Config (cell size, etc.)
-
-    Returns:
-        None (modifies raster in-place)
-
-    Commentary:
-        ✔ Rasterizes bounding boxes (not detailed geometry)
-        ✔ Each annotation gets unique index in anno_meta
-        ✔ anno_key cells point to anno_meta index
-        ✔ anno_over_model computed later during finalization
-        ✔ No occlusion handling (annotations are always visible)
-    """
     # Collect all annotations
     annotations = collect_2d_annotations(doc, view)
 
     if not annotations:
-        # No annotations to rasterize
         return
 
     # Get view basis from raster (stored during init)
     if hasattr(raster, 'view_basis'):
         vb = raster.view_basis
     else:
-        # Fallback: compute view basis from view
         from vop_interwoven.revit.view_basis import make_view_basis
-        vb = make_view_basis(view)
+        vb = make_view_basis(view, diag=diag)
 
-    # Rasterize each annotation
+    # Rate-limit per-annotation failures
+    fail_count = 0
+    fail_limit = 10
+
     for elem, anno_type in annotations:
-        # Get bounding box
+        elem_id = None
+        try:
+            elem_id = getattr(getattr(elem, "Id", None), "IntegerValue", None)
+        except Exception:
+            elem_id = None
+
         bbox = get_annotation_bbox(elem, view)
         if bbox is None:
             continue
 
-        # Project bbox to cell rectangle
         try:
-            # Project bbox to cell rect
-            cell_rect = _project_element_bbox_to_cell_rect_for_anno(
-                bbox, vb, raster
-            )
-
+            cell_rect = _project_element_bbox_to_cell_rect_for_anno(bbox, vb, raster)
             if cell_rect is None:
                 continue
 
-            # Get metadata index for this annotation
             anno_idx = len(raster.anno_meta)
 
-            # Store metadata
-            metadata = {
-                "type": anno_type,
-                "element_id": elem.Id.IntegerValue,
-                "bbox_min": (bbox.Min.X, bbox.Min.Y, bbox.Min.Z),
-                "bbox_max": (bbox.Max.X, bbox.Max.Y, bbox.Max.Z),
-            }
-            raster.anno_meta.append(metadata)
+            raster.anno_meta.append(
+                {
+                    "type": anno_type,
+                    "element_id": elem_id,
+                    "bbox_min": (bbox.Min.X, bbox.Min.Y, bbox.Min.Z),
+                    "bbox_max": (bbox.Max.X, bbox.Max.Y, bbox.Max.Z),
+                }
+            )
 
-            # Rasterize cells
             x0 = max(0, cell_rect.x0)
             y0 = max(0, cell_rect.y0)
             x1 = min(raster.W, cell_rect.x1)
@@ -614,13 +596,36 @@ def rasterize_annotations(doc, view, raster, cfg):
             for cy in range(y0, y1):
                 for cx in range(x0, x1):
                     cell_idx = cy * raster.W + cx
-
-                    # Set anno_key to this annotation's metadata index
                     raster.anno_key[cell_idx] = anno_idx
 
         except Exception as e:
-            # Skip annotations that fail to rasterize
+            fail_count += 1
+            if diag is not None and fail_count <= fail_limit:
+                try:
+                    diag.warn(
+                        phase="annotation",
+                        callsite="rasterize_annotations",
+                        message="Failed to rasterize annotation; skipping",
+                        view_id=view_id,
+                        elem_id=elem_id,
+                        extra={"anno_type": anno_type, "exc_type": type(e).__name__, "exc": str(e)},
+                    )
+                except Exception:
+                    pass
             continue
+
+    # If failures exceeded the limit, record one aggregated warning
+    if diag is not None and fail_count > fail_limit:
+        try:
+            diag.warn(
+                phase="annotation",
+                callsite="rasterize_annotations.summary",
+                message="Many annotation rasterization failures occurred (rate-limited)",
+                view_id=view_id,
+                extra={"fail_count": fail_count, "fail_limit": fail_limit},
+            )
+        except Exception:
+            pass
 
 
 def _project_element_bbox_to_cell_rect_for_anno(elem_or_bbox, view_basis, raster):

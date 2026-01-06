@@ -45,11 +45,11 @@ try:
     result = run_pipeline_from_dynamo_input(
         views_input=views_input,
         output_dir=r'C:\temp\vop_output',
-        pixels_per_cell=4,
+        pixels_per_cell=10,
         export_csv=True,
         export_json=True,
-        export_png=False,  # Skip PNG for speed
-        verbose=False
+        export_png=True,  # Skip PNG for speed
+        verbose=True    
     )
 
     # Extract results
@@ -105,18 +105,17 @@ try:
     OUT = "\n".join(lines)
 
 except Exception as e:
-    import traceback
-
     error_lines = []
     error_lines.append("=" * 60)
     error_lines.append("ERROR")
     error_lines.append("=" * 60)
     error_lines.append("")
-    error_lines.append(str(e))
+    error_lines.append(f"{type(e).__name__}: {e}")
     error_lines.append("")
-    error_lines.append("Traceback:")
-    error_lines.append(traceback.format_exc())
+    error_lines.append("NOTE: Dynamo CPython host may not include stdlib traceback; no stack trace available.")
+    error_lines.append("If pipeline_result contains per-view 'diag', inspect that for callsite + exc_message.")
     error_lines.append("")
     error_lines.append("=" * 60)
 
     OUT = "\n".join(error_lines)
+

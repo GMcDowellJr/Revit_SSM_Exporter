@@ -6,30 +6,18 @@ element visibility according to Revit view settings.
 """
 
 
-def collect_view_elements(doc, view, raster):
-    """Collect all potentially visible elements in view (broad-phase).
-
-    Args:
-        doc: Revit Document
-        view: Revit View
-        raster: ViewRaster (provides bounds_xy for spatial filtering)
-
-    Returns:
-        List of Revit elements visible in view
-
-    Commentary:
-        ✔ Uses FilteredElementCollector with view.Id scope
-        ✔ Filters to 3D model categories (Walls, Floors, etc.)
-        ✔ Excludes element types (only instances)
-        ✔ Requires valid bounding box
-        ✔ Broad-phase only - keeps collection cheap
-    """
+def collect_view_elements(doc, view, raster, diag=None):
+    """Collect all potentially visible elements in view (broad-phase)."""
     from Autodesk.Revit.DB import FilteredElementCollector, BuiltInCategory
+    from .safe_api import safe_call
 
-    # Define model categories to collect (3D model + symbolic lines)
-    # Using category name strings to handle different Revit versions gracefully
+    view_id = None
+    try:
+        view_id = getattr(getattr(view, "Id", None), "IntegerValue", None)
+    except Exception:
+        view_id = None
+
     category_names = [
-        # 3D Model elements
         'OST_Walls',
         'OST_Floors',
         'OST_Roofs',
@@ -43,19 +31,15 @@ def collect_view_elements(doc, view, raster):
         'OST_Ceilings',
         'OST_GenericModel',
         'OST_Furniture',
-        'OST_Casework',  # Note: some versions use OST_Casework, others OST_CaseworkWall
+        'OST_Casework',
         'OST_MechanicalEquipment',
         'OST_ElectricalEquipment',
         'OST_PlumbingFixtures',
         'OST_DuctCurves',
         'OST_PipeCurves',
-        # Symbolic geometry (contributes to MODEL occupancy, TINY/LINEAR classification)
-        'OST_Lines',  # DetailCurves, CurveElements (symbolic lines in families)
-        # NOTE: DetailComponents NOT included here - user-placed ones go to ANNOTATION
-        # Detail items embedded in model families are part of family geometry (collected via FamilyInstance)
+        'OST_Lines',
     ]
 
-    # Convert category names to BuiltInCategory enums (skip if not available in this Revit version)
     model_categories = []
     for cat_name in category_names:
         if hasattr(BuiltInCategory, cat_name):
@@ -63,38 +47,95 @@ def collect_view_elements(doc, view, raster):
 
     elements = []
 
+    # Aggregate for signal without spam
+    cat_fail = 0
+    viewspecific_fail = 0
+    bbox_fail = 0
+
     try:
-        # Collect elements visible in view
         for cat in model_categories:
             try:
                 collector = FilteredElementCollector(doc, view.Id)
                 collector.OfCategory(cat).WhereElementIsNotElementType()
 
-                # Filter to elements with valid bounding boxes
                 for elem in collector:
                     # For OST_Lines: Only collect MODEL lines (ViewSpecific=False)
-                    # Detail lines (ViewSpecific=True) go to ANNOTATION
                     if cat == getattr(BuiltInCategory, 'OST_Lines', None):
                         try:
                             if bool(getattr(elem, 'ViewSpecific', False)):
-                                continue  # Skip detail lines (they're annotations)
-                        except Exception as e:
-                            # Preserve prior behavior (don't skip element), but do not fail silently.
-                            print(f"[WARN] revit.collection:ViewSpecific check failed (elem_id={getattr(elem,'Id',None)}) ({type(e).__name__}: {e})")
+                                continue
+                        except Exception:
+                            viewspecific_fail += 1
+                            # Preserve prior behavior: don't skip element if the check itself fails.
                             pass
 
-                    bbox = elem.get_BoundingBox(None)  # World coordinates
-                    if bbox is not None:
-                        elements.append(elem)
+                    elem_id = None
+                    try:
+                        elem_id = getattr(getattr(elem, "Id", None), "IntegerValue", None)
+                    except Exception:
+                        elem_id = None
+
+                    bbox = safe_call(
+                        diag,
+                        phase="collection",
+                        callsite="elem.get_BoundingBox(None)",
+                        fn=lambda: elem.get_BoundingBox(None),
+                        default=None,
+                        context={"view_id": view_id, "elem_id": elem_id, "category": str(cat)},
+                        policy="default",
+                    )
+
+                    if bbox is None:
+                        bbox_fail += 1
+                        continue
+
+                    elements.append(elem)
+
             except Exception as e:
-                # Skip categories that cause errors
-                print(f"[WARN] revit.collection:category collection failed (view_id={getattr(view,'Id',None)}, cat={cat}) ({type(e).__name__}: {e})")
+                cat_fail += 1
+                try:
+                    if diag is not None:
+                        diag.warn(
+                            phase="collection",
+                            callsite="collect_view_elements.category",
+                            message="Category collection failed; skipping category",
+                            view_id=view_id,
+                            extra={"category": str(cat), "exc_type": type(e).__name__, "exc": str(e)},
+                        )
+                except Exception:
+                    pass
                 continue
 
     except Exception as e:
-        # If collection fails, return empty list (graceful degradation) but do not fail silently.
-        print(f"[WARN] revit.collection:element collection failed (view_id={getattr(view,'Id',None)}) ({type(e).__name__}: {e})")
-        pass
+        try:
+            if diag is not None:
+                diag.error(
+                    phase="collection",
+                    callsite="collect_view_elements",
+                    message="Element collection failed; returning partial/empty list",
+                    exc=e,
+                    view_id=view_id,
+                )
+        except Exception:
+            pass
+
+    # One aggregated warning if needed
+    if diag is not None and (cat_fail > 0 or viewspecific_fail > 0 or bbox_fail > 0):
+        try:
+            diag.warn(
+                phase="collection",
+                callsite="collect_view_elements.summary",
+                message="Collection had recoverable failures (aggregated)",
+                view_id=view_id,
+                extra={
+                    "num_elements": len(elements),
+                    "cat_fail": cat_fail,
+                    "viewspecific_fail": viewspecific_fail,
+                    "bbox_fail": bbox_fail,
+                },
+            )
+        except Exception:
+            pass
 
     return elements
 

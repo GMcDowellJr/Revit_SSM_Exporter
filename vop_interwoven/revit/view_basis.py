@@ -130,29 +130,15 @@ def world_to_view(pt, vb):
     return vb.transform_to_view_uvw(pt)
 
 
-def make_view_basis(view):
-    """Extract view basis from Revit View.
-
-    Args:
-        view: Revit View object
-
-    Returns:
-        ViewBasis with origin and basis vectors
-
-    Commentary:
-        ✔ Extracts view coordinate system from Revit View
-        ✔ Handles plan views, sections, elevations, and 3D views
-        ✔ Forward vector uses Revit's ViewDirection (points into view, down for plans)
-        ✔ For plan views, origin is set to cut plane for proper depth measurement
-        ⚠ For drafting views or views without orientation, falls back to identity
-
-    Example:
-        >>> # view = some Revit FloorPlan view
-        >>> basis = make_view_basis(view)
-        >>> basis.is_plan_like()
-        >>> # True for plan views (forward points down)
-    """
+def make_view_basis(view, diag=None):
+    """Extract view basis from Revit View."""
     from Autodesk.Revit.DB import ViewType
+
+    view_id = None
+    try:
+        view_id = getattr(getattr(view, "Id", None), "IntegerValue", None)
+    except Exception:
+        view_id = None
 
     try:
         origin = view.Origin
@@ -176,9 +162,19 @@ def make_view_basis(view):
                     cut_level = view.Document.GetElement(cut_level_id)
                     if cut_level is not None:
                         origin_z = cut_level.Elevation + cut_offset
-                        print("[DEBUG] make_view_basis: Plan view - cut plane at Z = {0:.3f}".format(origin_z))
         except Exception as e:
-            print("[DEBUG] make_view_basis: Could not get cut plane, using origin.Z = {0:.3f}: {1}".format(origin.Z, e))
+            # This is a correctness degradation (depth origin changes). Record it once.
+            try:
+                if diag is not None:
+                    diag.warn(
+                        phase="view_basis",
+                        callsite="make_view_basis",
+                        message="Could not get plan cut plane; using view.Origin.Z",
+                        view_id=view_id,
+                        extra={"exc_type": type(e).__name__, "exc": str(e)},
+                    )
+            except Exception:
+                pass
 
         return ViewBasis(
             origin=(origin.X, origin.Y, origin_z),
@@ -188,7 +184,19 @@ def make_view_basis(view):
         )
 
     except Exception as e:
-        print("[ERROR] make_view_basis failed, falling back:", type(e).__name__, e)
+        # Basis extraction failing is severe: we are returning identity fallback.
+        try:
+            if diag is not None:
+                diag.error(
+                    phase="view_basis",
+                    callsite="make_view_basis",
+                    message="make_view_basis failed; falling back to identity basis",
+                    exc=e,
+                    view_id=view_id,
+                )
+        except Exception:
+            pass
+
         return ViewBasis(
             origin=(0.0, 0.0, 0.0),
             right=(1.0, 0.0, 0.0),
@@ -264,7 +272,7 @@ def xy_bounds_from_crop_box_all_corners(view, basis, buffer=0.0):
         # Fallback for views without crop box
         return Bounds2D(-100.0 - buffer, -100.0 - buffer, 100.0 + buffer, 100.0 + buffer)
 
-def xy_bounds_effective(doc, view, basis, buffer=0.0):
+def xy_bounds_effective(doc, view, basis, buffer=0.0, diag=None):
     """Compute EFFECTIVE view bounds in view-local UV.
 
     Behaves as if the view had a usable crop box:
@@ -297,17 +305,16 @@ def xy_bounds_effective(doc, view, basis, buffer=0.0):
     # Fallback: extents derived from what is in the view (drafting-safe)
     return synthetic_bounds_from_visible_extents(doc, view, basis, buffer=buffer)
 
-def synthetic_bounds_from_visible_extents(doc, view, basis, buffer=0.0):
-    """Compute synthetic bounds from element extents in a view (crop-off / no-crop views).
-
-    Returns Bounds2D in *view-local UV* coordinates.
-
-    Notes:
-    - Works for DraftingView (no CropBox): uses view-owned elements.
-    - For BoundingBoxXYZ: Min/Max are in bbox-local space; Transform maps to model space.
-    """
+def synthetic_bounds_from_visible_extents(doc, view, basis, buffer=0.0, diag=None):
+    """Compute synthetic bounds from element extents in a view (crop-off / no-crop views)."""
     from ..core.math_utils import Bounds2D
     from Autodesk.Revit.DB import FilteredElementCollector, ViewDrafting, XYZ
+
+    view_id = None
+    try:
+        view_id = getattr(getattr(view, "Id", None), "IntegerValue", None)
+    except Exception:
+        view_id = None
 
     is_drafting = isinstance(view, ViewDrafting)
 
@@ -316,6 +323,11 @@ def synthetic_bounds_from_visible_extents(doc, view, basis, buffer=0.0):
     max_u = float("-inf")
     max_v = float("-inf")
     found = 0
+
+    # Aggregate failures; do NOT spam per-element
+    elem_fail = 0
+    viewspecific_fail = 0
+    collector_fail = None
 
     try:
         collector = (
@@ -335,6 +347,8 @@ def synthetic_bounds_from_visible_extents(doc, view, basis, buffer=0.0):
                         if bool(getattr(elem, "ViewSpecific", False)):
                             continue
                     except Exception:
+                        viewspecific_fail += 1
+                        # Preserve prior behavior: don't skip on failure; just treat as not view-specific
                         pass
 
                 mn = bbox.Min
@@ -366,13 +380,62 @@ def synthetic_bounds_from_visible_extents(doc, view, basis, buffer=0.0):
 
                 found += 1
             except Exception:
+                elem_fail += 1
                 continue
 
     except Exception as e:
-        print("WARNING: synthetic_bounds_from_visible_extents failed: {}".format(e))
+        collector_fail = e
 
+    if collector_fail is not None:
+        try:
+            if diag is not None:
+                diag.warn(
+                    phase="bounds",
+                    callsite="synthetic_bounds_from_visible_extents",
+                    message="Failed to scan visible extents; falling back to default bounds",
+                    view_id=view_id,
+                    extra={"exc_type": type(collector_fail).__name__, "exc": str(collector_fail)},
+                )
+        except Exception:
+            pass
+
+    # If scan yielded no usable bounds, fallback to default
     if found == 0 or min_u == float("inf"):
-        print("WARNING: No elements found for synthetic bounds in view '{}'. Using default 200x200ft bounds.".format(view.Name))
+        try:
+            if diag is not None:
+                diag.warn(
+                    phase="bounds",
+                    callsite="synthetic_bounds_from_visible_extents",
+                    message="No elements found for synthetic bounds; using default 200x200ft bounds",
+                    view_id=view_id,
+                    extra={
+                        "found": found,
+                        "elem_fail": elem_fail,
+                        "viewspecific_fail": viewspecific_fail,
+                        "is_drafting": bool(is_drafting),
+                    },
+                )
+        except Exception:
+            pass
+
         return Bounds2D(-100.0 - buffer, -100.0 - buffer, 100.0 + buffer, 100.0 + buffer)
+
+    # If there were per-element failures, record aggregated counts once
+    if (elem_fail > 0 or viewspecific_fail > 0) and diag is not None:
+        try:
+            diag.warn(
+                phase="bounds",
+                callsite="synthetic_bounds_from_visible_extents",
+                message="Element failures occurred during visible extents scan (aggregated)",
+                view_id=view_id,
+                extra={
+                    "found": found,
+                    "elem_fail": elem_fail,
+                    "viewspecific_fail": viewspecific_fail,
+                    "is_drafting": bool(is_drafting),
+                },
+            )
+        except Exception:
+            pass
 
     return Bounds2D(min_u - buffer, min_v - buffer, max_u + buffer, max_v + buffer)

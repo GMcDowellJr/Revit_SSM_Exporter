@@ -473,23 +473,31 @@ def quick_test_current_view():
 
         # Try to show summary dialog (works in both IronPython and CPython3)
         try:
-            from Autodesk.Revit.UI import TaskDialog
+            from Autodesk.Revit.UI import TaskDialog  # type: ignore
 
-            summary = result["summary"]
+            summary = result.get("summary", {}) or {}
             msg = "VOP Pipeline Test:\n\n"
-            msg += f"Views requested: {summary['num_views_requested']}\n"
-            msg += f"Views processed: {summary['num_views_processed']}\n"
-            msg += f"Errors: {summary['num_errors']}\n"
+            msg += f"Views requested: {summary.get('num_views_requested', 0)}\n"
+            msg += f"Views processed: {summary.get('num_views_processed', 0)}\n"
+            msg += f"Errors: {summary.get('num_errors', 0)}\n"
 
-            if result["views"]:
-                diag = result["views"][0].get("diagnostics", {})
+            views = result.get("views") or []
+            if views:
+                # NOTE: current code uses "diagnostics" numeric stats; keep as-is for now.
+                diag = views[0].get("diagnostics", {}) or {}
                 msg += f"\nElements: {diag.get('num_elements', 0)}\n"
                 msg += f"Filled cells: {diag.get('num_filled_cells', 0)}"
 
             TaskDialog.Show("VOP Test Result", msg)
         except ImportError:
-            # TaskDialog not available, just return result
+            # TaskDialog not available; ignore.
             pass
+        except Exception as e:
+            # Don't fail the pipeline test because UI failed; surface error in return payload.
+            try:
+                result.setdefault("errors", []).append(f"TaskDialog failed: {e}")
+            except Exception:
+                pass
 
         return result
 
@@ -502,5 +510,5 @@ if __name__ == "__main__":
     try:
         result = quick_test_current_view()
         OUT = result
-    except:
+    except Exception:
         OUT = {"success": False, "errors": ["Not running in Revit/Dynamo context"]}
