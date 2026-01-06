@@ -192,10 +192,25 @@ def extract_view_metadata(view, doc):
                             sheet_number = getattr(sheet, "SheetNumber", "") or ""
                             is_on_sheet = True
                             break
-                except Exception:
+                except Exception as e:
+                    if diag is not None:
+                        diag.warn(
+                            phase="export_csv",
+                            callsite="extract_view_metadata.viewport_scan",
+                            message="Viewport scan failed for one viewport; continuing",
+                            view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                            extra={"exc_type": type(e).__name__, "exc": str(e)},
+                        )
                     continue
-        except Exception:
-            pass
+        except Exception as e:
+            if diag is not None:
+                diag.warn(
+                    phase="export_csv",
+                    callsite="extract_view_metadata.sheet_lookup",
+                    message="Failed to determine sheet placement for view",
+                    view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                    extra={"exc_type": type(e).__name__, "exc": str(e)},
+                )
 
     metadata["SheetNumber"] = sheet_number
     metadata["IsOnSheet"] = is_on_sheet
@@ -412,7 +427,7 @@ def build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metada
     return row
 
 
-def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None):
+def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=None):
     """Export VOP pipeline results to CSV files.
 
     Args:
@@ -512,9 +527,33 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None):
         raster.anno_key = raster_dict.get("anno_key", [])
         raster.anno_meta = raster_dict.get("anno_meta", [])
 
-        # Compute metrics
-        model_presence_mode = getattr(config, "model_presence_mode", "occ")
-        metrics = compute_cell_metrics(raster, model_presence_mode=model_presence_mode, diag=diag)
+        # Compute metrics (must not be silent)
+        try:
+            model_presence_mode = getattr(config, "model_presence_mode", "occ")
+            metrics = compute_cell_metrics(
+                raster,
+                model_presence_mode=model_presence_mode,
+                diag=diag,
+            )
+            anno_metrics = compute_annotation_type_metrics(raster)
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="export_csv",
+                    callsite="export_pipeline_to_csv.metrics",
+                    message="Failed to compute CSV metrics for view",
+                    exc=e,
+                    extra={
+                        "view_id": view_result.get("view_id", 0),
+                        "view_name": view_result.get("view_name", ""),
+                        "width": raster_dict.get("width", raster_dict.get("W", 0)),
+                        "height": raster_dict.get("height", raster_dict.get("H", 0)),
+                        "model_presence_mode": model_presence_mode,
+                    },
+                )
+            # Do not recover here: metrics failure should fail the export deterministically
+            raise
+
 
         # Build run_info
         run_info = {
@@ -561,10 +600,23 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None):
     logger = SimpleLogger()
 
     # Write CSVs
-    if core_rows:
-        _append_csv_rows(core_path, core_headers, core_rows, logger)
-    if vop_rows:
-        _append_csv_rows(vop_path, vop_headers, vop_rows, logger)
+    try:
+        if core_rows:
+            _append_csv_rows(core_path, core_headers, core_rows, logger)
+        if vop_rows:
+            _append_csv_rows(vop_path, vop_headers, vop_rows, logger)
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="export_csv",
+                callsite="export_pipeline_to_csv.write",
+                message="Failed to write CSV files",
+                exc=e,
+                extra={"output_dir": output_dir},
+            )
+        else:
+            print(f"CSV Export ERROR: {type(e).__name__}: {e}")
+        raise
 
     return {
         "core_csv_path": core_path,

@@ -93,49 +93,41 @@ def collect_view_elements(doc, view, raster, diag=None):
 
             except Exception as e:
                 cat_fail += 1
-                try:
-                    if diag is not None:
-                        diag.warn(
-                            phase="collection",
-                            callsite="collect_view_elements.category",
-                            message="Category collection failed; skipping category",
-                            view_id=view_id,
-                            extra={"category": str(cat), "exc_type": type(e).__name__, "exc": str(e)},
-                        )
-                except Exception:
-                    pass
+                if diag is not None:
+                    diag.warn(
+                        phase="collection",
+                        callsite="collect_view_elements.category",
+                        message="Category collection failed; skipping category",
+                        view_id=view_id,
+                        extra={"category": str(cat), "exc_type": type(e).__name__, "exc": str(e)},
+                    )
+
                 continue
 
     except Exception as e:
-        try:
-            if diag is not None:
-                diag.error(
-                    phase="collection",
-                    callsite="collect_view_elements",
-                    message="Element collection failed; returning partial/empty list",
-                    exc=e,
-                    view_id=view_id,
-                )
-        except Exception:
-            pass
+        if diag is not None:
+            diag.error(
+                phase="collection",
+                callsite="collect_view_elements",
+                message="Element collection failed; returning partial/empty list",
+                exc=e,
+                view_id=view_id,
+            )
 
     # One aggregated warning if needed
     if diag is not None and (cat_fail > 0 or viewspecific_fail > 0 or bbox_fail > 0):
-        try:
-            diag.warn(
-                phase="collection",
-                callsite="collect_view_elements.summary",
-                message="Collection had recoverable failures (aggregated)",
-                view_id=view_id,
-                extra={
-                    "num_elements": len(elements),
-                    "cat_fail": cat_fail,
-                    "viewspecific_fail": viewspecific_fail,
-                    "bbox_fail": bbox_fail,
-                },
-            )
-        except Exception:
-            pass
+        diag.warn(
+            phase="collection",
+            callsite="collect_view_elements.summary",
+            message="Collection had recoverable failures (aggregated)",
+            view_id=view_id,
+            extra={
+                "num_elements": len(elements),
+                "cat_fail": cat_fail,
+                "viewspecific_fail": viewspecific_fail,
+                "bbox_fail": bbox_fail,
+            },
+        )
 
     return elements
 

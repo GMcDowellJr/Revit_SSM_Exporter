@@ -223,8 +223,22 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
                     anno_max_y = max(anno_max_y, y)
 
         except Exception as e:
-            # Skip annotations that fail to process, but do not fail silently.
-            print(f"[WARN] revit.annotation:anno extents update failed (elem_id={getattr(elem,'Id',None)}) ({type(e).__name__}: {e})")
+            # Recoverable per-annotation failure; must be visible and counted
+            if diag is not None:
+                diag.warn(
+                    phase="annotation",
+                    callsite="compute_annotation_extents",
+                    message="Failed to process annotation for extents; skipping element",
+                    view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                    elem_id=getattr(getattr(elem, "Id", None), "IntegerValue", None),
+                    extra={"exc_type": type(e).__name__, "exc": str(e)},
+                )
+            else:
+                print(
+                    f"[WARN] revit.annotation:anno extents update failed "
+                    f"(elem_id={getattr(elem,'Id',None)}) "
+                    f"({type(e).__name__}: {e})"
+                )
             continue
 
     if anno_min_x is None:
@@ -320,9 +334,21 @@ def collect_2d_annotations(doc, view):
 
                     annotations.append((elem, anno_type))
         except Exception as e:
-            # Skip categories that cause errors (not available in this view/version)
-            print(f"[WARN] revit.annotation:collector failed (view_id={getattr(view,'Id',None)}, cat={built_in_cat}) ({type(e).__name__}: {e})")
-            pass
+            # Recoverable, but must be visible and counted
+            if diag is not None:
+                diag.warn(
+                    phase="annotation",
+                    callsite="collect_2d_annotations.collect_category",
+                    message="Annotation category collection failed; skipping category",
+                    view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                    extra={"category": str(built_in_cat), "exc_type": type(e).__name__, "exc": str(e)},
+                )
+            else:
+                print(
+                    f"[WARN] revit.annotation:collector failed "
+                    f"(view_id={getattr(view,'Id',None)}, cat={built_in_cat}) "
+                    f"({type(e).__name__}: {e})"
+                )
 
     # TEXT: TextNote
     if hasattr(BuiltInCategory, 'OST_TextNotes'):
@@ -374,8 +400,20 @@ def collect_2d_annotations(doc, view):
                     anno_type = classify_keynote(elem)
                     annotations.append((elem, anno_type))
         except Exception as e:
-            print(f"[WARN] revit.annotation:keynote collector failed (view_id={getattr(view,'Id',None)}) ({type(e).__name__}: {e})")
-            pass
+            if diag is not None:
+                diag.warn(
+                    phase="annotation",
+                    callsite="collect_2d_annotations.keynotes",
+                    message="Keynote annotation collection failed; skipping",
+                    view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                    extra={"exc_type": type(e).__name__, "exc": str(e)},
+                )
+            else:
+                print(
+                    f"[WARN] revit.annotation:keynote collector failed "
+                    f"(view_id={getattr(view,'Id',None)}) "
+                    f"({type(e).__name__}: {e})"
+                )
 
     return annotations
 
@@ -601,31 +639,25 @@ def rasterize_annotations(doc, view, raster, cfg, diag=None):
         except Exception as e:
             fail_count += 1
             if diag is not None and fail_count <= fail_limit:
-                try:
-                    diag.warn(
-                        phase="annotation",
-                        callsite="rasterize_annotations",
-                        message="Failed to rasterize annotation; skipping",
-                        view_id=view_id,
-                        elem_id=elem_id,
-                        extra={"anno_type": anno_type, "exc_type": type(e).__name__, "exc": str(e)},
-                    )
-                except Exception:
-                    pass
+                diag.warn(
+                    phase="annotation",
+                    callsite="rasterize_annotations",
+                    message="Failed to rasterize annotation; skipping",
+                    view_id=view_id,
+                    elem_id=elem_id,
+                    extra={"anno_type": anno_type, "exc_type": type(e).__name__, "exc": str(e)},
+                )
             continue
 
     # If failures exceeded the limit, record one aggregated warning
     if diag is not None and fail_count > fail_limit:
-        try:
-            diag.warn(
-                phase="annotation",
-                callsite="rasterize_annotations.summary",
-                message="Many annotation rasterization failures occurred (rate-limited)",
-                view_id=view_id,
-                extra={"fail_count": fail_count, "fail_limit": fail_limit},
-            )
-        except Exception:
-            pass
+        diag.warn(
+            phase="annotation",
+            callsite="rasterize_annotations.summary",
+            message="Many annotation rasterization failures occurred (rate-limited)",
+            view_id=view_id,
+            extra={"fail_count": fail_count, "fail_limit": fail_limit},
+        )
 
 
 def _project_element_bbox_to_cell_rect_for_anno(elem_or_bbox, view_basis, raster):

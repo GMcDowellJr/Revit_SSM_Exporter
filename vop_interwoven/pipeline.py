@@ -30,6 +30,7 @@ from .revit.collection import (
     estimate_nearest_depth_from_bbox,
 )
 from .revit.annotation import rasterize_annotations, compute_annotation_extents
+from .revit.safe_api import safe_call
 
 
 def process_document_views(doc, view_ids, cfg):
@@ -73,7 +74,7 @@ def process_document_views(doc, view_ids, cfg):
             # 0) Validate supported view types (2D-ish)
             if not _is_supported_2d_view(view, diag=diag):
                 # Record skip reason for traceability (optional but useful)
-                try:
+                if diag is not None:
                     diag.warn(
                         phase="pipeline",
                         callsite="process_document_views",
@@ -81,8 +82,7 @@ def process_document_views(doc, view_ids, cfg):
                         view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
                         extra={"view_name": getattr(view, "Name", None)},
                     )
-                except Exception:
-                    pass
+
                 continue
 
             # 1) Init raster bounds/resolution
@@ -106,7 +106,7 @@ def process_document_views(doc, view_ids, cfg):
 
         except Exception as e:
             # Never silent: record + continue
-            try:
+            if diag is not None:
                 diag.error(
                     phase="pipeline",
                     callsite="process_document_views",
@@ -115,8 +115,6 @@ def process_document_views(doc, view_ids, cfg):
                     view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
                     extra={"view_name": getattr(view, "Name", None)},
                 )
-            except Exception:
-                pass
 
             # Keep legacy behavior (continue)
             results.append(
@@ -248,7 +246,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None):
     vb = make_view_basis(view, diag=diag)
 
     # Expand to include linked/imported elements
-    expanded_elements = expand_host_link_import_model_elements(doc, view, elements, cfg)
+    expanded_elements = expand_host_link_import_model_elements(doc, view, elems, cfg, diag=diag)
 
     # Sort elements front-to-back by depth for proper occlusion
     expanded_elements = sort_front_to_back(expanded_elements, view, raster)
@@ -329,73 +327,89 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None):
             print("[DEBUG] Element {0} ({1}): silhouette={2}, depth={3} (from {4}), source={5}".format(
                 elem_id, category, silhouette_status, elem_depth, depth_source, source_type))
 
-        # Safe early-out occlusion using bbox footprint + tile z-min (front-to-back streaming)
+        # Safe early-out occlusion using bbox footprint + tile depth (front-to-back streaming)
         try:
             rect = _project_element_bbox_to_cell_rect(elem, vb, raster)
-            if rect and not rect.empty:
+            if rect and (not rect.empty):
                 from .core.footprint import CellRectFootprint
                 fp = CellRectFootprint(rect)
-                if _tiles_fully_covered_and_nearer(raster.tile, fp, elem_depth):
+
+                # Defaults must be defined on the non-ambiguous path
+                uvw_pts = None
+                footprint = fp
+                elem_min_w = elem_depth  # conservative: element depth from loops-or-bbox
+
+                # Stage 1: tile-level conservative occlusion against bbox footprint
+                if _tiles_fully_covered_and_nearer(raster.tile, fp, elem_min_w):
                     skipped += 1
                     continue
-                    
-                # Tier-A measures for ambiguity trigger (Tier-B in next commit)
+
+                # Tier-A ambiguity trigger (selectively enable Tier-B proxy)
                 width_cells = rect.width()
                 height_cells = rect.height()
                 minor_cells = min(width_cells, height_cells)
                 aabb_area_cells = width_cells * height_cells
                 grid_area = raster.W * raster.H
-                # cell_size_world must be world-units-per-cell (already known in init_view_raster)
-                # For now, use cfg.cell_size_world_ft if present; otherwise inject from raster/meta in Commit 4.
-                cell_size_world = getattr(cfg, "cell_size_world_ft", 1.0)
+
+                # World-units-per-cell (ft). Prefer cfg override if present.
+                cell_size_world = getattr(cfg, "cell_size_world_ft", None)
+                if cell_size_world is None:
+                    cell_size_world = getattr(raster, "cell_size", 1.0)
+
                 from .core.geometry import tier_a_is_ambiguous
-                tier_a_ambig = tier_a_is_ambiguous(minor_cells, aabb_area_cells, grid_area, cell_size_world, cfg)
+                tier_a_ambig = tier_a_is_ambiguous(
+                    minor_cells, aabb_area_cells, grid_area, cell_size_world, cfg
+                )
 
-            uvw_pts = None
-            footprint = fp_a
+                # Tier-B proxy path (geometry-based sampling)
+                if tier_a_ambig:
+                    from .revit.tierb_proxy import sample_element_uvw_points
+                    uvw_pts = sample_element_uvw_points(elem, view, vb, cfg)
 
-            # Tier-B proxy path (geometry-based)
-            if tier_a_ambig:
-                from .revit.tierb_proxy import sample_element_uvw_points
-                uvw_pts = sample_element_uvw_points(elem, view, vb, cfg)
+                    if uvw_pts:
+                        points_uv = [(u, v) for (u, v, w) in uvw_pts]
 
+                        from .core.hull import convex_hull_uv
+                        hull_uv = convex_hull_uv(points_uv)
+
+                        from .core.footprint import HullFootprint
+                        footprint = HullFootprint(hull_uv, raster)
+
+                        # Minimum sampled W becomes the conservative depth for early-out + stamping
+                        elem_min_w = min(w for (_, _, w) in uvw_pts)
+
+                # Stage 2: depth-aware early-out using chosen footprint (bbox or hull)
+                if _tiles_fully_covered_and_nearer(raster.tile, footprint, elem_min_w):
+                    skipped += 1
+                    continue
+
+                # Stage 3: conservative stamping via try_write_cell (depth tested)
+                depth_by_cell = None
                 if uvw_pts:
-                    points_uv = [(u, v) for (u, v, w) in uvw_pts]
+                    depth_by_cell = {}
+                    for (u, v, w) in uvw_pts:
+                        i = int(round(u))
+                        j = int(round(v))
+                        key = (i, j)
+                        prev = depth_by_cell.get(key)
+                        if prev is None or w < prev:
+                            depth_by_cell[key] = w
 
-                    from .core.geometry import classify_by_uv_pca
-                    mode = classify_by_uv_pca(points_uv, cfg, cell_size_uv=1.0)
+                for (i, j) in footprint.cells():
+                    w_depth = depth_by_cell.get((i, j), elem_min_w) if depth_by_cell else elem_min_w
+                    raster.try_write_cell(i, j, w_depth=w_depth, source=source_type)
 
-                    from .core.hull import convex_hull_uv
-                    hull_uv = convex_hull_uv(points_uv)
-
-                    from .core.footprint import HullFootprint
-                    footprint = HullFootprint(hull_uv, raster)
-                    elem_min_w = min(w for (_, _, w) in uvw_pts)
-
-            # Stage 5: depth-aware early-out using footprint
-            if _tiles_fully_covered_and_nearer(raster.tile, footprint, elem_min_w):
-                skipped += 1
-                continue
-
-            # Stage 6: rasterization via TryWriteCell ONLY
-            depth_by_cell = None
-            if uvw_pts:
-                depth_by_cell = {}
-                for (u, v, w) in uvw_pts:
-                    i = int(round(u))
-                    j = int(round(v))
-                    key = (i, j)
-                    prev = depth_by_cell.get(key)
-                    if prev is None or w < prev:
-                        depth_by_cell[key] = w
-
-            for (i, j) in footprint.cells():
-                w_depth = depth_by_cell.get((i, j), elem_min_w) if depth_by_cell else elem_min_w
-                raster.try_write_cell(i, j, w_depth=w_depth, source=source_type)
-
-        except Exception:
-            # Never skip on failure (must stay conservative)
-            pass
+        except Exception as e:
+            # Must be observable, and must remain conservative (do not skip element).
+            if diag is not None:
+                diag.warn(
+                    phase="pipeline",
+                    callsite="render_model_front_to_back.early_out",
+                    message="Early-out/stamp block failed; continuing without early-out",
+                    view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                    elem_id=getattr(getattr(elem, "Id", None), "IntegerValue", None),
+                    extra={"doc_key": doc_key, "exc": str(e)},
+                )
 
         # Rasterize silhouette loops if we have them
         if loops:
@@ -404,14 +418,11 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None):
                 strategy = loops[0].get('strategy', 'unknown')
 
                 # If any loop is marked open (e.g., DWG curves), rasterize as edges only
-                try:
-                    if any(loop.get("open", False) for loop in loops):
-                        filled = raster.rasterize_open_polylines(loops, key_index, depth=elem_depth, source=source_type)
-                        silhouette_success += 1
-                        processed += 1
-                        continue
-                except Exception:
-                    pass
+                if any(loop.get("open", False) for loop in loops):
+                    filled = raster.rasterize_open_polylines(loops, key_index, depth=elem_depth, source=source_type)
+                    silhouette_success += 1
+                    processed += 1
+                    continue
 
                 # Rasterize silhouette loops with actual depth for occlusion
                 filled = raster.rasterize_silhouette_loops(loops, key_index, depth=elem_depth, source=source_type)

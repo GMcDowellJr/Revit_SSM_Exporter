@@ -7,7 +7,7 @@ Generates visual representations of raster data with color-coded cells.
 import os
 
 
-def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_projection=False, model_presence_mode="occ", diag=None):
+def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_projection=False, diag=None):
     """Export VOP raster to PNG image with color-coded occupancy.
 
     Color Legend:
@@ -149,29 +149,22 @@ def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_pro
         return output_path
 
     except Exception as e:
-        # Dynamo CPython may not include stdlib traceback; keep this minimal and non-silent.
-        try:
-            if diag is not None:
-                diag.error(
-                    phase="export_png",
-                    callsite="png_export",
-                    message="PNG export failed",
-                    exc=e,
-                )
-        except Exception:
-            pass
-
-        try:
+        # Recoverable per-view export failure; must be visible and counted
+        if diag is not None:
+            diag.error(
+                phase="export_png",
+                callsite="export_raster_to_png",
+                message="PNG export failed",
+                exc=e,
+                extra={"output_path": output_path},
+            )
+        else:
             print("Error exporting PNG: {0}: {1}".format(type(e).__name__, e))
-        except Exception:
-            pass
-
-        return None
 
         return None
 
 
-def export_pipeline_results_to_pngs(pipeline_result, output_dir, pixels_per_cell=4, cut_vs_projection=False):
+def export_pipeline_results_to_pngs(pipeline_result, output_dir, pixels_per_cell=4, cut_vs_projection=False, diag=None):
     """Export all views from pipeline result to PNG files.
 
     Args:
@@ -202,28 +195,30 @@ def export_pipeline_results_to_pngs(pipeline_result, output_dir, pixels_per_cell
             filename = f"{safe_name}_{view_id}.png"
             output_path = os.path.join(output_dir, filename)
 
-            png_path = export_raster_to_png(view_data, output_path, pixels_per_cell, cut_vs_projection)
+            png_path = export_raster_to_png(
+                view_data,
+                output_path,
+                pixels_per_cell,
+                cut_vs_projection,
+                diag=diag,
+            )
+
             if png_path:
                 saved_files.append(png_path)
                 print(f"Saved: {png_path}")
 
     except Exception as e:
-        # Dynamo CPython may not include stdlib traceback; keep this minimal and non-silent.
-        try:
-            if diag is not None:
-                diag.error(
-                    phase="export_png",
-                    callsite="png_export_many",
-                    message="PNG export failed",
-                    exc=e,
-                )
-        except Exception:
-            pass
-
-        try:
+        # Recoverable batch failure; must be visible and counted
+        if diag is not None:
+            diag.error(
+                phase="export_png",
+                callsite="export_pipeline_results_to_pngs",
+                message="PNG batch export failed",
+                exc=e,
+                extra={"output_dir": output_dir},
+            )
+        else:
             print("Error exporting PNGs: {0}: {1}".format(type(e).__name__, e))
-        except Exception:
-            pass
 
         return None
 
