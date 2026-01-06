@@ -439,3 +439,267 @@ def synthetic_bounds_from_visible_extents(doc, view, basis, buffer=0.0, diag=Non
             pass
 
     return Bounds2D(min_u - buffer, min_v - buffer, max_u + buffer, max_v + buffer)
+
+def _bounds_to_tuple(b):
+    try:
+        return (float(b.xmin), float(b.ymin), float(b.xmax), float(b.ymax))
+    except Exception:
+        return None
+
+
+def resolve_view_bounds(view, diag=None, policy=None):
+    """Resolve view bounds in view-local UV and return auditable metadata.
+
+    Contract:
+        - Always returns a dict with: bounds_uv, reason, confidence, capped, cap_before, cap_after
+        - Never performs a "silent cap": if cap triggers, caller gets before/after
+        - Centralizes: crop-box bounds, synthetic visible-extents bounds, annotation-driven expansion
+
+    Args:
+        view: Revit View (or stub)
+        diag: Diagnostics (optional)
+        policy: dict (optional) with the following keys:
+
+            doc: Revit Document (required unless providing all *_fn callbacks)
+            basis: ViewBasis (required unless providing all *_fn callbacks)
+            cfg: Config (optional, used for annotation settings)
+
+            buffer_ft: float (default 0.0)
+            cell_size_ft: float (required for cap reporting)
+            max_W: int (optional)
+            max_H: int (optional)
+
+            crop_active: bool (optional; overrides view.CropBoxActive)
+            bounds_crop_fn(view, policy) -> Bounds2D
+            bounds_extents_fn(view, policy) -> Bounds2D
+            bounds_default_fn(view, policy) -> Bounds2D
+            anno_expand_fn(base_bounds, view, policy) -> Bounds2D|None
+
+    Returns:
+        dict with:
+            bounds_uv: Bounds2D
+            reason: "crop"|"extents"|"fallback"
+            confidence: "high"|"med"|"low"
+            capped: bool
+            cap_before: dict|None
+            cap_after: dict|None
+            anno_expanded: bool
+            grid_W: int
+            grid_H: int
+
+    Notes:
+        - Unit-testable without Autodesk imports by supplying *_fn callbacks in policy.
+    """
+    from ..core.math_utils import Bounds2D
+    import math
+
+    policy = policy or {}
+
+    view_id = None
+    try:
+        view_id = getattr(getattr(view, "Id", None), "IntegerValue", None)
+    except Exception:
+        view_id = None
+
+    buffer_ft = float(policy.get("buffer_ft", 0.0) or 0.0)
+
+    cell_size_ft = policy.get("cell_size_ft", None)
+    if cell_size_ft is None:
+        raise ValueError("resolve_view_bounds requires policy['cell_size_ft']")
+    cell_size_ft = float(cell_size_ft)
+    if cell_size_ft <= 0:
+        raise ValueError("resolve_view_bounds requires cell_size_ft > 0")
+
+    max_W = policy.get("max_W", None)
+    max_H = policy.get("max_H", None)
+
+    # 1) Base bounds (crop preferred when active)
+    reason = "fallback"
+    confidence = "low"
+    base_bounds = None
+
+    crop_active = policy.get("crop_active", None)
+    if crop_active is None:
+        try:
+            crop_active = bool(getattr(view, "CropBoxActive"))
+        except Exception:
+            crop_active = False
+
+    bounds_crop_fn = policy.get("bounds_crop_fn", None)
+    bounds_extents_fn = policy.get("bounds_extents_fn", None)
+    bounds_default_fn = policy.get("bounds_default_fn", None)
+
+    if bounds_default_fn is None:
+
+        def bounds_default_fn(_view, _policy):
+            return Bounds2D(
+                -100.0 - buffer_ft,
+                -100.0 - buffer_ft,
+                100.0 + buffer_ft,
+                100.0 + buffer_ft,
+            )
+
+    if crop_active:
+        try:
+            if bounds_crop_fn is not None:
+                base_bounds = bounds_crop_fn(view, policy)
+            else:
+                doc = policy.get("doc")
+                basis = policy.get("basis")
+                if doc is None or basis is None:
+                    raise ValueError(
+                        "policy must provide doc and basis when bounds_crop_fn is not supplied"
+                    )
+                base_bounds = xy_bounds_from_crop_box_all_corners(view, basis, buffer=buffer_ft)
+
+            reason = "crop"
+            confidence = "high"
+        except Exception as e:
+            if diag is not None:
+                try:
+                    diag.warn(
+                        phase="bounds",
+                        callsite="resolve_view_bounds.crop",
+                        message="Crop bounds failed; falling back to extents",
+                        view_id=view_id,
+                        extra={"exc_type": type(e).__name__, "exc": str(e)},
+                    )
+                except Exception:
+                    pass
+
+    if base_bounds is None:
+        try:
+            if bounds_extents_fn is not None:
+                base_bounds = bounds_extents_fn(view, policy)
+            else:
+                doc = policy.get("doc")
+                basis = policy.get("basis")
+                if doc is None or basis is None:
+                    raise ValueError(
+                        "policy must provide doc and basis when bounds_extents_fn is not supplied"
+                    )
+                base_bounds = synthetic_bounds_from_visible_extents(
+                    doc, view, basis, buffer=buffer_ft, diag=diag
+                )
+
+            reason = "extents"
+            confidence = "med"
+        except Exception as e:
+            base_bounds = bounds_default_fn(view, policy)
+            reason = "fallback"
+            confidence = "low"
+            if diag is not None:
+                try:
+                    diag.warn(
+                        phase="bounds",
+                        callsite="resolve_view_bounds.extents",
+                        message="Extents bounds failed; using default fallback bounds",
+                        view_id=view_id,
+                        extra={"exc_type": type(e).__name__, "exc": str(e)},
+                    )
+                except Exception:
+                    pass
+
+    # 2) Annotation-driven expansion (optional)
+    anno_expanded = False
+    try:
+        anno_expand_fn = policy.get("anno_expand_fn", None)
+        if anno_expand_fn is None:
+            doc = policy.get("doc")
+            basis = policy.get("basis")
+            cfg = policy.get("cfg")
+            if doc is not None and basis is not None and cfg is not None:
+                from .annotation import compute_annotation_extents
+
+                anno_bounds = compute_annotation_extents(
+                    doc,
+                    view,
+                    basis,
+                    base_bounds,
+                    cell_size_ft,
+                    cfg,
+                    diag=diag,
+                )
+            else:
+                anno_bounds = None
+        else:
+            anno_bounds = anno_expand_fn(base_bounds, view, policy)
+
+        if anno_bounds is not None:
+            base_bounds = anno_bounds
+            anno_expanded = True
+    except Exception as e:
+        # Annotation expansion failing should never block model export.
+        if diag is not None:
+            try:
+                diag.warn(
+                    phase="bounds",
+                    callsite="resolve_view_bounds.annotation",
+                    message="Annotation bounds expansion failed; continuing with base bounds",
+                    view_id=view_id,
+                    extra={"exc_type": type(e).__name__, "exc": str(e)},
+                )
+            except Exception:
+                pass
+
+    # 3) Cap reporting (optional)
+    width_ft = float(base_bounds.width())
+    height_ft = float(base_bounds.height())
+
+    W = max(1, int(math.ceil(width_ft / cell_size_ft)))
+    H = max(1, int(math.ceil(height_ft / cell_size_ft)))
+
+    capped = False
+    cap_before = None
+    cap_after = None
+
+    if max_W is not None and max_H is not None:
+        max_W = int(max_W)
+        max_H = int(max_H)
+        if W > max_W or H > max_H:
+            capped = True
+            cap_before = {"W": W, "H": H, "bounds_uv": _bounds_to_tuple(base_bounds)}
+            W2 = min(W, max_W)
+            H2 = min(H, max_H)
+
+            # Preserve xmin/ymin anchor, clamp xmax/ymax
+            base_bounds = base_bounds.__class__(
+                base_bounds.xmin,
+                base_bounds.ymin,
+                base_bounds.xmin + W2 * cell_size_ft,
+                base_bounds.ymin + H2 * cell_size_ft,
+            )
+            cap_after = {"W": W2, "H": H2, "bounds_uv": _bounds_to_tuple(base_bounds)}
+
+            if diag is not None:
+                try:
+                    diag.warn(
+                        phase="bounds",
+                        callsite="resolve_view_bounds.cap",
+                        message="Grid size exceeds maximum; bounds were capped",
+                        view_id=view_id,
+                        extra={
+                            "before": cap_before,
+                            "after": cap_after,
+                            "max_W": max_W,
+                            "max_H": max_H,
+                        },
+                    )
+                except Exception:
+                    pass
+
+            W, H = W2, H2
+
+    return {
+        "bounds_uv": base_bounds,
+        "reason": reason,
+        "confidence": confidence,
+        "anno_expanded": bool(anno_expanded),
+        "capped": bool(capped),
+        "cap_before": cap_before,
+        "cap_after": cap_after,
+        "grid_W": int(W),
+        "grid_H": int(H),
+        "buffer_ft": buffer_ft,
+        "cell_size_ft": cell_size_ft,
+    }
