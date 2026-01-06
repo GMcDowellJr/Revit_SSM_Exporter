@@ -20,6 +20,35 @@ class Mode(Enum):
     LINEAR = 2
     AREAL = 3
 
+def _mesh_vertex_count(mesh):
+    """Best-effort vertex count for Revit Mesh-like objects.
+
+    Must not throw. Early-out uses this for heuristics only.
+    """
+    if mesh is None:
+        return 0
+    try:
+        verts = getattr(mesh, "Vertices", None)
+        if verts is not None:
+            try:
+                return len(verts)
+            except Exception:
+                # Some Revit collections expose Size instead of __len__
+                size = getattr(verts, "Size", None)
+                if isinstance(size, int):
+                    return size
+    except Exception:
+        pass
+
+    try:
+        n = getattr(mesh, "NumVertices", None)
+        if isinstance(n, int):
+            return n
+    except Exception:
+        pass
+
+    return 0
+    
 def tier_a_is_ambiguous(minor_cells, aabb_area_cells, grid_area, cell_size_world, cfg):
     t = cfg.thin_max  # required t=2 unless cfg changes
     margin_cells = max(cfg.tierb_margin_cells_min,
