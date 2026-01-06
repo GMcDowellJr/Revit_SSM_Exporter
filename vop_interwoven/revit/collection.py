@@ -93,49 +93,41 @@ def collect_view_elements(doc, view, raster, diag=None):
 
             except Exception as e:
                 cat_fail += 1
-                try:
-                    if diag is not None:
-                        diag.warn(
-                            phase="collection",
-                            callsite="collect_view_elements.category",
-                            message="Category collection failed; skipping category",
-                            view_id=view_id,
-                            extra={"category": str(cat), "exc_type": type(e).__name__, "exc": str(e)},
-                        )
-                except Exception:
-                    pass
+                if diag is not None:
+                    diag.warn(
+                        phase="collection",
+                        callsite="collect_view_elements.category",
+                        message="Category collection failed; skipping category",
+                        view_id=view_id,
+                        extra={"category": str(cat), "exc_type": type(e).__name__, "exc": str(e)},
+                    )
+
                 continue
 
     except Exception as e:
-        try:
-            if diag is not None:
-                diag.error(
-                    phase="collection",
-                    callsite="collect_view_elements",
-                    message="Element collection failed; returning partial/empty list",
-                    exc=e,
-                    view_id=view_id,
-                )
-        except Exception:
-            pass
+        if diag is not None:
+            diag.error(
+                phase="collection",
+                callsite="collect_view_elements",
+                message="Element collection failed; returning partial/empty list",
+                exc=e,
+                view_id=view_id,
+            )
 
     # One aggregated warning if needed
     if diag is not None and (cat_fail > 0 or viewspecific_fail > 0 or bbox_fail > 0):
-        try:
-            diag.warn(
-                phase="collection",
-                callsite="collect_view_elements.summary",
-                message="Collection had recoverable failures (aggregated)",
-                view_id=view_id,
-                extra={
-                    "num_elements": len(elements),
-                    "cat_fail": cat_fail,
-                    "viewspecific_fail": viewspecific_fail,
-                    "bbox_fail": bbox_fail,
-                },
-            )
-        except Exception:
-            pass
+        diag.warn(
+            phase="collection",
+            callsite="collect_view_elements.summary",
+            message="Collection had recoverable failures (aggregated)",
+            view_id=view_id,
+            extra={
+                "num_elements": len(elements),
+                "cat_fail": cat_fail,
+                "viewspecific_fail": viewspecific_fail,
+                "bbox_fail": bbox_fail,
+            },
+        )
 
     return elements
 
@@ -168,7 +160,7 @@ def is_element_visible_in_view(elem, view):
     return True
 
 
-def expand_host_link_import_model_elements(doc, view, elements, cfg):
+def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None):
     """Expand element list to include linked/imported model elements.
 
     Args:
@@ -227,8 +219,17 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg):
                 }
             )
     except Exception as e:
-        # Log warning but don't fail the whole export
-        print("[WARN] vop.collection: Failed to collect linked elements: {0}".format(e))
+        # Recoverable, but must be visible and counted
+        if diag is not None:
+            diag.warn(
+                phase="collection",
+                callsite="expand_host_link_import_model_elements",
+                message="Failed to collect linked/imported elements; continuing with host only",
+                exc=e,
+                view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+            )
+        else:
+            print("[WARN] vop.collection: Failed to collect linked elements: {0}".format(e))
 
     return result
 
