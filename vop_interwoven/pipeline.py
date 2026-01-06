@@ -17,7 +17,7 @@ Core principles:
 
 import math
 from .config import Config
-from .core.raster import ViewRaster, TileMap, _extract_source_type
+from .core.raster import ViewRaster, TileMap
 from .core.geometry import Mode, classify_by_uv, make_uv_aabb, make_obb_or_skinny_aabb
 from .core.math_utils import Bounds2D, CellRect
 from .core.silhouette import get_element_silhouette
@@ -277,8 +277,9 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None):
 
     for elem_wrapper in expanded_elements:
         elem = elem_wrapper["element"]
-        doc_key = elem_wrapper["doc_key"]           # Unique key for indexing
-        doc_label = elem_wrapper.get("doc_label", doc_key)  # Friendly label for logging
+        source_type = elem_wrapper.get("source_type", "HOST")
+        source_id = elem_wrapper.get("source_id", source_type)
+        source_label = elem_wrapper.get("source_label", source_id)
         world_transform = elem_wrapper["world_transform"]
 
         # Get element metadata
@@ -292,10 +293,14 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None):
                 print("[WARN] vop.pipeline: Skipping element from {0}: {1}".format(doc_label, e))
             continue
 
-        key_index = raster.get_or_create_element_meta_index(elem_id, category, source=doc_key, source_label=doc_label)
-
-        # Extract simple source type for depth-tested rasterization
-        source_type = _extract_source_type(doc_key)
+        key_index = raster.get_or_create_element_meta_index(
+            elem_id, category,
+            source_id=source_id,
+            source_type=source_type,
+            source_label=source_label
+        )
+        if source_type not in ("HOST", "LINK", "DWG"):
+            raise ValueError("Invalid source_type from wrapper: {0} (source_id={1})".format(source_type, source_id))
 
         # CRITICAL FIX: Extract silhouette FIRST to get accurate geometry
         # (depth calculation moved AFTER silhouette extraction)

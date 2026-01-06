@@ -163,28 +163,18 @@ def is_element_visible_in_view(elem, view):
 def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None):
     """Expand element list to include linked/imported model elements.
 
-    Args:
-        doc: Revit Document
-        view: Revit View
-        elements: List of host document elements
-        cfg: Config object with linked document settings
-
     Returns:
         List of element wrappers with transform info:
         Each item: {
-            'element': Element,
+            'element': Element or LinkedElementProxy,
             'world_transform': Transform (identity for host, link transform for linked),
-            'doc_key': str (unique key for indexing),
-            'doc_label': str (friendly label for logging),
+            'source_type': "HOST" | "LINK" | "DWG",
+            'source_id': stable unique string,
+            'source_label': human label,
+            'doc_key': legacy alias of source_id (deprecated),
+            'doc_label': legacy alias of source_label (deprecated),
             'link_inst_id': ElementId or None
         }
-
-    Commentary:
-        ✔ Includes host elements (identity transform)
-        ✔ Expands RevitLinkInstance and ImportInstance to access linked elements
-        ✔ Uses linked_documents module for production-ready link handling
-        ✔ Provides unique doc_key for multiple link instances (includes instance ID)
-        ✔ Provides friendly doc_label for logging/display
     """
     from Autodesk.Revit.DB import Transform
     from .linked_documents import collect_all_linked_elements
@@ -198,6 +188,9 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None):
             {
                 "element": e,
                 "world_transform": identity_trf,
+                "source_type": "HOST",
+                "source_id": "HOST",
+                "source_label": "HOST",
                 "doc_key": "HOST",
                 "doc_label": "HOST",
                 "link_inst_id": None,
@@ -209,12 +202,16 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None):
         linked_proxies = collect_all_linked_elements(doc, view, cfg)
 
         for proxy in linked_proxies:
+            # Proxy now carries normalized identity (doc_* retained as legacy aliases)
             result.append(
                 {
                     "element": proxy,  # LinkedElementProxy
                     "world_transform": proxy.transform,
-                    "doc_key": proxy.doc_key,          # Unique key (includes instance ID)
-                    "doc_label": proxy.doc_label,      # Friendly label for logging
+                    "source_type": getattr(proxy, "source_type", "HOST"),
+                    "source_id": getattr(proxy, "source_id", getattr(proxy, "doc_key", "HOST")),
+                    "source_label": getattr(proxy, "source_label", getattr(proxy, "doc_label", getattr(proxy, "doc_key", "HOST"))),
+                    "doc_key": getattr(proxy, "doc_key", getattr(proxy, "source_id", "HOST")),
+                    "doc_label": getattr(proxy, "doc_label", getattr(proxy, "source_label", getattr(proxy, "doc_key", "HOST"))),
                     "link_inst_id": proxy.LinkInstanceId,
                 }
             )

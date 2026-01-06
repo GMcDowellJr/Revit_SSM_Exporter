@@ -413,23 +413,24 @@ class ViewRaster:
             self.depth_test_rejects += 1
             return False
 
-    def get_or_create_element_meta_index(self, elem_id, category, source="HOST", source_label=None):
+    def get_or_create_element_meta_index(self, elem_id, category, source_id, source_type="HOST", source_label=None):
         """Get or create metadata index for element.
 
         Args:
             elem_id: Revit element ID (integer)
             category: Element category name (string)
-            source: Unique source key for indexing ("HOST", "RVT_LINK:{uid}:{id}", etc.)
-            source_label: Optional friendly label for display (defaults to source)
+            source_id: Stable unique source identifier for indexing (e.g., "HOST", "RVT_LINK:...", "DWG_IMPORT:...")
+            source_type: One of {"HOST", "LINK", "DWG"} (used for downstream layers)
+            source_label: Optional friendly label for display (defaults to source_id)
 
         Returns:
             Integer index for this element's metadata
 
         Commentary:
-            source: Used as unique key for indexing (must be unique per element)
+            source_id: Used as unique key for indexing (must be unique per element per source)
             source_label: Used for display/logging (can be friendly, non-unique)
         """
-        key = (elem_id, source)
+        key = (elem_id, source_id)
         if key in self.element_meta_index_by_key:
             return self.element_meta_index_by_key[key]
 
@@ -439,8 +440,9 @@ class ViewRaster:
             {
                 "elem_id": elem_id,
                 "category": category,
-                "source": source,
-                "source_label": source_label if source_label is not None else source
+                "source_id": source_id,
+                "source_type": source_type,
+                "source_label": source_label if source_label is not None else source_id
             }
         )
         return idx
