@@ -8,6 +8,21 @@ Provides functions to collect elements from:
 Handles spatial clipping, transform application, and visibility filtering.
 """
 
+# Optional Revit API bindings (allow pytest outside Revit)
+try:
+    from Autodesk.Revit.DB import (
+        FilteredElementCollector,
+        CategoryType,
+        RevitLinkInstance,
+        ImportInstance,
+    )
+except Exception:
+    FilteredElementCollector = None
+    CategoryType = None
+    RevitLinkInstance = None
+    ImportInstance = None
+
+
 # Logging helper for IronPython compatibility (no logging module)
 def _log(level, msg):
     """Simple logging function compatible with IronPython."""
@@ -24,26 +39,17 @@ class LinkedElementProxy:
     - get_BoundingBox(view): Returns host-space bbox
     - get_Geometry(options): Returns link-space geometry
     - transform: Link transform (link → host)
-    - doc_key: Unique document key for metadata indexing (includes instance ID)
-    - doc_label: Human-friendly document label for logging/display
+    - source_type: One of {HOST, LINK, DWG}
+    - source_id: Stable unique source identifier (includes instance ID)
+    - source_label: Human-friendly label for logging/display
+    - doc_key/doc_label: Legacy aliases (deprecated)
     """
 
     __slots__ = ("_bb", "_elem", "_link_trf", "Id", "Category",
-                 "LinkInstanceId", "transform", "doc_key", "doc_label")
+                 "LinkInstanceId", "transform", "source_type", "source_id", "source_label", "doc_key", "doc_label")
 
-    def __init__(self, element, link_inst, host_min, host_max, link_trf, doc_key, doc_label=None):
-        """Initialize proxy with host-space bbox and link transform.
-
-        Args:
-            element: Element from link document
-            link_inst: RevitLinkInstance or ImportInstance
-            host_min: BBox minimum in host coordinates (XYZ)
-            host_max: BBox maximum in host coordinates (XYZ)
-            link_trf: Transform from link to host
-            doc_key: Unique document key (e.g., "RVT_LINK:{UniqueId}:{InstanceId}")
-            doc_label: Optional friendly label (e.g., "RVT_LINK:LinkTitle"), defaults to doc_key
-        """
-        # Create simple bbox wrapper
+    def __init__(self, element, link_inst, host_min, host_max, link_trf, source_type, source_id, source_label=None, doc_key=None, doc_label=None):
+        """Initialize proxy with host-space bbox and link transform."""
         class _BB:
             __slots__ = ("Min", "Max")
             def __init__(self, mn, mx):
@@ -57,8 +63,14 @@ class LinkedElementProxy:
         self.Category = getattr(element, "Category", None)
         self.LinkInstanceId = getattr(link_inst, "Id", None)
         self.transform = link_trf
-        self.doc_key = doc_key
-        self.doc_label = doc_label if doc_label is not None else doc_key
+
+        self.source_type = source_type
+        self.source_id = source_id
+        self.source_label = source_label if source_label is not None else source_id
+
+        # Legacy aliases (deprecated): keep in sync for downstream callers not yet migrated
+        self.doc_key = doc_key if doc_key is not None else source_id
+        self.doc_label = doc_label if doc_label is not None else self.source_label
 
     def get_BoundingBox(self, view):
         """Return host-space bounding box (view parameter ignored)."""
@@ -74,12 +86,10 @@ class LinkedElementProxy:
         try:
             return self._elem.get_Geometry(options)
         except Exception as e:
-            # Log failure for debugging (silent failures hide problems)
             elem_id = getattr(self._elem, 'Id', '?')
             try:
                 _log("DEBUG", "Geometry extraction failed for link element {0}: {1}".format(elem_id, e))
             except Exception as log_e:
-                # Last-resort fallback; do not fail silently.
                 print(f"[WARN] revit.linked_documents: _log failed for geometry extraction failure (elem_id={elem_id}) ({type(log_e).__name__}: {log_e})")
             return None
 
@@ -133,59 +143,42 @@ def collect_all_linked_elements(doc, view, cfg):
 def _has_revit_2024_link_collector(doc, view):
     """Detect if Revit 2024+ FilteredElementCollector(doc, viewId, linkId) is available.
 
-    Args:
-        doc: Revit Document
-        view: Revit View
-
-    Returns:
-        True if Revit 2024+ collector is available, False otherwise
-
-    Commentary:
-        Tests if the 3-parameter FilteredElementCollector overload exists.
-        This overload was added in Revit 2024 to collect visible elements from links.
+    Uses reflection without executing the overload (no dependency on loaded/valid links).
     """
     try:
-        from Autodesk.Revit.DB import FilteredElementCollector, ElementId, RevitLinkInstance
+        import clr
+        import System
+        from Autodesk.Revit.DB import FilteredElementCollector, Document, ElementId
 
-        # Try to find a real RevitLinkInstance to test with (more reliable)
-        link_collector = FilteredElementCollector(doc).OfClass(RevitLinkInstance)
-        real_link_id = None
-
-        for link in link_collector:
-            if link is not None and link.Id is not None:
-                real_link_id = link.Id
-                break
-
-        # Use real link ID if available, otherwise fall back to dummy
-        test_id = real_link_id if real_link_id is not None else ElementId(-1)
-        test_id_desc = "real RevitLinkInstance.Id" if real_link_id is not None else "dummy ElementId(-1)"
-
-        # Try to create collector with the Revit 2024+ overload
+        # Robust pythonnet: get the CLR Type directly
         try:
-            test_collector = FilteredElementCollector(doc, view.Id, test_id)
-            # If we get here, the overload exists (Revit 2024+)
-            _log("INFO", "[Revit 2024+] FilteredElementCollector(doc, viewId, linkId) overload DETECTED (tested with {0})".format(test_id_desc))
-            _log("INFO", "[Revit 2024+] Using new collector path for linked elements")
-            return True
+            t = clr.GetClrType(FilteredElementCollector)
+        except Exception:
+            t = None
 
-        except TypeError as e:
-            # TypeError = signature doesn't match (overload missing)
-            error_msg = str(e)
-            _log("INFO", "[Revit <2024] FilteredElementCollector overload NOT FOUND - TypeError: {0}".format(error_msg))
-            _log("INFO", "[Revit <2024] Using legacy clip volume path for linked elements")
+        if t is None:
+            _log("WARN", "Could not resolve CLR type for FilteredElementCollector; defaulting to legacy path")
             return False
 
-        except Exception as e:
-            # Other exception = signature exists but runtime error
-            error_msg = str(e)
-            error_type = type(e).__name__
-            _log("WARN", "[Revit 2024+] Collector overload exists but test failed - {0}: {1}".format(error_type, error_msg))
-            _log("INFO", "[Revit 2024+] Falling back to legacy clip volume path for safety")
-            return False
+        for c in t.GetConstructors():
+            ps = c.GetParameters()
+            if ps is None or len(ps) != 3:
+                continue
+            p0 = ps[0].ParameterType.FullName
+            p1 = ps[1].ParameterType.FullName
+            p2 = ps[2].ParameterType.FullName
+            if p0 == "Autodesk.Revit.DB.Document" and p1 == "Autodesk.Revit.DB.ElementId" and p2 == "Autodesk.Revit.DB.ElementId":
+
+                _log("INFO", "[Revit 2024+] FilteredElementCollector(doc, viewId, linkId) overload DETECTED (reflection)")
+                _log("INFO", "[Revit 2024+] Using new collector path for linked elements")
+                return True
+
+        _log("INFO", "[Revit <2024] FilteredElementCollector 3-arg overload NOT FOUND (reflection)")
+        _log("INFO", "[Revit <2024] Using legacy clip volume path for linked elements")
+        return False
 
     except Exception as e:
-        # Import error or doc/view unavailable
-        _log("WARN", "Failed to check Revit 2024+ collector availability: {0}".format(e))
+        _log("WARN", "Failed to check Revit 2024+ collector availability (reflection): {0}".format(e))
         _log("INFO", "Defaulting to legacy clip volume path for safety")
         return False
 
@@ -209,8 +202,7 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
         This directly enumerates elements visible from the link in the host view,
         eliminating the need for bbox clipping approximations.
     """
-    from Autodesk.Revit.DB import FilteredElementCollector
-
+    
     # Build unique source key (includes instance ID for uniqueness)
     link_inst_id = link_inst.Id.IntegerValue
     try:
@@ -224,6 +216,27 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
     _log("DEBUG", "Using Revit 2024+ collector for link '{0}'".format(link_doc.Title))
 
     proxies = []
+    
+    if FilteredElementCollector is None:
+        raise RuntimeError("FilteredElementCollector unavailable (not running inside Revit/Dynamo)")
+    
+    # Diagnostics: count what we collect, what we skip, and why.
+    fec_total = 0
+    candidates = 0
+    created = 0
+    skip = {
+        "skip_nested_link": 0,
+        "skip_import_instance": 0,
+        "skip_no_category": 0,
+        "skip_excluded_category": 0,
+        "skip_non_model_categorytype": 0,
+        "skip_no_bbox": 0,
+        "skip_bad_bbox": 0,
+        "skip_transform_failed": 0,
+        "skip_exception": 0,
+    }
+    by_category = {}
+
     try:
         # Revit 2024+ overload: collect visible elements from link instance in view
         fec = FilteredElementCollector(doc, view.Id, link_inst.Id)
@@ -231,37 +244,51 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
         
         # Apply same category hygiene as legacy clipping path (exclude rooms/areas/grids etc.)
         excluded_cat_ids = _get_excluded_3d_category_ids(link_doc)
-        from Autodesk.Revit.DB import CategoryType
 
         for elem in fec:
+            fec_total += 1
             try:
                 # Skip nested links and imports (avoid recursion/noise)
-                from Autodesk.Revit.DB import RevitLinkInstance, ImportInstance
-                if isinstance(elem, RevitLinkInstance) or isinstance(elem, ImportInstance):
+                # NOTE: In pytest (outside Revit), these symbols may be None due to optional imports.
+                if RevitLinkInstance is not None and isinstance(elem, RevitLinkInstance):
+                    skip["skip_nested_link"] += 1
+                    continue
+                if ImportInstance is not None and isinstance(elem, ImportInstance):
+                    skip["skip_import_instance"] += 1
                     continue
 
                 cat = elem.Category
                 if cat is None:
+                    skip["skip_no_category"] += 1
                     continue
 
                 cat_id_val = cat.Id.IntegerValue
 
                 # Global 3D exclusion (rooms, areas, grids, etc.)
                 if cat_id_val in excluded_cat_ids:
+                    skip["skip_excluded_category"] += 1
                     continue
 
                 # Only model categories (ignore annotations, analytical, etc.)
                 if cat.CategoryType != CategoryType.Model:
+                    skip["skip_non_model_categorytype"] += 1
                     continue
+
+                candidates += 1
 
                 # Get element bbox in link space
                 bbox_link = elem.get_BoundingBox(None)
-                if bbox_link is None or bbox_link.Min is None or bbox_link.Max is None:
+                if bbox_link is None:
+                    skip["skip_no_bbox"] += 1
+                    continue
+                if bbox_link.Min is None or bbox_link.Max is None:
+                    skip["skip_bad_bbox"] += 1
                     continue
 
                 # Transform bbox to host space
                 host_min, host_max = _transform_bbox_to_host(bbox_link, link_trf)
                 if host_min is None or host_max is None:
+                    skip["skip_transform_failed"] += 1
                     continue
 
                 # Create proxy
@@ -271,18 +298,60 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
                     host_min=host_min,
                     host_max=host_max,
                     link_trf=link_trf,
+                    source_type="LINK",
+                    source_id=source_key,
+                    source_label=source_label,
                     doc_key=source_key,
-                    doc_label=source_label
+                    doc_label=source_label,
                 )
+
                 proxies.append(proxy)
+                created += 1
+
+                # Category histogram (created only)
+                try:
+                    cname = cat.Name if cat else "?"
+                except Exception:
+                    cname = "?"
+                by_category[cname] = by_category.get(cname, 0) + 1
 
             except Exception as e:
+                skip["skip_exception"] += 1
                 _log("DEBUG", "Error processing link element {0}: {1}".format(getattr(elem, 'Id', '?'), e))
                 continue
 
     except Exception as e:
         _log("ERROR", "Revit 2024+ collector failed for link '{0}': {1}".format(link_doc.Title, e))
         return [], source_key, source_label
+
+    # Summarize collection outcome (high signal, low spam)
+    _log(
+        "INFO",
+        "Revit 2024+ link collector summary for '{0}': fec_total={1}, model_candidates={2}, proxies_created={3}".format(
+            link_doc.Title, fec_total, candidates, created
+        )
+    )
+
+    # Skip reason breakdown (ordered for readability)
+    _log(
+        "INFO",
+        "Revit 2024+ link skips for '{0}': {1}".format(
+            link_doc.Title,
+            ", ".join(["{0}={1}".format(k, skip[k]) for k in sorted(skip.keys())])
+        )
+    )
+
+    # Top categories (created proxies only)
+    try:
+        top = sorted(by_category.items(), key=lambda kv: kv[1], reverse=True)[:10]
+        _log(
+            "INFO",
+            "Revit 2024+ link top categories for '{0}': {1}".format(
+                link_doc.Title, ", ".join(["{0}={1}".format(n, c) for n, c in top])
+            )
+        )
+    except Exception as e:
+        _log("DEBUG", "Failed to summarize category histogram: {0}".format(e))
 
     return proxies, source_key, source_label
 
@@ -487,8 +556,11 @@ def _collect_from_dwg_imports(doc, view, cfg):
                 host_min=bbox.Min,
                 host_max=bbox.Max,
                 link_trf=identity_trf,
+                source_type="DWG",
+                source_id=source_key,
+                source_label=source_label,
                 doc_key=source_key,
-                doc_label=source_label
+                doc_label=source_label,
             )
 
             proxies.append(proxy)
@@ -629,8 +701,11 @@ def _collect_link_elements_with_clipping(link_inst, link_doc, link_trf, view,
                 host_min=host_min,
                 host_max=host_max,
                 link_trf=link_trf,
+                source_type="LINK",
+                source_id=doc_key,
+                source_label=doc_label,
                 doc_key=doc_key,
-                doc_label=doc_label
+                doc_label=doc_label,
             )
 
             proxies.append(proxy)
