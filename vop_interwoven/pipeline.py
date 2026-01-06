@@ -55,51 +55,85 @@ def process_document_views(doc, view_ids, cfg):
         >>> len(results)
         2
     """
+    from .core.diagnostics import Diagnostics
+
     results = []
 
     for view_id in view_ids:
+        diag = Diagnostics()  # per-view diag
+        view = None
+
         try:
-            # Convert int to ElementId if needed (Revit API requires ElementId object)
+            # Convert int to ElementId if needed
             from Autodesk.Revit.DB import ElementId
-            if isinstance(view_id, int):
-                elem_id = ElementId(view_id)
-            else:
-                elem_id = view_id
+            elem_id = ElementId(view_id) if isinstance(view_id, int) else view_id
 
             view = doc.GetElement(elem_id)
 
             # 0) Validate supported view types (2D-ish)
-            if not _is_supported_2d_view(view):
+            if not _is_supported_2d_view(view, diag=diag):
+                # Record skip reason for traceability (optional but useful)
+                try:
+                    diag.warn(
+                        phase="pipeline",
+                        callsite="process_document_views",
+                        message="Skipping unsupported view type",
+                        view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                        extra={"view_name": getattr(view, "Name", None)},
+                    )
+                except Exception:
+                    pass
                 continue
 
             # 1) Init raster bounds/resolution
-            raster = init_view_raster(doc, view, cfg)
+            raster = init_view_raster(doc, view, cfg, diag=diag)
 
             # 2) Broad-phase visible elements
-            elements = collect_view_elements(doc, view, raster)
+            elements = collect_view_elements(doc, view, raster, diag=diag)
 
-            # 3) MODEL PASS (INTERWOVEN A+B): front-to-back, AreaL gets triangles+z, tiny/linear proxies
-            render_model_front_to_back(doc, view, raster, elements, cfg)
+            # 3) MODEL PASS
+            render_model_front_to_back(doc, view, raster, elements, cfg, diag=diag)
 
-            # 4) ANNO PASS (2D only, no occlusion effect)
-            rasterize_annotations(doc, view, raster, cfg)
+            # 4) ANNO PASS
+            rasterize_annotations(doc, view, raster, cfg, diag=diag)
 
-            # 5) Derive annoOverModel with explicit OverModel semantics
+            # 5) Derive annoOverModel
             raster.finalize_anno_over_model(cfg)
 
             # 6) Export
-            results.append(export_view_raster(view, raster, cfg))
+            out = export_view_raster(view, raster, cfg, diag=diag)
+            results.append(out)
 
         except Exception as e:
-            # Log error but continue processing other views
-            view_name = getattr(view, 'Name', 'Unknown') if 'view' in locals() else 'Unknown'
-            print("[ERROR] vop.pipeline: Failed to process view {0}: {1}".format(view_name, e))
+            # Never silent: record + continue
+            try:
+                diag.error(
+                    phase="pipeline",
+                    callsite="process_document_views",
+                    message="Failed to process view",
+                    exc=e,
+                    view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                    extra={"view_name": getattr(view, "Name", None)},
+                )
+            except Exception:
+                pass
+
+            # Keep legacy behavior (continue)
+            results.append(
+                {
+                    "view_id": getattr(getattr(view, "Id", None), "IntegerValue", 0),
+                    "view_name": getattr(view, "Name", "Unknown") if view is not None else "Unknown",
+                    "success": False,
+                    "diag": diag.to_dict(),
+                }
+            )
             continue
 
     return results
 
 
-def init_view_raster(doc, view, cfg):
+
+def init_view_raster(doc, view, cfg, diag=None):
     """Initialize ViewRaster for a view.
 
     Args:
@@ -121,21 +155,16 @@ def init_view_raster(doc, view, cfg):
     cell_size_ft = (0.125 * scale) / 12.0  # inches -> feet
 
     # View basis
-    basis = make_view_basis(view)
-    print("[DEBUG] make_view_basis returned:", basis)
+    basis = make_view_basis(view, diag=diag)
 
     # Base bounds in VIEW-LOCAL UV:
     # - crop box if available/active (with CropBox.Transform applied)
     # - otherwise synthetic bounds from elements in the view (drafting-safe)
-    base_bounds_xy = xy_bounds_effective(
-        doc, view, basis, buffer=cfg.bounds_buffer_ft
-    )
+    base_bounds_xy = xy_bounds_effective(doc, view, basis, buffer=cfg.bounds_buffer_ft, diag=diag)
 
     # Expand bounds to include extent-driver annotations (text, tags, dimensions)
     # These annotations can exist outside the crop box and need to be captured
-    anno_bounds = compute_annotation_extents(
-        doc, view, basis, base_bounds_xy, cell_size_ft, cfg
-    )
+    anno_bounds = compute_annotation_extents(doc, view, basis, base_bounds_xy, cell_size_ft, cfg, diag=diag)
 
     # Use expanded bounds if available, otherwise use base bounds
     bounds_xy = anno_bounds if anno_bounds is not None else base_bounds_xy
@@ -151,14 +180,28 @@ def init_view_raster(doc, view, cfg):
     max_H = cfg.max_grid_cells_height
 
     if W > max_W or H > max_H:
-        # Log warning about capping
-        print(f"WARNING: Grid size {W}x{H} exceeds max {max_W}x{max_H} "
-              f"(based on {cfg.max_sheet_width_in}x{cfg.max_sheet_height_in}\" sheet @ "
-              f"{cfg.cell_size_paper_in}\" cell size). Capping to max.")
+        try:
+            diag.warn(
+                phase="raster_init",
+                callsite="init_view_raster",
+                message="Grid size exceeds maximum; capping",
+                view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                extra={
+                    "W": W,
+                    "H": H,
+                    "max_W": max_W,
+                    "max_H": max_H,
+                    "max_sheet_width_in": cfg.max_sheet_width_in,
+                    "max_sheet_height_in": cfg.max_sheet_height_in,
+                    "cell_size_paper_in": cfg.cell_size_paper_in,
+                },
+            )
+        except Exception:
+            pass
+
         W = min(W, max_W)
         H = min(H, max_H)
 
-        # Adjust bounds to match capped grid
         bounds_xy = bounds_xy.__class__(
             bounds_xy.xmin,
             bounds_xy.ymin,
@@ -179,7 +222,7 @@ def init_view_raster(doc, view, cfg):
     return raster
 
 
-def render_model_front_to_back(doc, view, raster, elements, cfg):
+def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None):
     """Render 3D model elements front-to-back with interwoven AreaL/Tiny/Linear handling.
 
     Args:
@@ -202,7 +245,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
     from .revit.collection import _project_element_bbox_to_cell_rect, expand_host_link_import_model_elements
 
     # Get view basis for transformations
-    vb = make_view_basis(view)
+    vb = make_view_basis(view, diag=diag)
 
     # Expand to include linked/imported elements
     expanded_elements = expand_host_link_import_model_elements(doc, view, elements, cfg)
@@ -468,19 +511,39 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
 
         except Exception as e:
             # Catastrophic failure
-            if key_index < len(raster.element_meta):
-                raster.element_meta[key_index]['strategy'] = 'CATASTROPHIC_FAILURE'
-                raster.element_meta[key_index]['error'] = str(e)
+            try:
+                if key_index < len(raster.element_meta):
+                    raster.element_meta[key_index]['strategy'] = 'CATASTROPHIC_FAILURE'
+                    raster.element_meta[key_index]['error'] = str(e)
+            except Exception:
+                pass
 
             skipped += 1
+
             if skipped <= 10:
-                print("[ERROR] vop.pipeline: Catastrophic failure for element {0}: {1}".format(elem_id, e))
                 try:
-                    import traceback
-                    traceback.print_exc()
-                except Exception as e:
-                    # Last-ditch diagnostic; keep pipeline moving, but do not fail silently.
-                    print(f"[WARN] pipeline: traceback.print_exc() failed ({type(e).__name__}: {e})")
+                    safe_elem_id = getattr(getattr(elem, "Id", None), "IntegerValue", None)
+                except Exception:
+                    safe_elem_id = None
+                print("[ERROR] vop.pipeline: Catastrophic failure for element {0}: {1}".format(safe_elem_id, e))
+
+            # Record structured diagnostic if available
+            try:
+                if diag is not None:
+                    diag.error(
+                        phase="pipeline",
+                        callsite="render_model_front_to_back",
+                        message="Catastrophic failure processing element",
+                        exc=e,
+                        view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                        elem_id=getattr(getattr(elem, "Id", None), "IntegerValue", None),
+                        extra={"doc_key": doc_key if "doc_key" in locals() else None},
+                    )
+            except Exception:
+                pass
+
+            # Continue with remaining elements
+            continue
 
     # Phase 4.5: Ambiguity detection (selective z-buffer prep)
     # Build tile bins and detect ambiguous tiles where depth conflicts exist
@@ -517,22 +580,34 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
     # Debug dump occlusion layers if requested
     if cfg.debug_dump_occlusion:
         try:
-            import os, re, time
+            import os
+            import re
 
-            view_name = re.sub(r'[<>:"/\\|?*]', "_", view.Name)
-            view_id = view.Id.IntegerValue
+            def _makedirs(path):
+                if not path:
+                    return
+                if os.path.isdir(path):
+                    return
+                try:
+                    os.makedirs(path)
+                except Exception:
+                    # If it already exists due to race/permissions quirks, ignore.
+                    if not os.path.isdir(path):
+                        raise
+
+            view_name = re.sub(r'[<>:"/\\|?*]', "_", getattr(view, "Name", "view"))
+            view_id = getattr(getattr(view, "Id", None), "IntegerValue", 0)
 
             if getattr(cfg, "debug_dump_prefix", None):
                 prefix = cfg.debug_dump_prefix
                 dump_dir = os.path.dirname(prefix)
-                if dump_dir:
-                    os.makedirs(dump_dir, exist_ok=True)
+                _makedirs(dump_dir)
             else:
                 dump_dir = getattr(cfg, "debug_dump_path", None)
-                base_name = f"occlusion_{view_name}_{view_id}"
+                base_name = "occlusion_{0}_{1}".format(view_name, view_id)
 
                 if dump_dir:
-                    os.makedirs(dump_dir, exist_ok=True)
+                    _makedirs(dump_dir)
                     prefix = os.path.join(dump_dir, base_name)
                 else:
                     prefix = base_name  # explicit CWD fallback
@@ -545,7 +620,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg):
     return processed
 
 
-def _is_supported_2d_view(view):
+def _is_supported_2d_view(view, diag=None):
     """Check if view type is supported (2D-ish views only).
 
     Args:
@@ -577,9 +652,19 @@ def _is_supported_2d_view(view):
         return view_type in supported_types
     except Exception as e:
         # If we can't determine type, reject it. Record diagnostic to avoid silent misclassification.
-        vid = getattr(view, "Id", None)
-        vname = getattr(view, "Name", None)
-        print(f"[WARN] pipeline: failed to read view.ViewType (view_id={vid}, name={vname}) ({type(e).__name__}: {e})")
+        try:
+            if diag is not None:
+                diag.warn(
+                    phase="pipeline",
+                    callsite="_is_supported_2d_view",
+                    message="Failed to read view.ViewType; rejecting view",
+                    view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                    extra={"view_name": getattr(view, "Name", None), "exc": str(e)},
+                )
+        except Exception:
+            pass
+        return False
+
         return False
 
 def _tiles_fully_covered_and_nearer(tile_map, footprint, elem_min_w):
@@ -788,7 +873,7 @@ def _mark_thin_band_along_long_axis(rect, raster):
                 raster.model_proxy_mask[idx] = True
 
 
-def export_view_raster(view, raster, cfg):
+def export_view_raster(view, raster, cfg, diag=None):
     """Export view raster to dictionary for JSON serialization.
 
     Args:
@@ -804,8 +889,8 @@ def export_view_raster(view, raster, cfg):
     return {
         "view_id": view.Id.IntegerValue,
         "view_name": view.Name,
-        "width": raster.W,
-        "height": raster.H,
+        "width": int(getattr(raster, "W", 0) or 0),
+        "height": int(getattr(raster, "H", 0) or 0),
         "cell_size": raster.cell_size_ft,
         "tile_size": raster.tile.tile_size,
         "total_elements": len(raster.element_meta),
@@ -813,6 +898,7 @@ def export_view_raster(view, raster, cfg):
         "raster": raster.to_dict(),
         "config": cfg.to_dict(),
         "diagnostics": {
+            "diag": (diag.to_dict() if diag is not None else None),
             "num_elements": len(raster.element_meta),
             "num_annotations": len(raster.anno_meta),
             "num_filled_cells": num_filled,

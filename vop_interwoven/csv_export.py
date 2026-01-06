@@ -147,24 +147,24 @@ def extract_view_metadata(view, doc):
     # ViewId and UniqueId
     try:
         metadata["ViewId"] = view.Id.IntegerValue
-    except:
+    except Exception:
         metadata["ViewId"] = 0
 
     try:
         metadata["ViewUniqueId"] = view.UniqueId or ""
-    except:
+    except Exception:
         metadata["ViewUniqueId"] = ""
 
     # ViewName
     try:
         metadata["ViewName"] = view.Name or ""
-    except:
+    except Exception:
         metadata["ViewName"] = ""
 
     # ViewType
     try:
         metadata["ViewType"] = view.ViewType.ToString()
-    except:
+    except Exception:
         metadata["ViewType"] = ""
 
     # Sheet placement
@@ -183,9 +183,9 @@ def extract_view_metadata(view, doc):
                             sheet_number = getattr(sheet, "SheetNumber", "") or ""
                             is_on_sheet = True
                             break
-                except:
+                except Exception:
                     continue
-        except:
+        except Exception:
             pass
 
     metadata["SheetNumber"] = sheet_number
@@ -195,14 +195,14 @@ def extract_view_metadata(view, doc):
     try:
         scale_val = view.Scale
         metadata["Scale"] = int(scale_val) if isinstance(scale_val, int) else ""
-    except:
+    except Exception:
         metadata["Scale"] = ""
 
     # Discipline
     try:
         discipline = view.Discipline
         metadata["Discipline"] = discipline.ToString() if discipline is not None else ""
-    except:
+    except Exception:
         metadata["Discipline"] = ""
 
     # Phase
@@ -213,7 +213,7 @@ def extract_view_metadata(view, doc):
             metadata["Phase"] = phase_elem.Name if phase_elem is not None else ""
         else:
             metadata["Phase"] = ""
-    except:
+    except Exception:
         metadata["Phase"] = ""
 
     # View Template
@@ -224,13 +224,13 @@ def extract_view_metadata(view, doc):
             metadata["ViewTemplate_Name"] = vt_elem.Name if vt_elem is not None else ""
         else:
             metadata["ViewTemplate_Name"] = ""
-    except:
+    except Exception:
         metadata["ViewTemplate_Name"] = ""
 
     # IsTemplate
     try:
         metadata["IsTemplate"] = bool(view.IsTemplate)
-    except:
+    except Exception:
         metadata["IsTemplate"] = False
 
     return metadata
