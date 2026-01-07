@@ -590,14 +590,27 @@ class ViewRaster:
             if len(points_uv) < 3:
                 continue
 
+            # Clip in UV first to avoid clamp-to-grid distortion at raster bounds.
+            xmin = self.bounds_xy.xmin
+            ymin = self.bounds_xy.ymin
+            xmax = self.bounds_xy.xmax
+            ymax = self.bounds_xy.ymax
+
+            clipped_uv = _clip_poly_to_rect_uv([(p[0], p[1]) for p in points_uv], xmin, ymin, xmax, ymax)
+            if len(clipped_uv) < 3:
+                continue
+
             points_ij = []
-            for pt in points_uv:
-                u, v = pt[0], pt[1]
-                i = int((u - self.bounds_xy.xmin) / self.cell_size_ft)
-                j = int((v - self.bounds_xy.ymin) / self.cell_size_ft)
-                i = max(0, min(i, self.W - 1))
-                j = max(0, min(j, self.H - 1))
+            for (u, v) in clipped_uv:
+                i = int((u - xmin) / self.cell_size_ft)
+                j = int((v - ymin) / self.cell_size_ft)
+                # Range-check (no clamping). Skip vertices that land out of bounds.
+                if i < 0 or i >= self.W or j < 0 or j >= self.H:
+                    continue
                 points_ij.append((i, j))
+
+            if len(points_ij) < 3:
+                continue
 
             # 1) Occlusion interior fill (allowed for proxies)
             if not is_hole:
@@ -887,6 +900,69 @@ class ViewRaster:
             },
         }
 
+def _clip_poly_to_rect_uv(points_uv, xmin, ymin, xmax, ymax):
+    """Clip a polygon (list[(u,v)]) to an axis-aligned rect in UV using Sutherland–Hodgman.
+    Returns list[(u,v)] (may be empty). Never raises.
+    """
+    if not points_uv or len(points_uv) < 3:
+        return []
+
+    def inside(p, edge):
+        u, v = p
+        if edge == "left":
+            return u >= xmin
+        if edge == "right":
+            return u <= xmax
+        if edge == "bottom":
+            return v >= ymin
+        if edge == "top":
+            return v <= ymax
+        return True
+
+    def intersect(p1, p2, edge):
+        u1, v1 = p1
+        u2, v2 = p2
+        du = u2 - u1
+        dv = v2 - v1
+
+        # Parallel to boundary → return p2 (best effort; caller may drop degenerates)
+        if edge in ("left", "right"):
+            x = xmin if edge == "left" else xmax
+            if du == 0:
+                return (x, v2)
+            t = (x - u1) / du
+            return (x, v1 + t * dv)
+
+        y = ymin if edge == "bottom" else ymax
+        if dv == 0:
+            return (u2, y)
+        t = (y - v1) / dv
+        return (u1 + t * du, y)
+
+    def clip_against_edge(poly, edge):
+        if not poly:
+            return []
+        out = []
+        prev = poly[-1]
+        prev_in = inside(prev, edge)
+        for curr in poly:
+            curr_in = inside(curr, edge)
+            if curr_in:
+                if not prev_in:
+                    out.append(intersect(prev, curr, edge))
+                out.append(curr)
+            else:
+                if prev_in:
+                    out.append(intersect(prev, curr, edge))
+            prev, prev_in = curr, curr_in
+        return out
+
+    poly = points_uv
+    for edge in ("left", "right", "bottom", "top"):
+        poly = clip_against_edge(poly, edge)
+        if len(poly) < 3:
+            return []
+    return poly
 
 def _bresenham_line(i0, j0, i1, j1):
     """Generate cell coordinates along a line using Bresenham's algorithm.
