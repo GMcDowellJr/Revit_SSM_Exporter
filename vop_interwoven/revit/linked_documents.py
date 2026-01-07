@@ -183,7 +183,7 @@ def _has_revit_2024_link_collector(doc, view):
         return False
 
 
-def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, link_trf, cfg):
+def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, link_trf, cfg, diag=None):
     """Collect visible elements from link using Revit 2024+ collector.
 
     Args:
@@ -203,6 +203,11 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
         eliminating the need for bbox clipping approximations.
     """
     
+    from .collection_policy import should_include_element, PolicyStats
+    
+    policy_stats = PolicyStats()
+    excluded_by_category = {}
+
     # Build unique source key (includes instance ID for uniqueness)
     link_inst_id = link_inst.Id.IntegerValue
     try:
@@ -234,6 +239,7 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
         "skip_bad_bbox": 0,
         "skip_transform_failed": 0,
         "skip_exception": 0,
+        "skip_excluded_by_policy": 0,
     }
     by_category = {}
 
@@ -260,6 +266,17 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
                 cat = elem.Category
                 if cat is None:
                     skip["skip_no_category"] += 1
+                    continue
+
+                include, pol_reason, pol_cat = should_include_element(
+                    elem=elem,
+                    doc=link_doc,
+                    source_type="LINK",
+                    stats=policy_stats,
+                )
+                if not include:
+                    skip["skip_excluded_by_policy"] += 1
+                    excluded_by_category[pol_cat] = excluded_by_category.get(pol_cat, 0) + 1
                     continue
 
                 cat_id_val = cat.Id.IntegerValue
@@ -352,6 +369,23 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
         )
     except Exception as e:
         _log("DEBUG", "Failed to summarize category histogram: {0}".format(e))
+
+    if diag is not None and policy_stats.excluded_total > 0:
+        diag.info(
+            phase="collection",
+            callsite="linked_documents._collect_visible_link_elements_2024_plus.policy",
+            message="Link elements excluded due to category policy",
+            view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+            extra={
+                "source_key": source_key,
+                "link_title": getattr(link_doc, "Title", ""),
+                "seen_total": policy_stats.seen_total,
+                "included_total": policy_stats.included_total,
+                "excluded_total": policy_stats.excluded_total,
+                "excluded_by_reason": policy_stats.excluded_by_reason,
+                "excluded_by_category": excluded_by_category,
+            },
+        )
 
     return proxies, source_key, source_label
 
@@ -975,7 +1009,6 @@ def _get_host_visible_model_categories(view):
             continue
 
         try:
-            # Only model categories
             if cat.CategoryType != CategoryType.Model:
                 continue
 
@@ -992,52 +1025,12 @@ def _get_host_visible_model_categories(view):
 
 
 def _get_excluded_3d_category_ids(doc):
-    """Get set of category IDs to exclude from 3D collection.
+    """Compatibility wrapper for legacy code; delegates to collection_policy.
 
-    Excludes:
-    - Navigation/annotation mechanics (grids, levels, section heads, cameras)
-    - Non-physical model elements (rooms, areas, spaces)
-    - Detail components, model lines, point clouds
-
-    Args:
-        doc: Revit Document (link doc or host doc)
-
-    Returns:
-        Set of category integer IDs
+    Returns a set of integer CategoryIds resolved in the given doc.
     """
-    from Autodesk.Revit.DB import BuiltInCategory
-
-    excluded = set()
-
-    # Navigation & annotation mechanics
-    nav_names = [
-        "OST_Grids", "OST_GridHeads", "OST_Levels", "OST_LevelHeads",
-        "OST_SectionHeads", "OST_SectionMarks", "OST_ElevationMarks",
-        "OST_CalloutHeads", "OST_ReferenceViewer", "OST_Viewers",
-        "OST_Cameras", "OST_SunPath", "OST_SectionBox", "OST_AdaptivePoints",
-        "OST_Reveals",
-    ]
-
-    # Non-physical model elements
-    non_physical_names = [
-        "OST_Rooms", "OST_Areas", "OST_MEPSpaces",
-        "OST_DetailComponents", "OST_Lines", "OST_PointClouds",
-    ]
-
-    all_names = nav_names + non_physical_names
-
-    for name in all_names:
-        try:
-            bic = getattr(BuiltInCategory, name, None)
-            if bic is not None:
-                # Get category from doc to get proper ID
-                cat = doc.Settings.Categories.get_Item(bic)
-                if cat is not None:
-                    excluded.add(cat.Id.IntegerValue)
-        except Exception:
-            continue
-
-    return excluded
+    from .collection_policy import resolve_category_ids, excluded_bic_names_global
+    return resolve_category_ids(doc, excluded_bic_names_global())
 
 
 def _transform_bbox_to_host(bbox_link, link_trf):

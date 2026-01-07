@@ -62,6 +62,7 @@ def resolve_element_bbox(elem, view=None, diag=None, context=None):
 def collect_view_elements(doc, view, raster, diag=None):
     """Collect all potentially visible elements in view (broad-phase)."""
     from Autodesk.Revit.DB import FilteredElementCollector, BuiltInCategory
+    from .collection_policy import included_bic_names_for_source, should_include_element, PolicyStats
 
     view_id = None
     try:
@@ -69,39 +70,17 @@ def collect_view_elements(doc, view, raster, diag=None):
     except Exception:
         view_id = None
 
-    category_names = [
-        'OST_Walls',
-        'OST_Floors',
-        'OST_Roofs',
-        'OST_Doors',
-        'OST_Windows',
-        'OST_Columns',
-        'OST_StructuralFraming',
-        'OST_StructuralColumns',
-        'OST_Stairs',
-        'OST_Railings',
-        'OST_Ceilings',
-        'OST_GenericModel',
-        'OST_Furniture',
-        'OST_Casework',
-        'OST_MechanicalEquipment',
-        'OST_ElectricalEquipment',
-        'OST_PlumbingFixtures',
-        'OST_DuctCurves',
-        'OST_PipeCurves',
-        'OST_Lines',
-    ]
+    bic_names = included_bic_names_for_source("HOST")
 
     model_categories = []
-    for cat_name in category_names:
-        if hasattr(BuiltInCategory, cat_name):
-            model_categories.append(getattr(BuiltInCategory, cat_name))
+    for bic_name in bic_names:
+        if hasattr(BuiltInCategory, bic_name):
+            model_categories.append(getattr(BuiltInCategory, bic_name))
 
+    policy_stats = PolicyStats()
     elements = []
 
-    # Aggregate for signal without spam
     cat_fail = 0
-    viewspecific_fail = 0
     bbox_none = 0
     bbox_view = 0
     bbox_model = 0
@@ -113,23 +92,21 @@ def collect_view_elements(doc, view, raster, diag=None):
                 collector.OfCategory(cat).WhereElementIsNotElementType()
 
                 for elem in collector:
-                    # For OST_Lines: Only collect MODEL lines (ViewSpecific=False)
-                    if cat == getattr(BuiltInCategory, 'OST_Lines', None):
-                        try:
-                            if bool(getattr(elem, 'ViewSpecific', False)):
-                                continue
-                        except Exception:
-                            viewspecific_fail += 1
-                            # Preserve prior behavior: don't skip element if the check itself fails.
-                            pass
-
                     elem_id = None
                     try:
                         elem_id = getattr(getattr(elem, "Id", None), "IntegerValue", None)
                     except Exception:
                         elem_id = None
 
-                    # Prefer view bbox for view-dependent collection, but never silently drop.
+                    include, _pol_reason, _pol_cat = should_include_element(
+                        elem=elem,
+                        doc=doc,
+                        source_type="HOST",
+                        stats=policy_stats,
+                    )
+                    if not include:
+                        continue
+
                     _bbox, bbox_source = resolve_element_bbox(
                         elem,
                         view=view,
@@ -144,7 +121,6 @@ def collect_view_elements(doc, view, raster, diag=None):
                     else:
                         bbox_none += 1
 
-                    # CRITICAL: Do NOT drop bbox=None here; downstream may still succeed via geometry.
                     elements.append(elem)
 
             except Exception as e:
@@ -169,8 +145,23 @@ def collect_view_elements(doc, view, raster, diag=None):
                 view_id=view_id,
             )
 
-    # One aggregated warning if needed
-    if diag is not None and (cat_fail > 0 or viewspecific_fail > 0 or bbox_none > 0):
+    # Required by PR10: excluded-by-policy counts by category
+    if diag is not None and getattr(policy_stats, "excluded_total", 0) > 0:
+        diag.info(
+            phase="collection",
+            callsite="collect_view_elements.policy",
+            message="Elements excluded due to category policy",
+            view_id=view_id,
+            extra={
+                "seen_total": policy_stats.seen_total,
+                "included_total": policy_stats.included_total,
+                "excluded_total": policy_stats.excluded_total,
+                "excluded_by_reason": policy_stats.excluded_by_reason,
+                "excluded_by_category": policy_stats.excluded_by_category,
+            },
+        )
+
+    if diag is not None and (cat_fail > 0 or bbox_none > 0):
         diag.warn(
             phase="collection",
             callsite="collect_view_elements.summary",
@@ -179,12 +170,14 @@ def collect_view_elements(doc, view, raster, diag=None):
             extra={
                 "num_elements": len(elements),
                 "cat_fail": cat_fail,
-                "viewspecific_fail": viewspecific_fail,
-                "bbox": {
-                    "view": bbox_view,
-                    "model": bbox_model,
-                    "none": bbox_none,
+                "policy": {
+                    "seen_total": policy_stats.seen_total,
+                    "included_total": policy_stats.included_total,
+                    "excluded_total": policy_stats.excluded_total,
+                    "excluded_by_reason": policy_stats.excluded_by_reason,
+                    "excluded_by_category": policy_stats.excluded_by_category,
                 },
+                "bbox": {"view": bbox_view, "model": bbox_model, "none": bbox_none},
             },
         )
 
@@ -273,7 +266,7 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None):
 
     # Collect and add linked/imported elements
     try:
-        linked_proxies = collect_all_linked_elements(doc, view, cfg)
+        linked_proxies = collect_all_linked_elements(doc, view, cfg, diag=diag)
 
         for proxy in linked_proxies:
             bbox, bbox_source = resolve_element_bbox(
@@ -314,8 +307,11 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None):
                 phase="collection",
                 callsite="expand_host_link_import_model_elements",
                 message="Failed to collect linked/imported elements; continuing with host only",
-                exc=e,
                 view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                extra={
+                    "exc_type": type(e).__name__,
+                    "exc_message": str(e),
+                },
             )
         else:
             print("[WARN] vop.collection: Failed to collect linked elements: {0}".format(e))
