@@ -309,10 +309,35 @@ def xy_bounds_effective(doc, view, basis, buffer=0.0, diag=None):
     # Fallback: extents derived from what is in the view (drafting-safe)
     return synthetic_bounds_from_visible_extents(doc, view, basis, buffer=buffer)
 
-def synthetic_bounds_from_visible_extents(doc, view, basis, buffer=0.0, diag=None):
-    """Compute synthetic bounds from element extents in a view (crop-off / no-crop views)."""
+def synthetic_bounds_from_visible_extents(
+    doc,
+    view,
+    basis,
+    buffer=0.0,
+    diag=None,
+    max_elements=None,
+    time_budget_s=None,
+    time_fn=None,
+):
+    """Compute synthetic bounds from element extents in a view (crop-off / no-crop views).
+
+    Budget semantics:
+        - If max_elements is exceeded OR time_budget_s elapses, the scan stops early.
+        - Any early-stop yields confidence='low' and an explicit diagnostic (no silent degradation).
+        - If early-stop occurs before any bounds are found, returns default bounds.
+
+    Returns:
+        dict with:
+            bounds_uv: Bounds2D
+            confidence: 'med' | 'low'
+            budget: dict with scan counters + trigger info
+    """
     from ..core.math_utils import Bounds2D
     from Autodesk.Revit.DB import FilteredElementCollector, ViewDrafting, XYZ
+    import time as _time
+
+    if time_fn is None:
+        time_fn = _time.time
 
     view_id = None
     try:
@@ -321,6 +346,14 @@ def synthetic_bounds_from_visible_extents(doc, view, basis, buffer=0.0, diag=Non
         view_id = None
 
     is_drafting = isinstance(view, ViewDrafting)
+
+    # Default fallback bounds (200ft x 200ft centered at origin)
+    default_bounds = Bounds2D(
+        -100.0 - buffer,
+        -100.0 - buffer,
+        100.0 + buffer,
+        100.0 + buffer,
+    )
 
     min_u = float("inf")
     min_v = float("inf")
@@ -333,13 +366,28 @@ def synthetic_bounds_from_visible_extents(doc, view, basis, buffer=0.0, diag=Non
     viewspecific_fail = 0
     collector_fail = None
 
+    scanned = 0
+    budget_triggered = False
+    budget_reason = None
+    t0 = time_fn()
+
     try:
-        collector = (
-            FilteredElementCollector(doc, view.Id)
-            .WhereElementIsNotElementType()
-        )
+        collector = FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType()
 
         for elem in collector:
+            scanned += 1
+
+            # Budget checks are evaluated before doing per-element work
+            if max_elements is not None and scanned > int(max_elements):
+                budget_triggered = True
+                budget_reason = "max_elements"
+                break
+
+            if time_budget_s is not None and (time_fn() - t0) > float(time_budget_s):
+                budget_triggered = True
+                budget_reason = "time_budget_s"
+                break
+
             try:
                 bbox = elem.get_BoundingBox(view)
                 if bbox is None:
@@ -390,39 +438,80 @@ def synthetic_bounds_from_visible_extents(doc, view, basis, buffer=0.0, diag=Non
     except Exception as e:
         collector_fail = e
 
-    if collector_fail is not None:
+    elapsed_s = max(0.0, float(time_fn() - t0))
+
+    # Diagnostics for collector failure
+    if collector_fail is not None and diag is not None:
         try:
-            if diag is not None:
-                diag.warn(
-                    phase="bounds",
-                    callsite="synthetic_bounds_from_visible_extents",
-                    message="Failed to scan visible extents; falling back to default bounds",
-                    view_id=view_id,
-                    extra={"exc_type": type(collector_fail).__name__, "exc": str(collector_fail)},
-                )
+            diag.warn(
+                phase="bounds",
+                callsite="synthetic_bounds_from_visible_extents",
+                message="Failed to scan visible extents; using default bounds",
+                view_id=view_id,
+                extra={"exc_type": type(collector_fail).__name__, "exc": str(collector_fail)},
+            )
+        except Exception:
+            pass
+
+    # Budget-trigger diagnostic (explicit, aggregated, non-spammy)
+    if budget_triggered and diag is not None:
+        try:
+            diag.warn(
+                phase="bounds",
+                callsite="synthetic_bounds_from_visible_extents.budget",
+                message="Visible-extents scan stopped early due to budget; bounds confidence reduced",
+                view_id=view_id,
+                extra={
+                    "budget_reason": budget_reason,
+                    "max_elements": int(max_elements) if max_elements is not None else None,
+                    "time_budget_s": float(time_budget_s) if time_budget_s is not None else None,
+                    "scanned": int(scanned),
+                    "found": int(found),
+                    "elapsed_s": float(elapsed_s),
+                    "elem_fail": int(elem_fail),
+                    "viewspecific_fail": int(viewspecific_fail),
+                    "is_drafting": bool(is_drafting),
+                },
+            )
         except Exception:
             pass
 
     # If scan yielded no usable bounds, fallback to default
-    if found == 0 or min_u == float("inf"):
-        try:
-            if diag is not None:
+    if found == 0 or min_u == float("inf") or collector_fail is not None:
+        # Preserve existing explicit warning for empty scans
+        if collector_fail is None and diag is not None:
+            try:
                 diag.warn(
                     phase="bounds",
                     callsite="synthetic_bounds_from_visible_extents",
                     message="No elements found for synthetic bounds; using default 200x200ft bounds",
                     view_id=view_id,
                     extra={
-                        "found": found,
-                        "elem_fail": elem_fail,
-                        "viewspecific_fail": viewspecific_fail,
+                        "found": int(found),
+                        "scanned": int(scanned),
+                        "elem_fail": int(elem_fail),
+                        "viewspecific_fail": int(viewspecific_fail),
                         "is_drafting": bool(is_drafting),
+                        "budget_triggered": bool(budget_triggered),
+                        "budget_reason": budget_reason,
                     },
                 )
-        except Exception:
-            pass
+            except Exception:
+                pass
 
-        return Bounds2D(-100.0 - buffer, -100.0 - buffer, 100.0 + buffer, 100.0 + buffer)
+        return {
+            "bounds_uv": default_bounds,
+            "confidence": "low",
+            "budget": {
+                "triggered": bool(budget_triggered),
+                "reason": budget_reason,
+                "scanned": int(scanned),
+                "found": int(found),
+                "elapsed_s": float(elapsed_s),
+                "max_elements": int(max_elements) if max_elements is not None else None,
+                "time_budget_s": float(time_budget_s) if time_budget_s is not None else None,
+            },
+        }
 
     # If there were per-element failures, record aggregated counts once
     if (elem_fail > 0 or viewspecific_fail > 0) and diag is not None:
@@ -433,16 +522,34 @@ def synthetic_bounds_from_visible_extents(doc, view, basis, buffer=0.0, diag=Non
                 message="Element failures occurred during visible extents scan (aggregated)",
                 view_id=view_id,
                 extra={
-                    "found": found,
-                    "elem_fail": elem_fail,
-                    "viewspecific_fail": viewspecific_fail,
+                    "found": int(found),
+                    "scanned": int(scanned),
+                    "elem_fail": int(elem_fail),
+                    "viewspecific_fail": int(viewspecific_fail),
                     "is_drafting": bool(is_drafting),
+                    "budget_triggered": bool(budget_triggered),
+                    "budget_reason": budget_reason,
                 },
             )
         except Exception:
             pass
 
-    return Bounds2D(min_u - buffer, min_v - buffer, max_u + buffer, max_v + buffer)
+    bounds = Bounds2D(min_u - buffer, min_v - buffer, max_u + buffer, max_v + buffer)
+    confidence = "low" if budget_triggered else "med"
+
+    return {
+        "bounds_uv": bounds,
+        "confidence": confidence,
+        "budget": {
+            "triggered": bool(budget_triggered),
+            "reason": budget_reason,
+            "scanned": int(scanned),
+            "found": int(found),
+            "elapsed_s": float(elapsed_s),
+            "max_elements": int(max_elements) if max_elements is not None else None,
+            "time_budget_s": float(time_budget_s) if time_budget_s is not None else None,
+        },
+    }
 
 def _bounds_to_tuple(b):
     try:
@@ -521,6 +628,7 @@ def resolve_view_bounds(view, diag=None, policy=None):
     reason = "fallback"
     confidence = "low"
     base_bounds = None
+    bounds_budget = None
 
     crop_active = policy.get("crop_active", None)
     if crop_active is None:
@@ -574,7 +682,7 @@ def resolve_view_bounds(view, diag=None, policy=None):
     if base_bounds is None:
         try:
             if bounds_extents_fn is not None:
-                base_bounds = bounds_extents_fn(view, policy)
+                r_ext = bounds_extents_fn(view, policy)
             else:
                 doc = policy.get("doc")
                 basis = policy.get("basis")
@@ -582,16 +690,46 @@ def resolve_view_bounds(view, diag=None, policy=None):
                     raise ValueError(
                         "policy must provide doc and basis when bounds_extents_fn is not supplied"
                     )
-                base_bounds = synthetic_bounds_from_visible_extents(
-                    doc, view, basis, buffer=buffer_ft, diag=diag
+
+                cfg = policy.get("cfg", None)
+
+                # PR11: budgets can be overridden by policy, otherwise come from Config, otherwise None.
+                if "extents_scan_max_elements" in policy:
+                    max_elements = policy["extents_scan_max_elements"]
+                else:
+                    max_elements = getattr(cfg, "extents_scan_max_elements", None)
+
+                if "extents_scan_time_budget_s" in policy:
+                    time_budget_s = policy["extents_scan_time_budget_s"]
+                else:
+                    time_budget_s = getattr(cfg, "extents_scan_time_budget_s", None)
+
+
+                r_ext = synthetic_bounds_from_visible_extents(
+                    doc,
+                    view,
+                    basis,
+                    buffer=buffer_ft,
+                    diag=diag,
+                    max_elements=max_elements,
+                    time_budget_s=time_budget_s,
                 )
 
+            if isinstance(r_ext, dict):
+                base_bounds = r_ext.get("bounds_uv")
+                bounds_budget = r_ext.get("budget")
+                confidence = r_ext.get("confidence") or "med"
+            else:
+                base_bounds = r_ext
+                bounds_budget = None
+                confidence = "med"
+
             reason = "extents"
-            confidence = "med"
         except Exception as e:
             base_bounds = bounds_default_fn(view, policy)
             reason = "fallback"
             confidence = "low"
+            bounds_budget = None
             if diag is not None:
                 try:
                     diag.warn(
@@ -706,6 +844,7 @@ def resolve_view_bounds(view, diag=None, policy=None):
         "grid_H": int(H),
         "buffer_ft": buffer_ft,
         "cell_size_ft": cell_size_ft,
+        "bounds_budget": bounds_budget,
     }
 
 def _view_type_name(view):
