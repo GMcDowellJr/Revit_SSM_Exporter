@@ -332,6 +332,7 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None):
                 "world_transform": identity_trf,
                 "bbox": bbox,
                 "bbox_source": bbox_source,
+                "bbox_link": None,
                 "source_type": "HOST",
                 "source_id": "HOST",
                 "source_label": "HOST",
@@ -370,6 +371,7 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None):
                     "world_transform": proxy.transform,
                     "bbox": bbox,
                     "bbox_source": bbox_source,
+                    "bbox_link": getattr(proxy, "bbox_link", None),
                     "source_type": getattr(proxy, "source_type", "HOST"),
                     "source_id": getattr(proxy, "source_id", getattr(proxy, "doc_key", "HOST")),
                     "source_label": getattr(proxy, "source_label", getattr(proxy, "doc_label", getattr(proxy, "doc_key", "HOST"))),
@@ -429,7 +431,7 @@ def sort_front_to_back(model_elems, view, raster):
     return sorted_elems
 
 
-def estimate_nearest_depth_from_bbox(elem, transform, view, raster, bbox=None, diag=None):
+def estimate_nearest_depth_from_bbox(elem, transform, view, raster, bbox=None, diag=None, bbox_is_link_space=False):
     """Estimate nearest depth of element from its bounding box."""
     from .view_basis import world_to_view
 
@@ -465,6 +467,21 @@ def estimate_nearest_depth_from_bbox(elem, transform, view, raster, bbox=None, d
         (max_x, max_y, max_z),
     ]
 
+    if bbox_is_link_space:
+        if transform is None:
+            return float("inf")
+
+        try:
+            corners = [transform.OfPoint(c) for c in corners]
+        except Exception:
+            try:
+                from Autodesk.Revit.DB import XYZ
+                xyzs = [XYZ(c[0], c[1], c[2]) for c in corners]
+                corners_xyz = [transform.OfPoint(p) for p in xyzs]
+                corners = [(p.X, p.Y, p.Z) for p in corners_xyz]
+            except Exception:
+                return float("inf")
+
     min_depth = float("inf")
     for corner in corners:
         _u, _v, w = world_to_view(corner, vb)
@@ -474,7 +491,7 @@ def estimate_nearest_depth_from_bbox(elem, transform, view, raster, bbox=None, d
     return min_depth
 
 
-def estimate_depth_from_loops_or_bbox(elem, loops, transform, view, raster, bbox=None, diag=None):
+def estimate_depth_from_loops_or_bbox(elem, loops, transform, view, raster, bbox=None, diag=None, bbox_is_link_space=False):
     """Get element depth from silhouette geometry or bbox fallback."""
     if loops:
         min_w = float("inf")
@@ -492,8 +509,15 @@ def estimate_depth_from_loops_or_bbox(elem, loops, transform, view, raster, bbox
         if found_depth and min_w < float("inf"):
             return min_w
 
-    return estimate_nearest_depth_from_bbox(elem, transform, view, raster, bbox=bbox, diag=diag)
-
+    return estimate_nearest_depth_from_bbox(
+        elem,
+        transform,
+        view,
+        raster,
+        bbox=bbox,
+        diag=diag,
+        bbox_is_link_space=bbox_is_link_space,
+    )
 
 def estimate_depth_range_from_bbox(elem, transform, view, raster, bbox=None, diag=None):
     """Estimate depth range (min, max) of element from its bounding box.
@@ -561,7 +585,7 @@ def estimate_depth_range_from_bbox(elem, transform, view, raster, bbox=None, dia
     return (min_depth, max_depth)
 
 
-def _project_element_bbox_to_cell_rect(elem, vb, raster, bbox=None, diag=None, view=None):
+def _project_element_bbox_to_cell_rect(elem, vb, raster, bbox=None, diag=None, view=None, transform=None, bbox_is_link_space=False):
     """Project element bounding box to cell rectangle using OBB (oriented bounds).
 
     Args:
@@ -612,7 +636,32 @@ def _project_element_bbox_to_cell_rect(elem, vb, raster, bbox=None, diag=None, v
         (max_x, max_y, min_z), (max_x, max_y, max_z),
     ]
 
-    # Project all 8 corners to view UV
+    # PR12: if bbox is link-space, transform corners into host/world before projecting.
+    if bbox_is_link_space:
+        if transform is None:
+            return None  # cannot correctly project link-space bbox without transform
+        try:
+            corners = [transform.OfPoint(c) for c in corners]
+        except Exception:
+            return None
+
+    # PR12: if bbox is in link-space, transform corners into host/world before projection.
+    if bbox_is_link_space:
+        if transform is None:
+            return None
+
+        # Support both Revit Transform (expects XYZ) and test stubs (accept tuples).
+        try:
+            corners = [transform.OfPoint(c) for c in corners]
+        except Exception:
+            try:
+                from Autodesk.Revit.DB import XYZ
+                xyzs = [XYZ(c[0], c[1], c[2]) for c in corners]
+                corners_xyz = [transform.OfPoint(p) for p in xyzs]
+                corners = [(p.X, p.Y, p.Z) for p in corners_xyz]
+            except Exception:
+                return None
+
     uvs = [world_to_view(corner, vb) for corner in corners]
 
     # Extract just UV (ignore W for footprint calculation)
