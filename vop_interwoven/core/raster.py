@@ -243,7 +243,7 @@ class ViewRaster:
 
                     # Only stamp the edge if this element is nearer than what's already there
                     if w_here == float("inf") or depth <= w_here:
-                        self.model_edge_key[idx] = key_index
+                        self.stamp_model_edge_idx(idx, key_index, depth=depth)
 
                         # Contribute to occlusion along the curve using try_write_cell
                         # This ensures DWG curves participate in depth testing
@@ -403,38 +403,17 @@ class ViewRaster:
 
         raise ValueError("Unknown model-present mode: {0}".format(mode))
 
-    def try_write_cell(self, i, j, w_depth, source):
+    def try_write_cell(self, i, j, w_depth, source, key_index=None):
         """Centralized cell write with depth testing (MANDATORY contract).
-
-        This is the ONLY function that should write to w_occ and occupancy layers.
-        All rasterization code must route writes through this function.
 
         Args:
             i, j: Cell indices (column, row)
             w_depth: W-depth from view-space UVW transform (depth = dot(p - O, forward))
             source: Source identifier ("HOST", "LINK", or "DWG")
+            key_index: Optional element metadata index for attribution (PR8)
 
         Returns:
             True if depth won and cell was updated, False otherwise
-
-        Behavior:
-            1. Compare w_depth to w_occ[u,v]
-            2. If nearer (w_depth < w_occ):
-                - Update w_occ
-                - Mark exactly ONE occupancy layer (occ_host, occ_link, or occ_dwg)
-                - Update model_mask (unified legacy layer)
-                - Update tile acceleration
-                - Increment depth_test_wins
-            3. If not nearer:
-                - Do nothing
-                - Increment depth_test_rejects
-            4. Always increment depth_test_attempted
-
-        Commentary:
-            This enforces the depth-tested occupancy contract:
-            - Behind geometry never marks occupancy
-            - Per-source layers only mark winning depth
-            - All sources share the same w_occ buffer
         """
         idx = self.get_cell_index(i, j)
         if idx is None:
@@ -442,17 +421,13 @@ class ViewRaster:
 
         self.depth_test_attempted += 1
 
-        # Depth test: is this element nearer than what's already there?
         if w_depth < self.w_occ[idx]:
-            # Check if this is first write to cell (for tile filled count)
             was_empty = self.w_occ[idx] == float("inf")
 
-            # Depth wins - update occlusion and occupancy
             self.w_occ[idx] = w_depth
             self.model_mask[idx] = True
 
             # Mark exactly one occupancy layer based on source
-            # Enforce "exactly one occupancy layer" on depth win
             self.occ_host[idx] = False
             self.occ_link[idx] = False
             self.occ_dwg[idx] = False
@@ -463,17 +438,23 @@ class ViewRaster:
             elif source == "DWG":
                 self.occ_dwg[idx] = True
 
-            # Update tile acceleration
             self.tile.update_w_min(i, j, w_depth)
             if was_empty:
                 self.tile.update_filled_count(i, j, increment=1)
 
+            # PR8 attribution (best-effort; never throws)
+            if key_index is not None:
+                try:
+                    if 0 <= key_index < len(self.element_meta):
+                        self.element_meta[key_index]["occlusion_cells"] += 1
+                except Exception:
+                    pass
+
             self.depth_test_wins += 1
             return True
-        else:
-            # Depth rejected - element is behind existing geometry
-            self.depth_test_rejects += 1
-            return False
+
+        self.depth_test_rejects += 1
+        return False
 
     def get_or_create_element_meta_index(self, elem_id, category, source_id, source_type="HOST", source_label=None):
         """Get or create metadata index for element.
@@ -504,7 +485,11 @@ class ViewRaster:
                 "category": category,
                 "source_id": source_id,
                 "source_type": source_type,
-                "source_label": source_label if source_label is not None else source_id
+                "source_label": source_label if source_label is not None else source_id,
+                # PR8 counters (view-local; used for dominance + summaries)
+                "occlusion_cells": 0,      # depth wins via try_write_cell
+                "model_edge_cells": 0,     # visible edges stamped into model_edge_key
+                "proxy_edge_cells": 0,     # proxy perimeter edges stamped into model_proxy_key
             }
         )
         return idx
@@ -549,6 +534,85 @@ class ViewRaster:
                 has_model = self.model_mask[i]
 
             self.anno_over_model[i] = has_anno and has_model
+
+    def stamp_model_edge_idx(self, idx, key_index, depth=0.0):
+        """Stamp a model ink edge cell (edge-only occupancy), with depth visibility check."""
+        if idx is None or not (0 <= idx < len(self.model_edge_key)):
+            return False
+
+        w_here = self.w_occ[idx]
+        if w_here == float("inf") or depth <= w_here:
+            if self.model_edge_key[idx] != key_index:
+                self.model_edge_key[idx] = key_index
+                try:
+                    if 0 <= key_index < len(self.element_meta):
+                        self.element_meta[key_index]["model_edge_cells"] += 1
+                except Exception:
+                    pass
+            return True
+        return False
+
+    def stamp_proxy_edge_idx(self, idx, key_index, depth=0.0):
+        """Stamp a proxy perimeter edge cell into proxy channel (config-gated in pipeline)."""
+        if idx is None or not (0 <= idx < len(self.model_proxy_key)):
+            return False
+
+        w_here = self.w_occ[idx]
+        if w_here == float("inf") or depth <= w_here:
+            if self.model_proxy_key[idx] != key_index:
+                self.model_proxy_key[idx] = key_index
+                try:
+                    if 0 <= key_index < len(self.element_meta):
+                        self.element_meta[key_index]["proxy_edge_cells"] += 1
+                except Exception:
+                    pass
+            return True
+        return False
+
+    def rasterize_proxy_loops(self, loops, key_index, depth=0.0, source="HOST", write_proxy_edges=False):
+        """Rasterize proxy footprint loops: occlusion fill ALWAYS; proxy edges optionally.
+
+        Critical PR8 rule:
+          - never stamps model_edge_key
+          - never produces model ink by default
+        """
+        if not loops:
+            return 0
+
+        filled_count = 0
+
+        for loop in loops:
+            points_uv = loop.get("points", [])
+            is_hole = loop.get("is_hole", False)
+
+            if len(points_uv) < 3:
+                continue
+
+            points_ij = []
+            for pt in points_uv:
+                u, v = pt[0], pt[1]
+                i = int((u - self.bounds_xy.xmin) / self.cell_size_ft)
+                j = int((v - self.bounds_xy.ymin) / self.cell_size_ft)
+                i = max(0, min(i, self.W - 1))
+                j = max(0, min(j, self.H - 1))
+                points_ij.append((i, j))
+
+            # 1) Occlusion interior fill (allowed for proxies)
+            if not is_hole:
+                filled_count += self._scanline_fill(points_ij, key_index, depth, source)
+
+            # 2) Optional proxy perimeter edges (never model ink)
+            if write_proxy_edges:
+                for k in range(len(points_ij) - 1):
+                    i0, j0 = points_ij[k]
+                    i1, j1 = points_ij[k + 1]
+                    for i, j in _bresenham_line(i0, j0, i1, j1):
+                        idx = self.get_cell_index(i, j)
+                        if idx is None:
+                            continue
+                        self.stamp_proxy_edge_idx(idx, key_index, depth=depth)
+
+        return filled_count
 
     def rasterize_silhouette_loops(self, loops, key_index, depth=0.0, source="HOST"):
         """Rasterize element silhouette loops into model layers with depth testing.
@@ -611,8 +675,8 @@ class ViewRaster:
                         continue
 
                     w_here = self.w_occ[idx]
-                    if w_here == float("inf") or depth <= w_here:
-                        self.model_edge_key[idx] = key_index
+                    self.stamp_model_edge_idx(idx, key_index, depth=depth)
+
 
         return filled_count
 
