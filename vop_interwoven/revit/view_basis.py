@@ -145,11 +145,15 @@ def make_view_basis(view, diag=None):
         right = view.RightDirection
         up = view.UpDirection
 
-        # Forward = ViewDirection (keep as XYZ)
+        # Forward must point INTO the view.
+        # Revit's ViewDirection points from the view towards the model; for "depth into the view"
+        # and front-to-back sorting, we want the opposite sign.
         try:
-            forward = view.ViewDirection.Normalize()
+            vd = view.ViewDirection.Normalize()
         except Exception:
-            forward = right.CrossProduct(up).Normalize()
+            vd = right.CrossProduct(up).Normalize()
+
+        forward = vd.Negate()
 
         # Plan views: origin on cut plane
         origin_z = origin.Z

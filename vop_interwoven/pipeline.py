@@ -15,6 +15,80 @@ Core principles:
 4. Safe early-out only against depth-aware tile buffers
 """
 
+# ────────────────────────────────────────────────────────────────────────────
+# PR8 — MODEL / PROXY / OCCLUSION SEMANTICS (AUTHORITATIVE SUMMARY)
+#
+# Elements are processed FRONT → BACK by view-space depth (w).
+#
+# 1) CLASSIFICATION (semantic, NOT strategy-driven)
+#    Each element is classified as one of:
+#      - TINY    : very small (≤ ~2x2 cells)
+#      - LINEAR  : thin / elongated (angle matters)
+#      - AREAL   : meaningful area (floors, walls, slabs, etc.)
+#
+#    Classification determines *occlusion authority*.
+#    Rasterization strategy (silhouette vs OBB vs AABB) does NOT.
+#
+# 2) OCCLUSION (depth masking / early-out)
+#    - ONLY AREAL elements contribute to occlusion (w_occ).
+#    - AREAL elements ALWAYS occlude, even if they fall back to
+#      coarse geometry (OBB / AABB).
+#    - TINY and LINEAR elements NEVER write occlusion, even though
+#      they may technically hide things at sub-cell scale.
+#
+#    Rationale:
+#      • Occlusion is a high-impact decision (skips later elements).
+#      • We reserve it for elements we are confident dominate space.
+#      • This is a deliberate performance + correctness tradeoff.
+#
+# 3) CELL OCCUPANCY ("INK ON SCREEN")
+#    What appears in PNGs and contributes to cell metrics.
+#
+#    There are TWO kinds of occupancy ink:
+#
+#    a) MODEL INK (precise)
+#       - Written ONLY by AREAL elements when real geometry succeeds.
+#       - Comes from silhouette edges (with holes).
+#       - Stored in model_edge_key.
+#       - High spatial certainty.
+#
+#    b) PROXY INK (imprecise but real)
+#       - Written by TINY / LINEAR elements.
+#       - Also written by AREAL elements *when they fall back*
+#         to OBB / AABB instead of true silhouettes.
+#       - Stored in model_proxy_key.
+#       - Means: "this element occupies *somewhere* in these cells".
+#
+#    Proxy ink IS included in:
+#       ✔ PNG output
+#       ✔ Cell occupancy counts / metrics
+#
+#    The difference from model ink is *certainty*, not visibility.
+#
+# 4) FALLBACK RULE (critical)
+#    If an element is classified AREAL but must fall back to
+#    OBB or AABB:
+#      - It STILL occludes (writes w_occ).
+#      - It writes PROXY INK, not MODEL INK.
+#
+#    Strategy failure must NOT downgrade occlusion authority.
+#
+# 5) EARLY-OUT / SKIP LOGIC
+#    - Early-out tests consult ONLY existing occlusion (from AREAL).
+#    - Proxy ink alone never causes skipping.
+#
+# In short:
+#   • Classification controls occlusion.
+#   • Strategy controls ink precision.
+#   • Proxy ink counts, but only areal occludes.
+#
+# If behavior here looks "wrong", check:
+#   (1) element classification
+#   (2) fallback path taken
+#   (3) which channel was written (model_edge vs model_proxy vs w_occ)
+# ────────────────────────────────────────────────────────────────────────────
+
+
 import math
 from .config import Config
 from .core.raster import ViewRaster, TileMap
@@ -339,6 +413,21 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None):
     silhouette_success = 0
     bbox_fallback = 0
 
+    def _classify_uv_rect(width_cells, height_cells):
+        # Local, explicit classification to avoid dependency on classify_by_uv signature.
+        # Semantics:
+        #   - TINY   : <= 2x2 cells
+        #   - LINEAR : thin in one dimension (<=2) and longer in the other
+        #   - AREAL  : everything else (occlusion-authoritative)
+        minor = min(width_cells, height_cells)
+        major = max(width_cells, height_cells)
+
+        if major <= 2 and minor <= 2:
+            return "TINY"
+        if minor <= 2 and major > 2:
+            return "LINEAR"
+        return "AREAL"
+
     for elem_wrapper in expanded_elements:
         elem = elem_wrapper["element"]
         source_type = elem_wrapper.get("source_type", "HOST")
@@ -384,6 +473,21 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None):
         from .revit.collection import estimate_depth_from_loops_or_bbox
         elem_depth = estimate_depth_from_loops_or_bbox(elem, loops, world_transform, view, raster)
 
+        # Depth must be finite. NaN causes all depth tests to reject (NaN < inf is False),
+        # which yields exactly: filled_cells=0, occlusion_cells=0, proxy_edge_cells=0.
+        if (elem_depth is None) or (not isinstance(elem_depth, (int, float))) or (not math.isfinite(elem_depth)):
+            # Fall back to a conservative nearest-depth estimate from bbox.
+            try:
+                elem_depth = estimate_nearest_depth_from_bbox(elem, world_transform, view, raster)
+            except Exception:
+                elem_depth = 0.0
+
+            try:
+                if key_index < len(raster.element_meta):
+                    raster.element_meta[key_index]["depth_invalid"] = True
+            except Exception:
+                pass
+
         # DEBUG: Log depth values and silhouette status for first few elements
         if processed < 10:
             depth_source = "geometry" if loops else "bbox"
@@ -413,6 +517,12 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None):
                 from .core.math_utils import cellrect_dims
                 width_cells, height_cells = cellrect_dims(rect)
                 minor_cells = min(width_cells, height_cells)
+
+                elem_class = _classify_uv_rect(width_cells, height_cells)
+                if key_index < len(raster.element_meta):
+                    raster.element_meta[key_index]["class"] = elem_class
+                    raster.element_meta[key_index]["occluder"] = (elem_class == "AREAL")
+
                 aabb_area_cells = width_cells * height_cells
                 grid_area = raster.W * raster.H
 
@@ -448,21 +558,25 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None):
                     skipped += 1
                     continue
 
-                # Stage 3: conservative stamping via try_write_cell (depth tested)
-                depth_by_cell = None
-                if uvw_pts:
-                    depth_by_cell = {}
-                    for (u, v, w) in uvw_pts:
-                        i = int(round(u))
-                        j = int(round(v))
-                        key = (i, j)
-                        prev = depth_by_cell.get(key)
-                        if prev is None or w < prev:
-                            depth_by_cell[key] = w
+                # Stage 3: conservative stamping
+                # PR8 semantics:
+                #   - ONLY AREAL elements contribute to occlusion (w_occ)
+                #   - TINY/LINEAR never write occlusion here
+                if elem_class == "AREAL":
+                    depth_by_cell = None
+                    if uvw_pts:
+                        depth_by_cell = {}
+                        for (u, v, w) in uvw_pts:
+                            i = int(round(u))
+                            j = int(round(v))
+                            key = (i, j)
+                            prev = depth_by_cell.get(key)
+                            if prev is None or w < prev:
+                                depth_by_cell[key] = w
 
-                for (i, j) in footprint.cells():
-                    w_depth = depth_by_cell.get((i, j), elem_min_w) if depth_by_cell else elem_min_w
-                    raster.try_write_cell(i, j, w_depth=w_depth, source=source_type)
+                    for (i, j) in footprint.cells():
+                        w_depth = depth_by_cell.get((i, j), elem_min_w) if depth_by_cell else elem_min_w
+                        raster.try_write_cell(i, j, w_depth=w_depth, source=source_type, key_index=key_index)
 
         except Exception as e:
             # Must be observable, and must remain conservative (do not skip element).
@@ -531,7 +645,14 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None):
             if obb_loops:
                 try:
                     # Rasterize OBB polygon (same as silhouette loops)
-                    filled = raster.rasterize_silhouette_loops(obb_loops, key_index, depth=elem_depth, source=source_type)
+                    write_proxy_edges = bool(getattr(cfg, "proxy_edges_to_occupancy", True))
+                    filled = raster.rasterize_proxy_loops(
+                        obb_loops,
+                        key_index,
+                        depth=elem_depth,
+                        source=source_type,
+                        write_proxy_edges=write_proxy_edges,
+                    )
 
                     if filled > 0:
                         # Tag with OBB strategy
@@ -564,16 +685,19 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None):
                     filled_count = 0
                     for i, j in rect.cells():
                         # Use try_write_cell for depth-tested occlusion with per-source occupancy
-                        if raster.try_write_cell(i, j, w_depth=elem_depth, source=source_type):
-                            filled_count += 1
+                        
+                        if elem_class == "AREAL":
+                            if raster.try_write_cell(i, j, w_depth=elem_depth, source=source_type, key_index=key_index):
+                                filled_count += 1
 
                         # Set occupancy ONLY for boundary cells
                         is_boundary = (i == rect.i_min or i == rect.i_max or
                                       j == rect.j_min or j == rect.j_max)
+
                         if is_boundary:
                             idx = raster.get_cell_index(i, j)
                             if idx is not None:
-                                raster.model_edge_key[idx] = key_index
+                                raster.stamp_proxy_edge_idx(idx, key_index, depth=elem_depth)
 
                     # Tag element metadata with axis-aligned fallback strategy
                     if key_index < len(raster.element_meta):
@@ -980,6 +1104,88 @@ def export_view_raster(view, raster, cfg, diag=None):
     """
     num_filled = sum(1 for m in raster.model_mask if m)
 
+    # PR8: channel summary (auditable, low-noise)
+    occlusion_cells = int(num_filled)
+
+    model_ink_edge_cells = 0
+    try:
+        model_ink_edge_cells = sum(1 for k in raster.model_edge_key if k != -1)
+    except Exception:
+        model_ink_edge_cells = 0
+
+    proxy_edge_cells = 0
+    try:
+        proxy_edge_cells = sum(1 for k in raster.model_proxy_key if k != -1)
+    except Exception:
+        proxy_edge_cells = 0
+
+    # PR8: dominance detector (once per view)
+    try:
+        thr_ink = float(getattr(cfg, "dominance_threshold_model_ink", 0.75))
+        thr_occ = float(getattr(cfg, "dominance_threshold_occlusion", 0.90))
+
+        # Find max per-element contributions (counters are updated where we have key_index attribution)
+        max_ink = 0
+        max_occ = 0
+        max_ink_meta = None
+        max_occ_meta = None
+        for meta in getattr(raster, "element_meta", []) or []:
+            ink = int(meta.get("model_edge_cells", 0) or 0)
+            occ = int(meta.get("occlusion_cells", 0) or 0)
+            if ink > max_ink:
+                max_ink = ink
+                max_ink_meta = meta
+            if occ > max_occ:
+                max_occ = occ
+                max_occ_meta = meta
+
+        if diag is not None:
+            diag.debug(
+                phase="pipeline",
+                callsite="export_view_raster.channel_summary",
+                message="Per-view channel write summary",
+                view_id=view.Id.IntegerValue,
+                extra={
+                    "occlusion_cells": occlusion_cells,
+                    "model_ink_edge_cells": model_ink_edge_cells,
+                    "proxy_edge_cells": proxy_edge_cells,
+                },
+            )
+
+            # Warn once per view on dominance
+            if model_ink_edge_cells > 0 and (max_ink / float(model_ink_edge_cells)) >= thr_ink:
+                diag.warn(
+                    phase="pipeline",
+                    callsite="export_view_raster.dominance",
+                    message="Single element dominates model ink edges (possible regression)",
+                    view_id=view.Id.IntegerValue,
+                    extra={
+                        "threshold": thr_ink,
+                        "max_fraction": (max_ink / float(model_ink_edge_cells)),
+                        "elem_id": (max_ink_meta or {}).get("elem_id", None),
+                        "category": (max_ink_meta or {}).get("category", None),
+                        "source_type": (max_ink_meta or {}).get("source_type", None),
+                    },
+                )
+
+            if occlusion_cells > 0 and (max_occ / float(occlusion_cells)) >= thr_occ:
+                diag.warn(
+                    phase="pipeline",
+                    callsite="export_view_raster.dominance",
+                    message="Single element dominates occlusion coverage (possible proxy fill / huge footprint)",
+                    view_id=view.Id.IntegerValue,
+                    extra={
+                        "threshold": thr_occ,
+                        "max_fraction": (max_occ / float(occlusion_cells)),
+                        "elem_id": (max_occ_meta or {}).get("elem_id", None),
+                        "category": (max_occ_meta or {}).get("category", None),
+                        "source_type": (max_occ_meta or {}).get("source_type", None),
+                    },
+                )
+    except Exception:
+        # Never allow diagnostics to break export
+        pass
+
     return {
         "view_id": view.Id.IntegerValue,
         "view_name": view.Name,
@@ -999,5 +1205,8 @@ def export_view_raster(view, raster, cfg, diag=None):
             "num_elements": len(raster.element_meta),
             "num_annotations": len(raster.anno_meta),
             "num_filled_cells": num_filled,
+            "occlusion_cells": occlusion_cells,
+            "model_ink_edge_cells": model_ink_edge_cells,
+            "proxy_edge_cells": proxy_edge_cells,
         },
     }

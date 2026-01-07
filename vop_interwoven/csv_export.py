@@ -9,28 +9,18 @@ import hashlib
 from datetime import datetime
 
 
-def compute_cell_metrics(raster, model_presence_mode="occ", diag=None):
+def compute_cell_metrics(raster, model_presence_mode="ink", diag=None):
     """Compute occupancy metrics from raster arrays.
 
-    Args:# Restore raster arrays
+    Args:
         raster: ViewRaster object
-        model_presence_mode: "occ" | "edge" | "proxy" | "any"
-            - "occ"  : depth-tested interior occupancy (default; triangles/occlusion truth)
-            - "edge" : visible edge labeling (boundary only)
-            - "proxy": heuristic proxy presence only (tiny/linear)
-            - "any"  : occ OR edge (optionally proxy if caller chooses)
+        model_presence_mode: "occ" | "edge" | "proxy" | "ink" | "any"
+            - "occ"  : occlusion coverage (depth-tested interior fill)
+            - "edge" : precise model ink edges only (model_edge_key)
+            - "proxy": proxy ink only (model_proxy_key or proxy presence mask)
+            - "ink"  : edge OR proxy (DEFAULT; ink-on-screen occupancy)
+            - "any"  : occ OR edge OR proxy
         diag: optional diagnostics collector
-
-    Returns:
-        Dict with:
-            - TotalCells: int (W * H)
-            - Empty: int (neither model nor anno)
-            - ModelOnly: int (model present but no anno)
-            - AnnoOnly: int (anno present but no model)
-            - Overlap: int (both model and anno)
-
-    Raises:
-        AssertionError: If invariant fails (TotalCells != sum of categories)
     """
     total = raster.W * raster.H
     empty = 0
@@ -38,9 +28,58 @@ def compute_cell_metrics(raster, model_presence_mode="occ", diag=None):
     anno_only = 0
     overlap = 0
 
+    mode = (model_presence_mode or "ink").lower()
+
+    # Pull arrays defensively (tests / reconstructed rasters may be partial)
+    model_mask = getattr(raster, "model_mask", []) or []
+    model_edge_key = getattr(raster, "model_edge_key", []) or []
+    model_proxy_key = getattr(raster, "model_proxy_key", []) or []
+    model_proxy_mask = getattr(raster, "model_proxy_mask", []) or getattr(raster, "model_proxy_presence", []) or []
+
+    def _has_model(idx):
+        if mode == "occ":
+            return (idx < len(model_mask)) and bool(model_mask[idx])
+
+        if mode == "edge":
+            return (idx < len(model_edge_key)) and (model_edge_key[idx] != -1)
+
+        if mode == "proxy":
+            present = False
+            if idx < len(model_proxy_key):
+                present = present or (model_proxy_key[idx] != -1)
+            if idx < len(model_proxy_mask):
+                present = present or bool(model_proxy_mask[idx])
+            return present
+
+        if mode == "ink":
+            present = False
+            if idx < len(model_edge_key):
+                present = present or (model_edge_key[idx] != -1)
+            if idx < len(model_proxy_key):
+                present = present or (model_proxy_key[idx] != -1)
+            if idx < len(model_proxy_mask):
+                present = present or bool(model_proxy_mask[idx])
+            return present
+
+        if mode == "any":
+            present = False
+            if idx < len(model_mask):
+                present = present or bool(model_mask[idx])
+            if idx < len(model_edge_key):
+                present = present or (model_edge_key[idx] != -1)
+            if idx < len(model_proxy_key):
+                present = present or (model_proxy_key[idx] != -1)
+            if idx < len(model_proxy_mask):
+                present = present or bool(model_proxy_mask[idx])
+            return present
+
+        raise ValueError("Unknown model_presence_mode: {0}".format(mode))
+
+    anno_over_model = getattr(raster, "anno_over_model", []) or []
+
     for idx in range(total):
-        has_model = raster.has_model_present(idx, mode=model_presence_mode)
-        has_anno = raster.anno_over_model[idx] if idx < len(raster.anno_over_model) else False
+        has_model = _has_model(idx)
+        has_anno = anno_over_model[idx] if idx < len(anno_over_model) else False
 
         if has_model and has_anno:
             overlap += 1
@@ -62,6 +101,7 @@ def compute_cell_metrics(raster, model_presence_mode="occ", diag=None):
                 phase="export_csv",
                 callsite="compute_cell_metrics",
                 message=msg,
+                extra={"model_presence_mode": mode},
             )
         raise AssertionError(msg)
 
@@ -522,6 +562,7 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
         # Restore raster arrays
         raster.model_edge_key = raster_dict.get("model_edge_key", [])
         raster.model_proxy_mask = raster_dict.get("model_proxy_mask", raster_dict.get("model_proxy_presence", []))
+        raster.model_proxy_key = raster_dict.get("model_proxy_key", [])
         raster.model_mask = raster_dict.get("model_mask", [])
         raster.anno_over_model = raster_dict.get("anno_over_model", [])
         raster.anno_key = raster_dict.get("anno_key", [])
@@ -529,7 +570,8 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
 
         # Compute metrics (must not be silent)
         try:
-            model_presence_mode = getattr(config, "model_presence_mode", "occ")
+            # PR8: model occupancy metrics are ink-on-screen => edge-only by default
+            model_presence_mode = getattr(config, "model_presence_mode", "ink")
             metrics = compute_cell_metrics(
                 raster,
                 model_presence_mode=model_presence_mode,

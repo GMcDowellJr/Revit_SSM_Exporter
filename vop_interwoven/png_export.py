@@ -101,16 +101,59 @@ def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_pro
                 model_presence_mode = getattr(cfg, "model_presence_mode", None)
         except Exception:
             model_presence_mode = None
+            
+        # PR8: default PNG should visualize model ink (edge-only), not occlusion fills
+        if model_presence_mode is None:
+            model_presence_mode = "ink"
+
+        # PR8: optional debug rendering channel for PNG (does NOT affect metrics)
+        #   - "model_ink": edge-only model occupancy
+        #   - "occlusion": depth-tested interior coverage (may include proxy fills)
+        #   - "proxy": proxy edges/presence
+        png_render_channel = None
+        try:
+            if isinstance(cfg, dict):
+                png_render_channel = cfg.get("png_render_channel", None)
+            else:
+                png_render_channel = getattr(cfg, "png_render_channel", None)
+        except Exception:
+            png_render_channel = None
+
+        if png_render_channel:
+            ch = str(png_render_channel).lower()
+            if ch == "model_ink":
+                model_presence_mode = "edge"
+            elif ch == "occlusion":
+                model_presence_mode = "occ"
+            elif ch == "proxy":
+                model_presence_mode = "proxy"
+            elif ch == "ink":
+                model_presence_mode = "ink"
 
         model_edge_key = raster_dict.get("model_edge_key", [])
         model_mask = raster_dict.get("model_mask", [])
+
+        # Proxy ink may be stored as either:
+        #   - model_proxy_key (preferred: perimeter/ink attribution)
+        #   - model_proxy_mask / model_proxy_presence (legacy presence mask)
+        model_proxy_key = raster_dict.get("model_proxy_key", [])
         model_proxy_mask = raster_dict.get(
             "model_proxy_mask",
             raster_dict.get("model_proxy_presence", []),
         )
 
         def _has_model(idx):
-            mode = (model_presence_mode or "occ").lower()
+            # PR8 (final semantics):
+            #   - Default PNG presence should represent INK ON SCREEN
+            #     (model edges OR proxy ink), not occlusion fill.
+            #
+            # Supported modes:
+            #   - "occ"   : occlusion coverage (depth-tested interior fill)
+            #   - "edge"  : precise model ink edges only (model_edge_key)
+            #   - "proxy" : proxy ink only (model_proxy_key or proxy presence mask)
+            #   - "ink"   : edge OR proxy  (DEFAULT)
+            #   - "any"   : occ OR edge OR proxy
+            mode = (model_presence_mode or "ink").lower()
 
             if mode == "occ":
                 return (idx < len(model_mask)) and bool(model_mask[idx])
@@ -119,7 +162,22 @@ def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_pro
                 return (idx < len(model_edge_key)) and (model_edge_key[idx] != -1)
 
             if mode == "proxy":
-                return (idx < len(model_proxy_mask)) and bool(model_proxy_mask[idx])
+                present = False
+                if idx < len(model_proxy_key):
+                    present = present or (model_proxy_key[idx] != -1)
+                if idx < len(model_proxy_mask):
+                    present = present or bool(model_proxy_mask[idx])
+                return present
+
+            if mode == "ink":
+                present = False
+                if idx < len(model_edge_key):
+                    present = present or (model_edge_key[idx] != -1)
+                if idx < len(model_proxy_key):
+                    present = present or (model_proxy_key[idx] != -1)
+                if idx < len(model_proxy_mask):
+                    present = present or bool(model_proxy_mask[idx])
+                return present
 
             if mode == "any":
                 present = False
@@ -127,14 +185,13 @@ def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_pro
                     present = present or bool(model_mask[idx])
                 if idx < len(model_edge_key):
                     present = present or (model_edge_key[idx] != -1)
+                if idx < len(model_proxy_key):
+                    present = present or (model_proxy_key[idx] != -1)
                 if idx < len(model_proxy_mask):
                     present = present or bool(model_proxy_mask[idx])
                 return present
 
             raise ValueError("Unknown model_presence_mode: {0}".format(mode))
-
-        # Use model_edge_key (OCCUPANCY - boundary only) instead of model_mask (OCCLUSION - interior + boundary)
-        model_edge_key = raster_dict.get('model_edge_key', [])
 
         # Get anno_over_model and anno_key for annotation visualization
         anno_over_model = raster_dict.get('anno_over_model', [])
