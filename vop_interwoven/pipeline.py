@@ -134,6 +134,11 @@ def process_document_views(doc, view_ids, cfg):
 
     results = []
 
+    # Guardrail: cfg must be vop_interwoven.config.Config (attribute-based), not a dict.
+    # This prevents silent drift when new code accidentally uses cfg.get(...).
+    if isinstance(cfg, dict):
+        raise TypeError("cfg must be vop_interwoven.config.Config (not dict)")
+
     for view_id in view_ids:
         diag = Diagnostics()  # per-view diag
         view = None
@@ -221,7 +226,7 @@ def process_document_views(doc, view_ids, cfg):
 
             if view_mode == VIEW_MODE_MODEL_AND_ANNOTATION:
                 # 2) Broad-phase visible elements
-                elements = collect_view_elements(doc, view, raster, diag=diag)
+                elements = collect_view_elements(doc, view, raster, diag=diag, cfg=cfg)
 
                 # 3) MODEL PASS
                 render_model_front_to_back(doc, view, raster, elements, cfg, diag=diag)

@@ -94,7 +94,7 @@ class LinkedElementProxy:
             return None
 
 
-def collect_all_linked_elements(doc, view, cfg):
+def collect_all_linked_elements(doc, view, cfg, diag=None):
     """Collect all elements from linked RVT files and DWG imports.
 
     Args:

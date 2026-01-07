@@ -85,6 +85,16 @@ class Config:
         tierb_margin_cells_max=4,
         tierb_area_thresh_min=50,
         tierb_area_thresh_max=2000,
+
+        # PR11: Collector consolidation / broad-phase performance knobs
+        enable_multicategory_filter=True,
+        coarse_spatial_filter_enabled=False,
+        coarse_spatial_filter_pad_ft=0.0,
+
+        # PR11: Synthetic extents scan budgets (safety + auditable fallbacks)
+        extents_scan_max_elements=50000,
+        extents_scan_time_budget_s=0.50,
+
     ):
         """Initialize VOP configuration.
 
@@ -118,6 +128,15 @@ class Config:
         self.bounds_buffer_in = float(bounds_buffer_in)
         self.include_linked_rvt = bool(include_linked_rvt)
         self.include_dwg_imports = bool(include_dwg_imports)
+
+        # PR11: collector knobs
+        self.enable_multicategory_filter = bool(enable_multicategory_filter)
+        self.coarse_spatial_filter_enabled = bool(coarse_spatial_filter_enabled)
+        self.coarse_spatial_filter_pad_ft = float(coarse_spatial_filter_pad_ft)
+
+        # PR11: bounds scan budgets
+        self.extents_scan_max_elements = int(extents_scan_max_elements) if extents_scan_max_elements is not None else None
+        self.extents_scan_time_budget_s = float(extents_scan_time_budget_s) if extents_scan_time_budget_s is not None else None
 
         # Debug and diagnostics
         self.debug_dump_occlusion = bool(debug_dump_occlusion)
@@ -166,6 +185,16 @@ class Config:
             raise ValueError("max_sheet dimensions must be positive")
         if self.bounds_buffer_in < 0:
             raise ValueError("bounds_buffer_in must be non-negative")
+
+        # PR11 validation (explicit semantics; None means "no budget")
+        if self.coarse_spatial_filter_pad_ft < 0:
+            raise ValueError("coarse_spatial_filter_pad_ft must be non-negative")
+
+        if self.extents_scan_max_elements is not None and self.extents_scan_max_elements <= 0:
+            raise ValueError("extents_scan_max_elements must be positive or None")
+
+        if self.extents_scan_time_budget_s is not None and self.extents_scan_time_budget_s <= 0:
+            raise ValueError("extents_scan_time_budget_s must be positive or None")
 
     def compute_adaptive_tile_size(self, grid_width, grid_height):
         """Compute optimal tile size based on grid dimensions.
@@ -314,7 +343,12 @@ class Config:
             f"anno_expand_cap_cells={self.anno_expand_cap_cells}, "
             f"cell_size_paper_in={self.cell_size_paper_in}, "
             f"max_sheet={self.max_sheet_width_in}x{self.max_sheet_height_in}, "
-            f"max_grid={self.max_grid_cells_width}x{self.max_grid_cells_height})"
+            f"max_grid={self.max_grid_cells_width}x{self.max_grid_cells_height}"
+            f"multicat={self.enable_multicategory_filter}, "
+            f"coarse_spatial={self.coarse_spatial_filter_enabled}, "
+            f"coarse_pad_ft={self.coarse_spatial_filter_pad_ft}, "
+            f"extents_max={self.extents_scan_max_elements}, "
+            f"extents_budget_s={self.extents_scan_time_budget_s}) "
         )
 
     def to_dict(self):
@@ -335,6 +369,12 @@ class Config:
             "bounds_buffer_in": self.bounds_buffer_in,
             "include_linked_rvt": self.include_linked_rvt,
             "include_dwg_imports": self.include_dwg_imports,
+            # PR11 knobs
+            "enable_multicategory_filter": self.enable_multicategory_filter,
+            "coarse_spatial_filter_enabled": self.coarse_spatial_filter_enabled,
+            "coarse_spatial_filter_pad_ft": self.coarse_spatial_filter_pad_ft,
+            "extents_scan_max_elements": self.extents_scan_max_elements,
+            "extents_scan_time_budget_s": self.extents_scan_time_budget_s,
         }
 
     @classmethod
@@ -356,4 +396,11 @@ class Config:
             bounds_buffer_in=d.get("bounds_buffer_in", 0.5),
             include_linked_rvt=d.get("include_linked_rvt", True),
             include_dwg_imports=d.get("include_dwg_imports", True),
+
+            # PR11 knobs
+            enable_multicategory_filter=d.get("enable_multicategory_filter", True),
+            coarse_spatial_filter_enabled=d.get("coarse_spatial_filter_enabled", False),
+            coarse_spatial_filter_pad_ft=d.get("coarse_spatial_filter_pad_ft", 0.0),
+            extents_scan_max_elements=d.get("extents_scan_max_elements", 50000),
+            extents_scan_time_budget_s=d.get("extents_scan_time_budget_s", 0.50)
         )

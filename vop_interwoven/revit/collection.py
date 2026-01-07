@@ -59,10 +59,27 @@ def resolve_element_bbox(elem, view=None, diag=None, context=None):
     return None, "none"
 
 
-def collect_view_elements(doc, view, raster, diag=None):
-    """Collect all potentially visible elements in view (broad-phase)."""
+def collect_view_elements(doc, view, raster, diag=None, cfg=None):
+    """Collect all potentially visible elements in view (broad-phase).
+
+    Performance contract:
+        - One view-scoped collector per view (no per-category loops).
+        - Optional category filter (ElementMulticategoryFilter) when available.
+        - Optional coarse spatial filter (BoundingBoxIntersectsFilter) when available.
+
+    Args:
+        doc: Revit Document
+        view: Revit View
+        raster: ViewRaster (currently unused; reserved for future spatial hints)
+        diag: Diagnostics (optional)
+        cfg: config dict (optional)
+
+    Returns:
+        List[Element] (host elements only; link expansion happens downstream)
+    """
     from Autodesk.Revit.DB import FilteredElementCollector, BuiltInCategory
     from .collection_policy import included_bic_names_for_source, should_include_element, PolicyStats
+    from .safe_api import safe_call
 
     view_id = None
     try:
@@ -70,8 +87,8 @@ def collect_view_elements(doc, view, raster, diag=None):
     except Exception:
         view_id = None
 
+    # Category allowlist (policy is still authoritative; this is only a coarse filter)
     bic_names = included_bic_names_for_source("HOST")
-
     model_categories = []
     for bic_name in bic_names:
         if hasattr(BuiltInCategory, bic_name):
@@ -80,70 +97,138 @@ def collect_view_elements(doc, view, raster, diag=None):
     policy_stats = PolicyStats()
     elements = []
 
-    cat_fail = 0
     bbox_none = 0
     bbox_view = 0
     bbox_model = 0
 
+    # Optional performance filters
+    # cfg is vop_interwoven.config.Config (not a dict)
+    enable_multicat_filter = bool(getattr(cfg, "enable_multicategory_filter", True))
+    enable_coarse_spatial = bool(getattr(cfg, "coarse_spatial_filter_enabled", False))
+    coarse_pad_ft = float(getattr(cfg, "coarse_spatial_filter_pad_ft", 0.0))
+
+    # Build one view-scoped collector
     try:
-        for cat in model_categories:
-            try:
-                collector = FilteredElementCollector(doc, view.Id)
-                collector.OfCategory(cat).WhereElementIsNotElementType()
-
-                for elem in collector:
-                    elem_id = None
-                    try:
-                        elem_id = getattr(getattr(elem, "Id", None), "IntegerValue", None)
-                    except Exception:
-                        elem_id = None
-
-                    include, _pol_reason, _pol_cat = should_include_element(
-                        elem=elem,
-                        doc=doc,
-                        source_type="HOST",
-                        stats=policy_stats,
-                    )
-                    if not include:
-                        continue
-
-                    _bbox, bbox_source = resolve_element_bbox(
-                        elem,
-                        view=view,
-                        diag=diag,
-                        context={"view_id": view_id, "elem_id": elem_id, "category": str(cat)},
-                    )
-
-                    if bbox_source == "view":
-                        bbox_view += 1
-                    elif bbox_source == "model":
-                        bbox_model += 1
-                    else:
-                        bbox_none += 1
-
-                    elements.append(elem)
-
-            except Exception as e:
-                cat_fail += 1
-                if diag is not None:
-                    diag.warn(
-                        phase="collection",
-                        callsite="collect_view_elements.category",
-                        message="Category collection failed; skipping category",
-                        view_id=view_id,
-                        extra={"category": str(cat), "exc_type": type(e).__name__, "exc": str(e)},
-                    )
-                continue
-
+        collector = FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType()
     except Exception as e:
         if diag is not None:
             diag.error(
                 phase="collection",
-                callsite="collect_view_elements",
-                message="Element collection failed; returning partial/empty list",
+                callsite="collect_view_elements.collector_init",
+                message="View-scoped collector failed; returning empty list",
                 exc=e,
                 view_id=view_id,
             )
+        return []
+
+    # Best-effort: ElementMulticategoryFilter to avoid scanning categories we never include.
+    if enable_multicat_filter and model_categories:
+        try:
+            from Autodesk.Revit.DB import ElementMulticategoryFilter, ElementId
+            from System.Collections.Generic import List
+
+            # ElementMulticategoryFilter expects a .NET collection (typically ICollection<ElementId>)
+            cat_ids = List[ElementId]()
+            for bic in model_categories:
+                cat_ids.Add(ElementId(int(bic)))
+
+            collector = collector.WherePasses(ElementMulticategoryFilter(cat_ids))
+        except Exception as e:
+            if diag is not None:
+                diag.warn(
+                    phase="collection",
+                    callsite="collect_view_elements.multicat",
+                    message="Failed to apply multicategory filter; continuing without it",
+                    view_id=view_id,
+                    extra={
+                        "num_categories": len(model_categories),
+                        "exc_type": type(e).__name__,
+                        "exc": str(e),
+                    },
+                )
+
+    # Best-effort: coarse spatial filter using view.CropBox (model-space AABB).
+    if enable_coarse_spatial:
+        try:
+            from Autodesk.Revit.DB import Outline, BoundingBoxIntersectsFilter
+            crop = safe_call(
+                diag,
+                phase="collection",
+                callsite="view.CropBox",
+                fn=lambda: getattr(view, "CropBox", None),
+                default=None,
+                context={"view_id": view_id},
+                policy="default",
+            )
+            if crop is not None:
+                pad_ft = float(coarse_cfg.get("pad_ft", 0.0) or 0.0)
+
+                mn = safe_call(
+                    diag,
+                    phase="collection",
+                    callsite="view.CropBox.Min",
+                    fn=lambda: crop.Min,
+                    default=None,
+                    context={"view_id": view_id},
+                    policy="default",
+                )
+                mx = safe_call(
+                    diag,
+                    phase="collection",
+                    callsite="view.CropBox.Max",
+                    fn=lambda: crop.Max,
+                    default=None,
+                    context={"view_id": view_id},
+                    policy="default",
+                )
+
+                if mn is not None and mx is not None:
+                    outline = Outline(
+                        mn.__class__(mn.X - pad_ft, mn.Y - pad_ft, mn.Z - pad_ft),
+                        mx.__class__(mx.X + pad_ft, mx.Y + pad_ft, mx.Z + pad_ft),
+                    )
+                    collector = collector.WherePasses(BoundingBoxIntersectsFilter(outline))
+        except Exception as e:
+            if diag is not None:
+                diag.warn(
+                    phase="collection",
+                    callsite="collect_view_elements.coarse_spatial",
+                    message="Failed to apply coarse spatial filter; continuing without it",
+                    view_id=view_id,
+                    extra={"exc_type": type(e).__name__, "exc": str(e)},
+                )
+
+    # Collect and apply policy
+    for elem in collector:
+        elem_id = None
+        try:
+            elem_id = getattr(getattr(elem, "Id", None), "IntegerValue", None)
+        except Exception:
+            elem_id = None
+
+        include, _pol_reason, _pol_cat = should_include_element(
+            elem=elem,
+            doc=doc,
+            source_type="HOST",
+            stats=policy_stats,
+        )
+        if not include:
+            continue
+
+        _bbox, bbox_source = resolve_element_bbox(
+            elem,
+            view=view,
+            diag=diag,
+            context={"view_id": view_id, "elem_id": elem_id},
+        )
+        if bbox_source == "view":
+            bbox_view += 1
+        elif bbox_source == "model":
+            bbox_model += 1
+        else:
+            bbox_none += 1
+
+        elements.append(elem)
 
     # Required by PR10: excluded-by-policy counts by category
     if diag is not None and getattr(policy_stats, "excluded_total", 0) > 0:
@@ -161,7 +246,7 @@ def collect_view_elements(doc, view, raster, diag=None):
             },
         )
 
-    if diag is not None and (cat_fail > 0 or bbox_none > 0):
+    if diag is not None and bbox_none > 0:
         diag.warn(
             phase="collection",
             callsite="collect_view_elements.summary",
@@ -169,14 +254,6 @@ def collect_view_elements(doc, view, raster, diag=None):
             view_id=view_id,
             extra={
                 "num_elements": len(elements),
-                "cat_fail": cat_fail,
-                "policy": {
-                    "seen_total": policy_stats.seen_total,
-                    "included_total": policy_stats.included_total,
-                    "excluded_total": policy_stats.excluded_total,
-                    "excluded_by_reason": policy_stats.excluded_by_reason,
-                    "excluded_by_category": policy_stats.excluded_by_category,
-                },
                 "bbox": {"view": bbox_view, "model": bbox_model, "none": bbox_none},
             },
         )
