@@ -451,7 +451,15 @@ def estimate_nearest_depth_from_bbox(elem, transform, view, raster, bbox=None, d
 
     vb = getattr(raster, "view_basis", None)
     if vb is None:
-        return 0.0
+        if diag is not None:
+            diag.warn(
+                phase="collection",
+                callsite="estimate_nearest_depth_from_bbox.view_basis_missing",
+                message="View basis missing; returning inf depth to avoid near-bias",
+                view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                elem_id=getattr(getattr(elem, "Id", None), "IntegerValue", None),
+            )
+        return float("inf")
 
     min_x, min_y, min_z = bbox.Min.X, bbox.Min.Y, bbox.Min.Z
     max_x, max_y, max_z = bbox.Max.X, bbox.Max.Y, bbox.Max.Z
@@ -547,7 +555,15 @@ def estimate_depth_range_from_bbox(elem, transform, view, raster, bbox=None, dia
 
     vb = getattr(raster, "view_basis", None)
     if vb is None:
-        return (0.0, 0.0)
+        if diag is not None:
+            diag.warn(
+                phase="collection",
+                callsite="estimate_depth_range_from_bbox.view_basis_missing",
+                message="View basis missing; returning (inf, inf) depth range to avoid near-bias",
+                view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                elem_id=getattr(getattr(elem, "Id", None), "IntegerValue", None),
+            )
+        return (float("inf"), float("inf"))
 
     try:
         min_x, min_y, min_z = bbox.Min.X, bbox.Min.Y, bbox.Min.Z
