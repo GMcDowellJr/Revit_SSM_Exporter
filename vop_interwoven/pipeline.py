@@ -395,17 +395,30 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None):
         try:
             elem = wrapper["element"]
             world_transform = wrapper["world_transform"]
+            bbox = wrapper.get("bbox")
 
-            # Calculate depth range for ambiguity detection
-            depth_range = estimate_depth_range_from_bbox(elem, world_transform, view, raster)
-            wrapper['depth_range'] = depth_range
+            depth_range = estimate_depth_range_from_bbox(
+                elem,
+                world_transform,
+                view,
+                raster,
+                bbox=bbox,
+                diag=diag,
+            )
+            wrapper["depth_range"] = depth_range
 
-            # Get projected bbox for tile binning
-            rect = _project_element_bbox_to_cell_rect(elem, vb, raster)
-            wrapper['uv_bbox_rect'] = rect
+            rect = _project_element_bbox_to_cell_rect(
+                elem,
+                vb,
+                raster,
+                bbox=bbox,
+                diag=diag,
+                view=view,
+            )
+            wrapper["uv_bbox_rect"] = rect
         except Exception:
-            wrapper['depth_range'] = (0.0, 0.0)
-            wrapper['uv_bbox_rect'] = None
+            wrapper["depth_range"] = (0.0, 0.0)
+            wrapper["uv_bbox_rect"] = None
 
     # Process each element (host + linked)
     processed = 0
@@ -452,6 +465,14 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None):
             source_type=source_type,
             source_label=source_label
         )
+
+        # PR9: persist bbox provenance into element meta (auditable)
+        try:
+            if 0 <= key_index < len(raster.element_meta):
+                raster.element_meta[key_index]["bbox_source"] = elem_wrapper.get("bbox_source")
+        except Exception:
+            pass
+
         if source_type not in ("HOST", "LINK", "DWG"):
             raise ValueError("Invalid source_type from wrapper: {0} (source_id={1})".format(source_type, source_id))
 
@@ -478,7 +499,14 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None):
         if (elem_depth is None) or (not isinstance(elem_depth, (int, float))) or (not math.isfinite(elem_depth)):
             # Fall back to a conservative nearest-depth estimate from bbox.
             try:
-                elem_depth = estimate_nearest_depth_from_bbox(elem, world_transform, view, raster)
+                elem_depth = estimate_nearest_depth_from_bbox(
+                    elem,
+                    world_transform,
+                    view,
+                    raster,
+                    bbox=elem_wrapper.get("bbox"),
+                    diag=diag,
+                )
             except Exception:
                 elem_depth = 0.0
 
@@ -497,7 +525,16 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None):
 
         # Safe early-out occlusion using bbox footprint + tile depth (front-to-back streaming)
         try:
-            rect = _project_element_bbox_to_cell_rect(elem, vb, raster)
+            rect = elem_wrapper.get("uv_bbox_rect")
+            if rect is None:
+                rect = _project_element_bbox_to_cell_rect(
+                    elem,
+                    vb,
+                    raster,
+                    bbox=elem_wrapper.get("bbox"),
+                    diag=diag,
+                    view=view,
+                )
             if rect and (not rect.empty):
                 from .core.footprint import CellRectFootprint
                 fp = CellRectFootprint(rect)
@@ -640,7 +677,14 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None):
 
         try:
             from .revit.collection import get_element_obb_loops
-            obb_loops = get_element_obb_loops(elem, vb, raster)
+            obb_loops = get_element_obb_loops(
+                elem,
+                vb,
+                raster,
+                bbox=elem_wrapper.get("bbox"),
+                diag=diag,
+                view=view,
+            )
 
             if obb_loops:
                 try:
@@ -675,24 +719,37 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None):
 
             # Ultimate fallback: axis-aligned rect (if OBB fails)
             try:
-                rect = _project_element_bbox_to_cell_rect(elem, vb, raster)
+                rect = elem_wrapper.get("uv_bbox_rect")
+
+                # Force a rect attempt here (AABB last resort depends on it).
                 if rect is None:
-                    aabb_error = "CellRect projection returned None (no bbox?)"
+                    rect = _project_element_bbox_to_cell_rect(
+                        elem,
+                        vb,
+                        raster,
+                        bbox=elem_wrapper.get("bbox"),
+                        diag=diag,
+                        view=view,
+                    )
+
+                if rect is None:
+                    aabb_error = "CellRect unavailable (bbox missing/unprojectable)"
                 elif rect.empty:
                     aabb_error = "CellRect is empty (element outside bounds?)"
                 else:
                     # Fill axis-aligned rect with depth-tested occlusion and occupancy
                     filled_count = 0
                     for i, j in rect.cells():
-                        # Use try_write_cell for depth-tested occlusion with per-source occupancy
-                        
+                        # Occlusion authority remains classification-based
                         if elem_class == "AREAL":
                             if raster.try_write_cell(i, j, w_depth=elem_depth, source=source_type, key_index=key_index):
                                 filled_count += 1
 
-                        # Set occupancy ONLY for boundary cells
-                        is_boundary = (i == rect.i_min or i == rect.i_max or
-                                      j == rect.j_min or j == rect.j_max)
+                        # Always attempt proxy-ink edges on boundary (visibility > nothing)
+                        is_boundary = (
+                            i == rect.i_min or i == rect.i_max or
+                            j == rect.j_min or j == rect.j_max
+                        )
 
                         if is_boundary:
                             idx = raster.get_cell_index(i, j)
@@ -701,14 +758,16 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None):
 
                     # Tag element metadata with axis-aligned fallback strategy
                     if key_index < len(raster.element_meta):
-                        raster.element_meta[key_index]['strategy'] = 'aabb_fallback'
-                        raster.element_meta[key_index]['filled_cells'] = filled_count
+                        raster.element_meta[key_index]["strategy"] = "aabb_fallback"
+                        raster.element_meta[key_index]["filled_cells"] = filled_count
+                        raster.element_meta[key_index]["aabb_used"] = True
                         if obb_error:
-                            raster.element_meta[key_index]['obb_error'] = obb_error
+                            raster.element_meta[key_index]["obb_error"] = obb_error
 
                     bbox_fallback += 1
                     processed += 1
                     aabb_success = True
+
 
             except Exception as e:
                 aabb_error = "AABB fallback failed: {0}".format(e)
