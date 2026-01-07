@@ -1048,34 +1048,36 @@ def _bin_elements_to_tiles(elem_wrappers, raster):
     return tile_bins
 
 
-def _tile_has_depth_conflict(elem_wrappers):
-    """Check if tile has depth range conflicts (ambiguity).
+def _tile_has_depth_conflict(elem_wrappers, cfg=None):
+    """Check if tile has depth range conflicts (ambiguity) using a sweep (O(k log k)).
 
-    Args:
-        elem_wrappers: List of element wrappers touching this tile
-
-    Returns:
-        True if any pair of elements has overlapping depth ranges
-
-    Commentary:
-        Depth conflict occurs when: A.depth_min < B.depth_max AND B.depth_min < A.depth_max
-        This indicates elements may be interleaved in depth (passing through each other).
+    Returns True if any overlapping depth ranges exist.
     """
     if len(elem_wrappers) < 2:
         return False
 
-    # Check all pairs for depth range overlap
-    for i in range(len(elem_wrappers)):
-        for j in range(i + 1, len(elem_wrappers)):
-            a = elem_wrappers[i]
-            b = elem_wrappers[j]
+    cap = int(getattr(cfg, "tile_wrapper_cap", 250)) if cfg is not None else 250
+    if len(elem_wrappers) > cap:
+        return True
 
-            depth_min_a, depth_max_a = a.get('depth_range', (0, 0))
-            depth_min_b, depth_max_b = b.get('depth_range', (0, 0))
+    ranges = []
+    for w in elem_wrappers:
+        dmin, dmax = w.get("depth_range", (float("inf"), float("inf")))
+        # Skip invalid ranges (conservative): treat as ambiguous
+        if dmin == 0 and dmax == 0:
+            return True
+        if dmin > dmax:
+            dmin, dmax = dmax, dmin
+        ranges.append((dmin, dmax))
 
-            # Check for range overlap
-            if depth_min_a < depth_max_b and depth_min_b < depth_max_a:
-                return True  # Ambiguous!
+    ranges.sort(key=lambda t: t[0])
+
+    max_dmax = ranges[0][1]
+    for dmin, dmax in ranges[1:]:
+        if dmin < max_dmax:
+            return True
+        if dmax > max_dmax:
+            max_dmax = dmax
 
     return False
 
@@ -1097,7 +1099,7 @@ def _get_ambiguous_tiles(tile_bins, cfg):
     ambiguous = []
 
     for tile_id, elems in tile_bins.items():
-        if _tile_has_depth_conflict(elems):
+        if _tile_has_depth_conflict(elems, cfg=cfg):
             ambiguous.append(tile_id)
 
     # Debug logging
