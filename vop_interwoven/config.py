@@ -94,6 +94,9 @@ class Config:
         # PR11: Synthetic extents scan budgets (safety + auditable fallbacks)
         extents_scan_max_elements=50000,
         extents_scan_time_budget_s=0.50,
+        
+        # PR12: Geometry caching (bounded LRU)
+        geometry_cache_max_items=2048,
 
     ):
         """Initialize VOP configuration.
@@ -137,6 +140,9 @@ class Config:
         # PR11: bounds scan budgets
         self.extents_scan_max_elements = int(extents_scan_max_elements) if extents_scan_max_elements is not None else None
         self.extents_scan_time_budget_s = float(extents_scan_time_budget_s) if extents_scan_time_budget_s is not None else None
+
+        # PR12: geometry cache
+        self.geometry_cache_max_items = int(geometry_cache_max_items) if geometry_cache_max_items is not None else 0
 
         # Debug and diagnostics
         self.debug_dump_occlusion = bool(debug_dump_occlusion)
@@ -195,6 +201,10 @@ class Config:
 
         if self.extents_scan_time_budget_s is not None and self.extents_scan_time_budget_s <= 0:
             raise ValueError("extents_scan_time_budget_s must be positive or None")
+
+        # PR12 validation: 0 disables caching (explicit).
+        if self.geometry_cache_max_items < 0:
+            raise ValueError("geometry_cache_max_items must be >= 0")
 
     def compute_adaptive_tile_size(self, grid_width, grid_height):
         """Compute optimal tile size based on grid dimensions.
@@ -375,6 +385,8 @@ class Config:
             "coarse_spatial_filter_pad_ft": self.coarse_spatial_filter_pad_ft,
             "extents_scan_max_elements": self.extents_scan_max_elements,
             "extents_scan_time_budget_s": self.extents_scan_time_budget_s,
+            # PR12: geometry cache
+            "geometry_cache_max_items": self.geometry_cache_max_items,
         }
 
     @classmethod
@@ -396,11 +408,12 @@ class Config:
             bounds_buffer_in=d.get("bounds_buffer_in", 0.5),
             include_linked_rvt=d.get("include_linked_rvt", True),
             include_dwg_imports=d.get("include_dwg_imports", True),
-
             # PR11 knobs
             enable_multicategory_filter=d.get("enable_multicategory_filter", True),
             coarse_spatial_filter_enabled=d.get("coarse_spatial_filter_enabled", False),
             coarse_spatial_filter_pad_ft=d.get("coarse_spatial_filter_pad_ft", 0.0),
             extents_scan_max_elements=d.get("extents_scan_max_elements", 50000),
-            extents_scan_time_budget_s=d.get("extents_scan_time_budget_s", 0.50)
+            extents_scan_time_budget_s=d.get("extents_scan_time_budget_s", 0.50),
+            # PR12
+            geometry_cache_max_items=d.get("geometry_cache_max_items", 2048),
         )

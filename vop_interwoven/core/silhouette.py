@@ -340,7 +340,7 @@ def _to_host_point(elem, xyz):
     except Exception:
         return xyz
 
-def get_element_silhouette(elem, view, view_basis, raster, cfg=None):
+def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None, cache_key=None):
     """Extract element silhouette as 2D loops.
 
     Args:
@@ -363,6 +363,16 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None):
         - Tries strategies in order based on element UV mode (TINY/LINEAR/AREAL)
         - bbox is the ultimate fallback (always succeeds if element has bbox)
     """
+
+    # PR12: geometry cache (caller provides bounded LRU; this function treats it as optional).
+    if cache is not None and cache_key is not None:
+        try:
+            cached = cache.get(cache_key, default=None)
+            if cached is not None:
+                return cached
+        except Exception:
+            pass
+
     if cfg is None:
         # No config: accuracy-first default
         strategies = ['silhouette_edges', 'obb', 'bbox']
@@ -403,6 +413,13 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None):
                 # Tag loops with strategy used
                 for loop in loops:
                     loop['strategy'] = strategy_name
+
+                if cache is not None and cache_key is not None:
+                    try:
+                        cache.set(cache_key, [dict(loop) for loop in loops])
+                    except Exception:
+                        pass
+
                 return loops
 
         except Exception as e:

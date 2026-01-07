@@ -139,6 +139,14 @@ def process_document_views(doc, view_ids, cfg):
     if isinstance(cfg, dict):
         raise TypeError("cfg must be vop_interwoven.config.Config (not dict)")
 
+    # PR12: bounded geometry cache shared across all views in this call.
+    # Scoped to this run to avoid cross-run semantic drift.
+    try:
+        from .core.cache import LRUCache
+        geometry_cache = LRUCache(max_items=getattr(cfg, "geometry_cache_max_items", 0))
+    except Exception:
+        geometry_cache = None
+
     for view_id in view_ids:
         diag = Diagnostics()  # per-view diag
         view = None
@@ -229,7 +237,7 @@ def process_document_views(doc, view_ids, cfg):
                 elements = collect_view_elements(doc, view, raster, diag=diag, cfg=cfg)
 
                 # 3) MODEL PASS
-                render_model_front_to_back(doc, view, raster, elements, cfg, diag=diag)
+                render_model_front_to_back(doc, view, raster, elements, cfg, diag=diag, geometry_cache=geometry_cache)
 
             elif view_mode == VIEW_MODE_ANNOTATION_ONLY:
                 # Annotation-only: do NOT attempt model collection, depth sorting, or link expansion
@@ -363,7 +371,7 @@ def init_view_raster(doc, view, cfg, diag=None):
     return raster
 
 
-def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None):
+def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geometry_cache=None):
     """Render 3D model elements front-to-back with interwoven AreaL/Tiny/Linear handling.
 
     Args:
@@ -486,7 +494,22 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None):
         loops = None
         silhouette_error = None
         try:
-            loops = get_element_silhouette(elem, view, vb, raster, cfg)
+            # PR12: bounded LRU cache for expensive silhouette/triangulation calls.
+            cache_key = None
+            if geometry_cache is not None:
+                try:
+                    view_id_int = getattr(getattr(view, "Id", None), "IntegerValue", None)
+                except Exception:
+                    view_id_int = None
+                cache_key = (
+                    source_id,
+                    elem_id,
+                    view_id_int,
+                    getattr(cfg, "proxy_mask_mode", None),
+                    "silhouette_v1",
+                )
+
+            loops = get_element_silhouette(elem, view, vb, raster, cfg, cache=geometry_cache, cache_key=cache_key)
         except Exception as e:
             # Silhouette extraction failed, loops will be None
             silhouette_error = str(e)
@@ -494,10 +517,23 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None):
                 print("[DEBUG] Silhouette extraction failed for element {0} ({1}): {2}".format(
                     elem_id, category, silhouette_error))
 
+        bbox_link = elem_wrapper.get("bbox_link")
+        bbox_for_metrics = bbox_link if bbox_link is not None else elem_wrapper.get("bbox")
+        bbox_is_link_space = bbox_link is not None
+
         # Calculate element depth from silhouette geometry OR bbox fallback
         # CRITICAL FIX: Use accurate geometry depth instead of bbox-only depth
         from .revit.collection import estimate_depth_from_loops_or_bbox
-        elem_depth = estimate_depth_from_loops_or_bbox(elem, loops, world_transform, view, raster)
+
+        elem_depth = estimate_depth_from_loops_or_bbox(
+            elem=elem,
+            loops=loops,
+            bbox=bbox_for_metrics,
+            transform=world_transform,
+            view=view,
+            raster=raster,
+            bbox_is_link_space=bbox_is_link_space,
+        )
 
         # Depth must be finite. NaN causes all depth tests to reject (NaN < inf is False),
         # which yields exactly: filled_cells=0, occlusion_cells=0, proxy_edge_cells=0.
