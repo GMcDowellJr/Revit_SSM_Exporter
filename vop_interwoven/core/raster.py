@@ -490,6 +490,8 @@ class ViewRaster:
                 "occlusion_cells": 0,      # depth wins via try_write_cell
                 "model_edge_cells": 0,     # visible edges stamped into model_edge_key
                 "proxy_edge_cells": 0,     # proxy perimeter edges stamped into model_proxy_key
+                # PR9 bbox provenance (best-effort, set by pipeline after wrapper resolve)
+                "bbox_source": None,   # "view" | "model" | "none"
             }
         )
         return idx

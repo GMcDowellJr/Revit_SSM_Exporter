@@ -5,11 +5,63 @@ Provides functions to collect visible elements in a view and check
 element visibility according to Revit view settings.
 """
 
+def resolve_element_bbox(elem, view=None, diag=None, context=None):
+    """Resolve an element bounding box with explicit source semantics.
+
+    Semantics:
+        - Prefer view-dependent bbox when available: elem.get_BoundingBox(view)
+        - Fall back to model bbox: elem.get_BoundingBox(None)
+        - If neither is available, return (None, "none")
+
+    Returns:
+        (bbox, bbox_source)
+            bbox_source is one of: "view" | "model" | "none"
+
+    Notes:
+        - LinkedElementProxy ignores the view argument but returns a host-space bbox.
+          For such proxies, we treat the returned bbox as "model" even if it was
+          obtained via the view-callsite, to avoid implying view dependency.
+        - Never raises (uses safe_call). If diag is provided, failures are recorded
+          as recoverable errors by safe_call.
+    """
+    from .safe_api import safe_call
+
+    ctx = context or {}
+    is_link_proxy = type(elem).__name__ == "LinkedElementProxy"
+
+    # 1) Prefer view-specific bbox when a view is provided.
+    if view is not None:
+        bbox_view = safe_call(
+            diag,
+            phase="collection",
+            callsite="elem.get_BoundingBox(view)",
+            fn=lambda: elem.get_BoundingBox(view),
+            default=None,
+            context=ctx,
+            policy="default",
+        )
+        if bbox_view is not None:
+            return bbox_view, ("model" if is_link_proxy else "view")
+
+    # 2) Fall back to model bbox.
+    bbox_model = safe_call(
+        diag,
+        phase="collection",
+        callsite="elem.get_BoundingBox(None)",
+        fn=lambda: elem.get_BoundingBox(None),
+        default=None,
+        context=ctx,
+        policy="default",
+    )
+    if bbox_model is not None:
+        return bbox_model, "model"
+
+    return None, "none"
+
 
 def collect_view_elements(doc, view, raster, diag=None):
     """Collect all potentially visible elements in view (broad-phase)."""
     from Autodesk.Revit.DB import FilteredElementCollector, BuiltInCategory
-    from .safe_api import safe_call
 
     view_id = None
     try:
@@ -50,7 +102,9 @@ def collect_view_elements(doc, view, raster, diag=None):
     # Aggregate for signal without spam
     cat_fail = 0
     viewspecific_fail = 0
-    bbox_fail = 0
+    bbox_none = 0
+    bbox_view = 0
+    bbox_model = 0
 
     try:
         for cat in model_categories:
@@ -75,20 +129,22 @@ def collect_view_elements(doc, view, raster, diag=None):
                     except Exception:
                         elem_id = None
 
-                    bbox = safe_call(
-                        diag,
-                        phase="collection",
-                        callsite="elem.get_BoundingBox(None)",
-                        fn=lambda: elem.get_BoundingBox(None),
-                        default=None,
+                    # Prefer view bbox for view-dependent collection, but never silently drop.
+                    _bbox, bbox_source = resolve_element_bbox(
+                        elem,
+                        view=view,
+                        diag=diag,
                         context={"view_id": view_id, "elem_id": elem_id, "category": str(cat)},
-                        policy="default",
                     )
 
-                    if bbox is None:
-                        bbox_fail += 1
-                        continue
+                    if bbox_source == "view":
+                        bbox_view += 1
+                    elif bbox_source == "model":
+                        bbox_model += 1
+                    else:
+                        bbox_none += 1
 
+                    # CRITICAL: Do NOT drop bbox=None here; downstream may still succeed via geometry.
                     elements.append(elem)
 
             except Exception as e:
@@ -101,7 +157,6 @@ def collect_view_elements(doc, view, raster, diag=None):
                         view_id=view_id,
                         extra={"category": str(cat), "exc_type": type(e).__name__, "exc": str(e)},
                     )
-
                 continue
 
     except Exception as e:
@@ -115,7 +170,7 @@ def collect_view_elements(doc, view, raster, diag=None):
             )
 
     # One aggregated warning if needed
-    if diag is not None and (cat_fail > 0 or viewspecific_fail > 0 or bbox_fail > 0):
+    if diag is not None and (cat_fail > 0 or viewspecific_fail > 0 or bbox_none > 0):
         diag.warn(
             phase="collection",
             callsite="collect_view_elements.summary",
@@ -125,7 +180,11 @@ def collect_view_elements(doc, view, raster, diag=None):
                 "num_elements": len(elements),
                 "cat_fail": cat_fail,
                 "viewspecific_fail": viewspecific_fail,
-                "bbox_fail": bbox_fail,
+                "bbox": {
+                    "view": bbox_view,
+                    "model": bbox_model,
+                    "none": bbox_none,
+                },
             },
         )
 
@@ -164,30 +223,45 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None):
     """Expand element list to include linked/imported model elements.
 
     Returns:
-        List of element wrappers with transform info:
-        Each item: {
-            'element': Element or LinkedElementProxy,
-            'world_transform': Transform (identity for host, link transform for linked),
-            'source_type': "HOST" | "LINK" | "DWG",
-            'source_id': stable unique string,
-            'source_label': human label,
-            'doc_key': legacy alias of source_id (deprecated),
-            'doc_label': legacy alias of source_label (deprecated),
-            'link_inst_id': ElementId or None
-        }
+        List of element wrappers with transform info plus bbox provenance.
     """
     from Autodesk.Revit.DB import Transform
     from .linked_documents import collect_all_linked_elements
 
     result = []
 
+    # Track bbox stats (aggregated) without spamming.
+    bbox_view = 0
+    bbox_model = 0
+    bbox_none = 0
+
     # Add host elements with identity transform
     identity_trf = Transform.Identity
     for e in elements:
+        bbox, bbox_source = resolve_element_bbox(
+            e,
+            view=view,
+            diag=diag,
+            context={
+                "view_id": getattr(getattr(view, "Id", None), "IntegerValue", None),
+                "elem_id": getattr(getattr(e, "Id", None), "IntegerValue", None),
+                "source_type": "HOST",
+            },
+        )
+
+        if bbox_source == "view":
+            bbox_view += 1
+        elif bbox_source == "model":
+            bbox_model += 1
+        else:
+            bbox_none += 1
+
         result.append(
             {
                 "element": e,
                 "world_transform": identity_trf,
+                "bbox": bbox,
+                "bbox_source": bbox_source,
                 "source_type": "HOST",
                 "source_id": "HOST",
                 "source_label": "HOST",
@@ -202,11 +276,30 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None):
         linked_proxies = collect_all_linked_elements(doc, view, cfg)
 
         for proxy in linked_proxies:
-            # Proxy now carries normalized identity (doc_* retained as legacy aliases)
+            bbox, bbox_source = resolve_element_bbox(
+                proxy,
+                view=view,
+                diag=diag,
+                context={
+                    "view_id": getattr(getattr(view, "Id", None), "IntegerValue", None),
+                    "elem_id": getattr(getattr(proxy, "Id", None), "IntegerValue", None),
+                    "source_type": getattr(proxy, "source_type", "LINK"),
+                },
+            )
+
+            if bbox_source == "view":
+                bbox_view += 1
+            elif bbox_source == "model":
+                bbox_model += 1
+            else:
+                bbox_none += 1
+
             result.append(
                 {
-                    "element": proxy,  # LinkedElementProxy
+                    "element": proxy,
                     "world_transform": proxy.transform,
+                    "bbox": bbox,
+                    "bbox_source": bbox_source,
                     "source_type": getattr(proxy, "source_type", "HOST"),
                     "source_id": getattr(proxy, "source_id", getattr(proxy, "doc_key", "HOST")),
                     "source_label": getattr(proxy, "source_label", getattr(proxy, "doc_label", getattr(proxy, "doc_key", "HOST"))),
@@ -216,7 +309,6 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None):
                 }
             )
     except Exception as e:
-        # Recoverable, but must be visible and counted
         if diag is not None:
             diag.warn(
                 phase="collection",
@@ -228,78 +320,66 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None):
         else:
             print("[WARN] vop.collection: Failed to collect linked elements: {0}".format(e))
 
+    # Aggregated bbox source report (if anything was missing)
+    if diag is not None and bbox_none > 0:
+        try:
+            diag.warn(
+                phase="collection",
+                callsite="expand_host_link_import_model_elements.bbox",
+                message="Some elements had no bounding box; they were retained for downstream attempts",
+                view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                extra={
+                    "bbox": {"view": bbox_view, "model": bbox_model, "none": bbox_none},
+                },
+            )
+        except Exception:
+            pass
+
     return result
 
 
 def sort_front_to_back(model_elems, view, raster):
-    """Sort elements front-to-back by approximate depth.
-
-    Args:
-        model_elems: List of element wrappers (from expand_host_link_import_model_elements)
-        view: Revit View
-        raster: ViewRaster (provides view basis for depth calculation)
-
-    Returns:
-        Sorted list (nearest elements first)
-
-    Commentary:
-        ✔ Uses bbox minimum depth as sorting key (fast approximation)
-        ✔ Front-to-back order enables early-out occlusion testing
-        ✔ Stable sort for deterministic output
-        ✔ Elements with smaller depth values are closer to view plane
-    """
-    # Sort by depth (nearest first)
-    # Use stable sort to ensure deterministic output for elements with equal depth
+    """Sort elements front-to-back by approximate depth."""
     sorted_elems = sorted(
         model_elems,
-        key=lambda item: item.get("depth_sort", estimate_nearest_depth_from_bbox(
-            item["element"], item["world_transform"], view, raster
-        ))
+        key=lambda item: item.get(
+            "depth_sort",
+            estimate_nearest_depth_from_bbox(
+                item["element"],
+                item["world_transform"],
+                view,
+                raster,
+                bbox=item.get("bbox"),
+            ),
+        ),
     )
-
     return sorted_elems
 
 
-def estimate_nearest_depth_from_bbox(elem, transform, view, raster):
-    """Estimate nearest depth of element from its bounding box.
-
-    Args:
-        elem: Revit Element
-        transform: World transform (identity for host, link transform for linked)
-        view: Revit View
-        raster: ViewRaster
-
-    Returns:
-        Float depth value (distance from view plane)
-
-    Commentary:
-        ✔ Computes minimum depth across all 8 bbox corners
-        ✔ Used for front-to-back sorting
-        ✔ Returns depth in view space (w coordinate)
-    """
+def estimate_nearest_depth_from_bbox(elem, transform, view, raster, bbox=None, diag=None):
+    """Estimate nearest depth of element from its bounding box."""
     from .view_basis import world_to_view
 
-    # Get world-space bounding box
-    bbox = elem.get_BoundingBox(None)
     if bbox is None:
-        return float('inf')  # Elements without bbox go to back
+        bbox, _src = resolve_element_bbox(
+            elem,
+            view=view,
+            diag=diag,
+            context={
+                "view_id": getattr(getattr(view, "Id", None), "IntegerValue", None),
+                "elem_id": getattr(getattr(elem, "Id", None), "IntegerValue", None),
+            },
+        )
 
-    # Get view basis from raster (stored during init_view_raster)
-    vb = getattr(raster, 'view_basis', None)
+    if bbox is None:
+        return float("inf")
+
+    vb = getattr(raster, "view_basis", None)
     if vb is None:
-        return 0.0  # Fallback if view basis not available
+        return 0.0
 
-    # Get all 8 corners of bounding box in world space
     min_x, min_y, min_z = bbox.Min.X, bbox.Min.Y, bbox.Min.Z
     max_x, max_y, max_z = bbox.Max.X, bbox.Max.Y, bbox.Max.Z
-
-    # DEBUG: Log bbox and view basis for first few elements
-    debug_count = getattr(estimate_nearest_depth_from_bbox, '_debug_count', 0)
-    if debug_count < 2:
-        estimate_nearest_depth_from_bbox._debug_count = debug_count + 1
-        print("[DEBUG] estimate_depth: bbox Z range: [{0:.3f}, {1:.3f}]".format(min_z, max_z))
-        print("[DEBUG] estimate_depth: view_basis.origin = {0}".format(vb.origin))
-        print("[DEBUG] estimate_depth: view_basis.forward = {0}".format(vb.forward))
 
     corners = [
         (min_x, min_y, min_z),
@@ -312,96 +392,71 @@ def estimate_nearest_depth_from_bbox(elem, transform, view, raster):
         (max_x, max_y, max_z),
     ]
 
-    # Transform all corners to view space and get minimum depth (w coordinate)
-    min_depth = float('inf')
-    max_depth = float('-inf')
+    min_depth = float("inf")
     for corner in corners:
-        u, v, w = world_to_view(corner, vb)
+        _u, _v, w = world_to_view(corner, vb)
         if w < min_depth:
             min_depth = w
-        if w > max_depth:
-            max_depth = w
-
-    # DEBUG: Log depth range for first few elements
-    if debug_count < 2:
-        print("[DEBUG] estimate_depth: depth range: [{0:.3f}, {1:.3f}], using min={2:.3f}".format(
-            min_depth, max_depth, min_depth))
 
     return min_depth
 
 
-def estimate_depth_from_loops_or_bbox(elem, loops, transform, view, raster):
-    """Get element depth from silhouette geometry or bbox fallback.
-
-    Args:
-        elem: Revit Element
-        loops: Silhouette loops (may contain w coordinates)
-        transform: World transform
-        view: Revit View
-        raster: ViewRaster
-
-    Returns:
-        Float depth value (nearest point to view plane)
-
-    Commentary:
-        ✔ Extracts depth from silhouette loop points if w coordinate available
-        ✔ Falls back to bbox depth if loops unavailable/empty or no w coordinate
-        ✔ CRITICAL FIX: Use accurate geometry depth instead of inflated bbox depth
-    """
-    # Try to extract depth from loops first (accurate geometry)
+def estimate_depth_from_loops_or_bbox(elem, loops, transform, view, raster, bbox=None, diag=None):
+    """Get element depth from silhouette geometry or bbox fallback."""
     if loops:
-        min_w = float('inf')
+        min_w = float("inf")
         found_depth = False
 
         for loop in loops:
-            points = loop.get('points', [])
+            points = loop.get("points", [])
             for pt in points:
-                # Check if point has w coordinate (3-tuple)
                 if len(pt) >= 3:
                     w = pt[2]
                     if w < min_w:
                         min_w = w
                     found_depth = True
 
-        # If we found depth in loops, use it (accurate!)
-        if found_depth and min_w < float('inf'):
+        if found_depth and min_w < float("inf"):
             return min_w
 
-    # Fallback: use bbox (less accurate for rotated elements, but better than nothing)
-    return estimate_nearest_depth_from_bbox(elem, transform, view, raster)
+    return estimate_nearest_depth_from_bbox(elem, transform, view, raster, bbox=bbox, diag=diag)
 
 
-def estimate_depth_range_from_bbox(elem, transform, view, raster):
+def estimate_depth_range_from_bbox(elem, transform, view, raster, bbox=None, diag=None):
     """Estimate depth range (min, max) of element from its bounding box.
 
-    Args:
-        elem: Revit Element
-        transform: World transform (identity for host, link transform for linked)
-        view: Revit View
-        raster: ViewRaster
-
-    Returns:
-        Tuple (min_depth, max_depth) - range of depths in view space
-
-    Commentary:
-        Used for ambiguity detection in selective z-buffer phase.
-        Returns full depth extent across all 8 bbox corners.
+    Uses wrapper-provided bbox when available; otherwise resolves bbox via resolve_element_bbox().
+    Never raises; returns (inf, inf) when bbox is unavailable.
     """
     from .view_basis import world_to_view
 
-    # Get world-space bounding box
-    bbox = elem.get_BoundingBox(None)
+    # Prefer provided bbox (wrapper-resolved), otherwise resolve (view -> model -> none)
     if bbox is None:
-        return (float('inf'), float('inf'))  # Elements without bbox
+        try:
+            bbox, _src = resolve_element_bbox(
+                elem,
+                view=view,
+                diag=diag,
+                context={
+                    "view_id": getattr(getattr(view, "Id", None), "IntegerValue", None) if view is not None else None,
+                    "elem_id": getattr(getattr(elem, "Id", None), "IntegerValue", None),
+                },
+            )
+        except Exception:
+            bbox = None
 
-    # Get view basis from raster
-    vb = getattr(raster, 'view_basis', None)
+    if bbox is None:
+        return (float("inf"), float("inf"))
+
+    vb = getattr(raster, "view_basis", None)
     if vb is None:
-        return (0.0, 0.0)  # Fallback
+        return (0.0, 0.0)
 
-    # Get all 8 corners of bounding box in world space
-    min_x, min_y, min_z = bbox.Min.X, bbox.Min.Y, bbox.Min.Z
-    max_x, max_y, max_z = bbox.Max.X, bbox.Max.Y, bbox.Max.Z
+    try:
+        min_x, min_y, min_z = bbox.Min.X, bbox.Min.Y, bbox.Min.Z
+        max_x, max_y, max_z = bbox.Max.X, bbox.Max.Y, bbox.Max.Z
+    except Exception:
+        return (float("inf"), float("inf"))
 
     corners = [
         (min_x, min_y, min_z),
@@ -414,20 +469,26 @@ def estimate_depth_range_from_bbox(elem, transform, view, raster):
         (max_x, max_y, max_z),
     ]
 
-    # Transform all corners to view space and get min/max depth (w coordinate)
-    min_depth = float('inf')
-    max_depth = float('-inf')
+    min_depth = float("inf")
+    max_depth = float("-inf")
+
     for corner in corners:
-        u, v, w = world_to_view(corner, vb)
+        try:
+            _u, _v, w = world_to_view(corner, vb)
+        except Exception:
+            continue
         if w < min_depth:
             min_depth = w
         if w > max_depth:
             max_depth = w
 
+    if min_depth == float("inf") or max_depth == float("-inf"):
+        return (float("inf"), float("inf"))
+
     return (min_depth, max_depth)
 
 
-def _project_element_bbox_to_cell_rect(elem, vb, raster):
+def _project_element_bbox_to_cell_rect(elem, vb, raster, bbox=None, diag=None, view=None):
     """Project element bounding box to cell rectangle using OBB (oriented bounds).
 
     Args:
@@ -449,8 +510,21 @@ def _project_element_bbox_to_cell_rect(elem, vb, raster):
     from ..core.math_utils import CellRect
     from .view_basis import world_to_view
 
-    # Get world-space bounding box
-    bbox = elem.get_BoundingBox(None)
+    # Prefer provided bbox (wrapper-resolved). If absent, resolve (view -> model -> none).
+    if bbox is None:
+        try:
+            bbox, _src = resolve_element_bbox(
+                elem,
+                view=view,
+                diag=diag,
+                context={
+                    "view_id": getattr(getattr(view, "Id", None), "IntegerValue", None) if view is not None else None,
+                    "elem_id": getattr(getattr(elem, "Id", None), "IntegerValue", None),
+                },
+            )
+        except Exception:
+            bbox = None
+
     if bbox is None:
         return None
 
@@ -611,7 +685,7 @@ def _extract_geometry_footprint_uv(elem, vb):
         return None
 
 
-def get_element_obb_loops(elem, vb, raster):
+def get_element_obb_loops(elem, vb, raster, bbox=None, diag=None, view=None):
     """Get element OBB as polygon loops for accurate rasterization.
 
     Args:
@@ -630,10 +704,24 @@ def get_element_obb_loops(elem, vb, raster):
     """
     from .view_basis import world_to_view
 
-    # Always get bbox for depth calculation
-    bbox = elem.get_BoundingBox(None)
+    # Always need bbox for depth + UV projection. Prefer provided bbox, else resolve.
+    if bbox is None:
+        try:
+            bbox, _src = resolve_element_bbox(
+                elem,
+                view=view,
+                diag=diag,
+                context={
+                    "view_id": getattr(getattr(view, "Id", None), "IntegerValue", None) if view is not None else None,
+                    "elem_id": getattr(getattr(elem, "Id", None), "IntegerValue", None),
+                },
+            )
+        except Exception:
+            bbox = None
+
     if bbox is None:
         return None
+
 
     # Get all 8 corners and project to UV (needed for depth regardless of geometry extraction)
     min_x, min_y, min_z = bbox.Min.X, bbox.Min.Y, bbox.Min.Z
