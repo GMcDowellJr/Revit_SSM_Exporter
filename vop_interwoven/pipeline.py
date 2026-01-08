@@ -509,7 +509,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     "silhouette_v1",
                 )
 
-            loops = get_element_silhouette(elem, view, vb, raster, cfg, cache=geometry_cache, cache_key=cache_key)
+            loops = get_element_silhouette(elem, view, vb, raster, cfg, cache=geometry_cache, cache_key=cache_key, diag=diag)
         except Exception as e:
             # Silhouette extraction failed, loops will be None
             silhouette_error = str(e)
