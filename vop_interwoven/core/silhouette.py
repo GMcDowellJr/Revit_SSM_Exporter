@@ -357,10 +357,17 @@ def _iter_curve_primitives(geom):
         except Exception:
             return
 
-def _cad_curves_silhouette(elem, view, view_basis, cfg=None):
+def _cad_curves_silhouette(elem, view, view_basis, raster, cfg=None):
     """
     Extract curve primitives from DWG/DXF ImportInstance geometry and return OPEN polylines.
     Intended to avoid bbox/obb rectangles for imports.
+
+    NOTE:
+    - Revit may return different geometry representations depending on Options.View binding.
+    - For ImportInstance (CAD), binding Options.View can sometimes suppress curve primitives
+      (e.g., return display/tessellated geometry). We therefore try BOTH:
+        1) Options without View binding
+        2) Options with View binding (fallback)
     """
     try:
         from Autodesk.Revit.DB import Options, ViewDetailLevel
@@ -369,72 +376,288 @@ def _cad_curves_silhouette(elem, view, view_basis, cfg=None):
 
     base_elem = _unwrap_elem(elem)
 
-    try:
-        opts = Options()
-        opts.ComputeReferences = False
-        # Imports can hide curve primitives unless this is True in some cases
-        try:
-            opts.IncludeNonVisibleObjects = True
-        except Exception:
-            pass
-        try:
-            opts.DetailLevel = ViewDetailLevel.Fine
-        except Exception:
-            pass
-        try:
-            opts.View = view
-        except Exception:
-            pass
+    # DWG imports can contain many thousands of segments.
+    # Default caps must be high enough to avoid truncation artifacts.
+    default_max_paths = 20000
+    default_max_pts = 2000
 
-        geom = base_elem.get_Geometry(opts)
+    max_paths = getattr(cfg, "cad_max_paths", default_max_paths) if cfg else default_max_paths
+    max_pts = getattr(cfg, "cad_max_pts_per_path", default_max_pts) if cfg else default_max_pts
+
+    # Adaptive DWG budgeting: keep only what can affect the raster at the current cell size.
+    # This prevents "magic number" caps from truncating meaningful content.
+    cell = getattr(raster, "cell_size_ft", None)
+    if cell is None or cell <= 0:
+        cell = 1.0  # conservative fallback; should not happen
+
+    # Drop segments shorter than this (in view UV units, feet). Tuned to raster resolution.
+    min_seg_len = 0.35 * cell
+
+    # Direction binning: treat near-parallel segments as redundant within a cell.
+    # 8 bins across 180° (undirected); lines at theta and theta+pi map to same bin.
+    dir_bins = 8
+
+    # Per-cell directional occupancy: (cu, cv, bin) -> seen
+    seen = {}
+
+    def _extract_from_geom(geom):
+        loops = []
+        count = 0
+
         if geom is None:
-            return []
-    except Exception:
-        return []
+            return loops
 
-    max_paths = getattr(cfg, "cad_max_paths", 2000) if cfg else 2000
-    max_pts = getattr(cfg, "cad_max_pts_per_path", 500) if cfg else 500
-
-    loops = []
-    count = 0
-
-    for g in _iter_curve_primitives(geom):
-        if count >= max_paths:
-            break
-
-        pts_uv = []
-
-        # PolyLine
-        if g.__class__.__name__ == "PolyLine":
+        # Also scan raw geometry (recursively) for non-curve objects with meaningful bounding boxes.
+        # DWG text often appears as nested instance/display geometry, not curve primitives.
+        def _iter_geom_objects(g):
+            if g is None:
+                return
             try:
-                coords = g.GetCoordinates()
+                it2 = g.GetEnumerator()
             except Exception:
-                coords = None
+                it2 = None
 
-            if coords:
-                for k in range(min(len(coords), max_pts)):
-                    p = _to_host_point(elem, coords[k])  # IMPORTANT: use proxy transform if present
-                    uv = view_basis.transform_to_view_uv((p.X, p.Y, p.Z))
-                    pts_uv.append((uv[0], uv[1]))
+            if it2:
+                while it2.MoveNext():
+                    o = it2.Current
+                    if o is None:
+                        continue
+                    yield o
 
-        # Curve
-        elif hasattr(g, "Tessellate"):
+                    # Recurse into instance geometry if present
+                    if hasattr(o, "GetInstanceGeometry"):
+                        try:
+                            ig = o.GetInstanceGeometry()
+                            for x in _iter_geom_objects(ig):
+                                yield x
+                        except Exception:
+                            pass
+            else:
+                try:
+                    for o in g:
+                        if o is None:
+                            continue
+                        yield o
+                        if hasattr(o, "GetInstanceGeometry"):
+                            try:
+                                ig = o.GetInstanceGeometry()
+                                for x in _iter_geom_objects(ig):
+                                    yield x
+                            except Exception:
+                                pass
+                except Exception:
+                    return
+
+        try:
+            for obj in _iter_geom_objects(geom):
+                try:
+                    name = obj.__class__.__name__
+                except Exception:
+                    name = None
+
+                # Skip obvious curve primitives (handled below)
+                if name in ("Line", "Arc", "NurbSpline", "HermiteSpline", "PolyLine", "Curve"):
+                    continue
+                if hasattr(obj, "GetEndPoint") or name == "PolyLine":
+                    continue
+
+                bb = None
+                try:
+                    bb = getattr(obj, "BoundingBox", None)
+                except Exception:
+                    bb = None
+
+                if bb is None:
+                    try:
+                        bb = obj.GetBoundingBox()
+                    except Exception:
+                        bb = None
+
+                if bb is not None:
+                    _try_add_bbox_fill(loops, bb)
+
+        except Exception:
+            pass
+
+        for g in _iter_curve_primitives(geom):
+            if count >= max_paths:
+                break
+
+            pts_uv = []
+
+            # PolyLine
+            if g.__class__.__name__ == "PolyLine":
+                try:
+                    coords = g.GetCoordinates()
+                except Exception:
+                    coords = None
+
+                if coords:
+                    for k in range(min(len(coords), max_pts)):
+                        p = _to_host_point(elem, coords[k])  # IMPORTANT: use proxy transform if present
+                        uv = view_basis.transform_to_view_uv((p.X, p.Y, p.Z))
+                        pts_uv.append((uv[0], uv[1]))
+
+            # Curve
+            elif hasattr(g, "Tessellate"):
+                try:
+                    tess = g.Tessellate()
+                except Exception:
+                    tess = None
+
+                if tess:
+                    for k in range(min(len(tess), max_pts)):
+                        p = _to_host_point(elem, tess[k])
+                        uv = view_basis.transform_to_view_uv((p.X, p.Y, p.Z))
+                        pts_uv.append((uv[0], uv[1]))
+
+            if len(pts_uv) >= 2:
+                # Reduce consecutive points that fall in the same raster cell (no visible change).
+                compact = []
+                last_cell = None
+                for (u, v) in pts_uv:
+                    cu = int(u / cell) if cell else 0
+                    cv = int(v / cell) if cell else 0
+                    c = (cu, cv)
+                    if c != last_cell:
+                        compact.append((u, v))
+                        last_cell = c
+
+                # Keep only segments that are long enough to matter at this cell size
+                # and that add new info in cell+direction space.
+                kept = []
+                for i in range(len(compact) - 1):
+                    u0, v0 = compact[i]
+                    u1, v1 = compact[i + 1]
+                    du = (u1 - u0)
+                    dv = (v1 - v0)
+                    seg_len = math.sqrt(du * du + dv * dv)
+                    if seg_len < min_seg_len:
+                        continue
+
+                    # Midpoint cell for bucketing
+                    um = 0.5 * (u0 + u1)
+                    vm = 0.5 * (v0 + v1)
+                    cu = int(um / cell) if cell else 0
+                    cv = int(vm / cell) if cell else 0
+
+                    # Undirected angle bin in [0, pi)
+                    ang = math.atan2(dv, du)
+                    if ang < 0:
+                        ang += math.pi
+                    b = int((ang / math.pi) * dir_bins)
+                    if b >= dir_bins:
+                        b = dir_bins - 1
+
+                    key = (cu, cv, b)
+                    if key in seen:
+                        continue
+                    seen[key] = 1
+
+                    # Keep this segment (as a 2-pt polyline chunk)
+                    kept.append((u0, v0))
+                    kept.append((u1, v1))
+
+                # If anything survived, store as an OPEN polyline loop.
+                if len(kept) >= 2:
+                    loops.append({"points": kept, "is_hole": False, "open": True})
+                    count += 1
+
+        return loops
+
+    def _try_add_bbox_fill(loops, bbox):
+        """
+        Heuristic: add a closed rect loop (fill) for non-curve CAD geometry (often text).
+        Uses view UV projection of bbox corners.
+
+        Guardrails:
+        - Ignore degenerate bboxes
+        - Ignore huge bboxes (likely the overall import extents)
+        - Ignore tiny bboxes (sub-cell noise)
+        """
+        if bbox is None:
+            return False
+
+        try:
+            mn = bbox.Min
+            mx = bbox.Max
+            if mn is None or mx is None:
+                return False
+        except Exception:
+            return False
+
+        # Project bbox corners to UV (axis-aligned in UV)
+        try:
+            uv_mn = view_basis.transform_to_view_uv((mn.X, mn.Y, mn.Z))
+            uv_mx = view_basis.transform_to_view_uv((mx.X, mx.Y, mx.Z))
+        except Exception:
+            return False
+
+        u0 = min(uv_mn[0], uv_mx[0])
+        u1 = max(uv_mn[0], uv_mx[0])
+        v0 = min(uv_mn[1], uv_mx[1])
+        v1 = max(uv_mn[1], uv_mx[1])
+
+        du = (u1 - u0)
+        dv = (v1 - v0)
+        if du <= 1e-9 or dv <= 1e-9:
+            return False
+
+        cell = getattr(raster, "cell_size_ft", None)
+        if cell is None or cell <= 0:
+            cell = 1.0
+
+        diag = math.sqrt(du * du + dv * dv)
+
+        # Tunables: sized to raster resolution (avoid “entire import bbox” and micro-fragments)
+        min_diag = 0.75 * cell
+        max_diag = 40.0 * cell
+
+        if diag < min_diag or diag > max_diag:
+            return False
+
+        # Proxy-ink rectangle around likely text:
+        # open=True routes to rasterize_open_polylines (non-occluding ink).
+        pts = [(u0, v0), (u1, v0), (u1, v1), (u0, v1), (u0, v0)]
+        loops.append({"points": pts, "is_hole": False, "open": True, "strategy": "cad_text_bbox"})
+        return True
+
+    def _get_geom(bind_view):
+        try:
+            opts = Options()
+            opts.ComputeReferences = False
+
+            # Imports can hide curve primitives unless this is True in some cases
             try:
-                tess = g.Tessellate()
+                opts.IncludeNonVisibleObjects = True
             except Exception:
-                tess = None
+                pass
 
-            if tess:
-                for k in range(min(len(tess), max_pts)):
-                    p = _to_host_point(elem, tess[k])
-                    uv = view_basis.transform_to_view_uv((p.X, p.Y, p.Z))
-                    pts_uv.append((uv[0], uv[1]))
+            try:
+                opts.DetailLevel = ViewDetailLevel.Fine
+            except Exception:
+                pass
 
-        if len(pts_uv) >= 2:
-            loops.append({"points": pts_uv, "is_hole": False, "open": True})
-            count += 1
+            if bind_view:
+                try:
+                    opts.View = view
+                except Exception:
+                    pass
 
-    return loops
+            return base_elem.get_Geometry(opts)
+        except Exception:
+            return None
+
+    # Attempt 1: NO view binding (preferred for ImportInstance curve primitives)
+    geom1 = _get_geom(bind_view=False)
+    loops1 = _extract_from_geom(geom1)
+    if loops1:
+        return loops1
+
+    # Attempt 2: WITH view binding (fallback)
+    geom2 = _get_geom(bind_view=True)
+    loops2 = _extract_from_geom(geom2)
+    return loops2
 
 def _to_host_point(elem, xyz):
     """
@@ -503,9 +726,27 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
         ImportInstance = None
         FamilyInstance = None
 
+    strategies = None
+
+    # Prefer type-based detection (true ImportInstance)
     if ImportInstance is not None and isinstance(base_elem, ImportInstance):
         strategies = ['cad_curves', 'bbox']
-    elif FamilyInstance is not None and isinstance(base_elem, FamilyInstance):
+
+    # Some collection paths may hand us a wrapped/proxied CAD element that isn't an ImportInstance.
+    # In those cases, use a conservative heuristic: category name includes .dwg/.dxf.
+    if strategies is None:
+        try:
+            cat = getattr(base_elem, "Category", None)
+            cat_name = getattr(cat, "Name", None) if cat is not None else None
+            if cat_name:
+                ln = str(cat_name).lower()
+                if (".dwg" in ln) or (".dxf" in ln):
+                    strategies = ['cad_curves', 'bbox']
+        except Exception:
+            pass
+
+    # Family instances: prefer symbolic curves where possible
+    if strategies is None and FamilyInstance is not None and isinstance(base_elem, FamilyInstance):
         if cfg is None:
             strategies = ['symbolic_curves', 'silhouette_edges', 'obb', 'bbox']
         else:
@@ -516,6 +757,19 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
                 strategies = ['symbolic_curves', 'uv_obb_rect', 'bbox']
             else:
                 strategies = ['symbolic_curves', 'silhouette_edges', 'obb', 'bbox']
+
+    # Default for all other elements
+    if strategies is None:
+        if cfg is None:
+            strategies = ['silhouette_edges', 'obb', 'bbox']
+        else:
+            uv_mode = _determine_uv_mode(elem, view, view_basis, raster, cfg)
+            if uv_mode == 'TINY':
+                strategies = ['bbox', 'obb']
+            elif uv_mode == 'LINEAR':
+                strategies = ['uv_obb_rect', 'bbox']
+            else:
+                strategies = ['silhouette_edges', 'obb', 'bbox']
 
     # Try each strategy in order
     for strategy_name in strategies:
@@ -531,7 +785,7 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
             elif strategy_name == 'front_face_loops':
                 loops = _front_face_loops_silhouette(elem, view, view_basis, cfg)
             elif strategy_name == 'cad_curves':
-                loops = _cad_curves_silhouette(elem, view, view_basis, cfg)
+                loops = _cad_curves_silhouette(elem, view, view_basis, raster, cfg)
             elif strategy_name == 'symbolic_curves':
                 loops = _symbolic_curves_silhouette(elem, view, view_basis, cfg)
             else:
