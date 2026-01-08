@@ -243,12 +243,23 @@ class ViewRaster:
 
                     # Only stamp the edge if this element is nearer than what's already there
                     if w_here == float("inf") or depth <= w_here:
-                        self.stamp_model_edge_idx(idx, key_index, depth=depth)
+                        is_text_bbox = (pl.get("strategy") == "cad_text_bbox")
 
-                        # Contribute to occlusion along the curve using try_write_cell
-                        # This ensures DWG curves participate in depth testing
-                        if depth < w_here:
-                            self.try_write_cell(ii, jj, w_depth=depth, source=source)
+                        if is_text_bbox:
+                            # Make visible even if proxy edges are not rendered downstream:
+                            # - stamp proxy channel
+                            # - also stamp model edge channel
+                            # - DO NOT contribute occlusion (non-occluding ink)
+                            self.stamp_proxy_edge_idx(idx, key_index, depth=depth)
+                            self.model_proxy_mask[idx] = True
+                            self.stamp_model_edge_idx(idx, key_index, depth=depth)
+                        else:
+                            self.stamp_model_edge_idx(idx, key_index, depth=depth)
+
+                            # Contribute to occlusion along the curve using try_write_cell
+                            # This ensures DWG curves participate in depth testing
+                            if depth < w_here:
+                                self.try_write_cell(ii, jj, w_depth=depth, source=source)
                     filled += 1
 
         return filled

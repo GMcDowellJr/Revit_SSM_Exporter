@@ -687,15 +687,33 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 # Get strategy used from first loop
                 strategy = loops[0].get('strategy', 'unknown')
 
-                # If any loop is marked open (e.g., DWG curves), rasterize as edges only
-                if any(loop.get("open", False) for loop in loops):
-                    filled = raster.rasterize_open_polylines(loops, key_index, depth=elem_depth, source=source_type)
-                    silhouette_success += 1
-                    processed += 1
-                    continue
+                open_loops = []
+                closed_loops = []
+                for lp in loops:
+                    if lp.get("open", False):
+                        open_loops.append(lp)
+                    else:
+                        closed_loops.append(lp)
 
-                # Rasterize silhouette loops with actual depth for occlusion
-                filled = raster.rasterize_silhouette_loops(loops, key_index, depth=elem_depth, source=source_type)
+                filled = 0
+
+                # First: rasterize closed loops (fills/occlusion)
+                if closed_loops:
+                    try:
+                        filled += raster.rasterize_silhouette_loops(
+                            closed_loops, key_index, depth=elem_depth, source=source_type
+                        )
+                    except Exception:
+                        pass
+
+                # Second: rasterize open polylines (edges)
+                if open_loops:
+                    try:
+                        filled += raster.rasterize_open_polylines(
+                            open_loops, key_index, depth=elem_depth, source=source_type
+                        )
+                    except Exception:
+                        pass
 
                 if filled > 0:
                     # Tag element metadata with strategy used
