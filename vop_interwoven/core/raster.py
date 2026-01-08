@@ -226,6 +226,28 @@ class ViewRaster:
                 if 0 <= i < self.W and 0 <= j < self.H:
                     pts_ij.append((i, j))
 
+            # Degenerate-at-grid fallback:
+            # If the polyline collapses to <2 distinct cells at this resolution,
+            # still stamp a single visible edge cell so symbolic/model linework
+            # doesn't disappear entirely.
+            if len(pts_ij) == 1:
+                ii, jj = pts_ij[0]
+                idx = self.get_cell_index(ii, jj)
+                if idx is not None:
+                    w_here = self.w_occ[idx]
+                    if w_here == float("inf") or depth <= w_here:
+                        is_text_bbox = (pl.get("strategy") == "cad_text_bbox")
+                        if is_text_bbox:
+                            self.stamp_proxy_edge_idx(idx, key_index, depth=depth)
+                            self.model_proxy_mask[idx] = True
+                            self.stamp_model_edge_idx(idx, key_index, depth=depth)
+                        else:
+                            self.stamp_model_edge_idx(idx, key_index, depth=depth)
+                            if depth < w_here:
+                                self.try_write_cell(ii, jj, w_depth=depth, source=source)
+                filled += 1
+                continue
+
             if len(pts_ij) < 2:
                 continue
 

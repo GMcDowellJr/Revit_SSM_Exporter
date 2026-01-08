@@ -13,6 +13,412 @@ Compatible with IronPython (no logging module, no f-strings).
 
 import math
 
+# -----------------------------------------------------------------------------
+# Family-definition outline fallback (FilledRegion / 2D region edges)
+#
+# Motivation (evidence from this chat):
+#   Some family "panel" graphics defined as FilledRegion do not surface as Curves
+#   in FamilyInstance geometry (even with Options.View + symbol traversal).
+#   We therefore optionally extract those boundaries from the family document.
+#
+# Guardrails:
+#   - Per-symbol cache (avoid repeated EditFamily cost)
+#   - Per-symbol time budget (avoid stalls)
+#   - Bounded point sampling
+# -----------------------------------------------------------------------------
+
+_FAMILY_REGION_OUTLINE_CACHE = {}  # symbol_id_int -> {"xyz_loops": [ [(x,y,z), ...], ... ], "ts": float}
+
+_FAMILY_FAMDOC_REGION_CACHE = {}  # family_id_int -> {"xyz_loops": [...], "ts": float}
+
+def _compose_transform(parent_T, child_T):
+    if parent_T is None:
+        return child_T
+    if child_T is None:
+        return parent_T
+    try:
+        return parent_T.Multiply(child_T)
+    except Exception:
+        try:
+            return child_T.Multiply(parent_T)
+        except Exception:
+            return child_T
+
+def _collect_regions_recursive(
+    host_doc,
+    fam,
+    T_into_host_family,
+    view,
+    t0,
+    budget_s,
+    max_pts,
+    depth,
+    max_depth,
+    visited_family_ids,
+    diag=None,
+):
+    """
+    Recursively collect FilledRegion boundary loops from a family and any nested families.
+    Returns XYZ tuples in HOST FAMILY coordinates (i.e., after applying T_into_host_family).
+    """
+    import time
+    xyz_loops = []
+
+    fam_id = _safe_int_id(fam)
+    if fam_id <= 0:
+        return xyz_loops
+
+    if (time.time() - t0) > budget_s:
+        return xyz_loops
+    if depth > max_depth:
+        return xyz_loops
+
+    # Cycle breaker (recursion stack), not a global seen-set:
+    # allows the same family definition to be visited again via a different instance/transform.
+    if fam_id in visited_family_ids:
+        return xyz_loops
+    visited_family_ids.add(fam_id)
+
+    # Cache by family id (family-doc local coords) and then transform to host-family coords
+    hit = _FAMILY_FAMDOC_REGION_CACHE.get(fam_id)
+    fam_local_loops = None
+    if hit and isinstance(hit, dict) and "xyz_loops" in hit:
+        fam_local_loops = hit.get("xyz_loops") or []
+
+    fam_doc = None
+    try:
+        fam_doc = host_doc.EditFamily(fam)
+
+        if (time.time() - t0) > budget_s:
+            return xyz_loops
+
+        # If not cached, extract loops from THIS family doc (family-local coords)
+        if fam_local_loops is None:
+            fam_local_loops = []
+            try:
+                from Autodesk.Revit.DB import FilteredElementCollector, FilledRegion
+            except Exception:
+                return []
+
+            # Collect ALL filled regions (normal + masking)
+            regions = []
+            try:
+                regions = list(
+                    FilteredElementCollector(fam_doc)
+                    .OfClass(FilledRegion)
+                    .WhereElementIsNotElementType()
+                    .ToElements()
+                )
+                
+                if diag is not None and hasattr(diag, "debug"):
+                    diag.debug(
+                        phase="silhouette",
+                        callsite="family_region.collect",
+                        message="Collected filled regions in family doc",
+                        extra={
+                            "family_id": fam_id,
+                            "depth": depth,
+                            "regions_found": len(regions),
+                            "is_nested": depth > 0,
+                        },
+                    )
+
+            except Exception:
+                regions = []
+
+            for fr in regions:
+                if (time.time() - t0) > budget_s:
+                    break
+                    
+                # Optional: identify masking vs normal (not required for outline extraction)
+                is_masking = False
+                try:
+                    is_masking = bool(getattr(fr, "IsMasking", False))
+                except Exception:
+                    pass
+                    
+                try:
+                    loops = fr.GetBoundaries()
+                except Exception:
+                    loops = None
+                if not loops:
+                    continue
+
+                for cl in loops:
+                    if (time.time() - t0) > budget_s:
+                        break
+                    pts = []
+                    try:
+                        for c in cl:
+                            if (time.time() - t0) > budget_s:
+                                break
+
+                            cname = ""
+                            try:
+                                cname = c.__class__.__name__
+                            except Exception:
+                                cname = ""
+
+                            if hasattr(c, "GetEndPoint") and cname in ("Line", "BoundLine"):
+                                try:
+                                    p0 = c.GetEndPoint(0)
+                                    p1 = c.GetEndPoint(1)
+                                    pts.append(_xyz_tuple(p0))
+                                    pts.append(_xyz_tuple(p1))
+                                except Exception:
+                                    pass
+                            else:
+                                try:
+                                    tess = c.Tessellate()
+                                    n = min(len(tess), max_pts)
+                                    for k in range(n):
+                                        pts.append(_xyz_tuple(tess[k]))
+                                except Exception:
+                                    pass
+                    except Exception:
+                        continue
+
+                    if len(pts) >= 2:
+                        cleaned = [pts[0]]
+                        for p in pts[1:]:
+                            if p != cleaned[-1]:
+                                cleaned.append(p)
+                        if len(cleaned) >= 3 and cleaned[0] != cleaned[-1]:
+                            cleaned.append(cleaned[0])
+                        if len(cleaned) >= 3:
+                            fam_local_loops.append(cleaned)
+
+            # Cache extracted family-local loops (even if empty)
+            _FAMILY_FAMDOC_REGION_CACHE[fam_id] = {"xyz_loops": fam_local_loops, "ts": time.time()}
+
+        # Transform family-local loops into HOST FAMILY coords
+        for loop in fam_local_loops or []:
+            if (time.time() - t0) > budget_s:
+                break
+            out_loop = []
+            for xyz in loop:
+                out_loop.append(_apply_transform_xyz_tuple(T_into_host_family, xyz))
+            if len(out_loop) >= 3:
+                xyz_loops.append(out_loop)
+
+        # Recurse into nested family instances inside this family doc
+        if (time.time() - t0) > budget_s:
+            return xyz_loops
+
+        try:
+            from Autodesk.Revit.DB import FilteredElementCollector, FamilyInstance
+        except Exception:
+            FamilyInstance = None
+
+        if FamilyInstance is not None:
+            try:
+                nested_insts = list(
+                    FilteredElementCollector(fam_doc)
+                    .OfClass(FamilyInstance)
+                    .WhereElementIsNotElementType()
+                    .ToElements()
+                )
+            except Exception:
+                nested_insts = []
+
+            for inst in nested_insts:
+                if (time.time() - t0) > budget_s:
+                    break
+
+                try:
+                    sym = getattr(inst, "Symbol", None)
+                    nested_fam = getattr(sym, "Family", None) if sym is not None else None
+                except Exception:
+                    nested_fam = None
+
+                if nested_fam is None:
+                    continue
+
+                # Transform: nested family local -> this family local is inst.GetTransform()
+                inst_T = None
+                try:
+                    if hasattr(inst, "GetTransform"):
+                        inst_T = inst.GetTransform()
+                    else:
+                        inst_T = getattr(inst, "Transform", None)
+                except Exception:
+                    inst_T = None
+
+                # nested local -> host family = T_into_host_family * inst_T
+                T_nested_into_host = _compose_transform(T_into_host_family, inst_T)
+
+                if diag is not None and hasattr(diag, "debug"):
+                    diag.debug(
+                        phase="silhouette",
+                        callsite="family_region.recurse",
+                        message="Recursing into nested family",
+                        extra={
+                            "parent_family_id": fam_id,
+                            "nested_family_id": _safe_int_id(nested_fam),
+                            "depth": depth + 1,
+                        },
+                    )
+
+                xyz_loops.extend(
+                    _collect_regions_recursive(
+                        host_doc=host_doc,
+                        fam=nested_fam,
+                        T_into_host_family=T_nested_into_host,
+                        view=view,
+                        t0=t0,
+                        budget_s=budget_s,
+                        max_pts=max_pts,
+                        depth=depth + 1,
+                        max_depth=max_depth,
+                        visited_family_ids=visited_family_ids,
+                        diag=diag,
+                    )
+                )
+
+        return xyz_loops
+
+    finally:
+        try:
+            visited_family_ids.discard(fam_id)
+        except Exception:
+            pass
+        try:
+            if fam_doc is not None:
+                fam_doc.Close(False)
+        except Exception:
+            pass
+
+def _safe_int_id(x):
+    try:
+        return int(getattr(getattr(x, "Id", None), "IntegerValue", 0))
+    except Exception:
+        try:
+            return int(x)
+        except Exception:
+            return 0
+
+def _xyz_tuple(p):
+    try:
+        return (float(p.X), float(p.Y), float(p.Z))
+    except Exception:
+        return (float(p[0]), float(p[1]), float(p[2]))
+
+def _apply_transform_xyz_tuple(T, xyz):
+    # xyz is (x,y,z); T is Autodesk.Revit.DB.Transform or None
+    if T is None:
+        return xyz
+    try:
+        from Autodesk.Revit.DB import XYZ
+        p = XYZ(xyz[0], xyz[1], xyz[2])
+        q = T.OfPoint(p)
+        return (float(q.X), float(q.Y), float(q.Z))
+    except Exception:
+        return xyz
+
+def _family_region_outlines_cached(base_elem, view, cfg=None, diag=None):
+    """
+    Return list of HOST-FAMILY-local XYZ loops representing FilledRegion boundaries
+    extracted from the family document, including nested families (bounded recursion),
+    cached per symbol.
+
+    Returns:
+        xyz_loops: list of loops, each loop is [(x,y,z), ...] (typically closed with last==first)
+                  Coordinates are in the HOST FAMILY coordinate space.
+    """
+    # Enable gate (default True so it's testable; set False in cfg to disable)
+    enable = getattr(cfg, "family_region_outline_enable", False) if cfg else False
+    if not enable:
+        return []
+
+    # Budget (seconds) per symbol extraction (includes nested recursion)
+    budget_s = getattr(cfg, "family_region_outline_budget_s", 0.25) if cfg else 0.25
+    try:
+        budget_s = float(budget_s)
+    except Exception:
+        budget_s = 0.25
+    if budget_s <= 0:
+        return []
+
+    # Cap points per boundary curve tessellation
+    max_pts = getattr(cfg, "family_region_outline_max_pts_per_curve", 50) if cfg else 50
+    try:
+        max_pts = int(max_pts)
+    except Exception:
+        max_pts = 50
+    if max_pts < 2:
+        max_pts = 2
+
+    # Nested recursion cap
+    max_depth = getattr(cfg, "family_region_outline_nested_max_depth", 3) if cfg else 3
+    try:
+        max_depth = int(max_depth)
+    except Exception:
+        max_depth = 3
+    if max_depth < 0:
+        max_depth = 0
+
+    # Symbol key
+    try:
+        sym = getattr(base_elem, "Symbol", None)
+    except Exception:
+        sym = None
+    sym_id = _safe_int_id(sym)
+    if sym is None or sym_id <= 0:
+        return []
+
+    # Cache hit (per symbol)
+    hit = _FAMILY_REGION_OUTLINE_CACHE.get(sym_id)
+    if hit and isinstance(hit, dict) and "xyz_loops" in hit:
+        return hit.get("xyz_loops") or []
+
+    import time
+    t0 = time.time()
+
+    try:
+        doc = getattr(base_elem, "Document", None)
+        if doc is None:
+            return []
+
+        fam = getattr(sym, "Family", None)
+        if fam is None:
+            return []
+
+        visited = set()
+        # Host family local space starts as identity (no extra transform)
+        T0 = None
+
+        xyz_loops = _collect_regions_recursive(
+            host_doc=doc,
+            fam=fam,
+            T_into_host_family=T0,
+            view=view,
+            t0=t0,
+            budget_s=budget_s,
+            max_pts=max_pts,
+            depth=0,
+            max_depth=max_depth,
+            visited_family_ids=visited,
+            diag=diag,
+        )
+
+        _FAMILY_REGION_OUTLINE_CACHE[sym_id] = {"xyz_loops": xyz_loops, "ts": time.time()}
+        return xyz_loops
+
+    except Exception as e:
+        try:
+            if diag is not None and hasattr(diag, "warn"):
+                diag.warn(
+                    phase="silhouette",
+                    callsite="family_region_outline",
+                    message="Family region outline extraction failed; ignoring",
+                    elem_id=_safe_int_id(base_elem),
+                    extra={"exc_type": type(e).__name__, "exc": str(e), "sym_id": sym_id},
+                )
+        except Exception:
+            pass
+        _FAMILY_REGION_OUTLINE_CACHE[sym_id] = {"xyz_loops": [], "ts": time.time()}
+        return []
+
 def _bbox_corners_world(bbox):
     """
     Return 8 bbox corners in world coords, honoring bbox.Transform when present.
@@ -236,7 +642,7 @@ def _location_curve_obb_silhouette(elem, view, view_basis, cfg=None):
     except Exception:
         return []
         
-def _symbolic_curves_silhouette(elem, view, view_basis, cfg=None):
+def _symbolic_curves_silhouette(elem, view, view_basis, cfg=None, diag=None):
     """
     For FamilyInstance (and similar): extract curve primitives visible in the view.
     Returns OPEN polylines (edges only). Intended to show symbolic linework instead of extents rects.
@@ -246,14 +652,15 @@ def _symbolic_curves_silhouette(elem, view, view_basis, cfg=None):
         opts = Options()
         opts.ComputeReferences = False
         opts.IncludeNonVisibleObjects = False
+
+        # View-specific geometry (symbolic lines) often requires Options.View
         try:
-            opts.DetailLevel = ViewDetailLevel.Fine
+            opts.View = view
         except Exception:
             pass
 
-        # For host elements, bind to the view so symbolic/detail curves appear
         try:
-            opts.View = view
+            opts.DetailLevel = ViewDetailLevel.Fine
         except Exception:
             pass
 
@@ -262,32 +669,115 @@ def _symbolic_curves_silhouette(elem, view, view_basis, cfg=None):
         if geom is None:
             return []
 
+        import time
+
         max_paths = getattr(cfg, "symbolic_max_paths", 500) if cfg else 500
         max_pts = getattr(cfg, "symbolic_max_pts_per_path", 200) if cfg else 200
+
+        # Hard per-element budget so one pathological family can't stall the whole view.
+        # Set to 0/None to disable.
+        budget_s = getattr(cfg, "symbolic_time_budget_s", 0.10) if cfg else 0.10
+        try:
+            budget_s = float(budget_s) if budget_s is not None else None
+        except Exception:
+            budget_s = 0.10
+        if budget_s is not None and budget_s <= 0:
+            budget_s = None
+
+        t0 = time.time()
 
         loops = []
         count = 0
 
-        for g in _iter_curve_primitives(geom):
+        max_depth = getattr(cfg, "symbolic_curve_container_max_depth", 4) if cfg else 4
+        for g in _iter_curve_primitives(geom, _depth=0, _max_depth=max_depth):
             if count >= max_paths:
+                break
+
+            if budget_s is not None and (time.time() - t0) > budget_s:
+                try:
+                    if diag is not None and hasattr(diag, "warn"):
+                        diag.warn(
+                            phase="silhouette",
+                            callsite="_symbolic_curves_silhouette.budget",
+                            message="Symbolic curve extraction exceeded time budget; stopping early",
+                            elem_id=getattr(getattr(base_elem, "Id", None), "IntegerValue", None),
+                            extra={"budget_s": budget_s, "paths_emitted": count, "max_paths": max_paths},
+                        )
+                except Exception:
+                    pass
                 break
 
             pts_uv = []
 
-            if g.__class__.__name__ == "PolyLine":
+            # Endpoint-first sampling:
+            # For LINE-like curves, avoid Tessellate() entirely (it can be very expensive).
+            # For everything else, fall back to Tessellate() but still cap the point count.
+            g_name = ""
+            try:
+                g_name = g.__class__.__name__
+            except Exception:
+                g_name = ""
+
+            if g_name == "PolyLine":
                 try:
                     coords = g.GetCoordinates()
-                    for k in range(min(len(coords), max_pts)):
+                    ncoords = min(len(coords), max_pts)
+                    for k in range(ncoords):
+                        # periodic budget check inside long polylines
+                        if budget_s is not None and (k % 64) == 0 and (time.time() - t0) > budget_s:
+                            break
                         p = _to_host_point(elem, coords[k])
                         uv = view_basis.transform_to_view_uv((p.X, p.Y, p.Z))
                         pts_uv.append((uv[0], uv[1]))
                 except Exception:
                     continue
 
+            elif hasattr(g, "GetEndPoint"):
+                # Try cheap 2-point sampling first.
+                # This is correct for Autodesk.Revit.DB.Line and "good enough" for many segment boundaries.
+                p0 = None
+                p1 = None
+                try:
+                    p0 = g.GetEndPoint(0)
+                    p1 = g.GetEndPoint(1)
+                except Exception:
+                    p0 = None
+                    p1 = None
+
+                if p0 is not None and p1 is not None and g_name in ("Line", "BoundLine"):
+                    try:
+                        p0h = _to_host_point(elem, p0)
+                        p1h = _to_host_point(elem, p1)
+                        uv0 = view_basis.transform_to_view_uv((p0h.X, p0h.Y, p0h.Z))
+                        uv1 = view_basis.transform_to_view_uv((p1h.X, p1h.Y, p1h.Z))
+                        pts_uv = [(uv0[0], uv0[1]), (uv1[0], uv1[1])]
+                    except Exception:
+                        pts_uv = []
+                else:
+                    # Non-line curve: tessellate (bounded). Note Tessellate() cost is outside our point cap,
+                    # so the time budget above is the real protection against stalls.
+                    if hasattr(g, "Tessellate"):
+                        try:
+                            tess = g.Tessellate()
+                            nt = min(len(tess), max_pts)
+                            for k in range(nt):
+                                if budget_s is not None and (k % 64) == 0 and (time.time() - t0) > budget_s:
+                                    break
+                                p = _to_host_point(elem, tess[k])
+                                uv = view_basis.transform_to_view_uv((p.X, p.Y, p.Z))
+                                pts_uv.append((uv[0], uv[1]))
+                        except Exception:
+                            continue
+
             elif hasattr(g, "Tessellate"):
+                # Fallback tessellation path for odd primitives
                 try:
                     tess = g.Tessellate()
-                    for k in range(min(len(tess), max_pts)):
+                    nt = min(len(tess), max_pts)
+                    for k in range(nt):
+                        if budget_s is not None and (k % 64) == 0 and (time.time() - t0) > budget_s:
+                            break
                         p = _to_host_point(elem, tess[k])
                         uv = view_basis.transform_to_view_uv((p.X, p.Y, p.Z))
                         pts_uv.append((uv[0], uv[1]))
@@ -298,17 +788,95 @@ def _symbolic_curves_silhouette(elem, view, view_basis, cfg=None):
                 loops.append({"points": pts_uv, "is_hole": False, "open": True})
                 count += 1
 
+        # If instance/symbol geometry yields only swing curves (no panel boundary),
+        # optionally supplement with FilledRegion boundaries extracted from the family definition.
+        # This adds *outline only* (open polylines with closure point repeated), not fill.
+        try:
+            # Heuristic: if we only got a tiny number of edge cells / paths, try supplement.
+            # (We avoid trying to infer curve types here; the extractor is budgeted + cached.)
+            xyz_loops = _family_region_outlines_cached(base_elem, view, cfg=cfg, diag=diag)
+
+            if diag is not None and hasattr(diag, "debug"):
+                diag.debug(
+                    phase="silhouette",
+                    callsite="family_region.emit",
+                    message="Family region outlines returned",
+                    extra={
+                        "elem_id": getattr(getattr(base_elem, "Id", None), "IntegerValue", None),
+                        "loops_returned": len(xyz_loops),
+                    },
+                )
+
+            if xyz_loops:
+                # Apply instance transform (family-local -> instance/world), then project to UV.
+                inst_T = None
+                try:
+                    if hasattr(base_elem, "GetTransform"):
+                        inst_T = base_elem.GetTransform()
+                    else:
+                        inst_T = getattr(base_elem, "Transform", None)
+                except Exception:
+                    inst_T = None
+
+                for xyzs in xyz_loops:
+                    pts_uv = []
+                    for xyz in xyzs:
+                        # family-local -> instance/world
+                        xyz_w = _apply_transform_xyz_tuple(inst_T, xyz)
+                        # host/link adjustment (no-op for host; preserves existing behavior)
+                        try:
+                            from Autodesk.Revit.DB import XYZ
+                            p = XYZ(xyz_w[0], xyz_w[1], xyz_w[2])
+                            p = _to_host_point(elem, p)
+                            uv = view_basis.transform_to_view_uv((p.X, p.Y, p.Z))
+                        except Exception:
+                            uv = view_basis.transform_to_view_uv((xyz_w[0], xyz_w[1], xyz_w[2]))
+                        pts_uv.append((uv[0], uv[1]))
+
+                    # Keep as OPEN polyline but include closure point (last==first) so stroke closes.
+                    if len(pts_uv) >= 3:
+                        loops.append({"points": pts_uv, "is_hole": False, "open": True})
+        except Exception:
+            pass
+
         return loops
 
     except Exception:
         return []
 
-def _iter_curve_primitives(geom):
-    """Yield Curve / PolyLine-like primitives from GeometryElement recursively."""
+def _iter_curve_primitives(geom, _depth=0, _max_depth=4):
+    """Yield Curve/PolyLine-like primitives from a GeometryElement recursively.
+
+    Critical behavior:
+      - Recurse into GeometryInstance instance + symbol geometry.
+      - ALSO recurse into CurveLoop / CurveArray-style containers that are not themselves Curves.
+        (This is where family filled-region boundaries often live.)
+      - Depth-bounded to avoid pathological geometry graphs.
+    """
     if geom is None:
         return
+    if _depth > _max_depth:
+        return
 
-    # Prefer explicit enumerator to avoid IronPython iteration edge cases
+    # Best-effort class name (safe in Dynamo)
+    def _name(x):
+        try:
+            return x.__class__.__name__
+        except Exception:
+            return ""
+
+    # Conservative "container" predicate:
+    # Only recurse into known curve container names or objects exposing GetEnumerator but not being a Curve.
+    def _is_curve_container(x):
+        n = _name(x)
+        if n in ("CurveLoop", "CurveArray", "CurveArrArray"):
+            return True
+        # Some API wrappers show up as generic lists/enumerables; only recurse if it looks enumerable.
+        if hasattr(x, "GetEnumerator") and not hasattr(x, "GetEndPoint") and n != "PolyLine":
+            return True
+        return False
+
+    # Prefer enumerator when available
     try:
         it = geom.GetEnumerator()
     except Exception:
@@ -320,42 +888,148 @@ def _iter_curve_primitives(geom):
             if g is None:
                 continue
 
-            # GeometryInstance: recurse into both instance + symbol geometry
+            # GeometryInstance: recurse
             if hasattr(g, "GetInstanceGeometry") or hasattr(g, "GetSymbolGeometry"):
-                # Instance geometry
                 if hasattr(g, "GetInstanceGeometry"):
                     try:
                         ig = g.GetInstanceGeometry()
-                        for x in _iter_curve_primitives(ig):
+                        for x in _iter_curve_primitives(ig, _depth=_depth + 1, _max_depth=_max_depth):
                             yield x
                     except Exception:
                         pass
-
-                # Symbol geometry (often where family symbolic linework lives)
                 if hasattr(g, "GetSymbolGeometry"):
                     try:
                         sg = g.GetSymbolGeometry()
-                        for x in _iter_curve_primitives(sg):
+                        for x in _iter_curve_primitives(sg, _depth=_depth + 1, _max_depth=_max_depth):
                             yield x
                     except Exception:
                         pass
-
                 continue
 
-            # Curves / Polylines
-            if hasattr(g, "GetEndPoint") or g.__class__.__name__ == "PolyLine":
+            # Direct curve primitives
+            if _name(g) == "PolyLine" or hasattr(g, "GetEndPoint"):
                 yield g
                 continue
+
+            # Curve containers (CurveLoop, CurveArray, etc.)
+            if _is_curve_container(g):
+                try:
+                    for x in _iter_curve_primitives(g, _depth=_depth + 1, _max_depth=_max_depth):
+                        yield x
+                except Exception:
+                    pass
+                continue
+
     else:
-        # Last resort: try direct iteration
+        # Fallback direct iteration
         try:
             for g in geom:
                 if g is None:
                     continue
-                if hasattr(g, "GetEndPoint") or g.__class__.__name__ == "PolyLine":
+
+                if hasattr(g, "GetInstanceGeometry") or hasattr(g, "GetSymbolGeometry"):
+                    if hasattr(g, "GetInstanceGeometry"):
+                        try:
+                            ig = g.GetInstanceGeometry()
+                            for x in _iter_curve_primitives(ig, _depth=_depth + 1, _max_depth=_max_depth):
+                                yield x
+                        except Exception:
+                            pass
+                    if hasattr(g, "GetSymbolGeometry"):
+                        try:
+                            sg = g.GetSymbolGeometry()
+                            for x in _iter_curve_primitives(sg, _depth=_depth + 1, _max_depth=_max_depth):
+                                yield x
+                        except Exception:
+                            pass
+                    continue
+
+                if _name(g) == "PolyLine" or hasattr(g, "GetEndPoint"):
                     yield g
+                    continue
+
+                if _is_curve_container(g):
+                    try:
+                        for x in _iter_curve_primitives(g, _depth=_depth + 1, _max_depth=_max_depth):
+                            yield x
+                    except Exception:
+                        pass
+                    continue
         except Exception:
             return
+
+def _merge_paths_by_endpoints(paths, eps=1e-6, max_iters=500):
+    """
+    Merge polylines whose endpoints meet (within eps). Returns list of merged polylines.
+    Designed for family symbolic geometry where filled regions often appear as multiple
+    curve segments that should form a single closed loop.
+    """
+    def _dist2(a, b):
+        du = a[0] - b[0]
+        dv = a[1] - b[1]
+        return du * du + dv * dv
+
+    if not paths:
+        return []
+
+    eps2 = eps * eps
+    out = [p[:] for p in paths if p and len(p) >= 2]
+
+    iters = 0
+    changed = True
+    while changed and iters < max_iters:
+        iters += 1
+        changed = False
+
+        i = 0
+        while i < len(out):
+            a = out[i]
+            a0, a1 = a[0], a[-1]
+
+            j = i + 1
+            while j < len(out):
+                b = out[j]
+                b0, b1 = b[0], b[-1]
+
+                # a1 connects to b0: append b (skip duplicate)
+                if _dist2(a1, b0) <= eps2:
+                    out[i] = a + b[1:]
+                    out.pop(j)
+                    changed = True
+                    break
+
+                # a1 connects to b1: append reversed b
+                if _dist2(a1, b1) <= eps2:
+                    out[i] = a + list(reversed(b[:-1]))
+                    out.pop(j)
+                    changed = True
+                    break
+
+                # a0 connects to b1: prepend b
+                if _dist2(a0, b1) <= eps2:
+                    out[i] = b[:-1] + a
+                    out.pop(j)
+                    changed = True
+                    break
+
+                # a0 connects to b0: prepend reversed b
+                if _dist2(a0, b0) <= eps2:
+                    out[i] = list(reversed(b[1:])) + a
+                    out.pop(j)
+                    changed = True
+                    break
+
+                j += 1
+
+            if changed:
+                # restart comparisons for this i with the newly merged polyline
+                a = out[i]
+                a0, a1 = a[0], a[-1]
+                continue
+
+            i += 1
+
+    return out
 
 def _cad_curves_silhouette(elem, view, view_basis, raster, cfg=None):
     """
@@ -479,7 +1153,7 @@ def _cad_curves_silhouette(elem, view, view_basis, raster, cfg=None):
         except Exception:
             pass
 
-        for g in _iter_curve_primitives(geom):
+        for (g, g_trf) in _iter_curve_primitives_xform(geom, trf=None):
             if count >= max_paths:
                 break
 
@@ -494,7 +1168,13 @@ def _cad_curves_silhouette(elem, view, view_basis, raster, cfg=None):
 
                 if coords:
                     for k in range(min(len(coords), max_pts)):
-                        p = _to_host_point(elem, coords[k])  # IMPORTANT: use proxy transform if present
+                        p = coords[k]
+                        if g_trf is not None:
+                            try:
+                                p = g_trf.OfPoint(p)
+                            except Exception:
+                                pass
+                        p = _to_host_point(elem, p)
                         uv = view_basis.transform_to_view_uv((p.X, p.Y, p.Z))
                         pts_uv.append((uv[0], uv[1]))
 
@@ -507,7 +1187,13 @@ def _cad_curves_silhouette(elem, view, view_basis, raster, cfg=None):
 
                 if tess:
                     for k in range(min(len(tess), max_pts)):
-                        p = _to_host_point(elem, tess[k])
+                        p = tess[k]
+                        if g_trf is not None:
+                            try:
+                                p = g_trf.OfPoint(p)
+                            except Exception:
+                                pass
+                        p = _to_host_point(elem, p)
                         uv = view_basis.transform_to_view_uv((p.X, p.Y, p.Z))
                         pts_uv.append((uv[0], uv[1]))
 
@@ -684,7 +1370,7 @@ def _unwrap_elem(elem):
     except Exception:
         return elem
 
-def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None, cache_key=None):
+def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None, cache_key=None, diag=None):
     """Extract element silhouette as 2D loops.
 
     Args:
@@ -754,7 +1440,9 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
             if uv_mode == 'TINY':
                 strategies = ['symbolic_curves', 'bbox', 'obb']
             elif uv_mode == 'LINEAR':
-                strategies = ['symbolic_curves', 'uv_obb_rect', 'bbox']
+                # If symbolic curves are missing/empty for this family, still try a real edge-based
+                # silhouette before we degrade to rectangle proxies.
+                strategies = ['symbolic_curves', 'silhouette_edges', 'uv_obb_rect', 'bbox']
             else:
                 strategies = ['symbolic_curves', 'silhouette_edges', 'obb', 'bbox']
 
@@ -787,7 +1475,7 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
             elif strategy_name == 'cad_curves':
                 loops = _cad_curves_silhouette(elem, view, view_basis, raster, cfg)
             elif strategy_name == 'symbolic_curves':
-                loops = _symbolic_curves_silhouette(elem, view, view_basis, cfg)
+                loops = _symbolic_curves_silhouette(elem, view, view_basis, cfg, diag=diag)
             else:
                 continue
 
