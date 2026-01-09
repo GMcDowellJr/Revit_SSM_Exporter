@@ -214,9 +214,58 @@ def process_document_views(doc, view_ids, cfg):
         except Exception:
             return None
 
+    def _collect_element_ids_for_view(doc, view):
+        """
+        Enumerate element IDs visible in view for cache signature.
+
+        Uses FilteredElementCollector to gather all non-type elements visible in the view.
+        Returns a sorted list of integer element IDs. Element additions/removals in the
+        view will change this list, invalidating the cache as intended.
+
+        Args:
+            doc: Revit Document
+            view: Revit View
+
+        Returns:
+            List of sorted integer element IDs, or empty list on failure.
+
+        Notes:
+            - Never raises exceptions (returns [] on any error)
+            - Filters out element types (only instances)
+            - Sorted for deterministic signature generation
+        """
+        try:
+            from Autodesk.Revit.DB import FilteredElementCollector
+
+            # View-scoped collector: enumerates elements visible in this view
+            collector = FilteredElementCollector(doc, view.Id)
+            collector = collector.WhereElementIsNotElementType()
+
+            ids = []
+            for elem in collector:
+                try:
+                    elem_id = getattr(getattr(elem, "Id", None), "IntegerValue", None)
+                    if elem_id is not None:
+                        ids.append(int(elem_id))
+                except Exception:
+                    # Skip elements we can't read ID from
+                    continue
+
+            # Sort for deterministic signature (element iteration order may vary)
+            return sorted(set(ids))
+
+        except Exception:
+            # Collection failure must never break view processing
+            # Return empty list -> signature will be based on view properties only
+            return []
+
     def _view_signature(doc_obj, view_obj, view_mode_val):
         """
-        Conservative signature: view state + config + basic doc identity.
+        Conservative signature: view state + config + basic doc identity + element IDs.
+
+        Schema v2 adds element ID tracking: element additions/removals in the view
+        will invalidate the cache, ensuring accuracy when model content changes.
+
         This intentionally does NOT attempt to prove model hasn't changed
         when the document is dirty (unsaved changes).
 
@@ -225,6 +274,10 @@ def process_document_views(doc, view_ids, cfg):
             and may throw InvalidOperationException when accessed. Signature generation
             must never break the pipeline.
         """
+
+        # Collect element IDs visible in this view for content-aware cache invalidation
+        elem_ids = _collect_element_ids_for_view(doc_obj, view_obj)
+        elem_ids_str = ",".join(str(eid) for eid in elem_ids)
 
         def _safe_prop_str(getter):
             try:
@@ -242,7 +295,7 @@ def process_document_views(doc, view_ids, cfg):
                 return None
 
         sig = {
-            "schema": 1,
+            "schema": 2,
             "doc_path": getattr(doc_obj, "PathName", None),
             "doc_title": getattr(doc_obj, "Title", None),
             "view_id": _safe_int(getattr(getattr(view_obj, "Id", None), "IntegerValue", None)),
@@ -258,6 +311,7 @@ def process_document_views(doc, view_ids, cfg):
             "display_style": _safe_prop_str(lambda: view_obj.DisplayStyle),
             "crop": _cropbox_fingerprint(view_obj),
             "cfg_sha1": _cfg_hash(cfg),
+            "elem_ids": elem_ids_str,
         }
         blob = json.dumps(sig, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return hashlib.sha1(blob).hexdigest(), sig
