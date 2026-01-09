@@ -1,77 +1,77 @@
 # vop_interwoven symbol index (defs + callsites)
 
 This index lists selected high-signal symbols (definitions + approximate callsites) used for navigation-first debugging.
-Line numbers reflect the current source set as updated in this session.
+It is intentionally scoped (not exhaustive) and focuses on Dynamo entrypoints + export side-effects relevant to recent changes.
 
-
-## `Config.geometry_cache_max_items` / `Config.extents_scan_*`
-
-**Definitions**
-- vop_interwoven/config.py L56 (`Config.__init__` params/attrs)
-  - `extents_scan_max_elements` (param L95, attr L141)
-  - `extents_scan_time_budget_s` (param L96, attr L142)
-  - `geometry_cache_max_items` (param L99, attr L145)
-- vop_interwoven/config.py L364 (`Config.to_dict`) — exports these fields
-- vop_interwoven/config.py L393 (`Config.from_dict`) — restores these fields
-
-**Callsites (approx)**
-- vop_interwoven/pipeline.py::process_document_views (constructs per-run `LRUCache(max_items=cfg.geometry_cache_max_items)`)
-## `process_document_views`
+## `thinrunner` (Dynamo Python node entry)
 
 **Definitions**
-- vop_interwoven/pipeline.py L110 (function)
-
-**Key internal decision boundary**
-- Per-view orchestration boundary: resolves view mode, initializes raster, collects elements, renders model + annotations, exports raster, and aggregates per-view diagnostics.
+- vop_interwoven/thinrunner.py
+  - Reads Dynamo `IN[]` contract:
+    - `IN[0]` view ids / view elements
+    - `IN[1]` tag/date override (opaque string)
+    - `IN[2]` output_dir (optional)
+  - Constructs `Config()` and calls `run_pipeline_from_dynamo_input(...)`
 
 **Callsites (approx)**
-- vop_interwoven/entry_dynamo.py::run_vop_pipeline (primary entry)
+- Dynamo graph Python node (thin runner)
 
-
-## `init_view_raster`
+## `run_pipeline_from_dynamo_input`
 
 **Definitions**
-- vop_interwoven/pipeline.py L290 (function)
+- vop_interwoven/dynamo_helpers.py
+  - `run_pipeline_from_dynamo_input(views_input, output_dir, pixels_per_cell, config, verbose, export_csv, export_json, export_perf_csv, export_png, ...)`
 
 **Callsites (approx)**
-- vop_interwoven/pipeline.py::process_document_views (per-view raster init)
-
-
-## `export_view_raster`
-
-**Definitions**
-- vop_interwoven/pipeline.py L1214 (function)
-
-**Callsites (approx)**
-- vop_interwoven/pipeline.py::process_document_views (per-view export)
-
-
-## `LRUCache`
-
-**Definitions**
-- vop_interwoven/core/cache.py L16 (class)
-  - `get()` L37
-  - `set()` L54
-  - `stats()` L82
-
-**Callsites (approx)**
-- vop_interwoven/pipeline.py::process_document_views (constructs per-run geometry_cache)
-- vop_interwoven/pipeline.py::init_view_raster (uses cache via `get()`)
-
+- vop_interwoven/thinrunner.py
 
 ## `run_vop_pipeline_with_png`
 
 **Definitions**
-- vop_interwoven/entry_dynamo.py L320 (function)
+- vop_interwoven/entry_dynamo.py
+  - `run_vop_pipeline_with_png(doc, view_ids, cfg=None, output_dir=None, pixels_per_cell=4, export_json=True, ...)`
 
 **Callsites (approx)**
-- External/Dynamo entrypoint (sets output_dir defaults and writes debug json)
-
+- vop_interwoven/dynamo_helpers.py when `export_csv=False`
 
 ## `run_vop_pipeline_with_csv`
 
 **Definitions**
-- vop_interwoven/entry_dynamo.py L383 (function)
+- vop_interwoven/entry_dynamo.py
+  - `run_vop_pipeline_with_csv(doc, view_ids, cfg=None, output_dir=None, pixels_per_cell=4, export_json=False, export_png=True, export_perf_csv=True, date_override=None, ...)`
 
 **Callsites (approx)**
-- External/Dynamo entrypoint (sets output_dir defaults and writes debug json)
+- vop_interwoven/dynamo_helpers.py when `export_csv=True`
+
+## `export_pipeline_to_csv`
+
+**Definitions**
+- vop_interwoven/csv_export.py
+  - `export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=None, date_override=None)`
+  - `date_override` semantics:
+    - If parseable as date/datetime → drives Date column + filename date
+    - Else treated as opaque tag → incorporated into RunId and filenames; Date defaults to today
+
+**Callsites (approx)**
+- vop_interwoven/entry_dynamo.py (`run_vop_pipeline_with_csv`)
+- (optional legacy) vop_interwoven/thinrunner.py manual export branch
+
+## `export_pipeline_results_to_pngs`
+
+**Definitions**
+- vop_interwoven/png_export.py
+  - `export_pipeline_results_to_pngs(pipeline_result, output_dir, pixels_per_cell, cut_vs_projection=True, ...)`
+
+**Callsites (approx)**
+- vop_interwoven/entry_dynamo.py (`run_vop_pipeline_with_png`, `run_vop_pipeline_with_csv` when export_png=True)
+
+## `Config` export-related knobs
+
+**Definitions**
+- vop_interwoven/config.py
+  - `Config` (export- and raster-related fields referenced by entry + export layers)
+  - Note: dynamic attributes (e.g. `cfg.debug_json_detail`) may exist at runtime but are only meaningful if consumed downstream.
+
+**Callsites (approx)**
+- vop_interwoven/entry_dynamo.py (default config creation / to_dict for JSON snapshot)
+- vop_interwoven/thinrunner.py (constructs + overrides)

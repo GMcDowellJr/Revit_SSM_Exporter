@@ -589,31 +589,32 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
 
     # Resolve run datetime / date string
     run_dt = datetime.now()
+    tag = None
+
     if date_override:
-        try:
-            if isinstance(date_override, str):
-                s = date_override.strip()
+        if isinstance(date_override, str):
+            s = date_override.strip()
+            # Try strict date / datetime parsing first
+            try:
                 if len(s) == 10:
                     run_dt = datetime.strptime(s, "%Y-%m-%d")
                 else:
                     run_dt = datetime.fromisoformat(s)
-        except Exception:
-            if diag is not None:
-                try:
-                    diag.warn(
-                        phase="export_csv",
-                        callsite="export_pipeline_to_csv.date_override",
-                        message="Invalid date_override; using current datetime",
-                        extra={"date_override": date_override},
-                    )
-                except Exception:
-                    pass
+            except Exception:
+                # Treat as opaque tag (commit hash, label, etc.)
+                tag = s
+        else:
+            tag = str(date_override)
 
     date_str = run_dt.strftime("%Y-%m-%d")
-    run_id = run_dt.strftime("%Y%m%dT%H%M%S")
 
-    core_filename = f"views_core_{date_str}.csv"
-    vop_filename = f"views_vop_{date_str}.csv"
+    # RunId: deterministic but tag-aware
+    base_run_id = run_dt.strftime("%Y%m%dT%H%M%S")
+    run_id = f"{base_run_id}_{tag}" if tag else base_run_id
+
+    # Filenames: include tag if present
+    core_filename = f"views_core_{date_str}{'_' + tag if tag else ''}.csv"
+    vop_filename = f"views_vop_{date_str}{'_' + tag if tag else ''}.csv"
 
     core_path = os.path.join(output_dir, core_filename)
     vop_path = os.path.join(output_dir, vop_filename)

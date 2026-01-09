@@ -1,5 +1,29 @@
 # vop_interwoven trace map (approximate call tree)
 
+## Trace: thinrunner (vop_interwoven/thinrunner.py)
+
+- `thinrunner` (Dynamo Python node entry) — vop_interwoven/thinrunner.py
+  - Reads Dynamo `IN[]` contract:
+    - `IN[0]` → view ids / view elements
+    - `IN[1]` → tag/date override (opaque string)
+    - `IN[2]` → output_dir (optional)
+  - `Config()` — vop_interwoven/config.py
+  - `run_pipeline_from_dynamo_input()` — vop_interwoven/dynamo_helpers.py
+    - (see Trace: run_pipeline_from_dynamo_input)
+  - (optional legacy) `export_pipeline_to_csv()` — vop_interwoven/csv_export.py (only if thinrunner performs manual CSV export for override tagging)
+
+## Trace: run_pipeline_from_dynamo_input (vop_interwoven/dynamo_helpers.py)
+
+- `run_pipeline_from_dynamo_input()` — vop_interwoven/dynamo_helpers.py
+  - `get_current_document()` — vop_interwoven/entry_dynamo.py
+  - `_normalize_views_input()` — vop_interwoven/dynamo_helpers.py
+  - Branch on `export_csv`:
+    - if `export_csv=True` → `run_vop_pipeline_with_csv()` — vop_interwoven/entry_dynamo.py
+      - (see Trace: run_vop_pipeline_with_csv)
+    - else → `run_vop_pipeline_with_png()` — vop_interwoven/entry_dynamo.py
+      - (passes through `export_json` so vop_export.json is suppressible)
+      - (see Trace: run_vop_pipeline_with_png)
+
 ## Trace: run_vop_pipeline (vop_interwoven/entry_dynamo.py)
 
 - `run_vop_pipeline()` — vop_interwoven/entry_dynamo.py
@@ -1106,10 +1130,15 @@ Line numbers and callsite offsets remain approximate until the repo-wide extract
     - `_normalize_view_ids()` — vop_interwoven/entry_dynamo.py
     - `process_document_views()` — vop_interwoven/pipeline.py
       - (see Trace: process_document_views)
-  - `export_pipeline_results_to_pngs()` — vop_interwoven/png_export.py
+  - (optional) `export_pipeline_results_to_pngs()` — vop_interwoven/png_export.py (when export_png=True)
+    - Uses nested dir: `os.path.join(output_dir, "png")` (PNG-only subfolder)
     - `export_raster_to_png()` — vop_interwoven/png_export.py
   - `export_pipeline_to_csv()` — vop_interwoven/csv_export.py
     - `compute_cell_metrics()` — vop_interwoven/csv_export.py
+    - `compute_annotation_type_metrics()` — vop_interwoven/csv_export.py
     - `extract_view_metadata()` — vop_interwoven/csv_export.py
+    - `compute_config_hash()` / `compute_view_frame_hash()` — vop_interwoven/csv_export.py
+    - `date_override` accepted as either date/datetime OR opaque tag string (affects filenames / RunId)
+  - (optional) PERF CSV export `views_perf_*.csv` (when export_perf_csv=True)
   - `_pipeline_result_for_json()` — vop_interwoven/entry_dynamo.py (when export_json=True)
     - `_prune_view_raster_for_json()` — vop_interwoven/entry_dynamo.py

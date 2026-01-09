@@ -231,8 +231,10 @@ def run_pipeline_from_dynamo_input(
     verbose=False,
     export_csv=True,
     export_json=False,
+    export_perf_csv=True,
     export_png=True
 ):
+
     """Run VOP pipeline with Dynamo-friendly inputs.
 
     Args:
@@ -277,6 +279,10 @@ def run_pipeline_from_dynamo_input(
     if config is None:
         config = Config()
 
+    # Default output directory (keep consistent with entry_dynamo defaults)
+    if output_dir in (None, ""):
+        output_dir = r"C:\temp\vop_output"
+
     # Run pipeline with appropriate exporter
     if export_csv:
         # Use CSV exporter (also exports JSON and PNG)
@@ -287,8 +293,10 @@ def run_pipeline_from_dynamo_input(
             output_dir=output_dir,
             pixels_per_cell=pixels_per_cell,
             export_json=export_json,
-            export_png=export_png
+            export_png=export_png,
+            export_perf_csv=export_perf_csv,
         )
+
     else:
         # Use PNG-only exporter (legacy)
         result = run_vop_pipeline_with_png(
@@ -296,7 +304,8 @@ def run_pipeline_from_dynamo_input(
             view_ids,
             cfg=config,
             output_dir=output_dir,
-            pixels_per_cell=pixels_per_cell
+            pixels_per_cell=pixels_per_cell,
+            export_json=export_json,
         )
 
     # Add filtering info if verbose
