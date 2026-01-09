@@ -348,6 +348,13 @@ def run_vop_pipeline_with_png(doc, view_ids, cfg=None, output_dir=None, pixels_p
     if output_dir is None:
         output_dir = r"C:\temp\vop_output"
 
+    # Default view-cache location colocated with outputs (persistent between runs)
+    try:
+        if cfg is not None and getattr(cfg, "view_cache_dir", None) in (None, ""):
+            cfg.view_cache_dir = os.path.join(output_dir, ".vop_view_cache")
+    except Exception:
+        pass
+
     # Run pipeline
     pipeline_result = run_vop_pipeline(doc, view_ids, cfg)
 
@@ -423,6 +430,13 @@ def run_vop_pipeline_with_csv(doc, view_ids, cfg=None, output_dir=None, pixels_p
     # Default output directory
     if output_dir is None:
         output_dir = r"C:\temp\vop_output"
+
+    # Default view-cache location colocated with outputs (persistent between runs)
+    try:
+        if cfg is not None and getattr(cfg, "view_cache_dir", None) in (None, ""):
+            cfg.view_cache_dir = os.path.join(output_dir, ".vop_view_cache")
+    except Exception:
+        pass
 
     # Ensure output directory exists
     if not os.path.exists(output_dir):

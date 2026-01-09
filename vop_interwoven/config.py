@@ -97,6 +97,19 @@ class Config:
         
         # PR12: Geometry caching (bounded LRU)
         geometry_cache_max_items=2048,
+        
+        # ────────────────────────────────────────────────────────────────────
+        # Persistent view-level cache (disk-backed)
+        #
+        # If enabled and view_cache_dir is set, the pipeline will attempt to
+        # skip entire views when the view "signature" matches the cached one.
+        #
+        # NOTE: Signature is conservative but not omniscient; it primarily
+        # tracks view state + exporter config. If doc is dirty (unsaved),
+        # skipping is disabled by default.
+        view_cache_enabled=True,
+        view_cache_dir=None,  # e.g. r"C:\temp\vop_output\.vop_view_cache"
+        view_cache_require_doc_unmodified=True,
 
     ):
         """Initialize VOP configuration.
@@ -205,6 +218,11 @@ class Config:
         # PR12 validation: 0 disables caching (explicit).
         if self.geometry_cache_max_items < 0:
             raise ValueError("geometry_cache_max_items must be >= 0")
+
+        # Persistent view-level cache
+        self.view_cache_enabled = view_cache_enabled
+        self.view_cache_dir = view_cache_dir
+        self.view_cache_require_doc_unmodified = view_cache_require_doc_unmodified
 
     def compute_adaptive_tile_size(self, grid_width, grid_height):
         """Compute optimal tile size based on grid dimensions.
@@ -387,6 +405,9 @@ class Config:
             "extents_scan_time_budget_s": self.extents_scan_time_budget_s,
             # PR12: geometry cache
             "geometry_cache_max_items": self.geometry_cache_max_items,
+            "view_cache_enabled": self.view_cache_enabled,
+            "view_cache_dir": self.view_cache_dir,
+            "view_cache_require_doc_unmodified": self.view_cache_require_doc_unmodified,
         }
 
     @classmethod
@@ -416,4 +437,8 @@ class Config:
             extents_scan_time_budget_s=d.get("extents_scan_time_budget_s", 0.50),
             # PR12
             geometry_cache_max_items=d.get("geometry_cache_max_items", 2048),
+            view_cache_enabled=d.get("view_cache_enabled", True),
+            view_cache_dir=d.get("view_cache_dir", None),
+            view_cache_require_doc_unmodified=d.get("view_cache_require_doc_unmodified", True),
+
         )

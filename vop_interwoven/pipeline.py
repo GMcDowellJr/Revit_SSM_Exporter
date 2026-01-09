@@ -134,6 +134,142 @@ def process_document_views(doc, view_ids, cfg):
 
     results = []
 
+    # ────────────────────────────────────────────────────────────────────
+    # Persistent view-level cache (disk-backed)
+    # Skip entire views when their signature matches a stored result.
+    import os
+    import json
+    import hashlib
+    import time
+    import tempfile
+
+    view_cache_enabled = bool(getattr(cfg, "view_cache_enabled", False))
+    view_cache_dir = getattr(cfg, "view_cache_dir", None)
+    require_doc_clean = bool(getattr(cfg, "view_cache_require_doc_unmodified", True))
+
+    if not view_cache_dir:
+        view_cache_enabled = False
+
+    if view_cache_enabled:
+        try:
+            os.makedirs(view_cache_dir, exist_ok=True)
+        except Exception:
+            # If cache dir can't be created, disable caching (must never break pipeline)
+            view_cache_enabled = False
+
+    def _safe_int(v):
+        try:
+            return int(v)
+        except Exception:
+            return None
+
+    def _safe_bool(v):
+        try:
+            return bool(v)
+        except Exception:
+            return None
+
+    def _cropbox_fingerprint(view_obj):
+        """
+        Returns a small, stable fingerprint of crop settings and extents.
+        We avoid returning heavy objects; only primitives.
+        """
+        fp = {
+            "crop_active": _safe_bool(getattr(view_obj, "CropBoxActive", None)),
+            "crop_visible": _safe_bool(getattr(view_obj, "CropBoxVisible", None)),
+        }
+        try:
+            cb = getattr(view_obj, "CropBox", None)
+            if cb is not None:
+                mn = getattr(cb, "Min", None)
+                mx = getattr(cb, "Max", None)
+                fp["crop_min"] = (
+                    round(float(getattr(mn, "X", 0.0)), 6),
+                    round(float(getattr(mn, "Y", 0.0)), 6),
+                    round(float(getattr(mn, "Z", 0.0)), 6),
+                )
+                fp["crop_max"] = (
+                    round(float(getattr(mx, "X", 0.0)), 6),
+                    round(float(getattr(mx, "Y", 0.0)), 6),
+                    round(float(getattr(mx, "Z", 0.0)), 6),
+                )
+        except Exception:
+            pass
+        return fp
+
+    def _cfg_hash(cfg_obj):
+        try:
+            d = cfg_obj.to_dict() if cfg_obj is not None else {}
+            blob = json.dumps(d, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            return hashlib.sha1(blob).hexdigest()
+        except Exception:
+            return None
+
+    def _view_signature(doc_obj, view_obj, view_mode_val):
+        """
+        Conservative signature: view state + config + basic doc identity.
+        This intentionally does NOT attempt to prove model hasn't changed
+        when the document is dirty (unsaved changes).
+        """
+        sig = {
+            "schema": 1,
+            "doc_path": getattr(doc_obj, "PathName", None),
+            "doc_title": getattr(doc_obj, "Title", None),
+            "view_id": _safe_int(getattr(getattr(view_obj, "Id", None), "IntegerValue", None)),
+            "view_uid": getattr(view_obj, "UniqueId", None),
+            "view_name": getattr(view_obj, "Name", None),
+            "view_mode": view_mode_val,
+            "view_type": str(getattr(view_obj, "ViewType", None)),
+            "view_template_id": _safe_int(getattr(getattr(view_obj, "ViewTemplateId", None), "IntegerValue", None)),
+            "scale": _safe_int(getattr(view_obj, "Scale", None)),
+            "detail_level": str(getattr(view_obj, "DetailLevel", None)),
+            "discipline": str(getattr(view_obj, "Discipline", None)),
+            "display_style": str(getattr(view_obj, "DisplayStyle", None)),
+            "crop": _cropbox_fingerprint(view_obj),
+            "cfg_sha1": _cfg_hash(cfg),
+        }
+        blob = json.dumps(sig, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha1(blob).hexdigest(), sig
+
+    def _cache_path_for_view(view_id_int):
+        return os.path.join(view_cache_dir, f"view_{int(view_id_int)}.json")
+
+    def _load_cached_view(view_id_int, signature_hex):
+        try:
+            p = _cache_path_for_view(view_id_int)
+            if not os.path.exists(p):
+                return None
+            with open(p, "r") as f:
+                payload = json.load(f)
+            if payload.get("signature") != signature_hex:
+                return None
+            return payload.get("result")
+        except Exception:
+            return None
+
+    def _save_cached_view(view_id_int, signature_hex, result_obj):
+        try:
+            p = _cache_path_for_view(view_id_int)
+            payload = {
+                "signature": signature_hex,
+                "saved_utc": time.time(),
+                "result": result_obj,
+            }
+            # Atomic write
+            tmp_fd, tmp_path = tempfile.mkstemp(prefix="vop_viewcache_", suffix=".json", dir=view_cache_dir)
+            try:
+                with os.fdopen(tmp_fd, "w") as f:
+                    json.dump(payload, f)
+                os.replace(tmp_path, p)
+            finally:
+                try:
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     # Guardrail: cfg must be vop_interwoven.config.Config (attribute-based), not a dict.
     # This prevents silent drift when new code accidentally uses cfg.get(...).
     if isinstance(cfg, dict):
@@ -222,6 +358,45 @@ def process_document_views(doc, view_ids, cfg):
                 )
                 continue
 
+            # Persistent view-cache: skip whole view if unchanged (disk-backed)
+            view_id_int = getattr(getattr(view, "Id", None), "IntegerValue", None)
+
+            can_use_cache = view_cache_enabled
+            if can_use_cache and require_doc_clean:
+                try:
+                    if bool(getattr(doc, "IsModified", False)):
+                        can_use_cache = False
+                except Exception:
+                    pass
+
+            if can_use_cache and view_id_int is not None:
+                sig_hex, sig_obj = _view_signature(doc, view, view_mode)
+                cached = _load_cached_view(view_id_int, sig_hex)
+                if cached is not None:
+                    try:
+                        cached["cache"] = {
+                            "view_cache": "HIT",
+                            "signature": sig_hex,
+                            "dir": view_cache_dir,
+                        }
+                    except Exception:
+                        pass
+
+                    try:
+                        if hasattr(diag, "info"):
+                            diag.info(
+                                phase="pipeline",
+                                callsite="process_document_views.view_cache",
+                                message="View cache hit: skipping view processing",
+                                view_id=int(view_id_int),
+                                extra={"signature": sig_hex},
+                            )
+                    except Exception:
+                        pass
+
+                    results.append(cached)
+                    continue
+
             # 1) Init raster bounds/resolution
             raster = init_view_raster(doc, view, cfg, diag=diag)
             
@@ -258,6 +433,21 @@ def process_document_views(doc, view_ids, cfg):
 
             # 6) Export
             out = export_view_raster(view, raster, cfg, diag=diag)
+
+            # Write-through persistent cache on successful export
+            try:
+                if view_cache_enabled:
+                    vid = getattr(getattr(view, "Id", None), "IntegerValue", None)
+                    if vid is not None:
+                        sig_hex, _ = _view_signature(doc, view, view_mode)
+                        _save_cached_view(vid, sig_hex, out)
+                        try:
+                            out["cache"] = {"view_cache": "MISS_SAVED", "signature": sig_hex, "dir": view_cache_dir}
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            
             results.append(out)
 
         except Exception as e:
