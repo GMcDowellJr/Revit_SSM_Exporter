@@ -90,6 +90,8 @@ Core principles:
 
 
 import math
+import time
+
 from .config import Config
 from .core.raster import ViewRaster, TileMap
 from .core.geometry import Mode, classify_by_uv, make_uv_aabb, make_obb_or_skinny_aabb
@@ -106,6 +108,13 @@ from .revit.collection import (
 from .revit.annotation import rasterize_annotations
 from .revit.safe_api import safe_call
 
+def _perf_now():
+    # perf_counter is monotonic and high-resolution where available.
+    return time.perf_counter()
+
+
+def _perf_ms(t0, t1):
+    return (float(t1) - float(t0)) * 1000.0
 
 def process_document_views(doc, view_ids, cfg):
     """Process multiple views through the VOP interwoven pipeline.
@@ -285,6 +294,13 @@ def process_document_views(doc, view_ids, cfg):
 
     for view_id in view_ids:
         diag = Diagnostics()  # per-view diag
+        timings = {}
+        t_view0 = _perf_now()
+
+        def _tmark(name, t0, t1):
+            if getattr(cfg, "perf_collect_timings", True):
+                timings[name] = round(_perf_ms(t0, t1), 3)
+
         view = None
 
         try:
@@ -297,7 +313,10 @@ def process_document_views(doc, view_ids, cfg):
             # 0) Capability gating / mode selection (PR6)
             from .revit.view_basis import resolve_view_mode, VIEW_MODE_MODEL_AND_ANNOTATION, VIEW_MODE_ANNOTATION_ONLY, VIEW_MODE_REJECTED
 
+            t0 = _perf_now()
             view_mode, mode_reason = resolve_view_mode(view, diag=diag)
+            t1 = _perf_now()
+            _tmark("mode_ms", t0, t1)
 
             if diag is not None:
                 # Diagnostics implementations differ (some do not implement .info()).
@@ -329,6 +348,10 @@ def process_document_views(doc, view_ids, cfg):
                     pass
 
             if view_mode == VIEW_MODE_REJECTED:
+                
+                t_view1 = _perf_now()
+                _tmark("total_ms", t_view0, t_view1)
+
                 # Do not silently drop rejected views — always emit a per-view result
                 if diag is not None:
                     try:
@@ -354,6 +377,7 @@ def process_document_views(doc, view_ids, cfg):
                         "view_mode": view_mode,
                         "view_mode_reason": mode_reason,
                         "diag": diag.to_dict() if diag is not None else None,
+                        "timings": dict(timings),
                     }
                 )
                 continue
@@ -398,7 +422,10 @@ def process_document_views(doc, view_ids, cfg):
                     continue
 
             # 1) Init raster bounds/resolution
+            t0 = _perf_now()
             raster = init_view_raster(doc, view, cfg, diag=diag)
+            t1 = _perf_now()
+            _tmark("raster_init_ms", t0, t1)       
             
             # Persist view mode for downstream exports/diagnostics
             try:
@@ -409,10 +436,16 @@ def process_document_views(doc, view_ids, cfg):
 
             if view_mode == VIEW_MODE_MODEL_AND_ANNOTATION:
                 # 2) Broad-phase visible elements
+                t0 = _perf_now()
                 elements = collect_view_elements(doc, view, raster, diag=diag, cfg=cfg)
-
+                t1 = _perf_now()
+                _tmark("collect_ms", t0, t1)
+                
                 # 3) MODEL PASS
+                t0 = _perf_now()
                 render_model_front_to_back(doc, view, raster, elements, cfg, diag=diag, geometry_cache=geometry_cache)
+                t1 = _perf_now()
+                _tmark("model_ms", t0, t1)
 
             elif view_mode == VIEW_MODE_ANNOTATION_ONLY:
                 # Annotation-only: do NOT attempt model collection, depth sorting, or link expansion
@@ -426,13 +459,22 @@ def process_document_views(doc, view_ids, cfg):
                     )
 
             # 4) ANNO PASS (always allowed)
+            t0 = _perf_now()
             rasterize_annotations(doc, view, raster, cfg, diag=diag)
+            t1 = _perf_now()
+            _tmark("anno_ms", t0, t1)
 
             # 5) Derive annoOverModel (safe even if model is empty)
+            t0 = _perf_now()
             raster.finalize_anno_over_model(cfg)
+            t1 = _perf_now()
+            _tmark("finalize_ms", t0, t1)
 
             # 6) Export
-            out = export_view_raster(view, raster, cfg, diag=diag)
+            t0 = _perf_now()
+            out = export_view_raster(view, raster, cfg, diag=diag, timings=timings)
+            t1 = _perf_now()
+            _tmark("export_ms", t0, t1)
 
             # Write-through persistent cache on successful export
             try:
@@ -448,6 +490,15 @@ def process_document_views(doc, view_ids, cfg):
             except Exception:
                 pass
             
+            t_view1 = _perf_now()
+            _tmark("total_ms", t_view0, t_view1)
+
+            # Convenience mirror at top-level for callers that don't dive into diagnostics
+            try:
+                out["timings"] = dict(timings)
+            except Exception:
+                pass
+
             results.append(out)
 
         except Exception as e:
@@ -1401,7 +1452,7 @@ def _mark_thin_band_along_long_axis(rect, raster):
                 raster.model_proxy_mask[idx] = True
 
 
-def export_view_raster(view, raster, cfg, diag=None):
+def export_view_raster(view, raster, cfg, diag=None, timings=None):
     """Export view raster to dictionary for JSON serialization.
 
     Args:
@@ -1459,6 +1510,7 @@ def export_view_raster(view, raster, cfg, diag=None):
                     "occlusion_cells": occlusion_cells,
                     "model_ink_edge_cells": model_ink_edge_cells,
                     "proxy_edge_cells": proxy_edge_cells,
+                    "timings": (dict(timings) if timings is not None else None),
                 },
             )
 
@@ -1509,6 +1561,7 @@ def export_view_raster(view, raster, cfg, diag=None):
         "filled_cells": num_filled,
         "raster": raster.to_dict(),
         "config": cfg.to_dict(),
+        "timings": (dict(timings) if timings is not None else None),
         "diagnostics": {
             "diag": (diag.to_dict() if diag is not None else None),
             "bounds": getattr(raster, "bounds_meta", None),
@@ -1518,5 +1571,6 @@ def export_view_raster(view, raster, cfg, diag=None):
             "occlusion_cells": occlusion_cells,
             "model_ink_edge_cells": model_ink_edge_cells,
             "proxy_edge_cells": proxy_edge_cells,
+            "timings": (dict(timings) if timings is not None else None),
         },
     }

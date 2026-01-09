@@ -39,6 +39,10 @@ Usage in Dynamo IronPython (2.x - legacy):
 """
 
 import json
+import time
+
+import csv
+from datetime import datetime
 
 try:
     from .config import Config
@@ -373,12 +377,15 @@ def run_vop_pipeline_with_png(doc, view_ids, cfg=None, output_dir=None, pixels_p
         json_path = None
 
     # Export PNGs (with cut vs projection distinction)
+    t0 = time.perf_counter()
     png_files = export_pipeline_results_to_pngs(
         pipeline_result,
         output_dir,
         pixels_per_cell=pixels_per_cell,
-        cut_vs_projection=True  # Use dark gray for cut, light gray for projection
+        cut_vs_projection=True
     )
+    t1 = time.perf_counter()
+    png_export_ms = (t1 - t0) * 1000.0
 
     return {
         'pipeline_result': pipeline_result,
@@ -475,11 +482,69 @@ def run_vop_pipeline_with_csv(doc, view_ids, cfg=None, output_dir=None, pixels_p
         result['png_files'] = png_files
 
     # Export CSVs (always)
+    t0 = time.perf_counter()
     csv_result = export_pipeline_to_csv(pipeline_result, output_dir, cfg, doc)
+    t1 = time.perf_counter()
+    result["csv_export_ms"] = (t1 - t0) * 1000.0
 
     result['core_csv_path'] = csv_result['core_csv_path']
     result['vop_csv_path'] = csv_result['vop_csv_path']
     result['rows_exported'] = csv_result['rows_exported']
+
+    # Export PERF CSV (additional file; per-view coarse timings + png_ms if available)
+    perf_filename = "views_perf_{0}.csv".format(datetime.now().strftime("%Y-%m-%d_%H%M%S"))
+    perf_path = os.path.join(output_dir, perf_filename)
+
+    perf_fields = [
+        "view_id",
+        "view_name",
+        "success",
+        "total_ms",
+        "mode_ms",
+        "raster_init_ms",
+        "collect_ms",
+        "model_ms",
+        "anno_ms",
+        "finalize_ms",
+        "export_ms",
+        "png_ms",
+        "width",
+        "height",
+        "total_elements",
+        "filled_cells",
+    ]
+
+    with open(perf_path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=perf_fields)
+        w.writeheader()
+
+        for v in (pipeline_result.get("views", []) or []):
+            if not isinstance(v, dict):
+                continue
+
+            timings = v.get("timings") or (v.get("diagnostics", {}) or {}).get("timings") or {}
+
+            row = {
+                "view_id": v.get("view_id"),
+                "view_name": v.get("view_name"),
+                "success": v.get("success", True) if "success" in v else True,
+                "total_ms": timings.get("total_ms"),
+                "mode_ms": timings.get("mode_ms"),
+                "raster_init_ms": timings.get("raster_init_ms"),
+                "collect_ms": timings.get("collect_ms"),
+                "model_ms": timings.get("model_ms"),
+                "anno_ms": timings.get("anno_ms"),
+                "finalize_ms": timings.get("finalize_ms"),
+                "export_ms": timings.get("export_ms"),
+                "png_ms": timings.get("png_ms"),
+                "width": v.get("width"),
+                "height": v.get("height"),
+                "total_elements": v.get("total_elements"),
+                "filled_cells": v.get("filled_cells"),
+            }
+            w.writerow(row)
+
+    result["perf_csv_path"] = perf_path
 
     return result
 

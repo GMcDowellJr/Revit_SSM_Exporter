@@ -339,6 +339,8 @@
 ## Trace: run_vop_pipeline_with_png (vop_interwoven/entry_dynamo.py)
 
 - `run_vop_pipeline_with_png()` — vop_interwoven/entry_dynamo.py
+  - `_pipeline_result_for_json()` — vop_interwoven/entry_dynamo.py (prune debug JSON payload before json.dump)
+    - `_prune_view_raster_for_json()` — vop_interwoven/entry_dynamo.py
   - `export_pipeline_results_to_pngs()` — vop_interwoven/png_export.py
     - `error()` — vop_interwoven/core/diagnostics.py
       - `_exc_to_str()` — vop_interwoven/core/diagnostics.py
@@ -1096,3 +1098,17 @@ This navigation artifact was updated to reflect changes discussed/applied during
     - `silhouette|family_region.emit`
 
 Line numbers and callsite offsets remain approximate until the repo-wide extractor is re-run.
+## Trace: run_vop_pipeline_with_csv (vop_interwoven/entry_dynamo.py)
+
+- `run_vop_pipeline_with_csv()` — vop_interwoven/entry_dynamo.py
+  - `run_vop_pipeline()` — vop_interwoven/entry_dynamo.py
+    - `_normalize_view_ids()` — vop_interwoven/entry_dynamo.py
+    - `process_document_views()` — vop_interwoven/pipeline.py
+      - (see Trace: process_document_views)
+  - `export_pipeline_results_to_pngs()` — vop_interwoven/png_export.py
+    - `export_raster_to_png()` — vop_interwoven/png_export.py
+  - `export_pipeline_to_csv()` — vop_interwoven/csv_export.py
+    - `compute_cell_metrics()` — vop_interwoven/csv_export.py
+    - `extract_view_metadata()` — vop_interwoven/csv_export.py
+  - `_pipeline_result_for_json()` — vop_interwoven/entry_dynamo.py (when export_json=True)
+    - `_prune_view_raster_for_json()` — vop_interwoven/entry_dynamo.py
