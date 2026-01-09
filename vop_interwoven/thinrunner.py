@@ -41,16 +41,45 @@ try:
     # Get views from IN[0] or use current view
     views_input = IN[0] if len(IN) > 0 and IN[0] else None
 
-    # Run pipeline with CSV export
+    # Optional date override (for deterministic exports / backdated runs)
+    date_override = IN[1] if len(IN) > 1 and IN[1] else None
+
+    # Build a config so we can reuse it if we export CSV manually
+    from vop_interwoven.config import Config
+    cfg = Config()
+    cfg.debug_json_detail="summary"
+
+    # Run pipeline (export CSV directly only when no override is requested)
+    do_export_csv = False if date_override else True
+
     result = run_pipeline_from_dynamo_input(
         views_input=views_input,
         output_dir=r'C:\temp\vop_output',
         pixels_per_cell=10,
-        export_csv=True,
+        config=cfg,
+        export_csv=do_export_csv,
         export_json=True,
         export_png=True,  # Skip PNG for speed
-        verbose=True    
+        verbose=False
     )
+
+    # If caller requested date override, export CSV here so filenames + Date column match.
+    if date_override:
+        from vop_interwoven.csv_export import export_pipeline_to_csv
+        doc = get_current_document()
+        pipeline_result = result.get('pipeline_result', {})
+        csv_info = export_pipeline_to_csv(
+            pipeline_result=pipeline_result,
+            output_dir=r'C:\temp\vop_output',
+            config=cfg,
+            doc=doc,
+            diag=None,
+            date_override=str(date_override),
+        )
+        # Mirror keys expected by downstream consumers
+        result['core_csv_path'] = csv_info.get('core_csv_path')
+        result['vop_csv_path'] = csv_info.get('vop_csv_path')
+        result['rows_exported'] = csv_info.get('rows_exported', 0)
 
     # Extract results
     pipeline_result = result.get('pipeline_result', {})

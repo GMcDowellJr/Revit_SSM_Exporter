@@ -898,10 +898,11 @@ class ViewRaster:
             print("  - {0}".format(pgm_path))
 
     def to_dict(self):
-        """Export raster to dictionary for JSON serialization.
+        """Full raster payload for downstream exporters (PNG/CSV/metrics).
 
-        Returns:
-            Dictionary with all raster data (can be large - consider compression)
+        IMPORTANT:
+          - This must remain FULL. PNG + CSV rely on these arrays being present.
+          - Debug JSON size trimming must happen at JSON export time, NOT here.
         """
         return {
             "width": self.W,
@@ -913,7 +914,7 @@ class ViewRaster:
                 "xmax": self.bounds_xy.xmax,
                 "ymax": self.bounds_xy.ymax,
             },
-            # Note: Full array export - consider RLE compression for production
+            # Large per-cell arrays (required for PNG/CSV correctness)
             "w_occ": [w if w != float("inf") else None for w in self.w_occ],
             "occ_host": self.occ_host,
             "occ_link": self.occ_link,
@@ -924,14 +925,70 @@ class ViewRaster:
             "model_proxy_mask": self.model_proxy_mask,
             "anno_key": self.anno_key,
             "anno_over_model": self.anno_over_model,
+            # Meta (can be large-ish, but not per-cell dense)
             "element_meta": self.element_meta,
             "anno_meta": self.anno_meta,
-            "depth_test_stats": {
+            # Stats
+            "depth_test_attempted": self.depth_test_attempted,
+            "depth_test_wins": self.depth_test_wins,
+            "depth_test_rejects": self.depth_test_rejects,
+        }
+
+
+    def to_debug_dict(self, detail="summary"):
+        """Smaller debug payload for JSON export only.
+
+        detail:
+          - "summary": structural info only
+          - "medium": summary + lightweight stats + meta lists (no per-cell arrays)
+          - "full": same as to_dict()
+        """
+        d = (detail or "summary").strip().lower()
+        if d not in ("summary", "medium", "full"):
+            d = "summary"
+
+        if d == "full":
+            out = self.to_dict()
+            out["debug_detail"] = "full"
+            return out
+
+        out = {
+            "width": self.W,
+            "height": self.H,
+            "cell_size_ft": self.cell_size_ft,
+            "bounds_xy": {
+                "xmin": self.bounds_xy.xmin,
+                "ymin": self.bounds_xy.ymin,
+                "xmax": self.bounds_xy.xmax,
+                "ymax": self.bounds_xy.ymax,
+            },
+            "debug_detail": d,
+        }
+
+        if d == "medium":
+            # Keep meta + depth stats, but skip per-cell arrays
+            out["element_meta"] = self.element_meta
+            out["anno_meta"] = self.anno_meta
+            out["depth_test_stats"] = {
                 "attempted": self.depth_test_attempted,
                 "wins": self.depth_test_wins,
                 "rejects": self.depth_test_rejects,
-            },
-        }
+            }
+
+            # Small derived counts (best-effort)
+            try:
+                n = int(self.W) * int(self.H)
+                out["counts"] = {
+                    "total_cells": n,
+                    "occ_cells": sum(1 for w in self.w_occ if w != float("inf")),
+                    "model_cells": sum(1 for b in self.model_mask if b),
+                    "anno_cells": sum(1 for k in self.anno_key if k != -1),
+                    "overlap_cells": sum(1 for b in self.anno_over_model if b),
+                }
+            except Exception:
+                out["counts"] = None
+
+        return out
 
 def _clip_poly_to_rect_uv(points_uv, xmin, ymin, xmax, ymax):
     """Clip a polygon (list[(u,v)]) to an axis-aligned rect in UV using Sutherland–Hodgman.
