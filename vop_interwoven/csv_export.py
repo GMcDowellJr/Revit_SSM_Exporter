@@ -8,6 +8,74 @@ import os
 import hashlib
 from datetime import datetime
 
+def compute_external_cell_metrics(raster):
+    """Compute external-cell metrics for VOP CSV.
+
+    Definitions:
+        - DWG: cells with any model ink from elements whose source_type == "DWG"
+        - RVT: cells with any model ink from elements whose source_type == "LINK" (link only)
+        - Any: cells with any external model ink (DWG or LINK)
+        - Only: cells with external model ink and NO HOST model ink
+
+    Notes:
+        - Uses model ink keys (edge/proxy). Annotation ink is ignored for ext-cell metrics.
+        - Tolerates missing element_meta or key arrays by returning zeros.
+    """
+    def _get_source_type(key_index):
+        if not key_index:
+            return None
+        meta = None
+        em = getattr(raster, "element_meta", None)
+        if em is None:
+            return None
+        # element_meta may be list-like (index == key_index) or dict-like.
+        try:
+            if isinstance(em, dict):
+                meta = em.get(key_index, None)
+                if meta is None:
+                    meta = em.get(str(key_index), None)
+            else:
+                # Guard: some rasters reserve 0 for "none"
+                if 0 <= int(key_index) < len(em):
+                    meta = em[int(key_index)]
+        except Exception:
+            meta = None
+        if isinstance(meta, dict):
+            return meta.get("source_type")
+        return None
+
+    edge_keys = getattr(raster, "model_edge_key", None) or []
+    proxy_keys = getattr(raster, "model_proxy_key", None) or []
+
+    n = max(len(edge_keys), len(proxy_keys))
+    if n == 0:
+        return {"Ext_Cells_Any": 0, "Ext_Cells_Only": 0, "Ext_Cells_DWG": 0, "Ext_Cells_RVT": 0}
+
+    ext_any = ext_only = ext_dwg = ext_rvt = 0
+
+    for i in range(n):
+        k_edge = edge_keys[i] if i < len(edge_keys) else 0
+        k_proxy = proxy_keys[i] if i < len(proxy_keys) else 0
+
+        src_edge = _get_source_type(k_edge)
+        src_proxy = _get_source_type(k_proxy)
+
+        host = (src_edge == "HOST") or (src_proxy == "HOST")
+        dwg = (src_edge == "DWG") or (src_proxy == "DWG")
+        rvt = (src_edge == "LINK") or (src_proxy == "LINK")
+
+        ext = dwg or rvt
+        if ext:
+            ext_any += 1
+            if not host:
+                ext_only += 1
+        if dwg:
+            ext_dwg += 1
+        if rvt:
+            ext_rvt += 1
+
+    return {"Ext_Cells_Any": ext_any, "Ext_Cells_Only": ext_only, "Ext_Cells_DWG": ext_dwg, "Ext_Cells_RVT": ext_rvt}
+
 
 def compute_cell_metrics(raster, model_presence_mode="ink", diag=None):
     """Compute occupancy metrics from raster arrays.
@@ -445,10 +513,10 @@ def build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metada
         metrics.get("ModelOnly", 0),
         metrics.get("AnnoOnly", 0),
         metrics.get("Overlap", 0),
-        0,  # Ext_Cells_Any (no external support yet)
-        0,  # Ext_Cells_Only
-        0,  # Ext_Cells_DWG
-        0,  # Ext_Cells_RVT
+        metrics.get("Ext_Cells_Any", 0),
+        metrics.get("Ext_Cells_Only", 0),
+        metrics.get("Ext_Cells_DWG", 0),
+        metrics.get("Ext_Cells_RVT", 0),
         anno_metrics.get("AnnoCells_TEXT", 0),
         anno_metrics.get("AnnoCells_TAG", 0),
         anno_metrics.get("AnnoCells_DIM", 0),
@@ -466,30 +534,26 @@ def build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metada
 
     return row
 
-
-def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=None):
-    """Export VOP pipeline results to CSV files.
+def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=None, date_override=None):
+    """Export pipeline results to core + VOP CSV files.
 
     Args:
         pipeline_result: Dict with 'views' list from run_vop_pipeline()
         output_dir: Output directory path
         config: Config object
         doc: Revit Document (optional, for view metadata extraction)
+        diag: Optional diagnostics sink
+        date_override: Optional date/time override for filenames + Date column.
+            Accepts:
+                - "YYYY-MM-DD"
+                - ISO datetime string (e.g. "YYYY-MM-DDTHH:MM:SS")
+            If provided, the Date column and filename date will use this value.
 
     Returns:
         Dict with:
             - core_csv_path: str
             - vop_csv_path: str
             - rows_exported: int
-
-    Creates:
-        - views_core_YYYY-MM-DD.csv
-        - views_vop_YYYY-MM-DD.csv
-
-    Commentary:
-        ✔ Uses export/csv._append_csv_rows() for proper header handling
-        ✔ Date-based filenames
-        ✔ Appends to existing files (multiple runs same day)
     """
     import sys
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -499,19 +563,45 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
     if not _ensure_dir(output_dir, None):
         os.makedirs(output_dir, exist_ok=True)
 
-    # Generate date string and run ID
-    now = datetime.now()
-    date_str = now.strftime("%Y-%m-%d")
-    run_id = now.strftime("%Y%m%dT%H%M%S")
+    # Resolve document (best-effort)
+    if doc is None:
+        try:
+            from .entry_dynamo import get_current_document
+            doc = get_current_document()
+        except Exception:
+            doc = None
 
-    # CSV filenames
+    # Resolve run datetime / date string
+    run_dt = datetime.now()
+    if date_override:
+        try:
+            if isinstance(date_override, str):
+                s = date_override.strip()
+                if len(s) == 10:
+                    run_dt = datetime.strptime(s, "%Y-%m-%d")
+                else:
+                    run_dt = datetime.fromisoformat(s)
+        except Exception:
+            if diag is not None:
+                try:
+                    diag.warn(
+                        phase="export_csv",
+                        callsite="export_pipeline_to_csv.date_override",
+                        message="Invalid date_override; using current datetime",
+                        extra={"date_override": date_override},
+                    )
+                except Exception:
+                    pass
+
+    date_str = run_dt.strftime("%Y-%m-%d")
+    run_id = run_dt.strftime("%Y%m%dT%H%M%S")
+
     core_filename = f"views_core_{date_str}.csv"
     vop_filename = f"views_vop_{date_str}.csv"
 
     core_path = os.path.join(output_dir, core_filename)
     vop_path = os.path.join(output_dir, vop_filename)
 
-    # CSV headers
     core_headers = [
         "Date", "RunId", "ViewId", "ViewUniqueId", "ViewName", "ViewType",
         "SheetNumber", "IsOnSheet", "Scale", "Discipline", "Phase",
@@ -528,18 +618,33 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
         "ExporterVersion", "ConfigHash", "FromCache", "ElapsedSec"
     ]
 
-    # Build rows
     core_rows = []
     vop_rows = []
 
     views_data = pipeline_result.get("views", []) if isinstance(pipeline_result, dict) else pipeline_result
 
     for view_result in views_data:
-        # Get view reference (from result or reconstruct)
-        view = view_result.get("view")  # May not be present
-        raster_dict = view_result.get("raster", {})
+        # Requirement: rejected/failed views must not show up in CSVs
+        if view_result.get("success") is False:
+            continue
+        if view_result.get("view_mode") == "REJECTED":
+            continue
 
-        # Reconstruct raster for metrics computation
+        raster_dict = view_result.get("raster", {})
+        if not raster_dict:
+            continue
+
+        # Reconstruct View for views_core metadata
+        view = view_result.get("view")
+        if view is None and doc is not None:
+            try:
+                from Autodesk.Revit.DB import ElementId
+                vid = view_result.get("view_id", None)
+                if isinstance(vid, int):
+                    view = doc.GetElement(ElementId(vid))
+            except Exception:
+                view = None
+
         from .core.raster import ViewRaster
         from .core.math_utils import Bounds2D
 
@@ -556,10 +661,9 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
             height=raster_dict.get("height", 0),
             cell_size=raster_dict.get("cell_size_ft", 1.0),
             bounds=bounds,
-            tile_size=16  # Default
+            tile_size=16
         )
 
-        # Restore raster arrays
         raster.model_edge_key = raster_dict.get("model_edge_key", [])
         raster.model_proxy_mask = raster_dict.get("model_proxy_mask", raster_dict.get("model_proxy_presence", []))
         raster.model_proxy_key = raster_dict.get("model_proxy_key", [])
@@ -567,72 +671,67 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
         raster.anno_over_model = raster_dict.get("anno_over_model", [])
         raster.anno_key = raster_dict.get("anno_key", [])
         raster.anno_meta = raster_dict.get("anno_meta", [])
+        raster.element_meta = raster_dict.get("element_meta", raster_dict.get("elements_meta", []))
 
-        # Compute metrics (must not be silent)
         try:
-            # PR8: model occupancy metrics are ink-on-screen => edge-only by default
             model_presence_mode = getattr(config, "model_presence_mode", "ink")
-            metrics = compute_cell_metrics(
-                raster,
-                model_presence_mode=model_presence_mode,
-                diag=diag,
-            )
+            metrics = compute_cell_metrics(raster, model_presence_mode=model_presence_mode, diag=diag)
             anno_metrics = compute_annotation_type_metrics(raster)
         except Exception as e:
             if diag is not None:
-                diag.error(
-                    phase="export_csv",
-                    callsite="export_pipeline_to_csv.metrics",
-                    message="Failed to compute CSV metrics for view",
-                    exc=e,
-                    extra={
-                        "view_id": view_result.get("view_id", 0),
-                        "view_name": view_result.get("view_name", ""),
-                        "width": raster_dict.get("width", raster_dict.get("W", 0)),
-                        "height": raster_dict.get("height", raster_dict.get("H", 0)),
-                        "model_presence_mode": model_presence_mode,
-                    },
-                )
-            # Do not recover here: metrics failure should fail the export deterministically
+                try:
+                    diag.error(
+                        phase="export_csv",
+                        callsite="export_pipeline_to_csv.metrics",
+                        message="Failed to compute CSV metrics for view",
+                        exc=e,
+                        extra={
+                            "view_id": view_result.get("view_id", 0),
+                            "view_name": view_result.get("view_name", ""),
+                            "width": raster_dict.get("width", raster_dict.get("W", 0)),
+                            "height": raster_dict.get("height", raster_dict.get("H", 0)),
+                            "model_presence_mode": getattr(config, "model_presence_mode", "ink"),
+                        },
+                    )
+                except Exception:
+                    pass
             raise
 
+        try:
+            metrics.update(compute_external_cell_metrics(raster))
+        except Exception as e:
+            if diag is not None:
+                try:
+                    diag.warn(
+                        phase="export_csv",
+                        callsite="export_pipeline_to_csv.ext_cells",
+                        message="Failed to compute external-cell metrics; using zeros",
+                        exc=e,
+                        extra={"view_id": view_result.get("view_id", 0)},
+                    )
+                except Exception:
+                    pass
 
-        # Build run_info
         run_info = {
             "date": date_str,
             "run_id": run_id,
-            "exporter_version": "VOP_v1.0",
+            "exporter_version": view_result.get("exporter_version", "VOP_v1.0"),
             "elapsed_sec": view_result.get("elapsed_sec", 0.0),
             "cell_size_ft": raster_dict.get("cell_size_ft", 0.0),
         }
 
-        # Extract view metadata (from result or view object)
-        view_metadata = {
-            "ViewId": view_result.get("view_id", 0),
-            "ViewName": view_result.get("view_name", ""),
-            "ViewType": "",
-            "SheetNumber": "",
-            "IsOnSheet": False,
-            "Scale": "",
-            "Discipline": "",
-            "Phase": "",
-            "ViewTemplate_Name": "",
-            "IsTemplate": False,
-            "ViewUniqueId": "",
-        }
+        view_metadata = {}
+        if view is not None:
+            try:
+                view_metadata = extract_view_metadata(view, doc)
+            except Exception:
+                view_metadata = {}
 
-        # If we have the view object and doc, get full metadata
-        if view is not None and doc is not None:
-            view_metadata = extract_view_metadata(view, doc)
+        if view is not None:
+            core_rows.append(build_core_csv_row(view, doc, metrics, config, run_info, view_metadata=view_metadata))
+        vop_rows.append(build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metadata=view_metadata))
 
-        # Build rows
-        core_row = build_core_csv_row(view, doc, metrics, config, run_info, view_metadata)
-        vop_row = build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metadata)
-
-        core_rows.append(core_row)
-        vop_rows.append(vop_row)
-
-    # Simple logger stub
+    # Simple logger stub (export/csv expects logger-like object)
     class SimpleLogger:
         def info(self, msg):
             print(f"CSV Export: {msg}")
@@ -641,7 +740,6 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
 
     logger = SimpleLogger()
 
-    # Write CSVs
     try:
         if core_rows:
             _append_csv_rows(core_path, core_headers, core_rows, logger)
@@ -649,19 +747,16 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
             _append_csv_rows(vop_path, vop_headers, vop_rows, logger)
     except Exception as e:
         if diag is not None:
-            diag.error(
-                phase="export_csv",
-                callsite="export_pipeline_to_csv.write",
-                message="Failed to write CSV files",
-                exc=e,
-                extra={"output_dir": output_dir},
-            )
-        else:
-            print(f"CSV Export ERROR: {type(e).__name__}: {e}")
+            try:
+                diag.error(
+                    phase="export_csv",
+                    callsite="export_pipeline_to_csv.write",
+                    message="Failed to write CSV files",
+                    exc=e,
+                    extra={"output_dir": output_dir},
+                )
+            except Exception:
+                pass
         raise
 
-    return {
-        "core_csv_path": core_path,
-        "vop_csv_path": vop_path,
-        "rows_exported": len(core_rows)
-    }
+    return {"core_csv_path": core_path, "vop_csv_path": vop_path, "rows_exported": len(vop_rows)}

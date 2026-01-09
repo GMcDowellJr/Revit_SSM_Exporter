@@ -863,6 +863,35 @@ def _view_type_name(view):
         if vt is None:
             return ""
 
+        # 0) If Autodesk is available, prefer direct enum comparisons (avoids brittle numeric maps).
+        try:
+            from Autodesk.Revit.DB import ViewType as _VT
+
+            # IMPORTANT: In some Dynamo contexts, ViewType may stringify as an int (e.g. "11"),
+            # so comparisons against the enum constants are the most reliable.
+            if hasattr(_VT, "Legend") and (vt == getattr(_VT, "Legend", None)):
+                return "Legend"
+            if hasattr(_VT, "DraftingView") and (vt == getattr(_VT, "DraftingView", None)):
+                return "DraftingView"
+            if hasattr(_VT, "Section") and (vt == getattr(_VT, "Section", None)):
+                return "Section"
+            if hasattr(_VT, "FloorPlan") and (vt == getattr(_VT, "FloorPlan", None)):
+                return "FloorPlan"
+            if hasattr(_VT, "CeilingPlan") and (vt == getattr(_VT, "CeilingPlan", None)):
+                return "CeilingPlan"
+            if hasattr(_VT, "Elevation") and (vt == getattr(_VT, "Elevation", None)):
+                return "Elevation"
+            if hasattr(_VT, "Detail") and (vt == getattr(_VT, "Detail", None)):
+                return "Detail"
+            if hasattr(_VT, "AreaPlan") and (vt == getattr(_VT, "AreaPlan", None)):
+                return "AreaPlan"
+            if hasattr(_VT, "EngineeringPlan") and (vt == getattr(_VT, "EngineeringPlan", None)):
+                return "EngineeringPlan"
+            if hasattr(_VT, "ThreeD") and (vt == getattr(_VT, "ThreeD", None)):
+                return "ThreeD"
+        except Exception:
+            pass
+
         # 1) If the enum stringifies to a meaningful name, use it.
         try:
             s = str(vt) or ""
@@ -1026,6 +1055,10 @@ def resolve_view_mode(view, diag=None, policy=None):
     if vt == "DraftingView":
         return VIEW_MODE_ANNOTATION_ONLY, {**reason, "why": "drafting_view_forced_annotation_only"}
 
+    # Legend views should be processed as annotation-only (no model truth, but visible symbols/notes)
+    if vt == "Legend":
+        return VIEW_MODE_ANNOTATION_ONLY, {**reason, "why": "legend_forced_annotation_only"}
+
     # If it is not model-capable, reject rather than “pretend” (prevents silent semantic drift)
     if not reason["supports_model_geometry"]:
         return VIEW_MODE_REJECTED, {**reason, "why": "no_model_geometry_capability"}
@@ -1071,7 +1104,22 @@ def resolve_annotation_only_bounds(doc, view, basis, cell_size_ft, cfg=None, dia
             continue
 
     if not drivers:
-        return None
+        # For Legend/Drafting, be robust: if no extent-driver annotations were detected,
+        # fall back to using ALL collected 2D annotations for bounds.
+        drivers = [elem for (elem, _atype) in annos if elem is not None]
+        if not drivers:
+            return None
+        if diag is not None:
+            try:
+                diag.warn(
+                    phase="bounds",
+                    callsite="resolve_annotation_only_bounds",
+                    message="No extent-driver annotations found; falling back to all 2D annotations for bounds",
+                    view_id=view_id,
+                    extra={"num_annos": len(annos)},
+                )
+            except Exception:
+                pass
 
     min_u = min_v = max_u = max_v = None
 

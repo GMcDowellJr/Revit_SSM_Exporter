@@ -1,0 +1,1098 @@
+# vop_interwoven trace map (approximate call tree)
+
+## Trace: run_vop_pipeline (vop_interwoven/entry_dynamo.py)
+
+- `run_vop_pipeline()` — vop_interwoven/entry_dynamo.py
+  - `Config()` — vop_interwoven/config.py
+  - `_normalize_view_ids()` — vop_interwoven/entry_dynamo.py
+  - `process_document_views()` — vop_interwoven/pipeline.py
+    - `Diagnostics()` — vop_interwoven/core/diagnostics.py
+    - `LRUCache()` — vop_interwoven/core/cache.py
+    - `collect_view_elements()` — vop_interwoven/revit/collection.py
+      - `PolicyStats()` — vop_interwoven/revit/collection_policy.py
+      - `get()` — vop_interwoven/core/cache.py
+      - `error()` — vop_interwoven/core/diagnostics.py
+        - `_exc_to_str()` — vop_interwoven/core/diagnostics.py
+        - `_record()` — vop_interwoven/core/diagnostics.py
+          - `get()` — vop_interwoven/core/cache.py
+            - (cycle)
+          - `_count_key()` — vop_interwoven/core/diagnostics.py
+      - `info()` — vop_interwoven/core/diagnostics.py
+        - `_record()` — vop_interwoven/core/diagnostics.py
+          - (cycle)
+      - `warn()` — vop_interwoven/core/diagnostics.py
+        - `_record()` — vop_interwoven/core/diagnostics.py
+          - (cycle)
+      - `included_bic_names_for_source()` — vop_interwoven/revit/collection_policy.py
+      - `resolve_element_bbox()` — vop_interwoven/revit/collection.py
+        - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+        - `safe_call()` — vop_interwoven/revit/safe_api.py
+          - `get()` — vop_interwoven/core/cache.py
+            - (cycle)
+          - `error()` — vop_interwoven/core/diagnostics.py
+            - (cycle)
+      - `safe_call()` — vop_interwoven/revit/safe_api.py
+        - (cycle)
+      - `should_include_element()` — vop_interwoven/revit/collection_policy.py
+        - `_try_get_category_id()` — vop_interwoven/revit/collection_policy.py
+          - `_try_import_bic()` — vop_interwoven/revit/collection_policy.py
+        - `excluded_bic_names_global()` — vop_interwoven/revit/collection_policy.py
+        - `included_bic_names_for_source()` — vop_interwoven/revit/collection_policy.py
+          - (cycle)
+        - `resolve_category_ids()` — vop_interwoven/revit/collection_policy.py
+          - `get()` — vop_interwoven/core/cache.py
+            - (cycle)
+          - `_try_get_category_id()` — vop_interwoven/revit/collection_policy.py
+            - (cycle)
+          - `set()` — vop_interwoven/core/cache.py
+        - `mark_excluded()` — vop_interwoven/revit/collection_policy.py
+          - `get()` — vop_interwoven/core/cache.py
+            - (cycle)
+        - `mark_included()` — vop_interwoven/revit/collection_policy.py
+    - `debug()` — vop_interwoven/core/diagnostics.py
+      - `_record()` — vop_interwoven/core/diagnostics.py
+        - (cycle)
+    - `error()` — vop_interwoven/core/diagnostics.py
+      - (cycle)
+    - `warn()` — vop_interwoven/core/diagnostics.py
+      - (cycle)
+    - `export_view_raster()` — vop_interwoven/pipeline.py
+      - `debug()` — vop_interwoven/core/diagnostics.py
+        - (cycle)
+      - `warn()` — vop_interwoven/core/diagnostics.py
+        - (cycle)
+      - `get()` — vop_interwoven/core/cache.py
+        - (cycle)
+    - `init_view_raster()` — vop_interwoven/pipeline.py
+      - `Bounds2D()` — vop_interwoven/core/math_utils.py
+      - `ViewRaster()` — vop_interwoven/core/raster.py
+      - `get()` — vop_interwoven/core/cache.py
+        - (cycle)
+      - `compute_adaptive_tile_size()` — vop_interwoven/config.py
+      - `make_view_basis()` — vop_interwoven/revit/view_basis.py
+        - `ViewBasis()` — vop_interwoven/revit/view_basis.py
+        - `error()` — vop_interwoven/core/diagnostics.py
+          - (cycle)
+        - `warn()` — vop_interwoven/core/diagnostics.py
+          - (cycle)
+      - `resolve_annotation_only_bounds()` — vop_interwoven/revit/view_basis.py
+        - `Bounds2D()` — vop_interwoven/core/math_utils.py
+          - (cycle)
+        - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
+        - `collect_2d_annotations()` — vop_interwoven/revit/annotation.py
+          - `classify_annotation()` — vop_interwoven/revit/annotation.py
+            - `classify_keynote()` — vop_interwoven/revit/annotation.py
+          - `classify_keynote()` — vop_interwoven/revit/annotation.py
+          - `warn()` — vop_interwoven/core/diagnostics.py
+            - (cycle)
+          - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+            - (cycle)
+        - `warn()` — vop_interwoven/core/diagnostics.py
+          - (cycle)
+        - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+          - (cycle)
+        - `is_extent_driver_annotation()` — vop_interwoven/revit/annotation.py
+      - `resolve_view_bounds()` — vop_interwoven/revit/view_basis.py
+        - `Bounds2D()` — vop_interwoven/core/math_utils.py
+          - (cycle)
+        - `_bounds_to_tuple()` — vop_interwoven/revit/view_basis.py
+        - `compute_annotation_extents()` — vop_interwoven/revit/annotation.py
+          - `Bounds2D()` — vop_interwoven/core/math_utils.py
+            - (cycle)
+          - `collect_2d_annotations()` — vop_interwoven/revit/annotation.py
+            - (cycle)
+          - `warn()` — vop_interwoven/core/diagnostics.py
+            - (cycle)
+          - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+            - (cycle)
+          - `is_extent_driver_annotation()` — vop_interwoven/revit/annotation.py
+            - (cycle)
+          - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
+            - (cycle)
+        - `warn()` — vop_interwoven/core/diagnostics.py
+          - (cycle)
+        - `get()` — vop_interwoven/core/cache.py
+          - (cycle)
+        - `synthetic_bounds_from_visible_extents()` — vop_interwoven/revit/view_basis.py
+          - `Bounds2D()` — vop_interwoven/core/math_utils.py
+            - (cycle)
+          - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
+            - (cycle)
+          - `warn()` — vop_interwoven/core/diagnostics.py
+            - (cycle)
+          - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+            - (cycle)
+        - `xy_bounds_from_crop_box_all_corners()` — vop_interwoven/revit/view_basis.py
+          - `Bounds2D()` — vop_interwoven/core/math_utils.py
+            - (cycle)
+          - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
+            - (cycle)
+      - `resolve_view_mode()` — vop_interwoven/revit/view_basis.py
+        - `_view_type_name()` — vop_interwoven/revit/view_basis.py
+          - `get()` — vop_interwoven/core/cache.py
+            - (cycle)
+        - `supports_crop_bounds()` — vop_interwoven/revit/view_basis.py
+          - `supports_model_geometry()` — vop_interwoven/revit/view_basis.py
+            - `_view_type_name()` — vop_interwoven/revit/view_basis.py
+        - `supports_depth()` — vop_interwoven/revit/view_basis.py
+          - `supports_model_geometry()` — vop_interwoven/revit/view_basis.py
+            - (cycle)
+        - `supports_model_geometry()` — vop_interwoven/revit/view_basis.py
+          - (cycle)
+    - `finalize_anno_over_model()` — vop_interwoven/core/raster.py
+    - `rasterize_annotations()` — vop_interwoven/revit/annotation.py
+      - `_project_element_bbox_to_cell_rect_for_anno()` — vop_interwoven/revit/annotation.py
+        - `CellRect()` — vop_interwoven/core/math_utils.py
+        - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+          - (cycle)
+      - `collect_2d_annotations()` — vop_interwoven/revit/annotation.py
+        - (cycle)
+      - `warn()` — vop_interwoven/core/diagnostics.py
+        - (cycle)
+      - `get_annotation_bbox()` — vop_interwoven/revit/annotation.py
+        - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+          - (cycle)
+      - `make_view_basis()` — vop_interwoven/revit/view_basis.py
+        - (cycle)
+    - `render_model_front_to_back()` — vop_interwoven/pipeline.py
+      - `_classify_uv_rect()` — vop_interwoven/pipeline.py
+
+      - `ViewRaster.rasterize_silhouette_loops()` — vop_interwoven/core/raster.py
+      - `ViewRaster.rasterize_open_polylines()` — vop_interwoven/core/raster.py
+      - `ViewRaster.rasterize_proxy_loops()` — vop_interwoven/core/raster.py
+      - (routing note) open vs closed loops are split in pipeline before rasterization
+
+      - `CellRectFootprint()` — vop_interwoven/core/footprint.py
+      - `HullFootprint()` — vop_interwoven/core/footprint.py
+      - `_bin_elements_to_tiles()` — vop_interwoven/pipeline.py
+        - `get_tiles_for_rect()` — vop_interwoven/core/raster.py
+        - `get()` — vop_interwoven/core/cache.py
+          - (cycle)
+      - `_get_ambiguous_tiles()` — vop_interwoven/pipeline.py
+        - `_tile_has_depth_conflict()` — vop_interwoven/pipeline.py
+          - `get()` — vop_interwoven/core/cache.py
+            - (cycle)
+      - `_project_element_bbox_to_cell_rect()` — vop_interwoven/revit/collection.py
+        - `CellRect()` — vop_interwoven/core/math_utils.py
+          - (cycle)
+        - `_pca_obb_uv()` — vop_interwoven/revit/collection.py
+        - `resolve_element_bbox()` — vop_interwoven/revit/collection.py
+          - (cycle)
+        - `world_to_view()` — vop_interwoven/revit/view_basis.py
+          - `transform_to_view_uvw()` — vop_interwoven/revit/view_basis.py
+      - `_tiles_fully_covered_and_nearer()` — vop_interwoven/pipeline.py
+        - `tiles()` — vop_interwoven/core/footprint.py
+          - `get_tiles_for_rect()` — vop_interwoven/core/raster.py
+            - (cycle)
+        - `is_tile_full()` — vop_interwoven/core/raster.py
+      - `cellrect_dims()` — vop_interwoven/core/math_utils.py
+      - `convex_hull_uv()` — vop_interwoven/core/hull.py
+        - `set()` — vop_interwoven/core/cache.py
+          - (cycle)
+      - `get()` — vop_interwoven/core/cache.py
+        - (cycle)
+      - `debug_dedupe()` — vop_interwoven/core/diagnostics.py
+        - `get()` — vop_interwoven/core/cache.py
+          - (cycle)
+        - `_record()` — vop_interwoven/core/diagnostics.py
+          - (cycle)
+      - `error()` — vop_interwoven/core/diagnostics.py
+        - (cycle)
+      - `estimate_depth_from_loops_or_bbox()` — vop_interwoven/revit/collection.py
+        - `estimate_nearest_depth_from_bbox()` — vop_interwoven/revit/collection.py
+          - `warn()` — vop_interwoven/core/diagnostics.py
+            - (cycle)
+          - `resolve_element_bbox()` — vop_interwoven/revit/collection.py
+            - (cycle)
+          - `world_to_view()` — vop_interwoven/revit/view_basis.py
+            - (cycle)
+        - `get()` — vop_interwoven/core/cache.py
+          - (cycle)
+      - `estimate_depth_range_from_bbox()` — vop_interwoven/revit/collection.py
+        - `warn()` — vop_interwoven/core/diagnostics.py
+          - (cycle)
+        - `resolve_element_bbox()` — vop_interwoven/revit/collection.py
+          - (cycle)
+        - `world_to_view()` — vop_interwoven/revit/view_basis.py
+          - (cycle)
+      - `estimate_nearest_depth_from_bbox()` — vop_interwoven/revit/collection.py
+        - (cycle)
+      - `expand_host_link_import_model_elements()` — vop_interwoven/revit/collection.py
+        - `collect_all_linked_elements()` — vop_interwoven/revit/linked_documents.py
+          - `_collect_from_dwg_imports()` — vop_interwoven/revit/linked_documents.py
+            - `LinkedElementProxy()` — vop_interwoven/revit/linked_documents.py
+            - `_log()` — vop_interwoven/revit/linked_documents.py
+            - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+          - `_collect_from_revit_links()` — vop_interwoven/revit/linked_documents.py
+            - `_build_clip_volume()` — vop_interwoven/revit/linked_documents.py
+            - `_collect_link_elements_with_clipping()` — vop_interwoven/revit/linked_documents.py
+            - `_collect_visible_link_elements_2024_plus()` — vop_interwoven/revit/linked_documents.py
+            - `_get_host_visible_model_categories()` — vop_interwoven/revit/linked_documents.py
+            - `_has_revit_2024_link_collector()` — vop_interwoven/revit/linked_documents.py
+            - `_log()` — vop_interwoven/revit/linked_documents.py
+          - `_log()` — vop_interwoven/revit/linked_documents.py
+        - `warn()` — vop_interwoven/core/diagnostics.py
+          - (cycle)
+        - `resolve_element_bbox()` — vop_interwoven/revit/collection.py
+          - (cycle)
+      - `get_element_obb_loops()` — vop_interwoven/revit/collection.py
+        - `_extract_geometry_footprint_uv()` — vop_interwoven/revit/collection.py
+          - `get_Geometry()` — vop_interwoven/revit/linked_documents.py
+            - `_log()` — vop_interwoven/revit/linked_documents.py
+            - `get_Geometry()` — vop_interwoven/revit/linked_documents.py
+          - `world_to_view()` — vop_interwoven/revit/view_basis.py
+            - (cycle)
+        - `_pca_obb_uv()` — vop_interwoven/revit/collection.py
+          - (cycle)
+        - `resolve_element_bbox()` — vop_interwoven/revit/collection.py
+          - (cycle)
+        - `set()` — vop_interwoven/core/cache.py
+          - (cycle)
+        - `world_to_view()` — vop_interwoven/revit/view_basis.py
+          - (cycle)
+      - `get_element_silhouette()` — vop_interwoven/core/silhouette.py
+        - `_bbox_silhouette()` — vop_interwoven/core/silhouette.py
+          - `_to_host_point()` — vop_interwoven/core/silhouette.py
+          - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+            - (cycle)
+          - `world_to_view()` — vop_interwoven/revit/view_basis.py
+            - (cycle)
+        - `_cad_curves_silhouette()` — vop_interwoven/core/silhouette.py
+          - `_iter_curve_primitives()` — vop_interwoven/core/silhouette.py
+            - `_iter_curve_primitives()` — vop_interwoven/core/silhouette.py
+          - `_to_host_point()` — vop_interwoven/core/silhouette.py
+            - (cycle)
+          - `_unwrap_elem()` — vop_interwoven/core/silhouette.py
+          - `get_Geometry()` — vop_interwoven/revit/linked_documents.py
+            - (cycle)
+          - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
+            - (cycle)
+        - `_determine_uv_mode()` — vop_interwoven/core/silhouette.py
+          - `_uv_obb_rect_from_bbox()` — vop_interwoven/core/silhouette.py
+            - `_bbox_corners_world()` — vop_interwoven/core/silhouette.py
+            - `_pca_obb_uv()` — vop_interwoven/core/silhouette.py
+            - `_to_host_point()` — vop_interwoven/core/silhouette.py
+            - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+            - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
+          - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+            - (cycle)
+          - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
+            - (cycle)
+        - `_front_face_loops_silhouette()` — vop_interwoven/core/silhouette.py
+          - `_iter_solids()` — vop_interwoven/core/silhouette.py
+            - `_iter_solids()` — vop_interwoven/core/silhouette.py
+          - `_to_host_point()` — vop_interwoven/core/silhouette.py
+            - (cycle)
+          - `get_Geometry()` — vop_interwoven/revit/linked_documents.py
+            - (cycle)
+          - `world_to_view()` — vop_interwoven/revit/view_basis.py
+            - (cycle)
+        - `_obb_silhouette()` — vop_interwoven/core/silhouette.py
+          - `_convex_hull_2d()` — vop_interwoven/core/silhouette.py
+            - `set()` — vop_interwoven/core/cache.py
+          - `_to_host_point()` — vop_interwoven/core/silhouette.py
+            - (cycle)
+          - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+            - (cycle)
+          - `world_to_view()` — vop_interwoven/revit/view_basis.py
+            - (cycle)
+        - `_silhouette_edges()` — vop_interwoven/core/silhouette.py
+          - `_iter_solids()` — vop_interwoven/core/silhouette.py
+            - (cycle)
+          - `_order_points_by_connectivity()` — vop_interwoven/core/silhouette.py
+            - `set()` — vop_interwoven/core/cache.py
+          - `_to_host_point()` — vop_interwoven/core/silhouette.py
+            - (cycle)
+          - `get_Geometry()` — vop_interwoven/revit/linked_documents.py
+            - (cycle)
+          - `world_to_view()` — vop_interwoven/revit/view_basis.py
+            - (cycle)
+        - `_symbolic_curves_silhouette()` — vop_interwoven/core/silhouette.py
+          - `_iter_curve_primitives()` — vop_interwoven/core/silhouette.py
+            - (cycle)
+          - `_to_host_point()` — vop_interwoven/core/silhouette.py
+            - (cycle)
+          - `_unwrap_elem()` — vop_interwoven/core/silhouette.py
+            - (cycle)
+          - `get_Geometry()` — vop_interwoven/revit/linked_documents.py
+            - (cycle)
+          - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
+            - (cycle)
+        - `_unwrap_elem()` — vop_interwoven/core/silhouette.py
+          - (cycle)
+        - `_uv_obb_rect_silhouette()` — vop_interwoven/core/silhouette.py
+          - `_uv_obb_rect_from_bbox()` — vop_interwoven/core/silhouette.py
+            - (cycle)
+        - `get()` — vop_interwoven/core/cache.py
+          - (cycle)
+        - `set()` — vop_interwoven/core/cache.py
+          - (cycle)
+      - `make_view_basis()` — vop_interwoven/revit/view_basis.py
+        - (cycle)
+      - `dump_occlusion_debug()` — vop_interwoven/core/raster.py
+        - `get_cell_index()` — vop_interwoven/core/raster.py
+      - `get_cell_index()` — vop_interwoven/core/raster.py
+        - (cycle)
+    - `resolve_view_mode()` — vop_interwoven/revit/view_basis.py
+      - (cycle)
+
+## Trace: run_vop_pipeline_with_png (vop_interwoven/entry_dynamo.py)
+
+- `run_vop_pipeline_with_png()` — vop_interwoven/entry_dynamo.py
+  - `export_pipeline_results_to_pngs()` — vop_interwoven/png_export.py
+    - `error()` — vop_interwoven/core/diagnostics.py
+      - `_exc_to_str()` — vop_interwoven/core/diagnostics.py
+      - `_record()` — vop_interwoven/core/diagnostics.py
+        - `get()` — vop_interwoven/core/cache.py
+        - `_count_key()` — vop_interwoven/core/diagnostics.py
+    - `warn()` — vop_interwoven/core/diagnostics.py
+      - `_record()` — vop_interwoven/core/diagnostics.py
+        - (cycle)
+    - `export_raster_to_png()` — vop_interwoven/png_export.py
+      - `get()` — vop_interwoven/core/cache.py
+        - (cycle)
+      - `error()` — vop_interwoven/core/diagnostics.py
+        - (cycle)
+    - `get()` — vop_interwoven/core/cache.py
+      - (cycle)
+  - `run_vop_pipeline()` — vop_interwoven/entry_dynamo.py
+    - `Config()` — vop_interwoven/config.py
+    - `_normalize_view_ids()` — vop_interwoven/entry_dynamo.py
+    - `process_document_views()` — vop_interwoven/pipeline.py
+      - `Diagnostics()` — vop_interwoven/core/diagnostics.py
+      - `LRUCache()` — vop_interwoven/core/cache.py
+      - `collect_view_elements()` — vop_interwoven/revit/collection.py
+        - `PolicyStats()` — vop_interwoven/revit/collection_policy.py
+        - `get()` — vop_interwoven/core/cache.py
+          - (cycle)
+        - `error()` — vop_interwoven/core/diagnostics.py
+          - (cycle)
+        - `info()` — vop_interwoven/core/diagnostics.py
+          - `_record()` — vop_interwoven/core/diagnostics.py
+            - (cycle)
+        - `warn()` — vop_interwoven/core/diagnostics.py
+          - (cycle)
+        - `included_bic_names_for_source()` — vop_interwoven/revit/collection_policy.py
+        - `resolve_element_bbox()` — vop_interwoven/revit/collection.py
+          - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+          - `safe_call()` — vop_interwoven/revit/safe_api.py
+            - `get()` — vop_interwoven/core/cache.py
+            - `error()` — vop_interwoven/core/diagnostics.py
+        - `safe_call()` — vop_interwoven/revit/safe_api.py
+          - (cycle)
+        - `should_include_element()` — vop_interwoven/revit/collection_policy.py
+          - `_try_get_category_id()` — vop_interwoven/revit/collection_policy.py
+            - `_try_import_bic()` — vop_interwoven/revit/collection_policy.py
+          - `excluded_bic_names_global()` — vop_interwoven/revit/collection_policy.py
+          - `included_bic_names_for_source()` — vop_interwoven/revit/collection_policy.py
+            - (cycle)
+          - `resolve_category_ids()` — vop_interwoven/revit/collection_policy.py
+            - `get()` — vop_interwoven/core/cache.py
+            - `_try_get_category_id()` — vop_interwoven/revit/collection_policy.py
+            - `set()` — vop_interwoven/core/cache.py
+          - `mark_excluded()` — vop_interwoven/revit/collection_policy.py
+            - `get()` — vop_interwoven/core/cache.py
+          - `mark_included()` — vop_interwoven/revit/collection_policy.py
+      - `debug()` — vop_interwoven/core/diagnostics.py
+        - `_record()` — vop_interwoven/core/diagnostics.py
+          - (cycle)
+      - `error()` — vop_interwoven/core/diagnostics.py
+        - (cycle)
+      - `warn()` — vop_interwoven/core/diagnostics.py
+        - (cycle)
+      - `export_view_raster()` — vop_interwoven/pipeline.py
+        - `debug()` — vop_interwoven/core/diagnostics.py
+          - (cycle)
+        - `warn()` — vop_interwoven/core/diagnostics.py
+          - (cycle)
+        - `get()` — vop_interwoven/core/cache.py
+          - (cycle)
+      - `init_view_raster()` — vop_interwoven/pipeline.py
+        - `Bounds2D()` — vop_interwoven/core/math_utils.py
+        - `ViewRaster()` — vop_interwoven/core/raster.py
+        - `get()` — vop_interwoven/core/cache.py
+          - (cycle)
+        - `compute_adaptive_tile_size()` — vop_interwoven/config.py
+        - `make_view_basis()` — vop_interwoven/revit/view_basis.py
+          - `ViewBasis()` — vop_interwoven/revit/view_basis.py
+          - `error()` — vop_interwoven/core/diagnostics.py
+            - (cycle)
+          - `warn()` — vop_interwoven/core/diagnostics.py
+            - (cycle)
+        - `resolve_annotation_only_bounds()` — vop_interwoven/revit/view_basis.py
+          - `Bounds2D()` — vop_interwoven/core/math_utils.py
+            - (cycle)
+          - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
+          - `collect_2d_annotations()` — vop_interwoven/revit/annotation.py
+            - `classify_annotation()` — vop_interwoven/revit/annotation.py
+            - `classify_keynote()` — vop_interwoven/revit/annotation.py
+            - `warn()` — vop_interwoven/core/diagnostics.py
+            - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+          - `warn()` — vop_interwoven/core/diagnostics.py
+            - (cycle)
+          - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+            - (cycle)
+          - `is_extent_driver_annotation()` — vop_interwoven/revit/annotation.py
+        - `resolve_view_bounds()` — vop_interwoven/revit/view_basis.py
+          - `Bounds2D()` — vop_interwoven/core/math_utils.py
+            - (cycle)
+          - `_bounds_to_tuple()` — vop_interwoven/revit/view_basis.py
+          - `compute_annotation_extents()` — vop_interwoven/revit/annotation.py
+            - `Bounds2D()` — vop_interwoven/core/math_utils.py
+            - `collect_2d_annotations()` — vop_interwoven/revit/annotation.py
+            - `warn()` — vop_interwoven/core/diagnostics.py
+            - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+            - `is_extent_driver_annotation()` — vop_interwoven/revit/annotation.py
+            - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
+          - `warn()` — vop_interwoven/core/diagnostics.py
+            - (cycle)
+          - `get()` — vop_interwoven/core/cache.py
+            - (cycle)
+          - `synthetic_bounds_from_visible_extents()` — vop_interwoven/revit/view_basis.py
+            - `Bounds2D()` — vop_interwoven/core/math_utils.py
+            - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
+            - `warn()` — vop_interwoven/core/diagnostics.py
+            - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+          - `xy_bounds_from_crop_box_all_corners()` — vop_interwoven/revit/view_basis.py
+            - `Bounds2D()` — vop_interwoven/core/math_utils.py
+            - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
+        - `resolve_view_mode()` — vop_interwoven/revit/view_basis.py
+          - `_view_type_name()` — vop_interwoven/revit/view_basis.py
+            - `get()` — vop_interwoven/core/cache.py
+          - `supports_crop_bounds()` — vop_interwoven/revit/view_basis.py
+            - `supports_model_geometry()` — vop_interwoven/revit/view_basis.py
+          - `supports_depth()` — vop_interwoven/revit/view_basis.py
+            - `supports_model_geometry()` — vop_interwoven/revit/view_basis.py
+          - `supports_model_geometry()` — vop_interwoven/revit/view_basis.py
+            - `_view_type_name()` — vop_interwoven/revit/view_basis.py
+      - `finalize_anno_over_model()` — vop_interwoven/core/raster.py
+      - `rasterize_annotations()` — vop_interwoven/revit/annotation.py
+        - `_project_element_bbox_to_cell_rect_for_anno()` — vop_interwoven/revit/annotation.py
+          - `CellRect()` — vop_interwoven/core/math_utils.py
+          - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+            - (cycle)
+        - `collect_2d_annotations()` — vop_interwoven/revit/annotation.py
+          - (cycle)
+        - `warn()` — vop_interwoven/core/diagnostics.py
+          - (cycle)
+        - `get_annotation_bbox()` — vop_interwoven/revit/annotation.py
+          - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+            - (cycle)
+        - `make_view_basis()` — vop_interwoven/revit/view_basis.py
+          - (cycle)
+      - `render_model_front_to_back()` — vop_interwoven/pipeline.py
+        - `CellRectFootprint()` — vop_interwoven/core/footprint.py
+        - `HullFootprint()` — vop_interwoven/core/footprint.py
+        - `_bin_elements_to_tiles()` — vop_interwoven/pipeline.py
+          - `get_tiles_for_rect()` — vop_interwoven/core/raster.py
+          - `get()` — vop_interwoven/core/cache.py
+            - (cycle)
+        - `_get_ambiguous_tiles()` — vop_interwoven/pipeline.py
+          - `_tile_has_depth_conflict()` — vop_interwoven/pipeline.py
+            - `get()` — vop_interwoven/core/cache.py
+        - `_project_element_bbox_to_cell_rect()` — vop_interwoven/revit/collection.py
+          - `CellRect()` — vop_interwoven/core/math_utils.py
+            - (cycle)
+          - `_pca_obb_uv()` — vop_interwoven/revit/collection.py
+          - `resolve_element_bbox()` — vop_interwoven/revit/collection.py
+            - (cycle)
+          - `world_to_view()` — vop_interwoven/revit/view_basis.py
+            - `transform_to_view_uvw()` — vop_interwoven/revit/view_basis.py
+        - `_tiles_fully_covered_and_nearer()` — vop_interwoven/pipeline.py
+          - `tiles()` — vop_interwoven/core/footprint.py
+            - `get_tiles_for_rect()` — vop_interwoven/core/raster.py
+          - `is_tile_full()` — vop_interwoven/core/raster.py
+        - `cellrect_dims()` — vop_interwoven/core/math_utils.py
+        - `convex_hull_uv()` — vop_interwoven/core/hull.py
+          - `set()` — vop_interwoven/core/cache.py
+        - `get()` — vop_interwoven/core/cache.py
+          - (cycle)
+        - `debug_dedupe()` — vop_interwoven/core/diagnostics.py
+          - `get()` — vop_interwoven/core/cache.py
+            - (cycle)
+          - `_record()` — vop_interwoven/core/diagnostics.py
+            - (cycle)
+        - `error()` — vop_interwoven/core/diagnostics.py
+          - (cycle)
+        - `estimate_depth_from_loops_or_bbox()` — vop_interwoven/revit/collection.py
+          - `estimate_nearest_depth_from_bbox()` — vop_interwoven/revit/collection.py
+            - `warn()` — vop_interwoven/core/diagnostics.py
+            - `resolve_element_bbox()` — vop_interwoven/revit/collection.py
+            - `world_to_view()` — vop_interwoven/revit/view_basis.py
+          - `get()` — vop_interwoven/core/cache.py
+            - (cycle)
+        - `estimate_depth_range_from_bbox()` — vop_interwoven/revit/collection.py
+          - `warn()` — vop_interwoven/core/diagnostics.py
+            - (cycle)
+          - `resolve_element_bbox()` — vop_interwoven/revit/collection.py
+            - (cycle)
+          - `world_to_view()` — vop_interwoven/revit/view_basis.py
+            - (cycle)
+        - `estimate_nearest_depth_from_bbox()` — vop_interwoven/revit/collection.py
+          - (cycle)
+        - `expand_host_link_import_model_elements()` — vop_interwoven/revit/collection.py
+          - `collect_all_linked_elements()` — vop_interwoven/revit/linked_documents.py
+            - `_collect_from_dwg_imports()` — vop_interwoven/revit/linked_documents.py
+            - `_collect_from_revit_links()` — vop_interwoven/revit/linked_documents.py
+            - `_log()` — vop_interwoven/revit/linked_documents.py
+          - `warn()` — vop_interwoven/core/diagnostics.py
+            - (cycle)
+          - `resolve_element_bbox()` — vop_interwoven/revit/collection.py
+            - (cycle)
+        - `get_element_obb_loops()` — vop_interwoven/revit/collection.py
+          - `_extract_geometry_footprint_uv()` — vop_interwoven/revit/collection.py
+            - `get_Geometry()` — vop_interwoven/revit/linked_documents.py
+            - `world_to_view()` — vop_interwoven/revit/view_basis.py
+          - `_pca_obb_uv()` — vop_interwoven/revit/collection.py
+            - (cycle)
+          - `resolve_element_bbox()` — vop_interwoven/revit/collection.py
+            - (cycle)
+          - `set()` — vop_interwoven/core/cache.py
+            - (cycle)
+          - `world_to_view()` — vop_interwoven/revit/view_basis.py
+            - (cycle)
+        - `get_element_silhouette()` — vop_interwoven/core/silhouette.py
+          - `_bbox_silhouette()` — vop_interwoven/core/silhouette.py
+            - `_to_host_point()` — vop_interwoven/core/silhouette.py
+            - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+            - `world_to_view()` — vop_interwoven/revit/view_basis.py
+          - `_cad_curves_silhouette()` — vop_interwoven/core/silhouette.py
+            - `_iter_curve_primitives()` — vop_interwoven/core/silhouette.py
+            - `_to_host_point()` — vop_interwoven/core/silhouette.py
+            - `_unwrap_elem()` — vop_interwoven/core/silhouette.py
+            - `get_Geometry()` — vop_interwoven/revit/linked_documents.py
+            - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
+          - `_determine_uv_mode()` — vop_interwoven/core/silhouette.py
+            - `_uv_obb_rect_from_bbox()` — vop_interwoven/core/silhouette.py
+            - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+            - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
+          - `_front_face_loops_silhouette()` — vop_interwoven/core/silhouette.py
+            - `_iter_solids()` — vop_interwoven/core/silhouette.py
+            - `_to_host_point()` — vop_interwoven/core/silhouette.py
+            - `get_Geometry()` — vop_interwoven/revit/linked_documents.py
+            - `world_to_view()` — vop_interwoven/revit/view_basis.py
+          - `_obb_silhouette()` — vop_interwoven/core/silhouette.py
+            - `_convex_hull_2d()` — vop_interwoven/core/silhouette.py
+            - `_to_host_point()` — vop_interwoven/core/silhouette.py
+            - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+            - `world_to_view()` — vop_interwoven/revit/view_basis.py
+          - `_silhouette_edges()` — vop_interwoven/core/silhouette.py
+            - `_iter_solids()` — vop_interwoven/core/silhouette.py
+            - `_order_points_by_connectivity()` — vop_interwoven/core/silhouette.py
+            - `_to_host_point()` — vop_interwoven/core/silhouette.py
+            - `get_Geometry()` — vop_interwoven/revit/linked_documents.py
+            - `world_to_view()` — vop_interwoven/revit/view_basis.py
+          - `_symbolic_curves_silhouette()` — vop_interwoven/core/silhouette.py
+            - `_iter_curve_primitives()` — vop_interwoven/core/silhouette.py
+            - `_to_host_point()` — vop_interwoven/core/silhouette.py
+            - `_unwrap_elem()` — vop_interwoven/core/silhouette.py
+            - `get_Geometry()` — vop_interwoven/revit/linked_documents.py
+            - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
+          - `_unwrap_elem()` — vop_interwoven/core/silhouette.py
+          - `_uv_obb_rect_silhouette()` — vop_interwoven/core/silhouette.py
+            - `_uv_obb_rect_from_bbox()` — vop_interwoven/core/silhouette.py
+          - `get()` — vop_interwoven/core/cache.py
+            - (cycle)
+          - `set()` — vop_interwoven/core/cache.py
+            - (cycle)
+        - `make_view_basis()` — vop_interwoven/revit/view_basis.py
+          - (cycle)
+        - `dump_occlusion_debug()` — vop_interwoven/core/raster.py
+          - `get_cell_index()` — vop_interwoven/core/raster.py
+        - `get_cell_index()` — vop_interwoven/core/raster.py
+          - (cycle)
+      - `resolve_view_mode()` — vop_interwoven/revit/view_basis.py
+        - (cycle)
+
+## Trace: process_document_views (vop_interwoven/pipeline.py)
+
+- `process_document_views()` — vop_interwoven/pipeline.py
+  - `Diagnostics()` — vop_interwoven/core/diagnostics.py
+  - `LRUCache()` — vop_interwoven/core/cache.py
+  - `collect_view_elements()` — vop_interwoven/revit/collection.py
+    - `PolicyStats()` — vop_interwoven/revit/collection_policy.py
+    - `get()` — vop_interwoven/core/cache.py
+    - `error()` — vop_interwoven/core/diagnostics.py
+      - `_exc_to_str()` — vop_interwoven/core/diagnostics.py
+      - `_record()` — vop_interwoven/core/diagnostics.py
+        - `get()` — vop_interwoven/core/cache.py
+          - (cycle)
+        - `_count_key()` — vop_interwoven/core/diagnostics.py
+    - `info()` — vop_interwoven/core/diagnostics.py
+      - `_record()` — vop_interwoven/core/diagnostics.py
+        - (cycle)
+    - `warn()` — vop_interwoven/core/diagnostics.py
+      - `_record()` — vop_interwoven/core/diagnostics.py
+        - (cycle)
+    - `included_bic_names_for_source()` — vop_interwoven/revit/collection_policy.py
+    - `resolve_element_bbox()` — vop_interwoven/revit/collection.py
+      - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+      - `safe_call()` — vop_interwoven/revit/safe_api.py
+        - `get()` — vop_interwoven/core/cache.py
+          - (cycle)
+        - `error()` — vop_interwoven/core/diagnostics.py
+          - (cycle)
+    - `safe_call()` — vop_interwoven/revit/safe_api.py
+      - (cycle)
+    - `should_include_element()` — vop_interwoven/revit/collection_policy.py
+      - `_try_get_category_id()` — vop_interwoven/revit/collection_policy.py
+        - `_try_import_bic()` — vop_interwoven/revit/collection_policy.py
+      - `excluded_bic_names_global()` — vop_interwoven/revit/collection_policy.py
+      - `included_bic_names_for_source()` — vop_interwoven/revit/collection_policy.py
+        - (cycle)
+      - `resolve_category_ids()` — vop_interwoven/revit/collection_policy.py
+        - `get()` — vop_interwoven/core/cache.py
+          - (cycle)
+        - `_try_get_category_id()` — vop_interwoven/revit/collection_policy.py
+          - (cycle)
+        - `set()` — vop_interwoven/core/cache.py
+      - `mark_excluded()` — vop_interwoven/revit/collection_policy.py
+        - `get()` — vop_interwoven/core/cache.py
+          - (cycle)
+      - `mark_included()` — vop_interwoven/revit/collection_policy.py
+  - `debug()` — vop_interwoven/core/diagnostics.py
+    - `_record()` — vop_interwoven/core/diagnostics.py
+      - (cycle)
+  - `error()` — vop_interwoven/core/diagnostics.py
+    - (cycle)
+  - `warn()` — vop_interwoven/core/diagnostics.py
+    - (cycle)
+  - `export_view_raster()` — vop_interwoven/pipeline.py
+    - `debug()` — vop_interwoven/core/diagnostics.py
+      - (cycle)
+    - `warn()` — vop_interwoven/core/diagnostics.py
+      - (cycle)
+    - `get()` — vop_interwoven/core/cache.py
+      - (cycle)
+  - `init_view_raster()` — vop_interwoven/pipeline.py
+    - `Bounds2D()` — vop_interwoven/core/math_utils.py
+    - `ViewRaster()` — vop_interwoven/core/raster.py
+    - `get()` — vop_interwoven/core/cache.py
+      - (cycle)
+    - `compute_adaptive_tile_size()` — vop_interwoven/config.py
+    - `make_view_basis()` — vop_interwoven/revit/view_basis.py
+      - `ViewBasis()` — vop_interwoven/revit/view_basis.py
+      - `error()` — vop_interwoven/core/diagnostics.py
+        - (cycle)
+      - `warn()` — vop_interwoven/core/diagnostics.py
+        - (cycle)
+    - `resolve_annotation_only_bounds()` — vop_interwoven/revit/view_basis.py
+      - `Bounds2D()` — vop_interwoven/core/math_utils.py
+        - (cycle)
+      - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
+      - `collect_2d_annotations()` — vop_interwoven/revit/annotation.py
+        - `classify_annotation()` — vop_interwoven/revit/annotation.py
+          - `classify_keynote()` — vop_interwoven/revit/annotation.py
+        - `classify_keynote()` — vop_interwoven/revit/annotation.py
+          - (cycle)
+        - `warn()` — vop_interwoven/core/diagnostics.py
+          - (cycle)
+        - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+          - (cycle)
+      - `warn()` — vop_interwoven/core/diagnostics.py
+        - (cycle)
+      - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+        - (cycle)
+      - `is_extent_driver_annotation()` — vop_interwoven/revit/annotation.py
+    - `resolve_view_bounds()` — vop_interwoven/revit/view_basis.py
+      - `Bounds2D()` — vop_interwoven/core/math_utils.py
+        - (cycle)
+      - `_bounds_to_tuple()` — vop_interwoven/revit/view_basis.py
+      - `compute_annotation_extents()` — vop_interwoven/revit/annotation.py
+        - `Bounds2D()` — vop_interwoven/core/math_utils.py
+          - (cycle)
+        - `collect_2d_annotations()` — vop_interwoven/revit/annotation.py
+          - (cycle)
+        - `warn()` — vop_interwoven/core/diagnostics.py
+          - (cycle)
+        - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+          - (cycle)
+        - `is_extent_driver_annotation()` — vop_interwoven/revit/annotation.py
+          - (cycle)
+        - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
+          - (cycle)
+      - `warn()` — vop_interwoven/core/diagnostics.py
+        - (cycle)
+      - `get()` — vop_interwoven/core/cache.py
+        - (cycle)
+      - `synthetic_bounds_from_visible_extents()` — vop_interwoven/revit/view_basis.py
+        - `Bounds2D()` — vop_interwoven/core/math_utils.py
+          - (cycle)
+        - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
+          - (cycle)
+        - `warn()` — vop_interwoven/core/diagnostics.py
+          - (cycle)
+        - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+          - (cycle)
+      - `xy_bounds_from_crop_box_all_corners()` — vop_interwoven/revit/view_basis.py
+        - `Bounds2D()` — vop_interwoven/core/math_utils.py
+          - (cycle)
+        - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
+          - (cycle)
+    - `resolve_view_mode()` — vop_interwoven/revit/view_basis.py
+      - `_view_type_name()` — vop_interwoven/revit/view_basis.py
+        - `get()` — vop_interwoven/core/cache.py
+          - (cycle)
+      - `supports_crop_bounds()` — vop_interwoven/revit/view_basis.py
+        - `supports_model_geometry()` — vop_interwoven/revit/view_basis.py
+          - `_view_type_name()` — vop_interwoven/revit/view_basis.py
+            - (cycle)
+      - `supports_depth()` — vop_interwoven/revit/view_basis.py
+        - `supports_model_geometry()` — vop_interwoven/revit/view_basis.py
+          - (cycle)
+      - `supports_model_geometry()` — vop_interwoven/revit/view_basis.py
+        - (cycle)
+  - `finalize_anno_over_model()` — vop_interwoven/core/raster.py
+  - `rasterize_annotations()` — vop_interwoven/revit/annotation.py
+    - `_project_element_bbox_to_cell_rect_for_anno()` — vop_interwoven/revit/annotation.py
+      - `CellRect()` — vop_interwoven/core/math_utils.py
+      - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+        - (cycle)
+    - `collect_2d_annotations()` — vop_interwoven/revit/annotation.py
+      - (cycle)
+    - `warn()` — vop_interwoven/core/diagnostics.py
+      - (cycle)
+    - `get_annotation_bbox()` — vop_interwoven/revit/annotation.py
+      - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+        - (cycle)
+    - `make_view_basis()` — vop_interwoven/revit/view_basis.py
+      - (cycle)
+  - `render_model_front_to_back()` — vop_interwoven/pipeline.py
+    - `CellRectFootprint()` — vop_interwoven/core/footprint.py
+    - `HullFootprint()` — vop_interwoven/core/footprint.py
+    - `_bin_elements_to_tiles()` — vop_interwoven/pipeline.py
+      - `get_tiles_for_rect()` — vop_interwoven/core/raster.py
+      - `get()` — vop_interwoven/core/cache.py
+        - (cycle)
+    - `_get_ambiguous_tiles()` — vop_interwoven/pipeline.py
+      - `_tile_has_depth_conflict()` — vop_interwoven/pipeline.py
+        - `get()` — vop_interwoven/core/cache.py
+          - (cycle)
+    - `_project_element_bbox_to_cell_rect()` — vop_interwoven/revit/collection.py
+      - `CellRect()` — vop_interwoven/core/math_utils.py
+        - (cycle)
+      - `_pca_obb_uv()` — vop_interwoven/revit/collection.py
+      - `resolve_element_bbox()` — vop_interwoven/revit/collection.py
+        - (cycle)
+      - `world_to_view()` — vop_interwoven/revit/view_basis.py
+        - `transform_to_view_uvw()` — vop_interwoven/revit/view_basis.py
+    - `_tiles_fully_covered_and_nearer()` — vop_interwoven/pipeline.py
+      - `tiles()` — vop_interwoven/core/footprint.py
+        - `get_tiles_for_rect()` — vop_interwoven/core/raster.py
+          - (cycle)
+      - `is_tile_full()` — vop_interwoven/core/raster.py
+    - `cellrect_dims()` — vop_interwoven/core/math_utils.py
+    - `convex_hull_uv()` — vop_interwoven/core/hull.py
+      - `set()` — vop_interwoven/core/cache.py
+        - (cycle)
+    - `get()` — vop_interwoven/core/cache.py
+      - (cycle)
+    - `debug_dedupe()` — vop_interwoven/core/diagnostics.py
+      - `get()` — vop_interwoven/core/cache.py
+        - (cycle)
+      - `_record()` — vop_interwoven/core/diagnostics.py
+        - (cycle)
+    - `error()` — vop_interwoven/core/diagnostics.py
+      - (cycle)
+    - `estimate_depth_from_loops_or_bbox()` — vop_interwoven/revit/collection.py
+      - `estimate_nearest_depth_from_bbox()` — vop_interwoven/revit/collection.py
+        - `warn()` — vop_interwoven/core/diagnostics.py
+          - (cycle)
+        - `resolve_element_bbox()` — vop_interwoven/revit/collection.py
+          - (cycle)
+        - `world_to_view()` — vop_interwoven/revit/view_basis.py
+          - (cycle)
+      - `get()` — vop_interwoven/core/cache.py
+        - (cycle)
+    - `estimate_depth_range_from_bbox()` — vop_interwoven/revit/collection.py
+      - `warn()` — vop_interwoven/core/diagnostics.py
+        - (cycle)
+      - `resolve_element_bbox()` — vop_interwoven/revit/collection.py
+        - (cycle)
+      - `world_to_view()` — vop_interwoven/revit/view_basis.py
+        - (cycle)
+    - `estimate_nearest_depth_from_bbox()` — vop_interwoven/revit/collection.py
+      - (cycle)
+    - `expand_host_link_import_model_elements()` — vop_interwoven/revit/collection.py
+      - `collect_all_linked_elements()` — vop_interwoven/revit/linked_documents.py
+        - `_collect_from_dwg_imports()` — vop_interwoven/revit/linked_documents.py
+          - `LinkedElementProxy()` — vop_interwoven/revit/linked_documents.py
+          - `_log()` — vop_interwoven/revit/linked_documents.py
+          - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+            - (cycle)
+        - `_collect_from_revit_links()` — vop_interwoven/revit/linked_documents.py
+          - `_build_clip_volume()` — vop_interwoven/revit/linked_documents.py
+            - `_build_crop_prism_corners()` — vop_interwoven/revit/linked_documents.py
+            - `_get_plan_view_vertical_range()` — vop_interwoven/revit/linked_documents.py
+            - `_log()` — vop_interwoven/revit/linked_documents.py
+          - `_collect_link_elements_with_clipping()` — vop_interwoven/revit/linked_documents.py
+            - `LinkedElementProxy()` — vop_interwoven/revit/linked_documents.py
+            - `_get_excluded_3d_category_ids()` — vop_interwoven/revit/linked_documents.py
+            - `_log()` — vop_interwoven/revit/linked_documents.py
+            - `_transform_bbox_to_host()` — vop_interwoven/revit/linked_documents.py
+            - `get()` — vop_interwoven/core/cache.py
+            - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+          - `_collect_visible_link_elements_2024_plus()` — vop_interwoven/revit/linked_documents.py
+            - `LinkedElementProxy()` — vop_interwoven/revit/linked_documents.py
+            - `PolicyStats()` — vop_interwoven/revit/collection_policy.py
+            - `_get_excluded_3d_category_ids()` — vop_interwoven/revit/linked_documents.py
+            - `_log()` — vop_interwoven/revit/linked_documents.py
+            - `_transform_bbox_to_host()` — vop_interwoven/revit/linked_documents.py
+            - `get()` — vop_interwoven/core/cache.py
+            - `info()` — vop_interwoven/core/diagnostics.py
+            - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+            - `should_include_element()` — vop_interwoven/revit/collection_policy.py
+          - `_get_host_visible_model_categories()` — vop_interwoven/revit/linked_documents.py
+            - `set()` — vop_interwoven/core/cache.py
+          - `_has_revit_2024_link_collector()` — vop_interwoven/revit/linked_documents.py
+            - `_log()` — vop_interwoven/revit/linked_documents.py
+          - `_log()` — vop_interwoven/revit/linked_documents.py
+            - (cycle)
+        - `_log()` — vop_interwoven/revit/linked_documents.py
+          - (cycle)
+      - `warn()` — vop_interwoven/core/diagnostics.py
+        - (cycle)
+      - `resolve_element_bbox()` — vop_interwoven/revit/collection.py
+        - (cycle)
+    - `get_element_obb_loops()` — vop_interwoven/revit/collection.py
+      - `_extract_geometry_footprint_uv()` — vop_interwoven/revit/collection.py
+        - `get_Geometry()` — vop_interwoven/revit/linked_documents.py
+          - `_log()` — vop_interwoven/revit/linked_documents.py
+            - (cycle)
+          - `get_Geometry()` — vop_interwoven/revit/linked_documents.py
+            - (cycle)
+        - `world_to_view()` — vop_interwoven/revit/view_basis.py
+          - (cycle)
+      - `_pca_obb_uv()` — vop_interwoven/revit/collection.py
+        - (cycle)
+      - `resolve_element_bbox()` — vop_interwoven/revit/collection.py
+        - (cycle)
+      - `set()` — vop_interwoven/core/cache.py
+        - (cycle)
+      - `world_to_view()` — vop_interwoven/revit/view_basis.py
+        - (cycle)
+    - `get_element_silhouette()` — vop_interwoven/core/silhouette.py
+      - `_bbox_silhouette()` — vop_interwoven/core/silhouette.py
+        - `_to_host_point()` — vop_interwoven/core/silhouette.py
+        - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+          - (cycle)
+        - `world_to_view()` — vop_interwoven/revit/view_basis.py
+          - (cycle)
+      - `_cad_curves_silhouette()` — vop_interwoven/core/silhouette.py
+        - `_iter_curve_primitives()` — vop_interwoven/core/silhouette.py
+          - `_iter_curve_primitives()` — vop_interwoven/core/silhouette.py
+            - (cycle)
+        - `_to_host_point()` — vop_interwoven/core/silhouette.py
+          - (cycle)
+        - `_unwrap_elem()` — vop_interwoven/core/silhouette.py
+        - `get_Geometry()` — vop_interwoven/revit/linked_documents.py
+          - (cycle)
+        - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
+          - (cycle)
+      - `_determine_uv_mode()` — vop_interwoven/core/silhouette.py
+        - `_uv_obb_rect_from_bbox()` — vop_interwoven/core/silhouette.py
+          - `_bbox_corners_world()` — vop_interwoven/core/silhouette.py
+          - `_pca_obb_uv()` — vop_interwoven/core/silhouette.py
+          - `_to_host_point()` — vop_interwoven/core/silhouette.py
+            - (cycle)
+          - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+            - (cycle)
+          - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
+            - (cycle)
+        - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+          - (cycle)
+        - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
+          - (cycle)
+      - `_front_face_loops_silhouette()` — vop_interwoven/core/silhouette.py
+        - `_iter_solids()` — vop_interwoven/core/silhouette.py
+          - `_iter_solids()` — vop_interwoven/core/silhouette.py
+            - (cycle)
+        - `_to_host_point()` — vop_interwoven/core/silhouette.py
+          - (cycle)
+        - `get_Geometry()` — vop_interwoven/revit/linked_documents.py
+          - (cycle)
+        - `world_to_view()` — vop_interwoven/revit/view_basis.py
+          - (cycle)
+      - `_obb_silhouette()` — vop_interwoven/core/silhouette.py
+        - `_convex_hull_2d()` — vop_interwoven/core/silhouette.py
+          - `set()` — vop_interwoven/core/cache.py
+            - (cycle)
+        - `_to_host_point()` — vop_interwoven/core/silhouette.py
+          - (cycle)
+        - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+          - (cycle)
+        - `world_to_view()` — vop_interwoven/revit/view_basis.py
+          - (cycle)
+      - `_silhouette_edges()` — vop_interwoven/core/silhouette.py
+        - `_iter_solids()` — vop_interwoven/core/silhouette.py
+          - (cycle)
+        - `_order_points_by_connectivity()` — vop_interwoven/core/silhouette.py
+          - `set()` — vop_interwoven/core/cache.py
+            - (cycle)
+        - `_to_host_point()` — vop_interwoven/core/silhouette.py
+          - (cycle)
+        - `get_Geometry()` — vop_interwoven/revit/linked_documents.py
+          - (cycle)
+        - `world_to_view()` — vop_interwoven/revit/view_basis.py
+          - (cycle)
+      - `_symbolic_curves_silhouette()` — vop_interwoven/core/silhouette.py
+        - `_iter_curve_primitives()` — vop_interwoven/core/silhouette.py
+          - (cycle)
+        - `_to_host_point()` — vop_interwoven/core/silhouette.py
+          - (cycle)
+        - `_unwrap_elem()` — vop_interwoven/core/silhouette.py
+          - (cycle)
+        - `get_Geometry()` — vop_interwoven/revit/linked_documents.py
+          - (cycle)
+        - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
+          - (cycle)
+      - `_unwrap_elem()` — vop_interwoven/core/silhouette.py
+        - (cycle)
+      - `_uv_obb_rect_silhouette()` — vop_interwoven/core/silhouette.py
+        - `_uv_obb_rect_from_bbox()` — vop_interwoven/core/silhouette.py
+          - (cycle)
+      - `get()` — vop_interwoven/core/cache.py
+        - (cycle)
+      - `set()` — vop_interwoven/core/cache.py
+        - (cycle)
+    - `make_view_basis()` — vop_interwoven/revit/view_basis.py
+      - (cycle)
+    - `dump_occlusion_debug()` — vop_interwoven/core/raster.py
+      - `get_cell_index()` — vop_interwoven/core/raster.py
+    - `get_cell_index()` — vop_interwoven/core/raster.py
+      - (cycle)
+  - `resolve_view_mode()` — vop_interwoven/revit/view_basis.py
+    - (cycle)
+
+## Trace: get_element_silhouette (vop_interwoven/core/silhouette.py)
+
+- `get_element_silhouette()` — vop_interwoven/core/silhouette.py
+  - `_bbox_silhouette()` — vop_interwoven/core/silhouette.py
+    - `_to_host_point()` — vop_interwoven/core/silhouette.py
+    - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+    - `world_to_view()` — vop_interwoven/revit/view_basis.py
+      - `transform_to_view_uvw()` — vop_interwoven/revit/view_basis.py
+  - `_cad_curves_silhouette()` — vop_interwoven/core/silhouette.py
+    - `_iter_curve_primitives()` — vop_interwoven/core/silhouette.py
+      - `_iter_curve_primitives()` — vop_interwoven/core/silhouette.py
+        - (cycle)
+    - `_to_host_point()` — vop_interwoven/core/silhouette.py
+      - (cycle)
+    - `_unwrap_elem()` — vop_interwoven/core/silhouette.py
+    - `get_Geometry()` — vop_interwoven/revit/linked_documents.py
+      - `_log()` — vop_interwoven/revit/linked_documents.py
+      - `get_Geometry()` — vop_interwoven/revit/linked_documents.py
+        - (cycle)
+    - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
+  - `_determine_uv_mode()` — vop_interwoven/core/silhouette.py
+    - `_uv_obb_rect_from_bbox()` — vop_interwoven/core/silhouette.py
+      - `_bbox_corners_world()` — vop_interwoven/core/silhouette.py
+      - `_pca_obb_uv()` — vop_interwoven/core/silhouette.py
+      - `_to_host_point()` — vop_interwoven/core/silhouette.py
+        - (cycle)
+      - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+        - (cycle)
+      - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
+        - (cycle)
+    - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+      - (cycle)
+    - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
+      - (cycle)
+  - `_front_face_loops_silhouette()` — vop_interwoven/core/silhouette.py
+    - `_iter_solids()` — vop_interwoven/core/silhouette.py
+      - `_iter_solids()` — vop_interwoven/core/silhouette.py
+        - (cycle)
+    - `_to_host_point()` — vop_interwoven/core/silhouette.py
+      - (cycle)
+    - `get_Geometry()` — vop_interwoven/revit/linked_documents.py
+      - (cycle)
+    - `world_to_view()` — vop_interwoven/revit/view_basis.py
+      - (cycle)
+  - `_obb_silhouette()` — vop_interwoven/core/silhouette.py
+    - `_convex_hull_2d()` — vop_interwoven/core/silhouette.py
+      - `set()` — vop_interwoven/core/cache.py
+    - `_to_host_point()` — vop_interwoven/core/silhouette.py
+      - (cycle)
+    - `get_BoundingBox()` — vop_interwoven/revit/linked_documents.py
+      - (cycle)
+    - `world_to_view()` — vop_interwoven/revit/view_basis.py
+      - (cycle)
+  - `_silhouette_edges()` — vop_interwoven/core/silhouette.py
+    - `_iter_solids()` — vop_interwoven/core/silhouette.py
+      - (cycle)
+    - `_order_points_by_connectivity()` — vop_interwoven/core/silhouette.py
+      - `set()` — vop_interwoven/core/cache.py
+        - (cycle)
+    - `_to_host_point()` — vop_interwoven/core/silhouette.py
+      - (cycle)
+    - `get_Geometry()` — vop_interwoven/revit/linked_documents.py
+      - (cycle)
+    - `world_to_view()` — vop_interwoven/revit/view_basis.py
+      - (cycle)
+  - `_symbolic_curves_silhouette()` — vop_interwoven/core/silhouette.py
+    - `_iter_curve_primitives()` — vop_interwoven/core/silhouette.py
+      - (cycle)
+    - `_to_host_point()` — vop_interwoven/core/silhouette.py
+      - (cycle)
+    - `_unwrap_elem()` — vop_interwoven/core/silhouette.py
+      - (cycle)
+    - `get_Geometry()` — vop_interwoven/revit/linked_documents.py
+      - (cycle)
+    - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
+      - (cycle)
+  - `_unwrap_elem()` — vop_interwoven/core/silhouette.py
+    - (cycle)
+  - `_uv_obb_rect_silhouette()` — vop_interwoven/core/silhouette.py
+    - `_uv_obb_rect_from_bbox()` — vop_interwoven/core/silhouette.py
+      - (cycle)
+  - `get()` — vop_interwoven/core/cache.py
+  - `set()` — vop_interwoven/core/cache.py
+    - (cycle)
+
+## Trace: make_view_basis (vop_interwoven/revit/view_basis.py)
+
+- `make_view_basis()` — vop_interwoven/revit/view_basis.py
+  - `ViewBasis()` — vop_interwoven/revit/view_basis.py
+  - `error()` — vop_interwoven/core/diagnostics.py
+    - `_exc_to_str()` — vop_interwoven/core/diagnostics.py
+    - `_record()` — vop_interwoven/core/diagnostics.py
+      - `get()` — vop_interwoven/core/cache.py
+      - `_count_key()` — vop_interwoven/core/diagnostics.py
+  - `warn()` — vop_interwoven/core/diagnostics.py
+    - `_record()` — vop_interwoven/core/diagnostics.py
+      - (cycle)
+
+## Silhouette / family-region diagnostics flow (session update)
+
+pipeline.process_document_views
+  -> pipeline.export_view_raster (per view)
+     -> core.silhouette.get_element_silhouette(..., diag)
+        -> core.silhouette._symbolic_curves_silhouette(..., diag)
+           -> (optional / gated) core.silhouette._family_region_outlines_cached(..., diag)
+              -> (optional / gated) core.silhouette._collect_regions_recursive(..., diag)
+                 -> emits structured diag events:
+                    - DEBUG silhouette|family_region.collect|
+                    - DEBUG silhouette|family_region.recurse|
+                    - DEBUG silhouette|family_region.emit|
+
+Notes:
+- Masking Regions are represented as FilledRegion with IsMasking=True; extraction relies on FilledRegion.GetBoundaries().
+- Family-doc access uses EditFamily and may surface modal dialogs for malformed families; treat as interactive-only unless separately gated.
+
+---
+
+# Session delta notes (added 2026-01-08)
+
+This navigation artifact was updated to reflect changes discussed/applied during the "silhouette family masking region + diagnostics wiring" session:
+
+- `pipeline.py`: passes per-view `Diagnostics` (`diag`) into silhouette extraction entrypoint.
+- `core/silhouette.py`:
+  - signatures updated to accept optional `diag` and propagate it
+  - added family-document outline extraction helpers (FilledRegion + masking regions via `FilledRegion.IsMasking`)
+  - added nested-family recursion helpers with depth + budget guards
+  - added structured diagnostic events:
+    - `silhouette|family_region.collect`
+    - `silhouette|family_region.recurse`
+    - `silhouette|family_region.emit`
+
+Line numbers and callsite offsets remain approximate until the repo-wide extractor is re-run.

@@ -193,8 +193,11 @@ def filter_supported_views(views_input):
     supported_ids = []
     skipped_info = []
 
+    from Autodesk.Revit.DB import ElementId
+
     for view_id in view_ids:
-        view = doc.GetElement(view_id)
+        vid = ElementId(view_id) if isinstance(view_id, int) else view_id
+        view = doc.GetElement(vid)
         if view is None:
             continue
 

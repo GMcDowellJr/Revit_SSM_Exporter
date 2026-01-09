@@ -39,9 +39,105 @@ Usage in Dynamo IronPython (2.x - legacy):
 """
 
 import json
-from .config import Config
-from .pipeline import process_document_views
 
+try:
+    from .config import Config
+    from .pipeline import process_document_views
+except Exception:
+    # Dynamo sometimes imports modules without package context; fall back to absolute.
+    from vop_interwoven.config import Config
+    from vop_interwoven.pipeline import process_document_views
+
+import copy
+
+def _prune_view_raster_for_json(view_result, detail):
+    """Mutate one view_result dict in-place to reduce JSON size."""
+    if not isinstance(view_result, dict):
+        return
+
+    r = view_result.get("raster")
+    if not isinstance(r, dict):
+        return
+
+    d = (detail or "full").strip().lower()
+    if d not in ("summary", "medium", "full"):
+        d = "full"
+
+    if d == "full":
+        r["debug_detail"] = "full"
+        return
+
+    # Always keep these
+    keep_keys = {"width", "height", "cell_size_ft", "bounds_xy"}
+    pruned = {k: r.get(k) for k in keep_keys if k in r}
+    pruned["debug_detail"] = d
+
+    if d == "medium":
+        # Keep meta + light stats if present
+        for k in ("element_meta", "anno_meta", "depth_test_attempted", "depth_test_wins", "depth_test_rejects", "counts", "depth_test_stats"):
+            if k in r:
+                pruned[k] = r.get(k)
+
+        # If counts aren't present (they usually aren't in raster dict), we can rely on view_result["diagnostics"]
+        # so we don't compute anything here.
+
+    view_result["raster"] = pruned
+
+
+def _pipeline_result_for_json(pipeline_result, cfg):
+    """Return a JSON-safe COPY of pipeline_result with raster payload pruned per cfg.debug_json_detail.
+
+    IMPORTANT:
+      - Avoid copy.deepcopy(): Dynamo/Revit objects in diagnostics/meta can throw during deepcopy.
+      - This function must not mutate the in-memory pipeline_result (PNG/CSV need full raster payload).
+    """
+    # Resolve detail level
+    detail = "full"
+    try:
+        detail = getattr(cfg, "debug_json_detail", "full")
+    except Exception:
+        detail = "full"
+
+    d = (detail or "full").strip().lower()
+    if d not in ("summary", "medium", "full"):
+        d = "full"
+
+    # Shallow copy top-level dict (no deepcopy of .NET objects)
+    if not isinstance(pipeline_result, dict):
+        return {"success": False, "views": [], "errors": ["pipeline_result not dict"], "summary": {}}
+
+    pr = {}
+    for k, v in pipeline_result.items():
+        # We'll rebuild "views" below; everything else is shallow-copied
+        if k == "views":
+            continue
+        pr[k] = v
+
+    views = pipeline_result.get("views")
+    if isinstance(views, list):
+        pr_views = []
+        for view_result in views:
+            if not isinstance(view_result, dict):
+                pr_views.append(view_result)
+                continue
+
+            # Shallow copy per-view dict
+            vr = dict(view_result)
+
+            # Prune raster payload on the COPY only
+            try:
+                _prune_view_raster_for_json(vr, d)
+            except Exception:
+                # Never block export; keep whatever raster shape exists
+                pass
+
+            pr_views.append(vr)
+
+        pr["views"] = pr_views
+    else:
+        pr["views"] = views
+
+    return pr
 
 # ============================================================
 # REVIT CONTEXT HELPERS (CPython3-compatible)
@@ -221,7 +317,7 @@ def run_vop_pipeline(doc, view_ids, cfg=None):
         },
     }
 
-def run_vop_pipeline_with_png(doc, view_ids, cfg=None, output_dir=None, pixels_per_cell=4):
+def run_vop_pipeline_with_png(doc, view_ids, cfg=None, output_dir=None, pixels_per_cell=4, export_json=True):
     """Run VOP pipeline and export both JSON and PNG files.
 
     Args:
@@ -262,8 +358,12 @@ def run_vop_pipeline_with_png(doc, view_ids, cfg=None, output_dir=None, pixels_p
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    with open(json_path, 'w') as f:
-        json.dump(pipeline_result, f, indent=2)
+    if export_json:
+        json_payload = _pipeline_result_for_json(pipeline_result, cfg)
+        with open(json_path, 'w') as f:
+            json.dump(json_payload, f, indent=2, default=str)
+    else:
+        json_path = None
 
     # Export PNGs (with cut vs projection distinction)
     png_files = export_pipeline_results_to_pngs(
@@ -344,8 +444,9 @@ def run_vop_pipeline_with_csv(doc, view_ids, cfg=None, output_dir=None, pixels_p
         json_filename = "vop_export.json"
         json_path = os.path.join(output_dir, json_filename)
 
+        json_payload = _pipeline_result_for_json(pipeline_result, cfg)
         with open(json_path, 'w') as f:
-            json.dump(pipeline_result, f, indent=2)
+            json.dump(json_payload, f, indent=2, default=str)
 
         result['json_path'] = json_path
 
