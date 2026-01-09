@@ -81,6 +81,7 @@
         - `transform_to_view_uv()` — vop_interwoven/revit/view_basis.py
         - `collect_2d_annotations()` — vop_interwoven/revit/annotation.py
           - `classify_annotation()` — vop_interwoven/revit/annotation.py
+            - `isinstance(FilledRegion)` → force `"REGION"` (even when category is Detail Items)
             - `classify_keynote()` — vop_interwoven/revit/annotation.py
           - `classify_keynote()` — vop_interwoven/revit/annotation.py
           - `warn()` — vop_interwoven/core/diagnostics.py

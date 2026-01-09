@@ -17,41 +17,67 @@ def is_extent_driver_annotation(elem):
         - Tags (all tag types)
         - Dimensions
 
-    Non-drivers are crop-clipped annotations:
-        - FilledRegion (clipped by crop)
-        - DetailCurves (clipped by crop)
-        - DetailComponents (clipped by crop)
-
-    Args:
-        elem: Revit annotation element
-
-    Returns:
-        True if element is an extent driver (should expand grid bounds)
-
-    Commentary:
-        ✔ Matches SSM _is_extent_driver_2d logic
-        ✔ Uses category name matching for robustness
+    We avoid category-name substring matching (brittle/localized) and instead:
+        1) Prefer type checks when Autodesk classes are available
+        2) Fall back to BuiltInCategory id checks (stable)
     """
     try:
-        cat = elem.Category
-        if cat is None:
+        # 1) Strongest signal: actual runtime types (when Autodesk is available)
+        try:
+            from Autodesk.Revit.DB import TextNote, Dimension, IndependentTag
+            if isinstance(elem, (TextNote, Dimension, IndependentTag)):
+                return True
+        except Exception:
+            pass
+
+        cat = getattr(elem, "Category", None)
+        if cat is None or getattr(cat, "Id", None) is None:
             return False
 
-        name = cat.Name.lower() if cat.Name else ""
+        # 2) Stable fallback: BuiltInCategory ids
+        try:
+            from Autodesk.Revit.DB import BuiltInCategory
+            cat_id = int(cat.Id.IntegerValue)
 
-        # Text, tags, and dimensions can extend beyond crop
-        if "tag" in name:
-            return True
-        if "dimension" in name:
-            return True
-        if "text" in name:
-            return True
+            driver_cats = []
+
+            # Text
+            if hasattr(BuiltInCategory, "OST_TextNotes"):
+                driver_cats.append(int(BuiltInCategory.OST_TextNotes))
+
+            # Dimensions
+            if hasattr(BuiltInCategory, "OST_Dimensions"):
+                driver_cats.append(int(BuiltInCategory.OST_Dimensions))
+
+            # Tags (mirror the same tag category set used in collect_2d_annotations)
+            tag_cats = [
+                "OST_RoomTags",
+                "OST_SpaceTags",
+                "OST_AreaTags",
+                "OST_DoorTags",
+                "OST_WindowTags",
+                "OST_WallTags",
+                "OST_MEPSpaceTags",
+                "OST_GenericAnnotation",  # IndependentTag often lives here
+                "OST_KeynoteTags",        # keynotes can behave like tags/text
+            ]
+            for n in tag_cats:
+                if hasattr(BuiltInCategory, n):
+                    driver_cats.append(int(getattr(BuiltInCategory, n)))
+
+            return cat_id in set(driver_cats)
+        except Exception:
+            # Last-resort fallback (keep prior behavior, but only as a final fallback)
+            name = ""
+            try:
+                name = (cat.Name or "").lower()
+            except Exception:
+                name = ""
+            return ("tag" in name) or ("dimension" in name) or ("text" in name)
 
     except Exception as e:
         print(f"[WARN] revit.annotation:is_extent_driver_annotation: failed ({type(e).__name__}: {e})")
         return False
-
-    return False
 
 
 def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_ft, cfg=None, diag=None):
@@ -109,43 +135,99 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
             # leave ann_crop_active as-is (caller should have defaulted it)
             pass
 
-    # Compute allowed expansion envelope
-    allow_min_x = allow_min_y = allow_max_x = allow_max_y = None
+    # Compute printed inches → model feet conversion factors
+    scale = view.Scale if hasattr(view, 'Scale') else 96
 
-    if ann_crop_active:
-        # When annotation crop is ACTIVE: expand model crop by fixed margin
-        scale = view.Scale if hasattr(view, 'Scale') else 96
-        ann_margin_ft = (anno_crop_margin_in / 12.0) * float(scale)
+    # Final printed margin (applied AFTER union), per your intent
+    ann_margin_ft = (float(anno_crop_margin_in) / 12.0) * float(scale)
 
-        allow_min_x = base_bounds_xy.xmin - ann_margin_ft
-        allow_min_y = base_bounds_xy.ymin - ann_margin_ft
-        allow_max_x = base_bounds_xy.xmax + ann_margin_ft
-        allow_max_y = base_bounds_xy.ymax + ann_margin_ft
-    else:
-        # When annotation crop is NOT active: allow expansion up to hard cap
-        cap_ft = float(hard_cap_cells) * float(cell_size_ft)
+    # Expansion cap should be PRINTED INCHES, not cells.
+    # Prefer cfg.anno_expand_cap_in if present.
+    cap_in_printed = None
+    if cfg and hasattr(cfg, 'anno_expand_cap_in'):
+        try:
+            cap_in_printed = float(cfg.anno_expand_cap_in)
+        except Exception:
+            cap_in_printed = None
 
-        allow_min_x = base_bounds_xy.xmin - cap_ft
-        allow_min_y = base_bounds_xy.ymin - cap_ft
-        allow_max_x = base_bounds_xy.xmax + cap_ft
-        allow_max_y = base_bounds_xy.ymax + cap_ft
+    # Back-compat: treat existing cfg.anno_expand_cap_cells as printed inches
+    # (matches your stated intent that "4" meant 4")
+    if cap_in_printed is None:
+        try:
+            cap_in_printed = float(hard_cap_cells)
+        except Exception:
+            cap_in_printed = 0.0
 
-    # Collect all annotations
-    all_annotations = collect_2d_annotations(doc, view)
+    cap_ft = (cap_in_printed / 12.0) * float(scale)
+
+    # Allowed expansion envelope is a HARD SAFETY CLAMP:
+    # crop expanded by CAP ONLY (margin is applied after union)
+    allow_min_x = base_bounds_xy.xmin - cap_ft
+    allow_min_y = base_bounds_xy.ymin - cap_ft
+    allow_max_x = base_bounds_xy.xmax + cap_ft
+    allow_max_y = base_bounds_xy.ymax + cap_ft
+
+    # Collect all annotations (thread diag so we can see what was collected)
+    all_annotations = collect_2d_annotations(doc, view, diag=diag)
 
     # Filter to extent drivers only
     driver_annotations = [(elem, atype) for elem, atype in all_annotations
                           if is_extent_driver_annotation(elem)]
 
+    if diag is not None:
+        try:
+            diag.info(
+                phase="annotation",
+                callsite="compute_annotation_extents.summary",
+                message="Annotation extents driver filter summary",
+                view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                extra={
+                    "all_annotations": len(all_annotations),
+                    "driver_annotations": len(driver_annotations),
+                    "ann_crop_active": bool(ann_crop_active),
+                    "hard_cap_cells": hard_cap_cells,
+                    "anno_crop_margin_in": anno_crop_margin_in,
+                    "base_bounds_xy": (base_bounds_xy.xmin, base_bounds_xy.ymin, base_bounds_xy.xmax, base_bounds_xy.ymax),
+                    "allow_bounds_xy": (allow_min_x, allow_min_y, allow_max_x, allow_max_y),
+                },
+            )
+        except Exception:
+            pass
+
     if not driver_annotations:
-        # No driver annotations - return None (no expansion needed)
         return None
 
     # Compute bounding box of all driver annotations
     anno_min_x = anno_min_y = None
     anno_max_x = anno_max_y = None
 
+    sample_limit = 5
+    sample_count = 0
+
     for elem, anno_type in driver_annotations:
+        # Optional sample log (pre-bbox) for first few drivers
+        if diag is not None and sample_count < sample_limit:
+            try:
+                cat = getattr(elem, "Category", None)
+                cname = getattr(cat, "Name", None) if cat is not None else None
+                cid = None
+                if cat is not None:
+                    try:
+                        cid = int(cat.Id.IntegerValue)
+                    except Exception:
+                        cid = None
+                diag.info(
+                    phase="annotation",
+                    callsite="compute_annotation_extents.driver_sample.pre_bbox",
+                    message="Driver annotation sample (pre-bbox)",
+                    view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                    elem_id=getattr(getattr(elem, "Id", None), "IntegerValue", None),
+                    extra={"anno_type": anno_type, "cat_name": cname, "cat_id": cid},
+                )
+            except Exception:
+                pass
+            sample_count += 1
+
         try:
             # Get bounding box in view coordinates
             bbox = elem.get_BoundingBox(view)
@@ -153,12 +235,11 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
                 continue
 
             # For dimensions, also include curve endpoints and text position
-            from Autodesk.Revit.DB import Dimension
+            from Autodesk.Revit.DB import Dimension, XYZ
 
             pts_to_check = []
 
             if isinstance(elem, Dimension):
-                # Include dimension curve endpoints
                 try:
                     curve = elem.Curve
                     if curve is not None:
@@ -166,19 +247,13 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
                         pts_to_check.append(curve.GetEndPoint(1))
                 except Exception as e:
                     print(f"[WARN] revit.annotation:Dimension.Curve read failed (elem_id={getattr(elem,'Id',None)}) ({type(e).__name__}: {e})")
-                    pass
 
-                # Include text position
                 try:
                     text_pos = elem.TextPosition
                     if text_pos is not None:
                         pts_to_check.append(text_pos)
                 except Exception as e:
                     print(f"[WARN] revit.annotation:Dimension.TextPosition read failed (elem_id={getattr(elem,'Id',None)}) ({type(e).__name__}: {e})")
-                    pass
-
-            # Add bbox corners (respect BoundingBoxXYZ.Transform if present)
-            from Autodesk.Revit.DB import XYZ
 
             mn = bbox.Min
             mx = bbox.Max
@@ -196,7 +271,10 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
 
             TB = getattr(bbox, "Transform", None)
             if TB is not None:
-                pts_to_check.extend([TB.OfPoint(p) for p in corners_local])
+                try:
+                    pts_to_check.extend([TB.OfPoint(p) for p in corners_local])
+                except Exception:
+                    pts_to_check.extend(corners_local)
             else:
                 pts_to_check.extend(corners_local)
 
@@ -208,9 +286,8 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
                 x, y = view_basis.transform_to_view_uv((pt.X, pt.Y, pt.Z))
 
                 # Clip to allowed envelope (also in view-local UV)
-                if allow_min_x is not None:
-                    x = max(allow_min_x, min(allow_max_x, x))
-                    y = max(allow_min_y, min(allow_max_y, y))
+                x = max(allow_min_x, min(allow_max_x, x))
+                y = max(allow_min_y, min(allow_max_y, y))
 
                 # Update annotation extents
                 if anno_min_x is None:
@@ -222,24 +299,44 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
                     anno_max_x = max(anno_max_x, x)
                     anno_max_y = max(anno_max_y, y)
 
+                # Diagnostic: flag points that exceed base crop
+                if diag is not None:
+                    try:
+                        exceeds = (
+                            (x < base_bounds_xy.xmin) or (y < base_bounds_xy.ymin) or
+                            (x > base_bounds_xy.xmax) or (y > base_bounds_xy.ymax)
+                        )
+                        if exceeds:
+                            diag.info(
+                                phase="annotation",
+                                callsite="compute_annotation_extents.exceeds_crop",
+                                message="Driver point exceeds base crop (post-clamp-to-allow-envelope)",
+                                view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                                elem_id=getattr(getattr(elem, "Id", None), "IntegerValue", None),
+                                extra={
+                                    "anno_type": anno_type,
+                                    "pt_xy": (x, y),
+                                    "base_bounds_xy": (base_bounds_xy.xmin, base_bounds_xy.ymin, base_bounds_xy.xmax, base_bounds_xy.ymax),
+                                },
+                            )
+                    except Exception:
+                        pass
+
         except Exception as e:
-            # Recoverable per-annotation failure; must be visible and counted
             if diag is not None:
-                diag.warn(
-                    phase="annotation",
-                    callsite="compute_annotation_extents",
-                    message="Failed to process annotation for extents; skipping element",
-                    view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
-                    elem_id=getattr(getattr(elem, "Id", None), "IntegerValue", None),
-                    extra={"exc_type": type(e).__name__, "exc": str(e)},
-                )
-            else:
-                print(
-                    f"[WARN] revit.annotation:anno extents update failed "
-                    f"(elem_id={getattr(elem,'Id',None)}) "
-                    f"({type(e).__name__}: {e})"
-                )
+                try:
+                    diag.warn(
+                        phase="annotation",
+                        callsite="compute_annotation_extents",
+                        message="Failed to process annotation for extents; skipping element",
+                        view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                        elem_id=getattr(getattr(elem, "Id", None), "IntegerValue", None),
+                        extra={"exc_type": type(e).__name__, "exc": str(e)},
+                    )
+                except Exception:
+                    pass
             continue
+
 
     if anno_min_x is None:
         # No valid annotation extents found
@@ -251,10 +348,15 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
     final_max_x = max(base_bounds_xy.xmax, anno_max_x)
     final_max_y = max(base_bounds_xy.ymax, anno_max_y)
 
-    return Bounds2D(final_min_x, final_min_y, final_max_x, final_max_y)
+    # Apply printed margin AFTER union (final outward pad)
+    return Bounds2D(
+        final_min_x - ann_margin_ft,
+        final_min_y - ann_margin_ft,
+        final_max_x + ann_margin_ft,
+        final_max_y + ann_margin_ft
+    )
 
-
-def collect_2d_annotations(doc, view):
+def collect_2d_annotations(doc, view, diag=None):
     """Collect USER-ADDED 2D annotation elements by whitelist.
 
     IMPORTANT: This collects ONLY user annotations for anno_key layer.
@@ -304,8 +406,31 @@ def collect_2d_annotations(doc, view):
 
     annotations = []
 
+    # Diagnostics accumulators
+    type_counts = {}
+    cat_counts = {}
+
+    def _diag_info(callsite, message, extra=None):
+        if diag is not None:
+            try:
+                diag.info(
+                    phase="annotation",
+                    callsite=callsite,
+                    message=message,
+                    view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                    extra=extra or {},
+                )
+                return
+            except Exception:
+                pass
+        # Fallback: print
+        try:
+            print("[INFO] annotation.{0}: {1} {2}".format(callsite, message, extra or {}))
+        except Exception:
+            pass
+
     # Helper to safely collect category
-    def collect_category(built_in_cat, anno_type_override=None):
+    def collect_category(built_in_cat, anno_type_override=None, label=None):
         """Collect elements from a category and classify them."""
         try:
             collector = FilteredElementCollector(doc, view.Id)
@@ -313,8 +438,6 @@ def collect_2d_annotations(doc, view):
 
             for elem in collector:
                 # CRITICAL: Only collect view-specific 2D elements
-                # This filters out model elements and ensures we get true annotations
-                # including symbolic lines from families and nested family components
                 try:
                     if not bool(getattr(elem, 'ViewSpecific', False)):
                         continue
@@ -325,38 +448,68 @@ def collect_2d_annotations(doc, view):
 
                 # Get bounding box to ensure element is visible in view
                 bbox = elem.get_BoundingBox(view)
-                if bbox is not None:
-                    # Classify the element
+                if bbox is None:
+                    continue
+
+                # Force FilledRegion into REGION bucket even if its UI/category is "Detail Items"
+                try:
+                    from Autodesk.Revit.DB import FilledRegion
+                    if isinstance(elem, FilledRegion):
+                        anno_type = "REGION"
+                    else:
+                        anno_type = None
+                except Exception:
+                    anno_type = None
+
+                # Classify the element
+                if anno_type is None:
                     if anno_type_override:
                         anno_type = anno_type_override
                     else:
                         anno_type = classify_annotation(elem)
 
-                    annotations.append((elem, anno_type))
+                annotations.append((elem, anno_type))
+
+                # Diag counts
+                try:
+                    type_counts[anno_type] = type_counts.get(anno_type, 0) + 1
+                except Exception:
+                    pass
+                try:
+                    cat = getattr(elem, "Category", None)
+                    cname = getattr(cat, "Name", None) if cat is not None else None
+                    key = label or cname or str(built_in_cat)
+                    cat_counts[key] = cat_counts.get(key, 0) + 1
+                except Exception:
+                    pass
+
         except Exception as e:
-            # Recoverable, but must be visible and counted
             if diag is not None:
-                diag.warn(
-                    phase="annotation",
-                    callsite="collect_2d_annotations.collect_category",
-                    message="Annotation category collection failed; skipping category",
-                    view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
-                    extra={"category": str(built_in_cat), "exc_type": type(e).__name__, "exc": str(e)},
-                )
-            else:
-                print(
-                    f"[WARN] revit.annotation:collector failed "
-                    f"(view_id={getattr(view,'Id',None)}, cat={built_in_cat}) "
-                    f"({type(e).__name__}: {e})"
-                )
+                try:
+                    diag.warn(
+                        phase="annotation",
+                        callsite="collect_2d_annotations.collect_category",
+                        message="Annotation category collection failed; skipping category",
+                        view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                        extra={"category": str(built_in_cat), "exc_type": type(e).__name__, "exc": str(e)},
+                    )
+                    return
+                except Exception:
+                    pass
+
+            print(
+                f"[WARN] revit.annotation:collector failed "
+                f"(view_id={getattr(view,'Id',None)}, cat={built_in_cat}) "
+                f"({type(e).__name__}: {e})"
+            )
 
     # TEXT: TextNote
     if hasattr(BuiltInCategory, 'OST_TextNotes'):
-        collect_category(BuiltInCategory.OST_TextNotes, "TEXT")
+        collect_category(BuiltInCategory.OST_TextNotes, "TEXT", label="OST_TextNotes")
 
     # DIM: Dimensions
     if hasattr(BuiltInCategory, 'OST_Dimensions'):
-        collect_category(BuiltInCategory.OST_Dimensions, "DIM")
+        collect_category(BuiltInCategory.OST_Dimensions, "DIM", label="OST_Dimensions")
 
     # TAG: Tags (multiple tag categories)
     tag_categories = [
@@ -371,23 +524,21 @@ def collect_2d_annotations(doc, view):
     ]
     for cat_name in tag_categories:
         if hasattr(BuiltInCategory, cat_name):
-            collect_category(getattr(BuiltInCategory, cat_name), "TAG")
+            collect_category(getattr(BuiltInCategory, cat_name), "TAG", label=cat_name)
 
     # REGION: FilledRegion
     if hasattr(BuiltInCategory, 'OST_FilledRegion'):
-        collect_category(BuiltInCategory.OST_FilledRegion, "REGION")
+        collect_category(BuiltInCategory.OST_FilledRegion, "REGION", label="OST_FilledRegion")
 
     # LINES: Detail lines (ViewSpecific=True from OST_Lines)
-    # NOTE: Model lines (ViewSpecific=False) go to MODEL occupancy
     if hasattr(BuiltInCategory, 'OST_Lines'):
-        collect_category(BuiltInCategory.OST_Lines, "LINES")
+        collect_category(BuiltInCategory.OST_Lines, "LINES", label="OST_Lines")
 
     # DETAIL: Detail components (user-placed detail items)
     if hasattr(BuiltInCategory, 'OST_DetailComponents'):
-        collect_category(BuiltInCategory.OST_DetailComponents, "DETAIL")
+        collect_category(BuiltInCategory.OST_DetailComponents, "DETAIL", label="OST_DetailComponents")
 
     # KEYNOTES: Handle keynotes specially
-    # Keynotes can be Material Element Keynotes (TAG) or User Keynotes (TEXT)
     if hasattr(BuiltInCategory, 'OST_KeynoteTags'):
         try:
             collector = FilteredElementCollector(doc, view.Id)
@@ -395,25 +546,49 @@ def collect_2d_annotations(doc, view):
 
             for elem in collector:
                 bbox = elem.get_BoundingBox(view)
-                if bbox is not None:
-                    # Classify keynote as TAG or TEXT based on type
-                    anno_type = classify_keynote(elem)
-                    annotations.append((elem, anno_type))
+                if bbox is None:
+                    continue
+
+                anno_type = classify_keynote(elem)
+                annotations.append((elem, anno_type))
+
+                try:
+                    type_counts[anno_type] = type_counts.get(anno_type, 0) + 1
+                except Exception:
+                    pass
+                try:
+                    cat_counts["OST_KeynoteTags"] = cat_counts.get("OST_KeynoteTags", 0) + 1
+                except Exception:
+                    pass
+
         except Exception as e:
             if diag is not None:
-                diag.warn(
-                    phase="annotation",
-                    callsite="collect_2d_annotations.keynotes",
-                    message="Keynote annotation collection failed; skipping",
-                    view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
-                    extra={"exc_type": type(e).__name__, "exc": str(e)},
-                )
+                try:
+                    diag.warn(
+                        phase="annotation",
+                        callsite="collect_2d_annotations.keynotes",
+                        message="Keynote annotation collection failed; skipping",
+                        view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                        extra={"exc_type": type(e).__name__, "exc": str(e)},
+                    )
+                except Exception:
+                    pass
             else:
                 print(
                     f"[WARN] revit.annotation:keynote collector failed "
                     f"(view_id={getattr(view,'Id',None)}) "
                     f"({type(e).__name__}: {e})"
                 )
+
+    _diag_info(
+        "collect_2d_annotations.summary",
+        "Collected 2D annotations (post-ViewSpecific, post-bbox)",
+        extra={
+            "total": len(annotations),
+            "type_counts": dict(type_counts),
+            "cat_counts": dict(cat_counts),
+        },
+    )
 
     return annotations
 
@@ -435,6 +610,13 @@ def classify_annotation(elem):
         ✔ Matches SSM exporter classification logic
     """
     from Autodesk.Revit.DB import BuiltInCategory
+
+    try:
+        from Autodesk.Revit.DB import FilledRegion
+        if isinstance(elem, FilledRegion):
+            return "REGION"
+    except Exception:
+        pass
 
     try:
         category = elem.Category
@@ -583,7 +765,26 @@ def rasterize_annotations(doc, view, raster, cfg, diag=None):
         view_id = None
 
     # Collect all annotations
-    annotations = collect_2d_annotations(doc, view)
+    annotations = collect_2d_annotations(doc, view, diag=diag)
+
+    if diag is not None:
+        try:
+            region_samples = []
+            region_count = 0
+            for (e, t) in annotations:
+                if str(t).upper() == "REGION":
+                    region_count += 1
+                    if len(region_samples) < 5:
+                        region_samples.append(getattr(getattr(e, "Id", None), "IntegerValue", None))
+            diag.info(
+                phase="annotation",
+                callsite="rasterize_annotations.pre_summary",
+                message="Rasterize annotations pre-summary",
+                view_id=view_id,
+                extra={"total": len(annotations), "region_count": region_count, "region_elem_ids_sample": region_samples},
+            )
+        except Exception:
+            pass
 
     if not annotations:
         return
@@ -616,25 +817,149 @@ def rasterize_annotations(doc, view, raster, cfg, diag=None):
                 continue
 
             anno_idx = len(raster.anno_meta)
+            
+            # Capture category id for downstream export remapping (e.g., FilledRegion -> REGION)
+            cat_id = None
+            try:
+                cat = getattr(elem, "Category", None)
+                if cat is not None and getattr(cat, "Id", None) is not None:
+                    cat_id = int(cat.Id.IntegerValue)
+            except Exception:
+                cat_id = None
 
-            raster.anno_meta.append(
-                {
-                    "type": anno_type,
-                    "element_id": elem_id,
-                    "bbox_min": (bbox.Min.X, bbox.Min.Y, bbox.Min.Z),
-                    "bbox_max": (bbox.Max.X, bbox.Max.Y, bbox.Max.Z),
-                }
-            )
+            raster.anno_meta.append({
+                "type": anno_type,
+                "element_id": elem_id,
+                "cat_id": cat_id,
+                "bbox_min": (bbox.Min.X, bbox.Min.Y, bbox.Min.Z),
+                "bbox_max": (bbox.Max.X, bbox.Max.Y, bbox.Max.Z),
+            })
 
-            x0 = max(0, cell_rect.x0)
-            y0 = max(0, cell_rect.y0)
-            x1 = min(raster.W, cell_rect.x1)
-            y1 = min(raster.H, cell_rect.y1)
+            if diag is not None:
+                try:
+                    cat = getattr(elem, "Category", None)
+                    cname = getattr(cat, "Name", None) if cat is not None else None
+                    cid = None
+                    if cat is not None:
+                        try:
+                            cid = int(cat.Id.IntegerValue)
+                        except Exception:
+                            cid = None
 
-            for cy in range(y0, y1):
-                for cx in range(x0, x1):
-                    cell_idx = cy * raster.W + cx
-                    raster.anno_key[cell_idx] = anno_idx
+                    stored_type = raster.anno_meta[anno_idx].get("type") if anno_idx < len(raster.anno_meta) else None
+                    if str(anno_type).upper() == "REGION" or (cname and "filled" in str(cname).lower()):
+                        diag.info(
+                            phase="annotation",
+                            callsite="rasterize_annotations.region_stamp",
+                            message="Stamped REGION-ish annotation into raster.anno_meta",
+                            view_id=view_id,
+                            elem_id=elem_id,
+                            extra={
+                                "anno_type_in": anno_type,
+                                "anno_type_stored": stored_type,
+                                "cat_name": cname,
+                                "cat_id": cid,
+                                "anno_idx": anno_idx,
+                            },
+                        )
+                except Exception:
+                    pass
+
+            # Stamping strategy:
+            # - DIM: stamp dimension curve as a thin line (no filled bbox)
+            # - TEXT/TAG/LINES: stamp bbox outline (lightweight)
+            # - DETAIL/REGION (and others): fill bbox (as before)
+
+            mode = str(anno_type or "").upper()
+
+            # DIM: draw only the dimension line (no filled bbox)
+            if mode == "DIM":
+                stamped = False
+                try:
+                    from Autodesk.Revit.DB import Dimension
+                    if isinstance(elem, Dimension):
+                        curve = getattr(elem, "Curve", None)
+                        if curve is not None:
+                            p0 = curve.GetEndPoint(0)
+                            p1 = curve.GetEndPoint(1)
+
+                            u0, v0 = vb.transform_to_view_uv((p0.X, p0.Y, p0.Z))
+                            u1, v1 = vb.transform_to_view_uv((p1.X, p1.Y, p1.Z))
+
+                            cx0, cy0 = _uv_to_cell(u0, v0, raster)
+                            cx1, cy1 = _uv_to_cell(u1, v1, raster)
+
+                            _stamp_line_cells(raster, cx0, cy0, cx1, cy1, anno_idx)
+                            stamped = True
+
+                            if diag is not None:
+                                try:
+                                    diag.info(
+                                        phase="annotation",
+                                        callsite="rasterize_annotations.dim_line_stamp",
+                                        message="Stamped DIM via Dimension.Curve endpoints",
+                                        view_id=view_id,
+                                        elem_id=elem_id,
+                                        extra={
+                                            "p0": (p0.X, p0.Y, p0.Z),
+                                            "p1": (p1.X, p1.Y, p1.Z),
+                                            "cell0": (cx0, cy0),
+                                            "cell1": (cx1, cy1),
+                                        },
+                                    )
+                                except Exception:
+                                    pass
+
+                except Exception:
+                    stamped = False
+
+                if not stamped:
+
+                    if diag is not None:
+                        try:
+                            diag.info(
+                                phase="annotation",
+                                callsite="rasterize_annotations.dim_fallback_outline",
+                                message="DIM curve unavailable; used bbox outline fallback",
+                                view_id=view_id,
+                                elem_id=elem_id,
+                                extra={
+                                    "cell_rect": (cell_rect.x0, cell_rect.y0, cell_rect.x1, cell_rect.y1),
+                                },
+                            )
+                        except Exception:
+                            pass
+
+                    # Fallback: outline bbox (still not filled)
+                    _stamp_rect_outline(raster, cell_rect, anno_idx)
+
+            # TEXT: keep as filled (per your request)
+            elif mode == "TEXT":
+                x0 = max(0, cell_rect.x0)
+                y0 = max(0, cell_rect.y0)
+                x1 = min(raster.W, cell_rect.x1)
+                y1 = min(raster.H, cell_rect.y1)
+
+                for cy in range(y0, y1):
+                    row = cy * raster.W
+                    for cx in range(x0, x1):
+                        raster.anno_key[row + cx] = anno_idx
+
+            # TAG/LINES/KEYNOTE: recommend outline by default (cheap + avoids big fills)
+            elif mode in ("TAG", "LINES", "KEYNOTE"):
+                _stamp_rect_outline(raster, cell_rect, anno_idx)
+
+            # DETAIL/REGION: keep legacy fill unless you want otherwise
+            else:
+                x0 = max(0, cell_rect.x0)
+                y0 = max(0, cell_rect.y0)
+                x1 = min(raster.W, cell_rect.x1)
+                y1 = min(raster.H, cell_rect.y1)
+
+                for cy in range(y0, y1):
+                    row = cy * raster.W
+                    for cx in range(x0, x1):
+                        raster.anno_key[row + cx] = anno_idx
 
         except Exception as e:
             fail_count += 1
@@ -658,7 +983,99 @@ def rasterize_annotations(doc, view, raster, cfg, diag=None):
             view_id=view_id,
             extra={"fail_count": fail_count, "fail_limit": fail_limit},
         )
+    if diag is not None:
+        try:
+            anno_key = getattr(raster, "anno_key", []) or []
+            anno_meta = getattr(raster, "anno_meta", []) or []
+            anno_over_model = getattr(raster, "anno_over_model", []) or []
 
+            n_anno = sum(1 for k in anno_key if k is not None and k != -1)
+            n_over = sum(1 for b in anno_over_model if bool(b))
+
+            # Distribution by stored anno_meta.type (counts cells, not elements)
+            tcounts = {}
+            for idx in anno_key:
+                if idx is None or idx < 0:
+                    continue
+                if idx < len(anno_meta):
+                    t = (anno_meta[idx].get("type", "OTHER") or "OTHER").upper()
+                else:
+                    t = "OTHER"
+                tcounts[t] = tcounts.get(t, 0) + 1
+
+            diag.info(
+                phase="annotation",
+                callsite="rasterize_annotations.post_summary",
+                message="Rasterize annotations post-summary",
+                view_id=view_id,
+                extra={
+                    "anno_cells": int(n_anno),
+                    "anno_over_model_cells": int(n_over),
+                    "anno_cell_type_counts": dict(tcounts),
+                    "anno_meta_len": int(len(anno_meta)),
+                    "W": int(getattr(raster, "W", 0)),
+                    "H": int(getattr(raster, "H", 0)),
+                },
+            )
+        except Exception:
+            pass
+            
+def _uv_to_cell(x, y, raster):
+    """Convert view-local UV (feet) to integer cell coordinates."""
+    b = raster.bounds_xy
+    cs = raster.cell_size_ft
+    cx = int((x - b.xmin) / cs)
+    cy = int((y - b.ymin) / cs)
+    return cx, cy
+
+
+def _stamp_cell(raster, cx, cy, anno_idx):
+    """Set a single annotation cell if within bounds."""
+    if cx < 0 or cy < 0 or cx >= raster.W or cy >= raster.H:
+        return
+    raster.anno_key[cy * raster.W + cx] = anno_idx
+
+
+def _stamp_rect_outline(raster, cell_rect, anno_idx):
+    """Stamp only the perimeter of a rectangle in cell coordinates."""
+    x0 = max(0, cell_rect.x0)
+    y0 = max(0, cell_rect.y0)
+    x1 = min(raster.W, cell_rect.x1)
+    y1 = min(raster.H, cell_rect.y1)
+    if x1 <= x0 or y1 <= y0:
+        return
+
+    # top/bottom
+    for cx in range(x0, x1):
+        _stamp_cell(raster, cx, y0, anno_idx)
+        _stamp_cell(raster, cx, y1 - 1, anno_idx)
+
+    # left/right
+    for cy in range(y0, y1):
+        _stamp_cell(raster, x0, cy, anno_idx)
+        _stamp_cell(raster, x1 - 1, cy, anno_idx)
+
+
+def _stamp_line_cells(raster, x0, y0, x1, y1, anno_idx):
+    """Stamp a line in cell space using Bresenham (integer coords)."""
+    dx = abs(x1 - x0)
+    dy = -abs(y1 - y0)
+    sx = 1 if x0 < x1 else -1
+    sy = 1 if y0 < y1 else -1
+    err = dx + dy
+    cx, cy = x0, y0
+
+    while True:
+        _stamp_cell(raster, cx, cy, anno_idx)
+        if cx == x1 and cy == y1:
+            break
+        e2 = 2 * err
+        if e2 >= dy:
+            err += dy
+            cx += sx
+        if e2 <= dx:
+            err += dx
+            cy += sy
 
 def _project_element_bbox_to_cell_rect_for_anno(elem_or_bbox, view_basis, raster):
     """Project element bounding box to cell rectangle (annotation-specific).
@@ -700,11 +1117,29 @@ def _project_element_bbox_to_cell_rect_for_anno(elem_or_bbox, view_basis, raster
         # Get view bounds
         bounds = raster.bounds_xy
 
-        # Project min/max to view space
-        min_x_view = min_pt.X
-        min_y_view = min_pt.Y
-        max_x_view = max_pt.X
-        max_y_view = max_pt.Y
+        # Project bbox corners to view-local UV using view_basis
+        pts = [
+            (min_pt.X, min_pt.Y, min_pt.Z),
+            (max_pt.X, min_pt.Y, min_pt.Z),
+            (min_pt.X, max_pt.Y, min_pt.Z),
+            (max_pt.X, max_pt.Y, min_pt.Z),
+            (min_pt.X, min_pt.Y, max_pt.Z),
+            (max_pt.X, min_pt.Y, max_pt.Z),
+            (min_pt.X, max_pt.Y, max_pt.Z),
+            (max_pt.X, max_pt.Y, max_pt.Z),
+        ]
+
+        us = []
+        vs = []
+        for p in pts:
+            u, v = view_basis.transform_to_view_uv(p)
+            us.append(u)
+            vs.append(v)
+
+        min_x_view = min(us)
+        max_x_view = max(us)
+        min_y_view = min(vs)
+        max_y_view = max(vs)
 
         # Convert to cell coordinates relative to view bounds
         x0_cell = int((min_x_view - bounds.xmin) / cell_size)

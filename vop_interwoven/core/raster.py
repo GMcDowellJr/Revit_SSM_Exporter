@@ -570,6 +570,19 @@ class ViewRaster:
 
             self.anno_over_model[i] = has_anno and has_model
 
+        # DIAG: model vs anno occupancy counts (helps catch "frame rectangles")
+        try:
+            n_model_occ = sum(1 for b in self.model_mask if bool(b))
+            n_model_edge = sum(1 for k in self.model_edge_key if k != -1)
+            n_model_proxy = sum(1 for k in self.model_proxy_key if k != -1)
+            n_anno = sum(1 for k in self.anno_key if k != -1)
+            n_overlap = sum(1 for b in self.anno_over_model if b)
+            print("[diag][raster] model_occ={0} model_edge={1} model_proxy={2} anno={3} overlap={4} W={5} H={6}".format(
+                n_model_occ, n_model_edge, n_model_proxy, n_anno, n_overlap, self.W, self.H
+            ))
+        except Exception:
+            pass
+
     def stamp_model_edge_idx(self, idx, key_index, depth=0.0):
         """Stamp a model ink edge cell (edge-only occupancy), with depth visibility check."""
         if idx is None or not (0 <= idx < len(self.model_edge_key)):

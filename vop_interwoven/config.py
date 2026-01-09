@@ -64,10 +64,11 @@ class Config:
         thin_max=2,
         anno_crop_margin_in=None,
         anno_expand_cap_cells=None,
+        anno_expand_cap_in=None,
         cell_size_paper_in=0.125,
         max_sheet_width_in=48.0,
         max_sheet_height_in=36.0,
-        bounds_buffer_in=0.5,
+        bounds_buffer_in=0.0,
         include_linked_rvt=True,
         include_dwg_imports=True,
         # Debug and diagnostics
@@ -186,6 +187,12 @@ class Config:
         else:
             self.anno_crop_margin_in = float(anno_crop_margin_in)
 
+        # Explicit printed-inches cap (preferred over anno_expand_cap_cells when present)
+        if anno_expand_cap_in is None:
+            self.anno_expand_cap_in = None
+        else:
+            self.anno_expand_cap_in = float(anno_expand_cap_in)
+
         # Calculate anno_expand_cap_cells from bounds_buffer if not specified
         # Use bounds_buffer_in / cell_size_paper_in to get cells equivalent
         if anno_expand_cap_cells is None:
@@ -194,6 +201,9 @@ class Config:
             self.anno_expand_cap_cells = int(anno_expand_cap_cells)
 
         # Validate
+        if self.anno_expand_cap_in is not None and self.anno_expand_cap_in < 0:
+            raise ValueError("anno_expand_cap_in must be non-negative or None")
+
         if self.tile_size <= 0:
             raise ValueError("tile_size must be positive")
         if self.proxy_mask_mode not in ("edges", "minmask"):
