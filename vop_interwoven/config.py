@@ -98,6 +98,10 @@ class Config:
         # PR12: Geometry caching (bounded LRU)
         geometry_cache_max_items=2048,
         
+        # Perf: per-view timings (coarse always; optional sub-step)
+        perf_collect_timings=True,
+        perf_subtimings=True,
+
         # ────────────────────────────────────────────────────────────────────
         # Persistent view-level cache (disk-backed)
         #
@@ -156,6 +160,10 @@ class Config:
 
         # PR12: geometry cache
         self.geometry_cache_max_items = int(geometry_cache_max_items) if geometry_cache_max_items is not None else 0
+
+        # Perf: timings
+        self.perf_collect_timings = bool(perf_collect_timings)
+        self.perf_subtimings = bool(perf_subtimings)
 
         # Debug and diagnostics
         self.debug_dump_occlusion = bool(debug_dump_occlusion)
@@ -405,6 +413,10 @@ class Config:
             "extents_scan_time_budget_s": self.extents_scan_time_budget_s,
             # PR12: geometry cache
             "geometry_cache_max_items": self.geometry_cache_max_items,
+            
+            "perf_collect_timings": self.perf_collect_timings,
+            "perf_subtimings": self.perf_subtimings,
+            
             "view_cache_enabled": self.view_cache_enabled,
             "view_cache_dir": self.view_cache_dir,
             "view_cache_require_doc_unmodified": self.view_cache_require_doc_unmodified,
@@ -437,6 +449,10 @@ class Config:
             extents_scan_time_budget_s=d.get("extents_scan_time_budget_s", 0.50),
             # PR12
             geometry_cache_max_items=d.get("geometry_cache_max_items", 2048),
+
+            perf_collect_timings=d.get("perf_collect_timings", True),
+            perf_subtimings=d.get("perf_subtimings", False),
+                        
             view_cache_enabled=d.get("view_cache_enabled", True),
             view_cache_dir=d.get("view_cache_dir", None),
             view_cache_require_doc_unmodified=d.get("view_cache_require_doc_unmodified", True),

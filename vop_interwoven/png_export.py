@@ -5,7 +5,7 @@ Generates visual representations of raster data with color-coded cells.
 """
 
 import os
-
+import time
 
 def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_projection=False, diag=None):
     """Export VOP raster to PNG image with color-coded occupancy.
@@ -335,6 +335,7 @@ def export_pipeline_results_to_pngs(pipeline_result, output_dir, pixels_per_cell
             filename = f"{safe_name}_{view_id}.png"
             output_path = os.path.join(output_dir, filename)
 
+            t0 = time.perf_counter()
             png_path = export_raster_to_png(
                 view_data,
                 output_path,
@@ -342,6 +343,15 @@ def export_pipeline_results_to_pngs(pipeline_result, output_dir, pixels_per_cell
                 cut_vs_projection,
                 diag=diag,
             )
+            t1 = time.perf_counter()
+
+            # Attach per-view PNG cost (encode+write) to the view result for perf CSV
+            try:
+                timings = view_data.setdefault("timings", {})
+                timings["png_ms"] = (t1 - t0) * 1000.0
+            except Exception:
+                pass
+
 
             if png_path:
                 saved_files.append(png_path)

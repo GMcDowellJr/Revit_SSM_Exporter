@@ -227,7 +227,7 @@ def compute_annotation_type_metrics(raster):
     return {f"AnnoCells_{k}": v for k, v in counts.items()}
 
 
-def extract_view_metadata(view, doc):
+def extract_view_metadata(view, doc, diag=None):
     """Extract view metadata for CSV export.
 
     Args:
@@ -469,7 +469,7 @@ def build_core_csv_row(view, doc, metrics, config, run_info, view_metadata=None)
     return row
 
 
-def build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metadata=None):
+def build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metadata=None, diag=None):
     """Build row for VOP extended CSV.
 
     Args:
@@ -723,13 +723,13 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
         view_metadata = {}
         if view is not None:
             try:
-                view_metadata = extract_view_metadata(view, doc)
+                view_metadata = extract_view_metadata(view, doc, diag=diag)
             except Exception:
                 view_metadata = {}
 
         if view is not None:
             core_rows.append(build_core_csv_row(view, doc, metrics, config, run_info, view_metadata=view_metadata))
-        vop_rows.append(build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metadata=view_metadata))
+        vop_rows.append(build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metadata=view_metadata, diag=diag))
 
     # Simple logger stub (export/csv expects logger-like object)
     class SimpleLogger:

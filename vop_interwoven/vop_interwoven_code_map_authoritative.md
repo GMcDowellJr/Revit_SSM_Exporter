@@ -4,7 +4,7 @@
 
 **Imports**
 
-- from config import Config
+- from .config import Config
 
 _No top-level defs._
 
@@ -18,6 +18,7 @@ _No top-level defs._
 
 - class `Config` (L11) — Configuration for VOP interwoven pipeline.
   - method `__init__()` (L56) — Initialize VOP configuration.
+    - persistent view-cache controls: `view_cache_enabled`, `view_cache_dir`, `view_cache_require_doc_unmodified`
   - method `compute_adaptive_tile_size()` (L209) — Compute optimal tile size based on grid dimensions.
   - method `max_grid_cells_width()` (L259) — Maximum grid width in cells based on max sheet width and cell size.
   - method `max_grid_cells_height()` (L268) — Maximum grid height in cells based on max sheet height and cell size.
@@ -196,7 +197,8 @@ _No top-level defs._
   - method `rasterize_silhouette_loops()` (L632) — Rasterize element silhouette loops into model layers with depth testing.
   - method `_scanline_fill()` (L698) — Fill polygon interior using scanline algorithm with depth testing.
   - method `dump_occlusion_debug()` (L762) — Dump w_occ and occupancy layers for debugging.
-  - method `to_dict()` (L867) — Export raster to dictionary for JSON serialization.
+  - method `to_dict()` (L900) — Export raster to dictionary for JSON serialization.
+  - method `to_debug_dict()` (L938) — Export pruned raster payload for debug JSON (summary/medium/full).
 - function `_clip_poly_to_rect_uv()` (L903) — Clip a polygon (list[(u,v)]) to an axis-aligned rect in UV using Sutherland–Hodgman.
 - function `_bresenham_line()` (L967) — Generate cell coordinates along a line using Bresenham's algorithm.
 
@@ -272,56 +274,58 @@ _No top-level defs._
 
 **Imports**
 
-- import: json
-- from config import Config
-- from pipeline import process_document_views
+- import: json, copy
+- from .config import Config
+- from .pipeline import process_document_views
 
 **Top-level definitions**
 
-- function `get_current_document()` (L51) — Get current Revit document (works in both IronPython and CPython3).
-- function `get_current_view()` (L87) — Get current active view (works in both IronPython and CPython3).
-- function `_normalize_view_ids()` (L123) — Normalize Dynamo/Revit view inputs into a list of Revit ElementIds/ints.
-- function `run_vop_pipeline()` (L176) — Run VOP interwoven pipeline on specified views.
-- function `run_vop_pipeline_with_png()` (L224) — Run VOP pipeline and export both JSON and PNG files.
-- function `run_vop_pipeline_with_csv()` (L283) — Run VOP pipeline and export JSON + PNG + CSV files.
-- function `run_vop_pipeline_json()` (L372) — Run VOP pipeline and export results to JSON file.
-- function `get_test_config_tiny()` (L406) — Get config optimized for testing with TINY elements (doors, windows).
-- function `get_test_config_linear()` (L422) — Get config optimized for testing with LINEAR elements (walls).
-- function `get_test_config_areal_heavy()` (L438) — Get config optimized for testing with AREAL elements (floors, roofs).
-- function `quick_test_current_view()` (L455) — Quick test on current active view (CPython3-compatible).
+- function `_prune_view_raster_for_json()` (L53) — Prune per-view raster payload for debug JSON (summary/medium/full).
+- function `_pipeline_result_for_json()` (L87) — Build JSON-safe pipeline_result copy with pruned raster payload (no deepcopy).
+- function `get_current_document()` (L147) — Get current Revit document (works in both IronPython and CPython3).
+- function `get_current_view()` (L183) — Get current active view (works in both IronPython and CPython3).
+- function `_normalize_view_ids()` (L219) — Normalize Dynamo/Revit view inputs into a list of Revit ElementIds/ints.
+- function `run_vop_pipeline()` (L272) — Run VOP interwoven pipeline on specified views.
+- function `run_vop_pipeline_with_png()` (L320) — Run pipeline + export PNGs (also sets default persistent view-cache dir under output_dir when unset). — Run VOP pipeline and export JSON + PNG files (JSON is pruned via helpers).
+- function `run_vop_pipeline_with_csv()` (L383) — Run pipeline + export CSV (also sets default persistent view-cache dir under output_dir when unset). — Run VOP pipeline and export JSON + PNG + CSV files (JSON is pruned via helpers).
+- function `run_vop_pipeline_json()` (L473) — Run VOP pipeline and export results to JSON file.
+- function `get_test_config_tiny()` (L507) — Get config optimized for testing with TINY elements (doors, windows).
+- function `get_test_config_linear()` (L523) — Get config optimized for testing with LINEAR elements (walls).
+- function `get_test_config_areal_heavy()` (L539) — Get config optimized for testing with AREAL elements (floors, roofs).
+- function `quick_test_current_view()` (L556) — Quick test on current active view (CPython3-compatible).
 
 ## vop_interwoven/pipeline.py
 
 **Imports**
 
 - import: math
-- from config import Config
-- from core.geometry import Mode, classify_by_uv, make_obb_or_skinny_aabb, make_uv_aabb
-- from core.math_utils import Bounds2D, CellRect
-- from core.raster import TileMap, ViewRaster
-- from core.silhouette import get_element_silhouette
-- from revit.annotation import rasterize_annotations
-- from revit.collection import collect_view_elements, estimate_nearest_depth_from_bbox, expand_host_link_import_model_elements, is_element_visible_in_view, sort_front_to_back
-- from revit.safe_api import safe_call
-- from revit.view_basis import make_view_basis, resolve_view_bounds
+- from .config import Config
+- from .core.geometry import Mode, classify_by_uv, make_obb_or_skinny_aabb, make_uv_aabb
+- from .core.math_utils import Bounds2D, CellRect
+- from .core.raster import TileMap, ViewRaster
+- from .core.silhouette import get_element_silhouette
+- from .revit.annotation import rasterize_annotations
+- from .revit.collection import collect_view_elements, estimate_nearest_depth_from_bbox, expand_host_link_import_model_elements, is_element_visible_in_view, sort_front_to_back
+- from .revit.safe_api import safe_call
+- from .revit.view_basis import make_view_basis, resolve_view_bounds
 
 **Top-level definitions**
 
 - function `process_document_views()` (L110) — Process multiple views through the VOP interwoven pipeline.
+  - includes persistent disk-backed view-cache signature/load/save + early-exit skip boundary (cache HIT)
 - function `init_view_raster()` (L290) — Initialize ViewRaster for a view.
-- function `_classify_uv_rect()` (L687) — Classify UV-aligned rect sizes for proxy strategy selection.
 - function `render_model_front_to_back()` (L374) — Render 3D model elements front-to-back with interwoven AreaL/Tiny/Linear handling.
-- function `_is_supported_2d_view()` (L941) — Check if view type is supported (2D-ish views only).
-- function `_tiles_fully_covered_and_nearer()` (L988) — Check if all tiles overlapping rect are fully covered AND nearer than element.
-- function `_bin_elements_to_tiles()` (L1019) — Bin elements to tiles based on their projected bbox.
-- function `_tile_has_depth_conflict()` (L1051) — Check if tile has depth range conflicts (ambiguity) using a sweep (O(k log k)).
-- function `_get_ambiguous_tiles()` (L1085) — Identify tiles with depth conflicts that need triangle resolution.
-- function `_render_areal_element()` (L1115) — Render AREAL element: triangles + z-buffer + depth-tested edges.
-- function `_render_proxy_element()` (L1130) — Render TINY/LINEAR element: proxy edges + optional minimal mask.
-- function `_stamp_proxy_edges()` (L1155) — Stamp proxy edges into model_proxy_key layer.
-- function `_mark_rect_center_cell()` (L1168) — Mark center cell of rect in model_proxy_mask.
-- function `_mark_thin_band_along_long_axis()` (L1176) — Mark thin band along long axis of rect in model_proxy_mask.
-- function `export_view_raster()` (L1196) — Export view raster to dictionary for JSON serialization.
+- function `_is_supported_2d_view()` (L959) — Check if view type is supported (2D-ish views only).
+- function `_tiles_fully_covered_and_nearer()` (L1006) — Early-out: detect tiles already fully covered by nearer ink.
+- function `_bin_elements_to_tiles()` (L1037) — Bin elements into tiles for localized rendering.
+- function `_tile_has_depth_conflict()` (L1069) — Determine whether a tile has depth ordering conflicts.
+- function `_get_ambiguous_tiles()` (L1103) — Identify tiles needing conflict-safe processing.
+- function `_render_areal_element()` (L1133) — Rasterize a single AREAL element.
+- function `_render_proxy_element()` (L1148) — Rasterize a single PROXY (linear/tiny) element.
+- function `_stamp_proxy_edges()` (L1173) — Stamp proxy edges into raster (shared helper).
+- function `_mark_rect_center_cell()` (L1186) — Mark center cell for tiny rect proxy.
+- function `_mark_thin_band_along_long_axis()` (L1194) — Mark a thin band for linear proxy.
+- function `export_view_raster()` (L1214) — Export view raster + diagnostics payload.
 
 ## vop_interwoven/png_export.py
 
