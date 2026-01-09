@@ -376,11 +376,15 @@ def run_vop_pipeline_with_png(doc, view_ids, cfg=None, output_dir=None, pixels_p
     else:
         json_path = None
 
-    # Export PNGs (with cut vs projection distinction)
+    # Export PNGs (with cut vs projection distinction) into a nested folder
+    png_dir = os.path.join(output_dir, "png")
+    if not os.path.exists(png_dir):
+        os.makedirs(png_dir)
+
     t0 = time.perf_counter()
     png_files = export_pipeline_results_to_pngs(
         pipeline_result,
-        output_dir,
+        png_dir,
         pixels_per_cell=pixels_per_cell,
         cut_vs_projection=True
     )
@@ -394,7 +398,7 @@ def run_vop_pipeline_with_png(doc, view_ids, cfg=None, output_dir=None, pixels_p
     }
 
 
-def run_vop_pipeline_with_csv(doc, view_ids, cfg=None, output_dir=None, pixels_per_cell=4, export_json=False, export_png=True):
+def run_vop_pipeline_with_csv(doc, view_ids, cfg=None, output_dir=None, pixels_per_cell=4, export_json=False, export_png=True, export_perf_csv=True):
     """Run VOP pipeline and export JSON + PNG + CSV files.
 
     Args:
@@ -471,11 +475,15 @@ def run_vop_pipeline_with_csv(doc, view_ids, cfg=None, output_dir=None, pixels_p
 
         result['json_path'] = json_path
 
-    # Export PNGs (optional)
+    # Export PNGs (optional) into a nested folder
     if export_png:
+        png_dir = os.path.join(output_dir, "png")
+        if not os.path.exists(png_dir):
+            os.makedirs(png_dir)
+
         png_files = export_pipeline_results_to_pngs(
             pipeline_result,
-            output_dir,
+            png_dir,
             pixels_per_cell=pixels_per_cell,
             cut_vs_projection=True
         )
@@ -483,7 +491,7 @@ def run_vop_pipeline_with_csv(doc, view_ids, cfg=None, output_dir=None, pixels_p
 
     # Export CSVs (always)
     t0 = time.perf_counter()
-    csv_result = export_pipeline_to_csv(pipeline_result, output_dir, cfg, doc)
+    csv_result = export_pipeline_to_csv(pipeline_result, output_dir, cfg, doc, date_override=date_override)
     t1 = time.perf_counter()
     result["csv_export_ms"] = (t1 - t0) * 1000.0
 
@@ -491,60 +499,58 @@ def run_vop_pipeline_with_csv(doc, view_ids, cfg=None, output_dir=None, pixels_p
     result['vop_csv_path'] = csv_result['vop_csv_path']
     result['rows_exported'] = csv_result['rows_exported']
 
-    # Export PERF CSV (additional file; per-view coarse timings + png_ms if available)
-    perf_filename = "views_perf_{0}.csv".format(datetime.now().strftime("%Y-%m-%d_%H%M%S"))
-    perf_path = os.path.join(output_dir, perf_filename)
+    # Export PERF CSV (optional; per-view coarse timings + png_ms if available)
+    if export_perf_csv:
+        perf_filename = "views_perf_{0}.csv".format(datetime.now().strftime("%Y-%m-%d_%H%M%S"))
+        perf_path = os.path.join(output_dir, perf_filename)
 
-    perf_fields = [
-        "view_id",
-        "view_name",
-        "success",
-        "total_ms",
-        "mode_ms",
-        "raster_init_ms",
-        "collect_ms",
-        "model_ms",
-        "anno_ms",
-        "finalize_ms",
-        "export_ms",
-        "png_ms",
-        "width",
-        "height",
-        "total_elements",
-        "filled_cells",
-    ]
+        perf_fields = [
+            "view_id",
+            "view_name",
+            "success",
+            "total_ms",
+            "mode_ms",
+            "raster_init_ms",
+            "collect_ms",
+            "raster_ms",
+            "anno_ms",
+            "finalize_ms",
+            "export_ms",
+            "png_ms",
+            "width",
+            "height",
+            "total_elements",
+            "filled_cells",
+        ]
 
-    with open(perf_path, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=perf_fields)
-        w.writeheader()
+        with open(perf_path, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=perf_fields)
+            w.writeheader()
+            for v in (pipeline_result.get("views", []) or []):
+                if not isinstance(v, dict):
+                    continue
+                w.writerow({
+                    "view_id": v.get("view_id"),
+                    "view_name": v.get("view_name"),
+                    "success": v.get("success"),
+                    "total_ms": v.get("total_ms"),
+                    "mode_ms": v.get("mode_ms"),
+                    "raster_init_ms": v.get("raster_init_ms"),
+                    "collect_ms": v.get("collect_ms"),
+                    "raster_ms": v.get("raster_ms"),
+                    "anno_ms": v.get("anno_ms"),
+                    "finalize_ms": v.get("finalize_ms"),
+                    "export_ms": v.get("export_ms"),
+                    "png_ms": v.get("png_ms"),
+                    "width": v.get("width"),
+                    "height": v.get("height"),
+                    "total_elements": v.get("total_elements"),
+                    "filled_cells": v.get("filled_cells"),
+                })
 
-        for v in (pipeline_result.get("views", []) or []):
-            if not isinstance(v, dict):
-                continue
-
-            timings = v.get("timings") or (v.get("diagnostics", {}) or {}).get("timings") or {}
-
-            row = {
-                "view_id": v.get("view_id"),
-                "view_name": v.get("view_name"),
-                "success": v.get("success", True) if "success" in v else True,
-                "total_ms": timings.get("total_ms"),
-                "mode_ms": timings.get("mode_ms"),
-                "raster_init_ms": timings.get("raster_init_ms"),
-                "collect_ms": timings.get("collect_ms"),
-                "model_ms": timings.get("model_ms"),
-                "anno_ms": timings.get("anno_ms"),
-                "finalize_ms": timings.get("finalize_ms"),
-                "export_ms": timings.get("export_ms"),
-                "png_ms": timings.get("png_ms"),
-                "width": v.get("width"),
-                "height": v.get("height"),
-                "total_elements": v.get("total_elements"),
-                "filled_cells": v.get("filled_cells"),
-            }
-            w.writerow(row)
-
-    result["perf_csv_path"] = perf_path
+        result["perf_csv_path"] = perf_path
+    else:
+        result["perf_csv_path"] = None
 
     return result
 

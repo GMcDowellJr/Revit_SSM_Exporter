@@ -41,40 +41,45 @@ try:
     # Get views from IN[0] or use current view
     views_input = IN[0] if len(IN) > 0 and IN[0] else None
 
-    # Optional date override (for deterministic exports / backdated runs)
-    date_override = IN[1] if len(IN) > 1 and IN[1] else None
+    # Optional custom tag override (for deterministic exports / run labeling)
+    # IN[1] can be any string (e.g., commit hash, ticket id, "baseline-A", etc.)
+    tag_override = IN[1] if len(IN) > 1 and IN[1] else None
+
+    # Optional output directory override
+    output_dir = IN[2] if len(IN) > 2 and IN[2] else r'C:\temp\vop_output'
 
     # Build a config so we can reuse it if we export CSV manually
     from vop_interwoven.config import Config
     cfg = Config()
-    cfg.debug_json_detail="summary"
+    cfg.debug_json_detail = "summary"
 
     # Run pipeline (export CSV directly only when no override is requested)
-    do_export_csv = False if date_override else True
+    do_export_csv = False if tag_override else True
 
     result = run_pipeline_from_dynamo_input(
         views_input=views_input,
-        output_dir=r'C:\temp\vop_output',
+        output_dir=output_dir,
         pixels_per_cell=10,
         config=cfg,
         export_csv=do_export_csv,
-        export_json=True,
+        export_json=False,
+        export_perf_csv=False,
         export_png=True,  # Skip PNG for speed
         verbose=False
     )
 
-    # If caller requested date override, export CSV here so filenames + Date column match.
-    if date_override:
+    # If caller requested tag override, export CSV here so filenames + Tag column match.
+    if tag_override:
         from vop_interwoven.csv_export import export_pipeline_to_csv
         doc = get_current_document()
         pipeline_result = result.get('pipeline_result', {})
         csv_info = export_pipeline_to_csv(
             pipeline_result=pipeline_result,
-            output_dir=r'C:\temp\vop_output',
+            output_dir=output_dir,
             config=cfg,
             doc=doc,
             diag=None,
-            date_override=str(date_override),
+            date_override=str(tag_override),
         )
         # Mirror keys expected by downstream consumers
         result['core_csv_path'] = csv_info.get('core_csv_path')
