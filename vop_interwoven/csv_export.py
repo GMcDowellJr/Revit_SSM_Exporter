@@ -144,12 +144,17 @@ def compute_cell_metrics(raster, model_presence_mode="ink", diag=None):
         raise ValueError("Unknown model_presence_mode: {0}".format(mode))
 
     anno_over_model = getattr(raster, "anno_over_model", []) or []
+    anno_key = getattr(raster, "anno_key", []) or []
 
     for idx in range(total):
         has_model = _has_model(idx)
-        has_anno = anno_over_model[idx] if idx < len(anno_over_model) else False
 
-        if has_model and has_anno:
+        # "Any annotation ink" should be driven by anno_key presence.
+        # Keep anno_over_model as a separate concept (overlap channel).
+        has_anno = (idx < len(anno_key)) and (anno_key[idx] != -1)
+        has_anno_over_model = (idx < len(anno_over_model)) and bool(anno_over_model[idx])
+
+        if has_model and has_anno_over_model:
             overlap += 1
         elif has_model:
             model_only += 1
@@ -217,7 +222,18 @@ def compute_annotation_type_metrics(raster):
         if anno_idx >= 0:  # Cell has annotation
             if anno_idx < len(raster.anno_meta):
                 meta = raster.anno_meta[anno_idx]
-                anno_type = meta.get("type", "OTHER").upper()
+
+                # Base type from annotation pass
+                anno_type = (meta.get("type") or "OTHER").upper()
+
+                # Remap FilledRegion to REGION for CSV metrics
+                try:
+                    from Autodesk.Revit.DB import BuiltInCategory
+                    cat_id = meta.get("cat_id", None)
+                    if cat_id is not None and int(cat_id) == int(BuiltInCategory.OST_FilledRegion):
+                        anno_type = "REGION"
+                except Exception:
+                    pass
 
                 if anno_type in counts:
                     counts[anno_type] += 1

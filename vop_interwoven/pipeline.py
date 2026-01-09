@@ -608,6 +608,29 @@ def init_view_raster(doc, view, cfg, diag=None):
     W = int(bounds_result.get("grid_W", 1) or 1)
     H = int(bounds_result.get("grid_H", 1) or 1)
 
+    if diag is not None:
+        try:
+            b = bounds_xy
+            diag.info(
+                phase="pipeline",
+                callsite="init_view_raster.bounds_used",
+                message="Bounds used to construct ViewRaster",
+                view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                extra={
+                    "anno_expanded": bool(bounds_result.get("anno_expanded")),
+                    "reason": bounds_result.get("reason"),
+                    "confidence": bounds_result.get("confidence"),
+                    "grid_W": W,
+                    "grid_H": H,
+                    "cell_size_ft": cell_size_ft,
+                    "bounds_xy": (b.xmin, b.ymin, b.xmax, b.ymax),
+                    "cap_before": bounds_result.get("cap_before"),
+                    "cap_after": bounds_result.get("cap_after"),
+                },
+            )
+        except Exception:
+            pass
+
     # Compute adaptive tile size based on grid dimensions
     tile_size = cfg.compute_adaptive_tile_size(W, H)
 
