@@ -219,7 +219,28 @@ def process_document_views(doc, view_ids, cfg):
         Conservative signature: view state + config + basic doc identity.
         This intentionally does NOT attempt to prove model hasn't changed
         when the document is dirty (unsaved changes).
+
+        IMPORTANT:
+            Some Revit view properties are not available on all view types (e.g. Legend),
+            and may throw InvalidOperationException when accessed. Signature generation
+            must never break the pipeline.
         """
+
+        def _safe_prop_str(getter):
+            try:
+                v = getter()
+                return None if v is None else str(v)
+            except Exception as e:
+                # Keep deterministic + observable in cache signature without failing the view.
+                return "__ERR__:{0}".format(type(e).__name__)
+
+        def _safe_prop_int(getter):
+            try:
+                v = getter()
+                return None if v is None else int(v)
+            except Exception as e:
+                return None
+
         sig = {
             "schema": 1,
             "doc_path": getattr(doc_obj, "PathName", None),
@@ -228,12 +249,13 @@ def process_document_views(doc, view_ids, cfg):
             "view_uid": getattr(view_obj, "UniqueId", None),
             "view_name": getattr(view_obj, "Name", None),
             "view_mode": view_mode_val,
-            "view_type": str(getattr(view_obj, "ViewType", None)),
+            "view_type": _safe_prop_str(lambda: getattr(view_obj, "ViewType", None)),
             "view_template_id": _safe_int(getattr(getattr(view_obj, "ViewTemplateId", None), "IntegerValue", None)),
-            "scale": _safe_int(getattr(view_obj, "Scale", None)),
-            "detail_level": str(getattr(view_obj, "DetailLevel", None)),
-            "discipline": str(getattr(view_obj, "Discipline", None)),
-            "display_style": str(getattr(view_obj, "DisplayStyle", None)),
+            "scale": _safe_prop_int(lambda: getattr(view_obj, "Scale", None)),
+            "detail_level": _safe_prop_str(lambda: getattr(view_obj, "DetailLevel", None)),
+            # These are known to throw on some view types (e.g. Legend: Discipline)
+            "discipline": _safe_prop_str(lambda: view_obj.Discipline),
+            "display_style": _safe_prop_str(lambda: view_obj.DisplayStyle),
             "crop": _cropbox_fingerprint(view_obj),
             "cfg_sha1": _cfg_hash(cfg),
         }
