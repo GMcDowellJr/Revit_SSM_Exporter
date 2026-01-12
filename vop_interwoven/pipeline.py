@@ -521,7 +521,7 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
             )
 
             # Check root cache first (NOTE: root hits are metrics-only; gate if needed)
-            if root_cache:
+            if root_cache and not getattr(cfg, '_is_streaming_mode', False):
                 cached = root_cache.get_view(view_id_int, sig_hex)
                 if cached:
                     result = dict(cached.get("metadata") or {})
@@ -671,7 +671,14 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
             except Exception:
                 pass
 
-            results.append(out)
+            # Memory management: conditionally retain or discard raster data
+            if getattr(cfg, 'retain_rasters_in_memory', True):
+                # Keep full raster (needed for streaming exports or debug)
+                results.append(out)
+            else:
+                # Discard raster, keep only lightweight summary
+                summary = _extract_view_summary(out)
+                results.append(summary)
 
         except Exception as e:
             # Never silent: record + continue
@@ -804,9 +811,13 @@ def init_view_raster(doc, view, cfg, diag=None):
 
     Centralizes bounds resolution through resolve_view_bounds() so bounds behavior is auditable.
     """
-    # Cell size: 1/8" on sheet -> model feet
+    # Cell size: 1/8" on sheet -> model feet (REQUESTED resolution)
     scale = view.Scale  # e.g., 96 for 1/8" = 1'-0"
-    cell_size_ft = (0.125 * scale) / 12.0  # inches -> feet
+    cell_size_paper_in = float(getattr(cfg, "cell_size_paper_in", None))
+    if cell_size_paper_in <= 0:
+        raise ValueError("cfg.cell_size_paper_in must be > 0 (paper-space resolution)")
+
+    cell_size_ft_requested = (cell_size_paper_in * scale) / 12.0  # inches -> feet
 
     # View basis
     basis = make_view_basis(view, diag=diag)
@@ -818,7 +829,7 @@ def init_view_raster(doc, view, cfg, diag=None):
     view_mode, _mode_reason = resolve_view_mode(view, diag=diag)
 
     if view_mode == VIEW_MODE_ANNOTATION_ONLY:
-        anno_bounds = resolve_annotation_only_bounds(doc, view, basis, cell_size_ft, cfg=cfg, diag=diag)
+        anno_bounds = resolve_annotation_only_bounds(doc, view, basis, cell_size_ft_requested, cfg=cfg, diag=diag)
 
         if anno_bounds is None:
             # No driver annotations → deterministic small fallback to avoid huge grids
@@ -831,12 +842,16 @@ def init_view_raster(doc, view, cfg, diag=None):
             "confidence": "med",
             "anno_expanded": True,
             "capped": False,
+            "cap_triggered": False,
             "cap_before": None,
             "cap_after": None,
-            "grid_W": int(max(1, math.ceil(float(anno_bounds.width()) / cell_size_ft))),
-            "grid_H": int(max(1, math.ceil(float(anno_bounds.height()) / cell_size_ft))),
+            "resolution_mode": "canonical",
+            "cell_size_ft_requested": float(cell_size_ft_requested),
+            "cell_size_ft_effective": float(cell_size_ft_requested),
+            "grid_W": int(max(1, math.ceil(float(anno_bounds.width()) / cell_size_ft_requested))),
+            "grid_H": int(max(1, math.ceil(float(anno_bounds.height()) / cell_size_ft_requested))),
             "buffer_ft": 0.0,
-            "cell_size_ft": cell_size_ft,
+            "cell_size_ft": float(cell_size_ft_requested),
         }
     else:
         bounds_result = resolve_view_bounds(
@@ -847,13 +862,17 @@ def init_view_raster(doc, view, cfg, diag=None):
                 "basis": basis,
                 "cfg": cfg,
                 "buffer_ft": cfg.bounds_buffer_ft,
-                "cell_size_ft": cell_size_ft,
+                "cell_size_ft": float(cell_size_ft_requested),
                 "max_W": cfg.max_grid_cells_width,
                 "max_H": cfg.max_grid_cells_height,
             },
         )
 
     bounds_xy = bounds_result["bounds_uv"]
+
+    # Effective resolution (may differ if cap triggers)
+    cell_size_ft_effective = float(bounds_result.get("cell_size_ft_effective", cell_size_ft_requested))
+
     W = int(bounds_result.get("grid_W", 1) or 1)
     H = int(bounds_result.get("grid_H", 1) or 1)
 
@@ -871,7 +890,10 @@ def init_view_raster(doc, view, cfg, diag=None):
                     "confidence": bounds_result.get("confidence"),
                     "grid_W": W,
                     "grid_H": H,
-                    "cell_size_ft": cell_size_ft,
+                    "cell_size_ft_requested": float(cell_size_ft_requested),
+                    "cell_size_ft_effective": float(cell_size_ft_effective),
+                    "resolution_mode": bounds_result.get("resolution_mode"),
+                    "cap_triggered": bool(bounds_result.get("cap_triggered", bounds_result.get("capped"))),
                     "bounds_xy": (b.xmin, b.ymin, b.xmax, b.ymax),
                     "cap_before": bounds_result.get("cap_before"),
                     "cap_after": bounds_result.get("cap_after"),
@@ -884,28 +906,81 @@ def init_view_raster(doc, view, cfg, diag=None):
     tile_size = cfg.compute_adaptive_tile_size(W, H)
 
     raster = ViewRaster(
-        width=W, height=H, cell_size=cell_size_ft, bounds=bounds_xy, tile_size=tile_size, cfg=cfg
+        width=W, height=H, cell_size=cell_size_ft_effective, bounds=bounds_xy, tile_size=tile_size, cfg=cfg
     )
 
-    # Persist bounds metadata for export diagnostics (never silent)
+    # Persist bounds/resolution metadata for export diagnostics (never silent)
     raster.bounds_meta = {
         "reason": bounds_result.get("reason"),
         "confidence": bounds_result.get("confidence"),
         "buffer_ft": bounds_result.get("buffer_ft"),
         "anno_expanded": bounds_result.get("anno_expanded"),
+
         "capped": bounds_result.get("capped"),
+        "cap_triggered": bool(bounds_result.get("cap_triggered", bounds_result.get("capped"))),
         "cap_before": bounds_result.get("cap_before"),
         "cap_after": bounds_result.get("cap_after"),
+
         "grid_W": W,
         "grid_H": H,
+
+        # Option 2 contract fields
+        "resolution_mode": bounds_result.get("resolution_mode", "canonical"),
+        "cell_size_ft_requested": float(bounds_result.get("cell_size_ft_requested", cell_size_ft_requested)),
+        "cell_size_ft_effective": float(bounds_result.get("cell_size_ft_effective", cell_size_ft_effective)),
     }
+
 
     # Store view basis for annotation rasterization
     raster.view_basis = basis
 
     return raster
 
-
+def _extract_view_summary(view_result):
+    """Extract lightweight summary from full view result.
+    
+    Discards heavy raster data while retaining essential metadata for
+    summary statistics and reporting. Used when retain_rasters_in_memory=False.
+    
+    Args:
+        view_result: Full view result dict with raster data
+        
+    Returns:
+        Lightweight summary dict without raster arrays
+        
+    Memory impact:
+        - Full result: ~2-20 MB per view (depends on grid size)
+        - Summary: ~1-2 KB per view
+        - Savings: ~99.9% memory reduction per view
+    """
+    return {
+        "view_id": view_result.get("view_id"),
+        "view_name": view_result.get("view_name"),
+        "success": view_result.get("success", True),
+        "view_mode": view_result.get("view_mode"),
+        "view_mode_reason": view_result.get("view_mode_reason"),
+        "width": view_result.get("width"),
+        "height": view_result.get("height"),
+        "cell_size": view_result.get("cell_size"),
+        "tile_size": view_result.get("tile_size"),
+        "total_elements": view_result.get("total_elements"),
+        "filled_cells": view_result.get("filled_cells"),
+        "timings": view_result.get("timings"),
+        "diagnostics": {
+            # Keep only numeric stats, not full metadata lists
+            "num_elements": view_result.get("diagnostics", {}).get("num_elements"),
+            "num_annotations": view_result.get("diagnostics", {}).get("num_annotations"),
+            "num_filled_cells": view_result.get("diagnostics", {}).get("num_filled_cells"),
+            "occlusion_cells": view_result.get("diagnostics", {}).get("occlusion_cells"),
+            "model_ink_edge_cells": view_result.get("diagnostics", {}).get("model_ink_edge_cells"),
+            "proxy_edge_cells": view_result.get("diagnostics", {}).get("proxy_edge_cells"),
+            "timings": view_result.get("diagnostics", {}).get("timings"),
+        },
+        "cache": view_result.get("cache"),
+        "config": view_result.get("config"),
+        # Explicitly omit "raster" key to free memory
+    }
+    
 def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geometry_cache=None, elem_cache=None):
     """Render 3D model elements front-to-back with interwoven AreaL/Tiny/Linear handling.
 

@@ -783,42 +783,71 @@ def resolve_view_bounds(view, diag=None, policy=None):
                 )
             except Exception:
                 pass
-
+                
     # 3) Cap reporting (optional)
     width_ft = float(base_bounds.width())
     height_ft = float(base_bounds.height())
 
-    W = max(1, int(math.ceil(width_ft / cell_size_ft)))
-    H = max(1, int(math.ceil(height_ft / cell_size_ft)))
+    cell_size_ft_requested = float(cell_size_ft)
 
-    capped = False
+    W_req = max(1, int(math.ceil(width_ft / cell_size_ft_requested)))
+    H_req = max(1, int(math.ceil(height_ft / cell_size_ft_requested)))
+
+    cap_triggered = False
     cap_before = None
     cap_after = None
+
+    # Default: canonical (requested == effective)
+    resolution_mode = "canonical"
+    cell_size_ft_effective = float(cell_size_ft_requested)
 
     if max_W is not None and max_H is not None:
         max_W = int(max_W)
         max_H = int(max_H)
-        if W > max_W or H > max_H:
-            capped = True
-            cap_before = {"W": W, "H": H, "bounds_uv": _bounds_to_tuple(base_bounds)}
-            W2 = min(W, max_W)
-            H2 = min(H, max_H)
 
-            # Preserve xmin/ymin anchor, clamp xmax/ymax
-            base_bounds = base_bounds.__class__(
-                base_bounds.xmin,
-                base_bounds.ymin,
-                base_bounds.xmin + W2 * cell_size_ft,
-                base_bounds.ymin + H2 * cell_size_ft,
+        if W_req > max_W or H_req > max_H:
+            cap_triggered = True
+            resolution_mode = "adaptive"
+
+            cap_before = {
+                "W": int(W_req),
+                "H": int(H_req),
+                "bounds_uv": _bounds_to_tuple(base_bounds),
+                "cell_size_ft": float(cell_size_ft_requested),
+            }
+
+            # Adaptive resolution: preserve bounds, increase cell size to fit cap
+            cell_size_ft_effective = max(
+                float(width_ft) / float(max_W) if max_W > 0 else float(cell_size_ft_requested),
+                float(height_ft) / float(max_H) if max_H > 0 else float(cell_size_ft_requested),
             )
-            cap_after = {"W": W2, "H": H2, "bounds_uv": _bounds_to_tuple(base_bounds)}
+
+            # Guard: never reduce resolution below requested
+            if cell_size_ft_effective < cell_size_ft_requested:
+                cell_size_ft_effective = float(cell_size_ft_requested)
+
+            W_eff = max(1, int(math.ceil(width_ft / cell_size_ft_effective)))
+            H_eff = max(1, int(math.ceil(height_ft / cell_size_ft_effective)))
+
+            # Final guard: clamp computed sizes to cap (numerical safety)
+            if W_eff > max_W:
+                W_eff = int(max_W)
+            if H_eff > max_H:
+                H_eff = int(max_H)
+
+            cap_after = {
+                "W": int(W_eff),
+                "H": int(H_eff),
+                "bounds_uv": _bounds_to_tuple(base_bounds),  # bounds preserved
+                "cell_size_ft": float(cell_size_ft_effective),
+            }
 
             if diag is not None:
                 try:
                     diag.warn(
                         phase="bounds",
                         callsite="resolve_view_bounds.cap",
-                        message="Grid size exceeds maximum; bounds were capped",
+                        message="Grid size exceeds maximum; switching to adaptive cell size (bounds preserved)",
                         view_id=view_id,
                         extra={
                             "before": cap_before,
@@ -830,22 +859,42 @@ def resolve_view_bounds(view, diag=None, policy=None):
                 except Exception:
                     pass
 
-            W, H = W2, H2
+    # Report final grid dimensions using effective cell size
+    W = max(1, int(math.ceil(width_ft / cell_size_ft_effective)))
+    H = max(1, int(math.ceil(height_ft / cell_size_ft_effective)))
+
+    if max_W is not None:
+        W = min(int(W), int(max_W))
+    if max_H is not None:
+        H = min(int(H), int(max_H))
 
     return {
         "bounds_uv": base_bounds,
         "reason": reason,
         "confidence": confidence,
         "anno_expanded": bool(anno_expanded),
-        "capped": bool(capped),
+
+        # Back-compat: 'capped' previously meant bounds were clipped; now it means cap policy triggered.
+        "capped": bool(cap_triggered),
         "cap_before": cap_before,
         "cap_after": cap_after,
+
         "grid_W": int(W),
         "grid_H": int(H),
         "buffer_ft": buffer_ft,
-        "cell_size_ft": cell_size_ft,
+
+        # Requested vs effective resolution (Option 2 contract)
+        "resolution_mode": resolution_mode,
+        "cap_triggered": bool(cap_triggered),
+        "cell_size_ft_requested": float(cell_size_ft_requested),
+        "cell_size_ft_effective": float(cell_size_ft_effective),
+
+        # Back-compat: preserve existing key name, but keep it as requested (not effective).
+        "cell_size_ft": float(cell_size_ft_requested),
+
         "bounds_budget": bounds_budget,
     }
+
 
 def _view_type_name(view):
     """

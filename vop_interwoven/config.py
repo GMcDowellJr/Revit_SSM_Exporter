@@ -127,6 +127,11 @@ class Config:
         element_cache_detect_changes=True,  # Compare with previous run
         element_cache_change_tolerance=0.01,  # Position/size tolerance (feet)
 
+        # Memory management: control raster retention behavior
+        # True = keep full rasters in memory (needed for streaming exports)
+        # False = discard rasters after cache writes (memory efficient)
+        retain_rasters_in_memory=True,  # Default True for backward compatibility
+        
     ):
         """Initialize VOP configuration.
 
@@ -264,6 +269,9 @@ class Config:
         self.element_cache_detect_changes = bool(element_cache_detect_changes)
         self.element_cache_change_tolerance = float(element_cache_change_tolerance)
 
+        # Memory management
+        self.retain_rasters_in_memory = bool(retain_rasters_in_memory)
+        
     def compute_adaptive_tile_size(self, grid_width, grid_height):
         """Compute optimal tile size based on grid dimensions.
 
