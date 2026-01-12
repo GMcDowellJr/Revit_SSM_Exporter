@@ -1,77 +1,71 @@
 # vop_interwoven symbol index (defs + callsites)
 
 This index lists selected high-signal symbols (definitions + approximate callsites) used for navigation-first debugging.
-It is intentionally scoped (not exhaustive) and focuses on Dynamo entrypoints + export side-effects relevant to recent changes.
+Line numbers reflect the current source set as present in vop_interwoven.zip.
 
-## `thinrunner` (Dynamo Python node entry)
-
-**Definitions**
-- vop_interwoven/thinrunner.py
-  - Reads Dynamo `IN[]` contract:
-    - `IN[0]` view ids / view elements
-    - `IN[1]` tag/date override (opaque string)
-    - `IN[2]` output_dir (optional)
-  - Constructs `Config()` and calls `run_pipeline_from_dynamo_input(...)`
-
-**Callsites (approx)**
-- Dynamo graph Python node (thin runner)
-
-## `run_pipeline_from_dynamo_input`
-
-**Definitions**
-- vop_interwoven/dynamo_helpers.py
-  - `run_pipeline_from_dynamo_input(views_input, output_dir, pixels_per_cell, config, verbose, export_csv, export_json, export_perf_csv, export_png, ...)`
-
-**Callsites (approx)**
-- vop_interwoven/thinrunner.py
-
-## `run_vop_pipeline_with_png`
+## `run_vop_pipeline` / `run_vop_pipeline_with_png` / `run_vop_pipeline_with_csv`
 
 **Definitions**
 - vop_interwoven/entry_dynamo.py
-  - `run_vop_pipeline_with_png(doc, view_ids, cfg=None, output_dir=None, pixels_per_cell=4, export_json=True, ...)`
+  - `run_vop_pipeline` (L272)
+  - `run_vop_pipeline_with_png` (L320)
+  - `run_vop_pipeline_with_csv` (L383)
 
 **Callsites (approx)**
-- vop_interwoven/dynamo_helpers.py when `export_csv=False`
+- Dynamo entrypoints / thinrunner: vop_interwoven/thinrunner.py
 
-## `run_vop_pipeline_with_csv`
+## `run_vop_pipeline_streaming` / `process_document_views_streaming`
 
 **Definitions**
-- vop_interwoven/entry_dynamo.py
-  - `run_vop_pipeline_with_csv(doc, view_ids, cfg=None, output_dir=None, pixels_per_cell=4, export_json=False, export_png=True, export_perf_csv=True, date_override=None, ...)`
+- vop_interwoven/streaming.py
+  - `run_vop_pipeline_streaming` (L563)
+  - `process_document_views_streaming` (L496)
+  - `StreamingExporter` (L168)
 
 **Callsites (approx)**
-- vop_interwoven/dynamo_helpers.py when `export_csv=True`
+- vop_interwoven/thinrunner_streaming.py (imports + calls `run_vop_pipeline_streaming`)
+- External/Dynamo could call `vop_interwoven.streaming.run_vop_pipeline_streaming` directly
 
-## `export_pipeline_to_csv`
+## `RootStyleCache`
 
 **Definitions**
-- vop_interwoven/csv_export.py
-  - `export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=None, date_override=None)`
-  - `date_override` semantics:
-    - If parseable as date/datetime → drives Date column + filename date
-    - Else treated as opaque tag → incorporated into RunId and filenames; Date defaults to today
+- vop_interwoven/root_cache.py
+  - `RootStyleCache` (L34)
+  - `compute_config_hash` (L191)
+  - `extract_metrics_from_view_result` (L241)
 
 **Callsites (approx)**
-- vop_interwoven/entry_dynamo.py (`run_vop_pipeline_with_csv`)
-- (optional legacy) vop_interwoven/thinrunner.py manual export branch
+- vop_interwoven/streaming.py (persistent “root style” caching of per-view summaries/metrics)
 
-## `export_pipeline_results_to_pngs`
+## `ElementCache` / `ElementFingerprint`
 
 **Definitions**
-- vop_interwoven/png_export.py
-  - `export_pipeline_results_to_pngs(pipeline_result, output_dir, pixels_per_cell, cut_vs_projection=True, ...)`
+- vop_interwoven/core/element_cache.py
+  - `ElementFingerprint` (L50)
+  - `ElementCache` (L182)
 
 **Callsites (approx)**
-- vop_interwoven/entry_dynamo.py (`run_vop_pipeline_with_png`, `run_vop_pipeline_with_csv` when export_png=True)
+- vop_interwoven/pipeline.py: view signature / element tracking (see note below)
 
-## `Config` export-related knobs
+## `process_document_views`
 
 **Definitions**
-- vop_interwoven/config.py
-  - `Config` (export- and raster-related fields referenced by entry + export layers)
-  - Note: dynamic attributes (e.g. `cfg.debug_json_detail`) may exist at runtime but are only meaningful if consumed downstream.
+- vop_interwoven/pipeline.py
+  - `process_document_views` (L126)
 
-**Callsites (approx)**
-- vop_interwoven/entry_dynamo.py (default config creation / to_dict for JSON snapshot)
-- vop_interwoven/thinrunner.py (constructs + overrides)
+**Key internal decision boundary**
+- Per-view orchestration boundary: resolves view mode, initializes raster, collects elements, renders model + annotations, exports raster, and aggregates per-view diagnostics.
+
+## `_view_signature` (⚠️ structural mismatch)
+
+**Observed in source**
+- In vop_interwoven/pipeline.py, `_view_signature(...)` is defined at **L263** but it is **indented** (nested inside another function), so it is **not a module-level symbol**.
+
+**Observed import**
+- vop_interwoven/streaming.py imports it:
+  - `from vop_interwoven.pipeline import _view_signature  # Need to expose this`
+
+**Implication**
+- As the code exists in the zip, that import would raise `ImportError` at runtime. Either:
+  - `_view_signature` should be de-indented to module scope, or
+  - streaming should not import it (and should call whatever public API is intended).

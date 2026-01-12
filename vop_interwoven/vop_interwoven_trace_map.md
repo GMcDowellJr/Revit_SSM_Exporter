@@ -1142,3 +1142,31 @@ Line numbers and callsite offsets remain approximate until the repo-wide extract
   - (optional) PERF CSV export `views_perf_*.csv` (when export_perf_csv=True)
   - `_pipeline_result_for_json()` — vop_interwoven/entry_dynamo.py (when export_json=True)
     - `_prune_view_raster_for_json()` — vop_interwoven/entry_dynamo.py
+
+## Trace: run_vop_pipeline_streaming (vop_interwoven/streaming.py)
+
+- `run_vop_pipeline_streaming()` — vop_interwoven/streaming.py
+  - `Config()` — vop_interwoven/config.py
+  - `process_document_views_streaming()` — vop_interwoven/streaming.py
+    - `process_with_streaming()` — vop_interwoven/streaming.py
+      - `process_document_views()` — vop_interwoven/pipeline.py
+        - (see Trace: process_document_views)
+      - `StreamingExporter` — vop_interwoven/streaming.py
+        - `export_raster_to_png()` — vop_interwoven/png_export.py
+        - `_pipeline_result_for_json()` — vop_interwoven/entry_dynamo.py
+      - `RootStyleCache()` — vop_interwoven/root_cache.py
+        - `compute_config_hash()` — vop_interwoven/root_cache.py
+        - `extract_metrics_from_view_result()` — vop_interwoven/root_cache.py
+
+Notes:
+- Streaming does NOT replace `process_document_views`; it wraps it.
+- All model, annotation, silhouette, and raster behavior is identical to the non-streaming pipeline.
+- Differences are confined to:
+  - incremental export timing
+  - persistent root-level summary caching
+
+## Trace: thinrunner_streaming (vop_interwoven/thinrunner_streaming.py)
+
+- `thinrunner_streaming` (script / Dynamo entry)
+  - `run_vop_pipeline_streaming()` — vop_interwoven/streaming.py
+    - (see Trace: run_vop_pipeline_streaming)
