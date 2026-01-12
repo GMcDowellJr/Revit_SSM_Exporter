@@ -116,13 +116,14 @@ def _perf_now():
 def _perf_ms(t0, t1):
     return (float(t1) - float(t0)) * 1000.0
 
-def process_document_views(doc, view_ids, cfg):
+def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
     """Process multiple views through the VOP interwoven pipeline.
 
     Args:
         doc: Revit Document
         view_ids: List of Revit View ElementIds (or ints) to process
         cfg: Config object
+        root_cache: Optional RootStyleCache instance for metrics caching
 
     Returns:
         List of results (one per view), each containing:
@@ -570,9 +571,34 @@ def process_document_views(doc, view_ids, cfg):
                 except Exception:
                     pass
 
+            # Compute signature ONCE (and populate view_elements consistently)
+            sig_hex, sig_obj = _view_signature(
+                doc, view, view_mode,
+                elem_cache=elem_cache,
+                track_elements=view_elements
+            )
+
+            # Check root cache first (NOTE: root hits are metrics-only; gate if needed)
+            if root_cache:
+                cached = root_cache.get_view(view_id_int, sig_hex)
+                if cached:
+                    result = dict(cached.get("metadata") or {})
+                    result.update({
+                        "view_id": view_id_int,
+                        "success": True,
+                        "from_cache": True,
+                        "metrics": cached.get("metrics") or {},
+                        "cache": {
+                            "cache_type": "root",
+                            "signature": sig_hex,
+                        },
+                    })
+                    results.append(result)
+                    continue
+
             if can_use_cache and view_id_int is not None:
-                sig_hex, sig_obj = _view_signature(doc, view, view_mode, elem_cache=elem_cache, track_elements=view_elements)
                 cached = _load_cached_view(view_id_int, sig_hex)
+
                 if cached is not None:
                     try:
                         cached["cache"] = {
@@ -634,7 +660,7 @@ def process_document_views(doc, view_ids, cfg):
                         view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
                         extra={"view_name": getattr(view, "Name", None), "mode_reason": mode_reason},
                     )
-
+        
             # 4) ANNO PASS (always allowed)
             t0 = _perf_now()
             rasterize_annotations(doc, view, raster, cfg, diag=diag)
@@ -653,6 +679,24 @@ def process_document_views(doc, view_ids, cfg):
             t1 = _perf_now()
             _tmark("export_ms", t0, t1)
 
+            # Root cache write-through (metrics only; requires out+raster)
+            if root_cache and out and out.get("success", True) and ("raster" in out):
+                try:
+                    from .root_cache import extract_metrics_from_view_result
+
+                    metadata, metrics, elem_summary, timings2 = extract_metrics_from_view_result(out, cfg)
+
+                    root_cache.set_view(
+                        view_id=view_id_int,
+                        signature=sig_hex,
+                        metadata=metadata,
+                        metrics=metrics,
+                        element_summary=elem_summary,
+                        timings=timings2,
+                    )
+                except Exception as e:
+                    print(f"[Pipeline] Root cache save failed: {e}")
+        
             # Write-through persistent cache on successful export
             try:
                 if view_cache_enabled:
@@ -662,6 +706,16 @@ def process_document_views(doc, view_ids, cfg):
                         _save_cached_view(vid, sig_hex, out)
                         try:
                             out["cache"] = {"view_cache": "MISS_SAVED", "signature": sig_hex, "dir": view_cache_dir}
+                            # Attach canonical signature for downstream consumers (streaming/CSV/debug).
+                            # Never recompute signature outside this function.
+                            try:
+                                if out is not None:
+                                    c = out.setdefault("cache", {})
+                                    if isinstance(c, dict):
+                                        c.setdefault("signature", sig_hex)
+                            except Exception:
+                                pass
+
                         except Exception:
                             pass
             except Exception:
