@@ -259,11 +259,12 @@ def process_document_views(doc, view_ids, cfg):
             # Return empty list -> signature will be based on view properties only
             return []
 
-    def _view_signature(doc_obj, view_obj, view_mode_val, elem_cache=None):
+    def _view_signature(doc_obj, view_obj, view_mode_val, elem_cache=None, track_elements=None):
         """Enhanced signature with element fingerprints for position/size tracking.
 
         Args:
             elem_cache: Optional ElementCache for bbox fingerprint reuse
+            track_elements: Optional dict to populate with (view_id -> list of (elem_id, source_id))
 
         If elem_cache is provided:
             - Reuses cached bbox data across views
@@ -286,6 +287,7 @@ def process_document_views(doc, view_ids, cfg):
         from Autodesk.Revit.DB import FilteredElementCollector
 
         elem_fps = []
+        elem_ids_for_tracking = []  # For view_elements tracking
         try:
             col = FilteredElementCollector(doc_obj, view_obj.Id).WhereElementIsNotElementType()
             for elem in col:
@@ -293,6 +295,9 @@ def process_document_views(doc, view_ids, cfg):
                     elem_id = getattr(getattr(elem, "Id", None), "IntegerValue", None)
                     if elem_id is None:
                         continue
+
+                    # Track for CSV export
+                    elem_ids_for_tracking.append((elem_id, "HOST"))
 
                     if elem_cache is not None:
                         # Use fingerprint with bbox (position/size tracking)
@@ -317,6 +322,15 @@ def process_document_views(doc, view_ids, cfg):
                     continue
         except Exception:
             pass  # Empty list on failure
+
+        # Store element-view relationship for CSV export
+        if track_elements is not None:
+            try:
+                view_id_int = _safe_int(getattr(getattr(view_obj, "Id", None), "IntegerValue", None))
+                if view_id_int is not None:
+                    track_elements[view_id_int] = elem_ids_for_tracking
+            except Exception:
+                pass
 
         # Sort for deterministic signature
         elem_fps_str = "|".join(sorted(elem_fps))
@@ -412,13 +426,48 @@ def process_document_views(doc, view_ids, cfg):
 
     # PR13: Document-scoped element cache for bbox reuse across views
     elem_cache = None
+    elem_cache_prev = None  # Previous run cache (for change detection)
+    elem_cache_path = None
     if getattr(cfg, "use_element_cache", True):
         try:
             from .core.element_cache import ElementCache
             max_items = int(getattr(cfg, "element_cache_max_items", 10000))
-            elem_cache = ElementCache(max_elements=max_items)
+
+            # Determine cache file path (stored with output files)
+            if output_dir is not None:
+                elem_cache_path = os.path.join(output_dir, ".vop_element_cache.json")
+            else:
+                elem_cache_path = None
+
+            # Load previous cache if persistence enabled
+            if getattr(cfg, "element_cache_persist", True) and elem_cache_path is not None:
+                try:
+                    elem_cache_prev = ElementCache.load_from_json(elem_cache_path, max_elements=max_items)
+                    # Start with previous cache (pre-populated)
+                    elem_cache = elem_cache_prev
+                    if diag is not None:
+                        try:
+                            prev_size = len(elem_cache.cache)
+                            diag.info(
+                                phase="pipeline",
+                                callsite="process_document_views.element_cache_load",
+                                message=f"Loaded element cache from previous run ({prev_size} elements)",
+                                extra={"cache_path": elem_cache_path, "prev_size": prev_size}
+                            )
+                        except Exception:
+                            pass
+                except Exception:
+                    # Failed to load - start fresh
+                    elem_cache = ElementCache(max_elements=max_items)
+            else:
+                # No persistence - start fresh
+                elem_cache = ElementCache(max_elements=max_items)
+
         except Exception:
             elem_cache = None  # Graceful degradation
+
+    # Track element-view relationships for CSV export
+    view_elements = {}  # view_id -> list of (elem_id, source_id)
 
     for view_id in view_ids:
         diag = Diagnostics()  # per-view diag
@@ -522,7 +571,7 @@ def process_document_views(doc, view_ids, cfg):
                     pass
 
             if can_use_cache and view_id_int is not None:
-                sig_hex, sig_obj = _view_signature(doc, view, view_mode, elem_cache=elem_cache)
+                sig_hex, sig_obj = _view_signature(doc, view, view_mode, elem_cache=elem_cache, track_elements=view_elements)
                 cached = _load_cached_view(view_id_int, sig_hex)
                 if cached is not None:
                     try:
@@ -609,7 +658,7 @@ def process_document_views(doc, view_ids, cfg):
                 if view_cache_enabled:
                     vid = getattr(getattr(view, "Id", None), "IntegerValue", None)
                     if vid is not None:
-                        sig_hex, _ = _view_signature(doc, view, view_mode, elem_cache=elem_cache)
+                        sig_hex, _ = _view_signature(doc, view, view_mode, elem_cache=elem_cache, track_elements=view_elements)
                         _save_cached_view(vid, sig_hex, out)
                         try:
                             out["cache"] = {"view_cache": "MISS_SAVED", "signature": sig_hex, "dir": view_cache_dir}
@@ -661,6 +710,93 @@ def process_document_views(doc, view_ids, cfg):
                 message="Element cache statistics for this run",
                 extra=elem_cache.stats()
             )
+        except Exception:
+            pass
+
+    # Phase 2.5: Persistent element cache - save/export/detect changes
+    if elem_cache is not None and getattr(cfg, "element_cache_persist", True):
+        try:
+            # Save cache to JSON for next run
+            if elem_cache_path is not None:
+                try:
+                    metadata = {
+                        "timestamp": time.time(),
+                        "doc_path": getattr(doc, "PathName", None),
+                        "doc_title": getattr(doc, "Title", None),
+                    }
+                    saved = elem_cache.save_to_json(elem_cache_path, metadata=metadata)
+                    if saved and diag is not None:
+                        diag.info(
+                            phase="pipeline",
+                            callsite="process_document_views.element_cache_save",
+                            message="Saved element cache for next run",
+                            extra={"cache_path": elem_cache_path, "size": len(elem_cache.cache)}
+                        )
+                except Exception:
+                    pass
+
+            # Export analysis CSV
+            if getattr(cfg, "element_cache_export_csv", True) and output_dir is not None:
+                try:
+                    csv_path = os.path.join(output_dir, "element_cache_analysis.csv")
+                    exported = elem_cache.export_analysis_csv(csv_path, view_elements=view_elements)
+                    if exported and diag is not None:
+                        diag.info(
+                            phase="pipeline",
+                            callsite="process_document_views.element_cache_export_csv",
+                            message="Exported element cache analysis CSV",
+                            extra={"csv_path": csv_path, "elements": len(elem_cache.cache), "views": len(view_elements)}
+                        )
+                except Exception:
+                    pass
+
+            # Detect changes from previous run
+            if getattr(cfg, "element_cache_detect_changes", True) and elem_cache_prev is not None:
+                try:
+                    tolerance = float(getattr(cfg, "element_cache_change_tolerance", 0.01))
+                    changes = elem_cache.detect_changes(elem_cache_prev, tolerance=tolerance)
+
+                    if diag is not None:
+                        diag.info(
+                            phase="pipeline",
+                            callsite="process_document_views.element_cache_changes",
+                            message="Element changes detected since last run",
+                            extra=changes
+                        )
+
+                    # Also export changes CSV if significant changes detected
+                    if output_dir is not None and (changes["added"] or changes["moved"] or changes["resized"]):
+                        try:
+                            import csv as csv_module
+                            changes_csv_path = os.path.join(output_dir, "element_changes.csv")
+                            with open(changes_csv_path, "w", newline="") as f:
+                                writer = csv_module.writer(f)
+                                writer.writerow(["change_type", "elem_id", "source_id", "distance_or_size_change"])
+
+                                for elem_id, source_id in changes["added"]:
+                                    writer.writerow(["ADDED", elem_id, source_id, ""])
+
+                                for elem_id, source_id in changes["removed"]:
+                                    writer.writerow(["REMOVED", elem_id, source_id, ""])
+
+                                for elem_id, source_id, distance in changes["moved"]:
+                                    writer.writerow(["MOVED", elem_id, source_id, f"{distance:.3f}"])
+
+                                for elem_id, source_id, size_change in changes["resized"]:
+                                    writer.writerow(["RESIZED", elem_id, source_id, f"{size_change:.3f}"])
+
+                            if diag is not None:
+                                diag.info(
+                                    phase="pipeline",
+                                    callsite="process_document_views.element_changes_export",
+                                    message="Exported element changes CSV",
+                                    extra={"csv_path": changes_csv_path}
+                                )
+                        except Exception:
+                            pass
+
+                except Exception:
+                    pass
         except Exception:
             pass
 

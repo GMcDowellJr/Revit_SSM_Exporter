@@ -103,6 +103,38 @@ class ElementFingerprint:
             # Fallback: ID only
             return str(self.elem_id) if self.elem_id is not None else "UNKNOWN"
 
+    def to_dict(self):
+        """Serialize fingerprint to dict for JSON export.
+
+        Returns:
+            Dict with elem_id, centroid, size, category, params
+        """
+        return {
+            "elem_id": self.elem_id,
+            "centroid": list(self.centroid),
+            "size": list(self.size),
+            "category": self.category,
+            "params": self.params,
+        }
+
+    @classmethod
+    def from_dict(cls, d):
+        """Deserialize fingerprint from dict (JSON import).
+
+        Args:
+            d: Dict with elem_id, centroid, size, category, params
+
+        Returns:
+            ElementFingerprint instance
+        """
+        fp = cls.__new__(cls)
+        fp.elem_id = d.get("elem_id")
+        fp.centroid = tuple(d.get("centroid", [0.0, 0.0, 0.0]))
+        fp.size = tuple(d.get("size", [0.0, 0.0, 0.0]))
+        fp.category = d.get("category", "Unknown")
+        fp.params = d.get("params", {})
+        return fp
+
 
 class ElementCache:
     """LRU cache for element fingerprints with hit/miss tracking.
@@ -241,4 +273,283 @@ class ElementCache:
                 "misses": 0,
                 "hit_rate": 0.0,
                 "age_sec": 0.0,
+            }
+
+    def save_to_json(self, file_path, metadata=None):
+        """Save cache to JSON file for cross-run persistence.
+
+        Args:
+            file_path: Path to JSON file (e.g., "output/.vop_element_cache.json")
+            metadata: Optional dict with run metadata (timestamp, doc_path, etc.)
+
+        Returns:
+            True on success, False on failure
+
+        JSON format:
+            {
+                "metadata": {"timestamp": "...", "doc_path": "..."},
+                "elements": {
+                    "12345:HOST": {"elem_id": 12345, "centroid": [...], ...},
+                    ...
+                }
+            }
+        """
+        try:
+            import json
+            import os
+
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+            # Serialize cache
+            elements = {}
+            for cache_key, fingerprint in self.cache.items():
+                elem_id, source_id = cache_key
+                key_str = f"{elem_id}:{source_id}"
+                elements[key_str] = fingerprint.to_dict()
+
+            # Build JSON structure
+            data = {
+                "metadata": metadata or {},
+                "stats": self.stats(),
+                "elements": elements,
+            }
+
+            # Write to file
+            with open(file_path, "w") as f:
+                json.dump(data, f, indent=2)
+
+            return True
+
+        except Exception:
+            # Never raise - graceful degradation
+            return False
+
+    @classmethod
+    def load_from_json(cls, file_path, max_elements=10000):
+        """Load cache from JSON file (previous run).
+
+        Args:
+            file_path: Path to JSON file
+            max_elements: Cache capacity
+
+        Returns:
+            ElementCache instance (populated from file), or new empty cache if load fails
+
+        Usage:
+            >>> cache = ElementCache.load_from_json("output/.vop_element_cache.json")
+            >>> # Cache now contains fingerprints from previous run
+        """
+        try:
+            import json
+            import os
+
+            # Create new cache
+            cache = cls(max_elements=max_elements)
+
+            # Check if file exists
+            if not os.path.exists(file_path):
+                return cache  # Return empty cache
+
+            # Load JSON
+            with open(file_path, "r") as f:
+                data = json.load(f)
+
+            # Restore elements
+            elements = data.get("elements", {})
+            for key_str, fp_dict in elements.items():
+                # Parse cache key
+                parts = key_str.split(":", 1)
+                if len(parts) != 2:
+                    continue
+                elem_id = int(parts[0])
+                source_id = parts[1]
+                cache_key = (elem_id, source_id)
+
+                # Deserialize fingerprint
+                fingerprint = ElementFingerprint.from_dict(fp_dict)
+
+                # Add to cache
+                cache.cache[cache_key] = fingerprint
+
+            # Reset stats (fresh run)
+            cache.hits = 0
+            cache.misses = 0
+            cache.created_utc = time.time()
+
+            return cache
+
+        except Exception:
+            # Never raise - return empty cache
+            return cls(max_elements=max_elements)
+
+    def export_analysis_csv(self, file_path, view_elements=None):
+        """Export element cache to CSV for analysis.
+
+        Args:
+            file_path: Path to CSV file (e.g., "output/element_cache_analysis.csv")
+            view_elements: Optional dict mapping view_id -> list of (elem_id, source_id)
+                          for element-view relationship tracking
+
+        CSV columns:
+            elem_id, source_id, category, cx, cy, cz, width, height, depth, view_ids
+
+        Usage:
+            >>> cache.export_analysis_csv("output/elements.csv", view_elements={
+            ...     12345: [(98765, "HOST"), (98766, "HOST")],
+            ...     12346: [(98765, "HOST")],
+            ... })
+        """
+        try:
+            import csv
+            import os
+
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+            # Build reverse index: (elem_id, source_id) -> list of view_ids
+            elem_to_views = {}
+            if view_elements is not None:
+                for view_id, elem_list in view_elements.items():
+                    for elem_id, source_id in elem_list:
+                        key = (elem_id, source_id)
+                        if key not in elem_to_views:
+                            elem_to_views[key] = []
+                        elem_to_views[key].append(view_id)
+
+            # Write CSV
+            with open(file_path, "w", newline="") as f:
+                writer = csv.writer(f)
+
+                # Header
+                writer.writerow([
+                    "elem_id",
+                    "source_id",
+                    "category",
+                    "centroid_x",
+                    "centroid_y",
+                    "centroid_z",
+                    "width",
+                    "height",
+                    "depth",
+                    "view_count",
+                    "view_ids",
+                ])
+
+                # Rows
+                for cache_key, fingerprint in self.cache.items():
+                    elem_id, source_id = cache_key
+                    cx, cy, cz = fingerprint.centroid
+                    w, h, d = fingerprint.size
+
+                    # Get views containing this element
+                    view_ids = elem_to_views.get(cache_key, [])
+                    view_count = len(view_ids)
+                    view_ids_str = "|".join(str(v) for v in view_ids)
+
+                    writer.writerow([
+                        elem_id,
+                        source_id,
+                        fingerprint.category,
+                        f"{cx:.3f}",
+                        f"{cy:.3f}",
+                        f"{cz:.3f}",
+                        f"{w:.3f}",
+                        f"{h:.3f}",
+                        f"{d:.3f}",
+                        view_count,
+                        view_ids_str,
+                    ])
+
+            return True
+
+        except Exception:
+            # Never raise - graceful degradation
+            return False
+
+    def detect_changes(self, previous_cache, tolerance=0.01):
+        """Detect element changes between current and previous cache.
+
+        Args:
+            previous_cache: ElementCache from previous run (loaded from JSON)
+            tolerance: Position/size change threshold in feet (default: 0.01 ft = 1/8 inch)
+
+        Returns:
+            Dict with change detection results:
+            - added: List of (elem_id, source_id) added since last run
+            - removed: List of (elem_id, source_id) removed since last run
+            - moved: List of (elem_id, source_id, distance) moved > tolerance
+            - resized: List of (elem_id, source_id, size_change) resized > tolerance
+            - unchanged: Count of unchanged elements
+
+        Usage:
+            >>> prev_cache = ElementCache.load_from_json("output/.vop_element_cache.json")
+            >>> changes = current_cache.detect_changes(prev_cache)
+            >>> print(f"Added: {len(changes['added'])}, Moved: {len(changes['moved'])}")
+        """
+        try:
+            import math
+
+            added = []
+            removed = []
+            moved = []
+            resized = []
+            unchanged = 0
+
+            current_keys = set(self.cache.keys())
+            previous_keys = set(previous_cache.cache.keys())
+
+            # Find added elements
+            for key in current_keys - previous_keys:
+                added.append(key)
+
+            # Find removed elements
+            for key in previous_keys - current_keys:
+                removed.append(key)
+
+            # Find moved/resized elements
+            for key in current_keys & previous_keys:
+                curr_fp = self.cache[key]
+                prev_fp = previous_cache.cache[key]
+
+                # Check position change (Euclidean distance)
+                cx1, cy1, cz1 = curr_fp.centroid
+                cx2, cy2, cz2 = prev_fp.centroid
+                distance = math.sqrt((cx1 - cx2)**2 + (cy1 - cy2)**2 + (cz1 - cz2)**2)
+
+                # Check size change (max dimension change)
+                w1, h1, d1 = curr_fp.size
+                w2, h2, d2 = prev_fp.size
+                size_change = max(abs(w1 - w2), abs(h1 - h2), abs(d1 - d2))
+
+                # Classify change
+                if distance > tolerance:
+                    elem_id, source_id = key
+                    moved.append((elem_id, source_id, distance))
+                elif size_change > tolerance:
+                    elem_id, source_id = key
+                    resized.append((elem_id, source_id, size_change))
+                else:
+                    unchanged += 1
+
+            return {
+                "added": added,
+                "removed": removed,
+                "moved": moved,
+                "resized": resized,
+                "unchanged": unchanged,
+                "total_current": len(current_keys),
+                "total_previous": len(previous_keys),
+            }
+
+        except Exception:
+            # Never raise - return empty results
+            return {
+                "added": [],
+                "removed": [],
+                "moved": [],
+                "resized": [],
+                "unchanged": 0,
+                "total_current": 0,
+                "total_previous": 0,
             }
