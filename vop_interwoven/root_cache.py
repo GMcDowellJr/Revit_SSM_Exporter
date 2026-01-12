@@ -11,6 +11,11 @@ import time
 import tempfile
 import hashlib
 
+def _round6(x):
+    try:
+        return round(float(x), 6)
+    except Exception:
+        return x
 
 class RootStyleCache:
     """Single-file cache storing metrics only (no raster data)."""
@@ -304,7 +309,7 @@ def extract_metrics_from_view_result(view_result, cfg):
         "view_type": view_result.get("view_mode"),
         "width": view_result.get("width"),
         "height": view_result.get("height"),
-        "cell_size_ft": view_result.get("cell_size"),
+        "CellSize_ft": _round6(raster.cell_size_ft),
         "bounds": raster_dict.get("bounds_xy", {})
     }
     
