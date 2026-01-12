@@ -27,7 +27,27 @@ import math
 #   - Bounded point sampling
 # -----------------------------------------------------------------------------
 
-_FAMILY_REGION_OUTLINE_CACHE = {}  # symbol_id_int -> {"xyz_loops": [ [(x,y,z), ...], ... ], "ts": float}
+# -----------------------------------------------------------------------------
+# Family-definition outline fallback (FilledRegion / 2D region edges)
+# -----------------------------------------------------------------------------
+
+try:
+    # core/cache.py in this repo provides a bounded LRU implementation
+    from .cache import LRUCache
+except Exception:
+    LRUCache = None
+
+# Conservative defaults; override via cfg.* if present.
+_DEFAULT_FAMILY_REGION_CACHE_MAX_SYMBOLS = 2048
+_DEFAULT_FAMILY_REGION_CACHE_MAX_FAMILIES = 2048
+
+# Use bounded caches when available; fall back to dicts if import fails.
+if LRUCache is not None:
+    _FAMILY_REGION_OUTLINE_CACHE = LRUCache(max_items=_DEFAULT_FAMILY_REGION_CACHE_MAX_SYMBOLS)
+    _FAMILY_FAMDOC_REGION_CACHE = LRUCache(max_items=_DEFAULT_FAMILY_REGION_CACHE_MAX_FAMILIES)
+else:
+    _FAMILY_REGION_OUTLINE_CACHE = {}  # symbol_id_int -> {"xyz_loops": [...], "ts": float}
+    _FAMILY_FAMDOC_REGION_CACHE = {}   # family_id_int -> {"xyz_loops": [...], "ts": float}
 
 _FAMILY_FAMDOC_REGION_CACHE = {}  # family_id_int -> {"xyz_loops": [...], "ts": float}
 
@@ -80,7 +100,7 @@ def _collect_regions_recursive(
     visited_family_ids.add(fam_id)
 
     # Cache by family id (family-doc local coords) and then transform to host-family coords
-    hit = _FAMILY_FAMDOC_REGION_CACHE.get(fam_id)
+    hit = _cache_get(_FAMILY_FAMDOC_REGION_CACHE, fam_id, default=None)
     fam_local_loops = None
     if hit and isinstance(hit, dict) and "xyz_loops" in hit:
         fam_local_loops = hit.get("xyz_loops") or []
@@ -189,7 +209,7 @@ def _collect_regions_recursive(
                             fam_local_loops.append(cleaned)
 
             # Cache extracted family-local loops (even if empty)
-            _FAMILY_FAMDOC_REGION_CACHE[fam_id] = {"xyz_loops": fam_local_loops, "ts": time.time()}
+            _cache_set(_FAMILY_FAMDOC_REGION_CACHE, fam_id, {"xyz_loops": fam_local_loops, "ts": time.time()})
 
         # Transform family-local loops into HOST FAMILY coords
         for loop in fam_local_loops or []:
@@ -315,6 +335,36 @@ def _apply_transform_xyz_tuple(T, xyz):
     except Exception:
         return xyz
 
+def _cache_get(cache_obj, key, default=None):
+    try:
+        if hasattr(cache_obj, "get"):
+            return cache_obj.get(key, default=default)
+        return cache_obj.get(key, default)
+    except Exception:
+        return default
+
+def _cache_set(cache_obj, key, value):
+    try:
+        if hasattr(cache_obj, "set"):
+            cache_obj.set(key, value)
+        else:
+            cache_obj[key] = value
+    except Exception:
+        pass
+
+def _maybe_resize_lru(cache_obj, max_items):
+    # Best-effort: only affects LRUCache; dict fallback ignores.
+    try:
+        if hasattr(cache_obj, "max_items"):
+            mi = int(max_items)
+            if mi >= 0:
+                cache_obj.max_items = mi
+                # If downsizing, evict immediately by re-setting a no-op key pattern.
+                # LRUCache evicts on set(); forcing eviction without storing a new item
+                # isn't supported, so we accept that downsizing takes effect on next set.
+    except Exception:
+        pass
+
 def _family_region_outlines_cached(base_elem, view, cfg=None, diag=None):
     """
     Return list of HOST-FAMILY-local XYZ loops representing FilledRegion boundaries
@@ -366,8 +416,21 @@ def _family_region_outlines_cached(base_elem, view, cfg=None, diag=None):
     if sym is None or sym_id <= 0:
         return []
 
+    # Optional runtime cap overrides from cfg (no config dependency)
+    try:
+        max_syms = int(getattr(cfg, "family_region_outline_cache_max_symbols", _DEFAULT_FAMILY_REGION_CACHE_MAX_SYMBOLS))
+    except Exception:
+        max_syms = _DEFAULT_FAMILY_REGION_CACHE_MAX_SYMBOLS
+    try:
+        max_fams = int(getattr(cfg, "family_region_outline_cache_max_families", _DEFAULT_FAMILY_REGION_CACHE_MAX_FAMILIES))
+    except Exception:
+        max_fams = _DEFAULT_FAMILY_REGION_CACHE_MAX_FAMILIES
+
+    _maybe_resize_lru(_FAMILY_REGION_OUTLINE_CACHE, max_syms)
+    _maybe_resize_lru(_FAMILY_FAMDOC_REGION_CACHE, max_fams)
+
     # Cache hit (per symbol)
-    hit = _FAMILY_REGION_OUTLINE_CACHE.get(sym_id)
+    hit = _cache_get(_FAMILY_REGION_OUTLINE_CACHE, sym_id, default=None)
     if hit and isinstance(hit, dict) and "xyz_loops" in hit:
         return hit.get("xyz_loops") or []
 
@@ -401,8 +464,8 @@ def _family_region_outlines_cached(base_elem, view, cfg=None, diag=None):
             diag=diag,
         )
 
-        _FAMILY_REGION_OUTLINE_CACHE[sym_id] = {"xyz_loops": xyz_loops, "ts": time.time()}
-        return xyz_loops
+        _cache_set(_FAMILY_REGION_OUTLINE_CACHE, sym_id, {"xyz_loops": [], "ts": time.time()})
+        return []
 
     except Exception as e:
         try:
@@ -416,8 +479,8 @@ def _family_region_outlines_cached(base_elem, view, cfg=None, diag=None):
                 )
         except Exception:
             pass
-        _FAMILY_REGION_OUTLINE_CACHE[sym_id] = {"xyz_loops": [], "ts": time.time()}
-        return []
+        _cache_set(_FAMILY_REGION_OUTLINE_CACHE, sym_id, {"xyz_loops": xyz_loops, "ts": time.time()})
+        return xyz_loops
 
 def _bbox_corners_world(bbox):
     """

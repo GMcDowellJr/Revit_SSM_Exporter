@@ -181,7 +181,13 @@ class StreamingExporter:
         )
         
         # Core CSV
-        date_str = (self.date_override or datetime.now()).strftime("%Y-%m-%d")
+        if isinstance(self.date_override, datetime):
+            date_str = self.date_override.strftime("%Y-%m-%d")
+        elif isinstance(self.date_override, str):
+            date_str = self.date_override
+        else:
+            date_str = datetime.now().strftime("%Y-%m-%d")
+            
         core_filename = f"views_core_{date_str}.csv"
         self.core_csv_path = os.path.join(self.output_dir, core_filename)
         self.csv_core_file = open(self.core_csv_path, 'w', newline='', encoding='utf-8')
