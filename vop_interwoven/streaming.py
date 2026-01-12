@@ -65,10 +65,31 @@ class StreamingExporter:
         
         # Lightweight view summaries (no raster data)
         self.view_summaries = []
-        
+
         # Full results if JSON export requested (memory-heavy)
         self.full_results = [] if export_json else None
-        
+
+        # Generate run_id once for consistency across all views
+        from datetime import datetime
+        run_dt = datetime.now()
+        tag = None
+
+        if date_override:
+            if isinstance(date_override, str):
+                s = date_override.strip()
+                try:
+                    if len(s) == 10:
+                        run_dt = datetime.strptime(s, "%Y-%m-%d")
+                    else:
+                        run_dt = datetime.fromisoformat(s)
+                except Exception:
+                    tag = s
+            else:
+                tag = str(date_override)
+
+        base_run_id = run_dt.strftime("%Y%m%dT%H%M%S")
+        self.run_id = f"{base_run_id}_{tag}" if tag else base_run_id
+
         # Setup
         os.makedirs(output_dir, exist_ok=True)
         if export_png:
@@ -210,22 +231,24 @@ class StreamingExporter:
         
         # Core row
         core_row = view_result_to_core_row(
-            view_result, 
-            self.cfg, 
+            view_result,
+            self.cfg,
             self.doc,
-            date_override=self.date_override
+            date_override=self.date_override,
+            run_id=self.run_id
         )
         if core_row:
             self.csv_core_writer.writerow(core_row)
             self.csv_core_file.flush()  # Ensure written to disk
             self.csv_rows_written += 1
-        
+
         # VOP row
         vop_row = view_result_to_vop_row(
             view_result,
             self.cfg,
             self.doc,
-            date_override=self.date_override
+            date_override=self.date_override,
+            run_id=self.run_id
         )
         if vop_row:
             self.csv_vop_writer.writerow(vop_row)

@@ -79,7 +79,7 @@ try:
         cfg=cfg,
         output_dir=output_dir,
         export_png=True,
-        export_csv=not tag_override,  # Skip CSV if we'll export with tag later
+        export_csv=True,  # Always export CSV (tag override just affects Date/RunId columns)
         export_json=False,
         pixels_per_cell=10
     )
