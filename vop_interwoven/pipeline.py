@@ -116,6 +116,153 @@ def _perf_now():
 def _perf_ms(t0, t1):
     return (float(t1) - float(t0)) * 1000.0
 
+def _safe_int(v):
+    try:
+        return int(v)
+    except Exception:
+        return None
+
+
+def _safe_bool(v):
+    try:
+        return bool(v)
+    except Exception:
+        return None
+
+
+def _cropbox_fingerprint(view_obj):
+    """
+    Returns a small, stable fingerprint of crop settings and extents.
+    We avoid returning heavy objects; only primitives.
+    """
+    fp = {
+        "crop_active": _safe_bool(getattr(view_obj, "CropBoxActive", None)),
+        "crop_visible": _safe_bool(getattr(view_obj, "CropBoxVisible", None)),
+    }
+    try:
+        cb = getattr(view_obj, "CropBox", None)
+        if cb is not None:
+            mn = getattr(cb, "Min", None)
+            mx = getattr(cb, "Max", None)
+            fp["crop_min"] = (
+                round(float(getattr(mn, "X", 0.0)), 6),
+                round(float(getattr(mn, "Y", 0.0)), 6),
+                round(float(getattr(mn, "Z", 0.0)), 6),
+            )
+            fp["crop_max"] = (
+                round(float(getattr(mx, "X", 0.0)), 6),
+                round(float(getattr(mx, "Y", 0.0)), 6),
+                round(float(getattr(mx, "Z", 0.0)), 6),
+            )
+    except Exception:
+        pass
+    return fp
+
+
+def _cfg_hash(cfg_obj):
+    try:
+        import json
+        import hashlib
+
+        d = cfg_obj.to_dict() if cfg_obj is not None else {}
+        blob = json.dumps(d, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha1(blob).hexdigest()
+    except Exception:
+        return None
+
+
+def _view_signature(doc_obj, view_obj, view_mode_val, cfg_obj=None, elem_cache=None, track_elements=None):
+    """Enhanced signature with element fingerprints for position/size tracking.
+
+    Must be module-level: imported by vop_interwoven.streaming.
+    """
+    import json
+    import hashlib
+
+    # Collect elements with fingerprints (position + size) or IDs (fallback)
+    elem_fps = []
+    elem_ids_for_tracking = []  # For view_elements tracking
+    try:
+        from Autodesk.Revit.DB import FilteredElementCollector
+
+        col = FilteredElementCollector(doc_obj, view_obj.Id).WhereElementIsNotElementType()
+        for elem in col:
+            try:
+                elem_id = getattr(getattr(elem, "Id", None), "IntegerValue", None)
+                if elem_id is None:
+                    continue
+
+                # Track for CSV export
+                elem_ids_for_tracking.append((elem_id, "HOST"))
+
+                if elem_cache is not None:
+                    fp = elem_cache.get_or_create_fingerprint(
+                        elem=elem,
+                        elem_id=elem_id,
+                        source_id="HOST",
+                        view=None,  # Use model bbox for cross-view reuse
+                        extract_params=None,
+                    )
+                    if fp is not None:
+                        precision = int(getattr(cfg_obj, "signature_bbox_precision", 2)) if cfg_obj is not None else 2
+                        elem_fps.append(fp.to_signature_string(precision=precision))
+                    else:
+                        elem_fps.append(str(elem_id))
+                else:
+                    elem_fps.append(str(elem_id))
+            except Exception:
+                continue
+    except Exception:
+        pass  # Empty list on failure
+
+    # Store element-view relationship for CSV export
+    if track_elements is not None:
+        try:
+            view_id_int = _safe_int(getattr(getattr(view_obj, "Id", None), "IntegerValue", None))
+            if view_id_int is not None:
+                track_elements[view_id_int] = elem_ids_for_tracking
+        except Exception:
+            pass
+
+    # Sort for deterministic signature
+    elem_fps_str = "|".join(sorted(elem_fps))
+
+    def _safe_prop_str(getter):
+        try:
+            v = getter()
+            return None if v is None else str(v)
+        except Exception as e:
+            return "__ERR__:{0}".format(type(e).__name__)
+
+    def _safe_prop_int(getter):
+        try:
+            v = getter()
+            return None if v is None else int(v)
+        except Exception:
+            return None
+
+    sig = {
+        "schema": 3,
+        "doc_path": getattr(doc_obj, "PathName", None),
+        "doc_title": getattr(doc_obj, "Title", None),
+        "view_id": _safe_int(getattr(getattr(view_obj, "Id", None), "IntegerValue", None)),
+        "view_uid": getattr(view_obj, "UniqueId", None),
+        "view_name": getattr(view_obj, "Name", None),
+        "view_mode": view_mode_val,
+        "view_type": _safe_prop_str(lambda: getattr(view_obj, "ViewType", None)),
+        "view_template_id": _safe_int(getattr(getattr(view_obj, "ViewTemplateId", None), "IntegerValue", None)),
+        "scale": _safe_prop_int(lambda: getattr(view_obj, "Scale", None)),
+        "detail_level": _safe_prop_str(lambda: getattr(view_obj, "DetailLevel", None)),
+        "discipline": _safe_prop_str(lambda: view_obj.Discipline),
+        "display_style": _safe_prop_str(lambda: view_obj.DisplayStyle),
+        "crop": _cropbox_fingerprint(view_obj),
+        "elem_fps": elem_fps_str,
+        "cfg_sha1": _cfg_hash(cfg_obj),
+    }
+
+    blob = json.dumps(sig, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha1(blob).hexdigest(), sig
+
 def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
     """Process multiple views through the VOP interwoven pipeline.
 
@@ -166,212 +313,6 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
         except Exception:
             # If cache dir can't be created, disable caching (must never break pipeline)
             view_cache_enabled = False
-
-    def _safe_int(v):
-        try:
-            return int(v)
-        except Exception:
-            return None
-
-    def _safe_bool(v):
-        try:
-            return bool(v)
-        except Exception:
-            return None
-
-    def _cropbox_fingerprint(view_obj):
-        """
-        Returns a small, stable fingerprint of crop settings and extents.
-        We avoid returning heavy objects; only primitives.
-        """
-        fp = {
-            "crop_active": _safe_bool(getattr(view_obj, "CropBoxActive", None)),
-            "crop_visible": _safe_bool(getattr(view_obj, "CropBoxVisible", None)),
-        }
-        try:
-            cb = getattr(view_obj, "CropBox", None)
-            if cb is not None:
-                mn = getattr(cb, "Min", None)
-                mx = getattr(cb, "Max", None)
-                fp["crop_min"] = (
-                    round(float(getattr(mn, "X", 0.0)), 6),
-                    round(float(getattr(mn, "Y", 0.0)), 6),
-                    round(float(getattr(mn, "Z", 0.0)), 6),
-                )
-                fp["crop_max"] = (
-                    round(float(getattr(mx, "X", 0.0)), 6),
-                    round(float(getattr(mx, "Y", 0.0)), 6),
-                    round(float(getattr(mx, "Z", 0.0)), 6),
-                )
-        except Exception:
-            pass
-        return fp
-
-    def _cfg_hash(cfg_obj):
-        try:
-            d = cfg_obj.to_dict() if cfg_obj is not None else {}
-            blob = json.dumps(d, sort_keys=True, separators=(",", ":")).encode("utf-8")
-            return hashlib.sha1(blob).hexdigest()
-        except Exception:
-            return None
-
-    def _collect_element_ids_for_view(doc, view):
-        """
-        Enumerate element IDs visible in view for cache signature.
-
-        Uses FilteredElementCollector to gather all non-type elements visible in the view.
-        Returns a sorted list of integer element IDs. Element additions/removals in the
-        view will change this list, invalidating the cache as intended.
-
-        Args:
-            doc: Revit Document
-            view: Revit View
-
-        Returns:
-            List of sorted integer element IDs, or empty list on failure.
-
-        Notes:
-            - Never raises exceptions (returns [] on any error)
-            - Filters out element types (only instances)
-            - Sorted for deterministic signature generation
-        """
-        try:
-            from Autodesk.Revit.DB import FilteredElementCollector
-
-            # View-scoped collector: enumerates elements visible in this view
-            collector = FilteredElementCollector(doc, view.Id)
-            collector = collector.WhereElementIsNotElementType()
-
-            ids = []
-            for elem in collector:
-                try:
-                    elem_id = getattr(getattr(elem, "Id", None), "IntegerValue", None)
-                    if elem_id is not None:
-                        ids.append(int(elem_id))
-                except Exception:
-                    # Skip elements we can't read ID from
-                    continue
-
-            # Sort for deterministic signature (element iteration order may vary)
-            return sorted(set(ids))
-
-        except Exception:
-            # Collection failure must never break view processing
-            # Return empty list -> signature will be based on view properties only
-            return []
-
-    def _view_signature(doc_obj, view_obj, view_mode_val, elem_cache=None, track_elements=None):
-        """Enhanced signature with element fingerprints for position/size tracking.
-
-        Args:
-            elem_cache: Optional ElementCache for bbox fingerprint reuse
-            track_elements: Optional dict to populate with (view_id -> list of (elem_id, source_id))
-
-        If elem_cache is provided:
-            - Reuses cached bbox data across views
-            - Includes position/size in signature (detects geometry changes)
-            - Faster after first few views due to cache hits
-
-        If elem_cache is None:
-            - Falls back to element IDs only (Phase 1 behavior)
-
-        Schema v3 adds bbox fingerprints: element position/size changes
-        will invalidate the cache, ensuring accuracy when geometry changes.
-
-        IMPORTANT:
-            Some Revit view properties are not available on all view types (e.g. Legend),
-            and may throw InvalidOperationException when accessed. Signature generation
-            must never break the pipeline.
-        """
-
-        # Collect elements with fingerprints (position + size) or IDs (fallback)
-        from Autodesk.Revit.DB import FilteredElementCollector
-
-        elem_fps = []
-        elem_ids_for_tracking = []  # For view_elements tracking
-        try:
-            col = FilteredElementCollector(doc_obj, view_obj.Id).WhereElementIsNotElementType()
-            for elem in col:
-                try:
-                    elem_id = getattr(getattr(elem, "Id", None), "IntegerValue", None)
-                    if elem_id is None:
-                        continue
-
-                    # Track for CSV export
-                    elem_ids_for_tracking.append((elem_id, "HOST"))
-
-                    if elem_cache is not None:
-                        # Use fingerprint with bbox (position/size tracking)
-                        fp = elem_cache.get_or_create_fingerprint(
-                            elem=elem,
-                            elem_id=elem_id,
-                            source_id="HOST",
-                            view=None,  # Use model bbox for cross-view reuse
-                            extract_params=None  # Phase 3 will add param extraction
-                        )
-                        if fp is not None:
-                            precision = int(getattr(cfg, "signature_bbox_precision", 2))
-                            fp_str = fp.to_signature_string(precision=precision)
-                            elem_fps.append(fp_str)
-                        else:
-                            # Fallback to ID only if fingerprint fails
-                            elem_fps.append(str(elem_id))
-                    else:
-                        # Fallback: ID only (Phase 1 behavior)
-                        elem_fps.append(str(elem_id))
-                except Exception:
-                    continue
-        except Exception:
-            pass  # Empty list on failure
-
-        # Store element-view relationship for CSV export
-        if track_elements is not None:
-            try:
-                view_id_int = _safe_int(getattr(getattr(view_obj, "Id", None), "IntegerValue", None))
-                if view_id_int is not None:
-                    track_elements[view_id_int] = elem_ids_for_tracking
-            except Exception:
-                pass
-
-        # Sort for deterministic signature
-        elem_fps_str = "|".join(sorted(elem_fps))
-
-        def _safe_prop_str(getter):
-            try:
-                v = getter()
-                return None if v is None else str(v)
-            except Exception as e:
-                # Keep deterministic + observable in cache signature without failing the view.
-                return "__ERR__:{0}".format(type(e).__name__)
-
-        def _safe_prop_int(getter):
-            try:
-                v = getter()
-                return None if v is None else int(v)
-            except Exception as e:
-                return None
-
-        sig = {
-            "schema": 3,  # Bump schema for fingerprint format
-            "doc_path": getattr(doc_obj, "PathName", None),
-            "doc_title": getattr(doc_obj, "Title", None),
-            "view_id": _safe_int(getattr(getattr(view_obj, "Id", None), "IntegerValue", None)),
-            "view_uid": getattr(view_obj, "UniqueId", None),
-            "view_name": getattr(view_obj, "Name", None),
-            "view_mode": view_mode_val,
-            "view_type": _safe_prop_str(lambda: getattr(view_obj, "ViewType", None)),
-            "view_template_id": _safe_int(getattr(getattr(view_obj, "ViewTemplateId", None), "IntegerValue", None)),
-            "scale": _safe_prop_int(lambda: getattr(view_obj, "Scale", None)),
-            "detail_level": _safe_prop_str(lambda: getattr(view_obj, "DetailLevel", None)),
-            # These are known to throw on some view types (e.g. Legend: Discipline)
-            "discipline": _safe_prop_str(lambda: view_obj.Discipline),
-            "display_style": _safe_prop_str(lambda: view_obj.DisplayStyle),
-            "crop": _cropbox_fingerprint(view_obj),
-            "elem_fps": elem_fps_str,  # Changed from "elem_ids" to "elem_fps"
-            "cfg_sha1": _cfg_hash(cfg),
-        }
-        blob = json.dumps(sig, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        return hashlib.sha1(blob).hexdigest(), sig
 
     def _cache_path_for_view(view_id_int):
         return os.path.join(view_cache_dir, f"view_{int(view_id_int)}.json")
@@ -574,6 +515,7 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
             # Compute signature ONCE (and populate view_elements consistently)
             sig_hex, sig_obj = _view_signature(
                 doc, view, view_mode,
+                cfg_obj=cfg,
                 elem_cache=elem_cache,
                 track_elements=view_elements
             )
@@ -702,7 +644,6 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
                 if view_cache_enabled:
                     vid = getattr(getattr(view, "Id", None), "IntegerValue", None)
                     if vid is not None:
-                        sig_hex, _ = _view_signature(doc, view, view_mode, elem_cache=elem_cache, track_elements=view_elements)
                         _save_cached_view(vid, sig_hex, out)
                         try:
                             out["cache"] = {"view_cache": "MISS_SAVED", "signature": sig_hex, "dir": view_cache_dir}
