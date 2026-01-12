@@ -8,6 +8,12 @@ import os
 import hashlib
 from datetime import datetime
 
+def _round6(x):
+    try:
+        return round(float(x), 6)
+    except Exception:
+        return x
+
 def _is_from_cache(view_result):
     """Return True if the view_result represents any cache hit (legacy or root)."""
     try:
@@ -562,11 +568,11 @@ def build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metada
         anno_metrics.get("AnnoCells_OTHER", 0),
 
         # Back-compat: actual (effective) cell size used
-        run_info.get("cell_size_ft", 0.0),
+        _round6(run_info.get("cell_size_ft", 0.0)),
 
         # Option 2 contract fields
-        run_info.get("cell_size_ft_requested", run_info.get("cell_size_ft", 0.0)),
-        run_info.get("cell_size_ft_effective", run_info.get("cell_size_ft", 0.0)),
+        _round6(run_info.get("cell_size_ft_requested", run_info.get("cell_size_ft", 0.0))),
+        _round6(run_info.get("cell_size_ft_effective", run_info.get("cell_size_ft", 0.0))),
         run_info.get("resolution_mode", "canonical"),
         bool(run_info.get("cap_triggered", False)),
 
@@ -1171,11 +1177,11 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
         "AnnoCells_OTHER": anno_metrics.get("AnnoCells_OTHER", 0),
 
         # Existing field (effective size actually used by raster)
-        "CellSize_ft": cell_size_ft,
+        "CellSize_ft": _round6(cell_size_ft),
 
         # Option 2 contract fields
-        "CellSizeRequested_ft": cell_size_req,
-        "CellSizeEffective_ft": cell_size_eff,
+        "CellSizeRequested_ft": _round6(cell_size_req),
+        "CellSizeEffective_ft": _round6(cell_size_eff),
         "ResolutionMode": resolution_mode,
         "CapTriggered": cap_triggered,
 
