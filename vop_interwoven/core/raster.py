@@ -927,6 +927,9 @@ class ViewRaster:
                 "xmax": self.bounds_xy.xmax,
                 "ymax": self.bounds_xy.ymax,
             },
+            # Bounds/resolution metadata (small, required for CSV contract)
+            "bounds_meta": getattr(self, "bounds_meta", None),
+
             # Large per-cell arrays (required for PNG/CSV correctness)
             "w_occ": [w if w != float("inf") else None for w in self.w_occ],
             "occ_host": self.occ_host,
@@ -946,6 +949,7 @@ class ViewRaster:
             "depth_test_wins": self.depth_test_wins,
             "depth_test_rejects": self.depth_test_rejects,
         }
+
 
     @classmethod
     def from_dict(cls, d, cfg=None):
@@ -971,6 +975,14 @@ class ViewRaster:
         )
 
         r = cls(W, H, cell_size_ft, bounds, cfg=cfg)
+
+        # Optional bounds/resolution metadata (may be absent in older payloads)
+        bm = d.get("bounds_meta", None)
+        if bm is not None:
+            try:
+                r.bounds_meta = bm
+            except Exception:
+                pass
 
         # w_occ uses None as sentinel for +inf in JSON
         w_occ_in = d.get("w_occ") or []

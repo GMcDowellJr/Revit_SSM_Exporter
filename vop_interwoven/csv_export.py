@@ -560,13 +560,23 @@ def build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metada
         anno_metrics.get("AnnoCells_LINES", 0),
         anno_metrics.get("AnnoCells_REGION", 0),
         anno_metrics.get("AnnoCells_OTHER", 0),
+
+        # Back-compat: actual (effective) cell size used
         run_info.get("cell_size_ft", 0.0),
+
+        # Option 2 contract fields
+        run_info.get("cell_size_ft_requested", run_info.get("cell_size_ft", 0.0)),
+        run_info.get("cell_size_ft_effective", run_info.get("cell_size_ft", 0.0)),
+        run_info.get("resolution_mode", "canonical"),
+        bool(run_info.get("cap_triggered", False)),
+
         "VOP_Interwoven_v1",  # RowSource
         run_info.get("exporter_version", "VOP_v1.0"),
         config_hash,
         False,  # FromCache (always False for now)
         run_info.get("elapsed_sec", 0.0),
     ]
+
 
     return row
 
@@ -651,7 +661,18 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
         "Empty", "ModelOnly", "AnnoOnly", "Overlap", "Ext_Cells_Any",
         "Ext_Cells_Only", "Ext_Cells_DWG", "Ext_Cells_RVT", "AnnoCells_TEXT",
         "AnnoCells_TAG", "AnnoCells_DIM", "AnnoCells_DETAIL", "AnnoCells_LINES",
-        "AnnoCells_REGION", "AnnoCells_OTHER", "CellSize_ft", "RowSource",
+        "AnnoCells_REGION", "AnnoCells_OTHER",
+
+        # Back-compat: actual (effective) cell size used to construct raster
+        "CellSize_ft",
+
+        # Option 2 contract fields
+        "CellSizeRequested_ft",
+        "CellSizeEffective_ft",
+        "ResolutionMode",
+        "CapTriggered",
+
+        "RowSource",
         "ExporterVersion", "ConfigHash", "FromCache", "ElapsedSec"
     ]
 
@@ -749,12 +770,26 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
                 except Exception:
                     pass
 
+        bounds_meta = raster_dict.get("bounds_meta") or {}
+
+        cell_size_eff = raster_dict.get("cell_size_ft", 0.0)
+        cell_size_req = bounds_meta.get("cell_size_ft_requested", cell_size_eff)
+        cell_size_eff_meta = bounds_meta.get("cell_size_ft_effective", cell_size_eff)
+
         run_info = {
             "date": date_str,
             "run_id": run_id,
             "exporter_version": view_result.get("exporter_version", "VOP_v1.0"),
             "elapsed_sec": view_result.get("elapsed_sec", 0.0),
-            "cell_size_ft": raster_dict.get("cell_size_ft", 0.0),
+
+            # Back-compat: actual (effective) cell size used
+            "cell_size_ft": cell_size_eff,
+
+            # Option 2 contract fields
+            "cell_size_ft_requested": cell_size_req,
+            "cell_size_ft_effective": cell_size_eff_meta,
+            "resolution_mode": bounds_meta.get("resolution_mode", "canonical"),
+            "cap_triggered": bool(bounds_meta.get("cap_triggered", bounds_meta.get("capped", False))),
         }
 
         view_metadata = {}
@@ -821,7 +856,7 @@ def get_vop_csv_header():
         "Empty", "ModelOnly", "AnnoOnly", "Overlap", "Ext_Cells_Any",
         "Ext_Cells_Only", "Ext_Cells_DWG", "Ext_Cells_RVT", "AnnoCells_TEXT",
         "AnnoCells_TAG", "AnnoCells_DIM", "AnnoCells_DETAIL", "AnnoCells_LINES",
-        "AnnoCells_REGION", "AnnoCells_OTHER", "CellSize_ft", "RowSource",
+        "AnnoCells_REGION", "AnnoCells_OTHER", "CellSize_ft", "CellSizeRequested_ft", "CellSizeEffective_ft", "ResolutionMode", "CapTriggered","RowSource",
         "ExporterVersion", "ConfigHash", "FromCache", "ElapsedSec"
     ]
 
@@ -1104,6 +1139,14 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
         except Exception:
             pass
     
+    bounds_meta = raster_dict.get("bounds_meta") or {}
+
+    cell_size_ft = raster_dict.get("cell_size_ft", 0.0)
+    cell_size_req = bounds_meta.get("cell_size_ft_requested", cell_size_ft)
+    cell_size_eff = bounds_meta.get("cell_size_ft_effective", cell_size_ft)
+    resolution_mode = bounds_meta.get("resolution_mode", "canonical")
+    cap_triggered = bool(bounds_meta.get("cap_triggered", bounds_meta.get("capped", False)))
+
     row = {
         "Date": date_str,
         "RunId": run_id,
@@ -1126,13 +1169,23 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
         "AnnoCells_LINES": anno_metrics.get("AnnoCells_LINES", 0),
         "AnnoCells_REGION": anno_metrics.get("AnnoCells_REGION", 0),
         "AnnoCells_OTHER": anno_metrics.get("AnnoCells_OTHER", 0),
-        "CellSize_ft": raster_dict.get("cell_size_ft", 0.0),
+
+        # Existing field (effective size actually used by raster)
+        "CellSize_ft": cell_size_ft,
+
+        # Option 2 contract fields
+        "CellSizeRequested_ft": cell_size_req,
+        "CellSizeEffective_ft": cell_size_eff,
+        "ResolutionMode": resolution_mode,
+        "CapTriggered": cap_triggered,
+
         "RowSource": "vop_interwoven",
         "ExporterVersion": "vop_interwoven",
         "ConfigHash": config_hash,
         "FromCache": from_cache,
-        "ElapsedSec": f"{elapsed_sec:.3f}"
+        "ElapsedSec": f"{elapsed_sec:.3f}",
     }
+
     
     return row
 

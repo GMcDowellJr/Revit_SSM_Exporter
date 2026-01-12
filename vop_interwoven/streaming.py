@@ -437,6 +437,12 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
     # If no callback, fall back to standard behavior
     if on_view_complete is None:
         return process_document_views(doc, view_ids, cfg)
+
+    # CRITICAL: Ensure rasters are retained for streaming exports
+    # Override any user setting to prevent export failures
+    original_retain = getattr(cfg, 'retain_rasters_in_memory', True)
+    cfg._is_streaming_mode = True
+    cfg.retain_rasters_in_memory = True
     
     # Process views one at a time with callback
     summaries = []
@@ -448,7 +454,18 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
 
             if results and len(results) > 0:
                 view_result = results[0]
-
+                
+                # Verify raster is present before calling export callback
+                if "raster" not in view_result or view_result.get("raster") is None:
+                    print(f"[Streaming] WARNING: No raster in view_result for view {view_id}")
+                    print(f"[Streaming]   This should not happen - check cfg.retain_rasters_in_memory")
+                    summaries.append({
+                        "view_id": view_id,
+                        "success": False,
+                        "error": "Missing raster data"
+                    })
+                    continue
+                    
                 # Call user callback
                 on_view_complete(view_result)
 
@@ -458,7 +475,8 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                     "view_name": view_result.get("view_name"),
                     "width": view_result.get("width"),
                     "height": view_result.get("height"),
-                    "success": view_result.get("success", True)
+                    "success": view_result.get("success", True),
+                    "timings": view_result.get("timings")
                 }
                 summaries.append(summary)
 
@@ -469,7 +487,10 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                 "success": False,
                 "error": str(e)
             })
-
+    
+    # Restore original setting (though caller usually doesn't reuse cfg)
+    cfg.retain_rasters_in_memory = original_retain
+    
     return summaries
 
 
@@ -521,7 +542,11 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
     
     if output_dir is None:
         output_dir = r"C:\temp\vop_output"
-        
+
+    # CRITICAL: Force raster retention for streaming exports
+    # This ensures PNGs and CSVs can be exported before memory is discarded
+    cfg.retain_rasters_in_memory = True
+    
     # Initialize root-style cache (works with streaming!)
     project_guid = doc.ProjectInformation.UniqueId if doc.ProjectInformation else "unknown"
     exporter_version = "VOP_v2.0"
