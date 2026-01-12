@@ -8,6 +8,26 @@ import os
 import hashlib
 from datetime import datetime
 
+def _is_from_cache(view_result):
+    """Return True if the view_result represents any cache hit (legacy or root)."""
+    try:
+        if view_result.get("from_cache") is True:
+            return True
+
+        cache_info = view_result.get("cache", {})
+        if isinstance(cache_info, dict):
+            # Root cache
+            if str(cache_info.get("cache_type", "")).lower() == "root":
+                return True
+
+            # Legacy per-view cache
+            cache_status = cache_info.get("view_cache", "")
+            if "HIT" in str(cache_status).upper():
+                return True
+    except Exception:
+        pass
+    return False
+
 def compute_external_cell_metrics(raster):
     """Compute external-cell metrics for VOP CSV.
 
@@ -835,8 +855,11 @@ def view_result_to_core_row(view_result, config, doc, date_override=None, run_id
     if view_result.get("view_mode") == "REJECTED":
         return None
 
-    raster_dict = view_result.get("raster", {})
-    if not raster_dict:
+    raster_dict = view_result.get("raster", {}) or {}
+    metrics_only = (not raster_dict) and isinstance(view_result.get("metrics"), dict) and bool(view_result.get("metrics"))
+    
+    # Allow metrics-only results for cache hits (root cache)
+    if not raster_dict and not metrics_only:
         return None
 
     # Resolve run datetime and run_id (use provided run_id if available for consistency)
@@ -900,25 +923,18 @@ def view_result_to_core_row(view_result, config, doc, date_override=None, run_id
     config_hash = compute_config_hash(config)
     view_frame_hash = compute_view_frame_hash(view_metadata)
     
-    # Elapsed time
+    # FromCache flag (supports legacy + root)
+    from_cache = "Y" if _is_from_cache(view_result) else "N"
+
+    # Elapsed time (force 0 on cache hits)
     elapsed_sec = 0.0
-    try:
-        timings = view_result.get("timings", {})
-        total_ms = timings.get("total_ms", 0.0)
-        elapsed_sec = total_ms / 1000.0
-    except Exception:
-        pass
-    
-    # FromCache flag
-    from_cache = "N"
-    try:
-        cache_info = view_result.get("cache", {})
-        if isinstance(cache_info, dict):
-            cache_status = cache_info.get("view_cache", "")
-            if "HIT" in str(cache_status).upper():
-                from_cache = "Y"
-    except Exception:
-        pass
+    if from_cache != "Y":
+        try:
+            timings = view_result.get("timings", {})
+            total_ms = timings.get("total_ms", 0.0)
+            elapsed_sec = total_ms / 1000.0
+        except Exception:
+            pass
     
     row = {
         "Date": date_str,
@@ -963,8 +979,9 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
     if view_result.get("view_mode") == "REJECTED":
         return None
 
-    raster_dict = view_result.get("raster", {})
-    if not raster_dict:
+    raster_dict = view_result.get("raster", {}) or {}
+    metrics_only = (not raster_dict) and isinstance(view_result.get("metrics"), dict) and bool(view_result.get("metrics"))
+    if not raster_dict and not metrics_only:
         return None
 
     # Resolve run datetime and run_id (use provided run_id if available for consistency)
@@ -1010,9 +1027,14 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
             except Exception:
                 date_str = datetime.now().strftime("%Y-%m-%d")
     
-    # Reconstruct raster object for metrics computation
-    from .core.raster import ViewRaster
-    from .core.math_utils import Bounds2D
+    if metrics_only:
+        metrics = view_result.get("metrics") or {}
+        anno_metrics = metrics  # anno counts already flattened in root_cache metrics
+        ext_metrics = metrics   # ext counts already flattened in root_cache metrics
+    else:
+        # Reconstruct raster object for metrics computation (existing behavior)
+        from .core.raster import ViewRaster
+        from .core.math_utils import Bounds2D
     
     bounds_dict = raster_dict.get("bounds_xy", {})
     bounds = Bounds2D(
@@ -1044,7 +1066,7 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
     metrics = compute_cell_metrics(raster, model_presence_mode=model_presence_mode)
     anno_metrics = compute_annotation_type_metrics(raster)
     ext_metrics = compute_external_cell_metrics(raster)
-    
+
     # Get view object
     view = view_result.get("view")
     if view is None and doc is not None:
@@ -1069,16 +1091,18 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
     except Exception:
         pass
     
-    # FromCache flag
-    from_cache = "N"
-    try:
-        cache_info = view_result.get("cache", {})
-        if isinstance(cache_info, dict):
-            cache_status = cache_info.get("view_cache", "")
-            if "HIT" in str(cache_status).upper():
-                from_cache = "Y"
-    except Exception:
-        pass
+    # FromCache flag (supports legacy + root)
+    from_cache = "Y" if _is_from_cache(view_result) else "N"
+
+    # Elapsed time (force 0 on cache hits)
+    elapsed_sec = 0.0
+    if from_cache != "Y":
+        try:
+            timings = view_result.get("timings", {})
+            total_ms = timings.get("total_ms", 0.0)
+            elapsed_sec = total_ms / 1000.0
+        except Exception:
+            pass
     
     row = {
         "Date": date_str,
@@ -1168,6 +1192,9 @@ def view_result_to_perf_row(view_result, date_override=None, run_id=None):
                 date_str = datetime.now().strftime("%Y-%m-%d")
 
     timings = view_result.get("timings", {})
+    
+    if _is_from_cache(view_result):
+        timings = {}
 
     row = {
         "Date": date_str,

@@ -18,7 +18,76 @@ import time
 import json
 from datetime import datetime
 
-
+def process_with_streaming(doc, view_ids, cfg, on_view_complete, root_cache=None):
+    """Process views with per-view callback and cache support."""
+    
+    from vop_interwoven.pipeline import process_document_views
+    from vop_interwoven.root_cache import RootStyleCache, compute_config_hash
+    
+    # Initialize cache
+    project_guid = doc.ProjectInformation.UniqueId if doc.ProjectInformation else "unknown"
+    config_hash = compute_config_hash(cfg)
+    
+    root_cache = RootStyleCache(
+        output_dir=getattr(cfg, "output_dir", "C:\\temp\\vop_output"),
+        project_guid=project_guid,
+        exporter_version="VOP_v2.0",
+        config_hash=config_hash
+    )
+    root_cache.load()
+    
+    summaries = []
+    
+    for view_id in view_ids:
+        try:
+            # Compute signature FIRST (before processing)
+            from vop_interwoven.pipeline import _view_signature  # Need to expose this
+            view = doc.GetElement(view_id)
+            
+            # TODO: Compute signature with element IDs
+            # sig_hex, sig_obj = _view_signature(doc, view, "MODEL_AND_ANNOTATION")
+            
+            # Check cache
+            # cached = root_cache.get_view(view_id, sig_hex)
+            # if cached:
+            #     # Reconstruct minimal view_result from cached metrics
+            #     view_result = {
+            #         "view_id": view_id,
+            #         "from_cache": True,
+            #         **cached["metadata"],
+            #         "metrics": cached["metrics"]
+            #     }
+            #     on_view_complete(view_result)
+            #     continue
+            
+            # Process view (cache miss)
+            results = process_document_views(doc, [view_id], cfg)
+            
+            if results and len(results) > 0:
+                view_result = results[0]
+                on_view_complete(view_result)
+                
+                # Lightweight summary
+                summary = {
+                    "view_id": view_result.get("view_id"),
+                    "view_name": view_result.get("view_name"),
+                    "success": view_result.get("success", True)
+                }
+                summaries.append(summary)
+                
+        except Exception as e:
+            print(f"[Streaming] Error processing view {view_id}: {e}")
+            summaries.append({
+                "view_id": view_id,
+                "success": False,
+                "error": str(e)
+            })
+    
+    # Save cache at end
+    root_cache.save()
+    
+    return summaries
+    
 class StreamingExporter:
     """Manages incremental export of pipeline results."""
     
@@ -27,7 +96,8 @@ class StreamingExporter:
                  export_csv=True,
                  export_json=False,
                  pixels_per_cell=4,
-                 date_override=None):
+                 date_override=None,
+                 root_cache=None):
         """Initialize streaming exporter.
         
         Args:
@@ -40,6 +110,8 @@ class StreamingExporter:
             pixels_per_cell: PNG resolution
             date_override: Optional date for CSV export
         """
+        self.root_cache = root_cache
+
         self.output_dir = output_dir
         self.cfg = cfg
         self.doc = doc
@@ -150,49 +222,64 @@ class StreamingExporter:
         """
         self.views_processed += 1
         
-        # Check if this is a failure stub
+        # Check success
         is_success = view_result.get("success", True)
         has_raster = "raster" in view_result
-        
-        if not is_success or not has_raster:
+        is_cache_hit = bool(view_result.get("from_cache"))
+        has_metrics = isinstance(view_result.get("metrics"), dict) and bool(view_result.get("metrics"))
+
+        # If this is a root-cache hit, we may have metrics-only (no raster). That's OK for CSV/perf.
+        if not is_success or (not has_raster and not (is_cache_hit and has_metrics)):
+            
             self.views_failed += 1
-            # Store lightweight summary
+            if not has_raster:
+                print(f"[Streaming] No raster in view_result; skipping cache+exports for view {view_result.get('view_id')}")
             self.view_summaries.append({
                 "view_id": view_result.get("view_id"),
                 "view_name": view_result.get("view_name"),
                 "success": False
             })
             return
-        
-        # Export PNG immediately
-        if self.export_png:
+                
+        # Export PNG immediately (if enabled) — skip on cache hits (root or legacy)
+        try:
+            c = view_result.get("cache", {})
+            if isinstance(c, dict) and "HIT" in str(c.get("view_cache", "")).upper():
+                is_cache_hit = True
+            if isinstance(c, dict) and str(c.get("cache_type", "")).lower() == "root":
+                is_cache_hit = True
+        except Exception:
+            pass
+
+        if self.export_png and not is_cache_hit:
             t0 = time.perf_counter()
             png_path = self._write_png(view_result)
             t1 = time.perf_counter()
-            
-            # Add timing to view result
+
             timings = view_result.setdefault("timings", {})
             timings["png_ms"] = (t1 - t0) * 1000.0
-            
+
             if png_path:
                 self.png_files.append(png_path)
-        
-        # Write CSV rows immediately with flush
+
+        # Write CSV rows immediately (if enabled)
         if self.export_csv:
             self._write_csv_rows(view_result)
         
-        # Store lightweight summary (no raster arrays)
+        # Root cache write-through is owned by pipeline.process_document_views().
+        # Streaming must NOT recompute signatures or call root_cache.set_view(),
+        # otherwise it can overwrite valid entries with signature="" on import failures.
+        pass
+        
+        # Store lightweight summary (no raster)
         summary = self._extract_summary(view_result)
         self.view_summaries.append(summary)
         
-        # Store full result if JSON export requested (memory-heavy)
+        # Optionally store full result if JSON export requested
         if self.full_results is not None:
             self.full_results.append(view_result)
-        
-        # Note: View-level caching is disabled for streaming mode to avoid
-        # holding full raster data in memory. The cache would need to store
-        # the entire view_result dict, defeating streaming's memory benefits.
-    
+            
+            
     def _write_png(self, view_result):
         """Write PNG for a single view result.
         
@@ -330,7 +417,7 @@ class StreamingExporter:
         }
 
 
-def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None):
+def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, root_cache=None):
     """Process views with streaming callback support.
     
     Modified version of process_document_views() that calls a callback
@@ -356,15 +443,15 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None):
     
     for view_id in view_ids:
         try:
-            # Process single view
-            results = process_document_views(doc, [view_id], cfg)
-            
+            # Process single view (cache miss)
+            results = process_document_views(doc, [view_id], cfg, root_cache=root_cache)
+
             if results and len(results) > 0:
                 view_result = results[0]
-                
+
                 # Call user callback
                 on_view_complete(view_result)
-                
+
                 # Retain only lightweight summary
                 summary = {
                     "view_id": view_result.get("view_id"),
@@ -374,7 +461,7 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None):
                     "success": view_result.get("success", True)
                 }
                 summaries.append(summary)
-                
+
         except Exception as e:
             print(f"[Streaming] Error processing view {view_id}: {e}")
             summaries.append({
@@ -382,7 +469,7 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None):
                 "success": False,
                 "error": str(e)
             })
-    
+
     return summaries
 
 
@@ -426,34 +513,29 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
         >>> print(f"CSVs: {result['core_csv_path']}")
     """
     from vop_interwoven.config import Config
-    
+    from vop_interwoven.root_cache import RootStyleCache, compute_config_hash
+  
     # Defaults
     if cfg is None:
         cfg = Config()
     
     if output_dir is None:
         output_dir = r"C:\temp\vop_output"
+        
+    # Initialize root-style cache (works with streaming!)
+    project_guid = doc.ProjectInformation.UniqueId if doc.ProjectInformation else "unknown"
+    exporter_version = "VOP_v2.0"
+    config_hash = compute_config_hash(cfg)
     
-    # Disable view-level caching for streaming mode
-    # The cache stores the full view_result dict (including all raster arrays),
-    # which defeats streaming's memory optimization.
-    #
-    # CRITICAL: Must set BOTH view_cache_enabled=False AND view_cache_dir=None
-    # because pipeline checks both conditions:
-    #   - If view_cache_dir exists, pipeline may still write cache
-    #   - Config default is view_cache_enabled=True
-    #
-    # Save original setting in case user wants to check it
-    original_cache_enabled = getattr(cfg, 'view_cache_enabled', False)
-    original_cache_dir = getattr(cfg, 'view_cache_dir', None)
+    root_cache = RootStyleCache(
+        output_dir=output_dir,
+        project_guid=project_guid,
+        exporter_version=exporter_version,
+        config_hash=config_hash
+    )
     
-    cfg.view_cache_enabled = False
-    cfg.view_cache_dir = None
-    
-    if original_cache_enabled or original_cache_dir:
-        print("[Streaming] Note: View-level caching disabled for streaming mode")
-        print(f"[Streaming]   Original: enabled={original_cache_enabled}, dir={original_cache_dir}")
-        print(f"[Streaming]   Use batch mode if you need caching for iterative development")
+    # Load existing cache
+    root_cache.load()
     
     # Initialize streaming exporter
     exporter = StreamingExporter(
@@ -464,7 +546,8 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
         export_csv=export_csv,
         export_json=export_json,
         pixels_per_cell=pixels_per_cell,
-        date_override=date_override
+        date_override=date_override,
+        root_cache=root_cache
     )
     
     # Process with streaming callback
@@ -474,7 +557,8 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
         doc, 
         view_ids, 
         cfg,
-        on_view_complete=exporter.on_view_complete
+        on_view_complete=exporter.on_view_complete,
+        root_cache=root_cache
     )
     
     t1 = time.perf_counter()
@@ -482,6 +566,18 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
     # Finalize and get results
     result = exporter.finalize()
     result["total_time_sec"] = t1 - t0
+    
+    # Persist root cache
+    try:
+        ok = root_cache.save()
+        try:
+            print(f"[Streaming] Root cache stats: {root_cache.stats()}")
+        except Exception:
+            pass
+        if not ok:
+            print("[Streaming] Root cache save returned False")
+    except Exception as e:
+        print(f"[Streaming] Root cache save failed: {e}")
     
     print(f"\n[Streaming] Complete:")
     print(f"  Processed: {result['views_processed']} views")

@@ -947,6 +947,54 @@ class ViewRaster:
             "depth_test_rejects": self.depth_test_rejects,
         }
 
+    @classmethod
+    def from_dict(cls, d, cfg=None):
+        """Reconstruct a ViewRaster from a dict payload (inverse of to_dict()).
+
+        Intended for metrics/export recomputation paths (e.g., root cache extraction).
+        """
+        if d is None:
+            raise ValueError("ViewRaster.from_dict: input is None")
+
+        from .math_utils import Bounds2D
+
+        W = int(d.get("width", 0))
+        H = int(d.get("height", 0))
+        cell_size_ft = float(d.get("cell_size_ft", 0.0))
+
+        b = d.get("bounds_xy") or {}
+        bounds = Bounds2D(
+            b.get("xmin", 0.0),
+            b.get("ymin", 0.0),
+            b.get("xmax", 0.0),
+            b.get("ymax", 0.0),
+        )
+
+        r = cls(W, H, cell_size_ft, bounds, cfg=cfg)
+
+        # w_occ uses None as sentinel for +inf in JSON
+        w_occ_in = d.get("w_occ") or []
+        if w_occ_in:
+            r.w_occ = [float("inf") if (w is None) else float(w) for w in w_occ_in]
+
+        # Dense layers
+        for k in ("occ_host", "occ_link", "occ_dwg",
+                  "model_mask", "model_edge_key", "model_proxy_key",
+                  "model_proxy_mask", "anno_key", "anno_over_model"):
+            v = d.get(k)
+            if v is not None:
+                setattr(r, k, v)
+
+        # Meta lists
+        r.element_meta = d.get("element_meta") or []
+        r.anno_meta = d.get("anno_meta") or []
+
+        # Stats
+        r.depth_test_attempted = int(d.get("depth_test_attempted", 0))
+        r.depth_test_wins = int(d.get("depth_test_wins", 0))
+        r.depth_test_rejects = int(d.get("depth_test_rejects", 0))
+
+        return r
 
     def to_debug_dict(self, detail="summary"):
         """Smaller debug payload for JSON export only.
