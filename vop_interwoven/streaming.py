@@ -132,7 +132,7 @@ class StreamingExporter:
         self.csv_vop_writer.writeheader()
         
         # Perf CSV
-        perf_filename = f"views_perf_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}.csv"
+        perf_filename = f"views_perf_{date_str}.csv"
         self.perf_csv_path = os.path.join(self.output_dir, perf_filename)
         self.perf_file = open(self.perf_csv_path, 'w', newline='', encoding='utf-8')
         self.perf_writer = csv.DictWriter(
@@ -255,7 +255,11 @@ class StreamingExporter:
             self.csv_vop_file.flush()
         
         # Perf row
-        perf_row = view_result_to_perf_row(view_result)
+        perf_row = view_result_to_perf_row(
+            view_result,
+            date_override=self.date_override,
+            run_id=self.run_id
+        )
         if perf_row:
             self.perf_writer.writerow(perf_row)
             self.perf_file.flush()
