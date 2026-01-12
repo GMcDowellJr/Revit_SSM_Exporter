@@ -809,22 +809,23 @@ def get_vop_csv_header():
 def get_perf_csv_header():
     """Get header for performance CSV file."""
     return [
-        "view_id", "view_name", "success", "total_ms", "mode_ms",
+        "Date", "RunId", "view_id", "view_name", "success", "total_ms", "mode_ms",
         "raster_init_ms", "collect_ms", "raster_ms", "anno_ms",
         "finalize_ms", "export_ms", "png_ms", "width", "height",
         "total_elements", "filled_cells"
     ]
 
 
-def view_result_to_core_row(view_result, config, doc, date_override=None):
+def view_result_to_core_row(view_result, config, doc, date_override=None, run_id=None):
     """Convert a single view result to a core CSV row dict.
-    
+
     Args:
         view_result: View result dict from pipeline
         config: Config object
         doc: Revit Document
         date_override: Optional date/time override
-        
+        run_id: Optional pre-computed run_id for consistency across views
+
     Returns:
         Dict with core CSV fields, or None if view should be skipped
     """
@@ -833,31 +834,53 @@ def view_result_to_core_row(view_result, config, doc, date_override=None):
         return None
     if view_result.get("view_mode") == "REJECTED":
         return None
-    
+
     raster_dict = view_result.get("raster", {})
     if not raster_dict:
         return None
-    
-    # Resolve run datetime
-    run_dt = datetime.now()
-    tag = None
-    
-    if date_override:
-        if isinstance(date_override, str):
-            s = date_override.strip()
-            try:
-                if len(s) == 10:
-                    run_dt = datetime.strptime(s, "%Y-%m-%d")
-                else:
-                    run_dt = datetime.fromisoformat(s)
-            except Exception:
-                tag = s
+
+    # Resolve run datetime and run_id (use provided run_id if available for consistency)
+    if run_id is None:
+        run_dt = datetime.now()
+        tag = None
+
+        if date_override:
+            if isinstance(date_override, str):
+                s = date_override.strip()
+                try:
+                    if len(s) == 10:
+                        run_dt = datetime.strptime(s, "%Y-%m-%d")
+                    else:
+                        run_dt = datetime.fromisoformat(s)
+                except Exception:
+                    tag = s
+            else:
+                tag = str(date_override)
+
+        date_str = run_dt.strftime("%Y-%m-%d")
+        base_run_id = run_dt.strftime("%Y%m%dT%H%M%S")
+        run_id = f"{base_run_id}_{tag}" if tag else base_run_id
+    else:
+        # Extract date from run_id if provided
+        if date_override:
+            if isinstance(date_override, str):
+                s = date_override.strip()
+                try:
+                    if len(s) == 10:
+                        date_str = datetime.strptime(s, "%Y-%m-%d").strftime("%Y-%m-%d")
+                    else:
+                        date_str = datetime.fromisoformat(s).strftime("%Y-%m-%d")
+                except Exception:
+                    date_str = datetime.now().strftime("%Y-%m-%d")
+            else:
+                date_str = datetime.now().strftime("%Y-%m-%d")
         else:
-            tag = str(date_override)
-    
-    date_str = run_dt.strftime("%Y-%m-%d")
-    base_run_id = run_dt.strftime("%Y%m%dT%H%M%S")
-    run_id = f"{base_run_id}_{tag}" if tag else base_run_id
+            # Extract date from run_id (format: YYYYMMDDTHHMMSS or YYYYMMDDTHHMMSS_tag)
+            try:
+                date_part = run_id.split('_')[0].split('T')[0]
+                date_str = f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:8]}"
+            except Exception:
+                date_str = datetime.now().strftime("%Y-%m-%d")
     
     # Get view object
     view = view_result.get("view")
@@ -921,15 +944,16 @@ def view_result_to_core_row(view_result, config, doc, date_override=None):
     return row
 
 
-def view_result_to_vop_row(view_result, config, doc, date_override=None):
+def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=None):
     """Convert a single view result to a VOP CSV row dict.
-    
+
     Args:
         view_result: View result dict from pipeline
         config: Config object
         doc: Revit Document
         date_override: Optional date/time override
-        
+        run_id: Optional pre-computed run_id for consistency across views
+
     Returns:
         Dict with VOP CSV fields, or None if view should be skipped
     """
@@ -938,31 +962,53 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None):
         return None
     if view_result.get("view_mode") == "REJECTED":
         return None
-    
+
     raster_dict = view_result.get("raster", {})
     if not raster_dict:
         return None
-    
-    # Resolve run datetime
-    run_dt = datetime.now()
-    tag = None
-    
-    if date_override:
-        if isinstance(date_override, str):
-            s = date_override.strip()
-            try:
-                if len(s) == 10:
-                    run_dt = datetime.strptime(s, "%Y-%m-%d")
-                else:
-                    run_dt = datetime.fromisoformat(s)
-            except Exception:
-                tag = s
+
+    # Resolve run datetime and run_id (use provided run_id if available for consistency)
+    if run_id is None:
+        run_dt = datetime.now()
+        tag = None
+
+        if date_override:
+            if isinstance(date_override, str):
+                s = date_override.strip()
+                try:
+                    if len(s) == 10:
+                        run_dt = datetime.strptime(s, "%Y-%m-%d")
+                    else:
+                        run_dt = datetime.fromisoformat(s)
+                except Exception:
+                    tag = s
+            else:
+                tag = str(date_override)
+
+        date_str = run_dt.strftime("%Y-%m-%d")
+        base_run_id = run_dt.strftime("%Y%m%dT%H%M%S")
+        run_id = f"{base_run_id}_{tag}" if tag else base_run_id
+    else:
+        # Extract date from run_id if provided
+        if date_override:
+            if isinstance(date_override, str):
+                s = date_override.strip()
+                try:
+                    if len(s) == 10:
+                        date_str = datetime.strptime(s, "%Y-%m-%d").strftime("%Y-%m-%d")
+                    else:
+                        date_str = datetime.fromisoformat(s).strftime("%Y-%m-%d")
+                except Exception:
+                    date_str = datetime.now().strftime("%Y-%m-%d")
+            else:
+                date_str = datetime.now().strftime("%Y-%m-%d")
         else:
-            tag = str(date_override)
-    
-    date_str = run_dt.strftime("%Y-%m-%d")
-    base_run_id = run_dt.strftime("%Y%m%dT%H%M%S")
-    run_id = f"{base_run_id}_{tag}" if tag else base_run_id
+            # Extract date from run_id (format: YYYYMMDDTHHMMSS or YYYYMMDDTHHMMSS_tag)
+            try:
+                date_part = run_id.split('_')[0].split('T')[0]
+                date_str = f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:8]}"
+            except Exception:
+                date_str = datetime.now().strftime("%Y-%m-%d")
     
     # Reconstruct raster object for metrics computation
     from .core.raster import ViewRaster
@@ -1040,11 +1086,11 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None):
         "ViewId": view_result.get("view_id", 0),
         "ViewName": view_result.get("view_name", ""),
         "ViewType": view_metadata.get("ViewType", ""),
-        "TotalCells": metrics.get("total", 0),
-        "Empty": metrics.get("empty", 0),
-        "ModelOnly": metrics.get("model_only", 0),
-        "AnnoOnly": metrics.get("anno_only", 0),
-        "Overlap": metrics.get("overlap", 0),
+        "TotalCells": metrics.get("TotalCells", 0),
+        "Empty": metrics.get("Empty", 0),
+        "ModelOnly": metrics.get("ModelOnly", 0),
+        "AnnoOnly": metrics.get("AnnoOnly", 0),
+        "Overlap": metrics.get("Overlap", 0),
         "Ext_Cells_Any": ext_metrics.get("Ext_Cells_Any", 0),
         "Ext_Cells_Only": ext_metrics.get("Ext_Cells_Only", 0),
         "Ext_Cells_DWG": ext_metrics.get("Ext_Cells_DWG", 0),
@@ -1067,18 +1113,65 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None):
     return row
 
 
-def view_result_to_perf_row(view_result):
+def view_result_to_perf_row(view_result, date_override=None, run_id=None):
     """Convert a single view result to a performance CSV row dict.
-    
+
     Args:
         view_result: View result dict from pipeline
-        
+        date_override: Optional date/time override
+        run_id: Optional pre-computed run_id for consistency across views
+
     Returns:
         Dict with performance CSV fields
     """
+    # Resolve run datetime and run_id (use provided run_id if available for consistency)
+    if run_id is None:
+        run_dt = datetime.now()
+        tag = None
+
+        if date_override:
+            if isinstance(date_override, str):
+                s = date_override.strip()
+                try:
+                    if len(s) == 10:
+                        run_dt = datetime.strptime(s, "%Y-%m-%d")
+                    else:
+                        run_dt = datetime.fromisoformat(s)
+                except Exception:
+                    tag = s
+            else:
+                tag = str(date_override)
+
+        date_str = run_dt.strftime("%Y-%m-%d")
+        base_run_id = run_dt.strftime("%Y%m%dT%H%M%S")
+        run_id = f"{base_run_id}_{tag}" if tag else base_run_id
+    else:
+        # Extract date from run_id if provided
+        if date_override:
+            if isinstance(date_override, str):
+                s = date_override.strip()
+                try:
+                    if len(s) == 10:
+                        date_str = datetime.strptime(s, "%Y-%m-%d").strftime("%Y-%m-%d")
+                    else:
+                        date_str = datetime.fromisoformat(s).strftime("%Y-%m-%d")
+                except Exception:
+                    date_str = datetime.now().strftime("%Y-%m-%d")
+            else:
+                date_str = datetime.now().strftime("%Y-%m-%d")
+        else:
+            # Extract date from run_id (format: YYYYMMDDTHHMMSS or YYYYMMDDTHHMMSS_tag)
+            try:
+                date_part = run_id.split('_')[0].split('T')[0]
+                date_str = f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:8]}"
+            except Exception:
+                date_str = datetime.now().strftime("%Y-%m-%d")
+
     timings = view_result.get("timings", {})
-    
+
     row = {
+        "Date": date_str,
+        "RunId": run_id,
         "view_id": view_result.get("view_id", 0),
         "view_name": view_result.get("view_name", ""),
         "success": "Y" if view_result.get("success", True) else "N",
@@ -1096,5 +1189,5 @@ def view_result_to_perf_row(view_result):
         "total_elements": view_result.get("total_elements", 0),
         "filled_cells": view_result.get("filled_cells", 0)
     }
-    
+
     return row
