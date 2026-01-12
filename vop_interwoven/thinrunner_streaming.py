@@ -81,30 +81,9 @@ try:
         export_png=True,
         export_csv=True,  # Always export CSV (tag override just affects Date/RunId columns)
         export_json=False,
-        pixels_per_cell=10
+        pixels_per_cell=10,
+        date_override=tag_override,
     )
-
-    # If caller requested tag override, export CSV here so filenames + Tag column match
-    if tag_override:
-        from vop_interwoven.csv_export import export_pipeline_to_csv
-        
-        # Build pipeline_result format expected by csv_export
-        pipeline_result = {
-            'views': [],  # Will be populated from summaries
-            'success': True,
-            'config': cfg.to_dict()
-        }
-        
-        # Note: Streaming only keeps lightweight summaries, not full rasters
-        # For CSV with tag override, we'd need to re-process or store full results
-        # This is a limitation - recommend using batch mode for tag overrides
-        print("WARNING: Tag override with streaming requires full results")
-        print("         Consider using batch mode for tag-based CSV exports")
-        
-        # For now, skip CSV export with tag (would need full results)
-        result['core_csv_path'] = None
-        result['vop_csv_path'] = None
-        result['rows_exported'] = 0
 
     print("="*60)
     print("DEBUG: After streaming call")
