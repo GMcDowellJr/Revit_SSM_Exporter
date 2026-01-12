@@ -777,3 +777,324 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
         raise
 
     return {"core_csv_path": core_path, "vop_csv_path": vop_path, "rows_exported": len(vop_rows)}
+
+# =============================================================================
+# STREAMING SUPPORT - Append to end of csv_export.py
+# =============================================================================
+# These functions should be added at the very end of vop_interwoven/csv_export.py
+
+
+def get_core_csv_header():
+    """Get header for core CSV file."""
+    return [
+        "Date", "RunId", "ViewId", "ViewUniqueId", "ViewName", "ViewType",
+        "SheetNumber", "IsOnSheet", "Scale", "Discipline", "Phase",
+        "ViewTemplate_Name", "IsTemplate", "ExporterVersion", "ConfigHash",
+        "ViewFrameHash", "FromCache", "ElapsedSec"
+    ]
+
+
+def get_vop_csv_header():
+    """Get header for VOP CSV file."""
+    return [
+        "Date", "RunId", "ViewId", "ViewName", "ViewType", "TotalCells",
+        "Empty", "ModelOnly", "AnnoOnly", "Overlap", "Ext_Cells_Any",
+        "Ext_Cells_Only", "Ext_Cells_DWG", "Ext_Cells_RVT", "AnnoCells_TEXT",
+        "AnnoCells_TAG", "AnnoCells_DIM", "AnnoCells_DETAIL", "AnnoCells_LINES",
+        "AnnoCells_REGION", "AnnoCells_OTHER", "CellSize_ft", "RowSource",
+        "ExporterVersion", "ConfigHash", "FromCache", "ElapsedSec"
+    ]
+
+
+def get_perf_csv_header():
+    """Get header for performance CSV file."""
+    return [
+        "view_id", "view_name", "success", "total_ms", "mode_ms",
+        "raster_init_ms", "collect_ms", "raster_ms", "anno_ms",
+        "finalize_ms", "export_ms", "png_ms", "width", "height",
+        "total_elements", "filled_cells"
+    ]
+
+
+def view_result_to_core_row(view_result, config, doc, date_override=None):
+    """Convert a single view result to a core CSV row dict.
+    
+    Args:
+        view_result: View result dict from pipeline
+        config: Config object
+        doc: Revit Document
+        date_override: Optional date/time override
+        
+    Returns:
+        Dict with core CSV fields, or None if view should be skipped
+    """
+    # Skip failed/rejected views
+    if view_result.get("success") is False:
+        return None
+    if view_result.get("view_mode") == "REJECTED":
+        return None
+    
+    raster_dict = view_result.get("raster", {})
+    if not raster_dict:
+        return None
+    
+    # Resolve run datetime
+    run_dt = datetime.now()
+    tag = None
+    
+    if date_override:
+        if isinstance(date_override, str):
+            s = date_override.strip()
+            try:
+                if len(s) == 10:
+                    run_dt = datetime.strptime(s, "%Y-%m-%d")
+                else:
+                    run_dt = datetime.fromisoformat(s)
+            except Exception:
+                tag = s
+        else:
+            tag = str(date_override)
+    
+    date_str = run_dt.strftime("%Y-%m-%d")
+    base_run_id = run_dt.strftime("%Y%m%dT%H%M%S")
+    run_id = f"{base_run_id}_{tag}" if tag else base_run_id
+    
+    # Get view object
+    view = view_result.get("view")
+    if view is None and doc is not None:
+        try:
+            from Autodesk.Revit.DB import ElementId
+            vid = view_result.get("view_id", None)
+            if isinstance(vid, int):
+                view = doc.GetElement(ElementId(vid))
+        except Exception:
+            view = None
+    
+    # Extract view metadata
+    view_metadata = extract_view_metadata(view, doc) if view else {}
+    
+    # Build row
+    config_hash = compute_config_hash(config)
+    view_frame_hash = compute_view_frame_hash(view_metadata)
+    
+    # Elapsed time
+    elapsed_sec = 0.0
+    try:
+        timings = view_result.get("timings", {})
+        total_ms = timings.get("total_ms", 0.0)
+        elapsed_sec = total_ms / 1000.0
+    except Exception:
+        pass
+    
+    # FromCache flag
+    from_cache = "N"
+    try:
+        cache_info = view_result.get("cache", {})
+        if isinstance(cache_info, dict):
+            cache_status = cache_info.get("view_cache", "")
+            if "HIT" in str(cache_status).upper():
+                from_cache = "Y"
+    except Exception:
+        pass
+    
+    row = {
+        "Date": date_str,
+        "RunId": run_id,
+        "ViewId": view_metadata.get("ViewId", 0),
+        "ViewUniqueId": view_metadata.get("ViewUniqueId", ""),
+        "ViewName": view_metadata.get("ViewName", ""),
+        "ViewType": view_metadata.get("ViewType", ""),
+        "SheetNumber": view_metadata.get("SheetNumber", ""),
+        "IsOnSheet": view_metadata.get("IsOnSheet", "N"),
+        "Scale": view_metadata.get("Scale", 0),
+        "Discipline": view_metadata.get("Discipline", ""),
+        "Phase": view_metadata.get("Phase", ""),
+        "ViewTemplate_Name": view_metadata.get("ViewTemplate_Name", ""),
+        "IsTemplate": view_metadata.get("IsTemplate", "N"),
+        "ExporterVersion": "vop_interwoven",
+        "ConfigHash": config_hash,
+        "ViewFrameHash": view_frame_hash,
+        "FromCache": from_cache,
+        "ElapsedSec": f"{elapsed_sec:.3f}"
+    }
+    
+    return row
+
+
+def view_result_to_vop_row(view_result, config, doc, date_override=None):
+    """Convert a single view result to a VOP CSV row dict.
+    
+    Args:
+        view_result: View result dict from pipeline
+        config: Config object
+        doc: Revit Document
+        date_override: Optional date/time override
+        
+    Returns:
+        Dict with VOP CSV fields, or None if view should be skipped
+    """
+    # Skip failed/rejected views
+    if view_result.get("success") is False:
+        return None
+    if view_result.get("view_mode") == "REJECTED":
+        return None
+    
+    raster_dict = view_result.get("raster", {})
+    if not raster_dict:
+        return None
+    
+    # Resolve run datetime
+    run_dt = datetime.now()
+    tag = None
+    
+    if date_override:
+        if isinstance(date_override, str):
+            s = date_override.strip()
+            try:
+                if len(s) == 10:
+                    run_dt = datetime.strptime(s, "%Y-%m-%d")
+                else:
+                    run_dt = datetime.fromisoformat(s)
+            except Exception:
+                tag = s
+        else:
+            tag = str(date_override)
+    
+    date_str = run_dt.strftime("%Y-%m-%d")
+    base_run_id = run_dt.strftime("%Y%m%dT%H%M%S")
+    run_id = f"{base_run_id}_{tag}" if tag else base_run_id
+    
+    # Reconstruct raster object for metrics computation
+    from .core.raster import ViewRaster
+    from .core.math_utils import Bounds2D
+    
+    bounds_dict = raster_dict.get("bounds_xy", {})
+    bounds = Bounds2D(
+        bounds_dict.get("xmin", 0),
+        bounds_dict.get("ymin", 0),
+        bounds_dict.get("xmax", 100),
+        bounds_dict.get("ymax", 100)
+    )
+    
+    raster = ViewRaster(
+        width=raster_dict.get("width", 0),
+        height=raster_dict.get("height", 0),
+        cell_size=raster_dict.get("cell_size_ft", 1.0),
+        bounds=bounds,
+        tile_size=16
+    )
+    
+    raster.model_edge_key = raster_dict.get("model_edge_key", [])
+    raster.model_proxy_mask = raster_dict.get("model_proxy_mask", raster_dict.get("model_proxy_presence", []))
+    raster.model_proxy_key = raster_dict.get("model_proxy_key", [])
+    raster.model_mask = raster_dict.get("model_mask", [])
+    raster.anno_over_model = raster_dict.get("anno_over_model", [])
+    raster.anno_key = raster_dict.get("anno_key", [])
+    raster.anno_meta = raster_dict.get("anno_meta", [])
+    raster.element_meta = raster_dict.get("element_meta", raster_dict.get("elements_meta", []))
+    
+    # Compute metrics
+    model_presence_mode = getattr(config, "model_presence_mode", "ink")
+    metrics = compute_cell_metrics(raster, model_presence_mode=model_presence_mode)
+    anno_metrics = compute_annotation_type_metrics(raster)
+    ext_metrics = compute_external_cell_metrics(raster)
+    
+    # Get view object
+    view = view_result.get("view")
+    if view is None and doc is not None:
+        try:
+            from Autodesk.Revit.DB import ElementId
+            vid = view_result.get("view_id", None)
+            if isinstance(vid, int):
+                view = doc.GetElement(ElementId(vid))
+        except Exception:
+            view = None
+    
+    view_metadata = extract_view_metadata(view, doc) if view else {}
+    
+    config_hash = compute_config_hash(config)
+    
+    # Elapsed time
+    elapsed_sec = 0.0
+    try:
+        timings = view_result.get("timings", {})
+        total_ms = timings.get("total_ms", 0.0)
+        elapsed_sec = total_ms / 1000.0
+    except Exception:
+        pass
+    
+    # FromCache flag
+    from_cache = "N"
+    try:
+        cache_info = view_result.get("cache", {})
+        if isinstance(cache_info, dict):
+            cache_status = cache_info.get("view_cache", "")
+            if "HIT" in str(cache_status).upper():
+                from_cache = "Y"
+    except Exception:
+        pass
+    
+    row = {
+        "Date": date_str,
+        "RunId": run_id,
+        "ViewId": view_result.get("view_id", 0),
+        "ViewName": view_result.get("view_name", ""),
+        "ViewType": view_metadata.get("ViewType", ""),
+        "TotalCells": metrics.get("total", 0),
+        "Empty": metrics.get("empty", 0),
+        "ModelOnly": metrics.get("model_only", 0),
+        "AnnoOnly": metrics.get("anno_only", 0),
+        "Overlap": metrics.get("overlap", 0),
+        "Ext_Cells_Any": ext_metrics.get("Ext_Cells_Any", 0),
+        "Ext_Cells_Only": ext_metrics.get("Ext_Cells_Only", 0),
+        "Ext_Cells_DWG": ext_metrics.get("Ext_Cells_DWG", 0),
+        "Ext_Cells_RVT": ext_metrics.get("Ext_Cells_RVT", 0),
+        "AnnoCells_TEXT": anno_metrics.get("AnnoCells_TEXT", 0),
+        "AnnoCells_TAG": anno_metrics.get("AnnoCells_TAG", 0),
+        "AnnoCells_DIM": anno_metrics.get("AnnoCells_DIM", 0),
+        "AnnoCells_DETAIL": anno_metrics.get("AnnoCells_DETAIL", 0),
+        "AnnoCells_LINES": anno_metrics.get("AnnoCells_LINES", 0),
+        "AnnoCells_REGION": anno_metrics.get("AnnoCells_REGION", 0),
+        "AnnoCells_OTHER": anno_metrics.get("AnnoCells_OTHER", 0),
+        "CellSize_ft": raster_dict.get("cell_size_ft", 0.0),
+        "RowSource": "vop_interwoven",
+        "ExporterVersion": "vop_interwoven",
+        "ConfigHash": config_hash,
+        "FromCache": from_cache,
+        "ElapsedSec": f"{elapsed_sec:.3f}"
+    }
+    
+    return row
+
+
+def view_result_to_perf_row(view_result):
+    """Convert a single view result to a performance CSV row dict.
+    
+    Args:
+        view_result: View result dict from pipeline
+        
+    Returns:
+        Dict with performance CSV fields
+    """
+    timings = view_result.get("timings", {})
+    
+    row = {
+        "view_id": view_result.get("view_id", 0),
+        "view_name": view_result.get("view_name", ""),
+        "success": "Y" if view_result.get("success", True) else "N",
+        "total_ms": timings.get("total_ms", 0.0),
+        "mode_ms": timings.get("mode_ms", 0.0),
+        "raster_init_ms": timings.get("raster_init_ms", 0.0),
+        "collect_ms": timings.get("collect_ms", 0.0),
+        "raster_ms": timings.get("raster_ms", 0.0),
+        "anno_ms": timings.get("anno_ms", 0.0),
+        "finalize_ms": timings.get("finalize_ms", 0.0),
+        "export_ms": timings.get("export_ms", 0.0),
+        "png_ms": timings.get("png_ms", 0.0),
+        "width": view_result.get("width", 0),
+        "height": view_result.get("height", 0),
+        "total_elements": view_result.get("total_elements", 0),
+        "filled_cells": view_result.get("filled_cells", 0)
+    }
+    
+    return row
