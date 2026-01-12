@@ -289,8 +289,11 @@ def is_element_visible_in_view(elem, view):
     return True
 
 
-def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None):
+def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None, elem_cache=None):
     """Expand element list to include linked/imported model elements.
+
+    Args:
+        elem_cache: Optional ElementCache for bbox reuse (Phase 2)
 
     Returns:
         List of element wrappers with transform info plus bbox provenance.
@@ -308,13 +311,15 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None):
     # Add host elements with identity transform
     identity_trf = Transform.Identity
     for e in elements:
+        elem_id = getattr(getattr(e, "Id", None), "IntegerValue", None)
+
         bbox, bbox_source = resolve_element_bbox(
             e,
             view=view,
             diag=diag,
             context={
                 "view_id": getattr(getattr(view, "Id", None), "IntegerValue", None),
-                "elem_id": getattr(getattr(e, "Id", None), "IntegerValue", None),
+                "elem_id": elem_id,
                 "source_type": "HOST",
             },
         )
@@ -326,6 +331,20 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None):
         else:
             bbox_none += 1
 
+        # Phase 2: Optionally cache bbox fingerprint for cross-view reuse
+        fingerprint = None
+        if elem_cache is not None and elem_id is not None:
+            try:
+                fingerprint = elem_cache.get_or_create_fingerprint(
+                    elem=e,
+                    elem_id=elem_id,
+                    source_id="HOST",
+                    view=None,  # Use model bbox for reuse
+                    extract_params=None
+                )
+            except Exception:
+                pass  # Graceful degradation
+
         result.append(
             {
                 "element": e,
@@ -333,6 +352,7 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None):
                 "bbox": bbox,
                 "bbox_source": bbox_source,
                 "bbox_link": None,
+                "fingerprint": fingerprint,  # NEW: Store for debugging/metrics
                 "source_type": "HOST",
                 "source_id": "HOST",
                 "source_label": "HOST",
