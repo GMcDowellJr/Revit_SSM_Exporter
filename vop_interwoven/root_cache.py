@@ -125,33 +125,83 @@ class RootStyleCache:
         self.hits += 1
         print(f"[RootCache] HIT view {view_id}")
         return cached_view
-    
-    def set_view(self, view_id, signature, metadata, metrics, element_summary=None, timings=None):
-        """Cache a view's metrics (not raster data).
-        
-        Args:
-            view_id: View ID (integer)
-            signature: View signature hash
-            metadata: View metadata dict (dimensions, bounds, etc.)
-            metrics: Computed metrics dict (cell counts, etc.)
-            element_summary: Optional element summary
-            timings: Optional timing breakdown
+
+    def get_view_any(self, view_id):
+        """Get cached view by ID only (no signature check).
+
+        Use ONLY when the caller already knows the view was a cache hit
+        (e.g., pipeline performed the signature check).
         """
         if self._cache is None:
             self.load()
-        
+
+        view_key = str(view_id)
+        return self._cache.get("views", {}).get(view_key)
+
+    def set_view(self, view_id, signature, metadata, metrics, element_summary=None, timings=None):
+        """Cache a view's metrics (not raster data).
+
+        Stores an additional 'row_payload' dict that is sufficient to rehydrate
+        CSV rows on cache hits (streaming mode), without requiring raster arrays.
+        """
+        if self._cache is None:
+            self.load()
+
+        element_summary = element_summary or {}
+        timings = timings or {}
+
+        # CSV-rehydratable payload: flat dict for easy merge into view_result / row builders.
+        row_payload = {}
+        if isinstance(metadata, dict):
+            row_payload.update(metadata)
+
+        # Warn on collisions: metrics overwriting metadata is almost always unintended.
+        if isinstance(metadata, dict) and isinstance(metrics, dict):
+            for k in metrics.keys():
+                if k in metadata:
+                    print(f"[RootCache] WARNING: row_payload key collision (metrics overwrites metadata): {k}")
+
+        if isinstance(metrics, dict):
+            row_payload.update(metrics)
+
+        # Keep these nested fields too (some exporters may use them)
+        row_payload["timings"] = timings
+        row_payload["element_summary"] = element_summary
+
+        # Ensure basic identifiers exist in payload
+        if "view_id" not in row_payload:
+            row_payload["view_id"] = view_id
+
+        # CSV invariants for cache-hit rehydration
+        # These are safe defaults; streaming layer may overwrite with actual lookup timing.
+        row_payload.setdefault("FromCache", "Y")
+        row_payload.setdefault("ElapsedSec", 0)
+
+        # Backward-compatible: add CSV-schema identity keys alongside snake_case keys
+        # so cached row_payload can be reused verbatim by CSV exporters.
+        try:
+            if "ViewId" not in row_payload:
+                row_payload["ViewId"] = metadata.get("view_id", row_payload.get("view_id"))
+            if "ViewName" not in row_payload:
+                row_payload["ViewName"] = metadata.get("view_name", row_payload.get("view_name"))
+            if "ViewType" not in row_payload:
+                row_payload["ViewType"] = metadata.get("view_type", row_payload.get("view_type"))
+        except Exception:
+            pass
+
         view_key = str(view_id)
         self._cache.setdefault("views", {})[view_key] = {
             "view_signature": signature,
             "cached_utc": time.time(),
-            "metadata": metadata,
-            "metrics": metrics,
-            "element_summary": element_summary or {},
-            "timings": timings or {}
+            "metadata": metadata or {},
+            "metrics": metrics or {},
+            "element_summary": element_summary,
+            "timings": timings,
+            "row_payload": row_payload,
         }
-        
+
         self._dirty = True
-    
+
     def save(self):
         """Save cache to disk atomically."""
         if not self._dirty:
@@ -303,15 +353,31 @@ def extract_metrics_from_view_result(view_result, cfg):
     }
     
     # Extract metadata
+    bounds_meta = raster_dict.get("bounds_meta", {}) or {}
+
+    cell_size_req = bounds_meta.get("cell_size_ft_requested", raster.cell_size_ft)
+    cell_size_eff = bounds_meta.get("cell_size_ft_effective", raster.cell_size_ft)
+
     metadata = {
         "view_id": view_result.get("view_id"),
         "view_name": view_result.get("view_name"),
         "view_type": view_result.get("view_mode"),
         "width": view_result.get("width"),
         "height": view_result.get("height"),
+
+        # Back-compat / existing
         "CellSize_ft": _round6(raster.cell_size_ft),
-        "bounds": raster_dict.get("bounds_xy", {})
+
+        # Option 2 contract fields (persisted for CSV + cache parity)
+        "CellSizeRequested_ft": _round6(cell_size_req),
+        "CellSizeEffective_ft": _round6(cell_size_eff),
+        "ResolutionMode": bounds_meta.get("resolution_mode", "canonical"),
+        "CapTriggered": bool(bounds_meta.get("cap_triggered", bounds_meta.get("capped", False))),
+
+        # Keep bounds as before
+        "bounds": raster_dict.get("bounds_xy", {}),
     }
+
     
     # Extract element summary
     element_meta = raster_dict.get("element_meta", [])
