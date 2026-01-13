@@ -158,18 +158,21 @@ def _cropbox_fingerprint(view_obj):
         pass
     return fp
 
-
-def _cfg_hash(cfg_obj):
+def _cfg_hash(cfg_obj, exclude_cache_wiring=False):
     try:
         import json
         import hashlib
 
         d = cfg_obj.to_dict() if cfg_obj is not None else {}
+        if exclude_cache_wiring:
+            d.pop("view_cache_enabled", None)
+            d.pop("view_cache_dir", None)
+            d.pop("view_cache_require_doc_unmodified", None)
+
         blob = json.dumps(d, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return hashlib.sha1(blob).hexdigest()
     except Exception:
         return None
-
 
 def _view_signature(doc_obj, view_obj, view_mode_val, cfg_obj=None, elem_cache=None, track_elements=None):
     """Enhanced signature with element fingerprints for position/size tracking.
@@ -257,7 +260,7 @@ def _view_signature(doc_obj, view_obj, view_mode_val, cfg_obj=None, elem_cache=N
         "display_style": _safe_prop_str(lambda: view_obj.DisplayStyle),
         "crop": _cropbox_fingerprint(view_obj),
         "elem_fps": elem_fps_str,
-        "cfg_sha1": _cfg_hash(cfg_obj),
+        "cfg_sha1": _cfg_hash(cfg_obj, exclude_cache_wiring=True),
     }
 
     blob = json.dumps(sig, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -300,12 +303,24 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
     import time
     import tempfile
 
+    # Output directory (used for element cache persistence/export). Must be defined here.
+    output_dir = getattr(cfg, "output_dir", None)
+
     view_cache_enabled = bool(getattr(cfg, "view_cache_enabled", False))
     view_cache_dir = getattr(cfg, "view_cache_dir", None)
     require_doc_clean = bool(getattr(cfg, "view_cache_require_doc_unmodified", True))
 
-    if not view_cache_dir:
-        view_cache_enabled = False
+    # If view caching is enabled but no explicit directory is provided,
+    # default to the run output directory (so cache co-locates with CSV/PNG exports).
+    if view_cache_enabled and not view_cache_dir:
+        try:
+            view_cache_dir = getattr(cfg, "output_dir", None)
+        except Exception:
+            view_cache_dir = None
+
+    # Streaming-only policy: root_cache (single JSON) is the authoritative cache.
+    # Disable per-view disk cache to avoid duplicate cache systems and confusion.
+    view_cache_enabled = False
 
     if view_cache_enabled:
         try:
@@ -520,50 +535,57 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
                 track_elements=view_elements
             )
 
-            # Check root cache first (NOTE: root hits are metrics-only; gate if needed)
-            if root_cache and not getattr(cfg, '_is_streaming_mode', False):
+            # Check root cache first (metrics-only hit; valid in streaming too)
+            if root_cache:
+                t_cache0 = _perf_now()
                 cached = root_cache.get_view(view_id_int, sig_hex)
+                t_cache1 = _perf_now()
+
                 if cached:
-                    result = dict(cached.get("metadata") or {})
+                    cached_meta = cached.get("metadata") or {}
+                    cached_metrics = cached.get("metrics") or {}
+
+                    # Minimal raster stub so CSV export can populate bounds_meta-driven fields on metrics-only hits.
+                    cell_size_ft = cached_meta.get("CellSize_ft", cached_metrics.get("CellSize_ft", 0.0))
+                    raster_stub = {
+                        "cell_size_ft": cell_size_ft,
+                        "bounds_meta": {
+                            "cell_size_ft_requested": cached_meta.get("CellSizeRequested_ft", cell_size_ft),
+                            "cell_size_ft_effective": cached_meta.get("CellSizeEffective_ft", cell_size_ft),
+                            "resolution_mode": cached_meta.get("ResolutionMode", "canonical"),
+                            "cap_triggered": bool(cached_meta.get("CapTriggered", False)),
+                        },
+                    }
+
+                    # Cache-hit timing: how long it took to determine the hit (lookup + minimal assembly)
+                    cache_ms = _perf_ms(t_cache0, t_cache1)
+
+                    result = dict(cached_meta)
                     result.update({
-                        "view_id": view_id_int,
+                        # Ensure identity fields are always present for CSV + doc lookups
+                        "view_id": cached_meta.get("view_id", view_id_int),
+                        "view_name": cached_meta.get("view_name", ""),
+                        "view_type": cached_meta.get("view_type", ""),
+
                         "success": True,
                         "from_cache": True,
-                        "metrics": cached.get("metrics") or {},
+                        "metrics": cached_metrics,
+                        "raster": raster_stub,
+
+                        # Preserve cached outputs for reuse by CSV exporters
+                        "row_payload": cached.get("row_payload") or {},
+                        "timings": cached.get("timings") or {},
+
+                        # If you still want lookup cost, store it separately (do NOT overwrite timings)
+                        "cache_lookup_ms": cache_ms,
+
                         "cache": {
                             "cache_type": "root",
                             "signature": sig_hex,
                         },
                     })
+
                     results.append(result)
-                    continue
-
-            if can_use_cache and view_id_int is not None:
-                cached = _load_cached_view(view_id_int, sig_hex)
-
-                if cached is not None:
-                    try:
-                        cached["cache"] = {
-                            "view_cache": "HIT",
-                            "signature": sig_hex,
-                            "dir": view_cache_dir,
-                        }
-                    except Exception:
-                        pass
-
-                    try:
-                        if hasattr(diag, "info"):
-                            diag.info(
-                                phase="pipeline",
-                                callsite="process_document_views.view_cache",
-                                message="View cache hit: skipping view processing",
-                                view_id=int(view_id_int),
-                                extra={"signature": sig_hex},
-                            )
-                    except Exception:
-                        pass
-
-                    results.append(cached)
                     continue
 
             # 1) Init raster bounds/resolution
@@ -664,6 +686,12 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
             
             t_view1 = _perf_now()
             _tmark("total_ms", t_view0, t_view1)
+
+            # Always expose a wall-clock elapsed seconds for this view, even if timing collection is disabled
+            try:
+                out["elapsed_sec"] = round((_perf_ms(t_view0, t_view1) / 1000.0), 3)
+            except Exception:
+                pass
 
             # Convenience mirror at top-level for callers that don't dive into diagnostics
             try:

@@ -316,12 +316,69 @@ class StreamingExporter:
     
     def _write_csv_rows(self, view_result):
         """Write CSV rows for a single view result."""
+
+        # If this is a cache hit, attempt to rehydrate missing CSV fields from root cache.
+        # This prevents partial rows when process_document_views() short-circuits and returns
+        # metrics-only view_result dicts.
+        try:
+            is_cache_hit = bool(view_result.get("from_cache"))
+            c = view_result.get("cache", {})
+            if isinstance(c, dict) and "HIT" in str(c.get("view_cache", "")).upper():
+                is_cache_hit = True
+            if isinstance(c, dict) and str(c.get("cache_type", "")).lower() == "root":
+                is_cache_hit = True
+
+            if is_cache_hit and self.root_cache is not None:
+                vid = view_result.get("view_id")
+                if vid is not None:
+                    cached = None
+                    # Prefer signature-agnostic fetch: pipeline already validated signature on hit.
+                    try:
+                        cached = self.root_cache.get_view_any(vid)
+                    except Exception:
+                        cached = None
+
+                    if isinstance(cached, dict):
+                        payload = cached.get("row_payload")
+                        if isinstance(payload, dict) and payload:
+                            # Merge cached flat payload into view_result for downstream row builders.
+                            # Do not overwrite explicit fields already present in view_result.
+                            for k, v in payload.items():
+                                if k not in view_result or view_result.get(k) in (None, "", []):
+                                    view_result[k] = v
+
+                            # Ensure metrics is present as dict if cached has it
+                            if not isinstance(view_result.get("metrics"), dict) or not view_result.get("metrics"):
+                                m = cached.get("metrics")
+                                if isinstance(m, dict):
+                                    view_result["metrics"] = m
+
+                            # Ensure timings is present
+                            if not isinstance(view_result.get("timings"), dict) or not view_result.get("timings"):
+                                t = cached.get("timings")
+                                if isinstance(t, dict):
+                                    view_result["timings"] = t
+        except Exception:
+            # Never block export due to cache rehydration issues; downstream will fill sentinels.
+            pass
+
         from vop_interwoven.csv_export import (
             view_result_to_core_row,
             view_result_to_vop_row,
             view_result_to_perf_row
         )
         
+        # Helper: ensure all required header columns exist (no blanks on cache hits).
+        def _fill_missing(row_dict, fieldnames, sentinel):
+            if not isinstance(row_dict, dict):
+                return None
+            for f in fieldnames:
+                if f not in row_dict or row_dict[f] in (None, ""):
+                    row_dict[f] = sentinel
+            return row_dict
+
+        sentinel = "<MISSING_FROM_CACHE>" if bool(view_result.get("from_cache")) else ""
+
         # Core row
         core_row = view_result_to_core_row(
             view_result,
@@ -331,6 +388,7 @@ class StreamingExporter:
             run_id=self.run_id
         )
         if core_row:
+            core_row = _fill_missing(core_row, self.csv_core_writer.fieldnames, sentinel)
             self.csv_core_writer.writerow(core_row)
             self.csv_core_file.flush()  # Ensure written to disk
             self.csv_rows_written += 1
@@ -344,9 +402,10 @@ class StreamingExporter:
             run_id=self.run_id
         )
         if vop_row:
+            vop_row = _fill_missing(vop_row, self.csv_vop_writer.fieldnames, sentinel)
             self.csv_vop_writer.writerow(vop_row)
             self.csv_vop_file.flush()
-        
+
         # Perf row
         perf_row = view_result_to_perf_row(
             view_result,
@@ -354,9 +413,10 @@ class StreamingExporter:
             run_id=self.run_id
         )
         if perf_row:
+            perf_row = _fill_missing(perf_row, self.perf_writer.fieldnames, sentinel)
             self.perf_writer.writerow(perf_row)
             self.perf_file.flush()
-        
+
         print(f"[Streaming] Wrote CSV rows for view: {view_result.get('view_name')}")
     
     def _extract_summary(self, view_result):

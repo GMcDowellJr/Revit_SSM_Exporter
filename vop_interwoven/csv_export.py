@@ -504,7 +504,7 @@ def build_core_csv_row(view, doc, metrics, config, run_info, view_metadata=None)
         run_info.get("exporter_version", "VOP_v1.0"),
         config_hash,
         view_frame_hash,
-        False,  # FromCache (always False for now)
+        ("Y" if bool(run_info.get("from_cache", False)) else "N"),
         run_info.get("elapsed_sec", 0.0),
     ]
 
@@ -579,7 +579,7 @@ def build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metada
         "VOP_Interwoven_v1",  # RowSource
         run_info.get("exporter_version", "VOP_v1.0"),
         config_hash,
-        False,  # FromCache (always False for now)
+        ("Y" if bool(run_info.get("from_cache", False)) else "N"),
         run_info.get("elapsed_sec", 0.0),
     ]
 
@@ -694,8 +694,11 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
         if view_result.get("view_mode") == "REJECTED":
             continue
 
-        raster_dict = view_result.get("raster", {})
-        if not raster_dict:
+        raster_dict = view_result.get("raster", {}) or {}
+        metrics_only = (not raster_dict) and isinstance(view_result.get("metrics"), dict) and bool(view_result.get("metrics"))
+
+        # Allow metrics-only results (root cache hits)
+        if not raster_dict and not metrics_only:
             continue
 
         # Reconstruct View for views_core metadata
@@ -737,44 +740,71 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
         raster.anno_meta = raster_dict.get("anno_meta", [])
         raster.element_meta = raster_dict.get("element_meta", raster_dict.get("elements_meta", []))
 
-        try:
-            model_presence_mode = getattr(config, "model_presence_mode", "ink")
-            metrics = compute_cell_metrics(raster, model_presence_mode=model_presence_mode, diag=diag)
-            anno_metrics = compute_annotation_type_metrics(raster)
-        except Exception as e:
-            if diag is not None:
-                try:
-                    diag.error(
-                        phase="export_csv",
-                        callsite="export_pipeline_to_csv.metrics",
-                        message="Failed to compute CSV metrics for view",
-                        exc=e,
-                        extra={
-                            "view_id": view_result.get("view_id", 0),
-                            "view_name": view_result.get("view_name", ""),
-                            "width": raster_dict.get("width", raster_dict.get("W", 0)),
-                            "height": raster_dict.get("height", raster_dict.get("H", 0)),
-                            "model_presence_mode": getattr(config, "model_presence_mode", "ink"),
-                        },
-                    )
-                except Exception:
-                    pass
-            raise
+        # Cache status for this view_result (legacy or root)
+        from_cache = _is_from_cache(view_result)
 
-        try:
-            metrics.update(compute_external_cell_metrics(raster))
-        except Exception as e:
-            if diag is not None:
-                try:
-                    diag.warn(
-                        phase="export_csv",
-                        callsite="export_pipeline_to_csv.ext_cells",
-                        message="Failed to compute external-cell metrics; using zeros",
-                        exc=e,
-                        extra={"view_id": view_result.get("view_id", 0)},
-                    )
-                except Exception:
-                    pass
+        # Compute metrics
+        if metrics_only:
+            metrics = view_result.get("metrics") or {}
+            # For root-cache metrics, annotation/external counts are already flattened into metrics
+            anno_metrics = metrics
+        else:
+            try:
+                model_presence_mode = getattr(config, "model_presence_mode", "ink")
+                metrics = compute_cell_metrics(raster, model_presence_mode=model_presence_mode, diag=diag)
+                anno_metrics = compute_annotation_type_metrics(raster)
+            except Exception as e:
+                if diag is not None:
+                    try:
+                        diag.error(
+                            phase="export_csv",
+                            callsite="export_pipeline_to_csv.metrics",
+                            message="Failed to compute CSV metrics for view",
+                            exc=e,
+                            extra={
+                                "view_id": view_result.get("view_id", 0),
+                                "view_name": view_result.get("view_name", ""),
+                                "width": raster_dict.get("width", raster_dict.get("W", 0)),
+                                "height": raster_dict.get("height", raster_dict.get("H", 0)),
+                                "model_presence_mode": getattr(config, "model_presence_mode", "ink"),
+                            },
+                        )
+                    except Exception:
+                        pass
+                raise
+
+        # External-cell metrics
+        if not metrics_only:
+            try:
+                metrics.update(compute_external_cell_metrics(raster))
+            except Exception as e:
+                if diag is not None:
+                    try:
+                        diag.warn(
+                            phase="export_csv",
+                            callsite="export_pipeline_to_csv.ext_cells",
+                            message="Failed to compute external-cell metrics; using zeros",
+                            exc=e,
+                            extra={"view_id": view_result.get("view_id", 0)},
+                        )
+                    except Exception:
+                        pass
+
+        bounds_meta = raster_dict.get("bounds_meta") or {}
+
+        cell_size_eff = raster_dict.get("cell_size_ft", 0.0)
+        cell_size_req = bounds_meta.get("cell_size_ft_requested", cell_size_eff)
+        cell_size_eff_meta = bounds_meta.get("cell_size_ft_effective", cell_size_eff)
+
+        # ElapsedSec: force 0 on cache hits (parity with streaming CSV helpers)
+        elapsed_sec = 0.0
+        if not from_cache:
+            try:
+                timings = view_result.get("timings", {}) or {}
+                total_ms = float(timings.get("total_ms", 0.0) or 0.0)
+                elapsed_sec = total_ms / 1000.0
+            except Exception:
+                elapsed_sec = float(view_result.get("elapsed_sec", 0.0) or 0.0)
 
         bounds_meta = raster_dict.get("bounds_meta") or {}
 
@@ -786,7 +816,8 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
             "date": date_str,
             "run_id": run_id,
             "exporter_version": view_result.get("exporter_version", "VOP_v1.0"),
-            "elapsed_sec": view_result.get("elapsed_sec", 0.0),
+            "elapsed_sec": elapsed_sec,
+            "from_cache": bool(from_cache),
 
             # Back-compat: actual (effective) cell size used
             "cell_size_ft": cell_size_eff,
@@ -890,6 +921,7 @@ def view_result_to_core_row(view_result, config, doc, date_override=None, run_id
     Returns:
         Dict with core CSV fields, or None if view should be skipped
     """
+
     # Skip failed/rejected views
     if view_result.get("success") is False:
         return None
@@ -945,7 +977,7 @@ def view_result_to_core_row(view_result, config, doc, date_override=None, run_id
                 date_str = f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:8]}"
             except Exception:
                 date_str = datetime.now().strftime("%Y-%m-%d")
-    
+ 
     # Get view object
     view = view_result.get("view")
     if view is None and doc is not None:
@@ -971,9 +1003,13 @@ def view_result_to_core_row(view_result, config, doc, date_override=None, run_id
     elapsed_sec = 0.0
     if from_cache != "Y":
         try:
-            timings = view_result.get("timings", {})
-            total_ms = timings.get("total_ms", 0.0)
-            elapsed_sec = total_ms / 1000.0
+            timings = view_result.get("timings", {}) or {}
+            total_ms = float(timings.get("total_ms", 0.0) or 0.0)
+            if total_ms > 0.0:
+                elapsed_sec = total_ms / 1000.0
+            else:
+                # When perf timing collection is disabled, pipeline may omit timings; fall back to top-level elapsed.
+                elapsed_sec = float(view_result.get("elapsed_sec", 0.0) or 0.0)
         except Exception:
             pass
     
@@ -1014,6 +1050,7 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
     Returns:
         Dict with VOP CSV fields, or None if view should be skipped
     """
+
     # Skip failed/rejected views
     if view_result.get("success") is False:
         return None
@@ -1067,7 +1104,7 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
                 date_str = f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:8]}"
             except Exception:
                 date_str = datetime.now().strftime("%Y-%m-%d")
-    
+
     if metrics_only:
         metrics = view_result.get("metrics") or {}
         anno_metrics = metrics  # anno counts already flattened in root_cache metrics
@@ -1076,37 +1113,38 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
         # Reconstruct raster object for metrics computation (existing behavior)
         from .core.raster import ViewRaster
         from .core.math_utils import Bounds2D
-    
-    bounds_dict = raster_dict.get("bounds_xy", {})
-    bounds = Bounds2D(
-        bounds_dict.get("xmin", 0),
-        bounds_dict.get("ymin", 0),
-        bounds_dict.get("xmax", 100),
-        bounds_dict.get("ymax", 100)
-    )
-    
-    raster = ViewRaster(
-        width=raster_dict.get("width", 0),
-        height=raster_dict.get("height", 0),
-        cell_size=raster_dict.get("cell_size_ft", 1.0),
-        bounds=bounds,
-        tile_size=16
-    )
-    
-    raster.model_edge_key = raster_dict.get("model_edge_key", [])
-    raster.model_proxy_mask = raster_dict.get("model_proxy_mask", raster_dict.get("model_proxy_presence", []))
-    raster.model_proxy_key = raster_dict.get("model_proxy_key", [])
-    raster.model_mask = raster_dict.get("model_mask", [])
-    raster.anno_over_model = raster_dict.get("anno_over_model", [])
-    raster.anno_key = raster_dict.get("anno_key", [])
-    raster.anno_meta = raster_dict.get("anno_meta", [])
-    raster.element_meta = raster_dict.get("element_meta", raster_dict.get("elements_meta", []))
-    
-    # Compute metrics
-    model_presence_mode = getattr(config, "model_presence_mode", "ink")
-    metrics = compute_cell_metrics(raster, model_presence_mode=model_presence_mode)
-    anno_metrics = compute_annotation_type_metrics(raster)
-    ext_metrics = compute_external_cell_metrics(raster)
+
+        bounds_dict = raster_dict.get("bounds_xy", {})
+        bounds = Bounds2D(
+            bounds_dict.get("xmin", 0),
+            bounds_dict.get("ymin", 0),
+            bounds_dict.get("xmax", 100),
+            bounds_dict.get("ymax", 100)
+        )
+
+        raster = ViewRaster(
+            width=raster_dict.get("width", 0),
+            height=raster_dict.get("height", 0),
+            cell_size=raster_dict.get("cell_size_ft", 1.0),
+            bounds=bounds,
+            tile_size=16
+        )
+
+        raster.model_edge_key = raster_dict.get("model_edge_key", [])
+        raster.model_proxy_mask = raster_dict.get("model_proxy_mask", raster_dict.get("model_proxy_presence", []))
+        raster.model_proxy_key = raster_dict.get("model_proxy_key", [])
+        raster.model_mask = raster_dict.get("model_mask", [])
+        raster.anno_over_model = raster_dict.get("anno_over_model", [])
+        raster.anno_key = raster_dict.get("anno_key", [])
+        raster.anno_meta = raster_dict.get("anno_meta", [])
+        raster.element_meta = raster_dict.get("element_meta", raster_dict.get("elements_meta", []))
+
+        # Compute metrics
+        model_presence_mode = getattr(config, "model_presence_mode", "ink")
+        metrics = compute_cell_metrics(raster, model_presence_mode=model_presence_mode)
+        anno_metrics = compute_annotation_type_metrics(raster)
+        ext_metrics = compute_external_cell_metrics(raster)
+
 
     # Get view object
     view = view_result.get("view")
@@ -1135,13 +1173,41 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
     # FromCache flag (supports legacy + root)
     from_cache = "Y" if _is_from_cache(view_result) else "N"
 
+    # Cache-hit: reuse cached VOP row payload (normalize snake_case → CSV schema)
+    if from_cache == "Y":
+        payload = view_result.get("row_payload")
+        if isinstance(payload, dict):
+            row = dict(payload)
+
+            # Normalize identity keys from older caches
+            if "ViewId" not in row and "view_id" in row:
+                row["ViewId"] = row.get("view_id")
+            if "ViewName" not in row and "view_name" in row:
+                row["ViewName"] = row.get("view_name")
+            if "ViewType" not in row and "view_type" in row:
+                row["ViewType"] = row.get("view_type")
+
+            # Overwrite run-scoped fields
+            row["Date"] = date_str
+            row["RunId"] = run_id
+            row["ExporterVersion"] = view_result.get("exporter_version", "vop_interwoven")
+            row["ConfigHash"] = config_hash
+            # Enforce cache semantics
+            row["FromCache"] = "Y"
+            row["ElapsedSec"] = f"{0.0:.3f}"
+            return row
+
     # Elapsed time (force 0 on cache hits)
     elapsed_sec = 0.0
     if from_cache != "Y":
         try:
-            timings = view_result.get("timings", {})
-            total_ms = timings.get("total_ms", 0.0)
-            elapsed_sec = total_ms / 1000.0
+            timings = view_result.get("timings", {}) or {}
+            total_ms = float(timings.get("total_ms", 0.0) or 0.0)
+            if total_ms > 0.0:
+                elapsed_sec = total_ms / 1000.0
+            else:
+                # When perf timing collection is disabled, pipeline may omit timings; fall back to top-level elapsed.
+                elapsed_sec = float(view_result.get("elapsed_sec", 0.0) or 0.0)
         except Exception:
             pass
     
@@ -1207,6 +1273,7 @@ def view_result_to_perf_row(view_result, date_override=None, run_id=None):
     Returns:
         Dict with performance CSV fields
     """
+
     # Resolve run datetime and run_id (use provided run_id if available for consistency)
     if run_id is None:
         run_dt = datetime.now()
@@ -1251,9 +1318,6 @@ def view_result_to_perf_row(view_result, date_override=None, run_id=None):
                 date_str = datetime.now().strftime("%Y-%m-%d")
 
     timings = view_result.get("timings", {})
-    
-    if _is_from_cache(view_result):
-        timings = {}
 
     row = {
         "Date": date_str,
