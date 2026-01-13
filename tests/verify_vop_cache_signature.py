@@ -99,14 +99,13 @@ def test_signature_collection():
         print("\n" + "="*70)
         print("✓ All verification tests passed!")
         print("="*70)
-
-        return True
+        return None
 
     except Exception as e:
         print(f"\n✗ Error during verification: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        raise AssertionError("Signature verification failed") from e
 
 
 def test_cache_file_inspection(cache_dir=None):

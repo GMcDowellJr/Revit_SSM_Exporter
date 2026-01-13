@@ -38,10 +38,12 @@ def test_floorplan_is_model_and_annotation():
     assert supports_depth(v) is True
 
 
-def test_unknown_view_type_is_rejected():
+def test_legend_view_is_annotation_only():
     v = FakeView("Legend", is_template=False, has_cropbox=True)
     mode, reason = resolve_view_mode(v, diag=None)
-    assert mode == VIEW_MODE_REJECTED
+    assert mode == VIEW_MODE_ANNOTATION_ONLY
+    assert reason["view_type"] == "Legend"
+    assert reason["supports_model_geometry"] is False
 
 
 def test_template_view_is_rejected():
