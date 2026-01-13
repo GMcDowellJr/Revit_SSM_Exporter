@@ -628,6 +628,7 @@ def resolve_view_bounds(view, diag=None, policy=None):
     reason = "fallback"
     confidence = "low"
     base_bounds = None
+    model_bounds = None
     bounds_budget = None
 
     crop_active = policy.get("crop_active", None)
@@ -662,10 +663,15 @@ def resolve_view_bounds(view, diag=None, policy=None):
                     raise ValueError(
                         "policy must provide doc and basis when bounds_crop_fn is not supplied"
                     )
+                # Base bounds drives raster sizing (may include buffer_ft).
                 base_bounds = xy_bounds_from_crop_box_all_corners(view, basis, buffer=buffer_ft)
 
+                # Model clip bounds must be the true crop (NO buffer), so model ink does not extend past crop.
+                model_bounds = xy_bounds_from_crop_box_all_corners(view, basis, buffer=0.0)
+
             reason = "crop"
-            confidence = "high"
+            confidence = "high"          
+
         except Exception as e:
             if diag is not None:
                 try:
@@ -870,6 +876,11 @@ def resolve_view_bounds(view, diag=None, policy=None):
 
     return {
         "bounds_uv": base_bounds,
+       
+        # Pre-annotation bounds (crop/extents/fallback). Used by pipeline to clip model ink
+        # even when raster bounds are expanded for annotations.
+        "model_bounds_uv": model_bounds,
+
         "reason": reason,
         "confidence": confidence,
         "anno_expanded": bool(anno_expanded),
