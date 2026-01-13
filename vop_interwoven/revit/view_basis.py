@@ -803,7 +803,6 @@ def resolve_view_bounds(view, diag=None, policy=None):
     cap_before = None
     cap_after = None
 
-    # Default: canonical (requested == effective)
     resolution_mode = "canonical"
     cell_size_ft_effective = float(cell_size_ft_requested)
 
@@ -813,7 +812,6 @@ def resolve_view_bounds(view, diag=None, policy=None):
 
         if W_req > max_W or H_req > max_H:
             cap_triggered = True
-            resolution_mode = "adaptive"
 
             cap_before = {
                 "W": int(W_req),
@@ -822,30 +820,22 @@ def resolve_view_bounds(view, diag=None, policy=None):
                 "cell_size_ft": float(cell_size_ft_requested),
             }
 
-            # Adaptive resolution: preserve bounds, increase cell size to fit cap
-            cell_size_ft_effective = max(
-                float(width_ft) / float(max_W) if max_W > 0 else float(cell_size_ft_requested),
-                float(height_ft) / float(max_H) if max_H > 0 else float(cell_size_ft_requested),
+            # HARD CAP: clip bounds to capped grid extents
+            new_width_ft = float(max_W) * cell_size_ft_requested
+            new_height_ft = float(max_H) * cell_size_ft_requested
+
+            base_bounds = Bounds2D(
+                base_bounds.xmin,
+                base_bounds.ymin,
+                base_bounds.xmin + new_width_ft,
+                base_bounds.ymin + new_height_ft,
             )
 
-            # Guard: never reduce resolution below requested
-            if cell_size_ft_effective < cell_size_ft_requested:
-                cell_size_ft_effective = float(cell_size_ft_requested)
-
-            W_eff = max(1, int(math.ceil(width_ft / cell_size_ft_effective)))
-            H_eff = max(1, int(math.ceil(height_ft / cell_size_ft_effective)))
-
-            # Final guard: clamp computed sizes to cap (numerical safety)
-            if W_eff > max_W:
-                W_eff = int(max_W)
-            if H_eff > max_H:
-                H_eff = int(max_H)
-
             cap_after = {
-                "W": int(W_eff),
-                "H": int(H_eff),
-                "bounds_uv": _bounds_to_tuple(base_bounds),  # bounds preserved
-                "cell_size_ft": float(cell_size_ft_effective),
+                "W": int(max_W),
+                "H": int(max_H),
+                "bounds_uv": _bounds_to_tuple(base_bounds),
+                "cell_size_ft": float(cell_size_ft_requested),
             }
 
             if diag is not None:
@@ -853,7 +843,7 @@ def resolve_view_bounds(view, diag=None, policy=None):
                     diag.warn(
                         phase="bounds",
                         callsite="resolve_view_bounds.cap",
-                        message="Grid size exceeds maximum; switching to adaptive cell size (bounds preserved)",
+                        message="Grid size exceeds maximum; bounds clipped to cap",
                         view_id=view_id,
                         extra={
                             "before": cap_before,
