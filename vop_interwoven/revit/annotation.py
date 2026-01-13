@@ -286,8 +286,11 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
                 x, y = view_basis.transform_to_view_uv((pt.X, pt.Y, pt.Z))
 
                 # Clip to allowed envelope (also in view-local UV)
-                x = max(allow_min_x, min(allow_max_x, x))
-                y = max(allow_min_y, min(allow_max_y, y))
+                # Option A: If annotation crop is NOT active, do not clamp to model-crop-derived envelope.
+                # This allows driver annotations outside model crop to expand the grid.
+                if ann_crop_active:
+                    x = max(allow_min_x, min(allow_max_x, x))
+                    y = max(allow_min_y, min(allow_max_y, y))
 
                 # Update annotation extents
                 if anno_min_x is None:

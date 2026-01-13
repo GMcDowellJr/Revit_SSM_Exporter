@@ -5,7 +5,6 @@ Provides ViewRaster and TileMap classes for tracking occlusion state,
 depth buffers, and edge/annotation layers per view.
 """
 
-
 def _extract_source_type(doc_key):
     """Extract simple source type from doc_key.
 
@@ -23,6 +22,24 @@ def _extract_source_type(doc_key):
         return "DWG"
     else:
         return "HOST"
+
+def _cell_in_model_clip(self, i, j):
+    """
+   ffected to model writes only.
+    Returns True if (i,j) lies within model_clip_bounds, or if no clip is defined.
+    """
+    clip = getattr(self, "model_clip_bounds", None)
+    if clip is None:
+        return True
+
+    # Convert cell index → UV center
+    u = self.bounds.xmin + (i + 0.5) * self.cell_size
+    v = self.bounds.ymin + (j + 0.5) * self.cell_size
+
+    return (
+        clip.xmin <= u <= clip.xmax and
+        clip.ymin <= v <= clip.ymax
+    )
 
 
 class TileMap:
@@ -192,6 +209,27 @@ class ViewRaster:
         5.0
     """
 
+    def _cell_in_model_clip(self, i, j):
+        """
+        Model-only clip predicate.
+        Returns True if (i,j) lies fully inside model_clip_bounds, or if no clip is defined.
+
+        Rule: require cell center to be inside an inset clip rect by half a cell,
+        which is equivalent to requiring the full cell to remain inside the clip.
+        """
+        b = getattr(self, "model_clip_bounds", None)
+        if b is None:
+            return True
+
+        half = 0.5 * self.cell_size_ft
+        u = self.bounds_xy.xmin + (i + 0.5) * self.cell_size_ft
+        v = self.bounds_xy.ymin + (j + 0.5) * self.cell_size_ft
+
+        return (
+            (b.xmin + half) <= u <= (b.xmax - half) and
+            (b.ymin + half) <= v <= (b.ymax - half)
+        )
+
     def rasterize_open_polylines(self, polylines, key_index, depth=0.0, source="HOST"):
         """Rasterize OPEN polyline paths as edges only (no interior fill).
 
@@ -232,6 +270,11 @@ class ViewRaster:
             # doesn't disappear entirely.
             if len(pts_ij) == 1:
                 ii, jj = pts_ij[0]
+
+                # MODEL CLIP GUARD — open polyline stamping
+                if source in ("HOST", "LINK", "DWG") and (not self._cell_in_model_clip(ii, jj)):
+                    continue
+
                 idx = self.get_cell_index(ii, jj)
                 if idx is not None:
                     w_here = self.w_occ[idx]
@@ -256,6 +299,11 @@ class ViewRaster:
                 i0, j0 = pts_ij[k]
                 i1, j1 = pts_ij[k + 1]
                 for (ii, jj) in _bresenham_line(i0, j0, i1, j1):
+
+                    # MODEL CLIP GUARD — open polyline stamping
+                    if source in ("HOST", "LINK", "DWG") and (not self._cell_in_model_clip(ii, jj)):
+                        continue
+
                     idx = self.get_cell_index(ii, jj)
                     if idx is None:
                         continue
@@ -301,6 +349,9 @@ class ViewRaster:
         self.cell_size_ft = float(cell_size)
         self.bounds_xy = bounds
         self.cfg = cfg
+        # Optional model-crop clip (set by pipeline if annotation-expanded bounds are used)
+        # Bounds2D in view-local XY; model writes are clipped to this if present.
+        self.model_clip_bounds = None
 
         N = self.W * self.H
 
@@ -451,6 +502,11 @@ class ViewRaster:
         idx = self.get_cell_index(i, j)
         if idx is None:
             return False
+            
+        # MODEL CLIP GUARD
+        if source in ("HOST", "LINK", "DWG"):
+            if not self._cell_in_model_clip(i, j):
+                return False
 
         self.depth_test_attempted += 1
 
@@ -588,6 +644,21 @@ class ViewRaster:
         if idx is None or not (0 <= idx < len(self.model_edge_key)):
             return False
 
+        # Enforce model-crop clip for model edges.
+        # Use a half-cell inset so that no stamped cell extends outside the clip.
+        if self.model_clip_bounds is not None:
+            b = self.model_clip_bounds
+            half = 0.5 * self.cell_size_ft
+
+            i = idx % self.W
+            j = idx // self.W
+            u = self.bounds_xy.xmin + (i + 0.5) * self.cell_size_ft
+            v = self.bounds_xy.ymin + (j + 0.5) * self.cell_size_ft
+
+            if (u < (b.xmin + half) or u > (b.xmax - half) or
+                v < (b.ymin + half) or v > (b.ymax - half)):
+                return False
+
         w_here = self.w_occ[idx]
         if w_here == float("inf") or depth <= w_here:
             if self.model_edge_key[idx] != key_index:
@@ -604,6 +675,13 @@ class ViewRaster:
         """Stamp a proxy perimeter edge cell into proxy channel (config-gated in pipeline)."""
         if idx is None or not (0 <= idx < len(self.model_proxy_key)):
             return False
+
+        # Enforce model-crop clip for proxy edges too (proxy is still model ink / model signal).
+        if self.model_clip_bounds is not None:
+            i = idx % self.W
+            j = idx // self.W
+            if not self._cell_in_model_clip(i, j):
+                return False
 
         w_here = self.w_occ[idx]
         if w_here == float("inf") or depth <= w_here:
@@ -635,12 +713,21 @@ class ViewRaster:
 
             if len(points_uv) < 3:
                 continue
-
-            # Clip in UV first to avoid clamp-to-grid distortion at raster bounds.
-            xmin = self.bounds_xy.xmin
-            ymin = self.bounds_xy.ymin
-            xmax = self.bounds_xy.xmax
-            ymax = self.bounds_xy.ymax
+                
+            # Choose UV clip bounds.
+            # IMPORTANT: Inset model clip by half a cell so no raster cell
+            # can extend outside the crop boundary.
+            if self.model_clip_bounds is not None:
+                half = 0.5 * self.cell_size_ft
+                xmin = self.model_clip_bounds.xmin + half
+                ymin = self.model_clip_bounds.ymin + half
+                xmax = self.model_clip_bounds.xmax - half
+                ymax = self.model_clip_bounds.ymax - half
+            else:
+                xmin = self.bounds_xy.xmin
+                ymin = self.bounds_xy.ymin
+                xmax = self.bounds_xy.xmax
+                ymax = self.bounds_xy.ymax
 
             clipped_uv = _clip_poly_to_rect_uv([(p[0], p[1]) for p in points_uv], xmin, ymin, xmax, ymax)
             if len(clipped_uv) < 3:
@@ -648,8 +735,10 @@ class ViewRaster:
 
             points_ij = []
             for (u, v) in clipped_uv:
-                i = int((u - xmin) / self.cell_size_ft)
-                j = int((v - ymin) / self.cell_size_ft)
+                # Convert to raster cell indices in the raster's coordinate frame
+                i = int((u - self.bounds_xy.xmin) / self.cell_size_ft)
+                j = int((v - self.bounds_xy.ymin) / self.cell_size_ft)
+
                 # Range-check (no clamping). Skip vertices that land out of bounds.
                 if i < 0 or i >= self.W or j < 0 or j >= self.H:
                     continue
@@ -707,18 +796,38 @@ class ViewRaster:
                 continue
 
             # Convert UV points to cell indices
+            # IMPORTANT: If a model-only clip is present (model crop), clip the polygon in UV
+            # BEFORE converting to IJ to avoid "clamp-to-raster-edge" distortion.
+            if self.model_clip_bounds is not None:
+                xmin = self.model_clip_bounds.xmin
+                ymin = self.model_clip_bounds.ymin
+                xmax = self.model_clip_bounds.xmax
+                ymax = self.model_clip_bounds.ymax
+            else:
+                xmin = self.bounds_xy.xmin
+                ymin = self.bounds_xy.ymin
+                xmax = self.bounds_xy.xmax
+                ymax = self.bounds_xy.ymax
+
+            clipped_uv = _clip_poly_to_rect_uv([(p[0], p[1]) for p in points_uv], xmin, ymin, xmax, ymax)
+            if len(clipped_uv) < 3:
+                continue
+
             points_ij = []
-            for pt in points_uv:
-                # Handle both 2-tuples (u, v) and 3-tuples (u, v, w)
-                u, v = pt[0], pt[1]
+            for (u, v) in clipped_uv:
                 i = int((u - self.bounds_xy.xmin) / self.cell_size_ft)
                 j = int((v - self.bounds_xy.ymin) / self.cell_size_ft)
 
-                # Clamp to bounds
-                i = max(0, min(i, self.W - 1))
-                j = max(0, min(j, self.H - 1))
+                # After UV clipping, coordinates should land inside the clip rect.
+                # Do NOT clamp: clamping can snap slightly-outside vertices onto the raster edge,
+                # creating a thin strip outside the intended clip.
+                if i < 0 or i >= self.W or j < 0 or j >= self.H:
+                    continue
 
                 points_ij.append((i, j))
+
+            if len(points_ij) < 3:
+                continue
 
             # Rasterize edges
             # 1) Fill interior FIRST (writes w_occ and per-source occupancy for occlusion)

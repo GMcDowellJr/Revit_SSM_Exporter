@@ -936,6 +936,13 @@ def init_view_raster(doc, view, cfg, diag=None):
     raster = ViewRaster(
         width=W, height=H, cell_size=cell_size_ft_effective, bounds=bounds_xy, tile_size=tile_size, cfg=cfg
     )
+    
+    # If raster bounds were expanded for annotations, preserve the pre-annotation bounds
+    # as a model-only clip region. Model writes consult this; annotation writes do not.
+    try:
+        raster.model_clip_bounds = bounds_result.get("model_bounds_uv", None)
+    except Exception:
+        pass
 
     # Persist bounds/resolution metadata for export diagnostics (never silent)
     raster.bounds_meta = {
