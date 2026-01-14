@@ -263,12 +263,12 @@
 - `build_core_csv_row` (function, L619)
 - `build_vop_csv_row` (function, L672)
 - `export_pipeline_to_csv` (function, L747)
-- `get_core_csv_header` (function, L1037)
-- `get_vop_csv_header` (function, L1047)
-- `get_perf_csv_header` (function, L1059)
-- `view_result_to_core_row` (function, L1069)
-- `view_result_to_vop_row` (function, L1198)
-- `view_result_to_perf_row` (function, L1470)
+- `get_core_csv_header` (function, L1035)
+- `get_vop_csv_header` (function, L1045)
+- `get_perf_csv_header` (function, L1057)
+- `view_result_to_core_row` (function, L1067)
+- `view_result_to_vop_row` (function, L1196)
+- `view_result_to_perf_row` (function, L1468)
 
 ### `dynamo_helpers.py`
 
@@ -308,6 +308,16 @@
 - `get_test_config_linear` (function, L660)
 - `get_test_config_areal_heavy` (function, L676)
 - `quick_test_current_view` (function, L693)
+
+### `export/csv.py`
+
+**Imports**
+- `csv`
+- `os`
+
+**Definitions**
+- `_ensure_dir` (function, L8)
+- `_append_csv_rows` (function, L20)
 
 ### `pipeline.py`
 
@@ -521,31 +531,3 @@
 - `os`
 - `sys`
 - `vop_interwoven.entry_dynamo:get_current_document,get_current_view`
-
-### `tools/gen_maps.py`
-
-**Imports**
-- `__future__:annotations`
-- `ast`
-- `dataclasses:dataclass`
-- `os`
-- `sys`
-- `typing:Dict,Iterable,List,Optional,Set,Tuple`
-
-**Definitions**
-- `DefInfo` (class, L80)
-- `_is_excluded_dir` (function, L87)
-- `iter_py_files` (function, L91)
-- `relpath_from_root` (function, L110)
-- `parse_imports` (function, L115)
-- `parse_defs` (function, L131)
-- `_call_name` (function, L148)
-- `parse_callsites` (function, L163)
-- `load_ast` (function, L184)
-- `build_index` (function, L190)
-- `write_code_map` (function, L229)
-- `_format_def` (function, L262)
-- `write_symbol_index` (function, L266)
-- `build_trace_tree` (function, L329)
-- `write_trace_map` (function, L405)
-- `main` (function, L422)

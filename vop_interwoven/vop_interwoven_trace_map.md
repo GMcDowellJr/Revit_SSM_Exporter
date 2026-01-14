@@ -16,8 +16,6 @@ Notes:
     - called from: pipeline.py
   - `Config`
     - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
-  - `DefInfo`
-    - called from: tools/gen_maps.py
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
@@ -48,10 +46,6 @@ Notes:
     - called from: pipeline.py
   - `build_core_csv_row`
     - called from: csv_export.py
-  - `build_index`
-    - called from: tools/gen_maps.py
-  - `build_trace_tree`
-    - called from: tools/gen_maps.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `cellrect_dims`
@@ -88,12 +82,12 @@ Notes:
     - called from: pipeline.py, revit/collection.py
   - `excluded_bic_names_global`
     - called from: revit/collection_policy.py, revit/linked_documents.py
-    - `expand_host_link_import_model_elements`
-      - called from: pipeline.py
-    - `export_pipeline_results_to_pngs`
-      - called from: entry_dynamo.py
-    - `export_pipeline_to_csv`
-      - called from: entry_dynamo.py
+  - `expand_host_link_import_model_elements`
+    - called from: pipeline.py
+  - `export_pipeline_results_to_pngs`
+    - called from: entry_dynamo.py
+  - `export_pipeline_to_csv`
+    - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
@@ -128,24 +122,12 @@ Notes:
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
-    - `iter_py_files`
-      - called from: tools/gen_maps.py
-    - `load_ast`
-      - called from: tools/gen_maps.py
-    - `main`
-      - called from: tools/gen_maps.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
-    - `parse_callsites`
-      - called from: tools/gen_maps.py
-    - `parse_defs`
-      - called from: tools/gen_maps.py
-    - `parse_imports`
-      - called from: tools/gen_maps.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
     - `process_document_views`
@@ -156,8 +138,6 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
-    - `relpath_from_root`
-      - called from: tools/gen_maps.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_annotation_only_bounds`
@@ -202,12 +182,6 @@ Notes:
       - called from: streaming.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_code_map`
-      - called from: tools/gen_maps.py
-    - `write_symbol_index`
-      - called from: tools/gen_maps.py
-    - `write_trace_map`
-      - called from: tools/gen_maps.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -221,8 +195,6 @@ Notes:
     - called from: pipeline.py
   - `Config`
     - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
-  - `DefInfo`
-    - called from: tools/gen_maps.py
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
@@ -253,10 +225,6 @@ Notes:
     - called from: pipeline.py
   - `build_core_csv_row`
     - called from: csv_export.py
-  - `build_index`
-    - called from: tools/gen_maps.py
-  - `build_trace_tree`
-    - called from: tools/gen_maps.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `cellrect_dims`
@@ -293,12 +261,12 @@ Notes:
     - called from: pipeline.py, revit/collection.py
   - `excluded_bic_names_global`
     - called from: revit/collection_policy.py, revit/linked_documents.py
-    - `expand_host_link_import_model_elements`
-      - called from: pipeline.py
-    - `export_pipeline_results_to_pngs`
-      - called from: entry_dynamo.py
-    - `export_pipeline_to_csv`
-      - called from: entry_dynamo.py
+  - `expand_host_link_import_model_elements`
+    - called from: pipeline.py
+  - `export_pipeline_results_to_pngs`
+    - called from: entry_dynamo.py
+  - `export_pipeline_to_csv`
+    - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
@@ -333,24 +301,12 @@ Notes:
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
-    - `iter_py_files`
-      - called from: tools/gen_maps.py
-    - `load_ast`
-      - called from: tools/gen_maps.py
-    - `main`
-      - called from: tools/gen_maps.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
-    - `parse_callsites`
-      - called from: tools/gen_maps.py
-    - `parse_defs`
-      - called from: tools/gen_maps.py
-    - `parse_imports`
-      - called from: tools/gen_maps.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
     - `process_document_views`
@@ -361,8 +317,6 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
-    - `relpath_from_root`
-      - called from: tools/gen_maps.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_annotation_only_bounds`
@@ -407,12 +361,6 @@ Notes:
       - called from: streaming.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_code_map`
-      - called from: tools/gen_maps.py
-    - `write_symbol_index`
-      - called from: tools/gen_maps.py
-    - `write_trace_map`
-      - called from: tools/gen_maps.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -426,8 +374,6 @@ Notes:
     - called from: pipeline.py
   - `Config`
     - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
-  - `DefInfo`
-    - called from: tools/gen_maps.py
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
@@ -458,10 +404,6 @@ Notes:
     - called from: pipeline.py
   - `build_core_csv_row`
     - called from: csv_export.py
-  - `build_index`
-    - called from: tools/gen_maps.py
-  - `build_trace_tree`
-    - called from: tools/gen_maps.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `cellrect_dims`
@@ -498,12 +440,12 @@ Notes:
     - called from: pipeline.py, revit/collection.py
   - `excluded_bic_names_global`
     - called from: revit/collection_policy.py, revit/linked_documents.py
-    - `expand_host_link_import_model_elements`
-      - called from: pipeline.py
-    - `export_pipeline_results_to_pngs`
-      - called from: entry_dynamo.py
-    - `export_pipeline_to_csv`
-      - called from: entry_dynamo.py
+  - `expand_host_link_import_model_elements`
+    - called from: pipeline.py
+  - `export_pipeline_results_to_pngs`
+    - called from: entry_dynamo.py
+  - `export_pipeline_to_csv`
+    - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
@@ -538,24 +480,12 @@ Notes:
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
-    - `iter_py_files`
-      - called from: tools/gen_maps.py
-    - `load_ast`
-      - called from: tools/gen_maps.py
-    - `main`
-      - called from: tools/gen_maps.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
-    - `parse_callsites`
-      - called from: tools/gen_maps.py
-    - `parse_defs`
-      - called from: tools/gen_maps.py
-    - `parse_imports`
-      - called from: tools/gen_maps.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
     - `process_document_views`
@@ -566,8 +496,6 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
-    - `relpath_from_root`
-      - called from: tools/gen_maps.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_annotation_only_bounds`
@@ -612,12 +540,6 @@ Notes:
       - called from: streaming.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_code_map`
-      - called from: tools/gen_maps.py
-    - `write_symbol_index`
-      - called from: tools/gen_maps.py
-    - `write_trace_map`
-      - called from: tools/gen_maps.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -631,8 +553,6 @@ Notes:
     - called from: pipeline.py
   - `Config`
     - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
-  - `DefInfo`
-    - called from: tools/gen_maps.py
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
@@ -663,10 +583,6 @@ Notes:
     - called from: pipeline.py
   - `build_core_csv_row`
     - called from: csv_export.py
-  - `build_index`
-    - called from: tools/gen_maps.py
-  - `build_trace_tree`
-    - called from: tools/gen_maps.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `cellrect_dims`
@@ -703,12 +619,12 @@ Notes:
     - called from: pipeline.py, revit/collection.py
   - `excluded_bic_names_global`
     - called from: revit/collection_policy.py, revit/linked_documents.py
-    - `expand_host_link_import_model_elements`
-      - called from: pipeline.py
-    - `export_pipeline_results_to_pngs`
-      - called from: entry_dynamo.py
-    - `export_pipeline_to_csv`
-      - called from: entry_dynamo.py
+  - `expand_host_link_import_model_elements`
+    - called from: pipeline.py
+  - `export_pipeline_results_to_pngs`
+    - called from: entry_dynamo.py
+  - `export_pipeline_to_csv`
+    - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
@@ -743,24 +659,12 @@ Notes:
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
-    - `iter_py_files`
-      - called from: tools/gen_maps.py
-    - `load_ast`
-      - called from: tools/gen_maps.py
-    - `main`
-      - called from: tools/gen_maps.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
-    - `parse_callsites`
-      - called from: tools/gen_maps.py
-    - `parse_defs`
-      - called from: tools/gen_maps.py
-    - `parse_imports`
-      - called from: tools/gen_maps.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
     - `process_document_views`
@@ -771,8 +675,6 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
-    - `relpath_from_root`
-      - called from: tools/gen_maps.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_annotation_only_bounds`
@@ -817,12 +719,6 @@ Notes:
       - called from: streaming.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_code_map`
-      - called from: tools/gen_maps.py
-    - `write_symbol_index`
-      - called from: tools/gen_maps.py
-    - `write_trace_map`
-      - called from: tools/gen_maps.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -836,8 +732,6 @@ Notes:
     - called from: pipeline.py
   - `Config`
     - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
-  - `DefInfo`
-    - called from: tools/gen_maps.py
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
@@ -868,10 +762,6 @@ Notes:
     - called from: pipeline.py
   - `build_core_csv_row`
     - called from: csv_export.py
-  - `build_index`
-    - called from: tools/gen_maps.py
-  - `build_trace_tree`
-    - called from: tools/gen_maps.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `cellrect_dims`
@@ -908,12 +798,12 @@ Notes:
     - called from: pipeline.py, revit/collection.py
   - `excluded_bic_names_global`
     - called from: revit/collection_policy.py, revit/linked_documents.py
-    - `expand_host_link_import_model_elements`
-      - called from: pipeline.py
-    - `export_pipeline_results_to_pngs`
-      - called from: entry_dynamo.py
-    - `export_pipeline_to_csv`
-      - called from: entry_dynamo.py
+  - `expand_host_link_import_model_elements`
+    - called from: pipeline.py
+  - `export_pipeline_results_to_pngs`
+    - called from: entry_dynamo.py
+  - `export_pipeline_to_csv`
+    - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
@@ -948,24 +838,12 @@ Notes:
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
-    - `iter_py_files`
-      - called from: tools/gen_maps.py
-    - `load_ast`
-      - called from: tools/gen_maps.py
-    - `main`
-      - called from: tools/gen_maps.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
-    - `parse_callsites`
-      - called from: tools/gen_maps.py
-    - `parse_defs`
-      - called from: tools/gen_maps.py
-    - `parse_imports`
-      - called from: tools/gen_maps.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
     - `process_document_views`
@@ -976,8 +854,6 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
-    - `relpath_from_root`
-      - called from: tools/gen_maps.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_annotation_only_bounds`
@@ -1024,12 +900,6 @@ Notes:
       - called from: streaming.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_code_map`
-      - called from: tools/gen_maps.py
-    - `write_symbol_index`
-      - called from: tools/gen_maps.py
-    - `write_trace_map`
-      - called from: tools/gen_maps.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -1043,8 +913,6 @@ Notes:
     - called from: pipeline.py
   - `Config`
     - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
-  - `DefInfo`
-    - called from: tools/gen_maps.py
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
@@ -1075,10 +943,6 @@ Notes:
     - called from: pipeline.py
   - `build_core_csv_row`
     - called from: csv_export.py
-  - `build_index`
-    - called from: tools/gen_maps.py
-  - `build_trace_tree`
-    - called from: tools/gen_maps.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `cellrect_dims`
@@ -1115,12 +979,12 @@ Notes:
     - called from: pipeline.py, revit/collection.py
   - `excluded_bic_names_global`
     - called from: revit/collection_policy.py, revit/linked_documents.py
-    - `expand_host_link_import_model_elements`
-      - called from: pipeline.py
-    - `export_pipeline_results_to_pngs`
-      - called from: entry_dynamo.py
-    - `export_pipeline_to_csv`
-      - called from: entry_dynamo.py
+  - `expand_host_link_import_model_elements`
+    - called from: pipeline.py
+  - `export_pipeline_results_to_pngs`
+    - called from: entry_dynamo.py
+  - `export_pipeline_to_csv`
+    - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
@@ -1155,24 +1019,12 @@ Notes:
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
-    - `iter_py_files`
-      - called from: tools/gen_maps.py
-    - `load_ast`
-      - called from: tools/gen_maps.py
-    - `main`
-      - called from: tools/gen_maps.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
-    - `parse_callsites`
-      - called from: tools/gen_maps.py
-    - `parse_defs`
-      - called from: tools/gen_maps.py
-    - `parse_imports`
-      - called from: tools/gen_maps.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
     - `process_document_views_streaming`
@@ -1181,8 +1033,6 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
-    - `relpath_from_root`
-      - called from: tools/gen_maps.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_annotation_only_bounds`
@@ -1229,12 +1079,6 @@ Notes:
       - called from: streaming.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_code_map`
-      - called from: tools/gen_maps.py
-    - `write_symbol_index`
-      - called from: tools/gen_maps.py
-    - `write_trace_map`
-      - called from: tools/gen_maps.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -1248,8 +1092,6 @@ Notes:
     - called from: pipeline.py
   - `Config`
     - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
-  - `DefInfo`
-    - called from: tools/gen_maps.py
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
@@ -1280,10 +1122,6 @@ Notes:
     - called from: pipeline.py
   - `build_core_csv_row`
     - called from: csv_export.py
-  - `build_index`
-    - called from: tools/gen_maps.py
-  - `build_trace_tree`
-    - called from: tools/gen_maps.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `cellrect_dims`
@@ -1320,12 +1158,12 @@ Notes:
     - called from: pipeline.py, revit/collection.py
   - `excluded_bic_names_global`
     - called from: revit/collection_policy.py, revit/linked_documents.py
-    - `expand_host_link_import_model_elements`
-      - called from: pipeline.py
-    - `export_pipeline_results_to_pngs`
-      - called from: entry_dynamo.py
-    - `export_pipeline_to_csv`
-      - called from: entry_dynamo.py
+  - `expand_host_link_import_model_elements`
+    - called from: pipeline.py
+  - `export_pipeline_results_to_pngs`
+    - called from: entry_dynamo.py
+  - `export_pipeline_to_csv`
+    - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
@@ -1360,24 +1198,12 @@ Notes:
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
-    - `iter_py_files`
-      - called from: tools/gen_maps.py
-    - `load_ast`
-      - called from: tools/gen_maps.py
-    - `main`
-      - called from: tools/gen_maps.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
-    - `parse_callsites`
-      - called from: tools/gen_maps.py
-    - `parse_defs`
-      - called from: tools/gen_maps.py
-    - `parse_imports`
-      - called from: tools/gen_maps.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
     - `process_document_views`
@@ -1386,8 +1212,6 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
-    - `relpath_from_root`
-      - called from: tools/gen_maps.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_annotation_only_bounds`
@@ -1434,12 +1258,6 @@ Notes:
       - called from: streaming.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_code_map`
-      - called from: tools/gen_maps.py
-    - `write_symbol_index`
-      - called from: tools/gen_maps.py
-    - `write_trace_map`
-      - called from: tools/gen_maps.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -1453,8 +1271,6 @@ Notes:
     - called from: pipeline.py
   - `Config`
     - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
-  - `DefInfo`
-    - called from: tools/gen_maps.py
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
@@ -1485,10 +1301,6 @@ Notes:
     - called from: pipeline.py
   - `build_core_csv_row`
     - called from: csv_export.py
-  - `build_index`
-    - called from: tools/gen_maps.py
-  - `build_trace_tree`
-    - called from: tools/gen_maps.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `cellrect_dims`
@@ -1525,12 +1337,12 @@ Notes:
     - called from: pipeline.py, revit/collection.py
   - `excluded_bic_names_global`
     - called from: revit/collection_policy.py, revit/linked_documents.py
-    - `expand_host_link_import_model_elements`
-      - called from: pipeline.py
-    - `export_pipeline_results_to_pngs`
-      - called from: entry_dynamo.py
-    - `export_pipeline_to_csv`
-      - called from: entry_dynamo.py
+  - `expand_host_link_import_model_elements`
+    - called from: pipeline.py
+  - `export_pipeline_results_to_pngs`
+    - called from: entry_dynamo.py
+  - `export_pipeline_to_csv`
+    - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
@@ -1565,24 +1377,12 @@ Notes:
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
-    - `iter_py_files`
-      - called from: tools/gen_maps.py
-    - `load_ast`
-      - called from: tools/gen_maps.py
-    - `main`
-      - called from: tools/gen_maps.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
-    - `parse_callsites`
-      - called from: tools/gen_maps.py
-    - `parse_defs`
-      - called from: tools/gen_maps.py
-    - `parse_imports`
-      - called from: tools/gen_maps.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
     - `process_document_views`
@@ -1593,8 +1393,6 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
-    - `relpath_from_root`
-      - called from: tools/gen_maps.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -1639,12 +1437,6 @@ Notes:
       - called from: streaming.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_code_map`
-      - called from: tools/gen_maps.py
-    - `write_symbol_index`
-      - called from: tools/gen_maps.py
-    - `write_trace_map`
-      - called from: tools/gen_maps.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -1658,8 +1450,6 @@ Notes:
     - called from: pipeline.py
   - `Config`
     - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
-  - `DefInfo`
-    - called from: tools/gen_maps.py
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
@@ -1690,10 +1480,6 @@ Notes:
     - called from: pipeline.py
   - `build_core_csv_row`
     - called from: csv_export.py
-  - `build_index`
-    - called from: tools/gen_maps.py
-  - `build_trace_tree`
-    - called from: tools/gen_maps.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `cellrect_dims`
@@ -1730,12 +1516,12 @@ Notes:
     - called from: pipeline.py, revit/collection.py
   - `excluded_bic_names_global`
     - called from: revit/collection_policy.py, revit/linked_documents.py
-    - `expand_host_link_import_model_elements`
-      - called from: pipeline.py
-    - `export_pipeline_results_to_pngs`
-      - called from: entry_dynamo.py
-    - `export_pipeline_to_csv`
-      - called from: entry_dynamo.py
+  - `expand_host_link_import_model_elements`
+    - called from: pipeline.py
+  - `export_pipeline_results_to_pngs`
+    - called from: entry_dynamo.py
+  - `export_pipeline_to_csv`
+    - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
@@ -1768,24 +1554,12 @@ Notes:
       - called from: revit/collection.py, revit/collection_policy.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
-    - `iter_py_files`
-      - called from: tools/gen_maps.py
-    - `load_ast`
-      - called from: tools/gen_maps.py
-    - `main`
-      - called from: tools/gen_maps.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
-    - `parse_callsites`
-      - called from: tools/gen_maps.py
-    - `parse_defs`
-      - called from: tools/gen_maps.py
-    - `parse_imports`
-      - called from: tools/gen_maps.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
     - `process_document_views`
@@ -1796,8 +1570,6 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
-    - `relpath_from_root`
-      - called from: tools/gen_maps.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_annotation_only_bounds`
@@ -1844,12 +1616,6 @@ Notes:
       - called from: streaming.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_code_map`
-      - called from: tools/gen_maps.py
-    - `write_symbol_index`
-      - called from: tools/gen_maps.py
-    - `write_trace_map`
-      - called from: tools/gen_maps.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -1863,8 +1629,6 @@ Notes:
     - called from: pipeline.py
   - `Config`
     - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
-  - `DefInfo`
-    - called from: tools/gen_maps.py
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
@@ -1893,10 +1657,6 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `build_core_csv_row`
     - called from: csv_export.py
-  - `build_index`
-    - called from: tools/gen_maps.py
-  - `build_trace_tree`
-    - called from: tools/gen_maps.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `cellrect_dims`
@@ -1935,12 +1695,12 @@ Notes:
     - called from: revit/collection_policy.py, revit/linked_documents.py
   - `expand_host_link_import_model_elements`
     - called from: pipeline.py
-    - `export_pipeline_results_to_pngs`
-      - called from: entry_dynamo.py
-    - `export_pipeline_to_csv`
-      - called from: entry_dynamo.py
-    - `export_raster_to_png`
-      - called from: png_export.py, streaming.py
+  - `export_pipeline_results_to_pngs`
+    - called from: entry_dynamo.py
+  - `export_pipeline_to_csv`
+    - called from: entry_dynamo.py
+  - `export_raster_to_png`
+    - called from: png_export.py, streaming.py
     - `export_view_raster`
       - called from: pipeline.py
     - `extract_metrics_from_view_result`
@@ -1973,24 +1733,12 @@ Notes:
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
-    - `iter_py_files`
-      - called from: tools/gen_maps.py
-    - `load_ast`
-      - called from: tools/gen_maps.py
-    - `main`
-      - called from: tools/gen_maps.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
-    - `parse_callsites`
-      - called from: tools/gen_maps.py
-    - `parse_defs`
-      - called from: tools/gen_maps.py
-    - `parse_imports`
-      - called from: tools/gen_maps.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
     - `process_document_views`
@@ -2001,8 +1749,6 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
-    - `relpath_from_root`
-      - called from: tools/gen_maps.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_annotation_only_bounds`
@@ -2049,12 +1795,6 @@ Notes:
       - called from: streaming.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_code_map`
-      - called from: tools/gen_maps.py
-    - `write_symbol_index`
-      - called from: tools/gen_maps.py
-    - `write_trace_map`
-      - called from: tools/gen_maps.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -2068,8 +1808,6 @@ Notes:
     - called from: pipeline.py
   - `Config`
     - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
-  - `DefInfo`
-    - called from: tools/gen_maps.py
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
@@ -2100,10 +1838,6 @@ Notes:
     - called from: pipeline.py
   - `build_core_csv_row`
     - called from: csv_export.py
-  - `build_index`
-    - called from: tools/gen_maps.py
-  - `build_trace_tree`
-    - called from: tools/gen_maps.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `cellrect_dims`
@@ -2140,12 +1874,12 @@ Notes:
     - called from: pipeline.py, revit/collection.py
   - `excluded_bic_names_global`
     - called from: revit/collection_policy.py, revit/linked_documents.py
-    - `expand_host_link_import_model_elements`
-      - called from: pipeline.py
-    - `export_pipeline_results_to_pngs`
-      - called from: entry_dynamo.py
-    - `export_pipeline_to_csv`
-      - called from: entry_dynamo.py
+  - `expand_host_link_import_model_elements`
+    - called from: pipeline.py
+  - `export_pipeline_results_to_pngs`
+    - called from: entry_dynamo.py
+  - `export_pipeline_to_csv`
+    - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
@@ -2180,24 +1914,12 @@ Notes:
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
-    - `iter_py_files`
-      - called from: tools/gen_maps.py
-    - `load_ast`
-      - called from: tools/gen_maps.py
-    - `main`
-      - called from: tools/gen_maps.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
-    - `parse_callsites`
-      - called from: tools/gen_maps.py
-    - `parse_defs`
-      - called from: tools/gen_maps.py
-    - `parse_imports`
-      - called from: tools/gen_maps.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
     - `process_document_views`
@@ -2208,8 +1930,6 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
-    - `relpath_from_root`
-      - called from: tools/gen_maps.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_annotation_only_bounds`
@@ -2254,12 +1974,6 @@ Notes:
       - called from: streaming.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_code_map`
-      - called from: tools/gen_maps.py
-    - `write_symbol_index`
-      - called from: tools/gen_maps.py
-    - `write_trace_map`
-      - called from: tools/gen_maps.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -2273,8 +1987,6 @@ Notes:
     - called from: pipeline.py
   - `Config`
     - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
-  - `DefInfo`
-    - called from: tools/gen_maps.py
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
@@ -2305,10 +2017,6 @@ Notes:
     - called from: pipeline.py
   - `build_core_csv_row`
     - called from: csv_export.py
-  - `build_index`
-    - called from: tools/gen_maps.py
-  - `build_trace_tree`
-    - called from: tools/gen_maps.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `cellrect_dims`
@@ -2345,12 +2053,12 @@ Notes:
     - called from: pipeline.py, revit/collection.py
   - `excluded_bic_names_global`
     - called from: revit/collection_policy.py, revit/linked_documents.py
-    - `expand_host_link_import_model_elements`
-      - called from: pipeline.py
-    - `export_pipeline_results_to_pngs`
-      - called from: entry_dynamo.py
-    - `export_pipeline_to_csv`
-      - called from: entry_dynamo.py
+  - `expand_host_link_import_model_elements`
+    - called from: pipeline.py
+  - `export_pipeline_results_to_pngs`
+    - called from: entry_dynamo.py
+  - `export_pipeline_to_csv`
+    - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
@@ -2385,24 +2093,12 @@ Notes:
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
-    - `iter_py_files`
-      - called from: tools/gen_maps.py
-    - `load_ast`
-      - called from: tools/gen_maps.py
-    - `main`
-      - called from: tools/gen_maps.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
-    - `parse_callsites`
-      - called from: tools/gen_maps.py
-    - `parse_defs`
-      - called from: tools/gen_maps.py
-    - `parse_imports`
-      - called from: tools/gen_maps.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
     - `process_document_views`
@@ -2413,8 +2109,6 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
-    - `relpath_from_root`
-      - called from: tools/gen_maps.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -2459,12 +2153,6 @@ Notes:
       - called from: streaming.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_code_map`
-      - called from: tools/gen_maps.py
-    - `write_symbol_index`
-      - called from: tools/gen_maps.py
-    - `write_trace_map`
-      - called from: tools/gen_maps.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -2478,8 +2166,6 @@ Notes:
     - called from: pipeline.py
   - `Config`
     - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
-  - `DefInfo`
-    - called from: tools/gen_maps.py
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
@@ -2510,10 +2196,6 @@ Notes:
     - called from: pipeline.py
   - `build_core_csv_row`
     - called from: csv_export.py
-  - `build_index`
-    - called from: tools/gen_maps.py
-  - `build_trace_tree`
-    - called from: tools/gen_maps.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `cellrect_dims`
@@ -2550,12 +2232,12 @@ Notes:
     - called from: pipeline.py, revit/collection.py
   - `excluded_bic_names_global`
     - called from: revit/collection_policy.py, revit/linked_documents.py
-    - `expand_host_link_import_model_elements`
-      - called from: pipeline.py
-    - `export_pipeline_results_to_pngs`
-      - called from: entry_dynamo.py
-    - `export_pipeline_to_csv`
-      - called from: entry_dynamo.py
+  - `expand_host_link_import_model_elements`
+    - called from: pipeline.py
+  - `export_pipeline_results_to_pngs`
+    - called from: entry_dynamo.py
+  - `export_pipeline_to_csv`
+    - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
@@ -2590,24 +2272,12 @@ Notes:
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
-    - `iter_py_files`
-      - called from: tools/gen_maps.py
-    - `load_ast`
-      - called from: tools/gen_maps.py
-    - `main`
-      - called from: tools/gen_maps.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
-    - `parse_callsites`
-      - called from: tools/gen_maps.py
-    - `parse_defs`
-      - called from: tools/gen_maps.py
-    - `parse_imports`
-      - called from: tools/gen_maps.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
     - `process_document_views`
@@ -2616,8 +2286,6 @@ Notes:
       - called from: streaming.py
     - `quick_test_current_view`
       - called from: entry_dynamo.py
-    - `relpath_from_root`
-      - called from: tools/gen_maps.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_annotation_only_bounds`
@@ -2664,12 +2332,6 @@ Notes:
       - called from: streaming.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_code_map`
-      - called from: tools/gen_maps.py
-    - `write_symbol_index`
-      - called from: tools/gen_maps.py
-    - `write_trace_map`
-      - called from: tools/gen_maps.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -2683,8 +2345,6 @@ Notes:
     - called from: pipeline.py
   - `Config`
     - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
-  - `DefInfo`
-    - called from: tools/gen_maps.py
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
@@ -2715,10 +2375,6 @@ Notes:
     - called from: pipeline.py
   - `build_core_csv_row`
     - called from: csv_export.py
-  - `build_index`
-    - called from: tools/gen_maps.py
-  - `build_trace_tree`
-    - called from: tools/gen_maps.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `cellrect_dims`
@@ -2755,12 +2411,12 @@ Notes:
     - called from: revit/collection_policy.py, revit/linked_documents.py
   - `expand_host_link_import_model_elements`
     - called from: pipeline.py
-    - `export_pipeline_results_to_pngs`
-      - called from: entry_dynamo.py
-    - `export_pipeline_to_csv`
-      - called from: entry_dynamo.py
-    - `export_raster_to_png`
-      - called from: png_export.py, streaming.py
+  - `export_pipeline_results_to_pngs`
+    - called from: entry_dynamo.py
+  - `export_pipeline_to_csv`
+    - called from: entry_dynamo.py
+  - `export_raster_to_png`
+    - called from: png_export.py, streaming.py
     - `export_view_raster`
       - called from: pipeline.py
     - `extract_metrics_from_view_result`
@@ -2793,24 +2449,12 @@ Notes:
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
-    - `iter_py_files`
-      - called from: tools/gen_maps.py
-    - `load_ast`
-      - called from: tools/gen_maps.py
-    - `main`
-      - called from: tools/gen_maps.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
-    - `parse_callsites`
-      - called from: tools/gen_maps.py
-    - `parse_defs`
-      - called from: tools/gen_maps.py
-    - `parse_imports`
-      - called from: tools/gen_maps.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
     - `process_document_views`
@@ -2821,8 +2465,6 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
-    - `relpath_from_root`
-      - called from: tools/gen_maps.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_annotation_only_bounds`
@@ -2869,12 +2511,6 @@ Notes:
       - called from: streaming.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_code_map`
-      - called from: tools/gen_maps.py
-    - `write_symbol_index`
-      - called from: tools/gen_maps.py
-    - `write_trace_map`
-      - called from: tools/gen_maps.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -2888,8 +2524,6 @@ Notes:
     - called from: pipeline.py
   - `Config`
     - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
-  - `DefInfo`
-    - called from: tools/gen_maps.py
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
@@ -2920,10 +2554,6 @@ Notes:
     - called from: pipeline.py
   - `build_core_csv_row`
     - called from: csv_export.py
-  - `build_index`
-    - called from: tools/gen_maps.py
-  - `build_trace_tree`
-    - called from: tools/gen_maps.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `cellrect_dims`
@@ -2960,12 +2590,12 @@ Notes:
     - called from: pipeline.py, revit/collection.py
   - `excluded_bic_names_global`
     - called from: revit/collection_policy.py, revit/linked_documents.py
-    - `expand_host_link_import_model_elements`
-      - called from: pipeline.py
-    - `export_pipeline_results_to_pngs`
-      - called from: entry_dynamo.py
-    - `export_pipeline_to_csv`
-      - called from: entry_dynamo.py
+  - `expand_host_link_import_model_elements`
+    - called from: pipeline.py
+  - `export_pipeline_results_to_pngs`
+    - called from: entry_dynamo.py
+  - `export_pipeline_to_csv`
+    - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
@@ -2998,24 +2628,12 @@ Notes:
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
-    - `iter_py_files`
-      - called from: tools/gen_maps.py
-    - `load_ast`
-      - called from: tools/gen_maps.py
-    - `main`
-      - called from: tools/gen_maps.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
-    - `parse_callsites`
-      - called from: tools/gen_maps.py
-    - `parse_defs`
-      - called from: tools/gen_maps.py
-    - `parse_imports`
-      - called from: tools/gen_maps.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
     - `process_document_views`
@@ -3026,8 +2644,6 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
-    - `relpath_from_root`
-      - called from: tools/gen_maps.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_annotation_only_bounds`
@@ -3074,11 +2690,5 @@ Notes:
       - called from: streaming.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_code_map`
-      - called from: tools/gen_maps.py
-    - `write_symbol_index`
-      - called from: tools/gen_maps.py
-    - `write_trace_map`
-      - called from: tools/gen_maps.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
