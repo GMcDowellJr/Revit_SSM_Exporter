@@ -377,7 +377,9 @@ class StreamingExporter:
                     row_dict[f] = sentinel
             return row_dict
 
-        sentinel = "<MISSING_FROM_CACHE>" if bool(view_result.get("from_cache")) else ""
+        # IMPORTANT: For DAX slicing, cache-hit blanks should remain blanks.
+        # Do not inject "<MISSING_FROM_CACHE>" into empty-but-valid slicer fields.
+        sentinel = ""
 
         # Core row
         core_row = view_result_to_core_row(

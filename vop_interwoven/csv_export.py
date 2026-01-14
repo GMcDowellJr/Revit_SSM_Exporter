@@ -268,6 +268,101 @@ def compute_annotation_type_metrics(raster):
 
     return {f"AnnoCells_{k}": v for k, v in counts.items()}
 
+def _coerce_view_id_int(view_id):
+    """
+    Best-effort coercion to an int for doc.GetElement(ElementId(int)).
+    Accepts: int, str digits, objects with IntegerValue, and a few common wrappers.
+    Returns: int or None
+    """
+    if view_id is None:
+        return None
+
+    # Already int
+    if isinstance(view_id, int):
+        return view_id
+
+    # String digits
+    if isinstance(view_id, str):
+        s = view_id.strip()
+        if s.isdigit():
+            try:
+                return int(s)
+            except Exception:
+                return None
+        return None
+
+    # Revit ElementId-like: has IntegerValue
+    try:
+        iv = getattr(view_id, "IntegerValue", None)
+        if isinstance(iv, int):
+            return iv
+    except Exception:
+        pass
+
+    # Some wrappers may expose .Id
+    try:
+        inner = getattr(view_id, "Id", None)
+        if inner is not None:
+            return _coerce_view_id_int(inner)
+    except Exception:
+        pass
+
+    return None
+
+def _viewtype_name_from_value(v):
+    """
+    Convert cached view_type value into a human-readable Revit ViewType name.
+
+    Handles:
+      - already-string names
+      - pythonnet enums
+      - ints (common in CPython/pythonnet caches)
+      - digit-strings (e.g. "11") from JSON caches
+    Returns: "" if unknown/unconvertible.
+    """
+    if v is None:
+        return ""
+
+    # String case: treat digit strings as enum ints; otherwise keep as-is.
+    if isinstance(v, str):
+        s = v.strip()
+        if not s:
+            return ""
+        if s.isdigit():
+            try:
+                iv = int(s)
+            except Exception:
+                return ""
+            try:
+                from System import Enum  # type: ignore
+                from Autodesk.Revit.DB import ViewType as RevitViewType  # type: ignore
+                name = Enum.GetName(RevitViewType, iv)
+                return str(name) if name else ""
+            except Exception:
+                return ""
+        return s
+
+    # Enum instance case: try Enum.GetName(type(v), v)
+    try:
+        from System import Enum  # type: ignore
+        name = Enum.GetName(type(v), v)
+        if name:
+            return str(name)
+    except Exception:
+        pass
+
+    # Int case: map against Autodesk.Revit.DB.ViewType
+    if isinstance(v, int):
+        try:
+            from System import Enum  # type: ignore
+            from Autodesk.Revit.DB import ViewType as RevitViewType  # type: ignore
+            name = Enum.GetName(RevitViewType, v)
+            if name:
+                return str(name)
+        except Exception:
+            pass
+
+    return ""
 
 def extract_view_metadata(view, doc, diag=None):
     """Extract view metadata for CSV export.
@@ -319,10 +414,39 @@ def extract_view_metadata(view, doc, diag=None):
         metadata["ViewName"] = view.Name or ""
     except Exception:
         metadata["ViewName"] = ""
-
-    # ViewType
+        
+    # ViewType (human-readable name; CPython/pythonnet-safe)
     try:
-        metadata["ViewType"] = view.ViewType.ToString()
+        vt = getattr(view, "ViewType", None)
+        if vt is None:
+            metadata["ViewType"] = ""
+        else:
+            name = ""
+            try:
+                # If vt is already an enum, this works
+                from System import Enum  # type: ignore
+                name = Enum.GetName(type(vt), vt) or ""
+            except Exception:
+                name = ""
+
+            if not name:
+                # If vt came through as an int, map via the Revit enum type
+                try:
+                    if isinstance(vt, int):
+                        from System import Enum  # type: ignore
+                        from Autodesk.Revit.DB import ViewType as RevitViewType  # type: ignore
+                        name = Enum.GetName(RevitViewType, vt) or ""
+                except Exception:
+                    name = ""
+
+            if not name:
+                # Last-resort fallback: ToString if present (IronPython / some pythonnet cases)
+                try:
+                    name = vt.ToString()
+                except Exception:
+                    name = ""
+
+            metadata["ViewType"] = name or ""
     except Exception:
         metadata["ViewType"] = ""
 
@@ -372,19 +496,47 @@ def extract_view_metadata(view, doc, diag=None):
     except Exception:
         metadata["Scale"] = ""
 
-    # Discipline
+    # Discipline (readable; parameter-first; CPython-safe)
     try:
-        discipline = view.Discipline
-        metadata["Discipline"] = discipline.ToString() if discipline is not None else ""
+        disc = ""
+        try:
+            from Autodesk.Revit.DB import BuiltInParameter  # type: ignore
+            p = view.get_Parameter(BuiltInParameter.VIEW_DISCIPLINE)
+            if p is not None:
+                try:
+                    disc = p.AsValueString() or ""
+                except Exception:
+                    disc = ""
+                if not disc:
+                    try:
+                        disc = p.AsString() or ""
+                    except Exception:
+                        disc = ""
+        except Exception:
+            disc = ""
+
+        if not disc:
+            d = getattr(view, "Discipline", None)
+            if d is not None:
+                try:
+                    disc = d.ToString()
+                except Exception:
+                    disc = str(d)
+
+        metadata["Discipline"] = disc or ""
     except Exception:
         metadata["Discipline"] = ""
 
-    # Phase
+    # Phase (readable name)
     try:
-        phase_id = view.get_Parameter("Phase")
-        if phase_id is not None and doc is not None:
-            phase_elem = doc.GetElement(phase_id.AsElementId())
-            metadata["Phase"] = phase_elem.Name if phase_elem is not None else ""
+        from Autodesk.Revit.DB import BuiltInParameter  # type: ignore
+        p = view.get_Parameter(BuiltInParameter.VIEW_PHASE)
+        if p is not None and doc is not None:
+            try:
+                phase_elem = doc.GetElement(p.AsElementId())
+                metadata["Phase"] = phase_elem.Name if phase_elem is not None else ""
+            except Exception:
+                metadata["Phase"] = ""
         else:
             metadata["Phase"] = ""
     except Exception:
@@ -423,6 +575,12 @@ def compute_config_hash(config):
         ✔ Hashes relevant config parameters for reproducibility
         ✔ Stable: same config → same hash
     """
+
+    if config is None:
+        # Test harness / cache-hit conversions may not have a Config object.
+        # Return a deterministic sentinel rather than crashing.
+        return "00000000"
+
     # Build config payload string using actual Config attributes
     config_str = f"{config.tiny_max}|{config.thin_max}|" \
                  f"{config.adaptive_tile_size}|{config.proxy_mask_mode}|" \
@@ -705,9 +863,9 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
         view = view_result.get("view")
         if view is None and doc is not None:
             try:
-                from Autodesk.Revit.DB import ElementId
-                vid = view_result.get("view_id", None)
-                if isinstance(vid, int):
+                from Autodesk.Revit.DB import ElementId  # type: ignore
+                vid = _coerce_view_id_int(view_result.get("view_id", None))
+                if vid is not None:
                     view = doc.GetElement(ElementId(vid))
             except Exception:
                 view = None
@@ -978,13 +1136,13 @@ def view_result_to_core_row(view_result, config, doc, date_override=None, run_id
             except Exception:
                 date_str = datetime.now().strftime("%Y-%m-%d")
  
-    # Get view object
+    # Get view object (needed for metadata)
     view = view_result.get("view")
     if view is None and doc is not None:
         try:
-            from Autodesk.Revit.DB import ElementId
-            vid = view_result.get("view_id", None)
-            if isinstance(vid, int):
+            from Autodesk.Revit.DB import ElementId  # type: ignore
+            vid = _coerce_view_id_int(view_result.get("view_id", None))
+            if vid is not None:
                 view = doc.GetElement(ElementId(vid))
         except Exception:
             view = None
@@ -1150,9 +1308,9 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
     view = view_result.get("view")
     if view is None and doc is not None:
         try:
-            from Autodesk.Revit.DB import ElementId
-            vid = view_result.get("view_id", None)
-            if isinstance(vid, int):
+            from Autodesk.Revit.DB import ElementId  # type: ignore
+            vid = _coerce_view_id_int(view_result.get("view_id", None))
+            if vid is not None:
                 view = doc.GetElement(ElementId(vid))
         except Exception:
             view = None
@@ -1176,8 +1334,21 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
     # Cache-hit: reuse cached VOP row payload (normalize snake_case → CSV schema)
     if from_cache == "Y":
         payload = view_result.get("row_payload")
+
         if isinstance(payload, dict):
             row = dict(payload)
+
+            def _blank_if_missing_token(v):
+                # Preserve legitimate blanks for slicers.
+                if v is None:
+                    return ""
+                try:
+                    s = str(v)
+                except Exception:
+                    return ""
+                if s == "<MISSING_FROM_CACHE>":
+                    return ""
+                return v
 
             # Normalize identity keys from older caches
             if "ViewId" not in row and "view_id" in row:
@@ -1186,6 +1357,40 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
                 row["ViewName"] = row.get("view_name")
             if "ViewType" not in row and "view_type" in row:
                 row["ViewType"] = row.get("view_type")
+
+            # Normalize additional slicer keys from cached payload (snake_case → CSV schema)
+            if "Discipline" not in row and "discipline" in row:
+                row["Discipline"] = _blank_if_missing_token(row.get("discipline"))
+            else:
+                row["Discipline"] = _blank_if_missing_token(row.get("Discipline", ""))
+
+            if "Phase" not in row and "phase" in row:
+                row["Phase"] = _blank_if_missing_token(row.get("phase"))
+            else:
+                row["Phase"] = _blank_if_missing_token(row.get("Phase", ""))
+
+            if "SheetNumber" not in row and "sheet_number" in row:
+                row["SheetNumber"] = _blank_if_missing_token(row.get("sheet_number"))
+            else:
+                row["SheetNumber"] = _blank_if_missing_token(row.get("SheetNumber", ""))
+
+            if "ViewTemplate_Name" not in row and "view_template_name" in row:
+                row["ViewTemplate_Name"] = _blank_if_missing_token(row.get("view_template_name"))
+            else:
+                row["ViewTemplate_Name"] = _blank_if_missing_token(row.get("ViewTemplate_Name", ""))
+
+            # Always enforce RowSource for DAX slicing consistency
+            if not row.get("RowSource"):
+                row["RowSource"] = "vop_interwoven"
+
+            # Normalize ViewType to human-readable enum name (cached runs)
+            try:
+                if "ViewType" in row:
+                    row["ViewType"] = _viewtype_name_from_value(row.get("ViewType"))
+                elif "view_type" in row:
+                    row["ViewType"] = _viewtype_name_from_value(row.get("view_type"))
+            except Exception:
+                pass
 
             # Overwrite run-scoped fields
             row["Date"] = date_str

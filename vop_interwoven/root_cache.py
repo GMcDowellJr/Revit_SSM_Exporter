@@ -172,6 +172,20 @@ class RootStyleCache:
         if "view_id" not in row_payload:
             row_payload["view_id"] = view_id
 
+        # Normalize view_type to human-readable string before persisting to cache row_payload.
+        # This prevents cached VOP CSV ViewType from reverting to enum ints.
+        try:
+            from vop_interwoven.csv_export import _viewtype_name_from_value
+            _vt_raw = row_payload.get("view_type", None)
+            _vt_name = _viewtype_name_from_value(_vt_raw)
+
+            # Only replace if we successfully resolved a readable name.
+            # (In non-Revit test environments, enum name resolution may be unavailable.)
+            if _vt_name:
+                row_payload["view_type"] = _vt_name
+        except Exception:
+            pass
+
         # CSV invariants for cache-hit rehydration
         # These are safe defaults; streaming layer may overwrite with actual lookup timing.
         row_payload.setdefault("FromCache", "Y")
@@ -185,7 +199,7 @@ class RootStyleCache:
             if "ViewName" not in row_payload:
                 row_payload["ViewName"] = metadata.get("view_name", row_payload.get("view_name"))
             if "ViewType" not in row_payload:
-                row_payload["ViewType"] = metadata.get("view_type", row_payload.get("view_type"))
+                row_payload["ViewType"] = row_payload.get("view_type") or metadata.get("view_type", "")
         except Exception:
             pass
 
@@ -361,7 +375,20 @@ def extract_metrics_from_view_result(view_result, cfg):
     metadata = {
         "view_id": view_result.get("view_id"),
         "view_name": view_result.get("view_name"),
-        "view_type": view_result.get("view_mode"),
+
+        # IMPORTANT: view_type is a human-readable Revit view type (e.g., FloorPlan),
+        # NOT the pipeline view_mode (e.g., ANNOTATION_ONLY).
+        "view_type": view_result.get("view_type") or "",
+
+        # Keep processing mode separately (useful for debugging / slicing if desired)
+        "view_mode": view_result.get("view_mode") or "",
+
+        # Optional but valuable slicers (expect pipeline to populate these on cache-miss)
+        "discipline": view_result.get("discipline") or "",
+        "phase": view_result.get("phase") or "",
+        "sheet_number": view_result.get("sheet_number") or "",
+        "view_template_name": view_result.get("view_template_name") or "",
+
         "width": view_result.get("width"),
         "height": view_result.get("height"),
 
