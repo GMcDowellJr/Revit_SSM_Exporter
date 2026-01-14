@@ -266,6 +266,104 @@ def _view_signature(doc_obj, view_obj, view_mode_val, cfg_obj=None, elem_cache=N
     blob = json.dumps(sig, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha1(blob).hexdigest(), sig
 
+def _extract_view_identity_for_csv(doc, view):
+    """
+    Best-effort extraction of view identity fields needed for CSV slicing (DAX).
+    Readable names only (never ids). Missing/unknown -> "".
+    """
+    out = {
+        "view_type": "",
+        "discipline": "",
+        "phase": "",
+        "sheet_number": "",
+        "view_template_name": "",
+    }
+
+    if view is None:
+        return out
+
+    # view_type (readable)
+    try:
+        vt = getattr(view, "ViewType", None)
+        out["view_type"] = "" if vt is None else str(vt)
+    except Exception:
+        pass
+
+    # discipline (readable)
+    try:
+        # Prefer parameter value string if available (more "UI-like" than enum)
+        from Autodesk.Revit.DB import BuiltInParameter  # type: ignore
+        p = view.get_Parameter(BuiltInParameter.VIEW_DISCIPLINE)
+        if p is not None:
+            s = None
+            try:
+                s = p.AsValueString()
+            except Exception:
+                s = None
+            if not s:
+                try:
+                    s = p.AsString()
+                except Exception:
+                    s = None
+            if s:
+                out["discipline"] = str(s)
+
+        # Fallback: enum-ish string
+        if not out["discipline"]:
+            d = getattr(view, "Discipline", None)
+            out["discipline"] = "" if d is None else str(d)
+    except Exception:
+        try:
+            d = getattr(view, "Discipline", None)
+            out["discipline"] = "" if d is None else str(d)
+        except Exception:
+            pass
+
+    # phase (readable NAME only)
+    try:
+        from Autodesk.Revit.DB import BuiltInParameter  # type: ignore
+        p = view.get_Parameter(BuiltInParameter.VIEW_PHASE)
+        if p is not None:
+            eid = None
+            try:
+                eid = p.AsElementId()
+            except Exception:
+                eid = None
+
+            if eid is not None and doc is not None:
+                try:
+                    ph = doc.GetElement(eid)
+                    name = getattr(ph, "Name", None)
+                    if name:
+                        out["phase"] = str(name)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # sheet_number (readable)
+    try:
+        # Some view types expose SheetNumber directly when placed; else keep blank
+        sn = getattr(view, "SheetNumber", None)
+        out["sheet_number"] = "" if sn is None else str(sn)
+    except Exception:
+        pass
+
+    # view_template_name (readable)
+    try:
+        vtid = getattr(view, "ViewTemplateId", None)
+        if vtid is not None and doc is not None:
+            try:
+                vt_elem = doc.GetElement(vtid)
+                name = getattr(vt_elem, "Name", None)
+                out["view_template_name"] = "" if name is None else str(name)
+            except Exception:
+                out["view_template_name"] = ""
+    except Exception:
+        pass
+
+    return out
+
 def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
     """Process multiple views through the VOP interwoven pipeline.
 
@@ -535,6 +633,9 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
                 track_elements=view_elements
             )
 
+            # Compute identity fields once for CSV slicing and cache row_payload completeness
+            ident = _extract_view_identity_for_csv(doc, view)
+
             # Check root cache first (metrics-only hit; valid in streaming too)
             if root_cache:
                 t_cache0 = _perf_now()
@@ -562,10 +663,12 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
 
                     result = dict(cached_meta)
                     result.update({
-                        # Ensure identity fields are always present for CSV + doc lookups
+                        # Ensure identity fields are always present for CSV slicing + doc lookups
                         "view_id": cached_meta.get("view_id", view_id_int),
                         "view_name": cached_meta.get("view_name", ""),
-                        "view_type": cached_meta.get("view_type", ""),
+                        "view_type": cached_meta.get("view_type", "") or ident.get("view_type", ""),
+                        "discipline": cached_meta.get("discipline", "") or ident.get("discipline", ""),
+                        "phase": cached_meta.get("phase", "") or ident.get("phase", ""),
 
                         "success": True,
                         "from_cache": True,
@@ -640,6 +743,23 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
             # 6) Export
             t0 = _perf_now()
             out = export_view_raster(view, raster, cfg, diag=diag, timings=timings)
+
+            # Ensure identity fields exist on first-run results so CSV + cache row_payload are complete
+            try:
+                if isinstance(out, dict):
+                    if out.get("view_type") in (None, ""):
+                        out["view_type"] = ident.get("view_type", "")
+                    if out.get("discipline") in (None, ""):
+                        out["discipline"] = ident.get("discipline", "")
+                    if out.get("phase") in (None, ""):
+                        out["phase"] = ident.get("phase", "")
+                    if out.get("sheet_number") in (None, ""):
+                        out["sheet_number"] = ident.get("sheet_number", "")
+                    if out.get("view_template_name") in (None, ""):
+                        out["view_template_name"] = ident.get("view_template_name", "")
+            except Exception:
+                pass
+
             t1 = _perf_now()
             _tmark("export_ms", t0, t1)
 
