@@ -765,9 +765,7 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
             - vop_csv_path: str
             - rows_exported: int
     """
-    import sys
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from export.csv import _append_csv_rows, _ensure_dir
+    from vop_interwoven.export.csv import _append_csv_rows, _ensure_dir
 
     # Ensure output directory exists
     if not _ensure_dir(output_dir, None):

@@ -1,3 +1,6 @@
+
+reference only; not maintained; do not import 2026-01-14
+
 # SSM Exporter
 
 **SSM/VOP (Space/View Occupancy Planner) Exporter for Autodesk Revit**

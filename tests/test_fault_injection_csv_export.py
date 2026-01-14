@@ -87,7 +87,7 @@ def test_csv_export_records_error_on_write_failure(monkeypatch, tmp_path):
     import vop_interwoven.csv_export as csv_export
 
     # Patch the underlying writer used by csv_export.export_pipeline_to_csv.
-    import export.csv as export_csv_mod
+    import vop_interwoven.export.csv as export_csv_mod
 
     def boom_write(*_args, **_kwargs):
         raise OSError("disk full")

@@ -1,218 +1,3084 @@
 # vop_interwoven trace map (approximate call tree)
 
-_Regenerated from uploaded source snapshot (vop_interwoven.zip)._
+_Regenerated from the current source snapshot under this folder._
 
-## Trace: run_pipeline_from_dynamo_input (vop_interwoven/dynamo_helpers.py)
+Notes:
+- This is a name-based approximation (AST call names), not a precise runtime call graph.
+- It is still useful for stage ownership and narrowing which files to inspect next.
 
-- `run_pipeline_from_dynamo_input()` — vop_interwoven/dynamo_helpers.py
-  - `get_current_document()` — vop_interwoven/entry_dynamo.py
-  - `get_views_from_input_or_current()` — vop_interwoven/dynamo_helpers.py
-    - `get_current_view()` — vop_interwoven/entry_dynamo.py
-  - `Config()` — vop_interwoven/config.py
-  - `run_vop_pipeline_with_csv()` — vop_interwoven/entry_dynamo.py
-    - `Config()` — vop_interwoven/config.py
-    - `run_vop_pipeline()` — vop_interwoven/entry_dynamo.py
-    - `export_pipeline_results_to_pngs()` — vop_interwoven/png_export.py
-    - `export_pipeline_to_csv()` — vop_interwoven/csv_export.py
-  - `run_vop_pipeline_with_png()` — vop_interwoven/entry_dynamo.py
-    - `run_vop_pipeline()` — vop_interwoven/entry_dynamo.py
-    - `_pipeline_result_for_json()` — vop_interwoven/entry_dynamo.py
-    - `export_pipeline_results_to_pngs()` — vop_interwoven/png_export.py
-  - `filter_supported_views()` — vop_interwoven/dynamo_helpers.py
-    - `get_current_document()` — vop_interwoven/entry_dynamo.py
-    - `get_views_from_input_or_current()` — vop_interwoven/dynamo_helpers.py
+## Trace: `run_vop_pipeline` (entry_dynamo.py:L333)
 
-## Trace: run_vop_pipeline (vop_interwoven/entry_dynamo.py)
+  - `Bounds2D`
+    - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
+  - `CellRect`
+    - called from: revit/annotation.py, revit/collection.py
+  - `CellRectFootprint`
+    - called from: pipeline.py
+  - `Config`
+    - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
+  - `DefInfo`
+    - called from: tools/gen_maps.py
+  - `Diagnostics`
+    - called from: pipeline.py
+  - `ElementCache`
+    - called from: pipeline.py
+  - `ElementFingerprint`
+    - called from: core/element_cache.py
+  - `HullFootprint`
+    - called from: pipeline.py
+  - `LRUCache`
+    - called from: core/silhouette.py, pipeline.py
+  - `LinkedElementProxy`
+    - called from: revit/linked_documents.py
+  - `PolicyStats`
+    - called from: revit/collection.py, revit/linked_documents.py
+  - `RootStyleCache`
+    - called from: streaming.py
+  - `StreamingExporter`
+    - called from: streaming.py
+  - `TileMap`
+    - called from: core/raster.py
+  - `UV_AABB`
+    - called from: core/geometry.py
+  - `ViewBasis`
+    - called from: revit/view_basis.py
+  - `ViewRaster`
+    - called from: csv_export.py, pipeline.py, root_cache.py
+  - `_view_signature`
+    - called from: pipeline.py
+  - `build_core_csv_row`
+    - called from: csv_export.py
+  - `build_index`
+    - called from: tools/gen_maps.py
+  - `build_trace_tree`
+    - called from: tools/gen_maps.py
+  - `build_vop_csv_row`
+    - called from: csv_export.py
+  - `cellrect_dims`
+    - called from: pipeline.py
+  - `classify_annotation`
+    - called from: revit/annotation.py
+  - `classify_keynote`
+    - called from: revit/annotation.py
+  - `collect_2d_annotations`
+    - called from: revit/annotation.py, revit/view_basis.py
+  - `collect_all_linked_elements`
+    - called from: revit/collection.py
+  - `collect_view_elements`
+    - called from: pipeline.py
+  - `compute_annotation_extents`
+    - called from: revit/view_basis.py
+  - `compute_annotation_type_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_config_hash`
+    - called from: csv_export.py, streaming.py
+  - `compute_external_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_view_frame_hash`
+    - called from: csv_export.py
+  - `convex_hull_uv`
+    - called from: pipeline.py
+  - `estimate_depth_from_loops_or_bbox`
+    - called from: pipeline.py
+  - `estimate_depth_range_from_bbox`
+    - called from: pipeline.py
+  - `estimate_nearest_depth_from_bbox`
+    - called from: pipeline.py, revit/collection.py
+  - `excluded_bic_names_global`
+    - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
+    - `export_raster_to_png`
+      - called from: png_export.py, streaming.py
+    - `export_view_raster`
+      - called from: pipeline.py
+    - `extract_metrics_from_view_result`
+      - called from: pipeline.py
+    - `extract_view_metadata`
+      - called from: csv_export.py
+    - `filter_supported_views`
+      - called from: dynamo_helpers.py
+    - `get_annotation_bbox`
+      - called from: revit/annotation.py
+    - `get_core_csv_header`
+      - called from: streaming.py
+    - `get_current_document`
+      - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_current_view`
+      - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: pipeline.py
+    - `get_element_silhouette`
+      - called from: pipeline.py
+    - `get_perf_csv_header`
+      - called from: streaming.py
+    - `get_views_from_input_or_current`
+      - called from: dynamo_helpers.py
+    - `get_vop_csv_header`
+      - called from: streaming.py
+    - `included_bic_names_for_source`
+      - called from: revit/collection.py, revit/collection_policy.py
+    - `init_view_raster`
+      - called from: pipeline.py
+    - `is_extent_driver_annotation`
+      - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_py_files`
+      - called from: tools/gen_maps.py
+    - `load_ast`
+      - called from: tools/gen_maps.py
+    - `main`
+      - called from: tools/gen_maps.py
+    - `make_obb_or_skinny_aabb`
+      - called from: pipeline.py
+    - `make_uv_aabb`
+      - called from: core/geometry.py, pipeline.py
+    - `make_view_basis`
+      - called from: pipeline.py, revit/annotation.py
+    - `parse_callsites`
+      - called from: tools/gen_maps.py
+    - `parse_defs`
+      - called from: tools/gen_maps.py
+    - `parse_imports`
+      - called from: tools/gen_maps.py
+    - `pca_oriented_extents_uv`
+      - called from: core/geometry.py
+    - `process_document_views`
+      - called from: entry_dynamo.py, streaming.py
+    - `process_document_views_streaming`
+      - called from: streaming.py
+    - `quick_test_current_view`
+      - called from: entry_dynamo.py
+    - `rasterize_annotations`
+      - called from: pipeline.py
+    - `relpath_from_root`
+      - called from: tools/gen_maps.py
+    - `render_model_front_to_back`
+      - called from: pipeline.py
+    - `resolve_annotation_only_bounds`
+      - called from: pipeline.py
+    - `resolve_category_ids`
+      - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `resolve_element_bbox`
+      - called from: core/element_cache.py, revit/collection.py
+    - `resolve_view_bounds`
+      - called from: pipeline.py
+    - `resolve_view_mode`
+      - called from: pipeline.py
+    - `run_vop_pipeline_streaming`
+      - called from: thinrunner_streaming.py
+    - `run_vop_pipeline_with_csv`
+      - called from: dynamo_helpers.py
+    - `run_vop_pipeline_with_png`
+      - called from: dynamo_helpers.py
+    - `safe_call`
+      - called from: revit/collection.py
+    - `sample_element_uvw_points`
+      - called from: pipeline.py
+    - `should_include_element`
+      - called from: revit/collection.py, revit/linked_documents.py
+    - `sort_front_to_back`
+      - called from: pipeline.py
+    - `supports_crop_bounds`
+      - called from: revit/view_basis.py
+    - `supports_depth`
+      - called from: revit/view_basis.py
+    - `supports_model_geometry`
+      - called from: revit/view_basis.py
+    - `synthetic_bounds_from_visible_extents`
+      - called from: revit/view_basis.py
+    - `tier_a_is_ambiguous`
+      - called from: pipeline.py
+    - `view_result_to_core_row`
+      - called from: streaming.py
+    - `view_result_to_perf_row`
+      - called from: streaming.py
+    - `view_result_to_vop_row`
+      - called from: streaming.py
+    - `world_to_view`
+      - called from: core/silhouette.py, revit/collection.py
+    - `write_code_map`
+      - called from: tools/gen_maps.py
+    - `write_symbol_index`
+      - called from: tools/gen_maps.py
+    - `write_trace_map`
+      - called from: tools/gen_maps.py
+    - `xy_bounds_from_crop_box_all_corners`
+      - called from: revit/view_basis.py
 
-- `run_vop_pipeline()` — vop_interwoven/entry_dynamo.py
-  - `Config()` — vop_interwoven/config.py
-  - `_normalize_view_ids()` — vop_interwoven/entry_dynamo.py
-  - `process_document_views()` — vop_interwoven/pipeline.py
-    - `LRUCache()` — vop_interwoven/core/cache.py
-    - `ElementCache()` — vop_interwoven/core/element_cache.py
-    - `Diagnostics()` — vop_interwoven/core/diagnostics.py
-    - `_perf_now()` — vop_interwoven/pipeline.py
-    - `_perf_ms()` — vop_interwoven/pipeline.py
-    - `resolve_view_mode()` — vop_interwoven/revit/view_basis.py
-    - `_view_signature()` — vop_interwoven/pipeline.py
-    - `init_view_raster()` — vop_interwoven/pipeline.py
+## Trace: `run_vop_pipeline_with_png` (entry_dynamo.py:L381)
 
-## Trace: run_vop_pipeline_with_png (vop_interwoven/entry_dynamo.py)
+  - `Bounds2D`
+    - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
+  - `CellRect`
+    - called from: revit/annotation.py, revit/collection.py
+  - `CellRectFootprint`
+    - called from: pipeline.py
+  - `Config`
+    - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
+  - `DefInfo`
+    - called from: tools/gen_maps.py
+  - `Diagnostics`
+    - called from: pipeline.py
+  - `ElementCache`
+    - called from: pipeline.py
+  - `ElementFingerprint`
+    - called from: core/element_cache.py
+  - `HullFootprint`
+    - called from: pipeline.py
+  - `LRUCache`
+    - called from: core/silhouette.py, pipeline.py
+  - `LinkedElementProxy`
+    - called from: revit/linked_documents.py
+  - `PolicyStats`
+    - called from: revit/collection.py, revit/linked_documents.py
+  - `RootStyleCache`
+    - called from: streaming.py
+  - `StreamingExporter`
+    - called from: streaming.py
+  - `TileMap`
+    - called from: core/raster.py
+  - `UV_AABB`
+    - called from: core/geometry.py
+  - `ViewBasis`
+    - called from: revit/view_basis.py
+  - `ViewRaster`
+    - called from: csv_export.py, pipeline.py, root_cache.py
+  - `_view_signature`
+    - called from: pipeline.py
+  - `build_core_csv_row`
+    - called from: csv_export.py
+  - `build_index`
+    - called from: tools/gen_maps.py
+  - `build_trace_tree`
+    - called from: tools/gen_maps.py
+  - `build_vop_csv_row`
+    - called from: csv_export.py
+  - `cellrect_dims`
+    - called from: pipeline.py
+  - `classify_annotation`
+    - called from: revit/annotation.py
+  - `classify_keynote`
+    - called from: revit/annotation.py
+  - `collect_2d_annotations`
+    - called from: revit/annotation.py, revit/view_basis.py
+  - `collect_all_linked_elements`
+    - called from: revit/collection.py
+  - `collect_view_elements`
+    - called from: pipeline.py
+  - `compute_annotation_extents`
+    - called from: revit/view_basis.py
+  - `compute_annotation_type_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_config_hash`
+    - called from: csv_export.py, streaming.py
+  - `compute_external_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_view_frame_hash`
+    - called from: csv_export.py
+  - `convex_hull_uv`
+    - called from: pipeline.py
+  - `estimate_depth_from_loops_or_bbox`
+    - called from: pipeline.py
+  - `estimate_depth_range_from_bbox`
+    - called from: pipeline.py
+  - `estimate_nearest_depth_from_bbox`
+    - called from: pipeline.py, revit/collection.py
+  - `excluded_bic_names_global`
+    - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
+    - `export_raster_to_png`
+      - called from: png_export.py, streaming.py
+    - `export_view_raster`
+      - called from: pipeline.py
+    - `extract_metrics_from_view_result`
+      - called from: pipeline.py
+    - `extract_view_metadata`
+      - called from: csv_export.py
+    - `filter_supported_views`
+      - called from: dynamo_helpers.py
+    - `get_annotation_bbox`
+      - called from: revit/annotation.py
+    - `get_core_csv_header`
+      - called from: streaming.py
+    - `get_current_document`
+      - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_current_view`
+      - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: pipeline.py
+    - `get_element_silhouette`
+      - called from: pipeline.py
+    - `get_perf_csv_header`
+      - called from: streaming.py
+    - `get_views_from_input_or_current`
+      - called from: dynamo_helpers.py
+    - `get_vop_csv_header`
+      - called from: streaming.py
+    - `included_bic_names_for_source`
+      - called from: revit/collection.py, revit/collection_policy.py
+    - `init_view_raster`
+      - called from: pipeline.py
+    - `is_extent_driver_annotation`
+      - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_py_files`
+      - called from: tools/gen_maps.py
+    - `load_ast`
+      - called from: tools/gen_maps.py
+    - `main`
+      - called from: tools/gen_maps.py
+    - `make_obb_or_skinny_aabb`
+      - called from: pipeline.py
+    - `make_uv_aabb`
+      - called from: core/geometry.py, pipeline.py
+    - `make_view_basis`
+      - called from: pipeline.py, revit/annotation.py
+    - `parse_callsites`
+      - called from: tools/gen_maps.py
+    - `parse_defs`
+      - called from: tools/gen_maps.py
+    - `parse_imports`
+      - called from: tools/gen_maps.py
+    - `pca_oriented_extents_uv`
+      - called from: core/geometry.py
+    - `process_document_views`
+      - called from: entry_dynamo.py, streaming.py
+    - `process_document_views_streaming`
+      - called from: streaming.py
+    - `quick_test_current_view`
+      - called from: entry_dynamo.py
+    - `rasterize_annotations`
+      - called from: pipeline.py
+    - `relpath_from_root`
+      - called from: tools/gen_maps.py
+    - `render_model_front_to_back`
+      - called from: pipeline.py
+    - `resolve_annotation_only_bounds`
+      - called from: pipeline.py
+    - `resolve_category_ids`
+      - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `resolve_element_bbox`
+      - called from: core/element_cache.py, revit/collection.py
+    - `resolve_view_bounds`
+      - called from: pipeline.py
+    - `resolve_view_mode`
+      - called from: pipeline.py
+    - `run_vop_pipeline`
+      - called from: entry_dynamo.py
+    - `run_vop_pipeline_streaming`
+      - called from: thinrunner_streaming.py
+    - `run_vop_pipeline_with_csv`
+      - called from: dynamo_helpers.py
+    - `safe_call`
+      - called from: revit/collection.py
+    - `sample_element_uvw_points`
+      - called from: pipeline.py
+    - `should_include_element`
+      - called from: revit/collection.py, revit/linked_documents.py
+    - `sort_front_to_back`
+      - called from: pipeline.py
+    - `supports_crop_bounds`
+      - called from: revit/view_basis.py
+    - `supports_depth`
+      - called from: revit/view_basis.py
+    - `supports_model_geometry`
+      - called from: revit/view_basis.py
+    - `synthetic_bounds_from_visible_extents`
+      - called from: revit/view_basis.py
+    - `tier_a_is_ambiguous`
+      - called from: pipeline.py
+    - `view_result_to_core_row`
+      - called from: streaming.py
+    - `view_result_to_perf_row`
+      - called from: streaming.py
+    - `view_result_to_vop_row`
+      - called from: streaming.py
+    - `world_to_view`
+      - called from: core/silhouette.py, revit/collection.py
+    - `write_code_map`
+      - called from: tools/gen_maps.py
+    - `write_symbol_index`
+      - called from: tools/gen_maps.py
+    - `write_trace_map`
+      - called from: tools/gen_maps.py
+    - `xy_bounds_from_crop_box_all_corners`
+      - called from: revit/view_basis.py
 
-- `run_vop_pipeline_with_png()` — vop_interwoven/entry_dynamo.py
-  - `run_vop_pipeline()` — vop_interwoven/entry_dynamo.py
-    - `Config()` — vop_interwoven/config.py
-    - `_normalize_view_ids()` — vop_interwoven/entry_dynamo.py
-    - `process_document_views()` — vop_interwoven/pipeline.py
-  - `_pipeline_result_for_json()` — vop_interwoven/entry_dynamo.py
-    - `_prune_view_raster_for_json()` — vop_interwoven/entry_dynamo.py
-  - `export_pipeline_results_to_pngs()` — vop_interwoven/png_export.py
-    - `export_raster_to_png()` — vop_interwoven/png_export.py
+## Trace: `run_vop_pipeline_with_csv` (entry_dynamo.py:L458)
 
-## Trace: process_document_views (vop_interwoven/pipeline.py)
+  - `Bounds2D`
+    - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
+  - `CellRect`
+    - called from: revit/annotation.py, revit/collection.py
+  - `CellRectFootprint`
+    - called from: pipeline.py
+  - `Config`
+    - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
+  - `DefInfo`
+    - called from: tools/gen_maps.py
+  - `Diagnostics`
+    - called from: pipeline.py
+  - `ElementCache`
+    - called from: pipeline.py
+  - `ElementFingerprint`
+    - called from: core/element_cache.py
+  - `HullFootprint`
+    - called from: pipeline.py
+  - `LRUCache`
+    - called from: core/silhouette.py, pipeline.py
+  - `LinkedElementProxy`
+    - called from: revit/linked_documents.py
+  - `PolicyStats`
+    - called from: revit/collection.py, revit/linked_documents.py
+  - `RootStyleCache`
+    - called from: streaming.py
+  - `StreamingExporter`
+    - called from: streaming.py
+  - `TileMap`
+    - called from: core/raster.py
+  - `UV_AABB`
+    - called from: core/geometry.py
+  - `ViewBasis`
+    - called from: revit/view_basis.py
+  - `ViewRaster`
+    - called from: csv_export.py, pipeline.py, root_cache.py
+  - `_view_signature`
+    - called from: pipeline.py
+  - `build_core_csv_row`
+    - called from: csv_export.py
+  - `build_index`
+    - called from: tools/gen_maps.py
+  - `build_trace_tree`
+    - called from: tools/gen_maps.py
+  - `build_vop_csv_row`
+    - called from: csv_export.py
+  - `cellrect_dims`
+    - called from: pipeline.py
+  - `classify_annotation`
+    - called from: revit/annotation.py
+  - `classify_keynote`
+    - called from: revit/annotation.py
+  - `collect_2d_annotations`
+    - called from: revit/annotation.py, revit/view_basis.py
+  - `collect_all_linked_elements`
+    - called from: revit/collection.py
+  - `collect_view_elements`
+    - called from: pipeline.py
+  - `compute_annotation_extents`
+    - called from: revit/view_basis.py
+  - `compute_annotation_type_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_config_hash`
+    - called from: csv_export.py, streaming.py
+  - `compute_external_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_view_frame_hash`
+    - called from: csv_export.py
+  - `convex_hull_uv`
+    - called from: pipeline.py
+  - `estimate_depth_from_loops_or_bbox`
+    - called from: pipeline.py
+  - `estimate_depth_range_from_bbox`
+    - called from: pipeline.py
+  - `estimate_nearest_depth_from_bbox`
+    - called from: pipeline.py, revit/collection.py
+  - `excluded_bic_names_global`
+    - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
+    - `export_raster_to_png`
+      - called from: png_export.py, streaming.py
+    - `export_view_raster`
+      - called from: pipeline.py
+    - `extract_metrics_from_view_result`
+      - called from: pipeline.py
+    - `extract_view_metadata`
+      - called from: csv_export.py
+    - `filter_supported_views`
+      - called from: dynamo_helpers.py
+    - `get_annotation_bbox`
+      - called from: revit/annotation.py
+    - `get_core_csv_header`
+      - called from: streaming.py
+    - `get_current_document`
+      - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_current_view`
+      - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: pipeline.py
+    - `get_element_silhouette`
+      - called from: pipeline.py
+    - `get_perf_csv_header`
+      - called from: streaming.py
+    - `get_views_from_input_or_current`
+      - called from: dynamo_helpers.py
+    - `get_vop_csv_header`
+      - called from: streaming.py
+    - `included_bic_names_for_source`
+      - called from: revit/collection.py, revit/collection_policy.py
+    - `init_view_raster`
+      - called from: pipeline.py
+    - `is_extent_driver_annotation`
+      - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_py_files`
+      - called from: tools/gen_maps.py
+    - `load_ast`
+      - called from: tools/gen_maps.py
+    - `main`
+      - called from: tools/gen_maps.py
+    - `make_obb_or_skinny_aabb`
+      - called from: pipeline.py
+    - `make_uv_aabb`
+      - called from: core/geometry.py, pipeline.py
+    - `make_view_basis`
+      - called from: pipeline.py, revit/annotation.py
+    - `parse_callsites`
+      - called from: tools/gen_maps.py
+    - `parse_defs`
+      - called from: tools/gen_maps.py
+    - `parse_imports`
+      - called from: tools/gen_maps.py
+    - `pca_oriented_extents_uv`
+      - called from: core/geometry.py
+    - `process_document_views`
+      - called from: entry_dynamo.py, streaming.py
+    - `process_document_views_streaming`
+      - called from: streaming.py
+    - `quick_test_current_view`
+      - called from: entry_dynamo.py
+    - `rasterize_annotations`
+      - called from: pipeline.py
+    - `relpath_from_root`
+      - called from: tools/gen_maps.py
+    - `render_model_front_to_back`
+      - called from: pipeline.py
+    - `resolve_annotation_only_bounds`
+      - called from: pipeline.py
+    - `resolve_category_ids`
+      - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `resolve_element_bbox`
+      - called from: core/element_cache.py, revit/collection.py
+    - `resolve_view_bounds`
+      - called from: pipeline.py
+    - `resolve_view_mode`
+      - called from: pipeline.py
+    - `run_vop_pipeline`
+      - called from: entry_dynamo.py
+    - `run_vop_pipeline_streaming`
+      - called from: thinrunner_streaming.py
+    - `run_vop_pipeline_with_png`
+      - called from: dynamo_helpers.py
+    - `safe_call`
+      - called from: revit/collection.py
+    - `sample_element_uvw_points`
+      - called from: pipeline.py
+    - `should_include_element`
+      - called from: revit/collection.py, revit/linked_documents.py
+    - `sort_front_to_back`
+      - called from: pipeline.py
+    - `supports_crop_bounds`
+      - called from: revit/view_basis.py
+    - `supports_depth`
+      - called from: revit/view_basis.py
+    - `supports_model_geometry`
+      - called from: revit/view_basis.py
+    - `synthetic_bounds_from_visible_extents`
+      - called from: revit/view_basis.py
+    - `tier_a_is_ambiguous`
+      - called from: pipeline.py
+    - `view_result_to_core_row`
+      - called from: streaming.py
+    - `view_result_to_perf_row`
+      - called from: streaming.py
+    - `view_result_to_vop_row`
+      - called from: streaming.py
+    - `world_to_view`
+      - called from: core/silhouette.py, revit/collection.py
+    - `write_code_map`
+      - called from: tools/gen_maps.py
+    - `write_symbol_index`
+      - called from: tools/gen_maps.py
+    - `write_trace_map`
+      - called from: tools/gen_maps.py
+    - `xy_bounds_from_crop_box_all_corners`
+      - called from: revit/view_basis.py
 
-- `process_document_views()` — vop_interwoven/pipeline.py
-  - `LRUCache()` — vop_interwoven/core/cache.py
-  - `ElementCache()` — vop_interwoven/core/element_cache.py
-  - `Diagnostics()` — vop_interwoven/core/diagnostics.py
-  - `_perf_now()` — vop_interwoven/pipeline.py
-  - `_perf_ms()` — vop_interwoven/pipeline.py
-  - `resolve_view_mode()` — vop_interwoven/revit/view_basis.py
-    - `_view_type_name()` — vop_interwoven/revit/view_basis.py
-    - `supports_model_geometry()` — vop_interwoven/revit/view_basis.py
-    - `supports_crop_bounds()` — vop_interwoven/revit/view_basis.py
-    - `supports_depth()` — vop_interwoven/revit/view_basis.py
-  - `_view_signature()` — vop_interwoven/pipeline.py
-    - `_safe_int()` — vop_interwoven/pipeline.py
-    - `_cropbox_fingerprint()` — vop_interwoven/pipeline.py
-    - `_cfg_hash()` — vop_interwoven/pipeline.py
-  - `init_view_raster()` — vop_interwoven/pipeline.py
-    - `make_view_basis()` — vop_interwoven/revit/view_basis.py
-    - `resolve_view_mode()` — vop_interwoven/revit/view_basis.py
-    - `resolve_annotation_only_bounds()` — vop_interwoven/revit/view_basis.py
-    - `Bounds2D()` — vop_interwoven/core/math_utils.py
-    - `resolve_view_bounds()` — vop_interwoven/revit/view_basis.py
-    - `ViewRaster()` — vop_interwoven/core/raster.py
-  - `collect_view_elements()` — vop_interwoven/revit/collection.py
-    - `included_bic_names_for_source()` — vop_interwoven/revit/collection_policy.py
-    - `PolicyStats()` — vop_interwoven/revit/collection_policy.py
-    - `safe_call()` — vop_interwoven/revit/safe_api.py
-    - `should_include_element()` — vop_interwoven/revit/collection_policy.py
-    - `resolve_element_bbox()` — vop_interwoven/revit/collection.py
-  - `render_model_front_to_back()` — vop_interwoven/pipeline.py
-    - `make_view_basis()` — vop_interwoven/revit/view_basis.py
-    - `expand_host_link_import_model_elements()` — vop_interwoven/revit/collection.py
-    - `sort_front_to_back()` — vop_interwoven/revit/collection.py
-    - `estimate_depth_range_from_bbox()` — vop_interwoven/revit/collection.py
-    - `_project_element_bbox_to_cell_rect()` — vop_interwoven/revit/collection.py
-    - `get_element_silhouette()` — vop_interwoven/core/silhouette.py
-    - `estimate_depth_from_loops_or_bbox()` — vop_interwoven/revit/collection.py
-    - `estimate_nearest_depth_from_bbox()` — vop_interwoven/revit/collection.py
-  - `rasterize_annotations()` — vop_interwoven/revit/annotation.py
-    - `collect_2d_annotations()` — vop_interwoven/revit/annotation.py
-    - `make_view_basis()` — vop_interwoven/revit/view_basis.py
-    - `get_annotation_bbox()` — vop_interwoven/revit/annotation.py
-    - `_project_element_bbox_to_cell_rect_for_anno()` — vop_interwoven/revit/annotation.py
-    - `_uv_to_cell()` — vop_interwoven/revit/annotation.py
-    - `_stamp_line_cells()` — vop_interwoven/revit/annotation.py
-    - `_stamp_rect_outline()` — vop_interwoven/revit/annotation.py
-  - `export_view_raster()` — vop_interwoven/pipeline.py
-  - `extract_metrics_from_view_result()` — vop_interwoven/root_cache.py
-    - `Bounds2D()` — vop_interwoven/core/math_utils.py
-    - `ViewRaster()` — vop_interwoven/core/raster.py
-    - `compute_cell_metrics()` — vop_interwoven/csv_export.py
-    - `compute_external_cell_metrics()` — vop_interwoven/csv_export.py
-    - `compute_annotation_type_metrics()` — vop_interwoven/csv_export.py
-  - `_extract_view_summary()` — vop_interwoven/pipeline.py
+## Trace: `run_vop_pipeline_streaming` (streaming.py:L565)
 
-## Trace: get_element_silhouette (vop_interwoven/core/silhouette.py)
+  - `Bounds2D`
+    - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
+  - `CellRect`
+    - called from: revit/annotation.py, revit/collection.py
+  - `CellRectFootprint`
+    - called from: pipeline.py
+  - `Config`
+    - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
+  - `DefInfo`
+    - called from: tools/gen_maps.py
+  - `Diagnostics`
+    - called from: pipeline.py
+  - `ElementCache`
+    - called from: pipeline.py
+  - `ElementFingerprint`
+    - called from: core/element_cache.py
+  - `HullFootprint`
+    - called from: pipeline.py
+  - `LRUCache`
+    - called from: core/silhouette.py, pipeline.py
+  - `LinkedElementProxy`
+    - called from: revit/linked_documents.py
+  - `PolicyStats`
+    - called from: revit/collection.py, revit/linked_documents.py
+  - `RootStyleCache`
+    - called from: streaming.py
+  - `StreamingExporter`
+    - called from: streaming.py
+  - `TileMap`
+    - called from: core/raster.py
+  - `UV_AABB`
+    - called from: core/geometry.py
+  - `ViewBasis`
+    - called from: revit/view_basis.py
+  - `ViewRaster`
+    - called from: csv_export.py, pipeline.py, root_cache.py
+  - `_view_signature`
+    - called from: pipeline.py
+  - `build_core_csv_row`
+    - called from: csv_export.py
+  - `build_index`
+    - called from: tools/gen_maps.py
+  - `build_trace_tree`
+    - called from: tools/gen_maps.py
+  - `build_vop_csv_row`
+    - called from: csv_export.py
+  - `cellrect_dims`
+    - called from: pipeline.py
+  - `classify_annotation`
+    - called from: revit/annotation.py
+  - `classify_keynote`
+    - called from: revit/annotation.py
+  - `collect_2d_annotations`
+    - called from: revit/annotation.py, revit/view_basis.py
+  - `collect_all_linked_elements`
+    - called from: revit/collection.py
+  - `collect_view_elements`
+    - called from: pipeline.py
+  - `compute_annotation_extents`
+    - called from: revit/view_basis.py
+  - `compute_annotation_type_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_config_hash`
+    - called from: csv_export.py, streaming.py
+  - `compute_external_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_view_frame_hash`
+    - called from: csv_export.py
+  - `convex_hull_uv`
+    - called from: pipeline.py
+  - `estimate_depth_from_loops_or_bbox`
+    - called from: pipeline.py
+  - `estimate_depth_range_from_bbox`
+    - called from: pipeline.py
+  - `estimate_nearest_depth_from_bbox`
+    - called from: pipeline.py, revit/collection.py
+  - `excluded_bic_names_global`
+    - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
+    - `export_raster_to_png`
+      - called from: png_export.py, streaming.py
+    - `export_view_raster`
+      - called from: pipeline.py
+    - `extract_metrics_from_view_result`
+      - called from: pipeline.py
+    - `extract_view_metadata`
+      - called from: csv_export.py
+    - `filter_supported_views`
+      - called from: dynamo_helpers.py
+    - `get_annotation_bbox`
+      - called from: revit/annotation.py
+    - `get_core_csv_header`
+      - called from: streaming.py
+    - `get_current_document`
+      - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_current_view`
+      - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: pipeline.py
+    - `get_element_silhouette`
+      - called from: pipeline.py
+    - `get_perf_csv_header`
+      - called from: streaming.py
+    - `get_views_from_input_or_current`
+      - called from: dynamo_helpers.py
+    - `get_vop_csv_header`
+      - called from: streaming.py
+    - `included_bic_names_for_source`
+      - called from: revit/collection.py, revit/collection_policy.py
+    - `init_view_raster`
+      - called from: pipeline.py
+    - `is_extent_driver_annotation`
+      - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_py_files`
+      - called from: tools/gen_maps.py
+    - `load_ast`
+      - called from: tools/gen_maps.py
+    - `main`
+      - called from: tools/gen_maps.py
+    - `make_obb_or_skinny_aabb`
+      - called from: pipeline.py
+    - `make_uv_aabb`
+      - called from: core/geometry.py, pipeline.py
+    - `make_view_basis`
+      - called from: pipeline.py, revit/annotation.py
+    - `parse_callsites`
+      - called from: tools/gen_maps.py
+    - `parse_defs`
+      - called from: tools/gen_maps.py
+    - `parse_imports`
+      - called from: tools/gen_maps.py
+    - `pca_oriented_extents_uv`
+      - called from: core/geometry.py
+    - `process_document_views`
+      - called from: entry_dynamo.py, streaming.py
+    - `process_document_views_streaming`
+      - called from: streaming.py
+    - `quick_test_current_view`
+      - called from: entry_dynamo.py
+    - `rasterize_annotations`
+      - called from: pipeline.py
+    - `relpath_from_root`
+      - called from: tools/gen_maps.py
+    - `render_model_front_to_back`
+      - called from: pipeline.py
+    - `resolve_annotation_only_bounds`
+      - called from: pipeline.py
+    - `resolve_category_ids`
+      - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `resolve_element_bbox`
+      - called from: core/element_cache.py, revit/collection.py
+    - `resolve_view_bounds`
+      - called from: pipeline.py
+    - `resolve_view_mode`
+      - called from: pipeline.py
+    - `run_vop_pipeline`
+      - called from: entry_dynamo.py
+    - `run_vop_pipeline_with_csv`
+      - called from: dynamo_helpers.py
+    - `run_vop_pipeline_with_png`
+      - called from: dynamo_helpers.py
+    - `safe_call`
+      - called from: revit/collection.py
+    - `sample_element_uvw_points`
+      - called from: pipeline.py
+    - `should_include_element`
+      - called from: revit/collection.py, revit/linked_documents.py
+    - `sort_front_to_back`
+      - called from: pipeline.py
+    - `supports_crop_bounds`
+      - called from: revit/view_basis.py
+    - `supports_depth`
+      - called from: revit/view_basis.py
+    - `supports_model_geometry`
+      - called from: revit/view_basis.py
+    - `synthetic_bounds_from_visible_extents`
+      - called from: revit/view_basis.py
+    - `tier_a_is_ambiguous`
+      - called from: pipeline.py
+    - `view_result_to_core_row`
+      - called from: streaming.py
+    - `view_result_to_perf_row`
+      - called from: streaming.py
+    - `view_result_to_vop_row`
+      - called from: streaming.py
+    - `world_to_view`
+      - called from: core/silhouette.py, revit/collection.py
+    - `write_code_map`
+      - called from: tools/gen_maps.py
+    - `write_symbol_index`
+      - called from: tools/gen_maps.py
+    - `write_trace_map`
+      - called from: tools/gen_maps.py
+    - `xy_bounds_from_crop_box_all_corners`
+      - called from: revit/view_basis.py
 
-- `get_element_silhouette()` — vop_interwoven/core/silhouette.py
-  - `_unwrap_elem()` — vop_interwoven/core/silhouette.py
-  - `_determine_uv_mode()` — vop_interwoven/core/silhouette.py
-    - `_uv_obb_rect_from_bbox()` — vop_interwoven/core/silhouette.py
-  - `_uv_obb_rect_silhouette()` — vop_interwoven/core/silhouette.py
-    - `_uv_obb_rect_from_bbox()` — vop_interwoven/core/silhouette.py
-  - `_bbox_silhouette()` — vop_interwoven/core/silhouette.py
-    - `_to_host_point()` — vop_interwoven/core/silhouette.py
-    - `world_to_view()` — vop_interwoven/revit/view_basis.py
-  - `_obb_silhouette()` — vop_interwoven/core/silhouette.py
-    - `_to_host_point()` — vop_interwoven/core/silhouette.py
-    - `world_to_view()` — vop_interwoven/revit/view_basis.py
-    - `_convex_hull_2d()` — vop_interwoven/core/silhouette.py
-  - `_silhouette_edges()` — vop_interwoven/core/silhouette.py
-    - `_iter_solids()` — vop_interwoven/core/silhouette.py
-    - `_to_host_point()` — vop_interwoven/core/silhouette.py
-    - `world_to_view()` — vop_interwoven/revit/view_basis.py
-    - `_order_points_by_connectivity()` — vop_interwoven/core/silhouette.py
-  - `_front_face_loops_silhouette()` — vop_interwoven/core/silhouette.py
-    - `_iter_solids()` — vop_interwoven/core/silhouette.py
-    - `_to_host_point()` — vop_interwoven/core/silhouette.py
-    - `world_to_view()` — vop_interwoven/revit/view_basis.py
-  - `_cad_curves_silhouette()` — vop_interwoven/core/silhouette.py
-    - `_unwrap_elem()` — vop_interwoven/core/silhouette.py
-    - `_to_host_point()` — vop_interwoven/core/silhouette.py
-  - `_symbolic_curves_silhouette()` — vop_interwoven/core/silhouette.py
-    - `_unwrap_elem()` — vop_interwoven/core/silhouette.py
-    - `_iter_curve_primitives()` — vop_interwoven/core/silhouette.py
-    - `_to_host_point()` — vop_interwoven/core/silhouette.py
-    - `_family_region_outlines_cached()` — vop_interwoven/core/silhouette.py
-    - `_apply_transform_xyz_tuple()` — vop_interwoven/core/silhouette.py
+## Trace: `run_pipeline_from_dynamo_input` (dynamo_helpers.py:L226)
 
-## Trace: make_view_basis (vop_interwoven/revit/view_basis.py)
+  - `Bounds2D`
+    - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
+  - `CellRect`
+    - called from: revit/annotation.py, revit/collection.py
+  - `CellRectFootprint`
+    - called from: pipeline.py
+  - `Config`
+    - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
+  - `DefInfo`
+    - called from: tools/gen_maps.py
+  - `Diagnostics`
+    - called from: pipeline.py
+  - `ElementCache`
+    - called from: pipeline.py
+  - `ElementFingerprint`
+    - called from: core/element_cache.py
+  - `HullFootprint`
+    - called from: pipeline.py
+  - `LRUCache`
+    - called from: core/silhouette.py, pipeline.py
+  - `LinkedElementProxy`
+    - called from: revit/linked_documents.py
+  - `PolicyStats`
+    - called from: revit/collection.py, revit/linked_documents.py
+  - `RootStyleCache`
+    - called from: streaming.py
+  - `StreamingExporter`
+    - called from: streaming.py
+  - `TileMap`
+    - called from: core/raster.py
+  - `UV_AABB`
+    - called from: core/geometry.py
+  - `ViewBasis`
+    - called from: revit/view_basis.py
+  - `ViewRaster`
+    - called from: csv_export.py, pipeline.py, root_cache.py
+  - `_view_signature`
+    - called from: pipeline.py
+  - `build_core_csv_row`
+    - called from: csv_export.py
+  - `build_index`
+    - called from: tools/gen_maps.py
+  - `build_trace_tree`
+    - called from: tools/gen_maps.py
+  - `build_vop_csv_row`
+    - called from: csv_export.py
+  - `cellrect_dims`
+    - called from: pipeline.py
+  - `classify_annotation`
+    - called from: revit/annotation.py
+  - `classify_keynote`
+    - called from: revit/annotation.py
+  - `collect_2d_annotations`
+    - called from: revit/annotation.py, revit/view_basis.py
+  - `collect_all_linked_elements`
+    - called from: revit/collection.py
+  - `collect_view_elements`
+    - called from: pipeline.py
+  - `compute_annotation_extents`
+    - called from: revit/view_basis.py
+  - `compute_annotation_type_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_config_hash`
+    - called from: csv_export.py, streaming.py
+  - `compute_external_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_view_frame_hash`
+    - called from: csv_export.py
+  - `convex_hull_uv`
+    - called from: pipeline.py
+  - `estimate_depth_from_loops_or_bbox`
+    - called from: pipeline.py
+  - `estimate_depth_range_from_bbox`
+    - called from: pipeline.py
+  - `estimate_nearest_depth_from_bbox`
+    - called from: pipeline.py, revit/collection.py
+  - `excluded_bic_names_global`
+    - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
+    - `export_raster_to_png`
+      - called from: png_export.py, streaming.py
+    - `export_view_raster`
+      - called from: pipeline.py
+    - `extract_metrics_from_view_result`
+      - called from: pipeline.py
+    - `extract_view_metadata`
+      - called from: csv_export.py
+    - `filter_supported_views`
+      - called from: dynamo_helpers.py
+    - `get_annotation_bbox`
+      - called from: revit/annotation.py
+    - `get_core_csv_header`
+      - called from: streaming.py
+    - `get_current_document`
+      - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_current_view`
+      - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: pipeline.py
+    - `get_element_silhouette`
+      - called from: pipeline.py
+    - `get_perf_csv_header`
+      - called from: streaming.py
+    - `get_views_from_input_or_current`
+      - called from: dynamo_helpers.py
+    - `get_vop_csv_header`
+      - called from: streaming.py
+    - `included_bic_names_for_source`
+      - called from: revit/collection.py, revit/collection_policy.py
+    - `init_view_raster`
+      - called from: pipeline.py
+    - `is_extent_driver_annotation`
+      - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_py_files`
+      - called from: tools/gen_maps.py
+    - `load_ast`
+      - called from: tools/gen_maps.py
+    - `main`
+      - called from: tools/gen_maps.py
+    - `make_obb_or_skinny_aabb`
+      - called from: pipeline.py
+    - `make_uv_aabb`
+      - called from: core/geometry.py, pipeline.py
+    - `make_view_basis`
+      - called from: pipeline.py, revit/annotation.py
+    - `parse_callsites`
+      - called from: tools/gen_maps.py
+    - `parse_defs`
+      - called from: tools/gen_maps.py
+    - `parse_imports`
+      - called from: tools/gen_maps.py
+    - `pca_oriented_extents_uv`
+      - called from: core/geometry.py
+    - `process_document_views`
+      - called from: entry_dynamo.py, streaming.py
+    - `process_document_views_streaming`
+      - called from: streaming.py
+    - `quick_test_current_view`
+      - called from: entry_dynamo.py
+    - `rasterize_annotations`
+      - called from: pipeline.py
+    - `relpath_from_root`
+      - called from: tools/gen_maps.py
+    - `render_model_front_to_back`
+      - called from: pipeline.py
+    - `resolve_annotation_only_bounds`
+      - called from: pipeline.py
+    - `resolve_category_ids`
+      - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `resolve_element_bbox`
+      - called from: core/element_cache.py, revit/collection.py
+    - `resolve_view_bounds`
+      - called from: pipeline.py
+    - `resolve_view_mode`
+      - called from: pipeline.py
+    - `run_vop_pipeline`
+      - called from: entry_dynamo.py
+    - `run_vop_pipeline_streaming`
+      - called from: thinrunner_streaming.py
+    - `run_vop_pipeline_with_csv`
+      - called from: dynamo_helpers.py
+    - `run_vop_pipeline_with_png`
+      - called from: dynamo_helpers.py
+    - `safe_call`
+      - called from: revit/collection.py
+    - `sample_element_uvw_points`
+      - called from: pipeline.py
+    - `should_include_element`
+      - called from: revit/collection.py, revit/linked_documents.py
+    - `sort_front_to_back`
+      - called from: pipeline.py
+    - `supports_crop_bounds`
+      - called from: revit/view_basis.py
+    - `supports_depth`
+      - called from: revit/view_basis.py
+    - `supports_model_geometry`
+      - called from: revit/view_basis.py
+    - `synthetic_bounds_from_visible_extents`
+      - called from: revit/view_basis.py
+    - `tier_a_is_ambiguous`
+      - called from: pipeline.py
+    - `view_result_to_core_row`
+      - called from: streaming.py
+    - `view_result_to_perf_row`
+      - called from: streaming.py
+    - `view_result_to_vop_row`
+      - called from: streaming.py
+    - `world_to_view`
+      - called from: core/silhouette.py, revit/collection.py
+    - `write_code_map`
+      - called from: tools/gen_maps.py
+    - `write_symbol_index`
+      - called from: tools/gen_maps.py
+    - `write_trace_map`
+      - called from: tools/gen_maps.py
+    - `xy_bounds_from_crop_box_all_corners`
+      - called from: revit/view_basis.py
 
-- `make_view_basis()` — vop_interwoven/revit/view_basis.py
-  - `ViewBasis()` — vop_interwoven/revit/view_basis.py
+## Trace: `process_document_views` (pipeline.py:L367)
 
-## Trace: run_vop_pipeline_with_csv (vop_interwoven/entry_dynamo.py)
+  - `Bounds2D`
+    - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
+  - `CellRect`
+    - called from: revit/annotation.py, revit/collection.py
+  - `CellRectFootprint`
+    - called from: pipeline.py
+  - `Config`
+    - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
+  - `DefInfo`
+    - called from: tools/gen_maps.py
+  - `Diagnostics`
+    - called from: pipeline.py
+  - `ElementCache`
+    - called from: pipeline.py
+  - `ElementFingerprint`
+    - called from: core/element_cache.py
+  - `HullFootprint`
+    - called from: pipeline.py
+  - `LRUCache`
+    - called from: core/silhouette.py, pipeline.py
+  - `LinkedElementProxy`
+    - called from: revit/linked_documents.py
+  - `PolicyStats`
+    - called from: revit/collection.py, revit/linked_documents.py
+  - `RootStyleCache`
+    - called from: streaming.py
+  - `StreamingExporter`
+    - called from: streaming.py
+  - `TileMap`
+    - called from: core/raster.py
+  - `UV_AABB`
+    - called from: core/geometry.py
+  - `ViewBasis`
+    - called from: revit/view_basis.py
+  - `ViewRaster`
+    - called from: csv_export.py, pipeline.py, root_cache.py
+  - `_view_signature`
+    - called from: pipeline.py
+  - `build_core_csv_row`
+    - called from: csv_export.py
+  - `build_index`
+    - called from: tools/gen_maps.py
+  - `build_trace_tree`
+    - called from: tools/gen_maps.py
+  - `build_vop_csv_row`
+    - called from: csv_export.py
+  - `cellrect_dims`
+    - called from: pipeline.py
+  - `classify_annotation`
+    - called from: revit/annotation.py
+  - `classify_keynote`
+    - called from: revit/annotation.py
+  - `collect_2d_annotations`
+    - called from: revit/annotation.py, revit/view_basis.py
+  - `collect_all_linked_elements`
+    - called from: revit/collection.py
+  - `collect_view_elements`
+    - called from: pipeline.py
+  - `compute_annotation_extents`
+    - called from: revit/view_basis.py
+  - `compute_annotation_type_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_config_hash`
+    - called from: csv_export.py, streaming.py
+  - `compute_external_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_view_frame_hash`
+    - called from: csv_export.py
+  - `convex_hull_uv`
+    - called from: pipeline.py
+  - `estimate_depth_from_loops_or_bbox`
+    - called from: pipeline.py
+  - `estimate_depth_range_from_bbox`
+    - called from: pipeline.py
+  - `estimate_nearest_depth_from_bbox`
+    - called from: pipeline.py, revit/collection.py
+  - `excluded_bic_names_global`
+    - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
+    - `export_raster_to_png`
+      - called from: png_export.py, streaming.py
+    - `export_view_raster`
+      - called from: pipeline.py
+    - `extract_metrics_from_view_result`
+      - called from: pipeline.py
+    - `extract_view_metadata`
+      - called from: csv_export.py
+    - `filter_supported_views`
+      - called from: dynamo_helpers.py
+    - `get_annotation_bbox`
+      - called from: revit/annotation.py
+    - `get_core_csv_header`
+      - called from: streaming.py
+    - `get_current_document`
+      - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_current_view`
+      - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: pipeline.py
+    - `get_element_silhouette`
+      - called from: pipeline.py
+    - `get_perf_csv_header`
+      - called from: streaming.py
+    - `get_views_from_input_or_current`
+      - called from: dynamo_helpers.py
+    - `get_vop_csv_header`
+      - called from: streaming.py
+    - `included_bic_names_for_source`
+      - called from: revit/collection.py, revit/collection_policy.py
+    - `init_view_raster`
+      - called from: pipeline.py
+    - `is_extent_driver_annotation`
+      - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_py_files`
+      - called from: tools/gen_maps.py
+    - `load_ast`
+      - called from: tools/gen_maps.py
+    - `main`
+      - called from: tools/gen_maps.py
+    - `make_obb_or_skinny_aabb`
+      - called from: pipeline.py
+    - `make_uv_aabb`
+      - called from: core/geometry.py, pipeline.py
+    - `make_view_basis`
+      - called from: pipeline.py, revit/annotation.py
+    - `parse_callsites`
+      - called from: tools/gen_maps.py
+    - `parse_defs`
+      - called from: tools/gen_maps.py
+    - `parse_imports`
+      - called from: tools/gen_maps.py
+    - `pca_oriented_extents_uv`
+      - called from: core/geometry.py
+    - `process_document_views_streaming`
+      - called from: streaming.py
+    - `quick_test_current_view`
+      - called from: entry_dynamo.py
+    - `rasterize_annotations`
+      - called from: pipeline.py
+    - `relpath_from_root`
+      - called from: tools/gen_maps.py
+    - `render_model_front_to_back`
+      - called from: pipeline.py
+    - `resolve_annotation_only_bounds`
+      - called from: pipeline.py
+    - `resolve_category_ids`
+      - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `resolve_element_bbox`
+      - called from: core/element_cache.py, revit/collection.py
+    - `resolve_view_bounds`
+      - called from: pipeline.py
+    - `resolve_view_mode`
+      - called from: pipeline.py
+    - `run_vop_pipeline`
+      - called from: entry_dynamo.py
+    - `run_vop_pipeline_streaming`
+      - called from: thinrunner_streaming.py
+    - `run_vop_pipeline_with_csv`
+      - called from: dynamo_helpers.py
+    - `run_vop_pipeline_with_png`
+      - called from: dynamo_helpers.py
+    - `safe_call`
+      - called from: revit/collection.py
+    - `sample_element_uvw_points`
+      - called from: pipeline.py
+    - `should_include_element`
+      - called from: revit/collection.py, revit/linked_documents.py
+    - `sort_front_to_back`
+      - called from: pipeline.py
+    - `supports_crop_bounds`
+      - called from: revit/view_basis.py
+    - `supports_depth`
+      - called from: revit/view_basis.py
+    - `supports_model_geometry`
+      - called from: revit/view_basis.py
+    - `synthetic_bounds_from_visible_extents`
+      - called from: revit/view_basis.py
+    - `tier_a_is_ambiguous`
+      - called from: pipeline.py
+    - `view_result_to_core_row`
+      - called from: streaming.py
+    - `view_result_to_perf_row`
+      - called from: streaming.py
+    - `view_result_to_vop_row`
+      - called from: streaming.py
+    - `world_to_view`
+      - called from: core/silhouette.py, revit/collection.py
+    - `write_code_map`
+      - called from: tools/gen_maps.py
+    - `write_symbol_index`
+      - called from: tools/gen_maps.py
+    - `write_trace_map`
+      - called from: tools/gen_maps.py
+    - `xy_bounds_from_crop_box_all_corners`
+      - called from: revit/view_basis.py
 
-- `run_vop_pipeline_with_csv()` — vop_interwoven/entry_dynamo.py
-  - `Config()` — vop_interwoven/config.py
-  - `run_vop_pipeline()` — vop_interwoven/entry_dynamo.py
-    - `Config()` — vop_interwoven/config.py
-    - `_normalize_view_ids()` — vop_interwoven/entry_dynamo.py
-    - `process_document_views()` — vop_interwoven/pipeline.py
-  - `export_pipeline_results_to_pngs()` — vop_interwoven/png_export.py
-    - `export_raster_to_png()` — vop_interwoven/png_export.py
-  - `export_pipeline_to_csv()` — vop_interwoven/csv_export.py
-    - `get_current_document()` — vop_interwoven/entry_dynamo.py
-    - `Bounds2D()` — vop_interwoven/core/math_utils.py
-    - `ViewRaster()` — vop_interwoven/core/raster.py
-    - `_is_from_cache()` — vop_interwoven/csv_export.py
-    - `compute_cell_metrics()` — vop_interwoven/csv_export.py
-    - `compute_annotation_type_metrics()` — vop_interwoven/csv_export.py
-    - `compute_external_cell_metrics()` — vop_interwoven/csv_export.py
-    - `extract_view_metadata()` — vop_interwoven/csv_export.py
+## Trace: `process_document_views_streaming` (streaming.py:L488)
 
-## Trace: run_vop_pipeline_streaming (vop_interwoven/streaming.py)
+  - `Bounds2D`
+    - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
+  - `CellRect`
+    - called from: revit/annotation.py, revit/collection.py
+  - `CellRectFootprint`
+    - called from: pipeline.py
+  - `Config`
+    - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
+  - `DefInfo`
+    - called from: tools/gen_maps.py
+  - `Diagnostics`
+    - called from: pipeline.py
+  - `ElementCache`
+    - called from: pipeline.py
+  - `ElementFingerprint`
+    - called from: core/element_cache.py
+  - `HullFootprint`
+    - called from: pipeline.py
+  - `LRUCache`
+    - called from: core/silhouette.py, pipeline.py
+  - `LinkedElementProxy`
+    - called from: revit/linked_documents.py
+  - `PolicyStats`
+    - called from: revit/collection.py, revit/linked_documents.py
+  - `RootStyleCache`
+    - called from: streaming.py
+  - `StreamingExporter`
+    - called from: streaming.py
+  - `TileMap`
+    - called from: core/raster.py
+  - `UV_AABB`
+    - called from: core/geometry.py
+  - `ViewBasis`
+    - called from: revit/view_basis.py
+  - `ViewRaster`
+    - called from: csv_export.py, pipeline.py, root_cache.py
+  - `_view_signature`
+    - called from: pipeline.py
+  - `build_core_csv_row`
+    - called from: csv_export.py
+  - `build_index`
+    - called from: tools/gen_maps.py
+  - `build_trace_tree`
+    - called from: tools/gen_maps.py
+  - `build_vop_csv_row`
+    - called from: csv_export.py
+  - `cellrect_dims`
+    - called from: pipeline.py
+  - `classify_annotation`
+    - called from: revit/annotation.py
+  - `classify_keynote`
+    - called from: revit/annotation.py
+  - `collect_2d_annotations`
+    - called from: revit/annotation.py, revit/view_basis.py
+  - `collect_all_linked_elements`
+    - called from: revit/collection.py
+  - `collect_view_elements`
+    - called from: pipeline.py
+  - `compute_annotation_extents`
+    - called from: revit/view_basis.py
+  - `compute_annotation_type_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_config_hash`
+    - called from: csv_export.py, streaming.py
+  - `compute_external_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_view_frame_hash`
+    - called from: csv_export.py
+  - `convex_hull_uv`
+    - called from: pipeline.py
+  - `estimate_depth_from_loops_or_bbox`
+    - called from: pipeline.py
+  - `estimate_depth_range_from_bbox`
+    - called from: pipeline.py
+  - `estimate_nearest_depth_from_bbox`
+    - called from: pipeline.py, revit/collection.py
+  - `excluded_bic_names_global`
+    - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
+    - `export_raster_to_png`
+      - called from: png_export.py, streaming.py
+    - `export_view_raster`
+      - called from: pipeline.py
+    - `extract_metrics_from_view_result`
+      - called from: pipeline.py
+    - `extract_view_metadata`
+      - called from: csv_export.py
+    - `filter_supported_views`
+      - called from: dynamo_helpers.py
+    - `get_annotation_bbox`
+      - called from: revit/annotation.py
+    - `get_core_csv_header`
+      - called from: streaming.py
+    - `get_current_document`
+      - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_current_view`
+      - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: pipeline.py
+    - `get_element_silhouette`
+      - called from: pipeline.py
+    - `get_perf_csv_header`
+      - called from: streaming.py
+    - `get_views_from_input_or_current`
+      - called from: dynamo_helpers.py
+    - `get_vop_csv_header`
+      - called from: streaming.py
+    - `included_bic_names_for_source`
+      - called from: revit/collection.py, revit/collection_policy.py
+    - `init_view_raster`
+      - called from: pipeline.py
+    - `is_extent_driver_annotation`
+      - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_py_files`
+      - called from: tools/gen_maps.py
+    - `load_ast`
+      - called from: tools/gen_maps.py
+    - `main`
+      - called from: tools/gen_maps.py
+    - `make_obb_or_skinny_aabb`
+      - called from: pipeline.py
+    - `make_uv_aabb`
+      - called from: core/geometry.py, pipeline.py
+    - `make_view_basis`
+      - called from: pipeline.py, revit/annotation.py
+    - `parse_callsites`
+      - called from: tools/gen_maps.py
+    - `parse_defs`
+      - called from: tools/gen_maps.py
+    - `parse_imports`
+      - called from: tools/gen_maps.py
+    - `pca_oriented_extents_uv`
+      - called from: core/geometry.py
+    - `process_document_views`
+      - called from: entry_dynamo.py, streaming.py
+    - `quick_test_current_view`
+      - called from: entry_dynamo.py
+    - `rasterize_annotations`
+      - called from: pipeline.py
+    - `relpath_from_root`
+      - called from: tools/gen_maps.py
+    - `render_model_front_to_back`
+      - called from: pipeline.py
+    - `resolve_annotation_only_bounds`
+      - called from: pipeline.py
+    - `resolve_category_ids`
+      - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `resolve_element_bbox`
+      - called from: core/element_cache.py, revit/collection.py
+    - `resolve_view_bounds`
+      - called from: pipeline.py
+    - `resolve_view_mode`
+      - called from: pipeline.py
+    - `run_vop_pipeline`
+      - called from: entry_dynamo.py
+    - `run_vop_pipeline_streaming`
+      - called from: thinrunner_streaming.py
+    - `run_vop_pipeline_with_csv`
+      - called from: dynamo_helpers.py
+    - `run_vop_pipeline_with_png`
+      - called from: dynamo_helpers.py
+    - `safe_call`
+      - called from: revit/collection.py
+    - `sample_element_uvw_points`
+      - called from: pipeline.py
+    - `should_include_element`
+      - called from: revit/collection.py, revit/linked_documents.py
+    - `sort_front_to_back`
+      - called from: pipeline.py
+    - `supports_crop_bounds`
+      - called from: revit/view_basis.py
+    - `supports_depth`
+      - called from: revit/view_basis.py
+    - `supports_model_geometry`
+      - called from: revit/view_basis.py
+    - `synthetic_bounds_from_visible_extents`
+      - called from: revit/view_basis.py
+    - `tier_a_is_ambiguous`
+      - called from: pipeline.py
+    - `view_result_to_core_row`
+      - called from: streaming.py
+    - `view_result_to_perf_row`
+      - called from: streaming.py
+    - `view_result_to_vop_row`
+      - called from: streaming.py
+    - `world_to_view`
+      - called from: core/silhouette.py, revit/collection.py
+    - `write_code_map`
+      - called from: tools/gen_maps.py
+    - `write_symbol_index`
+      - called from: tools/gen_maps.py
+    - `write_trace_map`
+      - called from: tools/gen_maps.py
+    - `xy_bounds_from_crop_box_all_corners`
+      - called from: revit/view_basis.py
 
-- `run_vop_pipeline_streaming()` — vop_interwoven/streaming.py
-  - `Config()` — vop_interwoven/config.py
-  - `RootStyleCache()` — vop_interwoven/root_cache.py
-  - `StreamingExporter()` — vop_interwoven/streaming.py
-  - `process_document_views_streaming()` — vop_interwoven/streaming.py
-    - `process_document_views()` — vop_interwoven/pipeline.py
+## Trace: `render_model_front_to_back` (pipeline.py:L1139)
 
-## Trace: thinrunner (vop_interwoven/thinrunner.py)
+  - `Bounds2D`
+    - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
+  - `CellRect`
+    - called from: revit/annotation.py, revit/collection.py
+  - `CellRectFootprint`
+    - called from: pipeline.py
+  - `Config`
+    - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
+  - `DefInfo`
+    - called from: tools/gen_maps.py
+  - `Diagnostics`
+    - called from: pipeline.py
+  - `ElementCache`
+    - called from: pipeline.py
+  - `ElementFingerprint`
+    - called from: core/element_cache.py
+  - `HullFootprint`
+    - called from: pipeline.py
+  - `LRUCache`
+    - called from: core/silhouette.py, pipeline.py
+  - `LinkedElementProxy`
+    - called from: revit/linked_documents.py
+  - `PolicyStats`
+    - called from: revit/collection.py, revit/linked_documents.py
+  - `RootStyleCache`
+    - called from: streaming.py
+  - `StreamingExporter`
+    - called from: streaming.py
+  - `TileMap`
+    - called from: core/raster.py
+  - `UV_AABB`
+    - called from: core/geometry.py
+  - `ViewBasis`
+    - called from: revit/view_basis.py
+  - `ViewRaster`
+    - called from: csv_export.py, pipeline.py, root_cache.py
+  - `_view_signature`
+    - called from: pipeline.py
+  - `build_core_csv_row`
+    - called from: csv_export.py
+  - `build_index`
+    - called from: tools/gen_maps.py
+  - `build_trace_tree`
+    - called from: tools/gen_maps.py
+  - `build_vop_csv_row`
+    - called from: csv_export.py
+  - `cellrect_dims`
+    - called from: pipeline.py
+  - `classify_annotation`
+    - called from: revit/annotation.py
+  - `classify_keynote`
+    - called from: revit/annotation.py
+  - `collect_2d_annotations`
+    - called from: revit/annotation.py, revit/view_basis.py
+  - `collect_all_linked_elements`
+    - called from: revit/collection.py
+  - `collect_view_elements`
+    - called from: pipeline.py
+  - `compute_annotation_extents`
+    - called from: revit/view_basis.py
+  - `compute_annotation_type_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_config_hash`
+    - called from: csv_export.py, streaming.py
+  - `compute_external_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_view_frame_hash`
+    - called from: csv_export.py
+  - `convex_hull_uv`
+    - called from: pipeline.py
+  - `estimate_depth_from_loops_or_bbox`
+    - called from: pipeline.py
+  - `estimate_depth_range_from_bbox`
+    - called from: pipeline.py
+  - `estimate_nearest_depth_from_bbox`
+    - called from: pipeline.py, revit/collection.py
+  - `excluded_bic_names_global`
+    - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
+    - `export_raster_to_png`
+      - called from: png_export.py, streaming.py
+    - `export_view_raster`
+      - called from: pipeline.py
+    - `extract_metrics_from_view_result`
+      - called from: pipeline.py
+    - `extract_view_metadata`
+      - called from: csv_export.py
+    - `filter_supported_views`
+      - called from: dynamo_helpers.py
+    - `get_annotation_bbox`
+      - called from: revit/annotation.py
+    - `get_core_csv_header`
+      - called from: streaming.py
+    - `get_current_document`
+      - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_current_view`
+      - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: pipeline.py
+    - `get_element_silhouette`
+      - called from: pipeline.py
+    - `get_perf_csv_header`
+      - called from: streaming.py
+    - `get_views_from_input_or_current`
+      - called from: dynamo_helpers.py
+    - `get_vop_csv_header`
+      - called from: streaming.py
+    - `included_bic_names_for_source`
+      - called from: revit/collection.py, revit/collection_policy.py
+    - `init_view_raster`
+      - called from: pipeline.py
+    - `is_extent_driver_annotation`
+      - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_py_files`
+      - called from: tools/gen_maps.py
+    - `load_ast`
+      - called from: tools/gen_maps.py
+    - `main`
+      - called from: tools/gen_maps.py
+    - `make_obb_or_skinny_aabb`
+      - called from: pipeline.py
+    - `make_uv_aabb`
+      - called from: core/geometry.py, pipeline.py
+    - `make_view_basis`
+      - called from: pipeline.py, revit/annotation.py
+    - `parse_callsites`
+      - called from: tools/gen_maps.py
+    - `parse_defs`
+      - called from: tools/gen_maps.py
+    - `parse_imports`
+      - called from: tools/gen_maps.py
+    - `pca_oriented_extents_uv`
+      - called from: core/geometry.py
+    - `process_document_views`
+      - called from: entry_dynamo.py, streaming.py
+    - `process_document_views_streaming`
+      - called from: streaming.py
+    - `quick_test_current_view`
+      - called from: entry_dynamo.py
+    - `rasterize_annotations`
+      - called from: pipeline.py
+    - `relpath_from_root`
+      - called from: tools/gen_maps.py
+    - `resolve_annotation_only_bounds`
+      - called from: pipeline.py
+    - `resolve_category_ids`
+      - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `resolve_element_bbox`
+      - called from: core/element_cache.py, revit/collection.py
+    - `resolve_view_bounds`
+      - called from: pipeline.py
+    - `resolve_view_mode`
+      - called from: pipeline.py
+    - `run_vop_pipeline`
+      - called from: entry_dynamo.py
+    - `run_vop_pipeline_streaming`
+      - called from: thinrunner_streaming.py
+    - `run_vop_pipeline_with_csv`
+      - called from: dynamo_helpers.py
+    - `run_vop_pipeline_with_png`
+      - called from: dynamo_helpers.py
+    - `safe_call`
+      - called from: revit/collection.py
+    - `sample_element_uvw_points`
+      - called from: pipeline.py
+    - `should_include_element`
+      - called from: revit/collection.py, revit/linked_documents.py
+    - `sort_front_to_back`
+      - called from: pipeline.py
+    - `supports_crop_bounds`
+      - called from: revit/view_basis.py
+    - `supports_depth`
+      - called from: revit/view_basis.py
+    - `supports_model_geometry`
+      - called from: revit/view_basis.py
+    - `synthetic_bounds_from_visible_extents`
+      - called from: revit/view_basis.py
+    - `tier_a_is_ambiguous`
+      - called from: pipeline.py
+    - `view_result_to_core_row`
+      - called from: streaming.py
+    - `view_result_to_perf_row`
+      - called from: streaming.py
+    - `view_result_to_vop_row`
+      - called from: streaming.py
+    - `world_to_view`
+      - called from: core/silhouette.py, revit/collection.py
+    - `write_code_map`
+      - called from: tools/gen_maps.py
+    - `write_symbol_index`
+      - called from: tools/gen_maps.py
+    - `write_trace_map`
+      - called from: tools/gen_maps.py
+    - `xy_bounds_from_crop_box_all_corners`
+      - called from: revit/view_basis.py
 
-- _Not present in this source snapshot (no vop_interwoven/thinrunner.py found)._
+## Trace: `init_view_raster` (pipeline.py:L957)
 
-## Silhouette / family-region diagnostics flow
+  - `Bounds2D`
+    - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
+  - `CellRect`
+    - called from: revit/annotation.py, revit/collection.py
+  - `CellRectFootprint`
+    - called from: pipeline.py
+  - `Config`
+    - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
+  - `DefInfo`
+    - called from: tools/gen_maps.py
+  - `Diagnostics`
+    - called from: pipeline.py
+  - `ElementCache`
+    - called from: pipeline.py
+  - `ElementFingerprint`
+    - called from: core/element_cache.py
+  - `HullFootprint`
+    - called from: pipeline.py
+  - `LRUCache`
+    - called from: core/silhouette.py, pipeline.py
+  - `LinkedElementProxy`
+    - called from: revit/linked_documents.py
+  - `PolicyStats`
+    - called from: revit/collection.py, revit/linked_documents.py
+  - `RootStyleCache`
+    - called from: streaming.py
+  - `StreamingExporter`
+    - called from: streaming.py
+  - `TileMap`
+    - called from: core/raster.py
+  - `UV_AABB`
+    - called from: core/geometry.py
+  - `ViewBasis`
+    - called from: revit/view_basis.py
+  - `ViewRaster`
+    - called from: csv_export.py, pipeline.py, root_cache.py
+  - `_view_signature`
+    - called from: pipeline.py
+  - `build_core_csv_row`
+    - called from: csv_export.py
+  - `build_index`
+    - called from: tools/gen_maps.py
+  - `build_trace_tree`
+    - called from: tools/gen_maps.py
+  - `build_vop_csv_row`
+    - called from: csv_export.py
+  - `cellrect_dims`
+    - called from: pipeline.py
+  - `classify_annotation`
+    - called from: revit/annotation.py
+  - `classify_keynote`
+    - called from: revit/annotation.py
+  - `collect_2d_annotations`
+    - called from: revit/annotation.py, revit/view_basis.py
+  - `collect_all_linked_elements`
+    - called from: revit/collection.py
+  - `collect_view_elements`
+    - called from: pipeline.py
+  - `compute_annotation_extents`
+    - called from: revit/view_basis.py
+  - `compute_annotation_type_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_config_hash`
+    - called from: csv_export.py, streaming.py
+  - `compute_external_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_view_frame_hash`
+    - called from: csv_export.py
+  - `convex_hull_uv`
+    - called from: pipeline.py
+  - `estimate_depth_from_loops_or_bbox`
+    - called from: pipeline.py
+  - `estimate_depth_range_from_bbox`
+    - called from: pipeline.py
+  - `estimate_nearest_depth_from_bbox`
+    - called from: pipeline.py, revit/collection.py
+  - `excluded_bic_names_global`
+    - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
+    - `export_raster_to_png`
+      - called from: png_export.py, streaming.py
+    - `export_view_raster`
+      - called from: pipeline.py
+    - `extract_metrics_from_view_result`
+      - called from: pipeline.py
+    - `extract_view_metadata`
+      - called from: csv_export.py
+    - `filter_supported_views`
+      - called from: dynamo_helpers.py
+    - `get_annotation_bbox`
+      - called from: revit/annotation.py
+    - `get_core_csv_header`
+      - called from: streaming.py
+    - `get_current_document`
+      - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_current_view`
+      - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: pipeline.py
+    - `get_element_silhouette`
+      - called from: pipeline.py
+    - `get_perf_csv_header`
+      - called from: streaming.py
+    - `get_views_from_input_or_current`
+      - called from: dynamo_helpers.py
+    - `get_vop_csv_header`
+      - called from: streaming.py
+    - `included_bic_names_for_source`
+      - called from: revit/collection.py, revit/collection_policy.py
+    - `is_extent_driver_annotation`
+      - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_py_files`
+      - called from: tools/gen_maps.py
+    - `load_ast`
+      - called from: tools/gen_maps.py
+    - `main`
+      - called from: tools/gen_maps.py
+    - `make_obb_or_skinny_aabb`
+      - called from: pipeline.py
+    - `make_uv_aabb`
+      - called from: core/geometry.py, pipeline.py
+    - `make_view_basis`
+      - called from: pipeline.py, revit/annotation.py
+    - `parse_callsites`
+      - called from: tools/gen_maps.py
+    - `parse_defs`
+      - called from: tools/gen_maps.py
+    - `parse_imports`
+      - called from: tools/gen_maps.py
+    - `pca_oriented_extents_uv`
+      - called from: core/geometry.py
+    - `process_document_views`
+      - called from: entry_dynamo.py, streaming.py
+    - `process_document_views_streaming`
+      - called from: streaming.py
+    - `quick_test_current_view`
+      - called from: entry_dynamo.py
+    - `rasterize_annotations`
+      - called from: pipeline.py
+    - `relpath_from_root`
+      - called from: tools/gen_maps.py
+    - `render_model_front_to_back`
+      - called from: pipeline.py
+    - `resolve_annotation_only_bounds`
+      - called from: pipeline.py
+    - `resolve_category_ids`
+      - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `resolve_element_bbox`
+      - called from: core/element_cache.py, revit/collection.py
+    - `resolve_view_bounds`
+      - called from: pipeline.py
+    - `resolve_view_mode`
+      - called from: pipeline.py
+    - `run_vop_pipeline`
+      - called from: entry_dynamo.py
+    - `run_vop_pipeline_streaming`
+      - called from: thinrunner_streaming.py
+    - `run_vop_pipeline_with_csv`
+      - called from: dynamo_helpers.py
+    - `run_vop_pipeline_with_png`
+      - called from: dynamo_helpers.py
+    - `safe_call`
+      - called from: revit/collection.py
+    - `sample_element_uvw_points`
+      - called from: pipeline.py
+    - `should_include_element`
+      - called from: revit/collection.py, revit/linked_documents.py
+    - `sort_front_to_back`
+      - called from: pipeline.py
+    - `supports_crop_bounds`
+      - called from: revit/view_basis.py
+    - `supports_depth`
+      - called from: revit/view_basis.py
+    - `supports_model_geometry`
+      - called from: revit/view_basis.py
+    - `synthetic_bounds_from_visible_extents`
+      - called from: revit/view_basis.py
+    - `tier_a_is_ambiguous`
+      - called from: pipeline.py
+    - `view_result_to_core_row`
+      - called from: streaming.py
+    - `view_result_to_perf_row`
+      - called from: streaming.py
+    - `view_result_to_vop_row`
+      - called from: streaming.py
+    - `world_to_view`
+      - called from: core/silhouette.py, revit/collection.py
+    - `write_code_map`
+      - called from: tools/gen_maps.py
+    - `write_symbol_index`
+      - called from: tools/gen_maps.py
+    - `write_trace_map`
+      - called from: tools/gen_maps.py
+    - `xy_bounds_from_crop_box_all_corners`
+      - called from: revit/view_basis.py
 
-- `get_element_silhouette()` — vop_interwoven/core/silhouette.py
-  - `_unwrap_elem()` — vop_interwoven/core/silhouette.py
-  - `_determine_uv_mode()` — vop_interwoven/core/silhouette.py
-    - `_uv_obb_rect_from_bbox()` — vop_interwoven/core/silhouette.py
-    - `_bbox_corners_world()` — vop_interwoven/core/silhouette.py
-    - `_to_host_point()` — vop_interwoven/core/silhouette.py
-  - `_uv_obb_rect_silhouette()` — vop_interwoven/core/silhouette.py
-    - `_uv_obb_rect_from_bbox()` — vop_interwoven/core/silhouette.py
-  - `_bbox_silhouette()` — vop_interwoven/core/silhouette.py
-    - `_to_host_point()` — vop_interwoven/core/silhouette.py
-    - `world_to_view()` — vop_interwoven/revit/view_basis.py
-  - `_obb_silhouette()` — vop_interwoven/core/silhouette.py
-    - `_to_host_point()` — vop_interwoven/core/silhouette.py
-    - `world_to_view()` — vop_interwoven/revit/view_basis.py
-    - `_convex_hull_2d()` — vop_interwoven/core/silhouette.py
-  - `_silhouette_edges()` — vop_interwoven/core/silhouette.py
-    - `_iter_solids()` — vop_interwoven/core/silhouette.py
-    - `_iter_solids()` — vop_interwoven/core/silhouette.py
-    - `_to_host_point()` — vop_interwoven/core/silhouette.py
-    - `world_to_view()` — vop_interwoven/revit/view_basis.py
-    - `_order_points_by_connectivity()` — vop_interwoven/core/silhouette.py
-  - `_front_face_loops_silhouette()` — vop_interwoven/core/silhouette.py
-    - `_iter_solids()` — vop_interwoven/core/silhouette.py
-    - `_to_host_point()` — vop_interwoven/core/silhouette.py
-    - `world_to_view()` — vop_interwoven/revit/view_basis.py
-  - `_cad_curves_silhouette()` — vop_interwoven/core/silhouette.py
-    - `_unwrap_elem()` — vop_interwoven/core/silhouette.py
-    - `_to_host_point()` — vop_interwoven/core/silhouette.py
-  - `_symbolic_curves_silhouette()` — vop_interwoven/core/silhouette.py
-    - `_unwrap_elem()` — vop_interwoven/core/silhouette.py
-    - `_iter_curve_primitives()` — vop_interwoven/core/silhouette.py
-    - `_iter_curve_primitives()` — vop_interwoven/core/silhouette.py
-    - `_to_host_point()` — vop_interwoven/core/silhouette.py
-    - `_family_region_outlines_cached()` — vop_interwoven/core/silhouette.py
-    - `_safe_int_id()` — vop_interwoven/core/silhouette.py
-    - `_maybe_resize_lru()` — vop_interwoven/core/silhouette.py
-    - `_cache_get()` — vop_interwoven/core/silhouette.py
+## Trace: `_view_signature` (pipeline.py:L177)
+
+  - `Bounds2D`
+    - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
+  - `CellRect`
+    - called from: revit/annotation.py, revit/collection.py
+  - `CellRectFootprint`
+    - called from: pipeline.py
+  - `Config`
+    - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
+  - `DefInfo`
+    - called from: tools/gen_maps.py
+  - `Diagnostics`
+    - called from: pipeline.py
+  - `ElementCache`
+    - called from: pipeline.py
+  - `ElementFingerprint`
+    - called from: core/element_cache.py
+  - `HullFootprint`
+    - called from: pipeline.py
+  - `LRUCache`
+    - called from: core/silhouette.py, pipeline.py
+  - `LinkedElementProxy`
+    - called from: revit/linked_documents.py
+  - `PolicyStats`
+    - called from: revit/collection.py, revit/linked_documents.py
+  - `RootStyleCache`
+    - called from: streaming.py
+  - `StreamingExporter`
+    - called from: streaming.py
+  - `TileMap`
+    - called from: core/raster.py
+  - `UV_AABB`
+    - called from: core/geometry.py
+  - `ViewBasis`
+    - called from: revit/view_basis.py
+  - `ViewRaster`
+    - called from: csv_export.py, pipeline.py, root_cache.py
+  - `build_core_csv_row`
+    - called from: csv_export.py
+  - `build_index`
+    - called from: tools/gen_maps.py
+  - `build_trace_tree`
+    - called from: tools/gen_maps.py
+  - `build_vop_csv_row`
+    - called from: csv_export.py
+  - `cellrect_dims`
+    - called from: pipeline.py
+  - `classify_annotation`
+    - called from: revit/annotation.py
+  - `classify_keynote`
+    - called from: revit/annotation.py
+  - `collect_2d_annotations`
+    - called from: revit/annotation.py, revit/view_basis.py
+  - `collect_all_linked_elements`
+    - called from: revit/collection.py
+  - `collect_view_elements`
+    - called from: pipeline.py
+  - `compute_annotation_extents`
+    - called from: revit/view_basis.py
+  - `compute_annotation_type_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_config_hash`
+    - called from: csv_export.py, streaming.py
+  - `compute_external_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_view_frame_hash`
+    - called from: csv_export.py
+  - `convex_hull_uv`
+    - called from: pipeline.py
+  - `estimate_depth_from_loops_or_bbox`
+    - called from: pipeline.py
+  - `estimate_depth_range_from_bbox`
+    - called from: pipeline.py
+  - `estimate_nearest_depth_from_bbox`
+    - called from: pipeline.py, revit/collection.py
+  - `excluded_bic_names_global`
+    - called from: revit/collection_policy.py, revit/linked_documents.py
+  - `expand_host_link_import_model_elements`
+    - called from: pipeline.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
+    - `export_raster_to_png`
+      - called from: png_export.py, streaming.py
+    - `export_view_raster`
+      - called from: pipeline.py
+    - `extract_metrics_from_view_result`
+      - called from: pipeline.py
+    - `extract_view_metadata`
+      - called from: csv_export.py
+    - `filter_supported_views`
+      - called from: dynamo_helpers.py
+    - `get_annotation_bbox`
+      - called from: revit/annotation.py
+    - `get_core_csv_header`
+      - called from: streaming.py
+    - `get_current_document`
+      - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_current_view`
+      - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: pipeline.py
+    - `get_element_silhouette`
+      - called from: pipeline.py
+    - `get_perf_csv_header`
+      - called from: streaming.py
+    - `get_views_from_input_or_current`
+      - called from: dynamo_helpers.py
+    - `get_vop_csv_header`
+      - called from: streaming.py
+    - `included_bic_names_for_source`
+      - called from: revit/collection.py, revit/collection_policy.py
+    - `init_view_raster`
+      - called from: pipeline.py
+    - `is_extent_driver_annotation`
+      - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_py_files`
+      - called from: tools/gen_maps.py
+    - `load_ast`
+      - called from: tools/gen_maps.py
+    - `main`
+      - called from: tools/gen_maps.py
+    - `make_obb_or_skinny_aabb`
+      - called from: pipeline.py
+    - `make_uv_aabb`
+      - called from: core/geometry.py, pipeline.py
+    - `make_view_basis`
+      - called from: pipeline.py, revit/annotation.py
+    - `parse_callsites`
+      - called from: tools/gen_maps.py
+    - `parse_defs`
+      - called from: tools/gen_maps.py
+    - `parse_imports`
+      - called from: tools/gen_maps.py
+    - `pca_oriented_extents_uv`
+      - called from: core/geometry.py
+    - `process_document_views`
+      - called from: entry_dynamo.py, streaming.py
+    - `process_document_views_streaming`
+      - called from: streaming.py
+    - `quick_test_current_view`
+      - called from: entry_dynamo.py
+    - `rasterize_annotations`
+      - called from: pipeline.py
+    - `relpath_from_root`
+      - called from: tools/gen_maps.py
+    - `render_model_front_to_back`
+      - called from: pipeline.py
+    - `resolve_annotation_only_bounds`
+      - called from: pipeline.py
+    - `resolve_category_ids`
+      - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `resolve_element_bbox`
+      - called from: core/element_cache.py, revit/collection.py
+    - `resolve_view_bounds`
+      - called from: pipeline.py
+    - `resolve_view_mode`
+      - called from: pipeline.py
+    - `run_vop_pipeline`
+      - called from: entry_dynamo.py
+    - `run_vop_pipeline_streaming`
+      - called from: thinrunner_streaming.py
+    - `run_vop_pipeline_with_csv`
+      - called from: dynamo_helpers.py
+    - `run_vop_pipeline_with_png`
+      - called from: dynamo_helpers.py
+    - `safe_call`
+      - called from: revit/collection.py
+    - `sample_element_uvw_points`
+      - called from: pipeline.py
+    - `should_include_element`
+      - called from: revit/collection.py, revit/linked_documents.py
+    - `sort_front_to_back`
+      - called from: pipeline.py
+    - `supports_crop_bounds`
+      - called from: revit/view_basis.py
+    - `supports_depth`
+      - called from: revit/view_basis.py
+    - `supports_model_geometry`
+      - called from: revit/view_basis.py
+    - `synthetic_bounds_from_visible_extents`
+      - called from: revit/view_basis.py
+    - `tier_a_is_ambiguous`
+      - called from: pipeline.py
+    - `view_result_to_core_row`
+      - called from: streaming.py
+    - `view_result_to_perf_row`
+      - called from: streaming.py
+    - `view_result_to_vop_row`
+      - called from: streaming.py
+    - `world_to_view`
+      - called from: core/silhouette.py, revit/collection.py
+    - `write_code_map`
+      - called from: tools/gen_maps.py
+    - `write_symbol_index`
+      - called from: tools/gen_maps.py
+    - `write_trace_map`
+      - called from: tools/gen_maps.py
+    - `xy_bounds_from_crop_box_all_corners`
+      - called from: revit/view_basis.py
+
+## Trace: `resolve_view_bounds` (revit/view_basis.py:L561)
+
+  - `Bounds2D`
+    - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
+  - `CellRect`
+    - called from: revit/annotation.py, revit/collection.py
+  - `CellRectFootprint`
+    - called from: pipeline.py
+  - `Config`
+    - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
+  - `DefInfo`
+    - called from: tools/gen_maps.py
+  - `Diagnostics`
+    - called from: pipeline.py
+  - `ElementCache`
+    - called from: pipeline.py
+  - `ElementFingerprint`
+    - called from: core/element_cache.py
+  - `HullFootprint`
+    - called from: pipeline.py
+  - `LRUCache`
+    - called from: core/silhouette.py, pipeline.py
+  - `LinkedElementProxy`
+    - called from: revit/linked_documents.py
+  - `PolicyStats`
+    - called from: revit/collection.py, revit/linked_documents.py
+  - `RootStyleCache`
+    - called from: streaming.py
+  - `StreamingExporter`
+    - called from: streaming.py
+  - `TileMap`
+    - called from: core/raster.py
+  - `UV_AABB`
+    - called from: core/geometry.py
+  - `ViewBasis`
+    - called from: revit/view_basis.py
+  - `ViewRaster`
+    - called from: csv_export.py, pipeline.py, root_cache.py
+  - `_view_signature`
+    - called from: pipeline.py
+  - `build_core_csv_row`
+    - called from: csv_export.py
+  - `build_index`
+    - called from: tools/gen_maps.py
+  - `build_trace_tree`
+    - called from: tools/gen_maps.py
+  - `build_vop_csv_row`
+    - called from: csv_export.py
+  - `cellrect_dims`
+    - called from: pipeline.py
+  - `classify_annotation`
+    - called from: revit/annotation.py
+  - `classify_keynote`
+    - called from: revit/annotation.py
+  - `collect_2d_annotations`
+    - called from: revit/annotation.py, revit/view_basis.py
+  - `collect_all_linked_elements`
+    - called from: revit/collection.py
+  - `collect_view_elements`
+    - called from: pipeline.py
+  - `compute_annotation_extents`
+    - called from: revit/view_basis.py
+  - `compute_annotation_type_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_config_hash`
+    - called from: csv_export.py, streaming.py
+  - `compute_external_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_view_frame_hash`
+    - called from: csv_export.py
+  - `convex_hull_uv`
+    - called from: pipeline.py
+  - `estimate_depth_from_loops_or_bbox`
+    - called from: pipeline.py
+  - `estimate_depth_range_from_bbox`
+    - called from: pipeline.py
+  - `estimate_nearest_depth_from_bbox`
+    - called from: pipeline.py, revit/collection.py
+  - `excluded_bic_names_global`
+    - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
+    - `export_raster_to_png`
+      - called from: png_export.py, streaming.py
+    - `export_view_raster`
+      - called from: pipeline.py
+    - `extract_metrics_from_view_result`
+      - called from: pipeline.py
+    - `extract_view_metadata`
+      - called from: csv_export.py
+    - `filter_supported_views`
+      - called from: dynamo_helpers.py
+    - `get_annotation_bbox`
+      - called from: revit/annotation.py
+    - `get_core_csv_header`
+      - called from: streaming.py
+    - `get_current_document`
+      - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_current_view`
+      - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: pipeline.py
+    - `get_element_silhouette`
+      - called from: pipeline.py
+    - `get_perf_csv_header`
+      - called from: streaming.py
+    - `get_views_from_input_or_current`
+      - called from: dynamo_helpers.py
+    - `get_vop_csv_header`
+      - called from: streaming.py
+    - `included_bic_names_for_source`
+      - called from: revit/collection.py, revit/collection_policy.py
+    - `init_view_raster`
+      - called from: pipeline.py
+    - `is_extent_driver_annotation`
+      - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_py_files`
+      - called from: tools/gen_maps.py
+    - `load_ast`
+      - called from: tools/gen_maps.py
+    - `main`
+      - called from: tools/gen_maps.py
+    - `make_obb_or_skinny_aabb`
+      - called from: pipeline.py
+    - `make_uv_aabb`
+      - called from: core/geometry.py, pipeline.py
+    - `make_view_basis`
+      - called from: pipeline.py, revit/annotation.py
+    - `parse_callsites`
+      - called from: tools/gen_maps.py
+    - `parse_defs`
+      - called from: tools/gen_maps.py
+    - `parse_imports`
+      - called from: tools/gen_maps.py
+    - `pca_oriented_extents_uv`
+      - called from: core/geometry.py
+    - `process_document_views`
+      - called from: entry_dynamo.py, streaming.py
+    - `process_document_views_streaming`
+      - called from: streaming.py
+    - `quick_test_current_view`
+      - called from: entry_dynamo.py
+    - `rasterize_annotations`
+      - called from: pipeline.py
+    - `relpath_from_root`
+      - called from: tools/gen_maps.py
+    - `render_model_front_to_back`
+      - called from: pipeline.py
+    - `resolve_annotation_only_bounds`
+      - called from: pipeline.py
+    - `resolve_category_ids`
+      - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `resolve_element_bbox`
+      - called from: core/element_cache.py, revit/collection.py
+    - `resolve_view_mode`
+      - called from: pipeline.py
+    - `run_vop_pipeline`
+      - called from: entry_dynamo.py
+    - `run_vop_pipeline_streaming`
+      - called from: thinrunner_streaming.py
+    - `run_vop_pipeline_with_csv`
+      - called from: dynamo_helpers.py
+    - `run_vop_pipeline_with_png`
+      - called from: dynamo_helpers.py
+    - `safe_call`
+      - called from: revit/collection.py
+    - `sample_element_uvw_points`
+      - called from: pipeline.py
+    - `should_include_element`
+      - called from: revit/collection.py, revit/linked_documents.py
+    - `sort_front_to_back`
+      - called from: pipeline.py
+    - `supports_crop_bounds`
+      - called from: revit/view_basis.py
+    - `supports_depth`
+      - called from: revit/view_basis.py
+    - `supports_model_geometry`
+      - called from: revit/view_basis.py
+    - `synthetic_bounds_from_visible_extents`
+      - called from: revit/view_basis.py
+    - `tier_a_is_ambiguous`
+      - called from: pipeline.py
+    - `view_result_to_core_row`
+      - called from: streaming.py
+    - `view_result_to_perf_row`
+      - called from: streaming.py
+    - `view_result_to_vop_row`
+      - called from: streaming.py
+    - `world_to_view`
+      - called from: core/silhouette.py, revit/collection.py
+    - `write_code_map`
+      - called from: tools/gen_maps.py
+    - `write_symbol_index`
+      - called from: tools/gen_maps.py
+    - `write_trace_map`
+      - called from: tools/gen_maps.py
+    - `xy_bounds_from_crop_box_all_corners`
+      - called from: revit/view_basis.py
+
+## Trace: `resolve_annotation_only_bounds` (revit/view_basis.py:L1120)
+
+  - `Bounds2D`
+    - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
+  - `CellRect`
+    - called from: revit/annotation.py, revit/collection.py
+  - `CellRectFootprint`
+    - called from: pipeline.py
+  - `Config`
+    - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
+  - `DefInfo`
+    - called from: tools/gen_maps.py
+  - `Diagnostics`
+    - called from: pipeline.py
+  - `ElementCache`
+    - called from: pipeline.py
+  - `ElementFingerprint`
+    - called from: core/element_cache.py
+  - `HullFootprint`
+    - called from: pipeline.py
+  - `LRUCache`
+    - called from: core/silhouette.py, pipeline.py
+  - `LinkedElementProxy`
+    - called from: revit/linked_documents.py
+  - `PolicyStats`
+    - called from: revit/collection.py, revit/linked_documents.py
+  - `RootStyleCache`
+    - called from: streaming.py
+  - `StreamingExporter`
+    - called from: streaming.py
+  - `TileMap`
+    - called from: core/raster.py
+  - `UV_AABB`
+    - called from: core/geometry.py
+  - `ViewBasis`
+    - called from: revit/view_basis.py
+  - `ViewRaster`
+    - called from: csv_export.py, pipeline.py, root_cache.py
+  - `_view_signature`
+    - called from: pipeline.py
+  - `build_core_csv_row`
+    - called from: csv_export.py
+  - `build_index`
+    - called from: tools/gen_maps.py
+  - `build_trace_tree`
+    - called from: tools/gen_maps.py
+  - `build_vop_csv_row`
+    - called from: csv_export.py
+  - `cellrect_dims`
+    - called from: pipeline.py
+  - `classify_annotation`
+    - called from: revit/annotation.py
+  - `classify_keynote`
+    - called from: revit/annotation.py
+  - `collect_2d_annotations`
+    - called from: revit/annotation.py, revit/view_basis.py
+  - `collect_all_linked_elements`
+    - called from: revit/collection.py
+  - `collect_view_elements`
+    - called from: pipeline.py
+  - `compute_annotation_extents`
+    - called from: revit/view_basis.py
+  - `compute_annotation_type_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_config_hash`
+    - called from: csv_export.py, streaming.py
+  - `compute_external_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_view_frame_hash`
+    - called from: csv_export.py
+  - `convex_hull_uv`
+    - called from: pipeline.py
+  - `estimate_depth_from_loops_or_bbox`
+    - called from: pipeline.py
+  - `estimate_depth_range_from_bbox`
+    - called from: pipeline.py
+  - `estimate_nearest_depth_from_bbox`
+    - called from: pipeline.py, revit/collection.py
+  - `excluded_bic_names_global`
+    - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
+    - `export_raster_to_png`
+      - called from: png_export.py, streaming.py
+    - `export_view_raster`
+      - called from: pipeline.py
+    - `extract_metrics_from_view_result`
+      - called from: pipeline.py
+    - `extract_view_metadata`
+      - called from: csv_export.py
+    - `filter_supported_views`
+      - called from: dynamo_helpers.py
+    - `get_annotation_bbox`
+      - called from: revit/annotation.py
+    - `get_core_csv_header`
+      - called from: streaming.py
+    - `get_current_document`
+      - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_current_view`
+      - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: pipeline.py
+    - `get_element_silhouette`
+      - called from: pipeline.py
+    - `get_perf_csv_header`
+      - called from: streaming.py
+    - `get_views_from_input_or_current`
+      - called from: dynamo_helpers.py
+    - `get_vop_csv_header`
+      - called from: streaming.py
+    - `included_bic_names_for_source`
+      - called from: revit/collection.py, revit/collection_policy.py
+    - `init_view_raster`
+      - called from: pipeline.py
+    - `is_extent_driver_annotation`
+      - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_py_files`
+      - called from: tools/gen_maps.py
+    - `load_ast`
+      - called from: tools/gen_maps.py
+    - `main`
+      - called from: tools/gen_maps.py
+    - `make_obb_or_skinny_aabb`
+      - called from: pipeline.py
+    - `make_uv_aabb`
+      - called from: core/geometry.py, pipeline.py
+    - `make_view_basis`
+      - called from: pipeline.py, revit/annotation.py
+    - `parse_callsites`
+      - called from: tools/gen_maps.py
+    - `parse_defs`
+      - called from: tools/gen_maps.py
+    - `parse_imports`
+      - called from: tools/gen_maps.py
+    - `pca_oriented_extents_uv`
+      - called from: core/geometry.py
+    - `process_document_views`
+      - called from: entry_dynamo.py, streaming.py
+    - `process_document_views_streaming`
+      - called from: streaming.py
+    - `quick_test_current_view`
+      - called from: entry_dynamo.py
+    - `rasterize_annotations`
+      - called from: pipeline.py
+    - `relpath_from_root`
+      - called from: tools/gen_maps.py
+    - `render_model_front_to_back`
+      - called from: pipeline.py
+    - `resolve_category_ids`
+      - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `resolve_element_bbox`
+      - called from: core/element_cache.py, revit/collection.py
+    - `resolve_view_bounds`
+      - called from: pipeline.py
+    - `resolve_view_mode`
+      - called from: pipeline.py
+    - `run_vop_pipeline`
+      - called from: entry_dynamo.py
+    - `run_vop_pipeline_streaming`
+      - called from: thinrunner_streaming.py
+    - `run_vop_pipeline_with_csv`
+      - called from: dynamo_helpers.py
+    - `run_vop_pipeline_with_png`
+      - called from: dynamo_helpers.py
+    - `safe_call`
+      - called from: revit/collection.py
+    - `sample_element_uvw_points`
+      - called from: pipeline.py
+    - `should_include_element`
+      - called from: revit/collection.py, revit/linked_documents.py
+    - `sort_front_to_back`
+      - called from: pipeline.py
+    - `supports_crop_bounds`
+      - called from: revit/view_basis.py
+    - `supports_depth`
+      - called from: revit/view_basis.py
+    - `supports_model_geometry`
+      - called from: revit/view_basis.py
+    - `synthetic_bounds_from_visible_extents`
+      - called from: revit/view_basis.py
+    - `tier_a_is_ambiguous`
+      - called from: pipeline.py
+    - `view_result_to_core_row`
+      - called from: streaming.py
+    - `view_result_to_perf_row`
+      - called from: streaming.py
+    - `view_result_to_vop_row`
+      - called from: streaming.py
+    - `world_to_view`
+      - called from: core/silhouette.py, revit/collection.py
+    - `write_code_map`
+      - called from: tools/gen_maps.py
+    - `write_symbol_index`
+      - called from: tools/gen_maps.py
+    - `write_trace_map`
+      - called from: tools/gen_maps.py
+    - `xy_bounds_from_crop_box_all_corners`
+      - called from: revit/view_basis.py
+
+## Trace: `rasterize_annotations` (revit/annotation.py:L762)
+
+  - `Bounds2D`
+    - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
+  - `CellRect`
+    - called from: revit/annotation.py, revit/collection.py
+  - `CellRectFootprint`
+    - called from: pipeline.py
+  - `Config`
+    - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
+  - `DefInfo`
+    - called from: tools/gen_maps.py
+  - `Diagnostics`
+    - called from: pipeline.py
+  - `ElementCache`
+    - called from: pipeline.py
+  - `ElementFingerprint`
+    - called from: core/element_cache.py
+  - `HullFootprint`
+    - called from: pipeline.py
+  - `LRUCache`
+    - called from: core/silhouette.py, pipeline.py
+  - `LinkedElementProxy`
+    - called from: revit/linked_documents.py
+  - `PolicyStats`
+    - called from: revit/collection.py, revit/linked_documents.py
+  - `RootStyleCache`
+    - called from: streaming.py
+  - `StreamingExporter`
+    - called from: streaming.py
+  - `TileMap`
+    - called from: core/raster.py
+  - `UV_AABB`
+    - called from: core/geometry.py
+  - `ViewBasis`
+    - called from: revit/view_basis.py
+  - `ViewRaster`
+    - called from: csv_export.py, pipeline.py, root_cache.py
+  - `_view_signature`
+    - called from: pipeline.py
+  - `build_core_csv_row`
+    - called from: csv_export.py
+  - `build_index`
+    - called from: tools/gen_maps.py
+  - `build_trace_tree`
+    - called from: tools/gen_maps.py
+  - `build_vop_csv_row`
+    - called from: csv_export.py
+  - `cellrect_dims`
+    - called from: pipeline.py
+  - `classify_annotation`
+    - called from: revit/annotation.py
+  - `classify_keynote`
+    - called from: revit/annotation.py
+  - `collect_2d_annotations`
+    - called from: revit/annotation.py, revit/view_basis.py
+  - `collect_all_linked_elements`
+    - called from: revit/collection.py
+  - `collect_view_elements`
+    - called from: pipeline.py
+  - `compute_annotation_extents`
+    - called from: revit/view_basis.py
+  - `compute_annotation_type_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_config_hash`
+    - called from: csv_export.py, streaming.py
+  - `compute_external_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_view_frame_hash`
+    - called from: csv_export.py
+  - `convex_hull_uv`
+    - called from: pipeline.py
+  - `estimate_depth_from_loops_or_bbox`
+    - called from: pipeline.py
+  - `estimate_depth_range_from_bbox`
+    - called from: pipeline.py
+  - `estimate_nearest_depth_from_bbox`
+    - called from: pipeline.py, revit/collection.py
+  - `excluded_bic_names_global`
+    - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
+    - `export_raster_to_png`
+      - called from: png_export.py, streaming.py
+    - `export_view_raster`
+      - called from: pipeline.py
+    - `extract_metrics_from_view_result`
+      - called from: pipeline.py
+    - `extract_view_metadata`
+      - called from: csv_export.py
+    - `filter_supported_views`
+      - called from: dynamo_helpers.py
+    - `get_annotation_bbox`
+      - called from: revit/annotation.py
+    - `get_core_csv_header`
+      - called from: streaming.py
+    - `get_current_document`
+      - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_current_view`
+      - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: pipeline.py
+    - `get_element_silhouette`
+      - called from: pipeline.py
+    - `get_perf_csv_header`
+      - called from: streaming.py
+    - `get_views_from_input_or_current`
+      - called from: dynamo_helpers.py
+    - `get_vop_csv_header`
+      - called from: streaming.py
+    - `included_bic_names_for_source`
+      - called from: revit/collection.py, revit/collection_policy.py
+    - `init_view_raster`
+      - called from: pipeline.py
+    - `is_extent_driver_annotation`
+      - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_py_files`
+      - called from: tools/gen_maps.py
+    - `load_ast`
+      - called from: tools/gen_maps.py
+    - `main`
+      - called from: tools/gen_maps.py
+    - `make_obb_or_skinny_aabb`
+      - called from: pipeline.py
+    - `make_uv_aabb`
+      - called from: core/geometry.py, pipeline.py
+    - `make_view_basis`
+      - called from: pipeline.py, revit/annotation.py
+    - `parse_callsites`
+      - called from: tools/gen_maps.py
+    - `parse_defs`
+      - called from: tools/gen_maps.py
+    - `parse_imports`
+      - called from: tools/gen_maps.py
+    - `pca_oriented_extents_uv`
+      - called from: core/geometry.py
+    - `process_document_views`
+      - called from: entry_dynamo.py, streaming.py
+    - `process_document_views_streaming`
+      - called from: streaming.py
+    - `quick_test_current_view`
+      - called from: entry_dynamo.py
+    - `relpath_from_root`
+      - called from: tools/gen_maps.py
+    - `render_model_front_to_back`
+      - called from: pipeline.py
+    - `resolve_annotation_only_bounds`
+      - called from: pipeline.py
+    - `resolve_category_ids`
+      - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `resolve_element_bbox`
+      - called from: core/element_cache.py, revit/collection.py
+    - `resolve_view_bounds`
+      - called from: pipeline.py
+    - `resolve_view_mode`
+      - called from: pipeline.py
+    - `run_vop_pipeline`
+      - called from: entry_dynamo.py
+    - `run_vop_pipeline_streaming`
+      - called from: thinrunner_streaming.py
+    - `run_vop_pipeline_with_csv`
+      - called from: dynamo_helpers.py
+    - `run_vop_pipeline_with_png`
+      - called from: dynamo_helpers.py
+    - `safe_call`
+      - called from: revit/collection.py
+    - `sample_element_uvw_points`
+      - called from: pipeline.py
+    - `should_include_element`
+      - called from: revit/collection.py, revit/linked_documents.py
+    - `sort_front_to_back`
+      - called from: pipeline.py
+    - `supports_crop_bounds`
+      - called from: revit/view_basis.py
+    - `supports_depth`
+      - called from: revit/view_basis.py
+    - `supports_model_geometry`
+      - called from: revit/view_basis.py
+    - `synthetic_bounds_from_visible_extents`
+      - called from: revit/view_basis.py
+    - `tier_a_is_ambiguous`
+      - called from: pipeline.py
+    - `view_result_to_core_row`
+      - called from: streaming.py
+    - `view_result_to_perf_row`
+      - called from: streaming.py
+    - `view_result_to_vop_row`
+      - called from: streaming.py
+    - `world_to_view`
+      - called from: core/silhouette.py, revit/collection.py
+    - `write_code_map`
+      - called from: tools/gen_maps.py
+    - `write_symbol_index`
+      - called from: tools/gen_maps.py
+    - `write_trace_map`
+      - called from: tools/gen_maps.py
+    - `xy_bounds_from_crop_box_all_corners`
+      - called from: revit/view_basis.py
+
+## Trace: `collect_view_elements` (revit/collection.py:L62)
+
+  - `Bounds2D`
+    - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
+  - `CellRect`
+    - called from: revit/annotation.py, revit/collection.py
+  - `CellRectFootprint`
+    - called from: pipeline.py
+  - `Config`
+    - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
+  - `DefInfo`
+    - called from: tools/gen_maps.py
+  - `Diagnostics`
+    - called from: pipeline.py
+  - `ElementCache`
+    - called from: pipeline.py
+  - `ElementFingerprint`
+    - called from: core/element_cache.py
+  - `HullFootprint`
+    - called from: pipeline.py
+  - `LRUCache`
+    - called from: core/silhouette.py, pipeline.py
+  - `LinkedElementProxy`
+    - called from: revit/linked_documents.py
+  - `PolicyStats`
+    - called from: revit/collection.py, revit/linked_documents.py
+  - `RootStyleCache`
+    - called from: streaming.py
+  - `StreamingExporter`
+    - called from: streaming.py
+  - `TileMap`
+    - called from: core/raster.py
+  - `UV_AABB`
+    - called from: core/geometry.py
+  - `ViewBasis`
+    - called from: revit/view_basis.py
+  - `ViewRaster`
+    - called from: csv_export.py, pipeline.py, root_cache.py
+  - `_view_signature`
+    - called from: pipeline.py
+  - `build_core_csv_row`
+    - called from: csv_export.py
+  - `build_index`
+    - called from: tools/gen_maps.py
+  - `build_trace_tree`
+    - called from: tools/gen_maps.py
+  - `build_vop_csv_row`
+    - called from: csv_export.py
+  - `cellrect_dims`
+    - called from: pipeline.py
+  - `classify_annotation`
+    - called from: revit/annotation.py
+  - `classify_keynote`
+    - called from: revit/annotation.py
+  - `collect_2d_annotations`
+    - called from: revit/annotation.py, revit/view_basis.py
+  - `collect_all_linked_elements`
+    - called from: revit/collection.py
+  - `compute_annotation_extents`
+    - called from: revit/view_basis.py
+  - `compute_annotation_type_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_config_hash`
+    - called from: csv_export.py, streaming.py
+  - `compute_external_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_view_frame_hash`
+    - called from: csv_export.py
+  - `convex_hull_uv`
+    - called from: pipeline.py
+  - `estimate_depth_from_loops_or_bbox`
+    - called from: pipeline.py
+  - `estimate_depth_range_from_bbox`
+    - called from: pipeline.py
+  - `estimate_nearest_depth_from_bbox`
+    - called from: pipeline.py, revit/collection.py
+  - `excluded_bic_names_global`
+    - called from: revit/collection_policy.py, revit/linked_documents.py
+  - `expand_host_link_import_model_elements`
+    - called from: pipeline.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
+    - `export_raster_to_png`
+      - called from: png_export.py, streaming.py
+    - `export_view_raster`
+      - called from: pipeline.py
+    - `extract_metrics_from_view_result`
+      - called from: pipeline.py
+    - `extract_view_metadata`
+      - called from: csv_export.py
+    - `filter_supported_views`
+      - called from: dynamo_helpers.py
+    - `get_annotation_bbox`
+      - called from: revit/annotation.py
+    - `get_core_csv_header`
+      - called from: streaming.py
+    - `get_current_document`
+      - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_current_view`
+      - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: pipeline.py
+    - `get_element_silhouette`
+      - called from: pipeline.py
+    - `get_perf_csv_header`
+      - called from: streaming.py
+    - `get_views_from_input_or_current`
+      - called from: dynamo_helpers.py
+    - `get_vop_csv_header`
+      - called from: streaming.py
+    - `included_bic_names_for_source`
+      - called from: revit/collection.py, revit/collection_policy.py
+    - `init_view_raster`
+      - called from: pipeline.py
+    - `is_extent_driver_annotation`
+      - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_py_files`
+      - called from: tools/gen_maps.py
+    - `load_ast`
+      - called from: tools/gen_maps.py
+    - `main`
+      - called from: tools/gen_maps.py
+    - `make_obb_or_skinny_aabb`
+      - called from: pipeline.py
+    - `make_uv_aabb`
+      - called from: core/geometry.py, pipeline.py
+    - `make_view_basis`
+      - called from: pipeline.py, revit/annotation.py
+    - `parse_callsites`
+      - called from: tools/gen_maps.py
+    - `parse_defs`
+      - called from: tools/gen_maps.py
+    - `parse_imports`
+      - called from: tools/gen_maps.py
+    - `pca_oriented_extents_uv`
+      - called from: core/geometry.py
+    - `process_document_views`
+      - called from: entry_dynamo.py, streaming.py
+    - `process_document_views_streaming`
+      - called from: streaming.py
+    - `quick_test_current_view`
+      - called from: entry_dynamo.py
+    - `rasterize_annotations`
+      - called from: pipeline.py
+    - `relpath_from_root`
+      - called from: tools/gen_maps.py
+    - `render_model_front_to_back`
+      - called from: pipeline.py
+    - `resolve_annotation_only_bounds`
+      - called from: pipeline.py
+    - `resolve_category_ids`
+      - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `resolve_element_bbox`
+      - called from: core/element_cache.py, revit/collection.py
+    - `resolve_view_bounds`
+      - called from: pipeline.py
+    - `resolve_view_mode`
+      - called from: pipeline.py
+    - `run_vop_pipeline`
+      - called from: entry_dynamo.py
+    - `run_vop_pipeline_streaming`
+      - called from: thinrunner_streaming.py
+    - `run_vop_pipeline_with_csv`
+      - called from: dynamo_helpers.py
+    - `run_vop_pipeline_with_png`
+      - called from: dynamo_helpers.py
+    - `safe_call`
+      - called from: revit/collection.py
+    - `sample_element_uvw_points`
+      - called from: pipeline.py
+    - `should_include_element`
+      - called from: revit/collection.py, revit/linked_documents.py
+    - `sort_front_to_back`
+      - called from: pipeline.py
+    - `supports_crop_bounds`
+      - called from: revit/view_basis.py
+    - `supports_depth`
+      - called from: revit/view_basis.py
+    - `supports_model_geometry`
+      - called from: revit/view_basis.py
+    - `synthetic_bounds_from_visible_extents`
+      - called from: revit/view_basis.py
+    - `tier_a_is_ambiguous`
+      - called from: pipeline.py
+    - `view_result_to_core_row`
+      - called from: streaming.py
+    - `view_result_to_perf_row`
+      - called from: streaming.py
+    - `view_result_to_vop_row`
+      - called from: streaming.py
+    - `world_to_view`
+      - called from: core/silhouette.py, revit/collection.py
+    - `write_code_map`
+      - called from: tools/gen_maps.py
+    - `write_symbol_index`
+      - called from: tools/gen_maps.py
+    - `write_trace_map`
+      - called from: tools/gen_maps.py
+    - `xy_bounds_from_crop_box_all_corners`
+      - called from: revit/view_basis.py
+
+## Trace: `get_element_silhouette` (core/silhouette.py:L1436)
+
+  - `Bounds2D`
+    - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
+  - `CellRect`
+    - called from: revit/annotation.py, revit/collection.py
+  - `CellRectFootprint`
+    - called from: pipeline.py
+  - `Config`
+    - called from: dynamo_helpers.py, entry_dynamo.py, streaming.py, thinrunner_streaming.py
+  - `DefInfo`
+    - called from: tools/gen_maps.py
+  - `Diagnostics`
+    - called from: pipeline.py
+  - `ElementCache`
+    - called from: pipeline.py
+  - `ElementFingerprint`
+    - called from: core/element_cache.py
+  - `HullFootprint`
+    - called from: pipeline.py
+  - `LRUCache`
+    - called from: core/silhouette.py, pipeline.py
+  - `LinkedElementProxy`
+    - called from: revit/linked_documents.py
+  - `PolicyStats`
+    - called from: revit/collection.py, revit/linked_documents.py
+  - `RootStyleCache`
+    - called from: streaming.py
+  - `StreamingExporter`
+    - called from: streaming.py
+  - `TileMap`
+    - called from: core/raster.py
+  - `UV_AABB`
+    - called from: core/geometry.py
+  - `ViewBasis`
+    - called from: revit/view_basis.py
+  - `ViewRaster`
+    - called from: csv_export.py, pipeline.py, root_cache.py
+  - `_view_signature`
+    - called from: pipeline.py
+  - `build_core_csv_row`
+    - called from: csv_export.py
+  - `build_index`
+    - called from: tools/gen_maps.py
+  - `build_trace_tree`
+    - called from: tools/gen_maps.py
+  - `build_vop_csv_row`
+    - called from: csv_export.py
+  - `cellrect_dims`
+    - called from: pipeline.py
+  - `classify_annotation`
+    - called from: revit/annotation.py
+  - `classify_keynote`
+    - called from: revit/annotation.py
+  - `collect_2d_annotations`
+    - called from: revit/annotation.py, revit/view_basis.py
+  - `collect_all_linked_elements`
+    - called from: revit/collection.py
+  - `collect_view_elements`
+    - called from: pipeline.py
+  - `compute_annotation_extents`
+    - called from: revit/view_basis.py
+  - `compute_annotation_type_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_config_hash`
+    - called from: csv_export.py, streaming.py
+  - `compute_external_cell_metrics`
+    - called from: csv_export.py, root_cache.py
+  - `compute_view_frame_hash`
+    - called from: csv_export.py
+  - `convex_hull_uv`
+    - called from: pipeline.py
+  - `estimate_depth_from_loops_or_bbox`
+    - called from: pipeline.py
+  - `estimate_depth_range_from_bbox`
+    - called from: pipeline.py
+  - `estimate_nearest_depth_from_bbox`
+    - called from: pipeline.py, revit/collection.py
+  - `excluded_bic_names_global`
+    - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
+    - `export_raster_to_png`
+      - called from: png_export.py, streaming.py
+    - `export_view_raster`
+      - called from: pipeline.py
+    - `extract_metrics_from_view_result`
+      - called from: pipeline.py
+    - `extract_view_metadata`
+      - called from: csv_export.py
+    - `filter_supported_views`
+      - called from: dynamo_helpers.py
+    - `get_annotation_bbox`
+      - called from: revit/annotation.py
+    - `get_core_csv_header`
+      - called from: streaming.py
+    - `get_current_document`
+      - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_current_view`
+      - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: pipeline.py
+    - `get_perf_csv_header`
+      - called from: streaming.py
+    - `get_views_from_input_or_current`
+      - called from: dynamo_helpers.py
+    - `get_vop_csv_header`
+      - called from: streaming.py
+    - `included_bic_names_for_source`
+      - called from: revit/collection.py, revit/collection_policy.py
+    - `init_view_raster`
+      - called from: pipeline.py
+    - `is_extent_driver_annotation`
+      - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_py_files`
+      - called from: tools/gen_maps.py
+    - `load_ast`
+      - called from: tools/gen_maps.py
+    - `main`
+      - called from: tools/gen_maps.py
+    - `make_obb_or_skinny_aabb`
+      - called from: pipeline.py
+    - `make_uv_aabb`
+      - called from: core/geometry.py, pipeline.py
+    - `make_view_basis`
+      - called from: pipeline.py, revit/annotation.py
+    - `parse_callsites`
+      - called from: tools/gen_maps.py
+    - `parse_defs`
+      - called from: tools/gen_maps.py
+    - `parse_imports`
+      - called from: tools/gen_maps.py
+    - `pca_oriented_extents_uv`
+      - called from: core/geometry.py
+    - `process_document_views`
+      - called from: entry_dynamo.py, streaming.py
+    - `process_document_views_streaming`
+      - called from: streaming.py
+    - `quick_test_current_view`
+      - called from: entry_dynamo.py
+    - `rasterize_annotations`
+      - called from: pipeline.py
+    - `relpath_from_root`
+      - called from: tools/gen_maps.py
+    - `render_model_front_to_back`
+      - called from: pipeline.py
+    - `resolve_annotation_only_bounds`
+      - called from: pipeline.py
+    - `resolve_category_ids`
+      - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `resolve_element_bbox`
+      - called from: core/element_cache.py, revit/collection.py
+    - `resolve_view_bounds`
+      - called from: pipeline.py
+    - `resolve_view_mode`
+      - called from: pipeline.py
+    - `run_vop_pipeline`
+      - called from: entry_dynamo.py
+    - `run_vop_pipeline_streaming`
+      - called from: thinrunner_streaming.py
+    - `run_vop_pipeline_with_csv`
+      - called from: dynamo_helpers.py
+    - `run_vop_pipeline_with_png`
+      - called from: dynamo_helpers.py
+    - `safe_call`
+      - called from: revit/collection.py
+    - `sample_element_uvw_points`
+      - called from: pipeline.py
+    - `should_include_element`
+      - called from: revit/collection.py, revit/linked_documents.py
+    - `sort_front_to_back`
+      - called from: pipeline.py
+    - `supports_crop_bounds`
+      - called from: revit/view_basis.py
+    - `supports_depth`
+      - called from: revit/view_basis.py
+    - `supports_model_geometry`
+      - called from: revit/view_basis.py
+    - `synthetic_bounds_from_visible_extents`
+      - called from: revit/view_basis.py
+    - `tier_a_is_ambiguous`
+      - called from: pipeline.py
+    - `view_result_to_core_row`
+      - called from: streaming.py
+    - `view_result_to_perf_row`
+      - called from: streaming.py
+    - `view_result_to_vop_row`
+      - called from: streaming.py
+    - `world_to_view`
+      - called from: core/silhouette.py, revit/collection.py
+    - `write_code_map`
+      - called from: tools/gen_maps.py
+    - `write_symbol_index`
+      - called from: tools/gen_maps.py
+    - `write_trace_map`
+      - called from: tools/gen_maps.py
+    - `xy_bounds_from_crop_box_all_corners`
+      - called from: revit/view_basis.py
