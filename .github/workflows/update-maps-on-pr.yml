@@ -1,0 +1,56 @@
+name: update-maps-on-pr
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  update-maps:
+    runs-on: ubuntu-latest
+
+    # Don't run on PRs from forks (no safe push permissions)
+    if: github.event.pull_request.head.repo.full_name == github.repository
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          persist-credentials: true
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Generate maps
+        working-directory: vop_interwoven
+        run: |
+          python ../tools/gen_maps.py
+
+      - name: Commit and push if changed
+        run: |
+          # Avoid infinite loops: don't re-run if last commit was the bot updating maps
+          LAST_MSG="$(git log -1 --pretty=%s)"
+          echo "Last commit: $LAST_MSG"
+          if echo "$LAST_MSG" | grep -qiE '^chore: update navigation maps$'; then
+            echo "Last commit is map update; skipping."
+            exit 0
+          fi
+
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add vop_interwoven/vop_interwoven_code_map_authoritative.md
+            git add vop_interwoven/vop_interwoven_trace_map.md
+            git add vop_interwoven/vop_interwoven_symbol_index.md
+            git commit -m "chore: update navigation maps"
+            git push
+          else
+            echo "No map changes."
+          fi
+

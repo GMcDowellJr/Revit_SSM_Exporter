@@ -1,111 +1,304 @@
 # vop_interwoven symbol index (defs + callsites)
 
-This index lists selected high-signal symbols (definitions + approximate callsites) used for navigation-first debugging.
+This index lists definitions and approximate callsites (by file) for navigation-first debugging.
+Line numbers are from AST parsing of the current source.
 
-Line numbers reflect the current source set in vop_interwoven.zip.
-
-## Entrypoints: Dynamo / thinrunner
+## High-signal symbols
 
 **Definitions**
-- vop_interwoven/entry_dynamo.py
+- entry_dynamo.py
   - `run_vop_pipeline` (L333)
-- vop_interwoven/entry_dynamo.py
+- entry_dynamo.py
   - `run_vop_pipeline_with_png` (L381)
-- vop_interwoven/entry_dynamo.py
+- entry_dynamo.py
   - `run_vop_pipeline_with_csv` (L458)
-- vop_interwoven/dynamo_helpers.py
+- streaming.py
+  - `run_vop_pipeline_streaming` (L565)
+- dynamo_helpers.py
   - `run_pipeline_from_dynamo_input` (L226)
-- vop_interwoven/thinrunner_streaming.py
-  - `thinrunner` (L?)
-
-**Callsites (approx)**
-- `run_vop_pipeline`: vop_interwoven/csv_export.py, vop_interwoven/dynamo_helpers.py, vop_interwoven/entry_dynamo.py, vop_interwoven/png_export.py, vop_interwoven/streaming.py, vop_interwoven/thinrunner_streaming.py
-- `run_pipeline_from_dynamo_input`: vop_interwoven/dynamo_helpers.py
-
-## Pipeline orchestration + cache keying
-
-**Definitions**
-- vop_interwoven/pipeline.py
-  - `process_document_views` (L269)
-- vop_interwoven/pipeline.py
-  - `init_view_raster` (L837)
-- vop_interwoven/pipeline.py
+- pipeline.py
+  - `process_document_views` (L367)
+- streaming.py
+  - `process_document_views_streaming` (L488)
+- pipeline.py
+  - `render_model_front_to_back` (L1139)
+- pipeline.py
+  - `init_view_raster` (L957)
+- pipeline.py
   - `_view_signature` (L177)
-
-**Callsites (approx)**
-- `process_document_views`: vop_interwoven/entry_dynamo.py, vop_interwoven/pipeline.py, vop_interwoven/streaming.py
-- `init_view_raster`: vop_interwoven/pipeline.py
-- `_view_signature`: vop_interwoven/pipeline.py, vop_interwoven/streaming.py
-- `model_clip_bounds`: vop_interwoven/pipeline.py, vop_interwoven/core/raster.py
-
-## View bounds resolution (crop / annotation expansion)
-
-**Definitions**
-- vop_interwoven/revit/view_basis.py
+- revit/view_basis.py
   - `resolve_view_bounds` (L561)
-- vop_interwoven/revit/view_basis.py
-  - `resolve_annotation_only_bounds` (L1130)
-
-**Callsites (approx)**
-- `resolve_view_bounds`: vop_interwoven/pipeline.py, vop_interwoven/revit/view_basis.py
-- `resolve_annotation_only_bounds`: vop_interwoven/pipeline.py, vop_interwoven/revit/view_basis.py
-- `model_bounds_uv`: vop_interwoven/pipeline.py, vop_interwoven/revit/view_basis.py
-
-## Annotation extents + stamping
-
-**Definitions**
-- vop_interwoven/revit/annotation.py
-  - `compute_annotation_extents` (L83)
-- vop_interwoven/revit/annotation.py
+- revit/view_basis.py
+  - `resolve_annotation_only_bounds` (L1120)
+- revit/annotation.py
   - `rasterize_annotations` (L762)
-- vop_interwoven/revit/annotation.py
-  - `get_annotation_bbox` (L731)
+- revit/collection.py
+  - `collect_view_elements` (L62)
+- core/silhouette.py
+  - `get_element_silhouette` (L1436)
 
 **Callsites (approx)**
-- `compute_annotation_extents`: vop_interwoven/revit/annotation.py, vop_interwoven/revit/view_basis.py
-- `rasterize_annotations`: vop_interwoven/pipeline.py, vop_interwoven/revit/annotation.py
+- `run_vop_pipeline`: entry_dynamo.py
+- `run_vop_pipeline_with_png`: dynamo_helpers.py
+- `run_vop_pipeline_with_csv`: dynamo_helpers.py
+- `run_vop_pipeline_streaming`: thinrunner_streaming.py
+- `process_document_views`: entry_dynamo.py, streaming.py
+- `process_document_views_streaming`: streaming.py
+- `render_model_front_to_back`: pipeline.py
+- `init_view_raster`: pipeline.py
+- `_view_signature`: pipeline.py
+- `resolve_view_bounds`: pipeline.py
+- `resolve_annotation_only_bounds`: pipeline.py
+- `rasterize_annotations`: pipeline.py
+- `collect_view_elements`: pipeline.py
+- `get_element_silhouette`: pipeline.py
 
-## Raster write boundaries (model clip enforcement)
+## All top-level definitions
 
-**Definitions**
-- vop_interwoven/core/raster.py
-  - `ViewRaster` (L155)
-- vop_interwoven/core/raster.py
-  - `ViewRaster._cell_in_model_clip` (L212)
-- vop_interwoven/core/raster.py
-  - `ViewRaster.try_write_cell` (L490)
-- vop_interwoven/core/raster.py
-  - `ViewRaster.rasterize_open_polylines` (L233)
-- vop_interwoven/core/raster.py
-  - `ViewRaster.stamp_proxy_edge_idx` (L674)
+- `Bounds2D` — core/math_utils.py (L8)
+- `CellRect` — core/math_utils.py (L62)
+- `CellRectFootprint` — core/footprint.py (L3)
+- `Config` — config.py (L11)
+- `Diagnostics` — core/diagnostics.py (L10)
+- `ElementCache` — core/element_cache.py (L139)
+- `ElementFingerprint` — core/element_cache.py (L14)
+- `HullFootprint` — core/footprint.py (L15)
+- `LRUCache` — core/cache.py (L16)
+- `LinkedElementProxy` — revit/linked_documents.py (L32)
+- `Mode` — core/geometry.py (L11)
+- `OBB` — core/geometry.py (L172)
+- `PolicyStats` — revit/collection_policy.py (L23)
+- `RootStyleCache` — root_cache.py (L20)
+- `StreamingExporter` — streaming.py (L91)
+- `TileMap` — core/raster.py (L45)
+- `UV_AABB` — core/geometry.py (L117)
+- `ViewBasis` — revit/view_basis.py (L9)
+- `ViewRaster` — core/raster.py (L155)
+- `_append_csv_rows` — export/csv.py (L20)
+- `_apply_transform_xyz_tuple` — core/silhouette.py (L326)
+- `_bbox_corners_world` — core/silhouette.py (L485)
+- `_bbox_silhouette` — core/silhouette.py (L1583)
+- `_bin_elements_to_tiles` — pipeline.py (L1804)
+- `_bounds_to_tuple` — revit/view_basis.py (L554)
+- `_bresenham_line` — core/raster.py (L1239)
+- `_build_clip_volume` — revit/linked_documents.py (L754)
+- `_build_crop_prism_corners` — revit/linked_documents.py (L934)
+- `_cache_get` — core/silhouette.py (L338)
+- `_cache_set` — core/silhouette.py (L346)
+- `_cad_curves_silhouette` — core/silhouette.py (L1097)
+- `_cell_in_model_clip` — core/raster.py (L26)
+- `_cfg_hash` — pipeline.py (L161)
+- `_clip_poly_to_rect_uv` — core/raster.py (L1175)
+- `_coerce_view_id_int` — csv_export.py (L271)
+- `_collect_from_dwg_imports` — revit/linked_documents.py (L513)
+- `_collect_from_revit_links` — revit/linked_documents.py (L393)
+- `_collect_link_elements_with_clipping` — revit/linked_documents.py (L610)
+- `_collect_regions_recursive` — core/silhouette.py (L67)
+- `_collect_visible_link_elements_2024_plus` — revit/linked_documents.py (L186)
+- `_compose_transform` — core/silhouette.py (L54)
+- `_convex_hull_2d` — core/silhouette.py (L2140)
+- `_cropbox_fingerprint` — pipeline.py (L133)
+- `_determine_uv_mode` — core/silhouette.py (L620)
+- `_ensure_dir` — export/csv.py (L8)
+- `_exc_to_str` — core/diagnostics.py (L3)
+- `_extract_geometry_footprint_uv` — revit/collection.py (L737)
+- `_extract_source_type` — core/raster.py (L8)
+- `_extract_view_identity_for_csv` — pipeline.py (L269)
+- `_extract_view_summary` — pipeline.py (L1094)
+- `_family_region_outlines_cached` — core/silhouette.py (L368)
+- `_front_face_loops_silhouette` — core/silhouette.py (L1705)
+- `_get_ambiguous_tiles` — pipeline.py (L1870)
+- `_get_excluded_3d_category_ids` — revit/linked_documents.py (L1027)
+- `_get_host_visible_model_categories` — revit/linked_documents.py (L983)
+- `_get_plan_view_vertical_range` — revit/linked_documents.py (L875)
+- `_has_revit_2024_link_collector` — revit/linked_documents.py (L143)
+- `_is_from_cache` — csv_export.py (L17)
+- `_is_supported_2d_view` — pipeline.py (L1726)
+- `_iter_curve_primitives` — core/silhouette.py (L910)
+- `_iter_solids` — core/silhouette.py (L2100)
+- `_location_curve_obb_silhouette` — core/silhouette.py (L664)
+- `_log` — revit/linked_documents.py (L27)
+- `_mark_rect_center_cell` — pipeline.py (L1953)
+- `_mark_thin_band_along_long_axis` — pipeline.py (L1961)
+- `_maybe_resize_lru` — core/silhouette.py (L355)
+- `_merge_paths_by_endpoints` — core/silhouette.py (L1024)
+- `_mesh_vertex_count` — core/geometry.py (L23)
+- `_normalize_view_ids` — entry_dynamo.py (L280)
+- `_obb_silhouette` — core/silhouette.py (L1644)
+- `_order_points_by_connectivity` — core/silhouette.py (L2044)
+- `_pca_obb_uv` — revit/collection.py (L1001)
+- `_perf_ms` — pipeline.py (L116)
+- `_perf_now` — pipeline.py (L111)
+- `_pipeline_result_for_json` — entry_dynamo.py (L148)
+- `_project_element_bbox_to_cell_rect` — revit/collection.py (L624)
+- `_project_element_bbox_to_cell_rect_for_anno` — revit/annotation.py (L1083)
+- `_prune_view_raster_for_json` — entry_dynamo.py (L114)
+- `_render_areal_element` — pipeline.py (L1900)
+- `_render_proxy_element` — pipeline.py (L1915)
+- `_round6` — root_cache.py (L14)
+- `_safe_bool` — pipeline.py (L126)
+- `_safe_int` — pipeline.py (L119)
+- `_safe_int_id` — core/silhouette.py (L311)
+- `_sample_geom_object` — revit/tierb_proxy.py (L35)
+- `_silhouette_edges` — core/silhouette.py (L1865)
+- `_stamp_cell` — revit/annotation.py (L1035)
+- `_stamp_line_cells` — revit/annotation.py (L1062)
+- `_stamp_proxy_edges` — pipeline.py (L1940)
+- `_stamp_rect_outline` — revit/annotation.py (L1042)
+- `_symbolic_curves_silhouette` — core/silhouette.py (L708)
+- `_tile_has_depth_conflict` — pipeline.py (L1836)
+- `_tiles_fully_covered_and_nearer` — pipeline.py (L1773)
+- `_to_host_point` — core/silhouette.py (L1411)
+- `_transform_bbox_to_host` — revit/linked_documents.py (L1036)
+- `_try_get_category_id` — revit/collection_policy.py (L152)
+- `_try_import_bic` — revit/collection_policy.py (L147)
+- `_unwrap_elem` — core/silhouette.py (L1424)
+- `_uv_obb_rect_from_bbox` — core/silhouette.py (L591)
+- `_uv_obb_rect_silhouette` — core/silhouette.py (L1571)
+- `_uv_to_cell` — revit/annotation.py (L1026)
+- `_view_signature` — pipeline.py (L177)
+- `_view_type_name` — revit/view_basis.py (L900)
+- `_viewtype_name_from_value` — csv_export.py (L312)
+- `_xyz_tuple` — core/silhouette.py (L320)
+- `build_core_csv_row` — csv_export.py (L619)
+- `build_vop_csv_row` — csv_export.py (L672)
+- `cellrect_dims` — core/math_utils.py (L117)
+- `clamp` — core/math_utils.py (L185)
+- `classify_annotation` — revit/annotation.py (L599)
+- `classify_by_uv` — core/geometry.py (L79)
+- `classify_by_uv_pca` — core/geometry.py (L67)
+- `classify_keynote` — revit/annotation.py (L679)
+- `collect_2d_annotations` — revit/annotation.py (L362)
+- `collect_all_linked_elements` — revit/linked_documents.py (L97)
+- `collect_view_elements` — revit/collection.py (L62)
+- `compute_annotation_extents` — revit/annotation.py (L83)
+- `compute_annotation_type_metrics` — csv_export.py (L216)
+- `compute_cell_metrics` — csv_export.py (L106)
+- `compute_config_hash` — root_cache.py (L286)
+- `compute_external_cell_metrics` — csv_export.py (L37)
+- `compute_view_frame_hash` — csv_export.py (L597)
+- `convex_hull_uv` — core/hull.py (L1)
+- `estimate_depth_from_loops_or_bbox` — revit/collection.py (L522)
+- `estimate_depth_range_from_bbox` — revit/collection.py (L550)
+- `estimate_nearest_depth_from_bbox` — revit/collection.py (L454)
+- `excluded_bic_names_global` — revit/collection_policy.py (L144)
+- `expand_host_link_import_model_elements` — revit/collection.py (L292)
+- `export_pipeline_results_to_pngs` — png_export.py (L285)
+- `export_pipeline_to_csv` — csv_export.py (L747)
+- `export_raster_to_png` — png_export.py (L10)
+- `export_view_raster` — pipeline.py (L1981)
+- `extract_metrics_from_view_result` — root_cache.py (L310)
+- `extract_view_metadata` — csv_export.py (L367)
+- `filter_supported_views` — dynamo_helpers.py (L154)
+- `get_all_floor_plans` — dynamo_helpers.py (L101)
+- `get_all_sections` — dynamo_helpers.py (L129)
+- `get_all_views_in_model` — dynamo_helpers.py (L72)
+- `get_annotation_bbox` — revit/annotation.py (L731)
+- `get_core_csv_header` — csv_export.py (L1035)
+- `get_current_document` — entry_dynamo.py (L208)
+- `get_current_view` — entry_dynamo.py (L244)
+- `get_element_obb_loops` — revit/collection.py (L846)
+- `get_element_silhouette` — core/silhouette.py (L1436)
+- `get_perf_csv_header` — csv_export.py (L1057)
+- `get_test_config_areal_heavy` — entry_dynamo.py (L676)
+- `get_test_config_linear` — entry_dynamo.py (L660)
+- `get_test_config_tiny` — entry_dynamo.py (L644)
+- `get_views_from_input_or_current` — dynamo_helpers.py (L15)
+- `get_vop_csv_header` — csv_export.py (L1045)
+- `included_bic_names_for_source` — revit/collection_policy.py (L136)
+- `init_view_raster` — pipeline.py (L957)
+- `is_element_visible_in_view` — revit/collection.py (L264)
+- `is_extent_driver_annotation` — revit/annotation.py (L12)
+- `make_obb_or_skinny_aabb` — core/geometry.py (L267)
+- `make_source_identity` — core/source_identity.py (L23)
+- `make_uv_aabb` — core/geometry.py (L241)
+- `make_view_basis` — revit/view_basis.py (L133)
+- `mark_rect_center_cell` — core/geometry.py (L297)
+- `mark_thin_band_along_long_axis` — core/geometry.py (L320)
+- `pca_oriented_extents_uv` — core/pca2d.py (L3)
+- `point_in_rect` — core/math_utils.py (L190)
+- `process_document_views` — pipeline.py (L367)
+- `process_document_views_streaming` — streaming.py (L488)
+- `process_with_streaming` — streaming.py (L21)
+- `quick_test_current_view` — entry_dynamo.py (L693)
+- `rasterize_annotations` — revit/annotation.py (L762)
+- `rect_intersects_bounds` — core/math_utils.py (L161)
+- `render_model_front_to_back` — pipeline.py (L1139)
+- `resolve_annotation_only_bounds` — revit/view_basis.py (L1120)
+- `resolve_category_ids` — revit/collection_policy.py (L166)
+- `resolve_element_bbox` — revit/collection.py (L8)
+- `resolve_view_bounds` — revit/view_basis.py (L561)
+- `resolve_view_mode` — revit/view_basis.py (L1074)
+- `run_pipeline_from_dynamo_input` — dynamo_helpers.py (L226)
+- `run_vop_pipeline` — entry_dynamo.py (L333)
+- `run_vop_pipeline_json` — entry_dynamo.py (L610)
+- `run_vop_pipeline_memory_efficient` — entry_dynamo.py (L57)
+- `run_vop_pipeline_streaming` — streaming.py (L565)
+- `run_vop_pipeline_with_csv` — entry_dynamo.py (L458)
+- `run_vop_pipeline_with_png` — entry_dynamo.py (L381)
+- `safe_call` — revit/safe_api.py (L8)
+- `sample_element_uvw_points` — revit/tierb_proxy.py (L4)
+- `should_include_element` — revit/collection_policy.py (L189)
+- `sort_front_to_back` — revit/collection.py (L436)
+- `supports_crop_bounds` — revit/view_basis.py (L1041)
+- `supports_depth` — revit/view_basis.py (L1060)
+- `supports_model_geometry` — revit/view_basis.py (L1004)
+- `synthetic_bounds_from_visible_extents` — revit/view_basis.py (L312)
+- `tier_a_is_ambiguous` — core/geometry.py (L52)
+- `view_result_to_core_row` — csv_export.py (L1067)
+- `view_result_to_perf_row` — csv_export.py (L1468)
+- `view_result_to_vop_row` — csv_export.py (L1196)
+- `world_to_view` — revit/view_basis.py (L115)
+- `xy_bounds_effective` — revit/view_basis.py (L279)
+- `xy_bounds_from_crop_box_all_corners` — revit/view_basis.py (L212)
 
-**Callsites (approx)**
-- `_cell_in_model_clip`: vop_interwoven/core/raster.py
-- `rasterize_open_polylines`: vop_interwoven/pipeline.py, vop_interwoven/core/raster.py, vop_interwoven/core/silhouette.py
-- `stamp_proxy_edge_idx`: vop_interwoven/pipeline.py, vop_interwoven/core/raster.py
-- `try_write_cell`: vop_interwoven/pipeline.py, vop_interwoven/core/raster.py
+## High-signal callsite details (approx)
 
-## Bbox projection helpers
+### `run_vop_pipeline`
+- entry_dynamo.py:L420
+- entry_dynamo.py:L518
+- entry_dynamo.py:L630
+- entry_dynamo.py:L710
 
-**Definitions**
-- vop_interwoven/revit/collection.py
-  - `_project_element_bbox_to_cell_rect` (L624)
+### `run_vop_pipeline_with_png`
+- dynamo_helpers.py:L302
 
-**Callsites (approx)**
-- `_project_element_bbox_to_cell_rect`: vop_interwoven/pipeline.py, vop_interwoven/revit/annotation.py, vop_interwoven/revit/collection.py
+### `run_vop_pipeline_with_csv`
+- dynamo_helpers.py:L289
 
-## Streaming pipeline
+### `run_vop_pipeline_streaming`
+- thinrunner_streaming.py:L76
 
-**Definitions**
-- vop_interwoven/streaming.py
-  - `run_vop_pipeline_streaming` (L563)
+### `process_document_views`
+- entry_dynamo.py:L97
+- entry_dynamo.py:L365
+- streaming.py:L64
+- streaming.py:L507
+- streaming.py:L521
 
-**Callsites (approx)**
-- `run_vop_pipeline_streaming`: vop_interwoven/entry_dynamo.py, vop_interwoven/streaming.py, vop_interwoven/thinrunner_streaming.py
-- `_view_signature`: vop_interwoven/pipeline.py, vop_interwoven/streaming.py
+### `process_document_views_streaming`
+- streaming.py:L649
 
-## Trace map consistency notes
+### `render_model_front_to_back`
+- pipeline.py:L716
 
-- Trace map references `_normalize_views_input` in `vop_interwoven/dynamo_helpers.py`, but no such symbol exists in the current source set. (Likely renamed/removed.)
+### `init_view_raster`
+- pipeline.py:L696
 
-- Prior `_view_signature` import mismatch is resolved: `_view_signature` is a module-level def in `vop_interwoven/pipeline.py` and is imported by `vop_interwoven/streaming.py`.
+### `_view_signature`
+- pipeline.py:L629
+
+### `resolve_view_bounds`
+- pipeline.py:L1005
+
+### `resolve_annotation_only_bounds`
+- pipeline.py:L980
+
+### `rasterize_annotations`
+- pipeline.py:L733
+
+### `collect_view_elements`
+- pipeline.py:L710
+
+### `get_element_silhouette`
+- pipeline.py:L1279
