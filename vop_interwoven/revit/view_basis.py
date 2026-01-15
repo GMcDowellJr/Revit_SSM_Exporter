@@ -820,36 +820,54 @@ def resolve_view_bounds(view, diag=None, policy=None):
                 "cell_size_ft": float(cell_size_ft_requested),
             }
 
-            # HARD CAP: clip bounds to capped grid extents
-            new_width_ft = float(max_W) * cell_size_ft_requested
-            new_height_ft = float(max_H) * cell_size_ft_requested
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # FIX: ADAPTIVE CELL SIZE (not bounds clipping)
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-            base_bounds = Bounds2D(
-                base_bounds.xmin,
-                base_bounds.ymin,
-                base_bounds.xmin + new_width_ft,
-                base_bounds.ymin + new_height_ft,
+            # Calculate minimum cell size that fits bounds within cap
+            cell_size_w = width_ft / float(max_W)
+            cell_size_h = height_ft / float(max_H)
+            cell_size_ft_effective = max(
+                cell_size_w,
+                cell_size_h,
+                cell_size_ft_requested  # Never decrease below requested
             )
 
+            # Recalculate grid dimensions with adaptive cell size
+            W_adapt = max(1, int(math.ceil(width_ft / cell_size_ft_effective)))
+            H_adapt = max(1, int(math.ceil(height_ft / cell_size_ft_effective)))
+
+            # Apply final cap (should now be within limits, but defensive)
+            W_adapt = min(W_adapt, max_W)
+            H_adapt = min(H_adapt, max_H)
+
+            resolution_mode = "adaptive"
+
+            # CRITICAL: Bounds stay UNCHANGED
+            # The raster covers the full visible area at lower resolution
+            # No geometry is lost outside the raster bounds
+
             cap_after = {
-                "W": int(max_W),
-                "H": int(max_H),
-                "bounds_uv": _bounds_to_tuple(base_bounds),
-                "cell_size_ft": float(cell_size_ft_requested),
+                "W": int(W_adapt),
+                "H": int(H_adapt),
+                "bounds_uv": _bounds_to_tuple(base_bounds),  # UNCHANGED
+                "cell_size_ft": float(cell_size_ft_effective),
             }
 
             if diag is not None:
                 try:
                     diag.warn(
                         phase="bounds",
-                        callsite="resolve_view_bounds.cap",
-                        message="Grid size exceeds maximum; bounds clipped to cap",
+                        callsite="resolve_view_bounds.adaptive_resolution",
+                        message="Grid size exceeds maximum; using adaptive cell size (bounds preserved)",
                         view_id=view_id,
                         extra={
                             "before": cap_before,
                             "after": cap_after,
                             "max_W": max_W,
                             "max_H": max_H,
+                            "resolution_mode": resolution_mode,
+                            "cell_size_increase_factor": float(cell_size_ft_effective / cell_size_ft_requested),
                         },
                     )
                 except Exception:
@@ -891,7 +909,7 @@ def resolve_view_bounds(view, diag=None, policy=None):
         "cell_size_ft_effective": float(cell_size_ft_effective),
 
         # Back-compat: preserve existing key name, but keep it as requested (not effective).
-        "cell_size_ft": float(cell_size_ft_requested),
+        "cell_size_ft": float(cell_size_ft_effective),
 
         "bounds_budget": bounds_budget,
     }

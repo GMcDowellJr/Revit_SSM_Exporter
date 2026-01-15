@@ -391,6 +391,18 @@ class ViewRaster:
         self.depth_test_wins = 0
         self.depth_test_rejects = 0
 
+    def _is_valid_cell(self, i, j):
+        """Check if cell coordinates are within raster bounds.
+
+        Args:
+            i: Cell column index
+            j: Cell row index
+
+        Returns:
+            True if cell is within bounds, False otherwise
+        """
+        return 0 <= i < self.W and 0 <= j < self.H
+
     @property
     def width(self):
         """Raster width in cells (alias for W)."""
@@ -499,6 +511,10 @@ class ViewRaster:
         Returns:
             True if depth won and cell was updated, False otherwise
         """
+        # CRITICAL: Bounds check prevents out-of-bounds writes
+        if not self._is_valid_cell(i, j):
+            return False
+
         idx = self.get_cell_index(i, j)
         if idx is None:
             return False
@@ -907,6 +923,8 @@ class ViewRaster:
                 i_end = intersections[k + 1] if k + 1 < len(intersections) else intersections[k]
 
                 for i in range(i_start, i_end + 1):
+                    if not self._is_valid_cell(i, j):
+                        continue
                     # Use try_write_cell for depth-tested occlusion
                     # Interior fills space and blocks visibility via per-source occupancy
                     if self.try_write_cell(i, j, w_depth=depth, source=source):
