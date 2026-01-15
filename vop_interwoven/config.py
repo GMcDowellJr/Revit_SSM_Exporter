@@ -32,6 +32,7 @@ class Config:
         bounds_buffer_in (float): Buffer around bounds in inches (default: 0.5)
         include_linked_rvt (bool): Include elements from linked RVT files (default: True)
         include_dwg_imports (bool): Include elements from DWG/DXF imports (default: True)
+        linear_band_thickness_cells (float): Band width for detail/drafting lines in cells (default: 1.0)
 
     Commentary:
         ✔ overModelIncludesProxies controls whether tiny/linear proxies count as "model presence"
@@ -71,6 +72,8 @@ class Config:
         bounds_buffer_in=0.0,
         include_linked_rvt=True,
         include_dwg_imports=True,
+        # Detail line rendering (archive parity)
+        linear_band_thickness_cells=1.0,
         # Debug and diagnostics
         debug_dump_occlusion=False,
         debug_dump_path=r"C:\temp\vop_output",
@@ -151,6 +154,7 @@ class Config:
             bounds_buffer_in: Buffer around bounds in inches (default: 0.5)
             include_linked_rvt: Include elements from linked RVT files (default: True)
             include_dwg_imports: Include elements from DWG/DXF imports (default: True)
+            linear_band_thickness_cells: Band width for detail lines in cells (default: 1.0)
         """
         self.tile_size = int(tile_size)
         self.adaptive_tile_size = bool(adaptive_tile_size)
@@ -165,6 +169,12 @@ class Config:
         self.bounds_buffer_in = float(bounds_buffer_in)
         self.include_linked_rvt = bool(include_linked_rvt)
         self.include_dwg_imports = bool(include_dwg_imports)
+
+        # Detail line rendering (archive parity)
+        # Archive reference: archive/refactor1 used "linear_band_thickness_cells"
+        # Width of oriented bands for detail/drafting lines, in cell units.
+        # Default: 1.0 creates 2-cell-wide bands (±0.5 cells from centerline)
+        self.linear_band_thickness_cells = float(linear_band_thickness_cells)
 
         # PR11: collector knobs
         self.enable_multicategory_filter = bool(enable_multicategory_filter)
@@ -238,6 +248,8 @@ class Config:
             raise ValueError("max_sheet dimensions must be positive")
         if self.bounds_buffer_in < 0:
             raise ValueError("bounds_buffer_in must be non-negative")
+        if self.linear_band_thickness_cells < 0:
+            raise ValueError("linear_band_thickness_cells must be non-negative")
 
         # PR11 validation (explicit semantics; None means "no budget")
         if self.coarse_spatial_filter_pad_ft < 0:
@@ -445,6 +457,8 @@ class Config:
             "bounds_buffer_in": self.bounds_buffer_in,
             "include_linked_rvt": self.include_linked_rvt,
             "include_dwg_imports": self.include_dwg_imports,
+            # Detail line rendering
+            "linear_band_thickness_cells": self.linear_band_thickness_cells,
             # PR11 knobs
             "enable_multicategory_filter": self.enable_multicategory_filter,
             "coarse_spatial_filter_enabled": self.coarse_spatial_filter_enabled,
@@ -490,6 +504,8 @@ class Config:
             bounds_buffer_in=d.get("bounds_buffer_in", 0.5),
             include_linked_rvt=d.get("include_linked_rvt", True),
             include_dwg_imports=d.get("include_dwg_imports", True),
+            # Detail line rendering
+            linear_band_thickness_cells=d.get("linear_band_thickness_cells", 1.0),
             # PR11 knobs
             enable_multicategory_filter=d.get("enable_multicategory_filter", True),
             coarse_spatial_filter_enabled=d.get("coarse_spatial_filter_enabled", False),
