@@ -1516,9 +1516,11 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     continue
 
                 # Stage 3: conservative stamping
-                # PR8 semantics:
-                #   - ONLY AREAL elements contribute to occlusion (w_occ)
-                #   - TINY/LINEAR never write occlusion here
+                # PR8 occlusion contract:
+                #   - ONLY AREAL elements contribute to occlusion depth buffer (w_occ)
+                #   - TINY/LINEAR: skip conservative stamping entirely
+                #     * Will be rendered via silhouette extraction or fallback
+                #     * Prevents double-rendering and ghost pixels
                 if elem_class == "AREAL":
                     depth_by_cell = None
                     if uvw_pts:
@@ -1534,6 +1536,12 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     for (i, j) in footprint.cells():
                         w_depth = depth_by_cell.get((i, j), elem_min_w) if depth_by_cell else elem_min_w
                         raster.try_write_cell(i, j, w_depth=w_depth, source=source_type, key_index=key_index)
+
+                # Note: TINY/LINEAR elements intentionally NOT stamped here
+                # They will be rendered via:
+                #   1. Silhouette extraction (preferred)
+                #   2. OBB fallback (if silhouette fails)
+                #   3. AABB fallback (if OBB fails)
 
         except Exception as e:
             # Must be observable, and must remain conservative (do not skip element).
@@ -1608,29 +1616,47 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                         pass
 
                 # Second: rasterize open polylines (edges)
+                open_polyline_success = False
                 if open_loops:
                     try:
                         filled += raster.rasterize_open_polylines(
                             open_loops, key_index, depth=elem_depth, source=source_type
                         )
+                        # CRITICAL: Open polylines succeed even if filled=0
+                        # (Bresenham draws edges, doesn't "fill" cells like closed loops)
+                        if len(open_loops) > 0:
+                            open_polyline_success = True
                     except Exception:
                         pass
 
-                if filled > 0:
+                # Check for any successful rendering (filled cells OR open polylines drawn)
+                if filled > 0 or open_polyline_success:
                     # Tag element metadata with strategy used
                     if key_index < len(raster.element_meta):
                         raster.element_meta[key_index]['strategy'] = strategy
+                        if open_polyline_success and filled == 0:
+                            raster.element_meta[key_index]['open_polyline_only'] = True
 
                     silhouette_success += 1
                     processed += 1
                     continue
                 else:
                     if processed < 10:
-                        print("[DEBUG] Element {} loops exist but filled=0, falling through to bbox".format(elem_id))
+                        print("[DEBUG] Element {} loops exist but no successful rendering, falling through to bbox".format(elem_id))
 
             except Exception as e:
                 # Rasterization failed, fall through to bbox fallback
                 pass
+
+        # CRITICAL: Check if silhouette rendering already succeeded
+        # This section is ONLY for elements that failed silhouette extraction
+        # (most successful cases already hit 'continue' above, this is defensive)
+        if key_index < len(raster.element_meta):
+            strategy_used = raster.element_meta[key_index].get('strategy')
+            if strategy_used and strategy_used != 'unknown':
+                # Element already successfully rendered via silhouette
+                processed += 1
+                continue
 
         # Fallback: Use OBB polygon (oriented bounds, not axis-aligned rect)
         obb_success = False
