@@ -717,10 +717,13 @@ def _symbolic_curves_silhouette(elem, view, view_basis, cfg=None, diag=None):
         opts.IncludeNonVisibleObjects = False
 
         # View-specific geometry (symbolic lines) often requires Options.View
-        try:
-            opts.View = view
-        except Exception:
-            pass
+        # CRITICAL: Never set opts.View for linked elements - causes geometry extraction failure
+        if not hasattr(elem, 'transform'):  # Host element only
+            try:
+                opts.View = view
+            except Exception:
+                pass
+        # For linked elements: leave opts.View = None (extract in link coordinates)
 
         try:
             opts.DetailLevel = ViewDetailLevel.Fine
