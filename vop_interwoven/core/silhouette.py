@@ -745,6 +745,17 @@ def _detail_line_band_silhouette(elem, view, view_basis, cfg=None, diag=None):
         cat = getattr(elem, 'Category', None)
         cat_name = cat.Name if cat else ""
 
+        # DEBUG: Log category names for LINEAR elements (first 10)
+        if not hasattr(_detail_line_band_silhouette, '_debug_count'):
+            _detail_line_band_silhouette._debug_count = 0
+        if _detail_line_band_silhouette._debug_count < 10:
+            try:
+                elem_id = getattr(getattr(elem, 'Id', None), 'IntegerValue', 'unknown')
+                print("[DEBUG detail_line_band] Elem {}: category='{}'".format(elem_id, cat_name))
+                _detail_line_band_silhouette._debug_count += 1
+            except Exception:
+                pass
+
         # Archive used: cat_name in ("Lines", "Detail Lines")
         if cat_name not in ("Lines", "Detail Lines"):
             return []  # Not a detail line - try other strategies
@@ -813,6 +824,20 @@ def _detail_line_band_silhouette(elem, view, view_basis, cfg=None, diag=None):
             "is_hole": False,
             "strategy": "detail_line_band"
         }
+
+        # DEBUG: Log successful band creation (first 5)
+        if not hasattr(_detail_line_band_silhouette, '_success_count'):
+            _detail_line_band_silhouette._success_count = 0
+        if _detail_line_band_silhouette._success_count < 5:
+            try:
+                elem_id = getattr(getattr(elem, 'Id', None), 'IntegerValue', 'unknown')
+                print("[DEBUG detail_line_band] SUCCESS elem {}: band created, {} points, length={:.1f} cells".format(
+                    elem_id, len(band_loop['points']), length))
+                print("  UV endpoints: ({:.1f},{:.1f}) → ({:.1f},{:.1f})".format(x0, y0, x1, y1))
+                print("  Band width: {:.2f} cells (half={:.2f})".format(band_cells, band_half_cells))
+                _detail_line_band_silhouette._success_count += 1
+            except Exception:
+                pass
 
         # CRITICAL: Do NOT set "open": True
         # This is a CLOSED loop that should be filled, not a Bresenham edge

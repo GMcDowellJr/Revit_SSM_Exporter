@@ -1480,6 +1480,25 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     raster.element_meta[key_index]["class"] = elem_class
                     raster.element_meta[key_index]["occluder"] = (elem_class == "AREAL")
 
+                elem_class = _classify_uv_rect(width_cells, height_cells)
+                if key_index < len(raster.element_meta):
+                    raster.element_meta[key_index]["class"] = elem_class
+                    raster.element_meta[key_index]["occluder"] = (elem_class == "AREAL")
+
+                # DEBUG: Log classification for diagonal-looking elements (first 10)
+                if not hasattr(render_model_front_to_back, '_classify_debug_count'):
+                    render_model_front_to_back._classify_debug_count = 0
+                if render_model_front_to_back._classify_debug_count < 10:
+                    # Diagonal elements likely have similar width/height
+                    ratio = max(width_cells, height_cells) / max(min(width_cells, height_cells), 0.001)
+                    if 5 < ratio < 50:  # Likely LINEAR diagonal
+                        try:
+                            print("[DEBUG classify] Elem {}: {}x{} cells → class={}, category='{}'".format(
+                                elem_id, width_cells, height_cells, elem_class, category))
+                            render_model_front_to_back._classify_debug_count += 1
+                        except Exception:
+                            pass
+            
                 aabb_area_cells = width_cells * height_cells
                 grid_area = raster.W * raster.H
 
@@ -1640,6 +1659,30 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     silhouette_success += 1
                     processed += 1
                     continue
+                    
+                    # Check for any successful rendering (filled cells OR open polylines drawn)
+                    if filled > 0 or open_polyline_success:
+                        # Tag element metadata with strategy used
+                        if key_index < len(raster.element_meta):
+                            raster.element_meta[key_index]['strategy'] = strategy
+                            if open_polyline_success and filled == 0:
+                                raster.element_meta[key_index]['open_polyline_only'] = True
+                        
+                        # DEBUG: Log successful silhouette renders (first 10 detail_line_band)
+                        if not hasattr(render_model_front_to_back, '_silh_debug_count'):
+                            render_model_front_to_back._silh_debug_count = 0
+                        if strategy == 'detail_line_band' and render_model_front_to_back._silh_debug_count < 10:
+                            try:
+                                print("[DEBUG silhouette] Elem {}: strategy='{}', filled={}, open_polyline={}".format(
+                                    elem_id, strategy, filled, open_polyline_success))
+                                render_model_front_to_back._silh_debug_count += 1
+                            except Exception:
+                                pass
+
+                        silhouette_success += 1
+                        processed += 1
+                        continue
+    
                 else:
                     if processed < 10:
                         print("[DEBUG] Element {} loops exist but no successful rendering, falling through to bbox".format(elem_id))
