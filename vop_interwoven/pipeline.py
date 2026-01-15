@@ -108,6 +108,90 @@ from .revit.collection import (
 from .revit.annotation import rasterize_annotations
 from .revit.safe_api import safe_call
 
+
+def _diagnose_link_geometry_transform(elem, link_trf, basis, stage_name):
+    """Trace where transforms are applied to link geometry.
+
+    Call this at different stages of geometry processing to see
+    if transforms are being applied correctly and consistently.
+    """
+    try:
+        elem_id = getattr(elem, 'Id', None)
+        if elem_id:
+            elem_id = elem_id.IntegerValue
+        else:
+            elem_id = "?"
+    except:
+        elem_id = "?"
+
+    print("\n" + "="*80)
+    print("LINK GEOM TRANSFORM - Stage: {} - Element: {}".format(stage_name, elem_id))
+    print("="*80)
+
+    # Get first geometry vertex/point to trace coordinate space
+    try:
+        from Autodesk.Revit.DB import Options
+        opts = Options()
+        opts.ComputeReferences = False
+        opts.DetailLevel = 0
+
+        geom = elem.get_Geometry(opts)
+        if not geom:
+            print("No geometry available")
+            return
+
+        sample_pt = None
+        for item in geom:
+            # Try vertices
+            if hasattr(item, 'Vertices') and item.Vertices.Size > 0:
+                sample_pt = item.Vertices[0]
+                break
+            # Try curve endpoints
+            if hasattr(item, 'GetEndPoint'):
+                sample_pt = item.GetEndPoint(0)
+                break
+            # Try tessellated geometry
+            if hasattr(item, 'GetTriangles'):
+                tri = item.GetTriangles()
+                if tri and tri.Count > 0:
+                    sample_pt = tri[0].get_Vertex(0)
+                    break
+
+        if sample_pt is None:
+            print("No sample point found in geometry")
+            return
+
+        print("Sample point (raw from get_Geometry): ({:.3f}, {:.3f}, {:.3f})".format(
+            sample_pt.X, sample_pt.Y, sample_pt.Z))
+
+        if link_trf:
+            transformed = link_trf.OfPoint(sample_pt)
+            print("After link transform: ({:.3f}, {:.3f}, {:.3f})".format(
+                transformed.X, transformed.Y, transformed.Z))
+
+            if basis:
+                uv = basis.transform_to_view_uv((transformed.X, transformed.Y, transformed.Z))
+                print("After view basis transform (UV): ({:.3f}, {:.3f})".format(uv[0], uv[1]))
+
+        # Also check bbox to see if it matches
+        bbox_link = elem.get_BoundingBox(None)
+        if bbox_link:
+            print("BBox Min (link space): ({:.3f}, {:.3f}, {:.3f})".format(
+                bbox_link.Min.X, bbox_link.Min.Y, bbox_link.Min.Z))
+
+            if link_trf:
+                bbox_host_min = link_trf.OfPoint(bbox_link.Min)
+                print("BBox Min (after transform): ({:.3f}, {:.3f}, {:.3f})".format(
+                    bbox_host_min.X, bbox_host_min.Y, bbox_host_min.Z))
+
+    except Exception as e:
+        print("ERROR in diagnostic: {}".format(e))
+        import traceback
+        traceback.print_exc()
+
+    print("="*80 + "\n")
+
+
 def _perf_now():
     # perf_counter is monotonic and high-resolution where available.
     return time.perf_counter()
@@ -1256,6 +1340,13 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
         if source_type not in ("HOST", "LINK", "DWG"):
             raise ValueError("Invalid source_type from wrapper: {0} (source_id={1})".format(source_type, source_id))
 
+        # DIAGNOSTIC: Stage 1 - Right after extracting wrapper data
+        if source_type == "LINK" and processed < 3:  # Only first 3 LINK elements
+            try:
+                _diagnose_link_geometry_transform(elem, world_transform, vb, "STAGE1_WRAPPER_EXTRACTED")
+            except Exception as diag_e:
+                print("[DEBUG] Diagnostic failed at stage 1: {}".format(diag_e))
+
         # CRITICAL FIX: Extract silhouette FIRST to get accurate geometry
         # (depth calculation moved AFTER silhouette extraction)
         loops = None
@@ -1275,6 +1366,13 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     getattr(cfg, "proxy_mask_mode", None),
                     "silhouette_v1",
                 )
+
+            # DIAGNOSTIC: Stage 2 - Right before calling get_element_silhouette
+            if source_type == "LINK" and processed < 3:  # Only first 3 LINK elements
+                try:
+                    _diagnose_link_geometry_transform(elem, world_transform, vb, "STAGE2_BEFORE_SILHOUETTE")
+                except Exception as diag_e:
+                    print("[DEBUG] Diagnostic failed at stage 2: {}".format(diag_e))
 
             loops = get_element_silhouette(elem, view, vb, raster, cfg, cache=geometry_cache, cache_key=cache_key, diag=diag)
         except Exception as e:
@@ -1450,6 +1548,19 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
 
         # Rasterize silhouette loops if we have them
         if loops:
+            # DIAGNOSTIC: Stage 3 - Right before rasterization
+            if source_type == "LINK" and processed < 3:  # Only first 3 LINK elements
+                try:
+                    _diagnose_link_geometry_transform(elem, world_transform, vb, "STAGE3_BEFORE_RASTER")
+                    # Also print first few loop points to see if they're in correct space
+                    if loops and len(loops) > 0:
+                        first_loop = loops[0]
+                        pts = first_loop.get('points', [])
+                        if pts and len(pts) > 0:
+                            print("First loop point (UV): ({:.3f}, {:.3f})".format(pts[0][0], pts[0][1]))
+                except Exception as diag_e:
+                    print("[DEBUG] Diagnostic failed at stage 3: {}".format(diag_e))
+
             try:
                 # Get strategy used from first loop
                 strategy = loops[0].get('strategy', 'unknown')
