@@ -1506,9 +1506,10 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
             if uv_mode == 'TINY':
                 strategies = ['symbolic_curves', 'bbox', 'obb']
             elif uv_mode == 'LINEAR':
-                # If symbolic curves are missing/empty for this family, still try a real edge-based
-                # silhouette before we degrade to rectangle proxies.
-                strategies = ['symbolic_curves', 'silhouette_edges', 'uv_obb_rect', 'bbox']
+                # Prefer symbolic curves first, then open curve extraction (routes to Bresenham),
+                # to avoid diagonal curve-like elements degrading to rectangle proxies.
+                # Safe: _cad_curves_silhouette returns [] when not applicable.
+                strategies = ['symbolic_curves', 'cad_curves', 'silhouette_edges', 'uv_obb_rect', 'bbox']
             else:
                 strategies = ['symbolic_curves', 'silhouette_edges', 'obb', 'bbox']
 

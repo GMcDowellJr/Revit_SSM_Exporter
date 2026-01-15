@@ -5,6 +5,8 @@ Provides functions to collect visible elements in a view and check
 element visibility according to Revit view settings.
 """
 
+import math
+
 def resolve_element_bbox(elem, view=None, diag=None, context=None):
     """Resolve an element bounding box with explicit source semantics.
 
@@ -661,7 +663,7 @@ def _project_element_bbox_to_cell_rect(elem, vb, raster, bbox=None, diag=None, v
     if bbox is None:
         return None
 
-    # Get all 8 corners of 3D bounding box
+    # Get all 8 corners of 3D bounding box (bbox-local coordinates)
     min_x, min_y, min_z = bbox.Min.X, bbox.Min.Y, bbox.Min.Z
     max_x, max_y, max_z = bbox.Max.X, bbox.Max.Y, bbox.Max.Z
 
@@ -671,6 +673,20 @@ def _project_element_bbox_to_cell_rect(elem, vb, raster, bbox=None, diag=None, v
         (max_x, min_y, min_z), (max_x, min_y, max_z),
         (max_x, max_y, min_z), (max_x, max_y, max_z),
     ]
+
+    # CRITICAL: BoundingBoxXYZ.Min/Max are in bbox-local space.
+    # BoundingBoxXYZ.Transform maps local→world coordinates.
+    # This must be applied BEFORE link transform.
+    trf = getattr(bbox, "Transform", None)
+    if trf is not None:
+        try:
+            from Autodesk.Revit.DB import XYZ
+            xyzs = [XYZ(c[0], c[1], c[2]) for c in corners]
+            corners_w = [trf.OfPoint(p) for p in xyzs]
+            corners = [(p.X, p.Y, p.Z) for p in corners_w]
+        except Exception:
+            # Best-effort: keep tuple corners if Transform application fails
+            pass
 
     # PR12: if bbox is link-space, transform corners into host/world before projecting.
     if bbox_is_link_space:
@@ -719,11 +735,13 @@ def _project_element_bbox_to_cell_rect(elem, vb, raster, bbox=None, diag=None, v
         v_min = min(pt[1] for pt in obb_rect)
         v_max = max(pt[1] for pt in obb_rect)
 
-    # Convert to cell indices
-    i_min = int((u_min - raster.bounds.xmin) / raster.cell_size)
-    i_max = int((u_max - raster.bounds.xmin) / raster.cell_size)
-    j_min = int((v_min - raster.bounds.ymin) / raster.cell_size)
-    j_max = int((v_max - raster.bounds.ymin) / raster.cell_size)
+    # Convert to cell indices (inclusive bounds).
+    # Use floor/ceil to avoid truncation bias (especially for negative coords).
+    # int() truncates toward zero: int(-0.9) = 0, but floor(-0.9) = -1
+    i_min = int(math.floor((u_min - raster.bounds.xmin) / raster.cell_size))
+    i_max = int(math.ceil((u_max - raster.bounds.xmin) / raster.cell_size)) - 1
+    j_min = int(math.floor((v_min - raster.bounds.ymin) / raster.cell_size))
+    j_max = int(math.ceil((v_max - raster.bounds.ymin) / raster.cell_size)) - 1
 
     # Clamp to raster bounds
     i_min = max(0, min(i_min, raster.W - 1))
@@ -731,7 +749,22 @@ def _project_element_bbox_to_cell_rect(elem, vb, raster, bbox=None, diag=None, v
     j_min = max(0, min(j_min, raster.H - 1))
     j_max = max(0, min(j_max, raster.H - 1))
 
-    return CellRect(i_min, j_min, i_max, j_max)
+    rect = CellRect(i_min, j_min, i_max, j_max)
+
+    # Store OBB data for LINEAR proxy reconstruction (avoid recomputing PCA).
+    # _pca_obb_uv() already computed this; pass it through to geometry.py.
+    if obb_rect and len(obb_rect) >= 4:
+        rect.obb_data = {
+            'obb_corners': obb_rect,     # 4 corners of fitted OBB in UV space
+            'uv_corners': points_uv,     # Original 8 bbox corners in UV (for diagnostics)
+            'len_u': len_u,              # OBB dimensions
+            'len_v': len_v,
+            'angle_deg': angle_deg       # Rotation angle (for diagnostics)
+        }
+    else:
+        rect.obb_data = None
+
+    return rect
 
 
 def _extract_geometry_footprint_uv(elem, vb):
