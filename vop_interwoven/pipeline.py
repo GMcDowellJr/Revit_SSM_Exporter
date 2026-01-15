@@ -1777,16 +1777,24 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                             if raster.try_write_cell(i, j, w_depth=elem_depth, source=source_type, key_index=key_index):
                                 filled_count += 1
 
-                        # Always attempt proxy-ink edges on boundary (visibility > nothing)
-                        is_boundary = (
-                            i == rect.i_min or i == rect.i_max or
-                            j == rect.j_min or j == rect.j_max
-                        )
+                        # Check if element already rendered successfully via silhouette
+                        strategy_used = None
+                        if key_index < len(raster.element_meta):
+                            strategy_used = raster.element_meta[key_index].get('strategy')
 
-                        if is_boundary:
-                            idx = raster.get_cell_index(i, j)
-                            if idx is not None:
-                                raster.stamp_proxy_edge_idx(idx, key_index, depth=elem_depth)
+                        # Only stamp proxy edges if no successful silhouette exists
+                        # (Prevents double-rendering: silhouette geometry + bbox edges)
+                        if not strategy_used or strategy_used == 'unknown' or 'fallback' in str(strategy_used):
+                            # No silhouette or fallback path - stamp proxy edges
+                            is_boundary = (
+                                i == rect.i_min or i == rect.i_max or
+                                j == rect.j_min or j == rect.j_max
+                            )
+
+                            if is_boundary:
+                                idx = raster.get_cell_index(i, j)
+                                if idx is not None:
+                                    raster.stamp_proxy_edge_idx(idx, key_index, depth=elem_depth)
 
                     # Tag element metadata with axis-aligned fallback strategy
                     if key_index < len(raster.element_meta):

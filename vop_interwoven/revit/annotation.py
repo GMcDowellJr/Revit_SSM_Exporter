@@ -943,6 +943,12 @@ def rasterize_annotations(doc, view, raster, cfg, diag=None):
                 x1 = min(raster.W, cell_rect.x1)
                 y1 = min(raster.H, cell_rect.y1)
 
+                # Skip if bbox is huge (prevents floaters from bad bboxes)
+                bbox_width = x1 - x0
+                bbox_height = y1 - y0
+                if bbox_width > raster.W * 2 or bbox_height > raster.H * 2:
+                    continue
+
                 for cy in range(y0, y1):
                     row = cy * raster.W
                     for cx in range(x0, x1):
@@ -1029,6 +1035,12 @@ def rasterize_annotations(doc, view, raster, cfg, diag=None):
                 y0 = max(0, cell_rect.y0)
                 x1 = min(raster.W, cell_rect.x1)
                 y1 = min(raster.H, cell_rect.y1)
+
+                # Skip if bbox is huge (prevents floaters from bad bboxes)
+                bbox_width = x1 - x0
+                bbox_height = y1 - y0
+                if bbox_width > raster.W * 2 or bbox_height > raster.H * 2:
+                    continue
 
                 for cy in range(y0, y1):
                     row = cy * raster.W
