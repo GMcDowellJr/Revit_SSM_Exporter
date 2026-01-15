@@ -1140,7 +1140,12 @@ def init_view_raster(doc, view, cfg, diag=None):
     raster = ViewRaster(
         width=W, height=H, cell_size=cell_size_ft_effective, bounds=bounds_xy, tile_size=tile_size, cfg=cfg
     )
-    
+
+    # Log raster bounds for floater diagnostics
+    print("[RASTER] Grid: {}x{}, Cell: {:.3f}ft, UV bounds: ({:.1f},{:.1f}) to ({:.1f},{:.1f})".format(
+        W, H, cell_size_ft_effective,
+        bounds_xy.xmin, bounds_xy.ymin, bounds_xy.xmax, bounds_xy.ymax))
+
     # If raster bounds were expanded for annotations, preserve the pre-annotation bounds
     # as a model-only clip region. Model writes consult this; annotation writes do not.
     try:

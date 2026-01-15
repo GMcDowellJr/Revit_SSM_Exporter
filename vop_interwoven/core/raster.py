@@ -513,6 +513,15 @@ class ViewRaster:
         """
         # CRITICAL: Bounds check prevents out-of-bounds writes
         if not self._is_valid_cell(i, j):
+            # Log first 10 out-of-bounds attempts
+            if not hasattr(self, '_oob_count'):
+                self._oob_count = 0
+
+            if self._oob_count < 10:
+                print("[FLOATER] Out-of-bounds: cell ({}, {}) outside raster ({}x{}) source={}".format(
+                    i, j, self.W, self.H, source))
+                self._oob_count += 1
+
             return False
 
         idx = self.get_cell_index(i, j)
