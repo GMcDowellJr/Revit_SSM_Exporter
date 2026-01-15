@@ -763,6 +763,9 @@ def _extract_geometry_footprint_uv(elem, vb):
         if not geom:
             return None
 
+        # Extract link transform for LinkedElementProxy
+        link_transform = getattr(elem, 'transform', None)
+
         # Collect all vertices from solid geometry
         points_uv = []
 
@@ -799,6 +802,10 @@ def _extract_geometry_footprint_uv(elem, vb):
                                                     # Apply instance transform if present
                                                     if transform:
                                                         pt = transform.OfPoint(pt)
+
+                                                    # CRITICAL: Apply link transform for LinkedElementProxy
+                                                    if link_transform:
+                                                        pt = link_transform.OfPoint(pt)
 
                                                     # Project to UV
                                                     uvw = world_to_view((pt.X, pt.Y, pt.Z), vb)
