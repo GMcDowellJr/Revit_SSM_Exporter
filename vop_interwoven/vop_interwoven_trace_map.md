@@ -6,7 +6,7 @@ Notes:
 - This is a name-based approximation (AST call names), not a precise runtime call graph.
 - It is still useful for stage ownership and narrowing which files to inspect next.
 
-## Trace: `run_vop_pipeline` (entry_dynamo.py:L333)
+## Trace: `run_vop_pipeline` (entry_dynamo.py:L276)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -187,7 +187,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `run_vop_pipeline_with_png` (entry_dynamo.py:L381)
+## Trace: `run_vop_pipeline_with_png` (entry_dynamo.py:L324)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -368,7 +368,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `run_vop_pipeline_with_csv` (entry_dynamo.py:L458)
+## Trace: `run_vop_pipeline_with_csv` (entry_dynamo.py:L401)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1999,7 +1999,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `resolve_annotation_only_bounds` (revit/view_basis.py:L1138)
+## Trace: `resolve_annotation_only_bounds` (revit/view_basis.py:L1144)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py

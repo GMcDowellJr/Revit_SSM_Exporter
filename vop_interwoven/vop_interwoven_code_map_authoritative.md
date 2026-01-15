@@ -296,20 +296,19 @@
 - `time`
 
 **Definitions**
-- `run_vop_pipeline_memory_efficient` (function, L57)
-- `_prune_view_raster_for_json` (function, L114)
-- `_pipeline_result_for_json` (function, L148)
-- `get_current_document` (function, L208)
-- `get_current_view` (function, L244)
-- `_normalize_view_ids` (function, L280)
-- `run_vop_pipeline` (function, L333)
-- `run_vop_pipeline_with_png` (function, L381)
-- `run_vop_pipeline_with_csv` (function, L458)
-- `run_vop_pipeline_json` (function, L610)
-- `get_test_config_tiny` (function, L644)
-- `get_test_config_linear` (function, L660)
-- `get_test_config_areal_heavy` (function, L676)
-- `quick_test_current_view` (function, L693)
+- `_prune_view_raster_for_json` (function, L57)
+- `_pipeline_result_for_json` (function, L91)
+- `get_current_document` (function, L151)
+- `get_current_view` (function, L187)
+- `_normalize_view_ids` (function, L223)
+- `run_vop_pipeline` (function, L276)
+- `run_vop_pipeline_with_png` (function, L324)
+- `run_vop_pipeline_with_csv` (function, L401)
+- `run_vop_pipeline_json` (function, L553)
+- `get_test_config_tiny` (function, L587)
+- `get_test_config_linear` (function, L603)
+- `get_test_config_areal_heavy` (function, L619)
+- `quick_test_current_view` (function, L636)
 
 ### `export/csv.py`
 
@@ -482,12 +481,12 @@
 - `synthetic_bounds_from_visible_extents` (function, L312)
 - `_bounds_to_tuple` (function, L554)
 - `resolve_view_bounds` (function, L561)
-- `_view_type_name` (function, L918)
-- `supports_model_geometry` (function, L1022)
-- `supports_crop_bounds` (function, L1059)
-- `supports_depth` (function, L1078)
-- `resolve_view_mode` (function, L1092)
-- `resolve_annotation_only_bounds` (function, L1138)
+- `_view_type_name` (function, L924)
+- `supports_model_geometry` (function, L1028)
+- `supports_crop_bounds` (function, L1065)
+- `supports_depth` (function, L1084)
+- `resolve_view_mode` (function, L1098)
+- `resolve_annotation_only_bounds` (function, L1144)
 
 ### `root_cache.py`
 
