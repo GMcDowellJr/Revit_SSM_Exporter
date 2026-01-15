@@ -943,14 +943,91 @@ def rasterize_annotations(doc, view, raster, cfg, diag=None):
                 x1 = min(raster.W, cell_rect.x1)
                 y1 = min(raster.H, cell_rect.y1)
 
+                # Skip if bbox is huge (prevents floaters from bad bboxes)
+                bbox_width = x1 - x0
+                bbox_height = y1 - y0
+                if bbox_width > raster.W * 2 or bbox_height > raster.H * 2:
+                    continue
+
                 for cy in range(y0, y1):
                     row = cy * raster.W
                     for cx in range(x0, x1):
                         raster.anno_key[row + cx] = anno_idx
 
-            # TAG/LINES/KEYNOTE: recommend outline by default (cheap + avoids big fills)
-            elif mode in ("TAG", "LINES", "KEYNOTE"):
+            # TAG/KEYNOTE: outline only (cheap + avoids big fills)
+            elif mode in ("TAG", "KEYNOTE"):
                 _stamp_rect_outline(raster, cell_rect, anno_idx)
+
+            # LINES: Detail lines need special handling (extract actual curve geometry)
+            elif mode == "LINES":
+                stamped = False
+                try:
+                    # Extract curve from Location (like model lines, but in 2D)
+                    loc = getattr(elem, "Location", None)
+                    if loc is not None:
+                        curve = getattr(loc, "Curve", None)
+                        if curve is not None:
+                            # Get curve endpoints
+                            p0 = curve.GetEndPoint(0)
+                            p1 = curve.GetEndPoint(1)
+
+                            # Transform to UV
+                            u0, v0 = vb.transform_to_view_uv((p0.X, p0.Y, p0.Z))
+                            u1, v1 = vb.transform_to_view_uv((p1.X, p1.Y, p1.Z))
+
+                            # Convert to cell coordinates
+                            cx0, cy0 = _uv_to_cell(u0, v0, raster)
+                            cx1, cy1 = _uv_to_cell(u1, v1, raster)
+
+                            # Option A: Render as Bresenham line (single-pixel width)
+                            # Render as Bresenham line (single-pixel width, simpler but less visible)
+                            _stamp_line_cells(raster, cx0, cy0, cx1, cy1, anno_idx)
+                            stamped = True
+                            
+                            # Option B: Render as oriented band (2-cell width, archive parity)
+                            _stamp_detail_line_band(raster, cx0, cy0, cx1, cy1, anno_idx, cfg)
+                            
+                            stamped = True
+
+                            if diag is not None:
+                                try:
+                                    diag.info(
+                                        phase="annotation",
+                                        callsite="rasterize_annotations.lines_curve_stamp",
+                                        message="Stamped LINES via Location.Curve endpoints",
+                                        view_id=view_id,
+                                        elem_id=elem_id,
+                                        extra={
+                                            "p0": (p0.X, p0.Y, p0.Z),
+                                            "p1": (p1.X, p1.Y, p1.Z),
+                                            "cell0": (cx0, cy0),
+                                            "cell1": (cx1, cy1),
+                                        },
+                                    )
+                                except Exception:
+                                    pass
+
+                except Exception:
+                    stamped = False
+
+                # Fallback: if curve extraction failed, use bbox outline
+                if not stamped:
+                    if diag is not None:
+                        try:
+                            diag.info(
+                                phase="annotation",
+                                callsite="rasterize_annotations.lines_fallback_outline",
+                                message="LINES curve unavailable; used bbox outline fallback",
+                                view_id=view_id,
+                                elem_id=elem_id,
+                                extra={
+                                    "cell_rect": (cell_rect.x0, cell_rect.y0, cell_rect.x1, cell_rect.y1),
+                                },
+                            )
+                        except Exception:
+                            pass
+
+                    _stamp_rect_outline(raster, cell_rect, anno_idx)
 
             # DETAIL/REGION: keep legacy fill unless you want otherwise
             else:
@@ -958,6 +1035,12 @@ def rasterize_annotations(doc, view, raster, cfg, diag=None):
                 y0 = max(0, cell_rect.y0)
                 x1 = min(raster.W, cell_rect.x1)
                 y1 = min(raster.H, cell_rect.y1)
+
+                # Skip if bbox is huge (prevents floaters from bad bboxes)
+                bbox_width = x1 - x0
+                bbox_height = y1 - y0
+                if bbox_width > raster.W * 2 or bbox_height > raster.H * 2:
+                    continue
 
                 for cy in range(y0, y1):
                     row = cy * raster.W
@@ -1022,7 +1105,109 @@ def rasterize_annotations(doc, view, raster, cfg, diag=None):
             )
         except Exception:
             pass
-            
+ 
+def _stamp_detail_line_band(raster, cx0, cy0, cx1, cy1, anno_idx, cfg):
+    """
+    Stamp detail line as oriented band (2-cell-wide rectangle along line tangent).
+    
+    This matches archive/refactor1 behavior for detail lines and is more visible
+    than single-pixel Bresenham lines.
+    
+    Args:
+        raster: ViewRaster
+        cx0, cy0: Start cell coordinates
+        cx1, cy1: End cell coordinates
+        anno_idx: Annotation index
+        cfg: Config (for band_thickness_cells)
+    """
+    import math
+    
+    # Compute line tangent and perpendicular normal
+    dx = float(cx1 - cx0)
+    dy = float(cy1 - cy0)
+    length_sq = dx*dx + dy*dy
+    
+    if length_sq < 0.01:  # Degenerate line (< 0.1 cell length)
+        # Fallback: just stamp the start cell
+        _stamp_cell(raster, cx0, cy0, anno_idx)
+        return
+    
+    length = math.sqrt(length_sq)
+    
+    # Unit tangent vector
+    ux = dx / length
+    uy = dy / length
+    
+    # Unit normal vector (perpendicular, rotate 90° CCW)
+    nx = -uy
+    ny = ux
+    
+    # Band half-width from config (default 0.5 cells for 1-cell total width)
+    band_cells = getattr(cfg, 'linear_band_thickness_cells', 1.0) if cfg else 1.0
+    band_half_cells = band_cells * 0.5
+    
+    # Perpendicular offset in cell space
+    offx = nx * band_half_cells
+    offy = ny * band_half_cells
+    
+    # Four corners of oriented band
+    p0_plus = (cx0 + offx, cy0 + offy)
+    p0_minus = (cx0 - offx, cy0 - offy)
+    p1_plus = (cx1 + offx, cy1 + offy)
+    p1_minus = (cx1 - offx, cy1 - offy)
+    
+    # Rasterize the band as a filled polygon
+    # Simple scanline fill between the four corners
+    corners = [p0_plus, p1_plus, p1_minus, p0_minus]
+    
+    # Get integer bounding box
+    xs = [int(round(c[0])) for c in corners]
+    ys = [int(round(c[1])) for c in corners]
+    
+    x_min = max(0, min(xs))
+    x_max = min(raster.W, max(xs))
+    y_min = max(0, min(ys))
+    y_max = min(raster.H, max(ys))
+    
+    # For simplicity: stamp all cells in bounding box
+    # (More sophisticated polygon fill could be added later)
+    for cy in range(y_min, y_max + 1):
+        for cx in range(x_min, x_max + 1):
+            # Point-in-polygon test (simple cross product)
+            if _point_in_quad(cx, cy, corners):
+                _stamp_cell(raster, cx, cy, anno_idx)
+
+
+def _point_in_quad(px, py, corners):
+    """
+    Test if point (px, py) is inside the quadrilateral defined by corners.
+    
+    Uses winding number algorithm (simplified for convex quads).
+    """
+    # For a convex quad (which oriented bands are), we can use cross products
+    # Point is inside if it's on the same side of all 4 edges
+    
+    def cross_sign(ax, ay, bx, by, px, py):
+        """Sign of cross product (a-p) × (b-p)"""
+        return (bx - px) * (ay - py) - (by - py) * (ax - px)
+    
+    c0, c1, c2, c3 = corners
+    
+    # Check point is on correct side of each edge
+    s0 = cross_sign(c0[0], c0[1], c1[0], c1[1], px, py)
+    s1 = cross_sign(c1[0], c1[1], c2[0], c2[1], px, py)
+    s2 = cross_sign(c2[0], c2[1], c3[0], c3[1], px, py)
+    s3 = cross_sign(c3[0], c3[1], c0[0], c0[1], px, py)
+    
+    # All signs should be the same (all positive or all negative)
+    # For simplicity, check if all have same sign or are zero
+    signs = [s0, s1, s2, s3]
+    has_positive = any(s > 0.01 for s in signs)
+    has_negative = any(s < -0.01 for s in signs)
+    
+    # Point is inside if not crossing (not both positive and negative)
+    return not (has_positive and has_negative)
+    
 def _uv_to_cell(x, y, raster):
     """Convert view-local UV (feet) to integer cell coordinates."""
     b = raster.bounds_xy

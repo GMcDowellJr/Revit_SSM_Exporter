@@ -265,33 +265,69 @@ def make_uv_aabb(rect):
 
 
 def make_obb_or_skinny_aabb(elem, transform, rect, view, raster):
-    """Create OBB or skinny AABB proxy for LINEAR elements.
+    """Create OBB proxy for LINEAR elements using precomputed OBB from collection.
 
-    For LINEAR elements (one dimension thin, one long), attempts to construct
-    an oriented bounding box aligned with the element's dominant axis.
-    Falls back to UV_AABB if orientation cannot be determined.
+    For LINEAR elements (one dimension thin, one long), construct an oriented
+    bounding box aligned with the element's dominant axis. Uses OBB data
+    precomputed by _pca_obb_uv() during collection phase to avoid redundant PCA.
 
     Args:
         elem: Revit element
         transform: World transform (identity for host, link transform for linked)
-        rect: CellRect footprint
+        rect: CellRect footprint (enriched with obb_data by collection.py)
         view: Revit View
         raster: ViewRaster (for coordinate transforms)
 
     Returns:
-        OBB or UV_AABB proxy
+        OBB proxy with proper orientation, or UV_AABB for degenerate cases
 
     Commentary:
-        ⚠ This is a placeholder implementation. Full implementation requires:
-           - Element geometry access to determine dominant axis
-           - Projection into view UV space
-           - OBB fitting algorithm
-        ✔ Fallback to UV_AABB is safe - conservative proxy still prevents
-           false occlusion
+        ✔ Preserves diagonal orientation for walls, doors, thin elements
+        ✔ Uses precomputed PCA from collection phase (zero redundant computation)
+        ✔ Only falls back to AABB for truly degenerate geometry (near-zero area)
     """
-    # TODO: Implement OBB fitting based on element geometry
-    # For now, return skinny AABB as conservative fallback
-    return make_uv_aabb(rect)
+    import math
+
+    # Extract precomputed OBB data from collection phase
+    obb_data = getattr(rect, 'obb_data', None)
+
+    if obb_data is None:
+        # Fallback: no OBB data available (shouldn't happen in normal flow)
+        # This means either _pca_obb_uv() failed or rect wasn't enriched
+        return make_uv_aabb(rect)
+
+    obb_corners = obb_data['obb_corners']  # 4 corners of fitted OBB in UV space
+
+    # Compute OBB center (centroid of 4 corners)
+    center_u = sum(pt[0] for pt in obb_corners) / 4.0
+    center_v = sum(pt[1] for pt in obb_corners) / 4.0
+
+    # Reconstruct axes from OBB rectangle geometry.
+    # _pca_obb_uv() returns corners ordered as: [p0, p1, p2, p3]
+    # where p0→p1 and p0→p3 are the two orthogonal edges.
+    edge1_u = obb_corners[1][0] - obb_corners[0][0]
+    edge1_v = obb_corners[1][1] - obb_corners[0][1]
+    len1 = math.sqrt(edge1_u**2 + edge1_v**2)
+
+    edge2_u = obb_corners[3][0] - obb_corners[0][0]
+    edge2_v = obb_corners[3][1] - obb_corners[0][1]
+    len2 = math.sqrt(edge2_u**2 + edge2_v**2)
+
+    # Degenerate check: near-zero edge lengths indicate collapsed geometry
+    if len1 < 0.001 or len2 < 0.001:
+        return make_uv_aabb(rect)
+
+    # Normalize to unit axes
+    axis1 = (edge1_u / len1, edge1_v / len1)
+    axis2 = (edge2_u / len2, edge2_v / len2)
+
+    # Construct OBB proxy
+    return OBB(
+        center=(center_u, center_v),
+        axes=[axis1, axis2],
+        extents=(len1 * 0.5, len2 * 0.5),
+        rect=rect
+    )
 
 
 def mark_rect_center_cell(rect, mask):

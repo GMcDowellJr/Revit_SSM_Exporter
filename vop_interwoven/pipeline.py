@@ -1480,6 +1480,25 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     raster.element_meta[key_index]["class"] = elem_class
                     raster.element_meta[key_index]["occluder"] = (elem_class == "AREAL")
 
+                elem_class = _classify_uv_rect(width_cells, height_cells)
+                if key_index < len(raster.element_meta):
+                    raster.element_meta[key_index]["class"] = elem_class
+                    raster.element_meta[key_index]["occluder"] = (elem_class == "AREAL")
+
+                # DEBUG: Log classification for diagonal-looking elements (first 10)
+                if not hasattr(render_model_front_to_back, '_classify_debug_count'):
+                    render_model_front_to_back._classify_debug_count = 0
+                if render_model_front_to_back._classify_debug_count < 10:
+                    # Diagonal elements likely have similar width/height
+                    ratio = max(width_cells, height_cells) / max(min(width_cells, height_cells), 0.001)
+                    if 5 < ratio < 50:  # Likely LINEAR diagonal
+                        try:
+                            print("[DEBUG classify] Elem {}: {}x{} cells → class={}, category='{}'".format(
+                                elem_id, width_cells, height_cells, elem_class, category))
+                            render_model_front_to_back._classify_debug_count += 1
+                        except Exception:
+                            pass
+            
                 aabb_area_cells = width_cells * height_cells
                 grid_area = raster.W * raster.H
 
@@ -1516,9 +1535,11 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     continue
 
                 # Stage 3: conservative stamping
-                # PR8 semantics:
-                #   - ONLY AREAL elements contribute to occlusion (w_occ)
-                #   - TINY/LINEAR never write occlusion here
+                # PR8 occlusion contract:
+                #   - ONLY AREAL elements contribute to occlusion depth buffer (w_occ)
+                #   - TINY/LINEAR: skip conservative stamping entirely
+                #     * Will be rendered via silhouette extraction or fallback
+                #     * Prevents double-rendering and ghost pixels
                 if elem_class == "AREAL":
                     depth_by_cell = None
                     if uvw_pts:
@@ -1534,6 +1555,12 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     for (i, j) in footprint.cells():
                         w_depth = depth_by_cell.get((i, j), elem_min_w) if depth_by_cell else elem_min_w
                         raster.try_write_cell(i, j, w_depth=w_depth, source=source_type, key_index=key_index)
+
+                # Note: TINY/LINEAR elements intentionally NOT stamped here
+                # They will be rendered via:
+                #   1. Silhouette extraction (preferred)
+                #   2. OBB fallback (if silhouette fails)
+                #   3. AABB fallback (if OBB fails)
 
         except Exception as e:
             # Must be observable, and must remain conservative (do not skip element).
@@ -1608,29 +1635,71 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                         pass
 
                 # Second: rasterize open polylines (edges)
+                open_polyline_success = False
                 if open_loops:
                     try:
                         filled += raster.rasterize_open_polylines(
                             open_loops, key_index, depth=elem_depth, source=source_type
                         )
+                        # CRITICAL: Open polylines succeed even if filled=0
+                        # (Bresenham draws edges, doesn't "fill" cells like closed loops)
+                        if len(open_loops) > 0:
+                            open_polyline_success = True
                     except Exception:
                         pass
 
-                if filled > 0:
+                # Check for any successful rendering (filled cells OR open polylines drawn)
+                if filled > 0 or open_polyline_success:
                     # Tag element metadata with strategy used
                     if key_index < len(raster.element_meta):
                         raster.element_meta[key_index]['strategy'] = strategy
+                        if open_polyline_success and filled == 0:
+                            raster.element_meta[key_index]['open_polyline_only'] = True
 
                     silhouette_success += 1
                     processed += 1
                     continue
+                    
+                    # Check for any successful rendering (filled cells OR open polylines drawn)
+                    if filled > 0 or open_polyline_success:
+                        # Tag element metadata with strategy used
+                        if key_index < len(raster.element_meta):
+                            raster.element_meta[key_index]['strategy'] = strategy
+                            if open_polyline_success and filled == 0:
+                                raster.element_meta[key_index]['open_polyline_only'] = True
+                        
+                        # DEBUG: Log successful silhouette renders (first 10 detail_line_band)
+                        if not hasattr(render_model_front_to_back, '_silh_debug_count'):
+                            render_model_front_to_back._silh_debug_count = 0
+                        if strategy == 'detail_line_band' and render_model_front_to_back._silh_debug_count < 10:
+                            try:
+                                print("[DEBUG silhouette] Elem {}: strategy='{}', filled={}, open_polyline={}".format(
+                                    elem_id, strategy, filled, open_polyline_success))
+                                render_model_front_to_back._silh_debug_count += 1
+                            except Exception:
+                                pass
+
+                        silhouette_success += 1
+                        processed += 1
+                        continue
+    
                 else:
                     if processed < 10:
-                        print("[DEBUG] Element {} loops exist but filled=0, falling through to bbox".format(elem_id))
+                        print("[DEBUG] Element {} loops exist but no successful rendering, falling through to bbox".format(elem_id))
 
             except Exception as e:
                 # Rasterization failed, fall through to bbox fallback
                 pass
+
+        # CRITICAL: Check if silhouette rendering already succeeded
+        # This section is ONLY for elements that failed silhouette extraction
+        # (most successful cases already hit 'continue' above, this is defensive)
+        if key_index < len(raster.element_meta):
+            strategy_used = raster.element_meta[key_index].get('strategy')
+            if strategy_used and strategy_used != 'unknown':
+                # Element already successfully rendered via silhouette
+                processed += 1
+                continue
 
         # Fallback: Use OBB polygon (oriented bounds, not axis-aligned rect)
         obb_success = False
@@ -1708,16 +1777,24 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                             if raster.try_write_cell(i, j, w_depth=elem_depth, source=source_type, key_index=key_index):
                                 filled_count += 1
 
-                        # Always attempt proxy-ink edges on boundary (visibility > nothing)
-                        is_boundary = (
-                            i == rect.i_min or i == rect.i_max or
-                            j == rect.j_min or j == rect.j_max
-                        )
+                        # Check if element already rendered successfully via silhouette
+                        strategy_used = None
+                        if key_index < len(raster.element_meta):
+                            strategy_used = raster.element_meta[key_index].get('strategy')
 
-                        if is_boundary:
-                            idx = raster.get_cell_index(i, j)
-                            if idx is not None:
-                                raster.stamp_proxy_edge_idx(idx, key_index, depth=elem_depth)
+                        # Only stamp proxy edges if no successful silhouette exists
+                        # (Prevents double-rendering: silhouette geometry + bbox edges)
+                        if not strategy_used or strategy_used == 'unknown' or 'fallback' in str(strategy_used):
+                            # No silhouette or fallback path - stamp proxy edges
+                            is_boundary = (
+                                i == rect.i_min or i == rect.i_max or
+                                j == rect.j_min or j == rect.j_max
+                            )
+
+                            if is_boundary:
+                                idx = raster.get_cell_index(i, j)
+                                if idx is not None:
+                                    raster.stamp_proxy_edge_idx(idx, key_index, depth=elem_depth)
 
                     # Tag element metadata with axis-aligned fallback strategy
                     if key_index < len(raster.element_meta):

@@ -704,7 +704,152 @@ def _location_curve_obb_silhouette(elem, view, view_basis, cfg=None):
 
     except Exception:
         return []
-        
+
+
+def _detail_line_band_silhouette(elem, view, view_basis, cfg=None, diag=None):
+    """
+    Create oriented band loops for detail/drafting lines (archive parity).
+
+    Detail lines should render as thin rectangles oriented along the line,
+    not as single-pixel Bresenham edges. This matches archive/refactor1 behavior.
+
+    Archive reference: archive/refactor1/processing/projection.py (line 1030-1050)
+
+    Args:
+        elem: Revit element
+        view: Revit View
+        view_basis: ViewBasis for coordinate transformation
+        cfg: Config object (for linear_band_thickness_cells)
+        diag: Diagnostics (optional)
+
+    Returns:
+        List of loop dicts with oriented band rectangles, or [] if not applicable
+
+    Strategy:
+        1. Check category is "Lines" or "Detail Lines"
+        2. Extract curve from elem.Location.Curve
+        3. Get endpoints, transform to UV
+        4. Compute line tangent and perpendicular normal
+        5. Offset endpoints by band_half_width perpendicular to line
+        6. Create 4-corner closed loop: [p0+off, p1+off, p1-off, p0-off, p0+off]
+        7. Return as CLOSED loop (not "open": True)
+
+    Commentary:
+        ✔ Only applies to Lines/Detail Lines category
+        ✔ Band thickness from config (default 1.0 cells)
+        ✔ Returns CLOSED loops for proper fill rendering
+        ✔ Archive parity: matches proven refactor1 behavior
+    """
+    try:
+        # Check if this is a detail/drafting line by category
+        cat = getattr(elem, 'Category', None)
+        cat_name = cat.Name if cat else ""
+
+        # DEBUG: Log category names for LINEAR elements (first 10)
+        if not hasattr(_detail_line_band_silhouette, '_debug_count'):
+            _detail_line_band_silhouette._debug_count = 0
+        if _detail_line_band_silhouette._debug_count < 10:
+            try:
+                elem_id = getattr(getattr(elem, 'Id', None), 'IntegerValue', 'unknown')
+                print("[DEBUG detail_line_band] Elem {}: category='{}'".format(elem_id, cat_name))
+                _detail_line_band_silhouette._debug_count += 1
+            except Exception:
+                pass
+
+        # Archive used: cat_name in ("Lines", "Detail Lines")
+        if cat_name not in ("Lines", "Detail Lines"):
+            return []  # Not a detail line - try other strategies
+
+        # Extract curve from Location
+        loc = getattr(elem, 'Location', None)
+        if loc is None:
+            return []
+
+        curve = getattr(loc, 'Curve', None)
+        if curve is None:
+            return []
+
+        # Get curve endpoints
+        try:
+            p0 = curve.GetEndPoint(0)
+            p1 = curve.GetEndPoint(1)
+        except Exception:
+            return []
+
+        # Transform to view UV space
+        # view_basis.transform_to_view_uv expects (x, y, z) tuple, returns (u, v, w)
+        uv0 = view_basis.transform_to_view_uv((p0.X, p0.Y, p0.Z))
+        uv1 = view_basis.transform_to_view_uv((p1.X, p1.Y, p1.Z))
+
+        x0, y0 = uv0[0], uv0[1]
+        x1, y1 = uv1[0], uv1[1]
+
+        # Compute line tangent and perpendicular normal
+        dx = x1 - x0
+        dy = y1 - y0
+        length_sq = dx*dx + dy*dy
+
+        if length_sq < 1e-18:  # Degenerate line (< 1e-9 length)
+            return []
+
+        length = length_sq ** 0.5
+
+        # Unit tangent vector
+        ux = dx / length
+        uy = dy / length
+
+        # Unit normal vector (perpendicular, rotate 90° CCW)
+        nx = -uy
+        ny = ux
+
+        # Band half-width from config
+        # Archive default: linear_band_thickness_cells = 1.0 → half_width = 0.5
+        band_cells = getattr(cfg, 'linear_band_thickness_cells', 1.0) if cfg else 1.0
+        band_half_cells = band_cells * 0.5
+
+        # Perpendicular offset in UV space (already in cell coordinates)
+        offx = nx * band_half_cells
+        offy = ny * band_half_cells
+
+        # Four corners of oriented band rectangle
+        # Archive ordering: [p0+offset, p1+offset, p1-offset, p0-offset, close]
+        p0_plus = (x0 + offx, y0 + offy)
+        p0_minus = (x0 - offx, y0 - offy)
+        p1_plus = (x1 + offx, y1 + offy)
+        p1_minus = (x1 - offx, y1 - offy)
+
+        # Create closed loop (CRITICAL: must close for fill rasterization)
+        band_loop = {
+            "points": [p0_plus, p1_plus, p1_minus, p0_minus, p0_plus],
+            "is_hole": False,
+            "strategy": "detail_line_band"
+        }
+
+        # DEBUG: Log successful band creation (first 5)
+        if not hasattr(_detail_line_band_silhouette, '_success_count'):
+            _detail_line_band_silhouette._success_count = 0
+        if _detail_line_band_silhouette._success_count < 5:
+            try:
+                elem_id = getattr(getattr(elem, 'Id', None), 'IntegerValue', 'unknown')
+                print("[DEBUG detail_line_band] SUCCESS elem {}: band created, {} points, length={:.1f} cells".format(
+                    elem_id, len(band_loop['points']), length))
+                print("  UV endpoints: ({:.1f},{:.1f}) → ({:.1f},{:.1f})".format(x0, y0, x1, y1))
+                print("  Band width: {:.2f} cells (half={:.2f})".format(band_cells, band_half_cells))
+                _detail_line_band_silhouette._success_count += 1
+            except Exception:
+                pass
+
+        # CRITICAL: Do NOT set "open": True
+        # This is a CLOSED loop that should be filled, not a Bresenham edge
+
+        return [band_loop]
+
+    except Exception as e:
+        # Fail gracefully - other strategies will be tried
+        # Don't spam logs with exceptions from category check, etc.
+        return []
+
+
 def _symbolic_curves_silhouette(elem, view, view_basis, cfg=None, diag=None):
     """
     For FamilyInstance (and similar): extract curve primitives visible in the view.
@@ -1506,9 +1651,16 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
             if uv_mode == 'TINY':
                 strategies = ['symbolic_curves', 'bbox', 'obb']
             elif uv_mode == 'LINEAR':
-                # If symbolic curves are missing/empty for this family, still try a real edge-based
-                # silhouette before we degrade to rectangle proxies.
-                strategies = ['symbolic_curves', 'silhouette_edges', 'uv_obb_rect', 'bbox']
+                # Strategy ordering for LINEAR elements (first successful strategy wins):
+                # 1. detail_line_band: Detail/drafting lines → oriented band rectangles (archive parity)
+                #    - Creates CLOSED 2-cell-wide bands along line tangent
+                #    - Prevents invisible Bresenham single-pixel rendering
+                # 2. symbolic_curves: Family instance symbolic edges → open polylines
+                # 3. cad_curves: CAD/DWG curve primitives → open polylines
+                # 4. silhouette_edges: 3D edge extraction → open/closed loops
+                # 5. uv_obb_rect: Oriented bounding box fallback
+                # 6. bbox: Axis-aligned bounding box (last resort)
+                strategies = ['detail_line_band', 'symbolic_curves', 'cad_curves', 'silhouette_edges', 'uv_obb_rect', 'bbox']
             else:
                 strategies = ['symbolic_curves', 'silhouette_edges', 'obb', 'bbox']
 
@@ -1528,7 +1680,9 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
     # Try each strategy in order
     for strategy_name in strategies:
         try:
-            if strategy_name == 'uv_obb_rect':
+            if strategy_name == 'detail_line_band':
+                loops = _detail_line_band_silhouette(elem, view, view_basis, cfg, diag)
+            elif strategy_name == 'uv_obb_rect':
                 loops = _uv_obb_rect_silhouette(elem, view, view_basis)
             elif strategy_name == 'bbox':
                 loops = _bbox_silhouette(elem, view, view_basis)

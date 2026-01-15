@@ -28,6 +28,8 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `OBB`
+    - called from: core/geometry.py
   - `PolicyStats`
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
@@ -86,8 +88,8 @@ Notes:
     - called from: pipeline.py
   - `export_pipeline_results_to_pngs`
     - called from: entry_dynamo.py
-  - `export_pipeline_to_csv`
-    - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
@@ -207,6 +209,8 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `OBB`
+    - called from: core/geometry.py
   - `PolicyStats`
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
@@ -265,8 +269,8 @@ Notes:
     - called from: pipeline.py
   - `export_pipeline_results_to_pngs`
     - called from: entry_dynamo.py
-  - `export_pipeline_to_csv`
-    - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
@@ -386,6 +390,8 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `OBB`
+    - called from: core/geometry.py
   - `PolicyStats`
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
@@ -444,8 +450,8 @@ Notes:
     - called from: pipeline.py
   - `export_pipeline_results_to_pngs`
     - called from: entry_dynamo.py
-  - `export_pipeline_to_csv`
-    - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
@@ -565,6 +571,8 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `OBB`
+    - called from: core/geometry.py
   - `PolicyStats`
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
@@ -623,8 +631,8 @@ Notes:
     - called from: pipeline.py
   - `export_pipeline_results_to_pngs`
     - called from: entry_dynamo.py
-  - `export_pipeline_to_csv`
-    - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
@@ -744,6 +752,8 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `OBB`
+    - called from: core/geometry.py
   - `PolicyStats`
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
@@ -802,8 +812,8 @@ Notes:
     - called from: pipeline.py
   - `export_pipeline_results_to_pngs`
     - called from: entry_dynamo.py
-  - `export_pipeline_to_csv`
-    - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
@@ -925,6 +935,8 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `OBB`
+    - called from: core/geometry.py
   - `PolicyStats`
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
@@ -983,8 +995,8 @@ Notes:
     - called from: pipeline.py
   - `export_pipeline_results_to_pngs`
     - called from: entry_dynamo.py
-  - `export_pipeline_to_csv`
-    - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
@@ -1104,6 +1116,8 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `OBB`
+    - called from: core/geometry.py
   - `PolicyStats`
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
@@ -1162,8 +1176,8 @@ Notes:
     - called from: pipeline.py
   - `export_pipeline_results_to_pngs`
     - called from: entry_dynamo.py
-  - `export_pipeline_to_csv`
-    - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
@@ -1283,6 +1297,8 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `OBB`
+    - called from: core/geometry.py
   - `PolicyStats`
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
@@ -1341,8 +1357,8 @@ Notes:
     - called from: pipeline.py
   - `export_pipeline_results_to_pngs`
     - called from: entry_dynamo.py
-  - `export_pipeline_to_csv`
-    - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
@@ -1462,6 +1478,8 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `OBB`
+    - called from: core/geometry.py
   - `PolicyStats`
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
@@ -1520,8 +1538,8 @@ Notes:
     - called from: pipeline.py
   - `export_pipeline_results_to_pngs`
     - called from: entry_dynamo.py
-  - `export_pipeline_to_csv`
-    - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
@@ -1641,6 +1659,8 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `OBB`
+    - called from: core/geometry.py
   - `PolicyStats`
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
@@ -1699,8 +1719,8 @@ Notes:
     - called from: entry_dynamo.py
   - `export_pipeline_to_csv`
     - called from: entry_dynamo.py
-  - `export_raster_to_png`
-    - called from: png_export.py, streaming.py
+    - `export_raster_to_png`
+      - called from: png_export.py, streaming.py
     - `export_view_raster`
       - called from: pipeline.py
     - `extract_metrics_from_view_result`
@@ -1820,6 +1840,8 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `OBB`
+    - called from: core/geometry.py
   - `PolicyStats`
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
@@ -1878,8 +1900,8 @@ Notes:
     - called from: pipeline.py
   - `export_pipeline_results_to_pngs`
     - called from: entry_dynamo.py
-  - `export_pipeline_to_csv`
-    - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
@@ -1999,6 +2021,8 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `OBB`
+    - called from: core/geometry.py
   - `PolicyStats`
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
@@ -2057,8 +2081,8 @@ Notes:
     - called from: pipeline.py
   - `export_pipeline_results_to_pngs`
     - called from: entry_dynamo.py
-  - `export_pipeline_to_csv`
-    - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
@@ -2178,6 +2202,8 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `OBB`
+    - called from: core/geometry.py
   - `PolicyStats`
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
@@ -2236,8 +2262,8 @@ Notes:
     - called from: pipeline.py
   - `export_pipeline_results_to_pngs`
     - called from: entry_dynamo.py
-  - `export_pipeline_to_csv`
-    - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
@@ -2335,7 +2361,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `collect_view_elements` (revit/collection.py:L62)
+## Trace: `collect_view_elements` (revit/collection.py:L64)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -2357,6 +2383,8 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `OBB`
+    - called from: core/geometry.py
   - `PolicyStats`
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
@@ -2415,8 +2443,8 @@ Notes:
     - called from: entry_dynamo.py
   - `export_pipeline_to_csv`
     - called from: entry_dynamo.py
-  - `export_raster_to_png`
-    - called from: png_export.py, streaming.py
+    - `export_raster_to_png`
+      - called from: png_export.py, streaming.py
     - `export_view_raster`
       - called from: pipeline.py
     - `extract_metrics_from_view_result`
@@ -2514,7 +2542,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `get_element_silhouette` (core/silhouette.py:L1439)
+## Trace: `get_element_silhouette` (core/silhouette.py:L1584)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -2536,6 +2564,8 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `OBB`
+    - called from: core/geometry.py
   - `PolicyStats`
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
@@ -2594,8 +2624,8 @@ Notes:
     - called from: pipeline.py
   - `export_pipeline_results_to_pngs`
     - called from: entry_dynamo.py
-  - `export_pipeline_to_csv`
-    - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
