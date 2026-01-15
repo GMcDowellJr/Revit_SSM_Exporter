@@ -932,7 +932,25 @@ def get_element_obb_loops(elem, vb, raster, bbox=None, diag=None, view=None):
         (max_x, max_y, min_z), (max_x, max_y, max_z),
     ]
 
+    # CRITICAL: BoundingBoxXYZ may be oriented; apply bbox.Transform if present.
+    try:
+        bbox_tf = getattr(bbox, "Transform", None)
+    except Exception:
+        bbox_tf = None
+
+    if bbox_tf is not None:
+        try:
+            from Autodesk.Revit.DB import XYZ
+            corners_world = []
+            for (x, y, z) in corners:
+                corners_world.append(bbox_tf.OfPoint(XYZ(x, y, z)))
+            corners = [(p.X, p.Y, p.Z) for p in corners_world]
+        except Exception:
+            # If transform application fails, fall back to raw corners.
+            pass
+
     uvs = [world_to_view(corner, vb) for corner in corners]
+
     bbox_points_uv = [(uv[0], uv[1]) for uv in uvs]
 
     # STEP 1: Try to extract actual geometry footprint

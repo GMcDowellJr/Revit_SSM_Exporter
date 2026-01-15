@@ -349,17 +349,17 @@
 - `init_view_raster` (function, L1041)
 - `_extract_view_summary` (function, L1183)
 - `render_model_front_to_back` (function, L1228)
-- `_is_supported_2d_view` (function, L1940)
-- `_tiles_fully_covered_and_nearer` (function, L1987)
-- `_bin_elements_to_tiles` (function, L2018)
-- `_tile_has_depth_conflict` (function, L2050)
-- `_get_ambiguous_tiles` (function, L2084)
-- `_render_areal_element` (function, L2114)
-- `_render_proxy_element` (function, L2129)
-- `_stamp_proxy_edges` (function, L2154)
-- `_mark_rect_center_cell` (function, L2167)
-- `_mark_thin_band_along_long_axis` (function, L2175)
-- `export_view_raster` (function, L2195)
+- `_is_supported_2d_view` (function, L1996)
+- `_tiles_fully_covered_and_nearer` (function, L2043)
+- `_bin_elements_to_tiles` (function, L2074)
+- `_tile_has_depth_conflict` (function, L2106)
+- `_get_ambiguous_tiles` (function, L2140)
+- `_render_areal_element` (function, L2170)
+- `_render_proxy_element` (function, L2185)
+- `_stamp_proxy_edges` (function, L2210)
+- `_mark_rect_center_cell` (function, L2223)
+- `_mark_thin_band_along_long_axis` (function, L2231)
+- `export_view_raster` (function, L2251)
 
 ### `png_export.py`
 
@@ -406,7 +406,7 @@
 - `_project_element_bbox_to_cell_rect` (function, L626)
 - `_extract_geometry_footprint_uv` (function, L770)
 - `get_element_obb_loops` (function, L886)
-- `_pca_obb_uv` (function, L1041)
+- `_pca_obb_uv` (function, L1059)
 
 ### `revit/collection_policy.py`
 
