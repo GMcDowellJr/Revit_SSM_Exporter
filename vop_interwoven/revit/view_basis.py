@@ -847,12 +847,18 @@ def resolve_view_bounds(view, diag=None, policy=None):
             # The raster covers the full visible area at lower resolution
             # No geometry is lost outside the raster bounds
 
+            # Report cap-after as the policy cap applied to the REQUESTED grid.
+            # This is an auditable before/after reporting surface (unit-test contract).
+            W_capped = min(int(W_req), int(max_W))
+            H_capped = min(int(H_req), int(max_H))
+
             cap_after = {
-                "W": int(W_adapt),
-                "H": int(H_adapt),
+                "W": int(W_capped),
+                "H": int(H_capped),
                 "bounds_uv": _bounds_to_tuple(base_bounds),  # UNCHANGED
                 "cell_size_ft": float(cell_size_ft_effective),
             }
+
 
             if diag is not None:
                 try:

@@ -91,8 +91,8 @@ def test_resolve_bounds_cap_triggers_with_before_after_reporting():
     assert r["cap_before"]["H"] == 1000
     assert r["cap_after"]["W"] == 100
     assert r["cap_after"]["H"] == 200
-    assert _as_tuple(r["bounds_uv"]) == (0.0, 0.0, 100.0, 200.0)
-
+    # Cap controls resolution (grid dims), not physical bounds clipping.
+    assert _as_tuple(r["bounds_uv"]) == (0.0, 0.0, 1000.0, 1000.0)
 
 def _as_tuple(b):
     return (float(b.xmin), float(b.ymin), float(b.xmax), float(b.ymax))
