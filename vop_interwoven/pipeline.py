@@ -30,11 +30,11 @@ Core principles:
 #    Rasterization strategy (silhouette vs OBB vs AABB) does NOT.
 #
 # 2) OCCLUSION (depth masking / early-out)
-#    - ONLY AREAL elements contribute to occlusion (w_occ).
-#    - AREAL elements ALWAYS occlude, even if they fall back to
-#      coarse geometry (OBB / AABB).
-#    - TINY and LINEAR elements NEVER write occlusion, even though
-#      they may technically hide things at sub-cell scale.
+#    - ONLY AREAL elements with HIGH confidence contribute to occlusion (w_occ).
+#    - If silhouette/geometry fails and we fall back to OBB / AABB, confidence is LOW:
+#         • we still write PROXY INK (visibility + metrics)
+#         • we do NOT write occlusion (avoid false skipping + bbox-box artifacts)
+#    - TINY and LINEAR elements NEVER write occlusion.
 #
 #    Rationale:
 #      • Occlusion is a high-impact decision (skips later elements).
@@ -1301,6 +1301,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
         #   - TINY   : <= 2x2 cells
         #   - LINEAR : thin in one dimension (<=2) and longer in the other
         #   - AREAL  : everything else (occlusion-authoritative)
+    
         minor = min(width_cells, height_cells)
         major = max(width_cells, height_cells)
 
@@ -1309,6 +1310,37 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
         if minor <= 2 and major > 2:
             return "LINEAR"
         return "AREAL"
+
+    CONF_HIGH = "high"
+    CONF_MED = "med"   # reserved for later; currently unused
+    CONF_LOW  = "low"
+
+    def _rect_dims_for_classification(rect, raster):
+        """
+        Prefer OBB dimensions when available (diagonals), else fall back to AABB cell rect.
+        Returns (width_cells, height_cells) as floats.
+        """
+        try:
+            obb = getattr(rect, "obb_data", None)
+            if obb and isinstance(obb, dict):
+                # Stored in world/uv units; convert to cells using raster cell size.
+                cell = float(getattr(raster, "cell_size", 1.0) or 1.0)
+                if cell <= 0:
+                    cell = 1.0
+                len_u = float(obb.get("len_u", 0.0) or 0.0)
+                len_v = float(obb.get("len_v", 0.0) or 0.0)
+                return (abs(len_u) / cell, abs(len_v) / cell)
+        except Exception:
+            pass
+
+        # Fallback: AABB in cell units
+        try:
+            return (float(rect.width()), float(rect.height()))
+        except Exception:
+            return (0.0, 0.0)
+
+    def _occlusion_allowed(elem_class, confidence):
+        return (elem_class == "AREAL") and (confidence == CONF_HIGH)
 
     for elem_wrapper in expanded_elements:
         elem = elem_wrapper["element"]
@@ -1436,8 +1468,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
             rect = elem_wrapper.get("uv_bbox_rect")
             classification = "?"
             if rect and not rect.empty:
-                w_cells = rect.width()
-                h_cells = rect.height()
+                w_cells, h_cells = _rect_dims_for_classification(rect, raster)
                 classification = _classify_uv_rect(w_cells, h_cells)
             
             print("[DEBUG] Element {0} ({1}): silhouette={2}, depth={3} (from {4}), source={5}, class={6}".format(
@@ -1472,25 +1503,31 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 # Tier-A ambiguity trigger (selectively enable Tier-B proxy)
                 # NOTE: multiple CellRect implementations exist; derive dimensions via helper.
                 from .core.math_utils import cellrect_dims
-                width_cells, height_cells = cellrect_dims(rect)
-                minor_cells = min(width_cells, height_cells)
+                aabb_w_cells, aabb_h_cells = cellrect_dims(rect)
 
-                elem_class = _classify_uv_rect(width_cells, height_cells)
+                # Classification should be OBB-aware when available (diagonals).
+                cls_w_cells, cls_h_cells = _rect_dims_for_classification(rect, raster)
+                minor_cells = min(cls_w_cells, cls_h_cells)
+
+                elem_class = _classify_uv_rect(cls_w_cells, cls_h_cells)
+
+                # Confidence model (simple for now):
+                #   HIGH if we have silhouette loops (expensive geometry succeeded),
+                #   else LOW (OBB/AABB fallback).
+                confidence = CONF_HIGH if loops else CONF_LOW
+                occlusion_allowed = _occlusion_allowed(elem_class, confidence)
+
                 if key_index < len(raster.element_meta):
                     raster.element_meta[key_index]["class"] = elem_class
-                    raster.element_meta[key_index]["occluder"] = (elem_class == "AREAL")
-
-                elem_class = _classify_uv_rect(width_cells, height_cells)
-                if key_index < len(raster.element_meta):
-                    raster.element_meta[key_index]["class"] = elem_class
-                    raster.element_meta[key_index]["occluder"] = (elem_class == "AREAL")
+                    raster.element_meta[key_index]["confidence"] = confidence
+                    raster.element_meta[key_index]["occluder"] = occlusion_allowed
 
                 # DEBUG: Log classification for diagonal-looking elements (first 10)
                 if not hasattr(render_model_front_to_back, '_classify_debug_count'):
                     render_model_front_to_back._classify_debug_count = 0
                 if render_model_front_to_back._classify_debug_count < 10:
                     # Diagonal elements likely have similar width/height
-                    ratio = max(width_cells, height_cells) / max(min(width_cells, height_cells), 0.001)
+                    ratio = max(cls_w_cells, cls_h_cells) / max(min(cls_w_cells, cls_h_cells), 0.001)
                     if 5 < ratio < 50:  # Likely LINEAR diagonal
                         try:
                             print("[DEBUG classify] Elem {}: {}x{} cells → class={}, category='{}'".format(
@@ -1499,7 +1536,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                         except Exception:
                             pass
             
-                aabb_area_cells = width_cells * height_cells
+                aabb_area_cells = aabb_w_cells * aabb_h_cells
                 grid_area = raster.W * raster.H
 
                 # World-units-per-cell (ft). Prefer cfg override if present.
@@ -1540,7 +1577,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 #   - TINY/LINEAR: skip conservative stamping entirely
                 #     * Will be rendered via silhouette extraction or fallback
                 #     * Prevents double-rendering and ghost pixels
-                if elem_class == "AREAL":
+                if occlusion_allowed:
                     depth_by_cell = None
                     if uvw_pts:
                         depth_by_cell = {}
@@ -1650,11 +1687,19 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
 
                 # Check for any successful rendering (filled cells OR open polylines drawn)
                 if filled > 0 or open_polyline_success:
-                    # Tag element metadata with strategy used
+                    # Confidence: HIGH only when we have filled area (closed loop fill).
+                    # Open polylines alone are edges-only; treat as LOW for occlusion.
+                    confidence = CONF_HIGH if filled > 0 else CONF_LOW
+
                     if key_index < len(raster.element_meta):
-                        raster.element_meta[key_index]['strategy'] = strategy
+                        raster.element_meta[key_index]["strategy"] = strategy
+                        raster.element_meta[key_index]["confidence"] = confidence
+                        raster.element_meta[key_index]["occluder"] = _occlusion_allowed(
+                            raster.element_meta[key_index].get("class", "AREAL"),
+                            confidence,
+                        )
                         if open_polyline_success and filled == 0:
-                            raster.element_meta[key_index]['open_polyline_only'] = True
+                            raster.element_meta[key_index]["open_polyline_only"] = True
 
                     silhouette_success += 1
                     processed += 1
@@ -1772,8 +1817,16 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     # Fill axis-aligned rect with depth-tested occlusion and occupancy
                     filled_count = 0
                     for i, j in rect.cells():
-                        # Occlusion authority remains classification-based
-                        if elem_class == "AREAL":
+                        # Occlusion authority is classification + confidence gated.
+                        # If we are in AABB fallback, confidence is LOW by definition (no silhouette fill),
+                        # so we should not write occlusion here.
+                        meta = raster.element_meta[key_index] if (key_index < len(raster.element_meta)) else {}
+                        occlusion_allowed = _occlusion_allowed(
+                            meta.get("class", elem_class if "elem_class" in locals() else "AREAL"),
+                            meta.get("confidence", CONF_LOW),
+                        )
+
+                        if occlusion_allowed:
                             if raster.try_write_cell(i, j, w_depth=elem_depth, source=source_type, key_index=key_index):
                                 filled_count += 1
 
@@ -1781,6 +1834,9 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                         strategy_used = None
                         if key_index < len(raster.element_meta):
                             strategy_used = raster.element_meta[key_index].get('strategy')
+
+                            raster.element_meta[key_index]["confidence"] = CONF_LOW
+                            raster.element_meta[key_index]["occluder"] = False
 
                         # Only stamp proxy edges if no successful silhouette exists
                         # (Prevents double-rendering: silhouette geometry + bbox edges)
