@@ -7,7 +7,7 @@ Compatible with both IronPython (Dynamo 2.x) and CPython3 (Dynamo 3.3+).
 
 Usage in Dynamo CPython3 (3.3+):
     import sys
-    sys.path.append(r'C:\path\to\Revit_SSM_Exporter')
+    sys.path.append(r'C:\\path\\to\\Revit_SSM_Exporter')
 
     from vop_interwoven.entry_dynamo import run_vop_pipeline, get_current_document
     from vop_interwoven.config import Config
@@ -53,63 +53,6 @@ except Exception:
     from vop_interwoven.pipeline import process_document_views
 
 import copy
-
-def run_vop_pipeline_memory_efficient(doc, view_ids, cfg=None, output_dir=None):
-    """Run VOP pipeline in memory-efficient batch mode.
-    
-    This mode processes all views but discards raster data after cache writes,
-    keeping only lightweight summaries. Use this when:
-    - You don't need PNGs or CSVs (only cache updates)
-    - You're processing 100+ views and hitting memory limits
-    - You're running metrics collection or analysis only
-    
-    For PNG/CSV exports, use run_vop_pipeline_streaming() instead.
-    
-    Args:
-        doc: Revit Document
-        view_ids: List of view IDs to process
-        cfg: Config object (optional)
-        output_dir: Output directory for cache files (optional)
-        
-    Returns:
-        Dict with lightweight summaries and statistics
-        
-    Memory impact:
-        - 100 views: ~10 MB (vs ~500 MB with full rasters)
-        - 1000 views: ~100 MB (vs ~5 GB with full rasters)
-    
-    Example:
-        >>> result = run_vop_pipeline_memory_efficient(doc, view_ids, cfg)
-        >>> print(f"Processed {result['views_processed']} views")
-        >>> print(f"Memory efficient: {len(result['summaries'])} summaries")
-    """
-    from vop_interwoven.config import Config
-    from vop_interwoven.pipeline import process_document_views
-    
-    # Defaults
-    if cfg is None:
-        cfg = Config()
-    
-    # CRITICAL: Disable raster retention for memory efficiency
-    cfg.retain_rasters_in_memory = False
-    
-    # Process all views (rasters will be discarded)
-    results = process_document_views(doc, view_ids, cfg)
-    
-    # Aggregate statistics
-    views_processed = len(results)
-    views_succeeded = sum(1 for r in results if r.get("success", True))
-    views_failed = views_processed - views_succeeded
-    
-    return {
-        "success": views_failed == 0,
-        "views_requested": len(view_ids),
-        "views_processed": views_processed,
-        "views_succeeded": views_succeeded,
-        "views_failed": views_failed,
-        "summaries": results,  # Lightweight summaries only
-        "config": cfg.to_dict(),
-    }
 
 def _prune_view_raster_for_json(view_result, detail):
     """Mutate one view_result dict in-place to reduce JSON size."""

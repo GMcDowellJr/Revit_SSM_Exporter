@@ -7,11 +7,11 @@ Line numbers are from AST parsing of the current source.
 
 **Definitions**
 - entry_dynamo.py
-  - `run_vop_pipeline` (L333)
+  - `run_vop_pipeline` (L276)
 - entry_dynamo.py
-  - `run_vop_pipeline_with_png` (L381)
+  - `run_vop_pipeline_with_png` (L324)
 - entry_dynamo.py
-  - `run_vop_pipeline_with_csv` (L458)
+  - `run_vop_pipeline_with_csv` (L401)
 - streaming.py
   - `run_vop_pipeline_streaming` (L565)
 - dynamo_helpers.py
@@ -29,7 +29,7 @@ Line numbers are from AST parsing of the current source.
 - revit/view_basis.py
   - `resolve_view_bounds` (L561)
 - revit/view_basis.py
-  - `resolve_annotation_only_bounds` (L1138)
+  - `resolve_annotation_only_bounds` (L1144)
 - revit/annotation.py
   - `rasterize_annotations` (L762)
 - revit/collection.py
@@ -125,17 +125,17 @@ Line numbers are from AST parsing of the current source.
 - `_maybe_resize_lru` — core/silhouette.py (L355)
 - `_merge_paths_by_endpoints` — core/silhouette.py (L1172)
 - `_mesh_vertex_count` — core/geometry.py (L23)
-- `_normalize_view_ids` — entry_dynamo.py (L280)
+- `_normalize_view_ids` — entry_dynamo.py (L223)
 - `_obb_silhouette` — core/silhouette.py (L1792)
 - `_order_points_by_connectivity` — core/silhouette.py (L2192)
 - `_pca_obb_uv` — revit/collection.py (L1041)
 - `_perf_ms` — pipeline.py (L200)
 - `_perf_now` — pipeline.py (L195)
-- `_pipeline_result_for_json` — entry_dynamo.py (L148)
+- `_pipeline_result_for_json` — entry_dynamo.py (L91)
 - `_point_in_quad` — revit/annotation.py (L1181)
 - `_project_element_bbox_to_cell_rect` — revit/collection.py (L626)
 - `_project_element_bbox_to_cell_rect_for_anno` — revit/annotation.py (L1268)
-- `_prune_view_raster_for_json` — entry_dynamo.py (L114)
+- `_prune_view_raster_for_json` — entry_dynamo.py (L57)
 - `_render_areal_element` — pipeline.py (L2114)
 - `_render_proxy_element` — pipeline.py (L2129)
 - `_round6` — root_cache.py (L14)
@@ -161,7 +161,7 @@ Line numbers are from AST parsing of the current source.
 - `_uv_obb_rect_silhouette` — core/silhouette.py (L1728)
 - `_uv_to_cell` — revit/annotation.py (L1211)
 - `_view_signature` — pipeline.py (L261)
-- `_view_type_name` — revit/view_basis.py (L918)
+- `_view_type_name` — revit/view_basis.py (L924)
 - `_viewtype_name_from_value` — csv_export.py (L312)
 - `_xyz_tuple` — core/silhouette.py (L320)
 - `build_core_csv_row` — csv_export.py (L619)
@@ -199,14 +199,14 @@ Line numbers are from AST parsing of the current source.
 - `get_all_views_in_model` — dynamo_helpers.py (L72)
 - `get_annotation_bbox` — revit/annotation.py (L731)
 - `get_core_csv_header` — csv_export.py (L1035)
-- `get_current_document` — entry_dynamo.py (L208)
-- `get_current_view` — entry_dynamo.py (L244)
+- `get_current_document` — entry_dynamo.py (L151)
+- `get_current_view` — entry_dynamo.py (L187)
 - `get_element_obb_loops` — revit/collection.py (L886)
 - `get_element_silhouette` — core/silhouette.py (L1584)
 - `get_perf_csv_header` — csv_export.py (L1057)
-- `get_test_config_areal_heavy` — entry_dynamo.py (L676)
-- `get_test_config_linear` — entry_dynamo.py (L660)
-- `get_test_config_tiny` — entry_dynamo.py (L644)
+- `get_test_config_areal_heavy` — entry_dynamo.py (L619)
+- `get_test_config_linear` — entry_dynamo.py (L603)
+- `get_test_config_tiny` — entry_dynamo.py (L587)
 - `get_views_from_input_or_current` — dynamo_helpers.py (L15)
 - `get_vop_csv_header` — csv_export.py (L1045)
 - `included_bic_names_for_source` — revit/collection_policy.py (L136)
@@ -224,29 +224,28 @@ Line numbers are from AST parsing of the current source.
 - `process_document_views` — pipeline.py (L451)
 - `process_document_views_streaming` — streaming.py (L488)
 - `process_with_streaming` — streaming.py (L21)
-- `quick_test_current_view` — entry_dynamo.py (L693)
+- `quick_test_current_view` — entry_dynamo.py (L636)
 - `rasterize_annotations` — revit/annotation.py (L762)
 - `rect_intersects_bounds` — core/math_utils.py (L161)
 - `render_model_front_to_back` — pipeline.py (L1228)
-- `resolve_annotation_only_bounds` — revit/view_basis.py (L1138)
+- `resolve_annotation_only_bounds` — revit/view_basis.py (L1144)
 - `resolve_category_ids` — revit/collection_policy.py (L166)
 - `resolve_element_bbox` — revit/collection.py (L10)
 - `resolve_view_bounds` — revit/view_basis.py (L561)
-- `resolve_view_mode` — revit/view_basis.py (L1092)
+- `resolve_view_mode` — revit/view_basis.py (L1098)
 - `run_pipeline_from_dynamo_input` — dynamo_helpers.py (L226)
-- `run_vop_pipeline` — entry_dynamo.py (L333)
-- `run_vop_pipeline_json` — entry_dynamo.py (L610)
-- `run_vop_pipeline_memory_efficient` — entry_dynamo.py (L57)
+- `run_vop_pipeline` — entry_dynamo.py (L276)
+- `run_vop_pipeline_json` — entry_dynamo.py (L553)
 - `run_vop_pipeline_streaming` — streaming.py (L565)
-- `run_vop_pipeline_with_csv` — entry_dynamo.py (L458)
-- `run_vop_pipeline_with_png` — entry_dynamo.py (L381)
+- `run_vop_pipeline_with_csv` — entry_dynamo.py (L401)
+- `run_vop_pipeline_with_png` — entry_dynamo.py (L324)
 - `safe_call` — revit/safe_api.py (L8)
 - `sample_element_uvw_points` — revit/tierb_proxy.py (L4)
 - `should_include_element` — revit/collection_policy.py (L189)
 - `sort_front_to_back` — revit/collection.py (L438)
-- `supports_crop_bounds` — revit/view_basis.py (L1059)
-- `supports_depth` — revit/view_basis.py (L1078)
-- `supports_model_geometry` — revit/view_basis.py (L1022)
+- `supports_crop_bounds` — revit/view_basis.py (L1065)
+- `supports_depth` — revit/view_basis.py (L1084)
+- `supports_model_geometry` — revit/view_basis.py (L1028)
 - `synthetic_bounds_from_visible_extents` — revit/view_basis.py (L312)
 - `tier_a_is_ambiguous` — core/geometry.py (L52)
 - `view_result_to_core_row` — csv_export.py (L1067)
@@ -259,10 +258,10 @@ Line numbers are from AST parsing of the current source.
 ## High-signal callsite details (approx)
 
 ### `run_vop_pipeline`
-- entry_dynamo.py:L420
-- entry_dynamo.py:L518
-- entry_dynamo.py:L630
-- entry_dynamo.py:L710
+- entry_dynamo.py:L363
+- entry_dynamo.py:L461
+- entry_dynamo.py:L573
+- entry_dynamo.py:L653
 
 ### `run_vop_pipeline_with_png`
 - dynamo_helpers.py:L302
@@ -274,8 +273,7 @@ Line numbers are from AST parsing of the current source.
 - thinrunner_streaming.py:L76
 
 ### `process_document_views`
-- entry_dynamo.py:L97
-- entry_dynamo.py:L365
+- entry_dynamo.py:L308
 - streaming.py:L64
 - streaming.py:L507
 - streaming.py:L521
