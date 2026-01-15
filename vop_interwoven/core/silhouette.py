@@ -717,10 +717,13 @@ def _symbolic_curves_silhouette(elem, view, view_basis, cfg=None, diag=None):
         opts.IncludeNonVisibleObjects = False
 
         # View-specific geometry (symbolic lines) often requires Options.View
-        try:
-            opts.View = view
-        except Exception:
-            pass
+        # CRITICAL: Never set opts.View for linked elements - causes geometry extraction failure
+        if not hasattr(elem, 'transform'):  # Host element only
+            try:
+                opts.View = view
+            except Exception:
+                pass
+        # For linked elements: leave opts.View = None (extract in link coordinates)
 
         try:
             opts.DetailLevel = ViewDetailLevel.Fine
@@ -1598,19 +1601,10 @@ def _bbox_silhouette(elem, view, view_basis):
         if not bbox or not bbox.Min or not bbox.Max:
             return []
 
-        # Get min/max corners and transform to host space if needed
-        min_pt_local = (bbox.Min.X, bbox.Min.Y, bbox.Min.Z)
-        max_pt_local = (bbox.Max.X, bbox.Max.Y, bbox.Max.Z)
-
-        # Transform to host coordinates for linked elements
-        from Autodesk.Revit.DB import XYZ
-        min_xyz = XYZ(min_pt_local[0], min_pt_local[1], min_pt_local[2])
-        max_xyz = XYZ(max_pt_local[0], max_pt_local[1], max_pt_local[2])
-
-        min_pt = _to_host_point(elem, min_xyz)
-        max_pt = _to_host_point(elem, max_xyz)
-        min_pt_tuple = (min_pt.X, min_pt.Y, min_pt.Z)
-        max_pt_tuple = (max_pt.X, max_pt.Y, max_pt.Z)
+        # CRITICAL: LinkedElementProxy.get_BoundingBox(view) already returns host-space bbox
+        # Do NOT apply transform - bbox coordinates are already in correct space
+        min_pt_tuple = (bbox.Min.X, bbox.Min.Y, bbox.Min.Z)
+        max_pt_tuple = (bbox.Max.X, bbox.Max.Y, bbox.Max.Z)
 
         # Project to view UVW (with depth)
         min_uvw = world_to_view(min_pt_tuple, view_basis)
@@ -1674,12 +1668,12 @@ def _obb_silhouette(elem, view, view_basis):
             XYZ(mx.X, mx.Y, mx.Z),
         ]
 
-        # Transform to host coordinates for linked elements and project to view UVW
+        # CRITICAL: bbox corners are already in host space for LinkedElementProxy
+        # Use corner coordinates directly without transform
         corners_uvw = []
         min_w = float('inf')
         for corner in corners_3d:
-            corner_h = _to_host_point(elem, corner)
-            uvw = world_to_view((corner_h.X, corner_h.Y, corner_h.Z), view_basis)
+            uvw = world_to_view((corner.X, corner.Y, corner.Z), view_basis)
             corners_uvw.append(uvw)
             if uvw[2] < min_w:
                 min_w = uvw[2]
