@@ -1431,8 +1431,17 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
         if processed < 10:
             depth_source = "geometry" if loops else "bbox"
             silhouette_status = "SUCCESS ({0} loops)".format(len(loops)) if loops else "FAILED (bbox fallback)"
-            print("[DEBUG] Element {0} ({1}): silhouette={2}, depth={3} (from {4}), source={5}".format(
-                elem_id, category, silhouette_status, elem_depth, depth_source, source_type))
+            
+            # Get classification from wrapper if available
+            rect = elem_wrapper.get("uv_bbox_rect")
+            classification = "?"
+            if rect and not rect.empty:
+                w_cells = rect.width()
+                h_cells = rect.height()
+                classification = _classify_uv_rect(w_cells, h_cells)
+            
+            print("[DEBUG] Element {0} ({1}): silhouette={2}, depth={3} (from {4}), source={5}, class={6}".format(
+                elem_id, category, silhouette_status, elem_depth, depth_source, source_type, classification))
 
         # Safe early-out occlusion using bbox footprint + tile depth (front-to-back streaming)
         try:
@@ -1586,7 +1595,16 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                         filled += raster.rasterize_silhouette_loops(
                             closed_loops, key_index, depth=elem_depth, source=source_type
                         )
-                    except Exception:
+                        if filled == 0 and processed < 10:
+                            print("[DEBUG RASTER FAIL] Element {} closed loops returned 0 filled (loops={}, source={})".format(
+                                elem_id, len(closed_loops), source_type))
+                            # Show first loop points to diagnose
+                            if closed_loops and len(closed_loops[0].get('points', [])) > 0:
+                                pts = closed_loops[0]['points'][:3]
+                                print("  First 3 points: {}".format([(round(p[0],1), round(p[1],1)) for p in pts]))
+                    except Exception as e:
+                        if processed < 10:
+                            print("[DEBUG RASTER EXCEPT] Element {} rasterization exception: {}".format(elem_id, e))
                         pass
 
                 # Second: rasterize open polylines (edges)
@@ -1606,6 +1624,9 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     silhouette_success += 1
                     processed += 1
                     continue
+                else:
+                    if processed < 10:
+                        print("[DEBUG] Element {} loops exist but filled=0, falling through to bbox".format(elem_id))
 
             except Exception as e:
                 # Rasterization failed, fall through to bbox fallback
