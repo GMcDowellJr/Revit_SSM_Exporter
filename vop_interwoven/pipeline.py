@@ -329,9 +329,7 @@ def _view_signature(doc_obj, view_obj, view_mode_val, cfg_obj=None, elem_cache=N
             return None
 
     sig = {
-        "schema": 3,
-        "doc_path": getattr(doc_obj, "PathName", None),
-        "doc_title": getattr(doc_obj, "Title", None),
+        "schema": 4,
         "view_id": _safe_int(getattr(getattr(view_obj, "Id", None), "IntegerValue", None)),
         "view_uid": getattr(view_obj, "UniqueId", None),
         "view_name": getattr(view_obj, "Name", None),

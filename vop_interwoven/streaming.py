@@ -523,8 +523,19 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
             if results and len(results) > 0:
                 view_result = results[0]
                 
-                # Verify raster is present before calling export callback
-                if "raster" not in view_result or view_result.get("raster") is None:
+                # Verify raster is present before calling export callback.
+                # Cache hits may legitimately return metrics-only results (no raster arrays).
+                is_cache_hit = bool(view_result.get("from_cache"))
+                try:
+                    c = view_result.get("cache", {})
+                    if isinstance(c, dict) and "HIT" in str(c.get("view_cache", "")).upper():
+                        is_cache_hit = True
+                    if isinstance(c, dict) and str(c.get("cache_type", "")).lower() == "root":
+                        is_cache_hit = True
+                except Exception:
+                    pass
+
+                if (("raster" not in view_result) or (view_result.get("raster") is None)) and not is_cache_hit:
                     print(f"[Streaming] WARNING: No raster in view_result for view {view_id}")
                     print(f"[Streaming]   This should not happen - check cfg.retain_rasters_in_memory")
                     summaries.append({
