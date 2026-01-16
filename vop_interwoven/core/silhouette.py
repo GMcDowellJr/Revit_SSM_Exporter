@@ -1689,7 +1689,7 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
             elif strategy_name == 'obb':
                 loops = _obb_silhouette(elem, view, view_basis)
             elif strategy_name == 'silhouette_edges':
-                loops = _silhouette_edges(elem, view, view_basis, cfg)
+                loops = _silhouette_edges(elem, view, view_basis, cfg, raster=raster)
             elif strategy_name == 'front_face_loops':
                 loops = _front_face_loops_silhouette(elem, view, view_basis, cfg)
             elif strategy_name == 'cad_curves':
@@ -2010,7 +2010,7 @@ def _front_face_loops_silhouette(elem, view, view_basis, cfg=None):
     return loops_out
 
 
-def _silhouette_edges(elem, view, view_basis, cfg):
+def _silhouette_edges(elem, view, view_basis, cfg, raster=None):
     """Extract true silhouette edges based on view direction.
 
     This preserves concave shapes (L, U, C, etc.) by extracting actual
@@ -2021,6 +2021,7 @@ def _silhouette_edges(elem, view, view_basis, cfg):
         view: Revit View
         view_basis: ViewBasis
         cfg: Config object
+        raster: ViewRaster object (for cell-adaptive tolerance)
 
     Returns:
         List with loops representing actual silhouette (preserves concavity)
@@ -2062,8 +2063,8 @@ def _silhouette_edges(elem, view, view_basis, cfg):
     except Exception:
         return []
 
-    # Collect silhouette edges
-    silhouette_points = []
+    # Collect silhouette edges as edge objects (not points)
+    silhouette_edges = []
 
     for solid in _iter_solids(geom):
         if not solid or getattr(solid, 'Volume', 0) <= 1e-9:
@@ -2157,30 +2158,48 @@ def _silhouette_edges(elem, view, view_basis, cfg):
                     if not curve:
                         continue
 
-                    # Tessellate edge
-                    try:
-                        tess = curve.Tessellate()
-                        points_3d = list(tess)
-                    except Exception:
-                        # Fallback: use endpoints
-                        points_3d = [curve.GetEndPoint(0), curve.GetEndPoint(1)]
+                    # Get endpoints and project to view UV
+                    p0 = curve.GetEndPoint(0)
+                    p1 = curve.GetEndPoint(1)
 
-                    # Project to view UVW (with depth)
+                    # Transform to host coordinates if needed
+                    p0_h = _to_host_point(elem, p0)
+                    p1_h = _to_host_point(elem, p1)
+
+                    # Project to view UV (2D)
                     from .view_basis import world_to_view
-                    for pt in points_3d:
-                        pt_h = _to_host_point(elem, pt)
-                        uvw = world_to_view((pt_h.X, pt_h.Y, pt_h.Z), view_basis)
-                        silhouette_points.append(uvw)
+                    uvw0 = world_to_view((p0_h.X, p0_h.Y, p0_h.Z), view_basis)
+                    uvw1 = world_to_view((p1_h.X, p1_h.Y, p1_h.Z), view_basis)
+
+                    # Store edge as dict with start/end in UV space
+                    silhouette_edges.append({
+                        'start': (uvw0[0], uvw0[1]),
+                        'end': (uvw1[0], uvw1[1])
+                    })
 
                 except Exception:
                     continue
 
+    if len(silhouette_edges) < 3:
+        return []
+
+    # Use edge assembly if raster is provided
+    if raster is not None:
+        from .geometry import assemble_edge_loops
+        loops = assemble_edge_loops(silhouette_edges, raster, cfg)
+
+        if loops:
+            return loops
+
+    # Fallback: collect all points and order by connectivity
+    silhouette_points = []
+    for edge in silhouette_edges:
+        silhouette_points.append(edge['start'])
+        silhouette_points.append(edge['end'])
+
     if len(silhouette_points) < 3:
         return []
 
-    # Build polygon from silhouette points
-    # For now, use simplified approach: order by connectivity
-    # TODO: Implement proper edge chaining for multiple loops
     loop_points = _order_points_by_connectivity(silhouette_points)
 
     if len(loop_points) >= 3:

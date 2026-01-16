@@ -134,7 +134,18 @@ class Config:
         # True = keep full rasters in memory (needed for streaming exports)
         # False = discard rasters after cache writes (memory efficient)
         retain_rasters_in_memory=True,  # Default True for backward compatibility
-        
+
+        # Edge assembly tolerance (percentage of cell size)
+        edge_snap_tolerance_pct=1.0,  # Default: 1% of cell
+        edge_snap_tolerance_min_pct=0.5,  # Clamp minimum
+        edge_snap_tolerance_max_pct=5.0,  # Clamp maximum
+
+        # Gap closing uses multiplier of base tolerance
+        edge_gap_closing_multiplier=2.0,
+
+        # DFS cycle detection safety limit
+        edge_cycle_max_depth=1000,
+
     ):
         """Initialize VOP configuration.
 
@@ -283,6 +294,17 @@ class Config:
 
         # Memory management
         self.retain_rasters_in_memory = bool(retain_rasters_in_memory)
+
+        # Edge assembly tolerance (percentage of cell size)
+        self.edge_snap_tolerance_pct = float(edge_snap_tolerance_pct)
+        self.edge_snap_tolerance_min_pct = float(edge_snap_tolerance_min_pct)
+        self.edge_snap_tolerance_max_pct = float(edge_snap_tolerance_max_pct)
+
+        # Gap closing uses multiplier of base tolerance
+        self.edge_gap_closing_multiplier = float(edge_gap_closing_multiplier)
+
+        # DFS cycle detection safety limit
+        self.edge_cycle_max_depth = int(edge_cycle_max_depth)
         
     def compute_adaptive_tile_size(self, grid_width, grid_height):
         """Compute optimal tile size based on grid dimensions.
