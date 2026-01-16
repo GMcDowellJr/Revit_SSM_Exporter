@@ -1746,53 +1746,31 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 processed += 1
                 continue
 
-        # Fallback: Use OBB polygon (oriented bounds, not axis-aligned rect)
+        # Fallback: AABB-only proxy (skip OBB polygon generation entirely)
         obb_success = False
-        obb_error = None
+        obb_error = "skipped (proxy-only AABB)"
         aabb_success = False
         aabb_error = None
 
+        # Ultimate fallback: axis-aligned rect (AABB)
         try:
-            from .revit.collection import get_element_obb_loops
-            obb_loops = get_element_obb_loops(
-                elem,
-                vb,
-                raster,
-                bbox=elem_wrapper.get("bbox"),
-                diag=diag,
-                view=view,
-            )
+            rect = elem_wrapper.get("uv_bbox_rect")
 
-            if obb_loops:
-                try:
-                    # Rasterize OBB polygon (same as silhouette loops)
-                    write_proxy_edges = bool(getattr(cfg, "proxy_edges_to_occupancy", True))
-                    filled = raster.rasterize_proxy_loops(
-                        obb_loops,
-                        key_index,
-                        depth=elem_depth,
-                        source=source_type,
-                        write_proxy_edges=write_proxy_edges,
-                    )
+            # Force a rect attempt here (AABB last resort depends on it).
+            if rect is None:
+                rect = _project_element_bbox_to_cell_rect(
+                    elem,
+                    vb,
+                    raster,
+                    bbox=elem_wrapper.get("bbox"),
+                    diag=diag,
+                    view=view,
+                )
 
-                    if filled > 0:
-                        # Tag with OBB strategy
-                        if key_index < len(raster.element_meta):
-                            raster.element_meta[key_index]['strategy'] = 'uv_obb'
-                            raster.element_meta[key_index]['filled_cells'] = filled
-
-                        bbox_fallback += 1
-                        processed += 1
-                        obb_success = True
-                    else:
-                        obb_error = "OBB rasterization returned 0 filled cells"
-                except Exception as e:
-                    obb_error = "OBB rasterization failed: {0}".format(e)
-            else:
-                obb_error = "OBB loop generation returned None (no bbox?)"
-
-            if obb_success:
-                continue
+            if rect is None:
+                aabb_error = "CellRect unavailable (bbox missing/unprojectable)"
+            elif rect.empty:
+                aabb_error = "CellRect is empty (element outside bounds?)"
 
             # Ultimate fallback: axis-aligned rect (if OBB fails)
             try:

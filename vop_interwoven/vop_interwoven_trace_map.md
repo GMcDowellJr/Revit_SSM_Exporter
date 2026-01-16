@@ -108,8 +108,6 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
-    - `get_element_obb_loops`
-      - called from: pipeline.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -289,8 +287,6 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
-    - `get_element_obb_loops`
-      - called from: pipeline.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -470,8 +466,6 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
-    - `get_element_obb_loops`
-      - called from: pipeline.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -651,8 +645,6 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
-    - `get_element_obb_loops`
-      - called from: pipeline.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -832,8 +824,6 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
-    - `get_element_obb_loops`
-      - called from: pipeline.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -1015,8 +1005,6 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
-    - `get_element_obb_loops`
-      - called from: pipeline.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -1196,8 +1184,6 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
-    - `get_element_obb_loops`
-      - called from: pipeline.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -1377,8 +1363,6 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
-    - `get_element_obb_loops`
-      - called from: pipeline.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -1558,8 +1542,6 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
-    - `get_element_obb_loops`
-      - called from: pipeline.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -1737,8 +1719,6 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
-    - `get_element_obb_loops`
-      - called from: pipeline.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -1920,8 +1900,6 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
-    - `get_element_obb_loops`
-      - called from: pipeline.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -2101,8 +2079,6 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
-    - `get_element_obb_loops`
-      - called from: pipeline.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -2282,8 +2258,6 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
-    - `get_element_obb_loops`
-      - called from: pipeline.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -2461,8 +2435,6 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
-    - `get_element_obb_loops`
-      - called from: pipeline.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -2644,8 +2616,6 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
-    - `get_element_obb_loops`
-      - called from: pipeline.py
     - `get_perf_csv_header`
       - called from: streaming.py
     - `get_views_from_input_or_current`
