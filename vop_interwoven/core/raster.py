@@ -151,6 +151,38 @@ class TileMap:
             if depth > self.w_max_tile[tile_idx]:
                 self.w_max_tile[tile_idx] = depth
 
+def _fix_loop_points_uv(points_uv, tol_ft):
+    """Merge consecutive points closer than tol_ft (UV space, feet).
+    Returns a new list. Never raises.
+    """
+    try:
+        if not points_uv:
+            return []
+
+        tol2 = float(tol_ft) * float(tol_ft)
+
+        out = [points_uv[0]]
+        for (u, v) in points_uv[1:]:
+            pu, pv = out[-1]
+            du = float(u) - float(pu)
+            dv = float(v) - float(pv)
+            if (du * du + dv * dv) < tol2:
+                continue
+            out.append((float(u), float(v)))
+
+        # If last is too close to first, snap closed; else leave closure decision to caller.
+        if len(out) >= 2:
+            u0, v0 = out[0]
+            ul, vl = out[-1]
+            du = float(ul) - float(u0)
+            dv = float(vl) - float(v0)
+            if (du * du + dv * dv) < tol2:
+                out[-1] = (float(u0), float(v0))
+
+        return out
+    except Exception:
+        return list(points_uv) if points_uv else []
+
 
 class ViewRaster:
     """Raster representation of a single view for VOP interwoven pipeline.
@@ -358,6 +390,9 @@ class ViewRaster:
         # Global per-cell occlusion depth buffer (W-depth from view-space UVW)
         self.w_occ = [float("inf")] * N
 
+        # Track which key_index last won the w_occ depth test (for debugging occlusion ownership).
+        self.w_occ_key = [-1] * N
+
         # Tile acceleration
         self.tile = TileMap(tile_size, self.W, self.H)
 
@@ -499,7 +534,7 @@ class ViewRaster:
 
         raise ValueError("Unknown model-present mode: {0}".format(mode))
 
-    def try_write_cell(self, i, j, w_depth, source, key_index=None):
+    def try_write_cell(self, i, j, w_depth, source="HOST", allow_overwrite=False, tie_breaker_eps=0.0, key_index=None):
         """Centralized cell write with depth testing (MANDATORY contract).
 
         Args:
@@ -535,10 +570,24 @@ class ViewRaster:
 
         self.depth_test_attempted += 1
 
-        if w_depth < self.w_occ[idx]:
+        occ = self.w_occ[idx]
+        eps = float(tie_breaker_eps or 0.0)
+
+        # Standard strict depth test, with optional tie-breaker epsilon.
+        # If eps > 0 and depths are equal (or within eps), treat as a win for the incoming write.
+        if (w_depth < occ) or (eps > 0.0 and abs(float(w_depth) - float(occ)) <= eps):
+
             was_empty = self.w_occ[idx] == float("inf")
 
             self.w_occ[idx] = w_depth
+            try:
+                if key_index is not None:
+                    self.w_occ_key[idx] = int(key_index)
+                else:
+                    self.w_occ_key[idx] = -1
+            except Exception:
+                self.w_occ_key[idx] = -1
+
             self.model_mask[idx] = True
 
             # Mark exactly one occupancy layer based on source
@@ -734,8 +783,14 @@ class ViewRaster:
 
         for loop in loops:
             points_uv = loop.get("points", [])
-            is_hole = loop.get("is_hole", False)
+            is_hole = bool(loop.get("is_hole", False))
 
+            if len(points_uv) < 3:
+                continue
+
+            # Fix loops: merge nearly-coincident points (tessellation / clipping artifacts).
+            # Tolerance is 10% of the current grid cell size (in feet).
+            points_uv = _fix_loop_points_uv(points_uv, tol_ft=(0.10 * float(self.cell_size_ft)))
             if len(points_uv) < 3:
                 continue
                 
@@ -743,6 +798,7 @@ class ViewRaster:
             # IMPORTANT: Inset model clip by half a cell so no raster cell
             # can extend outside the crop boundary.
             if self.model_clip_bounds is not None:
+                # Match _cell_in_model_clip half-cell inset semantics
                 half = 0.5 * self.cell_size_ft
                 xmin = self.model_clip_bounds.xmin + half
                 ymin = self.model_clip_bounds.ymin + half
@@ -764,9 +820,16 @@ class ViewRaster:
                 i = int((u - self.bounds_xy.xmin) / self.cell_size_ft)
                 j = int((v - self.bounds_xy.ymin) / self.cell_size_ft)
 
-                # Range-check (no clamping). Skip vertices that land out of bounds.
-                if i < 0 or i >= self.W or j < 0 or j >= self.H:
-                    continue
+                # Clamp instead of dropping boundary vertices (u/v can equal xmax/ymax after clipping).
+                if i < 0:
+                    i = 0
+                elif i >= self.W:
+                    i = self.W - 1
+                if j < 0:
+                    j = 0
+                elif j >= self.H:
+                    j = self.H - 1
+
                 points_ij.append((i, j))
 
             if len(points_ij) < 3:
@@ -792,42 +855,49 @@ class ViewRaster:
     def rasterize_silhouette_loops(self, loops, key_index, depth=0.0, source="HOST"):
         """Rasterize element silhouette loops into model layers with depth testing.
 
-        Args:
-            loops: List of loop dicts from silhouette.get_element_silhouette()
-                   Each loop has: {'points': [(u, v), ...], 'is_hole': bool}
-            key_index: Element metadata index (for edge tracking)
-            depth: W-depth value for occlusion testing (default: 0.0)
-            source: Source type - "HOST", "LINK", or "DWG" (default: "HOST")
+        Transactional semantics:
+          - Compute interior cells for outer loops and hole loops without writing
+          - Commit only (outer_cells - hole_cells) via try_write_cell
+          - Stamp edges ONLY if any interior cells were written (filled > 0)
 
-        Returns:
-            Number of cells filled
-
-        Commentary:
-            - Converts loop points from view UV to cell indices
-            - Rasterizes loop edges using Bresenham line algorithm
-            - Fills interior using depth-tested scanline fill (try_write_cell)
-            - Updates w_occ, per-source occupancy, and model_edge_key
+        This prevents partial "edge-only" residue when fill fails and avoids bbox double-rendering.
         """
         if not loops:
             return 0
 
-        filled_count = 0
+        # Collect fill cells for outers and holes (no writes yet)
+        outer_cells = set()
+        hole_cells = set()
+
+        # Keep edge point chains for later edge stamping (only if commit succeeds)
+        edge_chains = []
 
         for loop in loops:
-            points_uv = loop.get('points', [])
-            is_hole = loop.get('is_hole', False)
+            points_uv = loop.get("points", [])
+            is_hole = bool(loop.get("is_hole", False))
 
             if len(points_uv) < 3:
                 continue
 
-            # Convert UV points to cell indices
-            # IMPORTANT: If a model-only clip is present (model crop), clip the polygon in UV
-            # BEFORE converting to IJ to avoid "clamp-to-raster-edge" distortion.
+            # Fix loops: merge nearly-coincident consecutive points (tessellation artifacts).
+            # Tolerance is 10% of the current grid cell size (in feet).
+            points_uv = _fix_loop_points_uv(points_uv, tol_ft=(0.10 * float(self.cell_size_ft)))
+
+            # Normalize closure BEFORE clipping: Sutherland–Hodgman expects an open ring.
+            if len(points_uv) >= 2 and points_uv[0] == points_uv[-1]:
+                points_uv = list(points_uv[:-1])
+
+            if len(points_uv) < 3:
+                continue
+
+            # UV clip bounds (model crop vs full raster).
+            # IMPORTANT: match _cell_in_model_clip semantics by insetting model clip by half a cell.
             if self.model_clip_bounds is not None:
-                xmin = self.model_clip_bounds.xmin
-                ymin = self.model_clip_bounds.ymin
-                xmax = self.model_clip_bounds.xmax
-                ymax = self.model_clip_bounds.ymax
+                half = 0.5 * self.cell_size_ft
+                xmin = self.model_clip_bounds.xmin + half
+                ymin = self.model_clip_bounds.ymin + half
+                xmax = self.model_clip_bounds.xmax - half
+                ymax = self.model_clip_bounds.ymax - half
             else:
                 xmin = self.bounds_xy.xmin
                 ymin = self.bounds_xy.ymin
@@ -843,37 +913,252 @@ class ViewRaster:
                 i = int((u - self.bounds_xy.xmin) / self.cell_size_ft)
                 j = int((v - self.bounds_xy.ymin) / self.cell_size_ft)
 
-                # After UV clipping, coordinates should land inside the clip rect.
-                # Do NOT clamp: clamping can snap slightly-outside vertices onto the raster edge,
-                # creating a thin strip outside the intended clip.
-                if i < 0 or i >= self.W or j < 0 or j >= self.H:
-                    continue
+                # Clamp instead of dropping boundary vertices (u/v can land exactly on xmax/ymax).
+                if i < 0:
+                    i = 0
+                elif i >= self.W:
+                    i = self.W - 1
+                if j < 0:
+                    j = 0
+                elif j >= self.H:
+                    j = self.H - 1
 
                 points_ij.append((i, j))
+
+            # Dedupe consecutive duplicates (scanline + bresenham stability)
+            dedup = []
+            for pt in points_ij:
+                if not dedup or dedup[-1] != pt:
+                    dedup.append(pt)
+            points_ij = dedup
 
             if len(points_ij) < 3:
                 continue
 
-            # Rasterize edges
-            # 1) Fill interior FIRST (writes w_occ and per-source occupancy for occlusion)
-            if not is_hole:
-                filled_count += self._scanline_fill(points_ij, key_index, depth, source)
+            # Ensure closure for scanline + edge stamping
+            if points_ij[0] != points_ij[-1]:
+                points_ij = points_ij + [points_ij[0]]
 
-            # 2) Then rasterize edges with depth-test against updated w_occ buffer
-            for k in range(len(points_ij) - 1):
-                i0, j0 = points_ij[k]
-                i1, j1 = points_ij[k + 1]
+            if len(points_ij) < 4:
+                continue
 
-                for i, j in _bresenham_line(i0, j0, i1, j1):
+            # Collect interior cells
+            cells = self._scanline_cells(points_ij)
+            if cells:
+                if is_hole:
+                    hole_cells |= cells
+                else:
+                    outer_cells |= cells
+
+            # Preserve edge chain for possible stamping after commit
+            edge_chains.append((points_ij, is_hole))
+
+        # Commit: outer minus holes
+        target_cells = outer_cells - hole_cells
+        
+        # TEMP DEBUG: identify element for this silhouette fill
+        try:
+            meta = None
+            em = getattr(self, "element_meta", None)
+            if isinstance(em, dict):
+                meta = em.get(key_index)
+            elif isinstance(em, list):
+                if 0 <= int(key_index) < len(em):
+                    meta = em[int(key_index)]
+            elem_id_dbg = meta.get("elem_id") if isinstance(meta, dict) else None
+            cat_dbg = meta.get("category") if isinstance(meta, dict) else None
+        except Exception:
+            elem_id_dbg = None
+            cat_dbg = None
+
+        print(
+            "thin_runner: [DEBUG] silhouette cells elem={} cat='{}' key_index={} target={} outer={} holes={}".format(
+                elem_id_dbg, cat_dbg, key_index, len(target_cells), len(outer_cells), len(hole_cells)
+            )
+        )
+
+
+        if not target_cells:
+            return 0
+
+        # TEMP DEBUG: classify why try_write_cell rejects (clip vs depth)
+        _clip_rejects = 0
+        _depth_rejects = 0
+
+        filled = 0
+        for (i, j) in target_cells:
+            # Mirror try_write_cell's clip guard so we can count it without changing try_write_cell.
+            if source in ("HOST", "LINK", "DWG") and (not self._cell_in_model_clip(i, j)):
+                _clip_rejects += 1
+                continue
+
+            idx = self.get_cell_index(i, j)
+            if idx is None:
+                _clip_rejects += 1
+                continue
+
+            # Depth pre-check must match try_write_cell tie-break behavior.
+            occ = self.w_occ[idx]
+            eps = 1e-6
+
+            if not ((depth < occ) or (abs(float(depth) - float(occ)) <= eps)):
+                _depth_rejects += 1
+                continue
+
+            if self.try_write_cell(i, j, w_depth=depth, source=source, tie_breaker_eps=eps, key_index=key_index):
+                filled += 1
+            else:
+                # Keep attribution (depth/tie or other guard inside try_write_cell)
+                _depth_rejects += 1
+
+        # TEMP DEBUG: if silhouette is fully depth-rejected, identify which existing element(s)
+        # own the w_occ cells inside this polygon.
+        if filled == 0 and len(target_cells) > 0:
+            try:
+                counts = {}
+                samples = 0
+                for (i, j) in target_cells:
                     idx = self.get_cell_index(i, j)
                     if idx is None:
                         continue
+                    k = -1
+                    try:
+                        k = int(self.w_occ_key[idx])
+                    except Exception:
+                        k = -1
+                    counts[k] = counts.get(k, 0) + 1
+                    samples += 1
 
-                    w_here = self.w_occ[idx]
-                    self.stamp_model_edge_idx(idx, key_index, depth=depth)
+                # Print top 3 occluders by cell coverage
+                top = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:3]
+                top_pretty = []
+                for k, n in top:
+                    meta = None
+                    try:
+                        if hasattr(self, "element_meta"):
+                            em = self.element_meta
+                            if isinstance(em, dict):
+                                meta = em.get(k)
+                            elif isinstance(em, list):
+                                if 0 <= k < len(em):
+                                    meta = em[k]
+                    except Exception:
+                        meta = None
 
+                    top_pretty.append(
+                        {
+                            "key_index": k,
+                            "cells": n,
+                            "elem_id": (meta.get("elem_id") if isinstance(meta, dict) else None),
+                            "category": (meta.get("category") if isinstance(meta, dict) else None),
+                            "source": (meta.get("source") if isinstance(meta, dict) else None),
+                        }
+                    )
 
-        return filled_count
+                print(f"thin_runner: [DEBUG] silhouette occluders top={top_pretty} samples={samples}")
+
+                try:
+                    depths = []
+                    for (i, j) in target_cells:
+                        idx = self.get_cell_index(i, j)
+                        if idx is None:
+                            continue
+                        depths.append(float(self.w_occ[idx]))
+                    if depths:
+                        print(f"thin_runner: [DEBUG] silhouette w_occ in target: min={min(depths)} max={max(depths)} floor_depth={depth}")
+                except Exception:
+                    pass
+
+            except Exception:
+                pass
+
+        # Only stamp edges if any interior cells were actually written.
+        # This prevents "L + rect" when the pipeline falls through to bbox.
+        if filled > 0:
+            for (points_ij, _is_hole) in edge_chains:
+                for k in range(len(points_ij) - 1):
+                    i0, j0 = points_ij[k]
+                    i1, j1 = points_ij[k + 1]
+                    for i, j in _bresenham_line(i0, j0, i1, j1):
+                        idx = self.get_cell_index(i, j)
+                        if idx is None:
+                            continue
+                        self.stamp_model_edge_idx(idx, key_index, depth=depth)
+
+        return filled
+
+    def _scanline_cells(self, points_ij):
+        """Return set of interior (i,j) cells for polygon using scanline (no writes).
+
+        points_ij is expected to be CLOSED (last == first). Never raises.
+        """
+        try:
+            if not points_ij or len(points_ij) < 4:
+                return set()
+
+            # Ensure closure
+            if points_ij[0] != points_ij[-1]:
+                points_ij = list(points_ij) + [points_ij[0]]
+
+            # Vertical extent
+            j_coords = [j for i, j in points_ij]
+            j_min = min(j_coords)
+            j_max = max(j_coords)
+
+            filled = set()
+
+            for j in range(j_min, j_max + 1):
+                intersections = []
+
+                for k in range(len(points_ij) - 1):
+                    i0, j0 = points_ij[k]
+                    i1, j1 = points_ij[k + 1]
+
+                    # Skip horizontal edges
+                    if j0 == j1:
+                        continue
+
+                    # Half-open rule to avoid double-counting shared vertices:
+                    # Count intersection when the scanline crosses an edge with j strictly above one endpoint.
+                    if (j0 < j <= j1) or (j1 < j <= j0):
+                        try:
+                            t = float(j - j0) / float(j1 - j0)
+                        except Exception:
+                            continue
+                        i_intersect = float(i0 + t * (i1 - i0))
+                        intersections.append(i_intersect)
+
+                intersections.sort()
+
+                # If odd, skip this scanline (should be rare once half-open rule is applied)
+                if len(intersections) % 2 != 0:
+                    continue
+
+                for k in range(0, len(intersections), 2):
+                    # Use ceil on left, floor on right to avoid over-filling concave notches
+                    try:
+                        import math
+                        x_left = float(intersections[k])
+                        x_right = float(intersections[k + 1])
+                    except Exception:
+                        continue
+
+                    if x_right < x_left:
+                        x_left, x_right = x_right, x_left
+
+                    i_start = int(math.ceil(x_left))
+                    i_end = int(math.floor(x_right))
+
+                    if i_end < i_start:
+                        continue
+
+                    for i in range(i_start, i_end + 1):
+                        if self._is_valid_cell(i, j):
+                            filled.add((i, j))
+
+            return filled
+        except Exception:
+            return set()
 
     def _scanline_fill(self, points_ij, key_index, depth, source):
         """Fill polygon interior using scanline algorithm with depth testing.
@@ -915,29 +1200,43 @@ class ViewRaster:
                 if j0 == j1:
                     continue
 
-                # Check if scanline intersects this edge
-                if min(j0, j1) <= j <= max(j0, j1):
-                    # Compute intersection i coordinate
-                    if j1 != j0:
+                # Half-open rule: avoid double-counting shared vertices
+                if (j0 < j <= j1) or (j1 < j <= j0):
+                    try:
                         t = float(j - j0) / float(j1 - j0)
-                        i_intersect = int(i0 + t * (i1 - i0))
-                        intersections.append(i_intersect)
+                    except Exception:
+                        continue
+                    i_intersect = float(i0 + t * (i1 - i0))
+                    intersections.append(i_intersect)
 
             # Sort intersections
             intersections.sort()
 
-            # Fill between pairs
-            for k in range(0, len(intersections) - 1, 2):
-                i_start = intersections[k]
-                i_end = intersections[k + 1] if k + 1 < len(intersections) else intersections[k]
+            # Defensive: if odd, skip this scanline (should be rare after half-open rule)
+            if len(intersections) % 2 != 0:
+                continue
+
+            for k in range(0, len(intersections), 2):
+                # Use ceil on left, floor on right to avoid over-filling concave notches
+                try:
+                    import math
+                    x_left = float(intersections[k])
+                    x_right = float(intersections[k + 1])
+                except Exception:
+                    continue
+
+                if x_right < x_left:
+                    x_left, x_right = x_right, x_left
+
+                i_start = int(math.ceil(x_left))
+                i_end = int(math.floor(x_right))
+
+                if i_end < i_start:
+                    continue
 
                 for i in range(i_start, i_end + 1):
-                    if not self._is_valid_cell(i, j):
-                        continue
-                    # Use try_write_cell for depth-tested occlusion
-                    # Interior fills space and blocks visibility via per-source occupancy
-                    if self.try_write_cell(i, j, w_depth=depth, source=source):
-                        filled += 1
+                    if self._is_valid_cell(i, j):
+                        filled.add((i, j))
 
         return filled
 

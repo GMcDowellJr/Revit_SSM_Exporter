@@ -413,8 +413,10 @@ class Config:
             # Thin/long elements (beams, columns, pipes): OBB captures rotation
             return ['obb', 'bbox']
         elif uv_mode == 'AREAL':
-            # Large area elements: need silhouette for concave shapes
-            return ['silhouette_edges', 'obb', 'bbox']
+            # Large area elements:
+            # Primary: planar front-facing face loops (semantic, preserves openings)
+            # Fallback: silhouette edges (temporary), then OBB → BBox
+            return ['planar_face_loops', 'silhouette_edges', 'obb', 'bbox']
         else:
             # Default fallback: full chain
             return ['silhouette_edges', 'obb', 'bbox']

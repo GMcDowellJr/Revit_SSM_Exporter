@@ -1398,7 +1398,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
             # Log the error but continue processing other elements
             skipped += 1
             if skipped <= 5:  # Log first 5 errors to avoid spam
-                print("[WARN] vop.pipeline: Skipping element from {0}: {1}".format(doc_label, e))
+                print("[WARN] vop.pipeline: Skipping element from {0}: {1}".format(source_type, e))
             continue
 
         key_index = raster.get_or_create_element_meta_index(
@@ -1720,13 +1720,51 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                         filled += raster.rasterize_silhouette_loops(
                             closed_loops, key_index, depth=elem_depth, source=source_type
                         )
+
+                        # TEMP DEBUG: dump loops for suspected "offset floater" elements (no behavior change)
+                        if elem_id in (987966, 987587, 988621):
+                            try:
+                                print(f"thin_runner: [DEBUG] loop_dump elem={elem_id} cat='{category}' strategy={closed_loops[0].get('strategy') if closed_loops else None} loops={len(closed_loops)} depth={elem_depth}")
+                                for li, lp in enumerate(closed_loops[:8]):
+                                    pts = lp.get("points", []) or []
+                                    is_hole = bool(lp.get("is_hole", False))
+                                    closed = (len(pts) >= 2 and pts[0] == pts[-1])
+                                    us = [p[0] for p in pts if isinstance(p, (tuple, list)) and len(p) >= 2]
+                                    vs = [p[1] for p in pts if isinstance(p, (tuple, list)) and len(p) >= 2]
+                                    if us and vs:
+                                        print(f"thin_runner: [DEBUG]   loop[{li}] pts={len(pts)} closed={closed} is_hole={is_hole} u=({min(us):.3f},{max(us):.3f}) v=({min(vs):.3f},{max(vs):.3f})")
+                                    else:
+                                        print(f"thin_runner: [DEBUG]   loop[{li}] pts={len(pts)} closed={closed} is_hole={is_hole} (no_uv)")
+                            except Exception as _e:
+                                pass
+
+                        # TEMP DEBUG: report actual silhouette commits (helps identify who "draws the big rect")
+                        if processed < 50:
+                            try:
+                                filled_delta = int(filled)  # cumulative in this element scope in current code
+                            except Exception:
+                                filled_delta = None
+
+                            strat = None
+                            try:
+                                strat = closed_loops[0].get("strategy") if closed_loops else None
+                            except Exception:
+                                strat = None
+
+                            if filled_delta and filled_delta > 0:
+                                print(
+                                    "thin_runner: [DEBUG] silhouette COMMIT elem={} cat='{}' strategy={} filled={} depth={} source={}".format(
+                                        elem_id, category, strat, filled_delta, elem_depth, source_type
+                                    )
+                                )
+
                         if filled == 0 and processed < 10:
                             print("[DEBUG RASTER FAIL] Element {} closed loops returned 0 filled (loops={}, source={})".format(
                                 elem_id, len(closed_loops), source_type))
                             # Show first loop points to diagnose
                             if closed_loops and len(closed_loops[0].get('points', [])) > 0:
-                                pts = closed_loops[0]['points'][:3]
-                                print("  First 3 points: {}".format([(round(p[0],1), round(p[1],1)) for p in pts]))
+                                pts = closed_loops[0].get("points", []) if closed_loops else []
+                                print(f"thin_runner: [DEBUG]   Points: count={len(pts)} sample_first_30={pts[:30]}")
                     except Exception as e:
                         if processed < 10:
                             print("[DEBUG RASTER EXCEPT] Element {} rasterization exception: {}".format(elem_id, e))
@@ -1910,14 +1948,14 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
             if not aabb_success:
                 # Complete failure - tag element with error info
                 if key_index < len(raster.element_meta):
-                    raster.element_meta[key_index]['strategy'] = 'FAILED'
                     raster.element_meta[key_index]['obb_error'] = obb_error
+                    raster.element_meta[key_index]['strategy'] = 'FAILED'
                     raster.element_meta[key_index]['aabb_error'] = aabb_error
 
                 skipped += 1
                 if skipped <= 10:
                     print("[ERROR] Element {0} ({1}) from {2} completely failed:".format(
-                        elem_id, category, doc_label))
+                        elem_id, category, source_type))
                     print("  OBB error: {0}".format(obb_error))
                     print("  AABB error: {0}".format(aabb_error))
 
