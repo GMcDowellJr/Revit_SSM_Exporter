@@ -76,6 +76,28 @@
 - `ElementCache.export_analysis_csv` (method, L386)
 - `ElementCache.detect_changes` (method, L470)
 
+### `core/face_selection.py`
+
+**Imports**
+- `__future__:annotations`
+
+**Definitions**
+- `_to_xyz_tuple` (function, L25)
+- `_dot` (function, L33)
+- `_norm` (function, L37)
+- `_normalize` (function, L41)
+- `_sub` (function, L48)
+- `_canonicalize_plane` (function, L52)
+- `_plane_from_planar_face` (function, L76)
+- `_plane_eq_close` (function, L98)
+- `signed_polygon_area_2d` (function, L116)
+- `polygon_area_2d` (function, L139)
+- `iter_front_facing_planar_faces` (function, L147)
+- `group_faces_by_plane` (function, L207)
+- `projected_outer_loop_area_uv` (function, L260)
+- `select_dominant_face_per_plane_group` (function, L316)
+- `select_top_plane_groups` (function, L356)
+
 ### `core/footprint.py`
 
 **Definitions**

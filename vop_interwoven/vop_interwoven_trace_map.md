@@ -130,10 +130,14 @@ Notes:
       - called from: pipeline.py, revit/annotation.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
+    - `polygon_area_2d`
+      - called from: core/face_selection.py
     - `process_document_views`
       - called from: entry_dynamo.py, streaming.py
     - `process_document_views_streaming`
       - called from: streaming.py
+    - `projected_outer_loop_area_uv`
+      - called from: core/face_selection.py
     - `quick_test_current_view`
       - called from: entry_dynamo.py
     - `rasterize_annotations`
@@ -164,6 +168,8 @@ Notes:
       - called from: pipeline.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
+    - `signed_polygon_area_2d`
+      - called from: core/face_selection.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -311,10 +317,14 @@ Notes:
       - called from: pipeline.py, revit/annotation.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
+    - `polygon_area_2d`
+      - called from: core/face_selection.py
     - `process_document_views`
       - called from: entry_dynamo.py, streaming.py
     - `process_document_views_streaming`
       - called from: streaming.py
+    - `projected_outer_loop_area_uv`
+      - called from: core/face_selection.py
     - `quick_test_current_view`
       - called from: entry_dynamo.py
     - `rasterize_annotations`
@@ -345,6 +355,8 @@ Notes:
       - called from: pipeline.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
+    - `signed_polygon_area_2d`
+      - called from: core/face_selection.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -492,10 +504,14 @@ Notes:
       - called from: pipeline.py, revit/annotation.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
+    - `polygon_area_2d`
+      - called from: core/face_selection.py
     - `process_document_views`
       - called from: entry_dynamo.py, streaming.py
     - `process_document_views_streaming`
       - called from: streaming.py
+    - `projected_outer_loop_area_uv`
+      - called from: core/face_selection.py
     - `quick_test_current_view`
       - called from: entry_dynamo.py
     - `rasterize_annotations`
@@ -526,6 +542,8 @@ Notes:
       - called from: pipeline.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
+    - `signed_polygon_area_2d`
+      - called from: core/face_selection.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -673,10 +691,14 @@ Notes:
       - called from: pipeline.py, revit/annotation.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
+    - `polygon_area_2d`
+      - called from: core/face_selection.py
     - `process_document_views`
       - called from: entry_dynamo.py, streaming.py
     - `process_document_views_streaming`
       - called from: streaming.py
+    - `projected_outer_loop_area_uv`
+      - called from: core/face_selection.py
     - `quick_test_current_view`
       - called from: entry_dynamo.py
     - `rasterize_annotations`
@@ -707,6 +729,8 @@ Notes:
       - called from: pipeline.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
+    - `signed_polygon_area_2d`
+      - called from: core/face_selection.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -854,10 +878,14 @@ Notes:
       - called from: pipeline.py, revit/annotation.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
+    - `polygon_area_2d`
+      - called from: core/face_selection.py
     - `process_document_views`
       - called from: entry_dynamo.py, streaming.py
     - `process_document_views_streaming`
       - called from: streaming.py
+    - `projected_outer_loop_area_uv`
+      - called from: core/face_selection.py
     - `quick_test_current_view`
       - called from: entry_dynamo.py
     - `rasterize_annotations`
@@ -890,6 +918,8 @@ Notes:
       - called from: pipeline.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
+    - `signed_polygon_area_2d`
+      - called from: core/face_selection.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -1037,8 +1067,12 @@ Notes:
       - called from: pipeline.py, revit/annotation.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
+    - `polygon_area_2d`
+      - called from: core/face_selection.py
     - `process_document_views_streaming`
       - called from: streaming.py
+    - `projected_outer_loop_area_uv`
+      - called from: core/face_selection.py
     - `quick_test_current_view`
       - called from: entry_dynamo.py
     - `rasterize_annotations`
@@ -1071,6 +1105,8 @@ Notes:
       - called from: pipeline.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
+    - `signed_polygon_area_2d`
+      - called from: core/face_selection.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -1218,8 +1254,12 @@ Notes:
       - called from: pipeline.py, revit/annotation.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
+    - `polygon_area_2d`
+      - called from: core/face_selection.py
     - `process_document_views`
       - called from: entry_dynamo.py, streaming.py
+    - `projected_outer_loop_area_uv`
+      - called from: core/face_selection.py
     - `quick_test_current_view`
       - called from: entry_dynamo.py
     - `rasterize_annotations`
@@ -1252,6 +1292,8 @@ Notes:
       - called from: pipeline.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
+    - `signed_polygon_area_2d`
+      - called from: core/face_selection.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -1399,10 +1441,14 @@ Notes:
       - called from: pipeline.py, revit/annotation.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
+    - `polygon_area_2d`
+      - called from: core/face_selection.py
     - `process_document_views`
       - called from: entry_dynamo.py, streaming.py
     - `process_document_views_streaming`
       - called from: streaming.py
+    - `projected_outer_loop_area_uv`
+      - called from: core/face_selection.py
     - `quick_test_current_view`
       - called from: entry_dynamo.py
     - `rasterize_annotations`
@@ -1433,6 +1479,8 @@ Notes:
       - called from: pipeline.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
+    - `signed_polygon_area_2d`
+      - called from: core/face_selection.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -1578,10 +1626,14 @@ Notes:
       - called from: pipeline.py, revit/annotation.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
+    - `polygon_area_2d`
+      - called from: core/face_selection.py
     - `process_document_views`
       - called from: entry_dynamo.py, streaming.py
     - `process_document_views_streaming`
       - called from: streaming.py
+    - `projected_outer_loop_area_uv`
+      - called from: core/face_selection.py
     - `quick_test_current_view`
       - called from: entry_dynamo.py
     - `rasterize_annotations`
@@ -1614,6 +1666,8 @@ Notes:
       - called from: pipeline.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
+    - `signed_polygon_area_2d`
+      - called from: core/face_selection.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -1759,10 +1813,14 @@ Notes:
       - called from: pipeline.py, revit/annotation.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
+    - `polygon_area_2d`
+      - called from: core/face_selection.py
     - `process_document_views`
       - called from: entry_dynamo.py, streaming.py
     - `process_document_views_streaming`
       - called from: streaming.py
+    - `projected_outer_loop_area_uv`
+      - called from: core/face_selection.py
     - `quick_test_current_view`
       - called from: entry_dynamo.py
     - `rasterize_annotations`
@@ -1795,6 +1853,8 @@ Notes:
       - called from: pipeline.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
+    - `signed_polygon_area_2d`
+      - called from: core/face_selection.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -1942,10 +2002,14 @@ Notes:
       - called from: pipeline.py, revit/annotation.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
+    - `polygon_area_2d`
+      - called from: core/face_selection.py
     - `process_document_views`
       - called from: entry_dynamo.py, streaming.py
     - `process_document_views_streaming`
       - called from: streaming.py
+    - `projected_outer_loop_area_uv`
+      - called from: core/face_selection.py
     - `quick_test_current_view`
       - called from: entry_dynamo.py
     - `rasterize_annotations`
@@ -1976,6 +2040,8 @@ Notes:
       - called from: pipeline.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
+    - `signed_polygon_area_2d`
+      - called from: core/face_selection.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -2123,10 +2189,14 @@ Notes:
       - called from: pipeline.py, revit/annotation.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
+    - `polygon_area_2d`
+      - called from: core/face_selection.py
     - `process_document_views`
       - called from: entry_dynamo.py, streaming.py
     - `process_document_views_streaming`
       - called from: streaming.py
+    - `projected_outer_loop_area_uv`
+      - called from: core/face_selection.py
     - `quick_test_current_view`
       - called from: entry_dynamo.py
     - `rasterize_annotations`
@@ -2157,6 +2227,8 @@ Notes:
       - called from: pipeline.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
+    - `signed_polygon_area_2d`
+      - called from: core/face_selection.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -2304,10 +2376,14 @@ Notes:
       - called from: pipeline.py, revit/annotation.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
+    - `polygon_area_2d`
+      - called from: core/face_selection.py
     - `process_document_views`
       - called from: entry_dynamo.py, streaming.py
     - `process_document_views_streaming`
       - called from: streaming.py
+    - `projected_outer_loop_area_uv`
+      - called from: core/face_selection.py
     - `quick_test_current_view`
       - called from: entry_dynamo.py
     - `render_model_front_to_back`
@@ -2338,6 +2414,8 @@ Notes:
       - called from: pipeline.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
+    - `signed_polygon_area_2d`
+      - called from: core/face_selection.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -2483,10 +2561,14 @@ Notes:
       - called from: pipeline.py, revit/annotation.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
+    - `polygon_area_2d`
+      - called from: core/face_selection.py
     - `process_document_views`
       - called from: entry_dynamo.py, streaming.py
     - `process_document_views_streaming`
       - called from: streaming.py
+    - `projected_outer_loop_area_uv`
+      - called from: core/face_selection.py
     - `quick_test_current_view`
       - called from: entry_dynamo.py
     - `rasterize_annotations`
@@ -2519,6 +2601,8 @@ Notes:
       - called from: pipeline.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
+    - `signed_polygon_area_2d`
+      - called from: core/face_selection.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -2664,10 +2748,14 @@ Notes:
       - called from: pipeline.py, revit/annotation.py
     - `pca_oriented_extents_uv`
       - called from: core/geometry.py
+    - `polygon_area_2d`
+      - called from: core/face_selection.py
     - `process_document_views`
       - called from: entry_dynamo.py, streaming.py
     - `process_document_views_streaming`
       - called from: streaming.py
+    - `projected_outer_loop_area_uv`
+      - called from: core/face_selection.py
     - `quick_test_current_view`
       - called from: entry_dynamo.py
     - `rasterize_annotations`
@@ -2700,6 +2788,8 @@ Notes:
       - called from: pipeline.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
+    - `signed_polygon_area_2d`
+      - called from: core/face_selection.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
