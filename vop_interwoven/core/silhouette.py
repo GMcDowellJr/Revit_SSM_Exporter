@@ -1605,6 +1605,64 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
         - bbox is the ultimate fallback (always succeeds if element has bbox)
     """
 
+    # Precompute ids used by diagnostics / planar-face selection (safe in tests and in Revit).
+    try:
+        view_id = int(getattr(getattr(view, "Id", None), "IntegerValue", 0))
+    except Exception:
+        view_id = 0
+    try:
+        elem_id = int(getattr(getattr(elem, "Id", None), "IntegerValue", 0))
+    except Exception:
+        elem_id = 0
+
+    # Best-effort face collection for planar-face selection strategy.
+    # In non-Revit unit tests this will remain [], and the strategy can be monkeypatched.
+    element_faces = []
+    try:
+        from Autodesk.Revit.DB import Options, ViewDetailLevel
+    except Exception:
+        Options = None
+        ViewDetailLevel = None
+
+    if Options is not None and hasattr(elem, "get_Geometry"):
+        try:
+            opts = Options()
+            opts.ComputeReferences = False
+            opts.IncludeNonVisibleObjects = False
+            try:
+                if ViewDetailLevel is not None:
+                    opts.DetailLevel = ViewDetailLevel.Medium
+            except Exception:
+                pass
+
+            # Same linked-element guard as elsewhere: don't bind opts.View for linked proxies
+            if not hasattr(elem, "transform"):
+                try:
+                    opts.View = view
+                except Exception:
+                    pass
+
+            geom = elem.get_Geometry(opts)
+            if geom is not None:
+                # Collect faces from solids (PlanarFace filtering happens downstream in face_selection)
+                for solid in _iter_solids(geom):
+                    try:
+                        faces = getattr(solid, "Faces", None)
+                    except Exception:
+                        faces = None
+                    if not faces:
+                        continue
+                    try:
+                        for f in faces:
+                            if f is not None:
+                                element_faces.append(f)
+                    except Exception:
+                        continue
+        except Exception:
+            # Best-effort only; keep element_faces empty on failure.
+            element_faces = []
+
+
     # PR12: geometry cache (caller provides bounded LRU; this function treats it as optional).
     if cache is not None and cache_key is not None:
         try:
@@ -1670,12 +1728,31 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
             strategies = ['silhouette_edges', 'obb', 'bbox']
         else:
             uv_mode = _determine_uv_mode(elem, view, view_basis, raster, cfg)
-            if uv_mode == 'TINY':
-                strategies = ['bbox', 'obb']
-            elif uv_mode == 'LINEAR':
-                strategies = ['uv_obb_rect', 'bbox']
-            else:
-                strategies = ['silhouette_edges', 'obb', 'bbox']
+
+            # If config provides per-uv-mode strategy ordering, honor it.
+            # This is the decision boundary the unit test is trying to validate.
+            if hasattr(cfg, "get_silhouette_strategies"):
+                try:
+                    s = cfg.get_silhouette_strategies(uv_mode)
+                    if s:
+                        strategies = list(s)
+                    else:
+                        strategies = None
+                except Exception:
+                    strategies = None
+
+            # Fallback to legacy defaults if cfg doesn't provide strategies (or failed).
+            if strategies is None:
+                if uv_mode == 'TINY':
+                    strategies = ['bbox', 'obb']
+                elif uv_mode == 'LINEAR':
+                    strategies = ['uv_obb_rect', 'bbox']
+                else:
+                    strategies = ['silhouette_edges', 'obb', 'bbox']
+
+    # Diagnostics: capture attempt order + outcomes.
+    # Emitted only on planar success or bbox_fallback use to avoid noise.
+    _silhouette_attempts = []
 
     # Try each strategy in order
     for strategy_name in strategies:
@@ -1688,6 +1765,14 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
                 loops = _bbox_silhouette(elem, view, view_basis)
             elif strategy_name == 'obb':
                 loops = _obb_silhouette(elem, view, view_basis)
+            elif strategy_name == 'planar_face_loops':
+                loops = _planar_face_loops_silhouette(
+                    element_faces,
+                    view_basis,
+                    diag=diag,
+                    view_id=view_id,
+                    elem_id=elem_id,
+                )
             elif strategy_name == 'silhouette_edges':
                 loops = _silhouette_edges(elem, view, view_basis, cfg)
             elif strategy_name == 'front_face_loops':
@@ -1704,6 +1789,32 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
                 for loop in loops:
                     loop['strategy'] = strategy_name
 
+                if diag is not None:
+                    try:
+                        # Mark last attempt as success
+                        if _silhouette_attempts and _silhouette_attempts[-1].get("strategy") == str(strategy_name):
+                            _silhouette_attempts[-1]["ok"] = True
+                            _silhouette_attempts[-1]["loops"] = int(len(loops))
+                        else:
+                            _silhouette_attempts.append({"strategy": str(strategy_name), "ok": True, "loops": int(len(loops))})
+
+                        # Only emit a success event when planar wins (keeps noise down)
+                        if str(strategy_name) == "planar_face_loops":
+                            diag.debug(
+                                phase="silhouette",
+                                callsite="get_element_silhouette.strategy_success",
+                                message="Silhouette strategy succeeded",
+                                view_id=view_id if 'view_id' in locals() else None,
+                                elem_id=elem_id if 'elem_id' in locals() else None,
+                                extra={
+                                    "uv_mode": uv_mode if 'uv_mode' in locals() else None,
+                                    "winner": str(strategy_name),
+                                    "attempts": list(_silhouette_attempts) if '_silhouette_attempts' in locals() else None,
+                                },
+                            )
+                    except Exception:
+                        pass
+
                 if cache is not None and cache_key is not None:
                     try:
                         cache.set(cache_key, [dict(loop) for loop in loops])
@@ -1712,8 +1823,26 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
 
                 return loops
 
+            # Record that we tried this strategy (success/failure appended below).
+            if diag is not None:
+                try:
+                    _silhouette_attempts.append({"strategy": str(strategy_name), "ok": None})
+                except Exception:
+                    pass
+
         except Exception as e:
             # Strategy failed, try next
+            if diag is not None:
+                try:
+                    _silhouette_attempts.append(
+                        {
+                            "strategy": str(strategy_name),
+                            "ok": False,
+                            "err_type": type(e).__name__,
+                        }
+                    )
+                except Exception:
+                    pass
             pass
 
     # Ultimate fallback: bbox
@@ -1721,8 +1850,55 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
         loops = _bbox_silhouette(elem, view, view_basis)
         for loop in loops:
             loop['strategy'] = 'bbox_fallback'
+
+        if diag is not None:
+            try:
+                # Mark last attempt (if any) as unsuccessful, then record bbox_fallback as winner.
+                if _silhouette_attempts and _silhouette_attempts[-1].get("ok") is None:
+                    _silhouette_attempts[-1]["ok"] = False
+
+                diag.debug(
+                    phase="silhouette",
+                    callsite="get_element_silhouette.bbox_fallback",
+                    message="Silhouette strategies fell through to bbox fallback",
+                    view_id=view_id,
+                    elem_id=elem_id,
+                    extra={
+                        "uv_mode": uv_mode if 'uv_mode' in locals() else None,
+                        "strategies": list(strategies) if strategies is not None else None,
+                        "attempts": list(_silhouette_attempts),
+                    },
+                )
+            except Exception:
+                pass
+
         return loops
+
     except Exception:
+
+        if diag is not None:
+            try:
+                diag.debug(
+                    phase="silhouette",
+                    callsite="get_element_silhouette.strategy_failed",
+                    message="All silhouette strategies failed; returning empty (downstream may bbox/obb fallback)",
+                    view_id=view_id if 'view_id' in locals() else None,
+                    elem_id=elem_id if 'elem_id' in locals() else None,
+                    extra={
+                        "uv_mode": uv_mode if 'uv_mode' in locals() else None,
+                        "strategies": list(strategies) if strategies is not None else None,
+                        "attempts": list(_silhouette_attempts) if '_silhouette_attempts' in locals() else None,
+                    },
+                )
+            except Exception:
+                pass
+
+        if diag is not None:
+            print(
+                f"[DEBUG][silhouette] elem={elem_id} attempts="
+                f"{_silhouette_attempts if '_silhouette_attempts' in locals() else None}"
+            )
+
         return []
 
 def _uv_obb_rect_silhouette(elem, view, view_basis):
@@ -2187,6 +2363,153 @@ def _silhouette_edges(elem, view, view_basis, cfg):
         return [{'points': loop_points, 'is_hole': False}]
     else:
         return []
+
+def _planar_face_loops_silhouette(
+    element_faces,
+    view_basis,
+    *,
+    diag=None,
+    view_id=None,
+    elem_id=None,
+):
+    """
+    Planar front-face projection source:
+      - select planar front-facing faces
+      - group by plane
+      - dominant face per plane-group
+      - top-2 plane-groups (hard-coded)
+      - emit loops as dicts: {"points":[(u,v)...], "open":False, "is_hole":bool}
+
+    NOTE: top_n is intentionally hard-coded to 2.
+          This is the exact place to promote to Config once stabilized.
+    """
+    # Import face_selection in both packaged and flat layouts.
+    # core/silhouette.py and core/face_selection.py are siblings inside vop_interwoven.core.
+    try:
+        from . import face_selection as fs  # type: ignore
+    except Exception:
+        try:
+            from vop_interwoven.core import face_selection as fs  # type: ignore
+        except Exception:
+            import face_selection as fs  # type: ignore
+
+    def _tessellated_xyz_points_from_curveloop(curveloop):
+        pts = []
+        try:
+            for crv in curveloop:
+                try:
+                    tess = crv.Tessellate()
+                    for p in tess:
+                        try:
+                            pts.append((float(p.X), float(p.Y), float(p.Z)))
+                        except Exception:
+                            pts.append((float(p[0]), float(p[1]), float(p[2])))
+                except Exception:
+                    continue
+        except Exception:
+            return []
+        return pts
+
+    def _project_xyz_to_uv(points_xyz):
+        out = []
+        for p in points_xyz:
+            try:
+                u, v = view_basis.transform_to_view_uv(p)
+                out.append((float(u), float(v)))
+            except Exception:
+                continue
+        return out
+
+    def _dedupe_consecutive(points_uv, tol=1e-9):
+        if not points_uv:
+            return []
+        out = [points_uv[0]]
+        for (u, v) in points_uv[1:]:
+            pu, pv = out[-1]
+            if abs(u - pu) <= tol and abs(v - pv) <= tol:
+                continue
+            out.append((u, v))
+        return out
+
+    def _ensure_closed(points_uv):
+        if len(points_uv) < 3:
+            return points_uv
+        if points_uv[0] != points_uv[-1]:
+            return points_uv + [points_uv[0]]
+        return points_uv
+
+    # 1) front-facing planar faces
+    front_faces = list(
+        fs.iter_front_facing_planar_faces(
+            element_faces,
+            view_basis.forward,
+            diag=diag,
+            view_id=view_id,
+            elem_id=elem_id,
+            callsite="silhouette.planar_face_loops",
+        )
+    )
+    if not front_faces:
+        return []
+
+    # 2) plane grouping
+    plane_groups = fs.group_faces_by_plane(front_faces)
+    if not plane_groups:
+        return []
+
+    # 3) dominant face per plane-group
+    selections = fs.select_dominant_face_per_plane_group(plane_groups, view_basis)
+
+    # 4) top-N plane-groups (HARD-CODED)
+    # TODO: Promote `top_n` to Config once behavior is proven stable
+    top = fs.select_top_plane_groups(selections, top_n=2)
+    if not top:
+        return []
+
+    loops_dicts = []
+
+    # 5) emit EdgeLoops directly (outer + holes) as UV point loops
+    for sel in top:
+        face = sel.get("face")
+        if face is None:
+            continue
+
+        try:
+            edge_loops = getattr(face, "EdgeLoops", None)
+        except Exception:
+            edge_loops = None
+
+        if not edge_loops:
+            continue
+
+        # Convert each CurveLoop to UV polyline, compute signed area for hole labeling
+        uv_loops = []
+        for cl in edge_loops:
+            xyz_pts = _tessellated_xyz_points_from_curveloop(cl)
+            uv = _project_xyz_to_uv(xyz_pts)
+            uv = _dedupe_consecutive(uv)
+            uv = _ensure_closed(uv)
+            if len(uv) < 4:
+                continue
+            a_signed = float(fs.signed_polygon_area_2d(uv))
+            uv_loops.append((uv, a_signed))
+
+        if not uv_loops:
+            continue
+
+        # Determine outer loop as the max-abs-area loop; everything else is treated as a hole.
+        outer_idx = max(range(len(uv_loops)), key=lambda i: abs(uv_loops[i][1]))
+
+        for i, (uv, _a_signed) in enumerate(uv_loops):
+            loops_dicts.append(
+                {
+                    "points": list(uv),
+                    "open": False,
+                    "is_hole": (i != outer_idx),
+                }
+            )
+
+    return loops_dicts
 
 
 def _order_points_by_connectivity(points):

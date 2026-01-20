@@ -116,12 +116,16 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: streaming.py
+    - `group_faces_by_plane`
+      - called from: core/silhouette.py
     - `included_bic_names_for_source`
       - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_front_facing_planar_faces`
+      - called from: core/silhouette.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -166,10 +170,14 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `select_dominant_face_per_plane_group`
+      - called from: core/silhouette.py
+    - `select_top_plane_groups`
+      - called from: core/silhouette.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
-      - called from: core/face_selection.py
+      - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -303,12 +311,16 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: streaming.py
+    - `group_faces_by_plane`
+      - called from: core/silhouette.py
     - `included_bic_names_for_source`
       - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_front_facing_planar_faces`
+      - called from: core/silhouette.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -353,10 +365,14 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `select_dominant_face_per_plane_group`
+      - called from: core/silhouette.py
+    - `select_top_plane_groups`
+      - called from: core/silhouette.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
-      - called from: core/face_selection.py
+      - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -490,12 +506,16 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: streaming.py
+    - `group_faces_by_plane`
+      - called from: core/silhouette.py
     - `included_bic_names_for_source`
       - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_front_facing_planar_faces`
+      - called from: core/silhouette.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -540,10 +560,14 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `select_dominant_face_per_plane_group`
+      - called from: core/silhouette.py
+    - `select_top_plane_groups`
+      - called from: core/silhouette.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
-      - called from: core/face_selection.py
+      - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -677,12 +701,16 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: streaming.py
+    - `group_faces_by_plane`
+      - called from: core/silhouette.py
     - `included_bic_names_for_source`
       - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_front_facing_planar_faces`
+      - called from: core/silhouette.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -727,10 +755,14 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `select_dominant_face_per_plane_group`
+      - called from: core/silhouette.py
+    - `select_top_plane_groups`
+      - called from: core/silhouette.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
-      - called from: core/face_selection.py
+      - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -864,12 +896,16 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: streaming.py
+    - `group_faces_by_plane`
+      - called from: core/silhouette.py
     - `included_bic_names_for_source`
       - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_front_facing_planar_faces`
+      - called from: core/silhouette.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -916,10 +952,14 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `select_dominant_face_per_plane_group`
+      - called from: core/silhouette.py
+    - `select_top_plane_groups`
+      - called from: core/silhouette.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
-      - called from: core/face_selection.py
+      - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -1053,12 +1093,16 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: streaming.py
+    - `group_faces_by_plane`
+      - called from: core/silhouette.py
     - `included_bic_names_for_source`
       - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_front_facing_planar_faces`
+      - called from: core/silhouette.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -1103,10 +1147,14 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `select_dominant_face_per_plane_group`
+      - called from: core/silhouette.py
+    - `select_top_plane_groups`
+      - called from: core/silhouette.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
-      - called from: core/face_selection.py
+      - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -1240,12 +1288,16 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: streaming.py
+    - `group_faces_by_plane`
+      - called from: core/silhouette.py
     - `included_bic_names_for_source`
       - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_front_facing_planar_faces`
+      - called from: core/silhouette.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -1290,10 +1342,14 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `select_dominant_face_per_plane_group`
+      - called from: core/silhouette.py
+    - `select_top_plane_groups`
+      - called from: core/silhouette.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
-      - called from: core/face_selection.py
+      - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -1427,12 +1483,16 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: streaming.py
+    - `group_faces_by_plane`
+      - called from: core/silhouette.py
     - `included_bic_names_for_source`
       - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_front_facing_planar_faces`
+      - called from: core/silhouette.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -1477,10 +1537,14 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `select_dominant_face_per_plane_group`
+      - called from: core/silhouette.py
+    - `select_top_plane_groups`
+      - called from: core/silhouette.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
-      - called from: core/face_selection.py
+      - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -1614,10 +1678,14 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: streaming.py
+    - `group_faces_by_plane`
+      - called from: core/silhouette.py
     - `included_bic_names_for_source`
       - called from: revit/collection.py, revit/collection_policy.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_front_facing_planar_faces`
+      - called from: core/silhouette.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -1664,10 +1732,14 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `select_dominant_face_per_plane_group`
+      - called from: core/silhouette.py
+    - `select_top_plane_groups`
+      - called from: core/silhouette.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
-      - called from: core/face_selection.py
+      - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -1799,12 +1871,16 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: streaming.py
+    - `group_faces_by_plane`
+      - called from: core/silhouette.py
     - `included_bic_names_for_source`
       - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_front_facing_planar_faces`
+      - called from: core/silhouette.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -1851,10 +1927,14 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `select_dominant_face_per_plane_group`
+      - called from: core/silhouette.py
+    - `select_top_plane_groups`
+      - called from: core/silhouette.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
-      - called from: core/face_selection.py
+      - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -1988,12 +2068,16 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: streaming.py
+    - `group_faces_by_plane`
+      - called from: core/silhouette.py
     - `included_bic_names_for_source`
       - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_front_facing_planar_faces`
+      - called from: core/silhouette.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -2038,10 +2122,14 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `select_dominant_face_per_plane_group`
+      - called from: core/silhouette.py
+    - `select_top_plane_groups`
+      - called from: core/silhouette.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
-      - called from: core/face_selection.py
+      - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -2175,12 +2263,16 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: streaming.py
+    - `group_faces_by_plane`
+      - called from: core/silhouette.py
     - `included_bic_names_for_source`
       - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_front_facing_planar_faces`
+      - called from: core/silhouette.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -2225,10 +2317,14 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `select_dominant_face_per_plane_group`
+      - called from: core/silhouette.py
+    - `select_top_plane_groups`
+      - called from: core/silhouette.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
-      - called from: core/face_selection.py
+      - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -2362,12 +2458,16 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: streaming.py
+    - `group_faces_by_plane`
+      - called from: core/silhouette.py
     - `included_bic_names_for_source`
       - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_front_facing_planar_faces`
+      - called from: core/silhouette.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -2412,10 +2512,14 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `select_dominant_face_per_plane_group`
+      - called from: core/silhouette.py
+    - `select_top_plane_groups`
+      - called from: core/silhouette.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
-      - called from: core/face_selection.py
+      - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -2547,12 +2651,16 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: streaming.py
+    - `group_faces_by_plane`
+      - called from: core/silhouette.py
     - `included_bic_names_for_source`
       - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_front_facing_planar_faces`
+      - called from: core/silhouette.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -2599,10 +2707,14 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `select_dominant_face_per_plane_group`
+      - called from: core/silhouette.py
+    - `select_top_plane_groups`
+      - called from: core/silhouette.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
-      - called from: core/face_selection.py
+      - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
@@ -2734,12 +2846,16 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: streaming.py
+    - `group_faces_by_plane`
+      - called from: core/silhouette.py
     - `included_bic_names_for_source`
       - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
+    - `iter_front_facing_planar_faces`
+      - called from: core/silhouette.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -2786,10 +2902,14 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `select_dominant_face_per_plane_group`
+      - called from: core/silhouette.py
+    - `select_top_plane_groups`
+      - called from: core/silhouette.py
     - `should_include_element`
       - called from: revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
-      - called from: core/face_selection.py
+      - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
     - `supports_crop_bounds`
