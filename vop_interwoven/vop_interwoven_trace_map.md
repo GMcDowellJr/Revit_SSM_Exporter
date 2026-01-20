@@ -150,6 +150,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_mode`
       - called from: pipeline.py
+    - `resolve_view_w_volume`
+      - called from: pipeline.py
     - `run_vop_pipeline_streaming`
       - called from: thinrunner_streaming.py
     - `run_vop_pipeline_with_csv`
@@ -328,6 +330,8 @@ Notes:
     - `resolve_view_bounds`
       - called from: pipeline.py
     - `resolve_view_mode`
+      - called from: pipeline.py
+    - `resolve_view_w_volume`
       - called from: pipeline.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
@@ -508,6 +512,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_mode`
       - called from: pipeline.py
+    - `resolve_view_w_volume`
+      - called from: pipeline.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
     - `run_vop_pipeline_streaming`
@@ -686,6 +692,8 @@ Notes:
     - `resolve_view_bounds`
       - called from: pipeline.py
     - `resolve_view_mode`
+      - called from: pipeline.py
+    - `resolve_view_w_volume`
       - called from: pipeline.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
@@ -866,6 +874,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_mode`
       - called from: pipeline.py
+    - `resolve_view_w_volume`
+      - called from: pipeline.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
     - `run_vop_pipeline_streaming`
@@ -1044,6 +1054,8 @@ Notes:
     - `resolve_view_bounds`
       - called from: pipeline.py
     - `resolve_view_mode`
+      - called from: pipeline.py
+    - `resolve_view_w_volume`
       - called from: pipeline.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
@@ -1224,6 +1236,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_mode`
       - called from: pipeline.py
+    - `resolve_view_w_volume`
+      - called from: pipeline.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
     - `run_vop_pipeline_streaming`
@@ -1402,6 +1416,8 @@ Notes:
     - `resolve_view_bounds`
       - called from: pipeline.py
     - `resolve_view_mode`
+      - called from: pipeline.py
+    - `resolve_view_w_volume`
       - called from: pipeline.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
@@ -1582,6 +1598,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_mode`
       - called from: pipeline.py
+    - `resolve_view_w_volume`
+      - called from: pipeline.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
     - `run_vop_pipeline_streaming`
@@ -1761,6 +1779,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_mode`
       - called from: pipeline.py
+    - `resolve_view_w_volume`
+      - called from: pipeline.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
     - `run_vop_pipeline_streaming`
@@ -1798,7 +1818,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `resolve_view_bounds` (revit/view_basis.py:L561)
+## Trace: `resolve_view_bounds` (revit/view_basis.py:L637)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1940,6 +1960,8 @@ Notes:
       - called from: core/element_cache.py, revit/collection.py
     - `resolve_view_mode`
       - called from: pipeline.py
+    - `resolve_view_w_volume`
+      - called from: pipeline.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
     - `run_vop_pipeline_streaming`
@@ -1977,7 +1999,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `resolve_annotation_only_bounds` (revit/view_basis.py:L1144)
+## Trace: `resolve_annotation_only_bounds` (revit/view_basis.py:L1220)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -2118,6 +2140,8 @@ Notes:
     - `resolve_view_bounds`
       - called from: pipeline.py
     - `resolve_view_mode`
+      - called from: pipeline.py
+    - `resolve_view_w_volume`
       - called from: pipeline.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
@@ -2298,6 +2322,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_mode`
       - called from: pipeline.py
+    - `resolve_view_w_volume`
+      - called from: pipeline.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
     - `run_vop_pipeline_streaming`
@@ -2477,6 +2503,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_mode`
       - called from: pipeline.py
+    - `resolve_view_w_volume`
+      - called from: pipeline.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
     - `run_vop_pipeline_streaming`
@@ -2655,6 +2683,8 @@ Notes:
     - `resolve_view_bounds`
       - called from: pipeline.py
     - `resolve_view_mode`
+      - called from: pipeline.py
+    - `resolve_view_w_volume`
       - called from: pipeline.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
