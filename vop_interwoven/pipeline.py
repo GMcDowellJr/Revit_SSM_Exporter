@@ -1250,6 +1250,18 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
     # Get view basis for transformations
     vb = make_view_basis(view, diag=diag)
 
+    # Resolve explicit view-space W volume once per view (shared by host + link).
+    from .revit.view_basis import resolve_view_w_volume
+    W0, Wmax, _wvol_meta = resolve_view_w_volume(view, vb, cfg, diag=diag)
+
+    # Persist for export/diagnostics (safe: optional fields)
+    try:
+        raster.view_w0 = W0
+        raster.view_wmax = Wmax
+        raster.view_wvol_meta = _wvol_meta
+    except Exception:
+        pass
+
     # Expand to include linked/imported elements
     expanded_elements = expand_host_link_import_model_elements(doc, view, elements, cfg, diag=diag, elem_cache=elem_cache)
 
@@ -1271,7 +1283,9 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 raster,
                 bbox=bbox,
                 diag=diag,
+                bbox_is_link_space=bool(wrapper.get("bbox_is_link_space", False)),
             )
+
             wrapper["depth_range"] = depth_range
 
             rect = _project_element_bbox_to_cell_rect(
@@ -1289,6 +1303,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
 
     # Process each element (host + linked)
     processed = 0
+    skipped_outside_view_volume = 0
     skipped = 0
     silhouette_success = 0
     bbox_fallback = 0
@@ -1347,6 +1362,34 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
         source_label = elem_wrapper.get("source_label", source_id)
         world_transform = elem_wrapper["world_transform"]
 
+        # View-volume gating: skip elements whose bbox W-range does not overlap [W0, Wmax].
+        # This is the ONLY intended semantic change: exclude truly-outside elements.
+        if (W0 is not None) and (Wmax is not None):
+            try:
+                dmin, dmax = elem_wrapper.get("depth_range", (None, None))
+                if (dmin is None) or (dmax is None):
+                    dmin, dmax = (None, None)
+
+                # Normalize range if present
+                if (dmin is not None) and (dmax is not None) and (dmin > dmax):
+                    dmin, dmax = dmax, dmin
+
+                # Non-overlap => skip
+                if (dmin is not None) and (dmax is not None):
+                    if (dmax < W0) or (dmin > Wmax):
+                        skipped_outside_view_volume += 1
+                        try:
+                            # Minimal, auditable tag (no spam)
+                            # key_index may not exist yet here; only write later if available
+                            elem_wrapper["_skipped_outside_view_volume"] = True
+                            elem_wrapper["_skip_w_range"] = (dmin, dmax)
+                        except Exception:
+                            pass
+                        continue
+            except Exception:
+                # Conservative: do not gate if we cannot determine depth range
+                pass
+
         # Get element metadata
         try:
             elem_id = elem.Id.IntegerValue
@@ -1364,6 +1407,15 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
             source_type=source_type,
             source_label=source_label
         )
+
+        # If wrapper was volume-skipped before meta existed, record it now (auditable).
+        try:
+            if elem_wrapper.get("_skipped_outside_view_volume", False):
+                if 0 <= key_index < len(raster.element_meta):
+                    raster.element_meta[key_index]["skipped_outside_view_volume"] = True
+                    raster.element_meta[key_index]["skip_w_range"] = elem_wrapper.get("_skip_w_range")
+        except Exception:
+            pass
 
         # PR9: persist bbox provenance into element meta (auditable)
         try:
@@ -1456,6 +1508,17 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     raster.element_meta[key_index]["depth_invalid"] = True
             except Exception:
                 pass
+
+        # Clamp depth used for early-out comparisons to the view volume (min depth >= W0).
+        # Do NOT change silhouette strategy; this only prevents out-of-volume depths from driving occlusion logic.
+        if (W0 is not None) and isinstance(elem_depth, (int, float)) and math.isfinite(elem_depth):
+            if elem_depth < W0:
+                try:
+                    if key_index < len(raster.element_meta):
+                        raster.element_meta[key_index]["depth_clamped_to_w0"] = True
+                except Exception:
+                    pass
+                elem_depth = W0
 
         # DEBUG: Log depth values and silhouette status for first few elements
         if processed < 10:
@@ -1915,6 +1978,12 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
         print("[INFO] vop.pipeline: Processed {0} elements ({1} silhouette, {2} bbox fallback)".format(
             processed, silhouette_success, bbox_fallback))
 
+    # Persist view-volume metric for export/diagnostics
+    try:
+        raster.skipped_outside_view_volume = int(skipped_outside_view_volume)
+    except Exception:
+        pass
+
     if skipped > 0:
         print("[WARN] vop.pipeline: Skipped {0} elements due to errors".format(skipped))
 
@@ -2015,6 +2084,42 @@ def _is_supported_2d_view(view, diag=None):
         return False
 
         return False
+
+def _should_skip_outside_view_volume(depth_range, W0, Wmax):
+    """Pure predicate: True iff element depth_range does NOT overlap [W0, Wmax].
+
+    depth_range: (dmin, dmax) in view-space W.
+    W0/Wmax: view-space W interval, both finite numbers.
+    """
+    if depth_range is None:
+        return False
+
+    try:
+        dmin, dmax = depth_range
+    except Exception:
+        return False
+
+    if (dmin is None) or (dmax is None):
+        return False
+
+    try:
+        dmin = float(dmin)
+        dmax = float(dmax)
+        W0 = float(W0)
+        Wmax = float(Wmax)
+    except Exception:
+        return False
+
+    if not (math.isfinite(dmin) and math.isfinite(dmax) and math.isfinite(W0) and math.isfinite(Wmax)):
+        return False
+
+    if dmin > dmax:
+        dmin, dmax = dmax, dmin
+
+    if W0 > Wmax:
+        W0, Wmax = Wmax, W0
+
+    return (dmax < W0) or (dmin > Wmax)
 
 def _tiles_fully_covered_and_nearer(tile_map, footprint, elem_min_w):
     """Check if all tiles overlapping rect are fully covered AND nearer than element.
@@ -2343,6 +2448,7 @@ def export_view_raster(view, raster, cfg, diag=None, timings=None):
             "occlusion_cells": occlusion_cells,
             "model_ink_edge_cells": model_ink_edge_cells,
             "proxy_edge_cells": proxy_edge_cells,
+            "skipped_outside_view_volume": int(getattr(raster, "skipped_outside_view_volume", 0) or 0),
             "timings": (dict(timings) if timings is not None else None),
         },
     }

@@ -208,6 +208,82 @@ def make_view_basis(view, diag=None):
             forward=(0.0, 0.0, -1.0),
         )
 
+def resolve_view_w_volume(view, vb, cfg, diag=None):
+    """Resolve view-space W volume [W0, Wmax] for the host view.
+
+    Unification rule:
+        Use linked_documents._build_clip_volume(view, cfg) as the single
+        canonical definition of the host view volume (already used for links).
+        Project its corners into vb to get a W interval.
+
+    Returns:
+        (W0, Wmax, meta)
+        - W0/Wmax are floats when available; otherwise (None, None, meta)
+        - meta includes clip kind/depth_mode for diagnostics
+    """
+    try:
+        from .linked_documents import _build_clip_volume
+    except Exception as e:
+        if diag is not None:
+            try:
+                diag.warn(
+                    phase="view_basis",
+                    callsite="resolve_view_w_volume",
+                    message="Could not import linked_documents._build_clip_volume; no view volume",
+                    view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                    extra={"exc_type": type(e).__name__, "exc": str(e)},
+                )
+            except Exception:
+                pass
+        return (None, None, {"is_valid": False, "reason": "import_failed"})
+
+    clip = None
+    try:
+        clip = _build_clip_volume(view, cfg)
+    except Exception as e:
+        if diag is not None:
+            try:
+                diag.warn(
+                    phase="view_basis",
+                    callsite="resolve_view_w_volume",
+                    message="Failed to build clip volume; no view volume",
+                    view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                    extra={"exc_type": type(e).__name__, "exc": str(e)},
+                )
+            except Exception:
+                pass
+        return (None, None, {"is_valid": False, "reason": "build_failed"})
+
+    if not clip or not clip.get("is_valid", False):
+        return (None, None, {"is_valid": False, "reason": "clip_invalid", "clip": clip})
+
+    corners = clip.get("corners_host") or []
+    if len(corners) < 8:
+        return (None, None, {"is_valid": False, "reason": "corners_missing", "clip": clip})
+
+    ws = []
+    for p in corners:
+        try:
+            u, v, w = vb.world_to_view_local(p)
+            ws.append(float(w))
+        except Exception:
+            continue
+
+    if not ws:
+        return (None, None, {"is_valid": False, "reason": "projection_failed", "clip": clip})
+
+    w0 = min(ws)
+    wmax = max(ws)
+
+    meta = {
+        "is_valid": True,
+        "kind": clip.get("kind"),
+        "depth_mode": clip.get("depth_mode"),
+        "z_min": clip.get("z_min"),
+        "z_max": clip.get("z_max"),
+    }
+    return (w0, wmax, meta)
+
 
 def xy_bounds_from_crop_box_all_corners(view, basis, buffer=0.0):
     """Compute XY bounds from view crop box (all 8 corners method).
