@@ -295,6 +295,20 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
 
                 # Get element bbox in link space
                 bbox_link = elem.get_BoundingBox(None)
+
+                # DEBUG: detect whether bbox from 2024+ collector is already in host space
+                try:
+                    dbg_limit = int(getattr(cfg, "diag_link_bbox_samples", 0) or 0)
+                except Exception:
+                    dbg_limit = 3
+                if dbg_limit > 0:
+                    try:
+                        dbg_seen = locals().get("_dbg_bbox_seen", 0)
+                    except Exception:
+                        dbg_seen = 0
+                else:
+                    dbg_seen = 0
+
                 if bbox_link is None:
                     skip["skip_no_bbox"] += 1
                     continue
@@ -302,8 +316,43 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
                     skip["skip_bad_bbox"] += 1
                     continue
 
-                # Transform bbox to host space
+                # Transform bbox to host space.
+                # NOTE:
+                # LinkedElementProxy.get_BoundingBox() is defined to return HOST-space bboxes.
+                # Silhouette + raster paths assume this invariant.
                 host_min, host_max = _transform_bbox_to_host(bbox_link, link_trf)
+
+                # DEBUG: compare raw bbox min to transformed min and link origin
+                if dbg_limit > 0 and dbg_seen < dbg_limit:
+                    try:
+                        raw_mn = bbox_link.Min
+                        trf_o = getattr(link_trf, "Origin", None)
+                        dx = host_min.X - raw_mn.X
+                        dy = host_min.Y - raw_mn.Y
+                        dz = host_min.Z - raw_mn.Z
+                        ox = float(trf_o.X) if trf_o is not None else None
+                        oy = float(trf_o.Y) if trf_o is not None else None
+                        oz = float(trf_o.Z) if trf_o is not None else None
+                        _log(
+                            "DEBUG",
+                            "2024+ link bbox space check: raw_min=({:.3f},{:.3f},{:.3f}) "
+                            "host_min=({:.3f},{:.3f},{:.3f}) delta=({:.3f},{:.3f},{:.3f}) "
+                            "link_origin=({},{},{})".format(
+                                raw_mn.X, raw_mn.Y, raw_mn.Z,
+                                host_min.X, host_min.Y, host_min.Z,
+                                dx, dy, dz,
+                                "{:.3f}".format(ox) if ox is not None else "None",
+                                "{:.3f}".format(oy) if oy is not None else "None",
+                                "{:.3f}".format(oz) if oz is not None else "None",
+                            ),
+                        )
+                        _dbg_bbox_seen = dbg_seen + 1
+                    except Exception:
+                        try:
+                            _dbg_bbox_seen = dbg_seen + 1
+                        except Exception:
+                            pass
+
                 if host_min is None or host_max is None:
                     skip["skip_transform_failed"] += 1
                     continue
@@ -718,7 +767,7 @@ def _collect_link_elements_with_clipping(link_inst, link_doc, link_trf, view,
                 if cat_id_val not in host_visible_cats:
                     continue
 
-            # Get link-space bbox
+            # Get bbox in link coordinates (legacy clip-volume path collects from link_doc).
             bbox_link = elem.get_BoundingBox(None)
             if bbox_link is None or bbox_link.Min is None or bbox_link.Max is None:
                 continue
@@ -1051,15 +1100,60 @@ def _transform_bbox_to_host(bbox_link, link_trf):
     except Exception:
         return None, None
 
+    # DEBUG: report whether BoundingBoxXYZ.Transform is non-identity (oriented bbox)
+    try:
+        bb_trf = getattr(bbox_link, "Transform", None)
+
+        bbox_tf_identity = None
+        bbox_tf_origin = None
+        if bb_trf is not None:
+            try:
+                bbox_tf_identity = bool(getattr(bb_trf, "IsIdentity"))
+            except Exception:
+                bbox_tf_identity = None
+
+            try:
+                o = getattr(bb_trf, "Origin", None)
+                if o is not None:
+                    bbox_tf_origin = (float(o.X), float(o.Y), float(o.Z))
+            except Exception:
+                bbox_tf_origin = None
+
+        link_tf_origin = None
+        try:
+            o = getattr(link_trf, "Origin", None)
+            if o is not None:
+                link_tf_origin = (float(o.X), float(o.Y), float(o.Z))
+        except Exception:
+            link_tf_origin = None
+
+        _log(
+            "DEBUG",
+            "link bbox tf: is_identity={} bbox_origin={} link_origin={}".format(
+                bbox_tf_identity, bbox_tf_origin, link_tf_origin
+            ),
+        )
+    except Exception:
+        pass
+
     # Transform all 8 corners to host space
     try:
-        corners = [
+        corners_local = [
             XYZ(mn.X, mn.Y, mn.Z), XYZ(mn.X, mn.Y, mx.Z),
             XYZ(mn.X, mx.Y, mn.Z), XYZ(mn.X, mx.Y, mx.Z),
             XYZ(mx.X, mn.Y, mn.Z), XYZ(mx.X, mn.Y, mx.Z),
             XYZ(mx.X, mx.Y, mn.Z), XYZ(mx.X, mx.Y, mx.Z),
         ]
-        host_corners = [link_trf.OfPoint(p) for p in corners]
+
+        # BoundingBoxXYZ.Min/Max are in bbox-local space; bbox_link.Transform maps local -> link coords.
+        bb_trf = getattr(bbox_link, "Transform", None)
+        if bb_trf is not None:
+            corners_link = [bb_trf.OfPoint(p) for p in corners_local]
+        else:
+            corners_link = corners_local
+
+        # link_trf maps link coords -> host coords.
+        host_corners = [link_trf.OfPoint(p) for p in corners_link]
     except Exception:
         return None, None
 

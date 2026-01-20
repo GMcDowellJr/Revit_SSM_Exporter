@@ -1558,9 +1558,18 @@ def _cad_curves_silhouette(elem, view, view_basis, raster, cfg=None):
 
 def _to_host_point(elem, xyz):
     """
-    If elem is a LinkedElementProxy (or anything with .transform),
-    map link-space XYZ -> host-space XYZ.
+    If elem is a LinkedElementProxy, map link-space XYZ -> host-space XYZ.
+
+    IMPORTANT: Do NOT apply transforms for arbitrary elements that merely expose
+    a '.transform' attribute. In this pipeline, link-space geometry is modeled
+    explicitly via LinkedElementProxy.
     """
+    try:
+        if type(elem).__name__ != "LinkedElementProxy":
+            return xyz
+    except Exception:
+        return xyz
+
     trf = getattr(elem, "transform", None)
     if trf is None:
         return xyz
@@ -1769,6 +1778,7 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
                 loops = _planar_face_loops_silhouette(
                     element_faces,
                     view_basis,
+                    elem=elem,
                     diag=diag,
                     view_id=view_id,
                     elem_id=elem_id,
@@ -2368,6 +2378,7 @@ def _planar_face_loops_silhouette(
     element_faces,
     view_basis,
     *,
+    elem=None,
     diag=None,
     view_id=None,
     elem_id=None,
@@ -2410,11 +2421,23 @@ def _planar_face_loops_silhouette(
             return []
         return pts
 
+    def _xyz_to_host(xyz_tup):
+        # xyz_tup is (x,y,z) floats
+        try:
+            trf = getattr(elem, "transform", None) if elem is not None else None
+            if trf is None:
+                return xyz_tup
+            # _apply_transform_xyz_tuple(T, xyz)
+            return _apply_transform_xyz_tuple(trf, xyz_tup)
+        except Exception:
+            return xyz_tup
+
     def _project_xyz_to_uv(points_xyz):
         out = []
         for p in points_xyz:
             try:
-                u, v = view_basis.transform_to_view_uv(p)
+                ph = _xyz_to_host(p)
+                u, v = view_basis.transform_to_view_uv(ph)
                 out.append((float(u), float(v)))
             except Exception:
                 continue

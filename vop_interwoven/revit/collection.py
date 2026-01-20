@@ -390,7 +390,7 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None, 
             result.append(
                 {
                     "element": proxy,
-                    "world_transform": proxy.transform,
+                    "world_transform": identity_trf,
                     "bbox": bbox,
                     "bbox_source": bbox_source,
                     "bbox_link": getattr(proxy, "bbox_link", None),
@@ -697,12 +697,12 @@ def _project_element_bbox_to_cell_rect(elem, vb, raster, bbox=None, diag=None, v
         except Exception:
             return None
 
-    # PR12: if bbox is in link-space, transform corners into host/world before projection.
+    # PR12: if bbox is in link-space, transform corners into host/world before projecting.
     if bbox_is_link_space:
         if transform is None:
-            return None
+            return None  # cannot correctly project link-space bbox without transform
 
-        # Support both Revit Transform (expects XYZ) and test stubs (accept tuples).
+        # Revit Transform expects XYZ; some test stubs may accept tuples.
         try:
             corners = [transform.OfPoint(c) for c in corners]
         except Exception:

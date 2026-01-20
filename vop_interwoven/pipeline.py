@@ -1427,8 +1427,18 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
         if source_type not in ("HOST", "LINK", "DWG"):
             raise ValueError("Invalid source_type from wrapper: {0} (source_id={1})".format(source_type, source_id))
 
+        # Optional targeted diagnostics for LINK transform issues.
+        # If cfg.diag_link_elem_ids is a non-empty iterable of int element ids, only those ids are traced.
+        diag_link_ids = set()
+        try:
+            v = getattr(cfg, "diag_link_elem_ids", None)
+            if v:
+                diag_link_ids = set(int(x) for x in v)
+        except Exception:
+            diag_link_ids = set()
+
         # DIAGNOSTIC: Stage 1 - Right after extracting wrapper data
-        if source_type == "LINK" and processed < 3:  # Only first 3 LINK elements
+        if source_type == "LINK" and ((diag_link_ids and elem_id in diag_link_ids) or ((not diag_link_ids) and processed < 3)):
             try:
                 _diagnose_link_geometry_transform(elem, world_transform, vb, "STAGE1_WRAPPER_EXTRACTED")
             except Exception as diag_e:
