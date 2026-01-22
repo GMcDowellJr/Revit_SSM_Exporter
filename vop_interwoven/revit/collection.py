@@ -767,7 +767,26 @@ def _project_element_bbox_to_cell_rect(elem, vb, raster, bbox=None, diag=None, v
     return rect
 
 
-def _extract_geometry_footprint_uv(elem, vb):
+def _get_element_category_name(elem):
+    """Safely extract category name from element.
+
+    Args:
+        elem: Revit Element
+
+    Returns:
+        Category name string, or 'Unknown' if unavailable
+    """
+    try:
+        cat = getattr(elem, "Category", None)
+        if cat is None:
+            return "Unknown"
+        cname = getattr(cat, "Name", None)
+        return cname if cname else "Unknown"
+    except Exception:
+        return "Unknown"
+
+
+def _extract_geometry_footprint_uv(elem, vb, diag=None, strategy_diag=None):
     """Extract actual geometry footprint vertices in UV space.
 
     Extracts solid geometry faces/edges and projects all vertices to UV.
@@ -776,11 +795,22 @@ def _extract_geometry_footprint_uv(elem, vb):
     Args:
         elem: Revit Element
         vb: ViewBasis for coordinate transformation
+        diag: Diagnostics instance for error tracking (optional)
+        strategy_diag: StrategyDiagnostics instance for strategy tracking (optional)
 
     Returns:
         List of (u, v) points representing element footprint, or None if failed
     """
     from .view_basis import world_to_view
+
+    # Extract element ID and category for tracking
+    elem_id = None
+    category = None
+    try:
+        elem_id = getattr(getattr(elem, "Id", None), "IntegerValue", None)
+        category = _get_element_category_name(elem)
+    except Exception:
+        pass
 
     try:
         from Autodesk.Revit.DB import Options, Solid, Face, Edge, GeometryInstance
@@ -794,6 +824,17 @@ def _extract_geometry_footprint_uv(elem, vb):
         # Get geometry
         geom = elem.get_Geometry(opts)
         if not geom:
+            # Track no_geometry failure
+            if strategy_diag is not None and elem_id is not None:
+                try:
+                    strategy_diag.record_geometry_extraction(
+                        elem_id=elem_id,
+                        outcome='no_geometry',
+                        category=category,
+                        details={'reason': 'get_Geometry returned None'}
+                    )
+                except Exception:
+                    pass
             return None
 
         # Extract link transform for LinkedElementProxy
@@ -875,21 +916,72 @@ def _extract_geometry_footprint_uv(elem, vb):
                 if not is_duplicate:
                     unique_points.append(pt)
 
-            return unique_points if len(unique_points) >= 3 else None
+            if len(unique_points) >= 3:
+                # Track success with vertex count
+                if strategy_diag is not None and elem_id is not None:
+                    try:
+                        strategy_diag.record_geometry_extraction(
+                            elem_id=elem_id,
+                            outcome='success',
+                            category=category,
+                            details={'vertices': len(unique_points), 'raw_vertices': len(points_uv)}
+                        )
+                    except Exception:
+                        pass
+                return unique_points
+            else:
+                # Track insufficient_points failure
+                if strategy_diag is not None and elem_id is not None:
+                    try:
+                        strategy_diag.record_geometry_extraction(
+                            elem_id=elem_id,
+                            outcome='insufficient_points',
+                            category=category,
+                            details={'unique_points': len(unique_points), 'required': 3}
+                        )
+                    except Exception:
+                        pass
+                return None
 
+        # Track insufficient_points failure (less than 3 raw points)
+        if strategy_diag is not None and elem_id is not None:
+            try:
+                strategy_diag.record_geometry_extraction(
+                    elem_id=elem_id,
+                    outcome='insufficient_points',
+                    category=category,
+                    details={'points': len(points_uv), 'required': 3}
+                )
+            except Exception:
+                pass
         return None
 
-    except Exception:
+    except Exception as e:
+        # Track exception failure
+        if strategy_diag is not None and elem_id is not None:
+            try:
+                strategy_diag.record_geometry_extraction(
+                    elem_id=elem_id,
+                    outcome='exception',
+                    category=category,
+                    details={'error': '{}: {}'.format(type(e).__name__, str(e))}
+                )
+            except Exception:
+                pass
         return None
 
 
-def get_element_obb_loops(elem, vb, raster, bbox=None, diag=None, view=None):
+def get_element_obb_loops(elem, vb, raster, bbox=None, diag=None, view=None, strategy_diag=None):
     """Get element OBB as polygon loops for accurate rasterization.
 
     Args:
         elem: Revit Element
         vb: ViewBasis for coordinate transformation
         raster: ViewRaster with bounds and cell size
+        bbox: Optional pre-resolved bounding box
+        diag: Diagnostics instance for error tracking (optional)
+        view: Revit View (optional)
+        strategy_diag: StrategyDiagnostics instance for strategy tracking (optional)
 
     Returns:
         List of loop dicts with OBB polygon, or None if bbox unavailable
@@ -901,6 +993,15 @@ def get_element_obb_loops(elem, vb, raster, bbox=None, diag=None, view=None):
         ✔ Falls back to bbox corners only if geometry extraction fails
     """
     from .view_basis import world_to_view
+
+    # Extract element ID and category for tracking
+    elem_id = None
+    category = None
+    try:
+        elem_id = getattr(getattr(elem, "Id", None), "IntegerValue", None)
+        category = _get_element_category_name(elem)
+    except Exception:
+        pass
 
     # Always need bbox for depth + UV projection. Prefer provided bbox, else resolve.
     if bbox is None:
@@ -954,7 +1055,7 @@ def get_element_obb_loops(elem, vb, raster, bbox=None, diag=None, view=None):
     bbox_points_uv = [(uv[0], uv[1]) for uv in uvs]
 
     # STEP 1: Try to extract actual geometry footprint
-    points_uv = _extract_geometry_footprint_uv(elem, vb)
+    points_uv = _extract_geometry_footprint_uv(elem, vb, diag=diag, strategy_diag=strategy_diag)
 
     # STEP 2: Fallback to bbox corners if geometry extraction failed
     if not points_uv or len(points_uv) < 3:
@@ -1000,6 +1101,18 @@ def get_element_obb_loops(elem, vb, raster, bbox=None, diag=None, view=None):
 
             strategy_name = 'geometry_polygon'
             angle_deg = 0.0  # Not applicable for arbitrary polygons
+
+            # Track successful geometry_polygon strategy
+            if strategy_diag is not None and elem_id is not None:
+                try:
+                    strategy_diag.record_areal_strategy(
+                        elem_id=elem_id,
+                        strategy='geometry_polygon',
+                        success=True,
+                        category=category
+                    )
+                except Exception:
+                    pass
         else:
             # Not enough vertices, fall back to bbox OBB
             used_geometry = False
@@ -1025,9 +1138,33 @@ def get_element_obb_loops(elem, vb, raster, bbox=None, diag=None, view=None):
             ]
             strategy_name = 'uv_aabb'
             angle_deg = 0.0
+
+            # Track AABB fallback strategy
+            if strategy_diag is not None and elem_id is not None:
+                try:
+                    strategy_diag.record_areal_strategy(
+                        elem_id=elem_id,
+                        strategy='aabb_used',
+                        success=True,
+                        category=category
+                    )
+                except Exception:
+                    pass
         else:
             polygon_uv = obb_rect
             strategy_name = 'uv_obb'
+
+            # Track OBB strategy
+            if strategy_diag is not None and elem_id is not None:
+                try:
+                    strategy_diag.record_areal_strategy(
+                        elem_id=elem_id,
+                        strategy='bbox_obb_used',
+                        success=True,
+                        category=category
+                    )
+                except Exception:
+                    pass
 
     # Get minimum depth for occlusion
     w_min = min(uv[2] for uv in uvs)
