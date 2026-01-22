@@ -130,6 +130,9 @@ class Config:
         element_cache_detect_changes=True,  # Compare with previous run
         element_cache_change_tolerance=0.01,  # Position/size tolerance (feet)
 
+        # Strategy diagnostics: track geometry extraction performance
+        export_strategy_diagnostics=True,  # Export strategy diagnostics CSV and print summary
+
         # Memory management: control raster retention behavior
         # True = keep full rasters in memory (needed for streaming exports)
         # False = discard rasters after cache writes (memory efficient)
@@ -280,6 +283,9 @@ class Config:
         self.element_cache_export_csv = bool(element_cache_export_csv)
         self.element_cache_detect_changes = bool(element_cache_detect_changes)
         self.element_cache_change_tolerance = float(element_cache_change_tolerance)
+
+        # Strategy diagnostics
+        self.export_strategy_diagnostics = bool(export_strategy_diagnostics)
 
         # Memory management
         self.retain_rasters_in_memory = bool(retain_rasters_in_memory)
@@ -485,6 +491,8 @@ class Config:
             "element_cache_export_csv": self.element_cache_export_csv,
             "element_cache_detect_changes": self.element_cache_detect_changes,
             "element_cache_change_tolerance": self.element_cache_change_tolerance,
+            # Strategy diagnostics
+            "export_strategy_diagnostics": self.export_strategy_diagnostics,
         }
 
     @classmethod
@@ -534,5 +542,8 @@ class Config:
             element_cache_export_csv=d.get("element_cache_export_csv", True),
             element_cache_detect_changes=d.get("element_cache_detect_changes", True),
             element_cache_change_tolerance=d.get("element_cache_change_tolerance", 0.01),
+
+            # Strategy diagnostics
+            export_strategy_diagnostics=d.get("export_strategy_diagnostics", True),
 
         )

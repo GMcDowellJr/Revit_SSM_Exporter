@@ -1247,6 +1247,16 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
     """
     from .revit.collection import _project_element_bbox_to_cell_rect, expand_host_link_import_model_elements
 
+    # Create strategy diagnostics tracker if enabled
+    strategy_diag = None
+    if getattr(cfg, "export_strategy_diagnostics", False):
+        try:
+            from .diagnostics import StrategyDiagnostics
+            strategy_diag = StrategyDiagnostics()
+        except Exception:
+            # Graceful degradation: continue without diagnostics
+            pass
+
     # Get view basis for transformations
     vb = make_view_basis(view, diag=diag)
 
@@ -1593,6 +1603,17 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     raster.element_meta[key_index]["confidence"] = confidence
                     raster.element_meta[key_index]["occluder"] = occlusion_allowed
 
+                # Track element classification in strategy diagnostics
+                if strategy_diag is not None:
+                    try:
+                        strategy_diag.record_element_classification(
+                            elem_id=elem_id,
+                            elem_class=elem_class,
+                            category=category
+                        )
+                    except Exception:
+                        pass  # Diagnostic failures must not crash pipeline
+
                 # DEBUG: Log classification for diagonal-looking elements (first 10)
                 if not hasattr(render_model_front_to_back, '_classify_debug_count'):
                     render_model_front_to_back._classify_debug_count = 0
@@ -1713,6 +1734,32 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
             try:
                 # Get strategy used from first loop
                 strategy = loops[0].get('strategy', 'unknown')
+
+                # Track AREAL strategy success if applicable
+                if strategy_diag is not None and elem_class == "AREAL":
+                    try:
+                        # Map strategy names to tracked strategy types
+                        tracked_strategy = None
+                        if strategy in ('planar_face_loops', 'planar_face'):
+                            tracked_strategy = 'planar_face'
+                        elif strategy in ('silhouette_edges', 'silhouette'):
+                            tracked_strategy = 'silhouette'
+                        elif strategy == 'geometry_polygon':
+                            tracked_strategy = 'geometry_polygon'
+                        elif strategy in ('uv_obb', 'obb'):
+                            tracked_strategy = 'bbox_obb_used'
+                        elif strategy == 'uv_aabb':
+                            tracked_strategy = 'aabb_used'
+
+                        if tracked_strategy:
+                            strategy_diag.record_areal_strategy(
+                                elem_id=elem_id,
+                                strategy=tracked_strategy,
+                                success=True,
+                                category=category
+                            )
+                    except Exception:
+                        pass  # Diagnostic failures must not crash pipeline
 
                 open_loops = []
                 closed_loops = []
@@ -1854,6 +1901,19 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 # Element already successfully rendered via silhouette
                 processed += 1
                 continue
+
+        # Track silhouette failure for AREAL elements (falling back to bbox)
+        if strategy_diag is not None and elem_class == "AREAL" and not loops:
+            try:
+                # Record that silhouette extraction failed and we're falling back to AABB
+                strategy_diag.record_areal_strategy(
+                    elem_id=elem_id,
+                    strategy='silhouette',
+                    success=False,
+                    category=category
+                )
+            except Exception:
+                pass  # Diagnostic failures must not crash pipeline
 
         # Fallback: AABB-only proxy (skip OBB polygon generation entirely)
         obb_success = False
@@ -2082,6 +2142,45 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
 
         except Exception as e:
             print("[WARN] vop.pipeline: Failed to dump occlusion debug: {0}".format(e))
+
+    # Export strategy diagnostics if enabled
+    if strategy_diag is not None:
+        try:
+            import os
+            import re
+
+            # Print summary to console
+            print("\n" + "=" * 80)
+            print("STRATEGY DIAGNOSTICS SUMMARY (View: {})".format(
+                getattr(view, "Name", "Unknown")))
+            print("=" * 80)
+            strategy_diag.print_summary()
+
+            # Export CSV if requested
+            if getattr(cfg, "export_strategy_diagnostics", False):
+                # Build output path
+                view_name = re.sub(r'[<>:"/\\|?*]', "_", getattr(view, "Name", "view"))
+                view_id = getattr(getattr(view, "Id", None), "IntegerValue", 0)
+
+                dump_dir = getattr(cfg, "debug_dump_path", None)
+                if dump_dir:
+                    try:
+                        if not os.path.isdir(dump_dir):
+                            os.makedirs(dump_dir)
+                    except Exception:
+                        pass
+
+                    csv_filename = "strategy_diagnostics_{0}_{1}.csv".format(view_name, view_id)
+                    csv_path = os.path.join(dump_dir, csv_filename)
+                else:
+                    csv_path = "strategy_diagnostics_{0}_{1}.csv".format(view_name, view_id)
+
+                # Export CSV
+                strategy_diag.export_to_csv(csv_path)
+                print("\nStrategy diagnostics exported to: {}".format(csv_path))
+
+        except Exception as e:
+            print("[WARN] vop.pipeline: Failed to export strategy diagnostics: {0}".format(e))
 
     return processed
 
