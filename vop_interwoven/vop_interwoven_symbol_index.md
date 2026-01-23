@@ -21,9 +21,9 @@ Line numbers are from AST parsing of the current source.
 - streaming.py
   - `process_document_views_streaming` (L488)
 - pipeline.py
-  - `render_model_front_to_back` (L1226)
+  - `render_model_front_to_back` (L1236)
 - pipeline.py
-  - `init_view_raster` (L1039)
+  - `init_view_raster` (L1049)
 - pipeline.py
   - `_view_signature` (L261)
 - revit/view_basis.py
@@ -69,6 +69,7 @@ Line numbers are from AST parsing of the current source.
 - `OBB` — core/geometry.py (L172)
 - `PolicyStats` — revit/collection_policy.py (L23)
 - `RootStyleCache` — root_cache.py (L20)
+- `StrategyDiagnostics` — diagnostics/strategy_tracker.py (L26)
 - `StreamingExporter` — streaming.py (L91)
 - `TileMap` — core/raster.py (L45)
 - `UV_AABB` — core/geometry.py (L117)
@@ -78,7 +79,7 @@ Line numbers are from AST parsing of the current source.
 - `_apply_transform_xyz_tuple` — core/silhouette.py (L326)
 - `_bbox_corners_world` — core/silhouette.py (L485)
 - `_bbox_silhouette` — core/silhouette.py (L1926)
-- `_bin_elements_to_tiles` — pipeline.py (L2203)
+- `_bin_elements_to_tiles` — pipeline.py (L2304)
 - `_bounds_to_tuple` — revit/view_basis.py (L630)
 - `_bresenham_line` — core/raster.py (L1565)
 - `_build_clip_volume` — revit/linked_documents.py (L803)
@@ -105,26 +106,27 @@ Line numbers are from AST parsing of the current source.
 - `_dot` — core/face_selection.py (L33)
 - `_ensure_dir` — export/csv.py (L8)
 - `_exc_to_str` — core/diagnostics.py (L3)
-- `_extract_geometry_footprint_uv` — revit/collection.py (L770)
+- `_extract_geometry_footprint_uv` — revit/collection.py (L789)
 - `_extract_source_type` — core/raster.py (L8)
 - `_extract_view_identity_for_csv` — pipeline.py (L351)
-- `_extract_view_summary` — pipeline.py (L1181)
+- `_extract_view_summary` — pipeline.py (L1191)
 - `_family_region_outlines_cached` — core/silhouette.py (L368)
 - `_fix_loop_points_uv` — core/raster.py (L154)
 - `_front_face_loops_silhouette` — core/silhouette.py (L2039)
-- `_get_ambiguous_tiles` — pipeline.py (L2269)
+- `_get_ambiguous_tiles` — pipeline.py (L2370)
+- `_get_element_category_name` — revit/collection.py (L770)
 - `_get_excluded_3d_category_ids` — revit/linked_documents.py (L1076)
 - `_get_host_visible_model_categories` — revit/linked_documents.py (L1032)
 - `_get_plan_view_vertical_range` — revit/linked_documents.py (L924)
 - `_has_revit_2024_link_collector` — revit/linked_documents.py (L143)
 - `_is_from_cache` — csv_export.py (L17)
-- `_is_supported_2d_view` — pipeline.py (L2089)
+- `_is_supported_2d_view` — pipeline.py (L2190)
 - `_iter_curve_primitives` — core/silhouette.py (L1058)
 - `_iter_solids` — core/silhouette.py (L2594)
 - `_location_curve_obb_silhouette` — core/silhouette.py (L664)
 - `_log` — revit/linked_documents.py (L27)
-- `_mark_rect_center_cell` — pipeline.py (L2352)
-- `_mark_thin_band_along_long_axis` — pipeline.py (L2360)
+- `_mark_rect_center_cell` — pipeline.py (L2453)
+- `_mark_thin_band_along_long_axis` — pipeline.py (L2461)
 - `_maybe_resize_lru` — core/silhouette.py (L355)
 - `_merge_paths_by_endpoints` — core/silhouette.py (L1172)
 - `_mesh_vertex_count` — core/geometry.py (L23)
@@ -133,7 +135,7 @@ Line numbers are from AST parsing of the current source.
 - `_normalize_view_ids` — entry_dynamo.py (L223)
 - `_obb_silhouette` — core/silhouette.py (L1978)
 - `_order_points_by_connectivity` — core/silhouette.py (L2538)
-- `_pca_obb_uv` — revit/collection.py (L1059)
+- `_pca_obb_uv` — revit/collection.py (L1196)
 - `_perf_ms` — pipeline.py (L200)
 - `_perf_now` — pipeline.py (L195)
 - `_pipeline_result_for_json` — entry_dynamo.py (L91)
@@ -144,24 +146,24 @@ Line numbers are from AST parsing of the current source.
 - `_project_element_bbox_to_cell_rect` — revit/collection.py (L626)
 - `_project_element_bbox_to_cell_rect_for_anno` — revit/annotation.py (L1268)
 - `_prune_view_raster_for_json` — entry_dynamo.py (L57)
-- `_render_areal_element` — pipeline.py (L2299)
-- `_render_proxy_element` — pipeline.py (L2314)
+- `_render_areal_element` — pipeline.py (L2400)
+- `_render_proxy_element` — pipeline.py (L2415)
 - `_round6` — root_cache.py (L14)
 - `_safe_bool` — pipeline.py (L210)
 - `_safe_int` — pipeline.py (L203)
 - `_safe_int_id` — core/silhouette.py (L311)
 - `_sample_geom_object` — revit/tierb_proxy.py (L35)
-- `_should_skip_outside_view_volume` — pipeline.py (L2136)
+- `_should_skip_outside_view_volume` — pipeline.py (L2237)
 - `_silhouette_edges` — core/silhouette.py (L2199)
 - `_stamp_cell` — revit/annotation.py (L1220)
 - `_stamp_detail_line_band` — revit/annotation.py (L1109)
 - `_stamp_line_cells` — revit/annotation.py (L1247)
-- `_stamp_proxy_edges` — pipeline.py (L2339)
+- `_stamp_proxy_edges` — pipeline.py (L2440)
 - `_stamp_rect_outline` — revit/annotation.py (L1227)
 - `_sub` — core/face_selection.py (L48)
 - `_symbolic_curves_silhouette` — core/silhouette.py (L853)
-- `_tile_has_depth_conflict` — pipeline.py (L2235)
-- `_tiles_fully_covered_and_nearer` — pipeline.py (L2172)
+- `_tile_has_depth_conflict` — pipeline.py (L2336)
+- `_tiles_fully_covered_and_nearer` — pipeline.py (L2273)
 - `_to_host_point` — core/silhouette.py (L1559)
 - `_to_xyz_tuple` — core/face_selection.py (L25)
 - `_transform_bbox_to_host` — revit/linked_documents.py (L1085)
@@ -199,9 +201,9 @@ Line numbers are from AST parsing of the current source.
 - `excluded_bic_names_global` — revit/collection_policy.py (L144)
 - `expand_host_link_import_model_elements` — revit/collection.py (L294)
 - `export_pipeline_results_to_pngs` — png_export.py (L285)
-- `export_pipeline_to_csv` — csv_export.py (L747)
+- `export_pipeline_to_csv` — csv_export.py (L801)
 - `export_raster_to_png` — png_export.py (L10)
-- `export_view_raster` — pipeline.py (L2380)
+- `export_view_raster` — pipeline.py (L2481)
 - `extract_metrics_from_view_result` — root_cache.py (L310)
 - `extract_view_metadata` — csv_export.py (L367)
 - `filter_supported_views` — dynamo_helpers.py (L154)
@@ -209,20 +211,20 @@ Line numbers are from AST parsing of the current source.
 - `get_all_sections` — dynamo_helpers.py (L129)
 - `get_all_views_in_model` — dynamo_helpers.py (L72)
 - `get_annotation_bbox` — revit/annotation.py (L731)
-- `get_core_csv_header` — csv_export.py (L1035)
+- `get_core_csv_header` — csv_export.py (L1105)
 - `get_current_document` — entry_dynamo.py (L151)
 - `get_current_view` — entry_dynamo.py (L187)
-- `get_element_obb_loops` — revit/collection.py (L886)
+- `get_element_obb_loops` — revit/collection.py (L974)
 - `get_element_silhouette` — core/silhouette.py (L1593)
-- `get_perf_csv_header` — csv_export.py (L1057)
+- `get_perf_csv_header` — csv_export.py (L1127)
 - `get_test_config_areal_heavy` — entry_dynamo.py (L619)
 - `get_test_config_linear` — entry_dynamo.py (L603)
 - `get_test_config_tiny` — entry_dynamo.py (L587)
 - `get_views_from_input_or_current` — dynamo_helpers.py (L15)
-- `get_vop_csv_header` — csv_export.py (L1045)
+- `get_vop_csv_header` — csv_export.py (L1115)
 - `group_faces_by_plane` — core/face_selection.py (L207)
 - `included_bic_names_for_source` — revit/collection_policy.py (L136)
-- `init_view_raster` — pipeline.py (L1039)
+- `init_view_raster` — pipeline.py (L1049)
 - `is_element_visible_in_view` — revit/collection.py (L266)
 - `is_extent_driver_annotation` — revit/annotation.py (L12)
 - `iter_front_facing_planar_faces` — core/face_selection.py (L147)
@@ -242,7 +244,7 @@ Line numbers are from AST parsing of the current source.
 - `quick_test_current_view` — entry_dynamo.py (L636)
 - `rasterize_annotations` — revit/annotation.py (L762)
 - `rect_intersects_bounds` — core/math_utils.py (L161)
-- `render_model_front_to_back` — pipeline.py (L1226)
+- `render_model_front_to_back` — pipeline.py (L1236)
 - `resolve_annotation_only_bounds` — revit/view_basis.py (L1220)
 - `resolve_category_ids` — revit/collection_policy.py (L166)
 - `resolve_element_bbox` — revit/collection.py (L10)
@@ -267,9 +269,9 @@ Line numbers are from AST parsing of the current source.
 - `supports_model_geometry` — revit/view_basis.py (L1104)
 - `synthetic_bounds_from_visible_extents` — revit/view_basis.py (L388)
 - `tier_a_is_ambiguous` — core/geometry.py (L52)
-- `view_result_to_core_row` — csv_export.py (L1067)
-- `view_result_to_perf_row` — csv_export.py (L1468)
-- `view_result_to_vop_row` — csv_export.py (L1196)
+- `view_result_to_core_row` — csv_export.py (L1137)
+- `view_result_to_perf_row` — csv_export.py (L1538)
+- `view_result_to_vop_row` — csv_export.py (L1266)
 - `world_to_view` — revit/view_basis.py (L115)
 - `xy_bounds_effective` — revit/view_basis.py (L355)
 - `xy_bounds_from_crop_box_all_corners` — revit/view_basis.py (L288)
@@ -301,7 +303,7 @@ Line numbers are from AST parsing of the current source.
 - streaming.py:L660
 
 ### `render_model_front_to_back`
-- pipeline.py:L798
+- pipeline.py:L808
 
 ### `init_view_raster`
 - pipeline.py:L778
@@ -310,16 +312,16 @@ Line numbers are from AST parsing of the current source.
 - pipeline.py:L711
 
 ### `resolve_view_bounds`
-- pipeline.py:L1087
+- pipeline.py:L1097
 
 ### `resolve_annotation_only_bounds`
-- pipeline.py:L1062
+- pipeline.py:L1072
 
 ### `rasterize_annotations`
-- pipeline.py:L815
+- pipeline.py:L825
 
 ### `collect_view_elements`
-- pipeline.py:L792
+- pipeline.py:L802
 
 ### `get_element_silhouette`
-- pipeline.py:L1474
+- pipeline.py:L1486
