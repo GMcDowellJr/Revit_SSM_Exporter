@@ -1865,26 +1865,15 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     continue
 
                 # Stage 3: conservative stamping
-                # PR8 occlusion contract:
-                #   - ONLY AREAL elements contribute to occlusion depth buffer (w_occ)
-                #   - TINY/LINEAR: skip conservative stamping entirely
-                #     * Will be rendered via silhouette extraction or fallback
-                #     * Prevents double-rendering and ghost pixels
-                if occlusion_allowed:
-                    depth_by_cell = None
-                    if uvw_pts:
-                        depth_by_cell = {}
-                        for (u, v, w) in uvw_pts:
-                            i = int(round(u))
-                            j = int(round(v))
-                            key = (i, j)
-                            prev = depth_by_cell.get(key)
-                            if prev is None or w < prev:
-                                depth_by_cell[key] = w
-
-                    for (i, j) in footprint.cells():
-                        w_depth = depth_by_cell.get((i, j), elem_min_w) if depth_by_cell else elem_min_w
-                        raster.try_write_cell(i, j, w_depth=w_depth, source=source_type, key_index=key_index)
+                #
+                # IMPORTANT: Do NOT write occlusion here based on a bbox footprint.
+                # Bbox-footprint occlusion creates false rectangular masks for diagonal/rotated geometry.
+                #
+                # Occlusion truth is written only by the actual rasterization path
+                # (e.g., rasterize_areal_loops -> raster.rasterize_silhouette_loops).
+                #
+                # This block intentionally performs no stamping.
+                pass
 
                 # Note: TINY/LINEAR elements intentionally NOT stamped here
                 # They will be rendered via:
@@ -2098,43 +2087,24 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 elif rect.empty:
                     aabb_error = "CellRect is empty (element outside bounds?)"
                 else:
-                    # Fill axis-aligned rect with depth-tested occlusion and occupancy
+                    # AABB fallback: proxy edges only (NO occlusion, NO filled mask)
                     filled_count = 0
+
+                    # AABB fallback is LOW confidence by definition; it must never write occlusion.
+                    if key_index < len(raster.element_meta):
+                        raster.element_meta[key_index]["confidence"] = CONF_LOW
+                        raster.element_meta[key_index]["occluder"] = False
+
+                    # Stamp boundary proxy edges
                     for i, j in rect.cells():
-                        # Occlusion authority is classification + confidence gated.
-                        # If we are in AABB fallback, confidence is LOW by definition (no silhouette fill),
-                        # so we should not write occlusion here.
-                        meta = raster.element_meta[key_index] if (key_index < len(raster.element_meta)) else {}
-                        occlusion_allowed = _occlusion_allowed(
-                            meta.get("class", elem_class if "elem_class" in locals() else "AREAL"),
-                            meta.get("confidence", CONF_LOW),
+                        is_boundary = (
+                            i == rect.i_min or i == rect.i_max or
+                            j == rect.j_min or j == rect.j_max
                         )
-
-                        if occlusion_allowed:
-                            if raster.try_write_cell(i, j, w_depth=elem_depth, source=source_type, key_index=key_index):
-                                filled_count += 1
-
-                        # Check if element already rendered successfully via silhouette
-                        strategy_used = None
-                        if key_index < len(raster.element_meta):
-                            strategy_used = raster.element_meta[key_index].get('strategy')
-
-                            raster.element_meta[key_index]["confidence"] = CONF_LOW
-                            raster.element_meta[key_index]["occluder"] = False
-
-                        # Only stamp proxy edges if no successful silhouette exists
-                        # (Prevents double-rendering: silhouette geometry + bbox edges)
-                        if not strategy_used or strategy_used == 'unknown' or 'fallback' in str(strategy_used):
-                            # No silhouette or fallback path - stamp proxy edges
-                            is_boundary = (
-                                i == rect.i_min or i == rect.i_max or
-                                j == rect.j_min or j == rect.j_max
-                            )
-
-                            if is_boundary:
-                                idx = raster.get_cell_index(i, j)
-                                if idx is not None:
-                                    raster.stamp_proxy_edge_idx(idx, key_index, depth=elem_depth)
+                        if is_boundary:
+                            idx = raster.get_cell_index(i, j)
+                            if idx is not None:
+                                raster.stamp_proxy_edge_idx(idx, key_index, depth=elem_depth)
 
                     # Tag element metadata with axis-aligned fallback strategy
                     if key_index < len(raster.element_meta):

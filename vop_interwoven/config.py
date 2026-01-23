@@ -131,12 +131,12 @@ class Config:
         element_cache_change_tolerance=0.01,  # Position/size tolerance (feet)
 
         # Strategy diagnostics: track geometry extraction performance
-        export_strategy_diagnostics=True,  # Export strategy diagnostics CSV and print summary
+        export_strategy_diagnostics=False,  # Export strategy diagnostics CSV and print summary
 
         # Memory management: control raster retention behavior
         # True = keep full rasters in memory (needed for streaming exports)
         # False = discard rasters after cache writes (memory efficient)
-        retain_rasters_in_memory=True,  # Default True for backward compatibility
+        retain_rasters_in_memory=False,  # Default True for backward compatibility
         
     ):
         """Initialize VOP configuration.
