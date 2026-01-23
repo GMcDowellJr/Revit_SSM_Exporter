@@ -95,7 +95,7 @@ class StrategyDiagnostics(object):
                 'failure_reason': None
             })
 
-    def record_areal_strategy(self, elem_id, strategy, success, category):
+    def record_areal_strategy(self, elem_id, strategy, success, category, confidence=None):
         """
         Record AREAL strategy attempt and outcome.
 
@@ -104,6 +104,8 @@ class StrategyDiagnostics(object):
             strategy: Strategy name (e.g., 'planar_face_success', 'silhouette_success')
             success: Whether strategy succeeded (True/False)
             category: Element category name
+            confidence: Optional confidence level ('HIGH', 'MEDIUM', 'LOW')
+                       If not provided, defaults to 'HIGH' if success else 'LOW'
         """
         elem_id = str(elem_id)
         category = str(category) if category else 'Unknown'
@@ -118,13 +120,21 @@ class StrategyDiagnostics(object):
         self.areal_strategy_counts[strategy_key] += 1
         self.category_areal_strategy[category][strategy_key] += 1
 
+        # Determine confidence level
+        if confidence is not None:
+            # Use provided confidence (normalize to uppercase)
+            conf_level = str(confidence).upper()
+        else:
+            # Fall back to legacy behavior
+            conf_level = 'HIGH' if success else 'LOW'
+
         # Update element record if it exists
         for record in self.element_records:
             if record['element_id'] == elem_id:
                 # Only update if not already set (first successful strategy wins)
                 if record['strategy_used'] is None and success:
                     record['strategy_used'] = strategy
-                    record['confidence'] = 'high' if success else 'low'
+                    record['confidence'] = conf_level
                 break
 
     def record_geometry_extraction(self, elem_id, outcome, category, details=None):

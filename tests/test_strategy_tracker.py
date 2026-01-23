@@ -230,10 +230,10 @@ class TestStrategyDiagnostics(unittest.TestCase):
             self.assertIn('2001,Walls,LINEAR,,,success,', lines[2])
 
             # Verify third element (AREAL with planar_face success)
-            self.assertIn('3001,Floors,AREAL,planar_face,high,success,', lines[3])
+            self.assertIn('3001,Floors,AREAL,planar_face,HIGH,success,', lines[3])
 
             # Verify fourth element (AREAL with silhouette success after planar_face failure)
-            self.assertIn('3002,Walls,AREAL,silhouette,high,success,', lines[4])
+            self.assertIn('3002,Walls,AREAL,silhouette,HIGH,success,', lines[4])
 
             # Verify fifth element (AREAL with no_geometry)
             self.assertIn('3003,Walls,AREAL,,,no_geometry,no_geometry', lines[5])
