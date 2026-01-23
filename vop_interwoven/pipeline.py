@@ -1317,26 +1317,31 @@ def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, con
         # MEDIUM/LOW confidence: Rasterize to proxy layer only (no occlusion)
         else:
             # For MEDIUM/LOW, we still want to show the element but NOT occlude
-            # Use proxy rasterization (visible ink without occlusion authority)
+            # Phase 2.3: Use rasterize_polygon_to_proxy (writes to model_proxy_key, NOT w_occ)
             if closed_loops:
                 try:
-                    # Rasterize as proxy (no depth writes to occlusion buffer)
+                    # Rasterize to proxy layer without updating occlusion buffer
                     # This makes the element visible but doesn't block later elements
-                    filled += raster.rasterize_proxy_loops(
+                    filled += raster.rasterize_polygon_to_proxy(
                         closed_loops, key_index, depth=elem_depth, source=source_type
                     )
                 except Exception:
-                    # If rasterize_proxy_loops doesn't exist, fall back to regular rasterization
-                    # but mark it as non-occluding by setting occluder=False in metadata
+                    # Fallback: if new method doesn't exist, try old method
                     try:
-                        filled += raster.rasterize_silhouette_loops(
+                        filled += raster.rasterize_proxy_loops(
                             closed_loops, key_index, depth=elem_depth, source=source_type
                         )
-                        # Explicitly mark as non-occluding
-                        if key_index < len(raster.element_meta):
-                            raster.element_meta[key_index]["occluder"] = False
                     except Exception:
-                        pass
+                        # Last resort: regular rasterization but mark as non-occluding
+                        try:
+                            filled += raster.rasterize_silhouette_loops(
+                                closed_loops, key_index, depth=elem_depth, source=source_type
+                            )
+                            # Explicitly mark as non-occluding
+                            if key_index < len(raster.element_meta):
+                                raster.element_meta[key_index]["occluder"] = False
+                        except Exception:
+                            pass
 
             if open_loops:
                 try:

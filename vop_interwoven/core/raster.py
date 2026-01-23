@@ -852,6 +852,140 @@ class ViewRaster:
 
         return filled_count
 
+    def rasterize_polygon_to_proxy(self, loops, key_index, depth=0.0, source="HOST"):
+        """Rasterize polygon loops to proxy layer WITHOUT updating occlusion buffer.
+
+        This is for MEDIUM/LOW confidence AREAL elements that should be visible but NOT occlude.
+
+        Args:
+            loops: List of loop dicts [{'points': [(u,v,w), ...], 'is_hole': bool}]
+            key_index: Element metadata index
+            depth: W-depth value (not used for occlusion, only for proxy edge stamping)
+            source: Source type - "HOST", "LINK", or "DWG" (default: "HOST")
+
+        Returns:
+            Number of cells written to proxy layer
+
+        Commentary:
+            - Writes to model_proxy_key (visible ink)
+            - Does NOT write to w_occ (no occlusion)
+            - Does NOT write to model_edge_key (not high-confidence model ink)
+            - Respects model_clip_bounds
+        """
+        if not loops:
+            return 0
+
+        filled_count = 0
+
+        # Collect fill cells for outers and holes
+        outer_cells = set()
+        hole_cells = set()
+
+        for loop in loops:
+            points_uv = loop.get("points", [])
+            is_hole = bool(loop.get("is_hole", False))
+
+            if len(points_uv) < 3:
+                continue
+
+            # Fix loops: merge nearly-coincident points
+            points_uv = _fix_loop_points_uv(points_uv, tol_ft=(0.10 * float(self.cell_size_ft)))
+
+            # Normalize closure: remove duplicate last point
+            if len(points_uv) >= 2 and points_uv[0] == points_uv[-1]:
+                points_uv = list(points_uv[:-1])
+
+            if len(points_uv) < 3:
+                continue
+
+            # UV clip bounds (model crop vs full raster)
+            if self.model_clip_bounds is not None:
+                half = 0.5 * self.cell_size_ft
+                xmin = self.model_clip_bounds.xmin + half
+                ymin = self.model_clip_bounds.ymin + half
+                xmax = self.model_clip_bounds.xmax - half
+                ymax = self.model_clip_bounds.ymax - half
+            else:
+                xmin = self.bounds_xy.xmin
+                ymin = self.bounds_xy.ymin
+                xmax = self.bounds_xy.xmax
+                ymax = self.bounds_xy.ymax
+
+            # Clip polygon to bounds
+            clipped_uv = _clip_poly_to_rect_uv([(p[0], p[1]) for p in points_uv], xmin, ymin, xmax, ymax)
+            if len(clipped_uv) < 3:
+                continue
+
+            # Convert to cell coordinates
+            points_ij = []
+            for (u, v) in clipped_uv:
+                i = int((u - self.bounds_xy.xmin) / self.cell_size_ft)
+                j = int((v - self.bounds_xy.ymin) / self.cell_size_ft)
+
+                # Clamp to raster bounds
+                if i < 0:
+                    i = 0
+                elif i >= self.W:
+                    i = self.W - 1
+                if j < 0:
+                    j = 0
+                elif j >= self.H:
+                    j = self.H - 1
+
+                points_ij.append((i, j))
+
+            # Dedupe consecutive duplicates
+            dedup = []
+            for pt in points_ij:
+                if not dedup or dedup[-1] != pt:
+                    dedup.append(pt)
+            points_ij = dedup
+
+            if len(points_ij) < 3:
+                continue
+
+            # Ensure closure
+            if points_ij[0] != points_ij[-1]:
+                points_ij = points_ij + [points_ij[0]]
+
+            if len(points_ij) < 4:
+                continue
+
+            # Get interior cells using scanline algorithm
+            cells = self._scanline_cells(points_ij)
+            if cells:
+                if is_hole:
+                    hole_cells |= cells
+                else:
+                    outer_cells |= cells
+
+        # Compute target cells (outer minus holes)
+        target_cells = outer_cells - hole_cells
+
+        if not target_cells:
+            return 0
+
+        # Write to model_proxy_key WITHOUT updating w_occ
+        for (i, j) in target_cells:
+            # Apply model clip guard
+            if source in ("HOST", "LINK", "DWG") and (not self._cell_in_model_clip(i, j)):
+                continue
+
+            idx = self.get_cell_index(i, j)
+            if idx is None:
+                continue
+
+            # Write to proxy layer (no occlusion check, no w_occ write)
+            if 0 <= idx < len(self.model_proxy_key):
+                if self.model_proxy_key[idx] != key_index:
+                    self.model_proxy_key[idx] = key_index
+                    filled_count += 1
+
+                # Mark proxy presence
+                self.model_proxy_mask[idx] = True
+
+        return filled_count
+
     def rasterize_silhouette_loops(self, loops, key_index, depth=0.0, source="HOST"):
         """Rasterize element silhouette loops into model layers with depth testing.
 
