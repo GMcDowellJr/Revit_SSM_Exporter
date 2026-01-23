@@ -672,35 +672,40 @@ class StrategyDiagnostics(object):
             - extraction_method: Which extraction method succeeded (Phase 3.1)
             - method_attempted_order: Order of methods attempted (Phase 3.1)
         """
-        with open(filepath, 'w') as f:
+        import csv
+
+        with open(filepath, 'w', newline='') as f:
+            writer = csv.writer(f)
+
             # Write header (Phase 3.1: added extraction_method, method_attempted_order)
-            f.write('element_id,category,classification,strategy_used,confidence,extraction_outcome,failure_reason,extraction_method,method_attempted_order\n')
+            writer.writerow([
+                'element_id', 'category', 'classification', 'strategy_used',
+                'confidence', 'extraction_outcome', 'failure_reason',
+                'extraction_method', 'method_attempted_order'
+            ])
 
             # Write element records
             for record in self.element_records:
-                # Escape values that might contain commas
-                elem_id = str(record['element_id'])
-                category = str(record['category'])
-                classification = str(record['classification'])
-                strategy_used = str(record['strategy_used']) if record['strategy_used'] else ''
-                confidence = str(record['confidence']) if record['confidence'] else ''
-                extraction_outcome = str(record['extraction_outcome']) if record['extraction_outcome'] else ''
-                failure_reason = str(record['failure_reason']) if record['failure_reason'] else ''
-                extraction_method = str(record['extraction_method']) if record['extraction_method'] else ''
-                method_attempted_order = str(record['method_attempted_order']) if record['method_attempted_order'] else ''
+                # Fallback: If method_attempted_order is not set, populate from element_attempts
+                method_order = record.get('method_attempted_order')
+                if not method_order:
+                    elem_id = str(record['element_id'])
+                    if elem_id in self.element_attempts and self.element_attempts[elem_id]:
+                        method_order = ','.join(self.element_attempts[elem_id])
+                    else:
+                        method_order = ''
 
-                # Write row (Phase 3.1: added extraction_method, method_attempted_order)
-                f.write('{},{},{},{},{},{},{},{},{}\n'.format(
-                    elem_id,
-                    category,
-                    classification,
-                    strategy_used,
-                    confidence,
-                    extraction_outcome,
-                    failure_reason,
-                    extraction_method,
-                    method_attempted_order
-                ))
+                writer.writerow([
+                    str(record['element_id']),
+                    str(record['category']),
+                    str(record['classification']),
+                    str(record['strategy_used']) if record['strategy_used'] else '',
+                    str(record['confidence']) if record['confidence'] else '',
+                    str(record['extraction_outcome']) if record['extraction_outcome'] else '',
+                    str(record['failure_reason']) if record['failure_reason'] else '',
+                    str(record['extraction_method']) if record['extraction_method'] else '',
+                    method_order
+                ])
 
     def export_category_summary_csv(self, filepath):
         """
