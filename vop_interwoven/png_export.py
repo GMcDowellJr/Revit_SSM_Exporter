@@ -201,12 +201,17 @@ def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_pro
         width_px = width * pixels_per_cell
         height_px = height * pixels_per_cell
 
-        # Define colors
-        col_empty = Color.White
+        # Define colors (Phase 2.3: Confidence-based color scheme)
+        col_empty = Color.White                       # Empty cells
+        col_model_edge = Color.FromArgb(0, 255, 0)    # Bright green (HIGH confidence model ink)
+        col_model_proxy = Color.FromArgb(0, 128, 0)   # Dark green (MEDIUM/LOW confidence proxy)
+        col_anno = Color.FromArgb(255, 0, 0)          # Red (annotations)
+
+        # Legacy colors (keep for backward compatibility)
         col_projection = Color.FromArgb(192, 192, 192)  # Light gray (RGB: 192, 192, 192)
         col_cut = Color.FromArgb(64, 64, 64)            # Dark gray (RGB: 64, 64, 64)
-        col_model = Color.FromArgb(128, 128, 128)       # Medium gray (default if not distinguishing)
-        col_anno_only = Color.FromArgb(100, 149, 237)   # Cornflower blue (annotations only)
+        col_model = col_model_edge                      # Default to bright green
+        col_anno_only = col_anno                        # Red for annotations
         col_anno_over_model = Color.FromArgb(255, 165, 0)  # Orange (annotation over model)
 
         # Create bitmap
@@ -222,27 +227,34 @@ def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_pro
             for j in range(height):
                 idx = j * width + i
 
-                # Check if cell has model edge (occupancy - boundary only) or annotation
-                has_model = _has_model(idx)
-                has_anno = (anno_key[idx] >= 0) if idx < len(anno_key) else False
+                # Phase 2.3: Check layers in priority order
+                # 1. model_edge_key (HIGH confidence - bright green)
+                # 2. model_proxy_key (MEDIUM/LOW confidence - dark green)
+                # 3. anno_key (annotations - red)
+                # 4. Empty (white)
+
+                has_model_edge = (idx < len(model_edge_key)) and (model_edge_key[idx] != -1)
+                has_model_proxy = (idx < len(model_proxy_key)) and (model_proxy_key[idx] != -1)
+                has_anno = (idx < len(anno_key)) and (anno_key[idx] >= 0)
 
                 # Skip completely empty cells
-                if not has_model and not has_anno:
+                if not has_model_edge and not has_model_proxy and not has_anno:
                     continue
 
-                # Determine color based on what's present
-                if has_anno and has_model:
-                    # Annotation over model = orange
-                    col = col_anno_over_model
+                # Determine color based on priority (first match wins)
+                if has_model_edge:
+                    # HIGH confidence model ink - bright green
+                    col = col_model_edge
+                elif has_model_proxy:
+                    # MEDIUM/LOW confidence proxy - dark green
+                    col = col_model_proxy
                 elif has_anno:
-                    # Annotation only = blue
-                    col = col_anno_only
-                elif cut_vs_projection:
-                    # If/when a real cut mask exists, wire it here; until then, fall back.
-                    col = col_model
+                    # Annotation - red
+                    col = col_anno
                 else:
-                    # Model only: default gray
-                    col = col_model
+                    # Should never reach here, but safety fallback
+                    col = col_empty
+                    continue
 
                 # Map cell (i, j) to pixel block
                 x0 = i * pixels_per_cell

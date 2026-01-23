@@ -96,6 +96,8 @@ Notes:
       - called from: png_export.py, streaming.py
     - `export_view_raster`
       - called from: pipeline.py
+    - `extract_areal_geometry`
+      - called from: pipeline.py
     - `extract_metrics_from_view_result`
       - called from: pipeline.py
     - `extract_view_metadata`
@@ -110,6 +112,8 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: core/areal_extraction.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -148,6 +152,8 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
+    - `rasterize_areal_loops`
+      - called from: pipeline.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_annotation_only_bounds`
@@ -155,7 +161,7 @@ Notes:
     - `resolve_category_ids`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `resolve_element_bbox`
-      - called from: core/element_cache.py, revit/collection.py
+      - called from: core/areal_extraction.py, core/element_cache.py, revit/collection.py
     - `resolve_view_bounds`
       - called from: pipeline.py
     - `resolve_view_mode`
@@ -293,6 +299,8 @@ Notes:
       - called from: png_export.py, streaming.py
     - `export_view_raster`
       - called from: pipeline.py
+    - `extract_areal_geometry`
+      - called from: pipeline.py
     - `extract_metrics_from_view_result`
       - called from: pipeline.py
     - `extract_view_metadata`
@@ -307,6 +315,8 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: core/areal_extraction.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -345,6 +355,8 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
+    - `rasterize_areal_loops`
+      - called from: pipeline.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_annotation_only_bounds`
@@ -352,7 +364,7 @@ Notes:
     - `resolve_category_ids`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `resolve_element_bbox`
-      - called from: core/element_cache.py, revit/collection.py
+      - called from: core/areal_extraction.py, core/element_cache.py, revit/collection.py
     - `resolve_view_bounds`
       - called from: pipeline.py
     - `resolve_view_mode`
@@ -490,6 +502,8 @@ Notes:
       - called from: png_export.py, streaming.py
     - `export_view_raster`
       - called from: pipeline.py
+    - `extract_areal_geometry`
+      - called from: pipeline.py
     - `extract_metrics_from_view_result`
       - called from: pipeline.py
     - `extract_view_metadata`
@@ -504,6 +518,8 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: core/areal_extraction.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -542,6 +558,8 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
+    - `rasterize_areal_loops`
+      - called from: pipeline.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_annotation_only_bounds`
@@ -549,7 +567,7 @@ Notes:
     - `resolve_category_ids`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `resolve_element_bbox`
-      - called from: core/element_cache.py, revit/collection.py
+      - called from: core/areal_extraction.py, core/element_cache.py, revit/collection.py
     - `resolve_view_bounds`
       - called from: pipeline.py
     - `resolve_view_mode`
@@ -687,6 +705,8 @@ Notes:
       - called from: png_export.py, streaming.py
     - `export_view_raster`
       - called from: pipeline.py
+    - `extract_areal_geometry`
+      - called from: pipeline.py
     - `extract_metrics_from_view_result`
       - called from: pipeline.py
     - `extract_view_metadata`
@@ -701,6 +721,8 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: core/areal_extraction.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -739,6 +761,8 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
+    - `rasterize_areal_loops`
+      - called from: pipeline.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_annotation_only_bounds`
@@ -746,7 +770,7 @@ Notes:
     - `resolve_category_ids`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `resolve_element_bbox`
-      - called from: core/element_cache.py, revit/collection.py
+      - called from: core/areal_extraction.py, core/element_cache.py, revit/collection.py
     - `resolve_view_bounds`
       - called from: pipeline.py
     - `resolve_view_mode`
@@ -884,6 +908,8 @@ Notes:
       - called from: png_export.py, streaming.py
     - `export_view_raster`
       - called from: pipeline.py
+    - `extract_areal_geometry`
+      - called from: pipeline.py
     - `extract_metrics_from_view_result`
       - called from: pipeline.py
     - `extract_view_metadata`
@@ -898,6 +924,8 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: core/areal_extraction.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -936,6 +964,8 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
+    - `rasterize_areal_loops`
+      - called from: pipeline.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_annotation_only_bounds`
@@ -943,7 +973,7 @@ Notes:
     - `resolve_category_ids`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `resolve_element_bbox`
-      - called from: core/element_cache.py, revit/collection.py
+      - called from: core/areal_extraction.py, core/element_cache.py, revit/collection.py
     - `resolve_view_bounds`
       - called from: pipeline.py
     - `resolve_view_mode`
@@ -993,7 +1023,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `process_document_views` (pipeline.py:L449)
+## Trace: `process_document_views` (pipeline.py:L450)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1083,6 +1113,8 @@ Notes:
       - called from: png_export.py, streaming.py
     - `export_view_raster`
       - called from: pipeline.py
+    - `extract_areal_geometry`
+      - called from: pipeline.py
     - `extract_metrics_from_view_result`
       - called from: pipeline.py
     - `extract_view_metadata`
@@ -1097,6 +1129,8 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: core/areal_extraction.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -1133,6 +1167,8 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
+    - `rasterize_areal_loops`
+      - called from: pipeline.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_annotation_only_bounds`
@@ -1140,7 +1176,7 @@ Notes:
     - `resolve_category_ids`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `resolve_element_bbox`
-      - called from: core/element_cache.py, revit/collection.py
+      - called from: core/areal_extraction.py, core/element_cache.py, revit/collection.py
     - `resolve_view_bounds`
       - called from: pipeline.py
     - `resolve_view_mode`
@@ -1280,6 +1316,8 @@ Notes:
       - called from: png_export.py, streaming.py
     - `export_view_raster`
       - called from: pipeline.py
+    - `extract_areal_geometry`
+      - called from: pipeline.py
     - `extract_metrics_from_view_result`
       - called from: pipeline.py
     - `extract_view_metadata`
@@ -1294,6 +1332,8 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: core/areal_extraction.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -1330,6 +1370,8 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
+    - `rasterize_areal_loops`
+      - called from: pipeline.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_annotation_only_bounds`
@@ -1337,7 +1379,7 @@ Notes:
     - `resolve_category_ids`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `resolve_element_bbox`
-      - called from: core/element_cache.py, revit/collection.py
+      - called from: core/areal_extraction.py, core/element_cache.py, revit/collection.py
     - `resolve_view_bounds`
       - called from: pipeline.py
     - `resolve_view_mode`
@@ -1387,7 +1429,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `render_model_front_to_back` (pipeline.py:L1236)
+## Trace: `render_model_front_to_back` (pipeline.py:L1369)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1477,6 +1519,8 @@ Notes:
       - called from: png_export.py, streaming.py
     - `export_view_raster`
       - called from: pipeline.py
+    - `extract_areal_geometry`
+      - called from: pipeline.py
     - `extract_metrics_from_view_result`
       - called from: pipeline.py
     - `extract_view_metadata`
@@ -1491,6 +1535,8 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: core/areal_extraction.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -1529,12 +1575,14 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
+    - `rasterize_areal_loops`
+      - called from: pipeline.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `resolve_element_bbox`
-      - called from: core/element_cache.py, revit/collection.py
+      - called from: core/areal_extraction.py, core/element_cache.py, revit/collection.py
     - `resolve_view_bounds`
       - called from: pipeline.py
     - `resolve_view_mode`
@@ -1584,7 +1632,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `init_view_raster` (pipeline.py:L1049)
+## Trace: `init_view_raster` (pipeline.py:L1050)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1674,6 +1722,8 @@ Notes:
       - called from: png_export.py, streaming.py
     - `export_view_raster`
       - called from: pipeline.py
+    - `extract_areal_geometry`
+      - called from: pipeline.py
     - `extract_metrics_from_view_result`
       - called from: pipeline.py
     - `extract_view_metadata`
@@ -1688,6 +1738,8 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: core/areal_extraction.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -1724,6 +1776,8 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
+    - `rasterize_areal_loops`
+      - called from: pipeline.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_annotation_only_bounds`
@@ -1731,7 +1785,7 @@ Notes:
     - `resolve_category_ids`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `resolve_element_bbox`
-      - called from: core/element_cache.py, revit/collection.py
+      - called from: core/areal_extraction.py, core/element_cache.py, revit/collection.py
     - `resolve_view_bounds`
       - called from: pipeline.py
     - `resolve_view_mode`
@@ -1781,7 +1835,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `_view_signature` (pipeline.py:L261)
+## Trace: `_view_signature` (pipeline.py:L262)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1869,6 +1923,8 @@ Notes:
       - called from: png_export.py, streaming.py
     - `export_view_raster`
       - called from: pipeline.py
+    - `extract_areal_geometry`
+      - called from: pipeline.py
     - `extract_metrics_from_view_result`
       - called from: pipeline.py
     - `extract_view_metadata`
@@ -1883,6 +1939,8 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: core/areal_extraction.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -1921,6 +1979,8 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
+    - `rasterize_areal_loops`
+      - called from: pipeline.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_annotation_only_bounds`
@@ -1928,7 +1988,7 @@ Notes:
     - `resolve_category_ids`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `resolve_element_bbox`
-      - called from: core/element_cache.py, revit/collection.py
+      - called from: core/areal_extraction.py, core/element_cache.py, revit/collection.py
     - `resolve_view_bounds`
       - called from: pipeline.py
     - `resolve_view_mode`
@@ -2068,6 +2128,8 @@ Notes:
       - called from: png_export.py, streaming.py
     - `export_view_raster`
       - called from: pipeline.py
+    - `extract_areal_geometry`
+      - called from: pipeline.py
     - `extract_metrics_from_view_result`
       - called from: pipeline.py
     - `extract_view_metadata`
@@ -2082,6 +2144,8 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: core/areal_extraction.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -2120,6 +2184,8 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
+    - `rasterize_areal_loops`
+      - called from: pipeline.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_annotation_only_bounds`
@@ -2127,7 +2193,7 @@ Notes:
     - `resolve_category_ids`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `resolve_element_bbox`
-      - called from: core/element_cache.py, revit/collection.py
+      - called from: core/areal_extraction.py, core/element_cache.py, revit/collection.py
     - `resolve_view_mode`
       - called from: pipeline.py
     - `resolve_view_w_volume`
@@ -2265,6 +2331,8 @@ Notes:
       - called from: png_export.py, streaming.py
     - `export_view_raster`
       - called from: pipeline.py
+    - `extract_areal_geometry`
+      - called from: pipeline.py
     - `extract_metrics_from_view_result`
       - called from: pipeline.py
     - `extract_view_metadata`
@@ -2279,6 +2347,8 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: core/areal_extraction.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -2317,12 +2387,14 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
+    - `rasterize_areal_loops`
+      - called from: pipeline.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_category_ids`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `resolve_element_bbox`
-      - called from: core/element_cache.py, revit/collection.py
+      - called from: core/areal_extraction.py, core/element_cache.py, revit/collection.py
     - `resolve_view_bounds`
       - called from: pipeline.py
     - `resolve_view_mode`
@@ -2462,6 +2534,8 @@ Notes:
       - called from: png_export.py, streaming.py
     - `export_view_raster`
       - called from: pipeline.py
+    - `extract_areal_geometry`
+      - called from: pipeline.py
     - `extract_metrics_from_view_result`
       - called from: pipeline.py
     - `extract_view_metadata`
@@ -2476,6 +2550,8 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: core/areal_extraction.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -2512,6 +2588,8 @@ Notes:
       - called from: core/face_selection.py
     - `quick_test_current_view`
       - called from: entry_dynamo.py
+    - `rasterize_areal_loops`
+      - called from: pipeline.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_annotation_only_bounds`
@@ -2519,7 +2597,7 @@ Notes:
     - `resolve_category_ids`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `resolve_element_bbox`
-      - called from: core/element_cache.py, revit/collection.py
+      - called from: core/areal_extraction.py, core/element_cache.py, revit/collection.py
     - `resolve_view_bounds`
       - called from: pipeline.py
     - `resolve_view_mode`
@@ -2657,6 +2735,8 @@ Notes:
       - called from: png_export.py, streaming.py
     - `export_view_raster`
       - called from: pipeline.py
+    - `extract_areal_geometry`
+      - called from: pipeline.py
     - `extract_metrics_from_view_result`
       - called from: pipeline.py
     - `extract_view_metadata`
@@ -2671,6 +2751,8 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: core/areal_extraction.py
     - `get_element_silhouette`
       - called from: pipeline.py
     - `get_perf_csv_header`
@@ -2709,6 +2791,8 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
+    - `rasterize_areal_loops`
+      - called from: pipeline.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_annotation_only_bounds`
@@ -2716,7 +2800,7 @@ Notes:
     - `resolve_category_ids`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `resolve_element_bbox`
-      - called from: core/element_cache.py, revit/collection.py
+      - called from: core/areal_extraction.py, core/element_cache.py, revit/collection.py
     - `resolve_view_bounds`
       - called from: pipeline.py
     - `resolve_view_mode`
@@ -2856,6 +2940,8 @@ Notes:
       - called from: png_export.py, streaming.py
     - `export_view_raster`
       - called from: pipeline.py
+    - `extract_areal_geometry`
+      - called from: pipeline.py
     - `extract_metrics_from_view_result`
       - called from: pipeline.py
     - `extract_view_metadata`
@@ -2870,6 +2956,8 @@ Notes:
       - called from: csv_export.py, dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
     - `get_current_view`
       - called from: dynamo_helpers.py, entry_dynamo.py, thinrunner_streaming.py
+    - `get_element_obb_loops`
+      - called from: core/areal_extraction.py
     - `get_perf_csv_header`
       - called from: streaming.py
     - `get_views_from_input_or_current`
@@ -2906,6 +2994,8 @@ Notes:
       - called from: entry_dynamo.py
     - `rasterize_annotations`
       - called from: pipeline.py
+    - `rasterize_areal_loops`
+      - called from: pipeline.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `resolve_annotation_only_bounds`
@@ -2913,7 +3003,7 @@ Notes:
     - `resolve_category_ids`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `resolve_element_bbox`
-      - called from: core/element_cache.py, revit/collection.py
+      - called from: core/areal_extraction.py, core/element_cache.py, revit/collection.py
     - `resolve_view_bounds`
       - called from: pipeline.py
     - `resolve_view_mode`

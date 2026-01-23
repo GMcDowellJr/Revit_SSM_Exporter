@@ -51,6 +51,13 @@ class StrategyDiagnostics(object):
         # Per-category extraction outcomes: {category: {outcome: count}}
         self.category_extraction_outcome = defaultdict(lambda: defaultdict(int))
 
+        # Confidence level counters: {confidence: count}
+        # Tracks HIGH, MEDIUM, LOW confidence from Phase 2.2
+        self.confidence_counts = defaultdict(int)
+
+        # Per-category confidence: {category: {confidence: count}}
+        self.category_confidence = defaultdict(lambda: defaultdict(int))
+
         # Per-element records for CSV export
         # Each record: {elem_id, category, classification, strategy_used,
         #               confidence, extraction_outcome, failure_reason}
@@ -88,7 +95,7 @@ class StrategyDiagnostics(object):
                 'failure_reason': None
             })
 
-    def record_areal_strategy(self, elem_id, strategy, success, category):
+    def record_areal_strategy(self, elem_id, strategy, success, category, confidence=None):
         """
         Record AREAL strategy attempt and outcome.
 
@@ -97,6 +104,8 @@ class StrategyDiagnostics(object):
             strategy: Strategy name (e.g., 'planar_face_success', 'silhouette_success')
             success: Whether strategy succeeded (True/False)
             category: Element category name
+            confidence: Optional confidence level ('HIGH', 'MEDIUM', 'LOW')
+                       If not provided, defaults to 'HIGH' if success else 'LOW'
         """
         elem_id = str(elem_id)
         category = str(category) if category else 'Unknown'
@@ -111,13 +120,21 @@ class StrategyDiagnostics(object):
         self.areal_strategy_counts[strategy_key] += 1
         self.category_areal_strategy[category][strategy_key] += 1
 
+        # Determine confidence level
+        if confidence is not None:
+            # Use provided confidence (normalize to uppercase)
+            conf_level = str(confidence).upper()
+        else:
+            # Fall back to legacy behavior
+            conf_level = 'HIGH' if success else 'LOW'
+
         # Update element record if it exists
         for record in self.element_records:
             if record['element_id'] == elem_id:
                 # Only update if not already set (first successful strategy wins)
                 if record['strategy_used'] is None and success:
                     record['strategy_used'] = strategy
-                    record['confidence'] = 'high' if success else 'low'
+                    record['confidence'] = conf_level
                 break
 
     def record_geometry_extraction(self, elem_id, outcome, category, details=None):
@@ -153,6 +170,32 @@ class StrategyDiagnostics(object):
                     record['failure_reason'] = details['error']
 
                 break
+
+    def record_confidence(self, elem_id, confidence, category):
+        """
+        Record confidence level for an element.
+
+        Args:
+            elem_id: Element ID (int or string)
+            confidence: Confidence level ('HIGH', 'MEDIUM', 'LOW')
+            category: Element category name
+        """
+        elem_id = str(elem_id)
+        category = str(category) if category else 'Unknown'
+
+        # Normalize confidence to uppercase
+        if confidence:
+            confidence = str(confidence).upper()
+
+            # Update counters
+            self.confidence_counts[confidence] += 1
+            self.category_confidence[category][confidence] += 1
+
+            # Update element record
+            for record in self.element_records:
+                if record['element_id'] == elem_id:
+                    record['confidence'] = confidence
+                    break
 
     def get_summary(self):
         """
@@ -225,10 +268,19 @@ class StrategyDiagnostics(object):
                 'extraction_outcomes': dict(self.category_extraction_outcome[category])
             }
 
+        # Calculate confidence rates
+        confidence_rates = {}
+        total_with_confidence = sum(self.confidence_counts.values())
+        if total_with_confidence > 0:
+            for conf, count in self.confidence_counts.items():
+                confidence_rates[conf] = (count * 100.0) / total_with_confidence
+
         return {
             'total_elements': total_elements,
             'classification_counts': dict(self.classification_counts),
             'classification_rates': classification_rates,
+            'confidence_counts': dict(self.confidence_counts),
+            'confidence_rates': confidence_rates,
             'areal_strategy_counts': dict(self.areal_strategy_counts),
             'areal_strategy_rates': areal_strategy_rates,
             'extraction_outcome_counts': dict(self.extraction_outcome_counts),
@@ -256,6 +308,16 @@ class StrategyDiagnostics(object):
             count = summary['classification_counts'].get(cls, 0)
             rate = summary['classification_rates'].get(cls, 0.0)
             print("  {:<10} {:>6} ({:>5.1f}%)".format(cls + ':', count, rate))
+
+        # Confidence level breakdown (Phase 2.2)
+        if summary.get('confidence_counts'):
+            print("\nCONFIDENCE LEVEL DISTRIBUTION:")
+            print("-" * 80)
+            for conf in ['HIGH', 'MEDIUM', 'LOW']:
+                count = summary['confidence_counts'].get(conf, 0)
+                rate = summary['confidence_rates'].get(conf, 0.0)
+                if count > 0:
+                    print("  {:<10} {:>6} ({:>5.1f}%)".format(conf + ':', count, rate))
 
         # AREAL strategy breakdown
         if summary['areal_strategy_rates']:
