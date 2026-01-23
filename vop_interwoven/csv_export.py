@@ -690,13 +690,19 @@ def build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metada
          AnnoCells_REGION, AnnoCells_OTHER, CellSize_ft, RowSource, ExporterVersion,
          ConfigHash, FromCache, ElapsedSec, Strategy_AREAL_PlanarFace, Strategy_AREAL_Silhouette,
          Strategy_AREAL_GeometryExtract, Strategy_AREAL_BBoxOBB, Strategy_AREAL_AABB,
-         GeomExtract_SuccessRate, AREAL_HighConfidenceRate]
+         GeomExtract_SuccessRate, AREAL_HighConfidenceRate,
+         Category_Walls_Total, Category_Walls_Success, Category_Walls_SuccessRate,
+         Category_Floors_Total, Category_Floors_Success, Category_Floors_SuccessRate,
+         Category_Roofs_Total, Category_Roofs_Success, Category_Roofs_SuccessRate,
+         Method_PlanarFace_Count, Method_GeometryPolygon_Count, Method_Silhouette_Count,
+         Method_BBoxOBB_Count, Method_AABB_Count]
 
     Commentary:
-        ✔ 34 columns (27 original + 7 strategy diagnostics)
+        ✔ 48 columns (27 original + 7 strategy diagnostics + 14 category/method stats)
         ✔ External cells (DWG, RVT) all 0 for now (no link support yet)
         ✔ RowSource = "VOP_Interwoven_v1"
         ✔ Strategy diagnostics default to 0 if strategy_diag=None
+        ✔ Category statistics (Phase 3.3) default to 0 if strategy_diag=None
     """
     # Extract view metadata if not provided
     if view_metadata is None:
@@ -794,6 +800,83 @@ def build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metada
         strategy_aabb,
         _round6(geom_extract_success_rate),
         _round6(areal_high_confidence_rate),
+    ])
+
+    # Phase 3.3: Extract per-category statistics and method counts
+    cat_walls_total = 0
+    cat_walls_success = 0
+    cat_walls_success_rate = 0.0
+    cat_floors_total = 0
+    cat_floors_success = 0
+    cat_floors_success_rate = 0.0
+    cat_roofs_total = 0
+    cat_roofs_success = 0
+    cat_roofs_success_rate = 0.0
+
+    method_planar_face_count = 0
+    method_geometry_polygon_count = 0
+    method_silhouette_count = 0
+    method_bbox_obb_count = 0
+    method_aabb_count = 0
+
+    if strategy_diag is not None:
+        try:
+            summary = strategy_diag.get_summary()
+            cat_method_stats = summary.get('category_method_stats', {})
+            method_stats = summary.get('method_stats', {})
+
+            # Extract Walls category statistics
+            walls_stats = cat_method_stats.get('Walls', {})
+            cat_walls_total = walls_stats.get('total', 0)
+            cat_walls_success = walls_stats.get('success', 0)
+            cat_walls_success_rate = walls_stats.get('success_rate', 0.0)
+
+            # Extract Floors category statistics
+            floors_stats = cat_method_stats.get('Floors', {})
+            cat_floors_total = floors_stats.get('total', 0)
+            cat_floors_success = floors_stats.get('success', 0)
+            cat_floors_success_rate = floors_stats.get('success_rate', 0.0)
+
+            # Extract Roofs category statistics
+            roofs_stats = cat_method_stats.get('Roofs', {})
+            cat_roofs_total = roofs_stats.get('total', 0)
+            cat_roofs_success = roofs_stats.get('success', 0)
+            cat_roofs_success_rate = roofs_stats.get('success_rate', 0.0)
+
+            # Extract method counts
+            method_planar_face_count = method_stats.get('planar_face', {}).get('count', 0)
+            method_geometry_polygon_count = method_stats.get('geometry_polygon', {}).get('count', 0)
+            method_silhouette_count = method_stats.get('silhouette', {}).get('count', 0)
+            method_bbox_obb_count = method_stats.get('bbox_obb', {}).get('count', 0)
+            method_aabb_count = method_stats.get('aabb', {}).get('count', 0)
+
+        except Exception:
+            # Diagnostic extraction failures should not crash export
+            pass
+
+    # Append category statistics and method counts (Phase 3.3)
+    row.extend([
+        # Category: Walls
+        cat_walls_total,
+        cat_walls_success,
+        _round6(cat_walls_success_rate),
+
+        # Category: Floors
+        cat_floors_total,
+        cat_floors_success,
+        _round6(cat_floors_success_rate),
+
+        # Category: Roofs
+        cat_roofs_total,
+        cat_roofs_success,
+        _round6(cat_roofs_success_rate),
+
+        # Method counts
+        method_planar_face_count,
+        method_geometry_polygon_count,
+        method_silhouette_count,
+        method_bbox_obb_count,
+        method_aabb_count,
     ])
 
     return row
@@ -899,6 +982,24 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
         "Strategy_AREAL_AABB",
         "GeomExtract_SuccessRate",
         "AREAL_HighConfidenceRate",
+
+        # Category statistics (Phase 3.3)
+        "Category_Walls_Total",
+        "Category_Walls_Success",
+        "Category_Walls_SuccessRate",
+        "Category_Floors_Total",
+        "Category_Floors_Success",
+        "Category_Floors_SuccessRate",
+        "Category_Roofs_Total",
+        "Category_Roofs_Success",
+        "Category_Roofs_SuccessRate",
+
+        # Method counts (Phase 3.3)
+        "Method_PlanarFace_Count",
+        "Method_GeometryPolygon_Count",
+        "Method_Silhouette_Count",
+        "Method_BBoxOBB_Count",
+        "Method_AABB_Count",
     ]
 
     core_rows = []
