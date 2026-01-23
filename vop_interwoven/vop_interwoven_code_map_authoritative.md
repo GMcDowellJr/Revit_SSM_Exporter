@@ -14,17 +14,25 @@
 **Definitions**
 - `Config` (class, L11)
 - `Config.__init__` (method, L57)
-- `Config.compute_adaptive_tile_size` (method, L287)
-- `Config.max_grid_cells_width` (method, L337)
-- `Config.max_grid_cells_height` (method, L346)
-- `Config.bounds_buffer_ft` (method, L355)
-- `Config.silhouette_tiny_thresh_ft` (method, L364)
-- `Config.silhouette_large_thresh_ft` (method, L373)
-- `Config.coarse_tess_max_verts` (method, L382)
-- `Config.get_silhouette_strategies` (method, L390)
-- `Config.__repr__` (method, L424)
-- `Config.to_dict` (method, L444)
-- `Config.from_dict` (method, L491)
+- `Config.compute_adaptive_tile_size` (method, L293)
+- `Config.max_grid_cells_width` (method, L343)
+- `Config.max_grid_cells_height` (method, L352)
+- `Config.bounds_buffer_ft` (method, L361)
+- `Config.silhouette_tiny_thresh_ft` (method, L370)
+- `Config.silhouette_large_thresh_ft` (method, L379)
+- `Config.coarse_tess_max_verts` (method, L388)
+- `Config.get_silhouette_strategies` (method, L396)
+- `Config.__repr__` (method, L430)
+- `Config.to_dict` (method, L450)
+- `Config.from_dict` (method, L499)
+
+### `core/areal_extraction.py`
+
+**Definitions**
+- `_safe_elem_id` (function, L16)
+- `_safe_category` (function, L34)
+- `_get_aabb_loops_from_bbox` (function, L53)
+- `extract_areal_geometry` (function, L140)
 
 ### `core/cache.py`
 
@@ -216,15 +224,16 @@
 - `ViewRaster.stamp_model_edge_idx` (method, L716)
 - `ViewRaster.stamp_proxy_edge_idx` (method, L748)
 - `ViewRaster.rasterize_proxy_loops` (method, L772)
-- `ViewRaster.rasterize_silhouette_loops` (method, L855)
-- `ViewRaster._scanline_cells` (method, L1090)
-- `ViewRaster._scanline_fill` (method, L1163)
-- `ViewRaster.dump_occlusion_debug` (method, L1243)
-- `ViewRaster.to_dict` (method, L1348)
-- `ViewRaster.from_dict` (method, L1390)
-- `ViewRaster.to_debug_dict` (method, L1446)
-- `_clip_poly_to_rect_uv` (function, L1501)
-- `_bresenham_line` (function, L1565)
+- `ViewRaster.rasterize_polygon_to_proxy` (method, L855)
+- `ViewRaster.rasterize_silhouette_loops` (method, L989)
+- `ViewRaster._scanline_cells` (method, L1224)
+- `ViewRaster._scanline_fill` (method, L1297)
+- `ViewRaster.dump_occlusion_debug` (method, L1377)
+- `ViewRaster.to_dict` (method, L1482)
+- `ViewRaster.from_dict` (method, L1524)
+- `ViewRaster.to_debug_dict` (method, L1580)
+- `_clip_poly_to_rect_uv` (function, L1635)
+- `_bresenham_line` (function, L1699)
 
 ### `core/silhouette.py`
 
@@ -289,13 +298,29 @@
 - `compute_view_frame_hash` (function, L597)
 - `build_core_csv_row` (function, L619)
 - `build_vop_csv_row` (function, L672)
-- `export_pipeline_to_csv` (function, L747)
-- `get_core_csv_header` (function, L1035)
-- `get_vop_csv_header` (function, L1045)
-- `get_perf_csv_header` (function, L1057)
-- `view_result_to_core_row` (function, L1067)
-- `view_result_to_vop_row` (function, L1196)
-- `view_result_to_perf_row` (function, L1468)
+- `export_pipeline_to_csv` (function, L801)
+- `get_core_csv_header` (function, L1105)
+- `get_vop_csv_header` (function, L1115)
+- `get_perf_csv_header` (function, L1127)
+- `view_result_to_core_row` (function, L1137)
+- `view_result_to_vop_row` (function, L1266)
+- `view_result_to_perf_row` (function, L1538)
+
+### `diagnostics/strategy_tracker.py`
+
+**Imports**
+- `collections:defaultdict`
+
+**Definitions**
+- `StrategyDiagnostics` (class, L26)
+- `StrategyDiagnostics.__init__` (method, L34)
+- `StrategyDiagnostics.record_element_classification` (method, L69)
+- `StrategyDiagnostics.record_areal_strategy` (method, L98)
+- `StrategyDiagnostics.record_geometry_extraction` (method, L140)
+- `StrategyDiagnostics.record_confidence` (method, L174)
+- `StrategyDiagnostics.get_summary` (method, L200)
+- `StrategyDiagnostics.print_summary` (method, L291)
+- `StrategyDiagnostics.export_to_csv` (method, L363)
 
 ### `dynamo_helpers.py`
 
@@ -349,6 +374,7 @@
 
 **Imports**
 - `.config:Config`
+- `.core.areal_extraction:extract_areal_geometry`
 - `.core.geometry:Mode,classify_by_uv,make_uv_aabb,make_obb_or_skinny_aabb`
 - `.core.math_utils:Bounds2D,CellRect`
 - `.core.raster:ViewRaster,TileMap`
@@ -361,31 +387,32 @@
 - `time`
 
 **Definitions**
-- `_diagnose_link_geometry_transform` (function, L112)
-- `_perf_now` (function, L195)
-- `_perf_ms` (function, L200)
-- `_safe_int` (function, L203)
-- `_safe_bool` (function, L210)
-- `_cropbox_fingerprint` (function, L217)
-- `_cfg_hash` (function, L245)
-- `_view_signature` (function, L261)
-- `_extract_view_identity_for_csv` (function, L351)
-- `process_document_views` (function, L449)
-- `init_view_raster` (function, L1039)
-- `_extract_view_summary` (function, L1181)
-- `render_model_front_to_back` (function, L1226)
-- `_is_supported_2d_view` (function, L2089)
-- `_should_skip_outside_view_volume` (function, L2136)
-- `_tiles_fully_covered_and_nearer` (function, L2172)
-- `_bin_elements_to_tiles` (function, L2203)
-- `_tile_has_depth_conflict` (function, L2235)
-- `_get_ambiguous_tiles` (function, L2269)
-- `_render_areal_element` (function, L2299)
-- `_render_proxy_element` (function, L2314)
-- `_stamp_proxy_edges` (function, L2339)
-- `_mark_rect_center_cell` (function, L2352)
-- `_mark_thin_band_along_long_axis` (function, L2360)
-- `export_view_raster` (function, L2380)
+- `_diagnose_link_geometry_transform` (function, L113)
+- `_perf_now` (function, L196)
+- `_perf_ms` (function, L201)
+- `_safe_int` (function, L204)
+- `_safe_bool` (function, L211)
+- `_cropbox_fingerprint` (function, L218)
+- `_cfg_hash` (function, L246)
+- `_view_signature` (function, L262)
+- `_extract_view_identity_for_csv` (function, L352)
+- `process_document_views` (function, L450)
+- `init_view_raster` (function, L1050)
+- `_extract_view_summary` (function, L1192)
+- `rasterize_areal_loops` (function, L1238)
+- `render_model_front_to_back` (function, L1369)
+- `_is_supported_2d_view` (function, L2341)
+- `_should_skip_outside_view_volume` (function, L2388)
+- `_tiles_fully_covered_and_nearer` (function, L2424)
+- `_bin_elements_to_tiles` (function, L2455)
+- `_tile_has_depth_conflict` (function, L2487)
+- `_get_ambiguous_tiles` (function, L2521)
+- `_render_areal_element` (function, L2551)
+- `_render_proxy_element` (function, L2566)
+- `_stamp_proxy_edges` (function, L2591)
+- `_mark_rect_center_cell` (function, L2604)
+- `_mark_thin_band_along_long_axis` (function, L2612)
+- `export_view_raster` (function, L2632)
 
 ### `png_export.py`
 
@@ -395,7 +422,7 @@
 
 **Definitions**
 - `export_raster_to_png` (function, L10)
-- `export_pipeline_results_to_pngs` (function, L285)
+- `export_pipeline_results_to_pngs` (function, L297)
 
 ### `revit/annotation.py`
 
@@ -430,9 +457,10 @@
 - `estimate_depth_from_loops_or_bbox` (function, L524)
 - `estimate_depth_range_from_bbox` (function, L552)
 - `_project_element_bbox_to_cell_rect` (function, L626)
-- `_extract_geometry_footprint_uv` (function, L770)
-- `get_element_obb_loops` (function, L886)
-- `_pca_obb_uv` (function, L1059)
+- `_get_element_category_name` (function, L770)
+- `_extract_geometry_footprint_uv` (function, L789)
+- `get_element_obb_loops` (function, L974)
+- `_pca_obb_uv` (function, L1196)
 
 ### `revit/collection_policy.py`
 
