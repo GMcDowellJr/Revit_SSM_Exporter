@@ -786,6 +786,16 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
             except Exception:
                 pass
 
+            # Create strategy diagnostics tracker if enabled (used by render and CSV export)
+            strategy_diag = None
+            if getattr(cfg, "export_strategy_diagnostics", False):
+                try:
+                    from .diagnostics import StrategyDiagnostics
+                    strategy_diag = StrategyDiagnostics()
+                except Exception:
+                    # Graceful degradation: continue without diagnostics
+                    pass
+
             if view_mode == VIEW_MODE_MODEL_AND_ANNOTATION:
                 # 2) Broad-phase visible elements
                 t0 = _perf_now()
@@ -795,7 +805,7 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
                 
                 # 3) MODEL PASS
                 t0 = _perf_now()
-                render_model_front_to_back(doc, view, raster, elements, cfg, diag=diag, geometry_cache=geometry_cache, elem_cache=elem_cache)
+                render_model_front_to_back(doc, view, raster, elements, cfg, diag=diag, geometry_cache=geometry_cache, elem_cache=elem_cache, strategy_diag=strategy_diag)
                 t1 = _perf_now()
                 _tmark("model_ms", t0, t1)
 
@@ -824,7 +834,7 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
 
             # 6) Export
             t0 = _perf_now()
-            out = export_view_raster(view, raster, cfg, diag=diag, timings=timings)
+            out = export_view_raster(view, raster, cfg, diag=diag, timings=timings, strategy_diag=strategy_diag)
 
             # Ensure identity fields exist on first-run results so CSV + cache row_payload are complete
             try:
@@ -1223,7 +1233,7 @@ def _extract_view_summary(view_result):
         # Explicitly omit "raster" key to free memory
     }
     
-def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geometry_cache=None, elem_cache=None):
+def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geometry_cache=None, elem_cache=None, strategy_diag=None):
     """Render 3D model elements front-to-back with interwoven AreaL/Tiny/Linear handling.
 
     Args:
@@ -1232,8 +1242,10 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
         raster: ViewRaster (modified in-place)
         elements: List of Revit elements (from collect_view_elements)
         cfg: Config
+        diag: Optional diagnostics
         geometry_cache: Optional geometry cache for silhouettes
         elem_cache: Optional element cache for bbox fingerprints (Phase 2)
+        strategy_diag: Optional StrategyDiagnostics instance
 
     Returns:
         None (modifies raster in-place)
@@ -1246,16 +1258,6 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
         ✔ Handles linked/imported elements with transforms
     """
     from .revit.collection import _project_element_bbox_to_cell_rect, expand_host_link_import_model_elements
-
-    # Create strategy diagnostics tracker if enabled
-    strategy_diag = None
-    if getattr(cfg, "export_strategy_diagnostics", False):
-        try:
-            from .diagnostics import StrategyDiagnostics
-            strategy_diag = StrategyDiagnostics()
-        except Exception:
-            # Graceful degradation: continue without diagnostics
-            pass
 
     # Get view basis for transformations
     vb = make_view_basis(view, diag=diag)
@@ -2476,13 +2478,16 @@ def _mark_thin_band_along_long_axis(rect, raster):
                 raster.model_proxy_mask[idx] = True
 
 
-def export_view_raster(view, raster, cfg, diag=None, timings=None):
+def export_view_raster(view, raster, cfg, diag=None, timings=None, strategy_diag=None):
     """Export view raster to dictionary for JSON serialization.
 
     Args:
         view: Revit View
         raster: ViewRaster
         cfg: Config
+        diag: Optional diagnostics
+        timings: Optional timings dict
+        strategy_diag: Optional StrategyDiagnostics instance
 
     Returns:
         Dictionary with all view data
@@ -2598,4 +2603,5 @@ def export_view_raster(view, raster, cfg, diag=None, timings=None):
             "skipped_outside_view_volume": int(getattr(raster, "skipped_outside_view_volume", 0) or 0),
             "timings": (dict(timings) if timings is not None else None),
         },
+        "strategy_diag": strategy_diag,  # StrategyDiagnostics instance for CSV export
     }

@@ -669,7 +669,7 @@ def build_core_csv_row(view, doc, metrics, config, run_info, view_metadata=None)
     return row
 
 
-def build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metadata=None, diag=None):
+def build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metadata=None, diag=None, strategy_diag=None):
     """Build row for VOP extended CSV.
 
     Args:
@@ -679,6 +679,8 @@ def build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metada
         config: Config object
         run_info: Dict with date, run_id, exporter_version, elapsed_sec, cell_size_ft
         view_metadata: Optional dict from extract_view_metadata() (computed if not provided)
+        diag: Optional diagnostics
+        strategy_diag: Optional StrategyDiagnostics instance
 
     Returns:
         List of values matching vop_headers order:
@@ -686,12 +688,15 @@ def build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metada
          Overlap, Ext_Cells_Any, Ext_Cells_Only, Ext_Cells_DWG, Ext_Cells_RVT,
          AnnoCells_TEXT, AnnoCells_TAG, AnnoCells_DIM, AnnoCells_DETAIL, AnnoCells_LINES,
          AnnoCells_REGION, AnnoCells_OTHER, CellSize_ft, RowSource, ExporterVersion,
-         ConfigHash, FromCache, ElapsedSec]
+         ConfigHash, FromCache, ElapsedSec, Strategy_AREAL_PlanarFace, Strategy_AREAL_Silhouette,
+         Strategy_AREAL_GeometryExtract, Strategy_AREAL_BBoxOBB, Strategy_AREAL_AABB,
+         GeomExtract_SuccessRate, AREAL_HighConfidenceRate]
 
     Commentary:
-        ✔ 27 columns matching SSM VOP CSV
+        ✔ 34 columns (27 original + 7 strategy diagnostics)
         ✔ External cells (DWG, RVT) all 0 for now (no link support yet)
         ✔ RowSource = "VOP_Interwoven_v1"
+        ✔ Strategy diagnostics default to 0 if strategy_diag=None
     """
     # Extract view metadata if not provided
     if view_metadata is None:
@@ -741,6 +746,55 @@ def build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metada
         run_info.get("elapsed_sec", 0.0),
     ]
 
+    # Extract strategy diagnostics statistics
+    strategy_planar_face = 0
+    strategy_silhouette = 0
+    strategy_geom_extract = 0
+    strategy_bbox_obb = 0
+    strategy_aabb = 0
+    geom_extract_success_rate = 0.0
+    areal_high_confidence_rate = 0.0
+
+    if strategy_diag is not None:
+        try:
+            summary = strategy_diag.get_summary()
+
+            # Strategy counts (success only)
+            areal_strats = summary.get('areal_strategy_counts', {})
+            strategy_planar_face = areal_strats.get('planar_face_success', 0)
+            strategy_silhouette = areal_strats.get('silhouette_success', 0)
+            strategy_geom_extract = areal_strats.get('geometry_polygon_success', 0)
+            strategy_bbox_obb = areal_strats.get('bbox_obb_used_success', 0)
+            strategy_aabb = areal_strats.get('aabb_used_success', 0)
+
+            # Geometry extraction success rate
+            extraction_outcomes = summary.get('extraction_outcome_counts', {})
+            total_extractions = sum(extraction_outcomes.values())
+            if total_extractions > 0:
+                successes = extraction_outcomes.get('success', 0)
+                geom_extract_success_rate = (successes * 100.0) / total_extractions
+
+            # AREAL high confidence rate (silhouette success vs total AREAL)
+            areal_count = summary.get('classification_counts', {}).get('AREAL', 0)
+            if areal_count > 0:
+                # High confidence = successful geometry extraction (planar_face or silhouette)
+                high_conf_count = strategy_planar_face + strategy_silhouette + strategy_geom_extract
+                areal_high_confidence_rate = (high_conf_count * 100.0) / areal_count
+
+        except Exception:
+            # Diagnostic extraction failures should not crash export
+            pass
+
+    # Append strategy diagnostic columns
+    row.extend([
+        strategy_planar_face,
+        strategy_silhouette,
+        strategy_geom_extract,
+        strategy_bbox_obb,
+        strategy_aabb,
+        _round6(geom_extract_success_rate),
+        _round6(areal_high_confidence_rate),
+    ])
 
     return row
 
@@ -835,7 +889,16 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
         "CapTriggered",
 
         "RowSource",
-        "ExporterVersion", "ConfigHash", "FromCache", "ElapsedSec"
+        "ExporterVersion", "ConfigHash", "FromCache", "ElapsedSec",
+
+        # Strategy diagnostics (Phase 1.4)
+        "Strategy_AREAL_PlanarFace",
+        "Strategy_AREAL_Silhouette",
+        "Strategy_AREAL_GeometryExtract",
+        "Strategy_AREAL_BBoxOBB",
+        "Strategy_AREAL_AABB",
+        "GeomExtract_SuccessRate",
+        "AREAL_HighConfidenceRate",
     ]
 
     core_rows = []
@@ -992,9 +1055,16 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
             except Exception:
                 view_metadata = {}
 
+        # Extract strategy_diag from view_result if available
+        strategy_diag = None
+        try:
+            strategy_diag = view_result.get("strategy_diag")
+        except Exception:
+            pass
+
         if view is not None:
             core_rows.append(build_core_csv_row(view, doc, metrics, config, run_info, view_metadata=view_metadata))
-        vop_rows.append(build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metadata=view_metadata, diag=diag))
+        vop_rows.append(build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metadata=view_metadata, diag=diag, strategy_diag=strategy_diag))
 
     # Simple logger stub (export/csv expects logger-like object)
     class SimpleLogger:
