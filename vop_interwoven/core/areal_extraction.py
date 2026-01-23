@@ -175,6 +175,13 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
     # ========================================================================
 
     # Try planar face loops first (best for floors/ceilings with openings)
+    # Phase 3.1: Record method attempt
+    if strategy_diag is not None and elem_id is not None:
+        try:
+            strategy_diag.record_method_attempt(elem_id, 'planar_face')
+        except Exception:
+            pass
+
     try:
         from .silhouette import _front_face_loops_silhouette
 
@@ -188,13 +195,22 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
                         elem_id=elem_id,
                         strategy='planar_face',
                         success=True,
-                        category=category
+                        category=category,
+                        confidence='HIGH'
                     )
                     strategy_diag.record_geometry_extraction(
                         elem_id=elem_id,
                         outcome='success',
                         category=category,
                         details={'strategy': 'planar_face_loops', 'loop_count': len(loops)}
+                    )
+                    # Phase 3.1: Record successful extraction method
+                    strategy_diag.record_extraction_method(
+                        elem_id=elem_id,
+                        category=category,
+                        method='planar_face',
+                        success=True,
+                        confidence='HIGH'
                     )
                 except Exception:
                     pass
@@ -204,6 +220,13 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
         pass
 
     # Try silhouette edges (preserves concave shapes like L, U, C)
+    # Phase 3.1: Record method attempt
+    if strategy_diag is not None and elem_id is not None:
+        try:
+            strategy_diag.record_method_attempt(elem_id, 'silhouette')
+        except Exception:
+            pass
+
     try:
         from .silhouette import _silhouette_edges
 
@@ -217,13 +240,22 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
                         elem_id=elem_id,
                         strategy='silhouette',
                         success=True,
-                        category=category
+                        category=category,
+                        confidence='HIGH'
                     )
                     strategy_diag.record_geometry_extraction(
                         elem_id=elem_id,
                         outcome='success',
                         category=category,
                         details={'strategy': 'silhouette_edges', 'loop_count': len(loops)}
+                    )
+                    # Phase 3.1: Record successful extraction method
+                    strategy_diag.record_extraction_method(
+                        elem_id=elem_id,
+                        category=category,
+                        method='silhouette',
+                        success=True,
+                        confidence='HIGH'
                     )
                 except Exception:
                     pass
@@ -254,6 +286,13 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
     # TIER 2: MEDIUM/LOW CONFIDENCE - Geometry extraction with OBB/AABB
     # ========================================================================
 
+    # Phase 3.1: Record method attempt for geometry_polygon
+    if strategy_diag is not None and elem_id is not None:
+        try:
+            strategy_diag.record_method_attempt(elem_id, 'geometry_polygon')
+        except Exception:
+            pass
+
     try:
         from ..revit.collection import get_element_obb_loops
 
@@ -269,18 +308,37 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
             # Check strategy used by get_element_obb_loops
             strategy_name = loops[0].get('strategy', 'unknown')
 
+            # Map internal strategy names to Phase 3.1 method names
             if strategy_name == 'geometry_polygon':
                 # Actual geometry was extracted - MEDIUM confidence
                 confidence = 'MEDIUM'
+                method_name = 'geometry_polygon'
             elif strategy_name in ['uv_obb', 'bbox_obb_used']:
                 # Bbox corners with OBB rotation - LOW confidence
                 confidence = 'LOW'
+                method_name = 'bbox_obb'
             elif strategy_name in ['uv_aabb', 'aabb_used']:
                 # Bbox corners with AABB - LOW confidence
                 confidence = 'LOW'
+                method_name = 'aabb'
             else:
                 # Unknown strategy - assume LOW confidence
                 confidence = 'LOW'
+                method_name = strategy_name
+
+            # Phase 3.1: Record successful extraction method
+            if strategy_diag is not None and elem_id is not None:
+                try:
+                    strategy_diag.record_extraction_method(
+                        elem_id=elem_id,
+                        category=category,
+                        method=method_name,
+                        success=True,
+                        confidence=confidence
+                    )
+                    strategy_diag.record_confidence(elem_id, confidence, category)
+                except Exception:
+                    pass
 
             return (loops, confidence, strategy_name)
     except Exception:
@@ -289,6 +347,13 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
     # ========================================================================
     # TIER 3: LOW CONFIDENCE - Pure AABB from bounding box
     # ========================================================================
+
+    # Phase 3.1: Record method attempt for aabb
+    if strategy_diag is not None and elem_id is not None:
+        try:
+            strategy_diag.record_method_attempt(elem_id, 'aabb')
+        except Exception:
+            pass
 
     try:
         from ..revit.collection import resolve_element_bbox
@@ -311,7 +376,8 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
                             elem_id=elem_id,
                             strategy='aabb_used',
                             success=True,
-                            category=category
+                            category=category,
+                            confidence='LOW'
                         )
                         strategy_diag.record_geometry_extraction(
                             elem_id=elem_id,
@@ -319,6 +385,15 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
                             category=category,
                             details={'strategy': 'aabb_fallback', 'bbox_source': bbox_src}
                         )
+                        # Phase 3.1: Record successful extraction method
+                        strategy_diag.record_extraction_method(
+                            elem_id=elem_id,
+                            category=category,
+                            method='aabb',
+                            success=True,
+                            confidence='LOW'
+                        )
+                        strategy_diag.record_confidence(elem_id, 'LOW', category)
                     except Exception:
                         pass
 
@@ -338,6 +413,9 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
                 category=category,
                 details={'reason': 'All AREAL extraction strategies failed'}
             )
+            # Phase 3.1: Record failed extraction (no method succeeded)
+            # Note: We don't call record_extraction_method here because no method succeeded
+            # The method_attempted_order will show all methods tried via record_method_attempt
         except Exception:
             pass
 

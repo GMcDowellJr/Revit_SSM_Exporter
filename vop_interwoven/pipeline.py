@@ -2323,14 +2323,28 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     except Exception:
                         pass
 
+                    # Per-element CSV (existing)
                     csv_filename = "strategy_diagnostics_{0}_{1}.csv".format(view_name, view_id)
                     csv_path = os.path.join(dump_dir, csv_filename)
+
+                    # Category summary CSV (Phase 3.1)
+                    cat_csv_filename = "category_summary_{0}_{1}.csv".format(view_name, view_id)
+                    cat_csv_path = os.path.join(dump_dir, cat_csv_filename)
                 else:
                     csv_path = "strategy_diagnostics_{0}_{1}.csv".format(view_name, view_id)
+                    cat_csv_path = "category_summary_{0}_{1}.csv".format(view_name, view_id)
 
-                # Export CSV
+                # Export per-element CSV
                 strategy_diag.export_to_csv(csv_path)
-                print("\nStrategy diagnostics exported to: {}".format(csv_path))
+                print("\nDiagnostics exported:")
+                print("  Elements: {}".format(csv_path))
+
+                # Export category summary CSV (Phase 3.1)
+                try:
+                    strategy_diag.export_category_summary_csv(cat_csv_path)
+                    print("  Categories: {}".format(cat_csv_path))
+                except Exception as cat_e:
+                    print("  [WARN] Failed to export category summary: {}".format(cat_e))
 
         except Exception as e:
             print("[WARN] vop.pipeline: Failed to export strategy diagnostics: {0}".format(e))
