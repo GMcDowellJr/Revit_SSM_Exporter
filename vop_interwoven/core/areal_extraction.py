@@ -185,6 +185,9 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
     try:
         from .silhouette import _front_face_loops_silhouette
 
+        # DEBUG: Log Tier 1A attempt
+        print("[DEBUG] Element {} ({}): Tier 1A - Attempting planar_face extraction".format(elem_id, category))
+
         loops = _front_face_loops_silhouette(elem, view, view_basis, cfg=cfg)
 
         if loops and len(loops) > 0:
@@ -215,8 +218,17 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
                 except Exception:
                     pass
 
+            # DEBUG: Log Tier 1A success
+            print("[DEBUG] Element {} ({}): Tier 1A - planar_face SUCCESS ({} loops)".format(
+                elem_id, category, len(loops)))
+
             return (loops, 'HIGH', 'planar_face_loops')
-    except Exception:
+        else:
+            # DEBUG: Log Tier 1A failure
+            print("[DEBUG] Element {} ({}): Tier 1A - planar_face FAILED (0 loops)".format(elem_id, category))
+    except Exception as e:
+        # DEBUG: Log Tier 1A exception
+        print("[DEBUG] Element {} ({}): Tier 1A - planar_face EXCEPTION: {}".format(elem_id, category, e))
         pass
 
     # Try silhouette edges (preserves concave shapes like L, U, C)
@@ -229,6 +241,9 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
 
     try:
         from .silhouette import _silhouette_edges
+
+        # DEBUG: Log Tier 1B attempt
+        print("[DEBUG] Element {} ({}): Tier 1B - Attempting silhouette extraction".format(elem_id, category))
 
         loops = _silhouette_edges(elem, view, view_basis, cfg)
 
@@ -260,8 +275,17 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
                 except Exception:
                     pass
 
+            # DEBUG: Log Tier 1B success
+            print("[DEBUG] Element {} ({}): Tier 1B - silhouette SUCCESS ({} loops), confidence=HIGH".format(
+                elem_id, category, len(loops)))
+
             return (loops, 'HIGH', 'silhouette_edges')
-    except Exception:
+        else:
+            # DEBUG: Log Tier 1B failure
+            print("[DEBUG] Element {} ({}): Tier 1B - silhouette FAILED (0 loops)".format(elem_id, category))
+    except Exception as e:
+        # DEBUG: Log Tier 1B exception
+        print("[DEBUG] Element {} ({}): Tier 1B - silhouette EXCEPTION: {}".format(elem_id, category, e))
         pass
 
     # Track Tier 1 failure
@@ -285,6 +309,9 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
     # ========================================================================
     # TIER 2: MEDIUM/LOW CONFIDENCE - Geometry extraction with OBB/AABB
     # ========================================================================
+
+    # DEBUG: Log Tier 2 start
+    print("[DEBUG] Element {} ({}): Tier 2 - Attempting geometry extraction".format(elem_id, category))
 
     # Phase 3.1: Record method attempt for geometry_polygon
     if strategy_diag is not None and elem_id is not None:
@@ -326,6 +353,10 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
                 confidence = 'LOW'
                 method_name = strategy_name
 
+            # DEBUG: Log Tier 2 success
+            print("[DEBUG] Element {} ({}): Tier 2 - {} SUCCESS ({} loops), confidence={}".format(
+                elem_id, category, strategy_name, len(loops), confidence))
+
             # Phase 3.1: Record successful extraction method
             if strategy_diag is not None and elem_id is not None:
                 try:
@@ -341,12 +372,20 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
                     pass
 
             return (loops, confidence, strategy_name)
-    except Exception:
+        else:
+            # DEBUG: Log Tier 2 failure
+            print("[DEBUG] Element {} ({}): Tier 2 - geometry extraction FAILED (0 loops)".format(elem_id, category))
+    except Exception as e:
+        # DEBUG: Log Tier 2 exception
+        print("[DEBUG] Element {} ({}): Tier 2 - geometry extraction EXCEPTION: {}".format(elem_id, category, e))
         pass
 
     # ========================================================================
     # TIER 3: LOW CONFIDENCE - Pure AABB from bounding box
     # ========================================================================
+
+    # DEBUG: Log Tier 3 start
+    print("[DEBUG] Element {} ({}): Tier 3 - Attempting AABB from bbox".format(elem_id, category))
 
     # Phase 3.1: Record method attempt for aabb
     if strategy_diag is not None and elem_id is not None:
@@ -369,6 +408,10 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
             loops = _get_aabb_loops_from_bbox(bbox, view_basis)
 
             if loops and len(loops) > 0:
+                # DEBUG: Log Tier 3 success
+                print("[DEBUG] Element {} ({}): Tier 3 - AABB SUCCESS ({} loops), confidence=LOW".format(
+                    elem_id, category, len(loops)))
+
                 # Track AABB strategy
                 if strategy_diag is not None and elem_id is not None:
                     try:
@@ -398,12 +441,23 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
                         pass
 
                 return (loops, 'LOW', 'aabb_fallback')
-    except Exception:
+            else:
+                # DEBUG: Log Tier 3 failure
+                print("[DEBUG] Element {} ({}): Tier 3 - AABB FAILED (0 loops)".format(elem_id, category))
+        else:
+            # DEBUG: Log no bbox
+            print("[DEBUG] Element {} ({}): Tier 3 - No bbox available".format(elem_id, category))
+    except Exception as e:
+        # DEBUG: Log Tier 3 exception
+        print("[DEBUG] Element {} ({}): Tier 3 - AABB EXCEPTION: {}".format(elem_id, category, e))
         pass
 
     # ========================================================================
     # TOTAL FAILURE - No strategy succeeded
     # ========================================================================
+
+    # DEBUG: Log total failure
+    print("[DEBUG] Element {} ({}): ALL TIERS FAILED - No extraction strategy succeeded".format(elem_id, category))
 
     if strategy_diag is not None and elem_id is not None:
         try:

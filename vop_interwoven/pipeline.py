@@ -1294,6 +1294,10 @@ def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, con
 
         # HIGH confidence: Rasterize with occlusion
         if confidence == "HIGH":
+            # DEBUG: Log HIGH confidence rasterization
+            print("[DEBUG RASTER] Element {} ({}): HIGH confidence - rasterizing to model_edge + w_occ".format(
+                elem_id, category))
+
             # Rasterize closed loops (fills + occlusion)
             if closed_loops:
                 try:
@@ -1316,6 +1320,9 @@ def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, con
 
         # MEDIUM/LOW confidence: Rasterize to proxy layer only (no occlusion)
         else:
+            # DEBUG: Log MEDIUM/LOW confidence rasterization
+            print("[DEBUG RASTER] Element {} ({}): {} confidence - rasterizing to model_proxy (NO occlusion)".format(
+                elem_id, category, confidence))
             # For MEDIUM/LOW, we still want to show the element but NOT occlude
             # Phase 2.3: Use rasterize_polygon_to_proxy (writes to model_proxy_key, NOT w_occ)
             if closed_loops:
