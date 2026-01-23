@@ -1302,7 +1302,7 @@ def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, con
             if closed_loops:
                 try:
                     filled += raster.rasterize_silhouette_loops(
-                        closed_loops, key_index, depth=elem_depth, source=source_type
+                        closed_loops, key_index, depth=elem_depth, source=source_type, occlude_edges=True
                     )
                 except Exception:
                     pass
@@ -1318,41 +1318,18 @@ def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, con
                 except Exception:
                     pass
 
-        # MEDIUM/LOW confidence: Rasterize to proxy layer only (no occlusion)
-        else:
-            # DEBUG: Log MEDIUM/LOW confidence rasterization
-            print("[DEBUG RASTER] Element {} ({}): {} confidence - rasterizing to model_proxy (NO occlusion)".format(
-                elem_id, category, confidence))
-            # For MEDIUM/LOW, we still want to show the element but NOT occlude
-            # Phase 2.3: Use rasterize_polygon_to_proxy (writes to model_proxy_key, NOT w_occ)
+            # For MEDIUM/LOW, show boundary ink via proxy edges ONLY, with NO occlusion.
             if closed_loops:
                 try:
-                    # Rasterize to proxy layer without updating occlusion buffer
-                    # This makes the element visible but doesn't block later elements
-                    filled += raster.rasterize_polygon_to_proxy(
+                    filled += raster.rasterize_closed_loops_to_proxy_edges(
                         closed_loops, key_index, depth=elem_depth, source=source_type
                     )
                 except Exception:
-                    # Fallback: if new method doesn't exist, try old method
-                    try:
-                        filled += raster.rasterize_proxy_loops(
-                            closed_loops, key_index, depth=elem_depth, source=source_type
-                        )
-                    except Exception:
-                        # Last resort: regular rasterization but mark as non-occluding
-                        try:
-                            filled += raster.rasterize_silhouette_loops(
-                                closed_loops, key_index, depth=elem_depth, source=source_type
-                            )
-                            # Explicitly mark as non-occluding
-                            if key_index < len(raster.element_meta):
-                                raster.element_meta[key_index]["occluder"] = False
-                        except Exception:
-                            pass
+                    pass
 
             if open_loops:
                 try:
-                    filled += raster.rasterize_open_polylines(
+                    filled += raster.rasterize_open_polylines_to_proxy_edges(
                         open_loops, key_index, depth=elem_depth, source=source_type
                     )
                     if len(open_loops) > 0:

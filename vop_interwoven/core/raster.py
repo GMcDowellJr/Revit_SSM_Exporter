@@ -986,7 +986,150 @@ class ViewRaster:
 
         return filled_count
 
-    def rasterize_silhouette_loops(self, loops, key_index, depth=0.0, source="HOST"):
+    def rasterize_closed_loops_to_proxy_edges(self, loops, key_index, depth=0.0, source="HOST"):
+        """Stamp CLOSED loop perimeters into proxy channel only (no fill, no occlusion)."""
+        if not loops:
+            return 0
+
+        stamped = 0
+
+        for loop in loops:
+            points_uv = loop.get("points", [])
+            is_hole = bool(loop.get("is_hole", False))
+            if is_hole:
+                # Holes don't contribute proxy boundary ink for AREAL occupancy semantics
+                continue
+
+            if len(points_uv) < 3:
+                continue
+
+            points_uv = _fix_loop_points_uv(points_uv, tol_ft=(0.10 * float(self.cell_size_ft)))
+
+            # Normalize closure BEFORE clipping: treat ring as open for clipping, then close for stamping.
+            if len(points_uv) >= 2 and points_uv[0] == points_uv[-1]:
+                points_uv = list(points_uv[:-1])
+
+            if len(points_uv) < 3:
+                continue
+
+            # Choose UV clip bounds (match model clip semantics inset by half cell)
+            if self.model_clip_bounds is not None:
+                half = 0.5 * self.cell_size_ft
+                xmin = self.model_clip_bounds.xmin + half
+                ymin = self.model_clip_bounds.ymin + half
+                xmax = self.model_clip_bounds.xmax - half
+                ymax = self.model_clip_bounds.ymax - half
+            else:
+                xmin = self.bounds_xy.xmin
+                ymin = self.bounds_xy.ymin
+                xmax = self.bounds_xy.xmax
+                ymax = self.bounds_xy.ymax
+
+            clipped_uv = _clip_poly_to_rect_uv([(p[0], p[1]) for p in points_uv], xmin, ymin, xmax, ymax)
+            if len(clipped_uv) < 3:
+                continue
+
+            points_ij = []
+            for (u, v) in clipped_uv:
+                i = int((u - self.bounds_xy.xmin) / self.cell_size_ft)
+                j = int((v - self.bounds_xy.ymin) / self.cell_size_ft)
+
+                if i < 0:
+                    i = 0
+                elif i >= self.W:
+                    i = self.W - 1
+                if j < 0:
+                    j = 0
+                elif j >= self.H:
+                    j = self.H - 1
+
+                points_ij.append((i, j))
+
+            # Dedupe consecutive duplicates
+            dedup = []
+            for pt in points_ij:
+                if not dedup or dedup[-1] != pt:
+                    dedup.append(pt)
+            points_ij = dedup
+
+            if len(points_ij) < 3:
+                continue
+
+            # Ensure closure for perimeter stamping
+            if points_ij[0] != points_ij[-1]:
+                points_ij = points_ij + [points_ij[0]]
+
+            if len(points_ij) < 4:
+                continue
+
+            for k in range(len(points_ij) - 1):
+                i0, j0 = points_ij[k]
+                i1, j1 = points_ij[k + 1]
+                for i, j in _bresenham_line(i0, j0, i1, j1):
+                    idx = self.get_cell_index(i, j)
+                    if idx is None:
+                        continue
+                    if self.stamp_proxy_edge_idx(idx, key_index, depth=depth):
+                        stamped += 1
+
+        return stamped
+
+    def rasterize_open_polylines_to_proxy_edges(self, polylines, key_index, depth=0.0, source="HOST"):
+        """Stamp OPEN polylines into proxy channel only (no fill, no occlusion)."""
+        if not polylines:
+            return 0
+
+        stamped = 0
+
+        for pl in polylines:
+            pts = pl.get("points", [])
+            if not pts or len(pts) < 2:
+                continue
+
+            # Clip each segment in UV space (simple conservative: clamp endpoints via rect clip helper)
+            # Reuse the same UV bounds logic as other rasterizers.
+            if self.model_clip_bounds is not None:
+                half = 0.5 * self.cell_size_ft
+                xmin = self.model_clip_bounds.xmin + half
+                ymin = self.model_clip_bounds.ymin + half
+                xmax = self.model_clip_bounds.xmax - half
+                ymax = self.model_clip_bounds.ymax - half
+            else:
+                xmin = self.bounds_xy.xmin
+                ymin = self.bounds_xy.ymin
+                xmax = self.bounds_xy.xmax
+                ymax = self.bounds_xy.ymax
+
+            # Walk segments, clip per-segment by projecting into ij after bounding clamp.
+            for k in range(len(pts) - 1):
+                (u0, v0) = pts[k]
+                (u1, v1) = pts[k + 1]
+
+                # Quick reject if both endpoints are outside on same side (very conservative)
+                if (u0 < xmin and u1 < xmin) or (u0 > xmax and u1 > xmax) or (v0 < ymin and v1 < ymin) or (v0 > ymax and v1 > ymax):
+                    continue
+
+                i0 = int((min(max(u0, xmin), xmax) - self.bounds_xy.xmin) / self.cell_size_ft)
+                j0 = int((min(max(v0, ymin), ymax) - self.bounds_xy.ymin) / self.cell_size_ft)
+                i1 = int((min(max(u1, xmin), xmax) - self.bounds_xy.xmin) / self.cell_size_ft)
+                j1 = int((min(max(v1, ymin), ymax) - self.bounds_xy.ymin) / self.cell_size_ft)
+
+                # Clamp
+                i0 = 0 if i0 < 0 else (self.W - 1 if i0 >= self.W else i0)
+                j0 = 0 if j0 < 0 else (self.H - 1 if j0 >= self.H else j0)
+                i1 = 0 if i1 < 0 else (self.W - 1 if i1 >= self.W else i1)
+                j1 = 0 if j1 < 0 else (self.H - 1 if j1 >= self.H else j1)
+
+                for i, j in _bresenham_line(i0, j0, i1, j1):
+                    idx = self.get_cell_index(i, j)
+                    if idx is None:
+                        continue
+                    if self.stamp_proxy_edge_idx(idx, key_index, depth=depth):
+                        stamped += 1
+
+        return stamped
+
+    def rasterize_silhouette_loops(self, loops, key_index, depth=0.0, source="HOST", occlude_edges=False):
         """Rasterize element silhouette loops into model layers with depth testing.
 
         Transactional semantics:
@@ -994,8 +1137,10 @@ class ViewRaster:
           - Commit only (outer_cells - hole_cells) via try_write_cell
           - Stamp edges ONLY if any interior cells were written (filled > 0)
 
-        This prevents partial "edge-only" residue when fill fails and avoids bbox double-rendering.
+        If occlude_edges=True, edge cells also write to occlusion (w_occ/model_mask)
+        via try_write_cell, so perimeters participate in occlusion.
         """
+
         if not loops:
             return 0
 
@@ -1217,6 +1362,14 @@ class ViewRaster:
                         idx = self.get_cell_index(i, j)
                         if idx is None:
                             continue
+
+                        # Optional: make the perimeter participate in occlusion too.
+                        if occlude_edges:
+                            try:
+                                self.try_write_cell(i, j, w_depth=depth, source=source, key_index=key_index)
+                            except Exception:
+                                pass
+
                         self.stamp_model_edge_idx(idx, key_index, depth=depth)
 
         return filled
