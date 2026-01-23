@@ -97,6 +97,7 @@ from .core.raster import ViewRaster, TileMap
 from .core.geometry import Mode, classify_by_uv, make_uv_aabb, make_obb_or_skinny_aabb
 from .core.math_utils import Bounds2D, CellRect
 from .core.silhouette import get_element_silhouette
+from .core.areal_extraction import extract_areal_geometry
 from .revit.view_basis import make_view_basis, resolve_view_bounds
 from .revit.collection import (
     collect_view_elements,
@@ -1232,7 +1233,134 @@ def _extract_view_summary(view_result):
         "config": view_result.get("config"),
         # Explicitly omit "raster" key to free memory
     }
-    
+
+
+def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, confidence, strategy, elem_id=None, category=None):
+    """Rasterize AREAL element loops with confidence-based occlusion handling.
+
+    Args:
+        loops: List of loop dicts [{'points': [...], 'is_hole': bool}]
+        raster: ViewRaster instance
+        key_index: Element metadata index
+        elem_depth: Element depth (W coordinate)
+        source_type: Source type ('HOST' or 'LINK')
+        confidence: Confidence level ('HIGH', 'MEDIUM', 'LOW')
+        strategy: Strategy name used for extraction
+        elem_id: Optional element ID for debugging
+        category: Optional category name for debugging
+
+    Returns:
+        Tuple of (success, filled_cells):
+          - success: True if rasterization succeeded
+          - filled_cells: Number of cells filled (0 for edges-only)
+
+    Commentary:
+        HIGH confidence:
+          - Rasterizes filled polygons and edges
+          - Updates occlusion buffer (allows early-out for later elements)
+          - Uses actual extracted geometry (planar_face_loops, silhouette_edges)
+
+        MEDIUM confidence:
+          - Rasterizes to proxy layer ONLY (no occlusion)
+          - Uses geometry_polygon extraction (actual footprint, not bbox)
+          - Visible in output but doesn't block later elements
+
+        LOW confidence:
+          - Rasterizes to proxy layer ONLY (no occlusion)
+          - Uses OBB/AABB fallback (approximate shape)
+          - Visible in output but doesn't block later elements
+    """
+    if not loops or len(loops) == 0:
+        return (False, 0)
+
+    try:
+        # Store strategy and confidence in element metadata
+        if key_index < len(raster.element_meta):
+            raster.element_meta[key_index]["strategy"] = strategy
+            raster.element_meta[key_index]["confidence"] = confidence
+            raster.element_meta[key_index]["occluder"] = (confidence == "HIGH")
+
+        # Separate open and closed loops
+        open_loops = []
+        closed_loops = []
+        for lp in loops:
+            if lp.get("open", False):
+                open_loops.append(lp)
+            else:
+                closed_loops.append(lp)
+
+        filled = 0
+        open_polyline_success = False
+
+        # HIGH confidence: Rasterize with occlusion
+        if confidence == "HIGH":
+            # Rasterize closed loops (fills + occlusion)
+            if closed_loops:
+                try:
+                    filled += raster.rasterize_silhouette_loops(
+                        closed_loops, key_index, depth=elem_depth, source=source_type
+                    )
+                except Exception:
+                    pass
+
+            # Rasterize open polylines (edges)
+            if open_loops:
+                try:
+                    filled += raster.rasterize_open_polylines(
+                        open_loops, key_index, depth=elem_depth, source=source_type
+                    )
+                    if len(open_loops) > 0:
+                        open_polyline_success = True
+                except Exception:
+                    pass
+
+        # MEDIUM/LOW confidence: Rasterize to proxy layer only (no occlusion)
+        else:
+            # For MEDIUM/LOW, we still want to show the element but NOT occlude
+            # Use proxy rasterization (visible ink without occlusion authority)
+            if closed_loops:
+                try:
+                    # Rasterize as proxy (no depth writes to occlusion buffer)
+                    # This makes the element visible but doesn't block later elements
+                    filled += raster.rasterize_proxy_loops(
+                        closed_loops, key_index, depth=elem_depth, source=source_type
+                    )
+                except Exception:
+                    # If rasterize_proxy_loops doesn't exist, fall back to regular rasterization
+                    # but mark it as non-occluding by setting occluder=False in metadata
+                    try:
+                        filled += raster.rasterize_silhouette_loops(
+                            closed_loops, key_index, depth=elem_depth, source=source_type
+                        )
+                        # Explicitly mark as non-occluding
+                        if key_index < len(raster.element_meta):
+                            raster.element_meta[key_index]["occluder"] = False
+                    except Exception:
+                        pass
+
+            if open_loops:
+                try:
+                    filled += raster.rasterize_open_polylines(
+                        open_loops, key_index, depth=elem_depth, source=source_type
+                    )
+                    if len(open_loops) > 0:
+                        open_polyline_success = True
+                except Exception:
+                    pass
+
+        # Mark open-polyline-only rendering in metadata
+        if open_polyline_success and filled == 0:
+            if key_index < len(raster.element_meta):
+                raster.element_meta[key_index]["open_polyline_only"] = True
+
+        # Success if we filled cells OR drew open polylines
+        success = (filled > 0) or open_polyline_success
+        return (success, filled)
+
+    except Exception:
+        return (False, 0)
+
+
 def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geometry_cache=None, elem_cache=None, strategy_diag=None):
     """Render 3D model elements front-to-back with interwoven AreaL/Tiny/Linear handling.
 
@@ -1336,9 +1464,10 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
             return "LINEAR"
         return "AREAL"
 
-    CONF_HIGH = "high"
-    CONF_MED = "med"   # reserved for later; currently unused
-    CONF_LOW  = "low"
+    # Confidence levels for geometry extraction (match areal_extraction.py output)
+    CONF_HIGH = "HIGH"      # Tier 1: planar_face_loops, silhouette_edges
+    CONF_MEDIUM = "MEDIUM"  # Tier 2: geometry_polygon extraction
+    CONF_LOW = "LOW"        # Tier 2/3: OBB/AABB fallback
 
     def _rect_dims_for_classification(rect, raster):
         """
@@ -1456,40 +1585,111 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
             except Exception as diag_e:
                 print("[DEBUG] Diagnostic failed at stage 1: {}".format(diag_e))
 
-        # CRITICAL FIX: Extract silhouette FIRST to get accurate geometry
-        # (depth calculation moved AFTER silhouette extraction)
+        # PHASE 2.2: Classify element FIRST, then use appropriate extraction strategy
+        # AREAL elements use unified extract_areal_geometry() with confidence levels
+        # TINY/LINEAR elements use get_element_silhouette() as before
+
+        # Get rect for classification (required before extraction)
+        rect = elem_wrapper.get("uv_bbox_rect")
+        if rect is None:
+            try:
+                rect = _project_element_bbox_to_cell_rect(
+                    elem,
+                    vb,
+                    raster,
+                    bbox=elem_wrapper.get("bbox"),
+                    diag=diag,
+                    view=view,
+                )
+            except Exception:
+                rect = None
+
+        # Classify element based on rect dimensions
+        elem_class = "AREAL"  # Default classification
+        if rect and not rect.empty:
+            try:
+                cls_w_cells, cls_h_cells = _rect_dims_for_classification(rect, raster)
+                elem_class = _classify_uv_rect(cls_w_cells, cls_h_cells)
+            except Exception:
+                elem_class = "AREAL"  # Safe default on classification failure
+
+        # Extract geometry using appropriate strategy based on classification
         loops = None
+        confidence = None
+        strategy = None
         silhouette_error = None
-        try:
-            # PR12: bounded LRU cache for expensive silhouette/triangulation calls.
-            cache_key = None
-            if geometry_cache is not None:
-                try:
-                    view_id_int = getattr(getattr(view, "Id", None), "IntegerValue", None)
-                except Exception:
-                    view_id_int = None
-                cache_key = (
-                    source_id,
-                    elem_id,
-                    view_id_int,
-                    getattr(cfg, "proxy_mask_mode", None),
-                    "silhouette_v1",
+
+        if elem_class == "AREAL":
+            # AREAL: Use unified extraction with confidence-based fallback
+            try:
+                loops, confidence, strategy = extract_areal_geometry(
+                    elem=elem,
+                    view=view,
+                    view_basis=vb,
+                    raster=raster,
+                    cfg=cfg,
+                    diag=diag,
+                    strategy_diag=strategy_diag
                 )
 
-            # DIAGNOSTIC: Stage 2 - Right before calling get_element_silhouette
-            if source_type == "LINK" and processed < 3:  # Only first 3 LINK elements
-                try:
-                    _diagnose_link_geometry_transform(elem, world_transform, vb, "STAGE2_BEFORE_SILHOUETTE")
-                except Exception as diag_e:
-                    print("[DEBUG] Diagnostic failed at stage 2: {}".format(diag_e))
+                # Normalize confidence to uppercase (extract_areal_geometry returns 'HIGH', 'MEDIUM', 'LOW')
+                if confidence is None:
+                    confidence = CONF_LOW  # Failed extraction
 
-            loops = get_element_silhouette(elem, view, vb, raster, cfg, cache=geometry_cache, cache_key=cache_key, diag=diag)
-        except Exception as e:
-            # Silhouette extraction failed, loops will be None
-            silhouette_error = str(e)
-            if processed < 10:
-                print("[DEBUG] Silhouette extraction failed for element {0} ({1}): {2}".format(
-                    elem_id, category, silhouette_error))
+            except Exception as e:
+                # Extraction failed completely
+                loops = None
+                confidence = CONF_LOW
+                strategy = 'failed'
+                silhouette_error = str(e)
+                if processed < 10:
+                    print("[DEBUG] AREAL extraction failed for element {0} ({1}): {2}".format(
+                        elem_id, category, silhouette_error))
+        else:
+            # TINY/LINEAR: Use traditional silhouette extraction (no confidence levels)
+            try:
+                # PR12: bounded LRU cache for expensive silhouette/triangulation calls.
+                cache_key = None
+                if geometry_cache is not None:
+                    try:
+                        view_id_int = getattr(getattr(view, "Id", None), "IntegerValue", None)
+                    except Exception:
+                        view_id_int = None
+                    cache_key = (
+                        source_id,
+                        elem_id,
+                        view_id_int,
+                        getattr(cfg, "proxy_mask_mode", None),
+                        "silhouette_v1",
+                    )
+
+                # DIAGNOSTIC: Stage 2 - Right before calling get_element_silhouette
+                if source_type == "LINK" and processed < 3:  # Only first 3 LINK elements
+                    try:
+                        _diagnose_link_geometry_transform(elem, world_transform, vb, "STAGE2_BEFORE_SILHOUETTE")
+                    except Exception as diag_e:
+                        print("[DEBUG] Diagnostic failed at stage 2: {}".format(diag_e))
+
+                loops = get_element_silhouette(elem, view, vb, raster, cfg, cache=geometry_cache, cache_key=cache_key, diag=diag)
+
+                # Assign confidence for TINY/LINEAR (simple model)
+                confidence = CONF_HIGH if loops else CONF_LOW
+
+                # Extract strategy from loops if available
+                if loops and len(loops) > 0:
+                    strategy = loops[0].get('strategy', 'silhouette')
+                else:
+                    strategy = 'failed'
+
+            except Exception as e:
+                # Silhouette extraction failed, loops will be None
+                loops = None
+                confidence = CONF_LOW
+                strategy = 'failed'
+                silhouette_error = str(e)
+                if processed < 10:
+                    print("[DEBUG] Silhouette extraction failed for element {0} ({1}): {2}".format(
+                        elem_id, category, silhouette_error))
 
         bbox_link = elem_wrapper.get("bbox_link")
         bbox_for_metrics = bbox_link if bbox_link is not None else elem_wrapper.get("bbox")
@@ -1588,16 +1788,18 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 from .core.math_utils import cellrect_dims
                 aabb_w_cells, aabb_h_cells = cellrect_dims(rect)
 
-                # Classification should be OBB-aware when available (diagonals).
+                # Classification and confidence already set above (Phase 2.2)
+                # elem_class: set before extraction (line ~1620)
+                # confidence: returned by extract_areal_geometry() or assigned for TINY/LINEAR
+
+                # Get dimensions for Tier-A ambiguity check
                 cls_w_cells, cls_h_cells = _rect_dims_for_classification(rect, raster)
                 minor_cells = min(cls_w_cells, cls_h_cells)
 
-                elem_class = _classify_uv_rect(cls_w_cells, cls_h_cells)
+                # Use existing confidence (don't overwrite what extraction set)
+                if confidence is None:
+                    confidence = CONF_LOW  # Safety fallback
 
-                # Confidence model (simple for now):
-                #   HIGH if we have silhouette loops (expensive geometry succeeded),
-                #   else LOW (OBB/AABB fallback).
-                confidence = CONF_HIGH if loops else CONF_LOW
                 occlusion_allowed = _occlusion_allowed(elem_class, confidence)
 
                 if key_index < len(raster.element_meta):
@@ -1605,7 +1807,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     raster.element_meta[key_index]["confidence"] = confidence
                     raster.element_meta[key_index]["occluder"] = occlusion_allowed
 
-                # Track element classification in strategy diagnostics
+                # Track element classification and confidence in strategy diagnostics
                 if strategy_diag is not None:
                     try:
                         strategy_diag.record_element_classification(
@@ -1613,6 +1815,14 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                             elem_class=elem_class,
                             category=category
                         )
+
+                        # Phase 2.2: Track confidence level (HIGH, MEDIUM, LOW)
+                        if confidence is not None:
+                            strategy_diag.record_confidence(
+                                elem_id=elem_id,
+                                confidence=confidence,
+                                category=category
+                            )
                     except Exception:
                         pass  # Diagnostic failures must not crash pipeline
 
@@ -1733,166 +1943,112 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 except Exception as diag_e:
                     print("[DEBUG] Diagnostic failed at stage 3: {}".format(diag_e))
 
-            try:
-                # Get strategy used from first loop
+            # Get strategy from extraction (already set above) or from loop metadata
+            if strategy is None and len(loops) > 0:
                 strategy = loops[0].get('strategy', 'unknown')
 
-                # Track AREAL strategy success if applicable
-                if strategy_diag is not None and elem_class == "AREAL":
-                    try:
-                        # Map strategy names to tracked strategy types
-                        tracked_strategy = None
-                        if strategy in ('planar_face_loops', 'planar_face'):
-                            tracked_strategy = 'planar_face'
-                        elif strategy in ('silhouette_edges', 'silhouette'):
-                            tracked_strategy = 'silhouette'
-                        elif strategy == 'geometry_polygon':
-                            tracked_strategy = 'geometry_polygon'
-                        elif strategy in ('uv_obb', 'obb'):
-                            tracked_strategy = 'bbox_obb_used'
-                        elif strategy == 'uv_aabb':
-                            tracked_strategy = 'aabb_used'
+            # PHASE 2.2: Use rasterize_areal_loops() for AREAL elements
+            # This handles confidence-based occlusion (HIGH occludes, MEDIUM/LOW don't)
+            if elem_class == "AREAL":
+                try:
+                    success, filled = rasterize_areal_loops(
+                        loops=loops,
+                        raster=raster,
+                        key_index=key_index,
+                        elem_depth=elem_depth,
+                        source_type=source_type,
+                        confidence=confidence,
+                        strategy=strategy,
+                        elem_id=elem_id,
+                        category=category
+                    )
 
-                        if tracked_strategy:
-                            strategy_diag.record_areal_strategy(
-                                elem_id=elem_id,
-                                strategy=tracked_strategy,
-                                success=True,
-                                category=category
-                            )
-                    except Exception:
-                        pass  # Diagnostic failures must not crash pipeline
-
-                open_loops = []
-                closed_loops = []
-                for lp in loops:
-                    if lp.get("open", False):
-                        open_loops.append(lp)
+                    if success:
+                        silhouette_success += 1
+                        processed += 1
+                        continue
                     else:
-                        closed_loops.append(lp)
-
-                filled = 0
-
-                # First: rasterize closed loops (fills/occlusion)
-                if closed_loops:
-                    try:
-                        filled += raster.rasterize_silhouette_loops(
-                            closed_loops, key_index, depth=elem_depth, source=source_type
-                        )
-
-                        # TEMP DEBUG: dump loops for suspected "offset floater" elements (no behavior change)
-                        if elem_id in (987966, 987587, 988621):
-                            try:
-                                print(f"thin_runner: [DEBUG] loop_dump elem={elem_id} cat='{category}' strategy={closed_loops[0].get('strategy') if closed_loops else None} loops={len(closed_loops)} depth={elem_depth}")
-                                for li, lp in enumerate(closed_loops[:8]):
-                                    pts = lp.get("points", []) or []
-                                    is_hole = bool(lp.get("is_hole", False))
-                                    closed = (len(pts) >= 2 and pts[0] == pts[-1])
-                                    us = [p[0] for p in pts if isinstance(p, (tuple, list)) and len(p) >= 2]
-                                    vs = [p[1] for p in pts if isinstance(p, (tuple, list)) and len(p) >= 2]
-                                    if us and vs:
-                                        print(f"thin_runner: [DEBUG]   loop[{li}] pts={len(pts)} closed={closed} is_hole={is_hole} u=({min(us):.3f},{max(us):.3f}) v=({min(vs):.3f},{max(vs):.3f})")
-                                    else:
-                                        print(f"thin_runner: [DEBUG]   loop[{li}] pts={len(pts)} closed={closed} is_hole={is_hole} (no_uv)")
-                            except Exception as _e:
-                                pass
-
-                        # TEMP DEBUG: report actual silhouette commits (helps identify who "draws the big rect")
-                        if processed < 50:
-                            try:
-                                filled_delta = int(filled)  # cumulative in this element scope in current code
-                            except Exception:
-                                filled_delta = None
-
-                            strat = None
-                            try:
-                                strat = closed_loops[0].get("strategy") if closed_loops else None
-                            except Exception:
-                                strat = None
-
-                            if filled_delta and filled_delta > 0:
-                                print(
-                                    "thin_runner: [DEBUG] silhouette COMMIT elem={} cat='{}' strategy={} filled={} depth={} source={}".format(
-                                        elem_id, category, strat, filled_delta, elem_depth, source_type
-                                    )
-                                )
-
-                        if filled == 0 and processed < 10:
-                            print("[DEBUG RASTER FAIL] Element {} closed loops returned 0 filled (loops={}, source={})".format(
-                                elem_id, len(closed_loops), source_type))
-                            # Show first loop points to diagnose
-                            if closed_loops and len(closed_loops[0].get('points', [])) > 0:
-                                pts = closed_loops[0].get("points", []) if closed_loops else []
-                                print(f"thin_runner: [DEBUG]   Points: count={len(pts)} sample_first_30={pts[:30]}")
-                    except Exception as e:
+                        # Rasterization failed, fall through to bbox fallback
                         if processed < 10:
-                            print("[DEBUG RASTER EXCEPT] Element {} rasterization exception: {}".format(elem_id, e))
-                        pass
+                            print("[DEBUG] AREAL rasterization failed for element {} ({}), falling through to bbox".format(elem_id, category))
 
-                # Second: rasterize open polylines (edges)
-                open_polyline_success = False
-                if open_loops:
-                    try:
-                        filled += raster.rasterize_open_polylines(
-                            open_loops, key_index, depth=elem_depth, source=source_type
-                        )
-                        # CRITICAL: Open polylines succeed even if filled=0
-                        # (Bresenham draws edges, doesn't "fill" cells like closed loops)
-                        if len(open_loops) > 0:
-                            open_polyline_success = True
-                    except Exception:
-                        pass
+                except Exception as e:
+                    # Rasterization failed, fall through to bbox fallback
+                    if processed < 10:
+                        print("[DEBUG] AREAL rasterization exception for element {} ({}): {}".format(elem_id, category, e))
+                    pass
 
-                # Check for any successful rendering (filled cells OR open polylines drawn)
-                if filled > 0 or open_polyline_success:
-                    # Confidence: HIGH only when we have filled area (closed loop fill).
-                    # Open polylines alone are edges-only; treat as LOW for occlusion.
-                    confidence = CONF_HIGH if filled > 0 else CONF_LOW
+            # TINY/LINEAR: Use traditional rasterization (no confidence-based occlusion)
+            else:
+                try:
+                    open_loops = []
+                    closed_loops = []
+                    for lp in loops:
+                        if lp.get("open", False):
+                            open_loops.append(lp)
+                        else:
+                            closed_loops.append(lp)
 
-                    if key_index < len(raster.element_meta):
-                        raster.element_meta[key_index]["strategy"] = strategy
-                        raster.element_meta[key_index]["confidence"] = confidence
-                        raster.element_meta[key_index]["occluder"] = _occlusion_allowed(
-                            raster.element_meta[key_index].get("class", "AREAL"),
-                            confidence,
-                        )
-                        if open_polyline_success and filled == 0:
-                            raster.element_meta[key_index]["open_polyline_only"] = True
+                    filled = 0
 
-                    silhouette_success += 1
-                    processed += 1
-                    continue
-                    
+                    # First: rasterize closed loops (fills/occlusion)
+                    if closed_loops:
+                        try:
+                            filled += raster.rasterize_silhouette_loops(
+                                closed_loops, key_index, depth=elem_depth, source=source_type
+                            )
+
+                            if filled == 0 and processed < 10:
+                                print("[DEBUG RASTER FAIL] Element {} closed loops returned 0 filled (loops={}, source={})".format(
+                                    elem_id, len(closed_loops), source_type))
+                        except Exception as e:
+                            if processed < 10:
+                                print("[DEBUG RASTER EXCEPT] Element {} rasterization exception: {}".format(elem_id, e))
+                            pass
+
+                    # Second: rasterize open polylines (edges)
+                    open_polyline_success = False
+                    if open_loops:
+                        try:
+                            filled += raster.rasterize_open_polylines(
+                                open_loops, key_index, depth=elem_depth, source=source_type
+                            )
+                            # CRITICAL: Open polylines succeed even if filled=0
+                            # (Bresenham draws edges, doesn't "fill" cells like closed loops)
+                            if len(open_loops) > 0:
+                                open_polyline_success = True
+                        except Exception:
+                            pass
+
                     # Check for any successful rendering (filled cells OR open polylines drawn)
                     if filled > 0 or open_polyline_success:
-                        # Tag element metadata with strategy used
+                        # Update confidence if needed (TINY/LINEAR use simple model)
+                        if confidence is None or confidence == CONF_LOW:
+                            confidence = CONF_HIGH if filled > 0 else CONF_LOW
+
                         if key_index < len(raster.element_meta):
-                            raster.element_meta[key_index]['strategy'] = strategy
+                            raster.element_meta[key_index]["strategy"] = strategy
+                            raster.element_meta[key_index]["confidence"] = confidence
+                            raster.element_meta[key_index]["occluder"] = _occlusion_allowed(
+                                elem_class,
+                                confidence,
+                            )
                             if open_polyline_success and filled == 0:
-                                raster.element_meta[key_index]['open_polyline_only'] = True
-                        
-                        # DEBUG: Log successful silhouette renders (first 10 detail_line_band)
-                        if not hasattr(render_model_front_to_back, '_silh_debug_count'):
-                            render_model_front_to_back._silh_debug_count = 0
-                        if strategy == 'detail_line_band' and render_model_front_to_back._silh_debug_count < 10:
-                            try:
-                                print("[DEBUG silhouette] Elem {}: strategy='{}', filled={}, open_polyline={}".format(
-                                    elem_id, strategy, filled, open_polyline_success))
-                                render_model_front_to_back._silh_debug_count += 1
-                            except Exception:
-                                pass
+                                raster.element_meta[key_index]["open_polyline_only"] = True
 
                         silhouette_success += 1
                         processed += 1
                         continue
-    
-                else:
-                    if processed < 10:
-                        print("[DEBUG] Element {} loops exist but no successful rendering, falling through to bbox".format(elem_id))
 
-            except Exception as e:
-                # Rasterization failed, fall through to bbox fallback
-                pass
+                    else:
+                        if processed < 10:
+                            print("[DEBUG] Element {} loops exist but no successful rendering, falling through to bbox".format(elem_id))
+
+                except Exception as e:
+                    # Rasterization failed, fall through to bbox fallback
+                    if processed < 10:
+                        print("[DEBUG] Rasterization exception for element {} ({}): {}".format(elem_id, category, e))
+                    pass
 
         # CRITICAL: Check if silhouette rendering already succeeded
         # This section is ONLY for elements that failed silhouette extraction
@@ -1904,18 +2060,8 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 processed += 1
                 continue
 
-        # Track silhouette failure for AREAL elements (falling back to bbox)
-        if strategy_diag is not None and elem_class == "AREAL" and not loops:
-            try:
-                # Record that silhouette extraction failed and we're falling back to AABB
-                strategy_diag.record_areal_strategy(
-                    elem_id=elem_id,
-                    strategy='silhouette',
-                    success=False,
-                    category=category
-                )
-            except Exception:
-                pass  # Diagnostic failures must not crash pipeline
+        # Note: AREAL diagnostic tracking is now handled inside extract_areal_geometry()
+        # No need for additional tracking here
 
         # Fallback: AABB-only proxy (skip OBB polygon generation entirely)
         obb_success = False
