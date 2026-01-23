@@ -1935,7 +1935,7 @@ def _bbox_silhouette(elem, view, view_basis):
         List with one loop (rectangle in view UVW coordinates, W for depth)
     """
     try:
-        from .view_basis import world_to_view
+        from vop_interwoven.revit.view_basis import world_to_view
 
         bbox = elem.get_BoundingBox(view)
         if not bbox or not bbox.Min or not bbox.Max:
@@ -1988,7 +1988,7 @@ def _obb_silhouette(elem, view, view_basis):
     """
     try:
         from Autodesk.Revit.DB import XYZ
-        from .view_basis import world_to_view
+        from vop_interwoven.revit.view_basis import world_to_view
 
         bbox = elem.get_BoundingBox(view)
         if not bbox or not bbox.Min or not bbox.Max:
@@ -2126,7 +2126,7 @@ def _front_face_loops_silhouette(elem, view, view_basis, cfg=None):
     faces.sort(key=lambda x: x[0], reverse=True)
     max_faces = getattr(cfg, "front_face_max_faces", 2) if cfg else 2
 
-    from .view_basis import world_to_view
+    from vop_interwoven.revit.view_basis import world_to_view
 
     for _, face in faces[:max_faces]:
         try:
@@ -2352,7 +2352,7 @@ def _silhouette_edges(elem, view, view_basis, cfg):
                         points_3d = [curve.GetEndPoint(0), curve.GetEndPoint(1)]
 
                     # Project to view UVW (with depth)
-                    from .view_basis import world_to_view
+                    from vop_interwoven.revit.view_basis import world_to_view
                     for pt in points_3d:
                         pt_h = _to_host_point(elem, pt)
                         uvw = world_to_view((pt_h.X, pt_h.Y, pt_h.Z), view_basis)
