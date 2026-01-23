@@ -14,17 +14,17 @@
 **Definitions**
 - `Config` (class, L11)
 - `Config.__init__` (method, L57)
-- `Config.compute_adaptive_tile_size` (method, L287)
-- `Config.max_grid_cells_width` (method, L337)
-- `Config.max_grid_cells_height` (method, L346)
-- `Config.bounds_buffer_ft` (method, L355)
-- `Config.silhouette_tiny_thresh_ft` (method, L364)
-- `Config.silhouette_large_thresh_ft` (method, L373)
-- `Config.coarse_tess_max_verts` (method, L382)
-- `Config.get_silhouette_strategies` (method, L390)
-- `Config.__repr__` (method, L424)
-- `Config.to_dict` (method, L444)
-- `Config.from_dict` (method, L491)
+- `Config.compute_adaptive_tile_size` (method, L293)
+- `Config.max_grid_cells_width` (method, L343)
+- `Config.max_grid_cells_height` (method, L352)
+- `Config.bounds_buffer_ft` (method, L361)
+- `Config.silhouette_tiny_thresh_ft` (method, L370)
+- `Config.silhouette_large_thresh_ft` (method, L379)
+- `Config.coarse_tess_max_verts` (method, L388)
+- `Config.get_silhouette_strategies` (method, L396)
+- `Config.__repr__` (method, L430)
+- `Config.to_dict` (method, L450)
+- `Config.from_dict` (method, L499)
 
 ### `core/cache.py`
 
@@ -289,13 +289,28 @@
 - `compute_view_frame_hash` (function, L597)
 - `build_core_csv_row` (function, L619)
 - `build_vop_csv_row` (function, L672)
-- `export_pipeline_to_csv` (function, L747)
-- `get_core_csv_header` (function, L1035)
-- `get_vop_csv_header` (function, L1045)
-- `get_perf_csv_header` (function, L1057)
-- `view_result_to_core_row` (function, L1067)
-- `view_result_to_vop_row` (function, L1196)
-- `view_result_to_perf_row` (function, L1468)
+- `export_pipeline_to_csv` (function, L801)
+- `get_core_csv_header` (function, L1105)
+- `get_vop_csv_header` (function, L1115)
+- `get_perf_csv_header` (function, L1127)
+- `view_result_to_core_row` (function, L1137)
+- `view_result_to_vop_row` (function, L1266)
+- `view_result_to_perf_row` (function, L1538)
+
+### `diagnostics/strategy_tracker.py`
+
+**Imports**
+- `collections:defaultdict`
+
+**Definitions**
+- `StrategyDiagnostics` (class, L26)
+- `StrategyDiagnostics.__init__` (method, L34)
+- `StrategyDiagnostics.record_element_classification` (method, L62)
+- `StrategyDiagnostics.record_areal_strategy` (method, L91)
+- `StrategyDiagnostics.record_geometry_extraction` (method, L123)
+- `StrategyDiagnostics.get_summary` (method, L157)
+- `StrategyDiagnostics.print_summary` (method, L239)
+- `StrategyDiagnostics.export_to_csv` (method, L301)
 
 ### `dynamo_helpers.py`
 
@@ -371,21 +386,21 @@
 - `_view_signature` (function, L261)
 - `_extract_view_identity_for_csv` (function, L351)
 - `process_document_views` (function, L449)
-- `init_view_raster` (function, L1039)
-- `_extract_view_summary` (function, L1181)
-- `render_model_front_to_back` (function, L1226)
-- `_is_supported_2d_view` (function, L2089)
-- `_should_skip_outside_view_volume` (function, L2136)
-- `_tiles_fully_covered_and_nearer` (function, L2172)
-- `_bin_elements_to_tiles` (function, L2203)
-- `_tile_has_depth_conflict` (function, L2235)
-- `_get_ambiguous_tiles` (function, L2269)
-- `_render_areal_element` (function, L2299)
-- `_render_proxy_element` (function, L2314)
-- `_stamp_proxy_edges` (function, L2339)
-- `_mark_rect_center_cell` (function, L2352)
-- `_mark_thin_band_along_long_axis` (function, L2360)
-- `export_view_raster` (function, L2380)
+- `init_view_raster` (function, L1049)
+- `_extract_view_summary` (function, L1191)
+- `render_model_front_to_back` (function, L1236)
+- `_is_supported_2d_view` (function, L2190)
+- `_should_skip_outside_view_volume` (function, L2237)
+- `_tiles_fully_covered_and_nearer` (function, L2273)
+- `_bin_elements_to_tiles` (function, L2304)
+- `_tile_has_depth_conflict` (function, L2336)
+- `_get_ambiguous_tiles` (function, L2370)
+- `_render_areal_element` (function, L2400)
+- `_render_proxy_element` (function, L2415)
+- `_stamp_proxy_edges` (function, L2440)
+- `_mark_rect_center_cell` (function, L2453)
+- `_mark_thin_band_along_long_axis` (function, L2461)
+- `export_view_raster` (function, L2481)
 
 ### `png_export.py`
 
@@ -430,9 +445,10 @@
 - `estimate_depth_from_loops_or_bbox` (function, L524)
 - `estimate_depth_range_from_bbox` (function, L552)
 - `_project_element_bbox_to_cell_rect` (function, L626)
-- `_extract_geometry_footprint_uv` (function, L770)
-- `get_element_obb_loops` (function, L886)
-- `_pca_obb_uv` (function, L1059)
+- `_get_element_category_name` (function, L770)
+- `_extract_geometry_footprint_uv` (function, L789)
+- `get_element_obb_loops` (function, L974)
+- `_pca_obb_uv` (function, L1196)
 
 ### `revit/collection_policy.py`
 

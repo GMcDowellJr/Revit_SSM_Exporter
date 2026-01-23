@@ -786,6 +786,16 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
             except Exception:
                 pass
 
+            # Create strategy diagnostics tracker if enabled (used by render and CSV export)
+            strategy_diag = None
+            if getattr(cfg, "export_strategy_diagnostics", False):
+                try:
+                    from .diagnostics import StrategyDiagnostics
+                    strategy_diag = StrategyDiagnostics()
+                except Exception:
+                    # Graceful degradation: continue without diagnostics
+                    pass
+
             if view_mode == VIEW_MODE_MODEL_AND_ANNOTATION:
                 # 2) Broad-phase visible elements
                 t0 = _perf_now()
@@ -795,7 +805,7 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
                 
                 # 3) MODEL PASS
                 t0 = _perf_now()
-                render_model_front_to_back(doc, view, raster, elements, cfg, diag=diag, geometry_cache=geometry_cache, elem_cache=elem_cache)
+                render_model_front_to_back(doc, view, raster, elements, cfg, diag=diag, geometry_cache=geometry_cache, elem_cache=elem_cache, strategy_diag=strategy_diag)
                 t1 = _perf_now()
                 _tmark("model_ms", t0, t1)
 
@@ -824,7 +834,7 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
 
             # 6) Export
             t0 = _perf_now()
-            out = export_view_raster(view, raster, cfg, diag=diag, timings=timings)
+            out = export_view_raster(view, raster, cfg, diag=diag, timings=timings, strategy_diag=strategy_diag)
 
             # Ensure identity fields exist on first-run results so CSV + cache row_payload are complete
             try:
@@ -1223,7 +1233,7 @@ def _extract_view_summary(view_result):
         # Explicitly omit "raster" key to free memory
     }
     
-def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geometry_cache=None, elem_cache=None):
+def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geometry_cache=None, elem_cache=None, strategy_diag=None):
     """Render 3D model elements front-to-back with interwoven AreaL/Tiny/Linear handling.
 
     Args:
@@ -1232,8 +1242,10 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
         raster: ViewRaster (modified in-place)
         elements: List of Revit elements (from collect_view_elements)
         cfg: Config
+        diag: Optional diagnostics
         geometry_cache: Optional geometry cache for silhouettes
         elem_cache: Optional element cache for bbox fingerprints (Phase 2)
+        strategy_diag: Optional StrategyDiagnostics instance
 
     Returns:
         None (modifies raster in-place)
@@ -1593,6 +1605,17 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     raster.element_meta[key_index]["confidence"] = confidence
                     raster.element_meta[key_index]["occluder"] = occlusion_allowed
 
+                # Track element classification in strategy diagnostics
+                if strategy_diag is not None:
+                    try:
+                        strategy_diag.record_element_classification(
+                            elem_id=elem_id,
+                            elem_class=elem_class,
+                            category=category
+                        )
+                    except Exception:
+                        pass  # Diagnostic failures must not crash pipeline
+
                 # DEBUG: Log classification for diagonal-looking elements (first 10)
                 if not hasattr(render_model_front_to_back, '_classify_debug_count'):
                     render_model_front_to_back._classify_debug_count = 0
@@ -1713,6 +1736,32 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
             try:
                 # Get strategy used from first loop
                 strategy = loops[0].get('strategy', 'unknown')
+
+                # Track AREAL strategy success if applicable
+                if strategy_diag is not None and elem_class == "AREAL":
+                    try:
+                        # Map strategy names to tracked strategy types
+                        tracked_strategy = None
+                        if strategy in ('planar_face_loops', 'planar_face'):
+                            tracked_strategy = 'planar_face'
+                        elif strategy in ('silhouette_edges', 'silhouette'):
+                            tracked_strategy = 'silhouette'
+                        elif strategy == 'geometry_polygon':
+                            tracked_strategy = 'geometry_polygon'
+                        elif strategy in ('uv_obb', 'obb'):
+                            tracked_strategy = 'bbox_obb_used'
+                        elif strategy == 'uv_aabb':
+                            tracked_strategy = 'aabb_used'
+
+                        if tracked_strategy:
+                            strategy_diag.record_areal_strategy(
+                                elem_id=elem_id,
+                                strategy=tracked_strategy,
+                                success=True,
+                                category=category
+                            )
+                    except Exception:
+                        pass  # Diagnostic failures must not crash pipeline
 
                 open_loops = []
                 closed_loops = []
@@ -1854,6 +1903,19 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 # Element already successfully rendered via silhouette
                 processed += 1
                 continue
+
+        # Track silhouette failure for AREAL elements (falling back to bbox)
+        if strategy_diag is not None and elem_class == "AREAL" and not loops:
+            try:
+                # Record that silhouette extraction failed and we're falling back to AABB
+                strategy_diag.record_areal_strategy(
+                    elem_id=elem_id,
+                    strategy='silhouette',
+                    success=False,
+                    category=category
+                )
+            except Exception:
+                pass  # Diagnostic failures must not crash pipeline
 
         # Fallback: AABB-only proxy (skip OBB polygon generation entirely)
         obb_success = False
@@ -2082,6 +2144,45 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
 
         except Exception as e:
             print("[WARN] vop.pipeline: Failed to dump occlusion debug: {0}".format(e))
+
+    # Export strategy diagnostics if enabled
+    if strategy_diag is not None:
+        try:
+            import os
+            import re
+
+            # Print summary to console
+            print("\n" + "=" * 80)
+            print("STRATEGY DIAGNOSTICS SUMMARY (View: {})".format(
+                getattr(view, "Name", "Unknown")))
+            print("=" * 80)
+            strategy_diag.print_summary()
+
+            # Export CSV if requested
+            if getattr(cfg, "export_strategy_diagnostics", False):
+                # Build output path
+                view_name = re.sub(r'[<>:"/\\|?*]', "_", getattr(view, "Name", "view"))
+                view_id = getattr(getattr(view, "Id", None), "IntegerValue", 0)
+
+                dump_dir = getattr(cfg, "debug_dump_path", None)
+                if dump_dir:
+                    try:
+                        if not os.path.isdir(dump_dir):
+                            os.makedirs(dump_dir)
+                    except Exception:
+                        pass
+
+                    csv_filename = "strategy_diagnostics_{0}_{1}.csv".format(view_name, view_id)
+                    csv_path = os.path.join(dump_dir, csv_filename)
+                else:
+                    csv_path = "strategy_diagnostics_{0}_{1}.csv".format(view_name, view_id)
+
+                # Export CSV
+                strategy_diag.export_to_csv(csv_path)
+                print("\nStrategy diagnostics exported to: {}".format(csv_path))
+
+        except Exception as e:
+            print("[WARN] vop.pipeline: Failed to export strategy diagnostics: {0}".format(e))
 
     return processed
 
@@ -2377,13 +2478,16 @@ def _mark_thin_band_along_long_axis(rect, raster):
                 raster.model_proxy_mask[idx] = True
 
 
-def export_view_raster(view, raster, cfg, diag=None, timings=None):
+def export_view_raster(view, raster, cfg, diag=None, timings=None, strategy_diag=None):
     """Export view raster to dictionary for JSON serialization.
 
     Args:
         view: Revit View
         raster: ViewRaster
         cfg: Config
+        diag: Optional diagnostics
+        timings: Optional timings dict
+        strategy_diag: Optional StrategyDiagnostics instance
 
     Returns:
         Dictionary with all view data
@@ -2499,4 +2603,5 @@ def export_view_raster(view, raster, cfg, diag=None, timings=None):
             "skipped_outside_view_volume": int(getattr(raster, "skipped_outside_view_volume", 0) or 0),
             "timings": (dict(timings) if timings is not None else None),
         },
+        "strategy_diag": strategy_diag,  # StrategyDiagnostics instance for CSV export
     }

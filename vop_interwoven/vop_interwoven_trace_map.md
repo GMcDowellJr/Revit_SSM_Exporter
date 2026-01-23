@@ -34,6 +34,8 @@ Notes:
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
     - called from: streaming.py
+  - `StrategyDiagnostics`
+    - called from: pipeline.py
   - `StreamingExporter`
     - called from: streaming.py
   - `TileMap`
@@ -86,8 +88,8 @@ Notes:
     - called from: revit/collection_policy.py, revit/linked_documents.py
   - `expand_host_link_import_model_elements`
     - called from: pipeline.py
-  - `export_pipeline_results_to_pngs`
-    - called from: entry_dynamo.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
       - called from: entry_dynamo.py
     - `export_raster_to_png`
@@ -229,6 +231,8 @@ Notes:
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
     - called from: streaming.py
+  - `StrategyDiagnostics`
+    - called from: pipeline.py
   - `StreamingExporter`
     - called from: streaming.py
   - `TileMap`
@@ -281,8 +285,8 @@ Notes:
     - called from: revit/collection_policy.py, revit/linked_documents.py
   - `expand_host_link_import_model_elements`
     - called from: pipeline.py
-  - `export_pipeline_results_to_pngs`
-    - called from: entry_dynamo.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
       - called from: entry_dynamo.py
     - `export_raster_to_png`
@@ -424,6 +428,8 @@ Notes:
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
     - called from: streaming.py
+  - `StrategyDiagnostics`
+    - called from: pipeline.py
   - `StreamingExporter`
     - called from: streaming.py
   - `TileMap`
@@ -476,8 +482,8 @@ Notes:
     - called from: revit/collection_policy.py, revit/linked_documents.py
   - `expand_host_link_import_model_elements`
     - called from: pipeline.py
-  - `export_pipeline_results_to_pngs`
-    - called from: entry_dynamo.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
       - called from: entry_dynamo.py
     - `export_raster_to_png`
@@ -619,6 +625,8 @@ Notes:
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
     - called from: streaming.py
+  - `StrategyDiagnostics`
+    - called from: pipeline.py
   - `StreamingExporter`
     - called from: streaming.py
   - `TileMap`
@@ -671,8 +679,8 @@ Notes:
     - called from: revit/collection_policy.py, revit/linked_documents.py
   - `expand_host_link_import_model_elements`
     - called from: pipeline.py
-  - `export_pipeline_results_to_pngs`
-    - called from: entry_dynamo.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
       - called from: entry_dynamo.py
     - `export_raster_to_png`
@@ -814,6 +822,8 @@ Notes:
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
     - called from: streaming.py
+  - `StrategyDiagnostics`
+    - called from: pipeline.py
   - `StreamingExporter`
     - called from: streaming.py
   - `TileMap`
@@ -866,8 +876,8 @@ Notes:
     - called from: revit/collection_policy.py, revit/linked_documents.py
   - `expand_host_link_import_model_elements`
     - called from: pipeline.py
-  - `export_pipeline_results_to_pngs`
-    - called from: entry_dynamo.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
       - called from: entry_dynamo.py
     - `export_raster_to_png`
@@ -1011,6 +1021,8 @@ Notes:
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
     - called from: streaming.py
+  - `StrategyDiagnostics`
+    - called from: pipeline.py
   - `StreamingExporter`
     - called from: streaming.py
   - `TileMap`
@@ -1063,8 +1075,8 @@ Notes:
     - called from: revit/collection_policy.py, revit/linked_documents.py
   - `expand_host_link_import_model_elements`
     - called from: pipeline.py
-  - `export_pipeline_results_to_pngs`
-    - called from: entry_dynamo.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
       - called from: entry_dynamo.py
     - `export_raster_to_png`
@@ -1206,6 +1218,8 @@ Notes:
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
     - called from: streaming.py
+  - `StrategyDiagnostics`
+    - called from: pipeline.py
   - `StreamingExporter`
     - called from: streaming.py
   - `TileMap`
@@ -1258,8 +1272,8 @@ Notes:
     - called from: revit/collection_policy.py, revit/linked_documents.py
   - `expand_host_link_import_model_elements`
     - called from: pipeline.py
-  - `export_pipeline_results_to_pngs`
-    - called from: entry_dynamo.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
       - called from: entry_dynamo.py
     - `export_raster_to_png`
@@ -1373,7 +1387,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `render_model_front_to_back` (pipeline.py:L1226)
+## Trace: `render_model_front_to_back` (pipeline.py:L1236)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1401,6 +1415,8 @@ Notes:
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
     - called from: streaming.py
+  - `StrategyDiagnostics`
+    - called from: pipeline.py
   - `StreamingExporter`
     - called from: streaming.py
   - `TileMap`
@@ -1453,8 +1469,8 @@ Notes:
     - called from: revit/collection_policy.py, revit/linked_documents.py
   - `expand_host_link_import_model_elements`
     - called from: pipeline.py
-  - `export_pipeline_results_to_pngs`
-    - called from: entry_dynamo.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
       - called from: entry_dynamo.py
     - `export_raster_to_png`
@@ -1568,7 +1584,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `init_view_raster` (pipeline.py:L1039)
+## Trace: `init_view_raster` (pipeline.py:L1049)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1596,6 +1612,8 @@ Notes:
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
     - called from: streaming.py
+  - `StrategyDiagnostics`
+    - called from: pipeline.py
   - `StreamingExporter`
     - called from: streaming.py
   - `TileMap`
@@ -1648,8 +1666,8 @@ Notes:
     - called from: revit/collection_policy.py, revit/linked_documents.py
   - `expand_host_link_import_model_elements`
     - called from: pipeline.py
-  - `export_pipeline_results_to_pngs`
-    - called from: entry_dynamo.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
       - called from: entry_dynamo.py
     - `export_raster_to_png`
@@ -1791,6 +1809,8 @@ Notes:
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
     - called from: streaming.py
+  - `StrategyDiagnostics`
+    - called from: pipeline.py
   - `StreamingExporter`
     - called from: streaming.py
   - `TileMap`
@@ -1843,8 +1863,8 @@ Notes:
     - called from: pipeline.py
   - `export_pipeline_results_to_pngs`
     - called from: entry_dynamo.py
-  - `export_pipeline_to_csv`
-    - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
@@ -1986,6 +2006,8 @@ Notes:
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
     - called from: streaming.py
+  - `StrategyDiagnostics`
+    - called from: pipeline.py
   - `StreamingExporter`
     - called from: streaming.py
   - `TileMap`
@@ -2038,8 +2060,8 @@ Notes:
     - called from: revit/collection_policy.py, revit/linked_documents.py
   - `expand_host_link_import_model_elements`
     - called from: pipeline.py
-  - `export_pipeline_results_to_pngs`
-    - called from: entry_dynamo.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
       - called from: entry_dynamo.py
     - `export_raster_to_png`
@@ -2181,6 +2203,8 @@ Notes:
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
     - called from: streaming.py
+  - `StrategyDiagnostics`
+    - called from: pipeline.py
   - `StreamingExporter`
     - called from: streaming.py
   - `TileMap`
@@ -2233,8 +2257,8 @@ Notes:
     - called from: revit/collection_policy.py, revit/linked_documents.py
   - `expand_host_link_import_model_elements`
     - called from: pipeline.py
-  - `export_pipeline_results_to_pngs`
-    - called from: entry_dynamo.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
       - called from: entry_dynamo.py
     - `export_raster_to_png`
@@ -2376,6 +2400,8 @@ Notes:
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
     - called from: streaming.py
+  - `StrategyDiagnostics`
+    - called from: pipeline.py
   - `StreamingExporter`
     - called from: streaming.py
   - `TileMap`
@@ -2428,8 +2454,8 @@ Notes:
     - called from: revit/collection_policy.py, revit/linked_documents.py
   - `expand_host_link_import_model_elements`
     - called from: pipeline.py
-  - `export_pipeline_results_to_pngs`
-    - called from: entry_dynamo.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
       - called from: entry_dynamo.py
     - `export_raster_to_png`
@@ -2571,6 +2597,8 @@ Notes:
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
     - called from: streaming.py
+  - `StrategyDiagnostics`
+    - called from: pipeline.py
   - `StreamingExporter`
     - called from: streaming.py
   - `TileMap`
@@ -2623,8 +2651,8 @@ Notes:
     - called from: pipeline.py
   - `export_pipeline_results_to_pngs`
     - called from: entry_dynamo.py
-  - `export_pipeline_to_csv`
-    - called from: entry_dynamo.py
+    - `export_pipeline_to_csv`
+      - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
     - `export_view_raster`
@@ -2766,6 +2794,8 @@ Notes:
     - called from: revit/collection.py, revit/linked_documents.py
   - `RootStyleCache`
     - called from: streaming.py
+  - `StrategyDiagnostics`
+    - called from: pipeline.py
   - `StreamingExporter`
     - called from: streaming.py
   - `TileMap`
@@ -2818,8 +2848,8 @@ Notes:
     - called from: revit/collection_policy.py, revit/linked_documents.py
   - `expand_host_link_import_model_elements`
     - called from: pipeline.py
-  - `export_pipeline_results_to_pngs`
-    - called from: entry_dynamo.py
+    - `export_pipeline_results_to_pngs`
+      - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
       - called from: entry_dynamo.py
     - `export_raster_to_png`
