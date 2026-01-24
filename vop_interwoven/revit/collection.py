@@ -843,18 +843,48 @@ def _extract_geometry_footprint_uv(elem, vb, diag=None, strategy_diag=None):
         # Collect all vertices from solid geometry
         points_uv = []
 
-        def process_geometry(geo, transform=None):
-            """Recursively process geometry to extract vertices."""
+        def process_geometry(geo, transform=None, _has_instances=None):
+            """Recursively process geometry to extract vertices.
+
+            Args:
+                geo: GeometryElement or geometry collection to process
+                transform: Accumulated transform from parent GeometryInstances
+                _has_instances: Internal flag - whether this level contains GeometryInstances
+
+            Key behavior:
+                - If GeometryInstances exist at this level, ONLY process them (skip top-level Solids)
+                - This prevents duplicate extraction when family instances have geometry both
+                  at top level AND inside GetInstanceGeometry()
+            """
+
+            # First pass: detect if this geometry level has instances
+            if _has_instances is None:
+                _has_instances = False
+                for obj in geo:
+                    if isinstance(obj, GeometryInstance):
+                        _has_instances = True
+                        break
+
             for obj in geo:
                 # Handle geometry instances (e.g., family instances)
                 if isinstance(obj, GeometryInstance):
                     inst_geom = obj.GetInstanceGeometry()
                     if inst_geom:
                         inst_transform = obj.Transform
-                        process_geometry(inst_geom, inst_transform)
+                        # Compose transforms: apply instance transform on top of any existing transform
+                        if transform is not None:
+                            # If we already have a transform, compose them
+                            combined_transform = transform.Multiply(inst_transform)
+                        else:
+                            combined_transform = inst_transform
 
-                # Handle solids
-                elif isinstance(obj, Solid):
+                        # Recurse into instance geometry with composed transform
+                        # _has_instances=False because we're now inside the instance
+                        process_geometry(inst_geom, combined_transform, _has_instances=False)
+
+                # Handle solids - but ONLY if there are no instances at this level
+                # If instances exist, the real geometry is inside them and we skip top-level solids
+                elif isinstance(obj, Solid) and not _has_instances:
                     if obj.Volume > 0.0001:  # Non-degenerate solid
                         # Extract vertices from faces
                         for face in obj.Faces:
