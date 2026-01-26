@@ -1661,6 +1661,116 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
 
                 loops = get_element_silhouette(elem, view, vb, raster, cfg, cache=geometry_cache, cache_key=cache_key, diag=diag)
 
+                # =====================================================================
+                # DIAGNOSTIC: Coordinate space check for element 987587
+                # =====================================================================
+                if elem_id == 987587 and loops and len(loops) > 0:
+                    print(f"\n{'='*80}")
+                    print(f"SILHOUETTE COORDINATE DIAGNOSTIC - Element {elem_id}")
+                    print(f"{'='*80}")
+                    print(f"Category: {category}")
+                    print(f"Source: {source_type}")
+                    print(f"Number of loops returned: {len(loops)}")
+                    
+                    # Analyze ALL loops
+                    for loop_idx, loop in enumerate(loops):
+                        points = loop.get('points', [])
+                        strategy = loop.get('strategy', 'unknown')
+                        is_hole = loop.get('is_hole', False)
+                        is_open = loop.get('open', False)
+                        
+                        print(f"\n  Loop {loop_idx}:")
+                        print(f"    Strategy: {strategy}")
+                        print(f"    Point count: {len(points)}")
+                        print(f"    Is hole: {is_hole}")
+                        print(f"    Is open: {is_open}")
+                        
+                        if len(points) > 0:
+                            # Show all points for small loops, first/last 3 for large loops
+                            if len(points) <= 10:
+                                print(f"    All points:")
+                                for i, pt in enumerate(points):
+                                    if len(pt) >= 2:
+                                        print(f"      [{i}] U={pt[0]:10.2f}, V={pt[1]:10.2f}", end="")
+                                    if len(pt) >= 3:
+                                        print(f", W={pt[2]:10.2f}")
+                                    else:
+                                        print()
+                            else:
+                                print(f"    First 3 points:")
+                                for i, pt in enumerate(points[:3]):
+                                    if len(pt) >= 2:
+                                        print(f"      [{i}] U={pt[0]:10.2f}, V={pt[1]:10.2f}", end="")
+                                    if len(pt) >= 3:
+                                        print(f", W={pt[2]:10.2f}")
+                                    else:
+                                        print()
+                                print(f"    Last 3 points:")
+                                for i, pt in enumerate(points[-3:], start=len(points)-3):
+                                    if len(pt) >= 2:
+                                        print(f"      [{i}] U={pt[0]:10.2f}, V={pt[1]:10.2f}", end="")
+                                    if len(pt) >= 3:
+                                        print(f", W={pt[2]:10.2f}")
+                                    else:
+                                        print()
+                        
+                        # UV bounds for this loop
+                        u_coords = [pt[0] for pt in points if len(pt) >= 2]
+                        v_coords = [pt[1] for pt in points if len(pt) >= 2]
+                        
+                        if u_coords and v_coords:
+                            u_min, u_max = min(u_coords), max(u_coords)
+                            v_min, v_max = min(v_coords), max(v_coords)
+                            u_center = (u_min + u_max) / 2.0
+                            v_center = (v_min + v_max) / 2.0
+                            u_span = u_max - u_min
+                            v_span = v_max - v_min
+                            
+                            print(f"    UV Bounds: U=[{u_min:7.2f}, {u_max:7.2f}] V=[{v_min:7.2f}, {v_max:7.2f}]")
+                            print(f"    Span: U={u_span:7.2f}, V={v_span:7.2f}")
+                            print(f"    Center: U={u_center:7.2f}, V={v_center:7.2f}")
+                    
+                    # Check for overlapping loops
+                    print(f"\n  Overlap Analysis:")
+                    for i in range(len(loops)):
+                        for j in range(i+1, len(loops)):
+                            loop_i_points = loops[i].get('points', [])
+                            loop_j_points = loops[j].get('points', [])
+                            
+                            if loop_i_points and loop_j_points:
+                                # Get bounds
+                                u_i = [pt[0] for pt in loop_i_points if len(pt) >= 2]
+                                v_i = [pt[1] for pt in loop_i_points if len(pt) >= 2]
+                                u_j = [pt[0] for pt in loop_j_points if len(pt) >= 2]
+                                v_j = [pt[1] for pt in loop_j_points if len(pt) >= 2]
+                                
+                                if u_i and v_i and u_j and v_j:
+                                    # Check for overlap
+                                    u_overlap = not (max(u_i) < min(u_j) or max(u_j) < min(u_i))
+                                    v_overlap = not (max(v_i) < min(v_j) or max(v_j) < min(v_i))
+                                    
+                                    if u_overlap and v_overlap:
+                                        print(f"    ⚠️  Loop {i} and Loop {j} OVERLAP")
+                                        print(f"        Loop {i}: U=[{min(u_i):7.2f}, {max(u_i):7.2f}] V=[{min(v_i):7.2f}, {max(v_i):7.2f}]")
+                                        print(f"        Loop {j}: U=[{min(u_j):7.2f}, {max(u_j):7.2f}] V=[{min(v_j):7.2f}, {max(v_j):7.2f}]")
+                    
+                    # Check bbox for comparison
+                    try:
+                        test_bbox = elem.get_BoundingBox(view)
+                        if not test_bbox:
+                            test_bbox = elem.get_BoundingBox(None)
+                        
+                        if test_bbox:
+                            print(f"\n  BBox Info:")
+                            bbox_tf = getattr(test_bbox, "Transform", None)
+                            print(f"    BBox.Transform.IsIdentity: {getattr(bbox_tf, 'IsIdentity', True) if bbox_tf else True}")
+                            print(f"    BBox.Min (local): ({test_bbox.Min.X:.2f}, {test_bbox.Min.Y:.2f}, {test_bbox.Min.Z:.2f})")
+                            print(f"    BBox.Max (local): ({test_bbox.Max.X:.2f}, {test_bbox.Max.Y:.2f}, {test_bbox.Max.Z:.2f})")
+                    except Exception as e:
+                        print(f"  Could not analyze bbox: {e}")
+                    
+                    print(f"{'='*80}\n")
+
                 # Assign confidence for TINY/LINEAR (simple model)
                 confidence = CONF_HIGH if loops else CONF_LOW
 
