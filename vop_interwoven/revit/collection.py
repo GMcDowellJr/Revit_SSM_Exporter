@@ -786,6 +786,233 @@ def _get_element_category_name(elem):
         return "Unknown"
 
 
+def _diagnose_coordinate_spaces(elem, geom, transform, link_transform, vb):
+    """Diagnostic: Print detailed coordinate space information for troubleshooting.
+
+    This function traces geometry through all transform stages to identify
+    where coordinate space mismatches occur.
+
+    Args:
+        elem: Revit Element being processed
+        geom: GeometryElement from elem.get_Geometry()
+        transform: Instance transform (from GeometryInstance.Transform)
+        link_transform: Link transform for LinkedElementProxy
+        vb: ViewBasis for UV projection
+    """
+    try:
+        elem_id = getattr(getattr(elem, "Id", None), "IntegerValue", "?")
+        print(f"\n{'='*80}")
+        print(f"COORDINATE SPACE DIAGNOSTIC - Element {elem_id}")
+        print(f"{'='*80}")
+
+        # 1. Check bbox and its transform
+        print("\n1. BOUNDING BOX ANALYSIS:")
+        try:
+            bbox = elem.get_BoundingBox(None)
+            if bbox:
+                bbox_tf = getattr(bbox, "Transform", None)
+                print(f"   BBox.Transform exists: {bbox_tf is not None}")
+                if bbox_tf:
+                    is_identity = getattr(bbox_tf, 'IsIdentity', None)
+                    print(f"   BBox.Transform.IsIdentity: {is_identity}")
+                    origin = getattr(bbox_tf, "Origin", None)
+                    if origin:
+                        print(f"   BBox.Transform.Origin: ({origin.X:.2f}, {origin.Y:.2f}, {origin.Z:.2f})")
+
+                    # Show basis vectors
+                    try:
+                        basis_x = bbox_tf.BasisX
+                        basis_y = bbox_tf.BasisY
+                        basis_z = bbox_tf.BasisZ
+                        print(f"   BBox.Transform.BasisX: ({basis_x.X:.3f}, {basis_x.Y:.3f}, {basis_x.Z:.3f})")
+                        print(f"   BBox.Transform.BasisY: ({basis_y.X:.3f}, {basis_y.Y:.3f}, {basis_y.Z:.3f})")
+                        print(f"   BBox.Transform.BasisZ: ({basis_z.X:.3f}, {basis_z.Y:.3f}, {basis_z.Z:.3f})")
+                    except:
+                        pass
+
+                print(f"   BBox.Min (bbox-local): ({bbox.Min.X:.2f}, {bbox.Min.Y:.2f}, {bbox.Min.Z:.2f})")
+                print(f"   BBox.Max (bbox-local): ({bbox.Max.X:.2f}, {bbox.Max.Y:.2f}, {bbox.Max.Z:.2f})")
+
+                # Transform a corner to world space
+                if bbox_tf is not None:
+                    from Autodesk.Revit.DB import XYZ
+                    corner_local = XYZ(bbox.Min.X, bbox.Min.Y, bbox.Min.Z)
+                    corner_world = bbox_tf.OfPoint(corner_local)
+                    print(f"   BBox.Min (world space): ({corner_world.X:.2f}, {corner_world.Y:.2f}, {corner_world.Z:.2f})")
+            else:
+                print("   No bounding box available")
+        except Exception as e:
+            print(f"   Error getting bbox: {e}")
+
+        # 2. Check element type and instance transform
+        print("\n2. ELEMENT TYPE & INSTANCE TRANSFORM:")
+        try:
+            from Autodesk.Revit.DB import FamilyInstance
+            base_elem = getattr(elem, "_elem", elem)  # Unwrap if wrapped
+
+            if isinstance(base_elem, FamilyInstance):
+                print("   Element type: FamilyInstance")
+
+                # Get instance placement transform
+                inst_tf = None
+                if hasattr(base_elem, "GetTransform"):
+                    inst_tf = base_elem.GetTransform()
+                elif hasattr(base_elem, "Transform"):
+                    inst_tf = base_elem.Transform
+
+                if inst_tf:
+                    origin = getattr(inst_tf, "Origin", None)
+                    if origin:
+                        print(f"   Instance placement Origin: ({origin.X:.2f}, {origin.Y:.2f}, {origin.Z:.2f})")
+
+                    try:
+                        basis_x = inst_tf.BasisX
+                        basis_y = inst_tf.BasisY
+                        basis_z = inst_tf.BasisZ
+                        print(f"   Instance BasisX: ({basis_x.X:.3f}, {basis_x.Y:.3f}, {basis_x.Z:.3f})")
+                        print(f"   Instance BasisY: ({basis_y.X:.3f}, {basis_y.Y:.3f}, {basis_y.Z:.3f})")
+                        print(f"   Instance BasisZ: ({basis_z.X:.3f}, {basis_z.Y:.3f}, {basis_z.Z:.3f})")
+                    except:
+                        pass
+            else:
+                print(f"   Element type: {type(base_elem).__name__}")
+        except Exception as e:
+            print(f"   Error checking element type: {e}")
+
+        # 3. Check provided transforms
+        print("\n3. PROVIDED TRANSFORMS:")
+        print(f"   transform parameter: {transform is not None}")
+        if transform:
+            try:
+                print(f"   transform.Origin: ({transform.Origin.X:.2f}, {transform.Origin.Y:.2f}, {transform.Origin.Z:.2f})")
+            except:
+                pass
+
+        print(f"   link_transform parameter: {link_transform is not None}")
+        if link_transform:
+            try:
+                print(f"   link_transform.Origin: ({link_transform.Origin.X:.2f}, {link_transform.Origin.Y:.2f}, {link_transform.Origin.Z:.2f})")
+            except:
+                pass
+
+        # 4. Sample geometry and trace through transforms
+        print("\n4. GEOMETRY SAMPLING & TRANSFORM CHAIN:")
+        if not geom:
+            print("   No geometry available")
+            print(f"{'='*80}\n")
+            return
+
+        from Autodesk.Revit.DB import GeometryInstance, Solid
+
+        sample_found = False
+        for obj in geom:
+            if sample_found:
+                break
+
+            if isinstance(obj, GeometryInstance):
+                print("   Found: GeometryInstance in root geometry")
+                inst_tf = obj.Transform
+                print(f"   GeometryInstance.Transform.Origin: ({inst_tf.Origin.X:.2f}, {inst_tf.Origin.Y:.2f}, {inst_tf.Origin.Z:.2f})")
+
+                inst_geom = obj.GetInstanceGeometry()
+                if inst_geom:
+                    for inst_obj in inst_geom:
+                        if isinstance(inst_obj, Solid) and inst_obj.Volume > 0.0001:
+                            # Get first vertex from geometry
+                            for face in inst_obj.Faces:
+                                try:
+                                    for edge_loop in face.EdgeLoops:
+                                        for edge in edge_loop:
+                                            curve = edge.AsCurve()
+                                            if curve:
+                                                pt_local = curve.Evaluate(0.0, True)
+                                                print(f"\n   Sample vertex transform chain:")
+                                                print(f"   [1] Raw from GetInstanceGeometry: ({pt_local.X:.2f}, {pt_local.Y:.2f}, {pt_local.Z:.2f})")
+
+                                                # Apply GeometryInstance.Transform
+                                                pt_after_inst = inst_tf.OfPoint(pt_local)
+                                                print(f"   [2] After GeometryInstance.Transform: ({pt_after_inst.X:.2f}, {pt_after_inst.Y:.2f}, {pt_after_inst.Z:.2f})")
+
+                                                # Apply the 'transform' parameter if provided
+                                                if transform:
+                                                    pt_after_param = transform.OfPoint(pt_after_inst)
+                                                    print(f"   [3] After parameter transform: ({pt_after_param.X:.2f}, {pt_after_param.Y:.2f}, {pt_after_param.Z:.2f})")
+                                                    current_pt = pt_after_param
+                                                else:
+                                                    print(f"   [3] No parameter transform provided")
+                                                    current_pt = pt_after_inst
+
+                                                # Apply link transform if provided
+                                                if link_transform:
+                                                    pt_after_link = link_transform.OfPoint(current_pt)
+                                                    print(f"   [4] After link_transform: ({pt_after_link.X:.2f}, {pt_after_link.Y:.2f}, {pt_after_link.Z:.2f})")
+                                                    current_pt = pt_after_link
+                                                else:
+                                                    print(f"   [4] No link_transform (host element)")
+
+                                                # Project to UV
+                                                from .view_basis import world_to_view
+                                                uvw = world_to_view((current_pt.X, current_pt.Y, current_pt.Z), vb)
+                                                print(f"   [5] Final UV: ({uvw[0]:.2f}, {uvw[1]:.2f})")
+
+                                                sample_found = True
+                                                break
+                                        if sample_found:
+                                            break
+                                except:
+                                    continue
+                                if sample_found:
+                                    break
+
+            elif isinstance(obj, Solid) and obj.Volume > 0.0001 and not sample_found:
+                print("   Found: Solid directly in root geometry (no GeometryInstance wrapper)")
+
+                for face in obj.Faces:
+                    try:
+                        for edge_loop in face.EdgeLoops:
+                            for edge in edge_loop:
+                                curve = edge.AsCurve()
+                                if curve:
+                                    pt = curve.Evaluate(0.0, True)
+                                    print(f"\n   Sample vertex (should already be in world space):")
+                                    print(f"   [1] Raw from Solid: ({pt.X:.2f}, {pt.Y:.2f}, {pt.Z:.2f})")
+
+                                    # This geometry should already be in world coordinates
+                                    # Only apply link transform if it's a linked element
+                                    current_pt = pt
+
+                                    if link_transform:
+                                        pt_after_link = link_transform.OfPoint(current_pt)
+                                        print(f"   [2] After link_transform: ({pt_after_link.X:.2f}, {pt_after_link.Y:.2f}, {pt_after_link.Z:.2f})")
+                                        current_pt = pt_after_link
+                                    else:
+                                        print(f"   [2] No link_transform needed (host element)")
+
+                                    # Project to UV
+                                    from .view_basis import world_to_view
+                                    uvw = world_to_view((current_pt.X, current_pt.Y, current_pt.Z), vb)
+                                    print(f"   [3] Final UV: ({uvw[0]:.2f}, {uvw[1]:.2f})")
+
+                                    sample_found = True
+                                    break
+                            if sample_found:
+                                break
+                    except:
+                        continue
+                    if sample_found:
+                        break
+
+        if not sample_found:
+            print("   No sample geometry found to trace")
+
+        print(f"{'='*80}\n")
+
+    except Exception as e:
+        print(f"DIAGNOSTIC ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 def _extract_geometry_footprint_uv(elem, vb, diag=None, strategy_diag=None):
     """Extract actual geometry footprint vertices in UV space.
 
@@ -840,21 +1067,63 @@ def _extract_geometry_footprint_uv(elem, vb, diag=None, strategy_diag=None):
         # Extract link transform for LinkedElementProxy
         link_transform = getattr(elem, 'transform', None)
 
+        # =====================================================================
+        # DIAGNOSTIC: Add this block for problematic elements
+        # =====================================================================
+        try:
+            elem_id = getattr(getattr(elem, "Id", None), "IntegerValue", None)
+            # Replace 987587 with the actual element ID of your problematic beam
+            if elem_id and elem_id in [987587]:  # <-- PUT YOUR BEAM ID HERE
+                _diagnose_coordinate_spaces(elem, geom, None, link_transform, vb)
+        except:
+            pass
+        # =====================================================================
+
         # Collect all vertices from solid geometry
         points_uv = []
 
-        def process_geometry(geo, transform=None):
-            """Recursively process geometry to extract vertices."""
+        def process_geometry(geo, transform=None, _has_instances=None):
+            """Recursively process geometry to extract vertices.
+
+            Args:
+                geo: GeometryElement or geometry collection to process
+                transform: Accumulated transform from parent GeometryInstances
+                _has_instances: Internal flag - whether this level contains GeometryInstances
+
+            Key behavior:
+                - If GeometryInstances exist at this level, ONLY process them (skip top-level Solids)
+                - This prevents duplicate extraction when family instances have geometry both
+                  at top level AND inside GetInstanceGeometry()
+            """
+
+            # First pass: detect if this geometry level has instances
+            if _has_instances is None:
+                _has_instances = False
+                for obj in geo:
+                    if isinstance(obj, GeometryInstance):
+                        _has_instances = True
+                        break
+
             for obj in geo:
                 # Handle geometry instances (e.g., family instances)
                 if isinstance(obj, GeometryInstance):
                     inst_geom = obj.GetInstanceGeometry()
                     if inst_geom:
                         inst_transform = obj.Transform
-                        process_geometry(inst_geom, inst_transform)
+                        # Compose transforms: apply instance transform on top of any existing transform
+                        if transform is not None:
+                            # If we already have a transform, compose them
+                            combined_transform = transform.Multiply(inst_transform)
+                        else:
+                            combined_transform = inst_transform
 
-                # Handle solids
-                elif isinstance(obj, Solid):
+                        # Recurse into instance geometry with composed transform
+                        # _has_instances=False because we're now inside the instance
+                        process_geometry(inst_geom, combined_transform, _has_instances=False)
+
+                # Handle solids - but ONLY if there are no instances at this level
+                # If instances exist, the real geometry is inside them and we skip top-level solids
+                elif isinstance(obj, Solid) and not _has_instances:
                     if obj.Volume > 0.0001:  # Non-degenerate solid
                         # Extract vertices from faces
                         for face in obj.Faces:

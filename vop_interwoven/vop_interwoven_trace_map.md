@@ -2850,7 +2850,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `get_element_silhouette` (core/silhouette.py:L1593)
+## Trace: `get_element_silhouette` (core/silhouette.py:L1615)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py

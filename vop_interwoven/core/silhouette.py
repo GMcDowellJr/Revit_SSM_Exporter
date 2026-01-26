@@ -958,13 +958,24 @@ def _symbolic_curves_silhouette(elem, view, view_basis, cfg=None, diag=None):
 
                 if p0 is not None and p1 is not None and g_name in ("Line", "BoundLine"):
                     try:
-                        p0h = _to_host_point(elem, p0)
-                        p1h = _to_host_point(elem, p1)
+                        # Apply transform only if points are in family-local space
+                        should_transform = _should_apply_transform(p0, inst_transform, bbox_world_center)
+                        
+                        if should_transform:
+                            p0_world = inst_transform.OfPoint(p0)
+                            p1_world = inst_transform.OfPoint(p1)
+                        else:
+                            p0_world = p0
+                            p1_world = p1
+                        
+                        p0h = _to_host_point(elem, p0_world)
+                        p1h = _to_host_point(elem, p1_world)
                         uv0 = view_basis.transform_to_view_uv((p0h.X, p0h.Y, p0h.Z))
                         uv1 = view_basis.transform_to_view_uv((p1h.X, p1h.Y, p1h.Z))
                         pts_uv = [(uv0[0], uv0[1]), (uv1[0], uv1[1])]
                     except Exception:
                         pts_uv = []
+
                 else:
                     # Non-line curve: tessellate (bounded). Note Tessellate() cost is outside our point cap,
                     # so the time budget above is the real protection against stalls.
@@ -996,6 +1007,17 @@ def _symbolic_curves_silhouette(elem, view, view_basis, cfg=None, diag=None):
                     continue
 
             if len(pts_uv) >= 2:
+                
+                # DIAGNOSTIC: Track where this curve came from
+                try:
+                    elem_id = getattr(getattr(base_elem, 'Id', None), 'IntegerValue', None)
+                    if elem_id == 987587:
+                        print(f"[CURVE SOURCE] count={count}, g_name={g_name}, pts={len(pts_uv)}")
+                        if len(pts_uv) >= 2:
+                            print(f"  First point: ({pts_uv[0][0]:.2f}, {pts_uv[0][1]:.2f})")
+                except:
+                    pass
+        
                 loops.append({"points": pts_uv, "is_hole": False, "open": True})
                 count += 1
 

@@ -229,9 +229,11 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
     fec_total = 0
     candidates = 0
     created = 0
+    
     skip = {
         "skip_nested_link": 0,
         "skip_import_instance": 0,
+        "skip_host_doc_element": 0,
         "skip_no_category": 0,
         "skip_excluded_category": 0,
         "skip_non_model_categorytype": 0,
@@ -241,6 +243,7 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
         "skip_exception": 0,
         "skip_excluded_by_policy": 0,
     }
+
     by_category = {}
 
     try:
@@ -254,6 +257,18 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
         for elem in fec:
             fec_total += 1
             try:
+                
+                # Defensive: Revit 2024+ 3-arg FEC is intended to enumerate link-owned elements.
+                # If we ever receive host-owned elements here, wrapping them as link proxies will
+                # apply link transforms incorrectly and can manifest as "duplicate" geometry.
+                try:
+                    if getattr(elem, "Document", None) is doc:
+                        skip["skip_host_doc_element"] += 1
+                        continue
+                except Exception:
+                    # If Document is not readable, do not block; downstream bbox/geometry checks may still fail safely.
+                    pass
+        
                 # Skip nested links and imports (avoid recursion/noise)
                 # NOTE: In pytest (outside Revit), these symbols may be None due to optional imports.
                 if RevitLinkInstance is not None and isinstance(elem, RevitLinkInstance):
@@ -1083,11 +1098,12 @@ def _get_excluded_3d_category_ids(doc):
 
 
 def _transform_bbox_to_host(bbox_link, link_trf):
-    """Transform link-space bounding box to host-space AABB.
+    """Transform a BoundingBoxXYZ into a host-space AABB.
 
     Args:
-        bbox_link: BoundingBoxXYZ in link coordinates
-        link_trf: Transform (link → host)
+        bbox_link: BoundingBoxXYZ in element/local space. If bbox_link.Transform is non-identity,
+                  it is applied first (local -> bbox/world).
+        link_trf: Optional Transform (link → host). If None, no link transform is applied.
 
     Returns:
         (host_min, host_max) as XYZ objects, or (None, None) on error
@@ -1120,12 +1136,13 @@ def _transform_bbox_to_host(bbox_link, link_trf):
                 bbox_tf_origin = None
 
         link_tf_origin = None
-        try:
-            o = getattr(link_trf, "Origin", None)
-            if o is not None:
-                link_tf_origin = (float(o.X), float(o.Y), float(o.Z))
-        except Exception:
-            link_tf_origin = None
+        if link_trf is not None:
+            try:
+                o = getattr(link_trf, "Origin", None)
+                if o is not None:
+                    link_tf_origin = (float(o.X), float(o.Y), float(o.Z))
+            except Exception:
+                link_tf_origin = None
 
         _log(
             "DEBUG",
@@ -1152,8 +1169,11 @@ def _transform_bbox_to_host(bbox_link, link_trf):
         else:
             corners_link = corners_local
 
-        # link_trf maps link coords -> host coords.
-        host_corners = [link_trf.OfPoint(p) for p in corners_link]
+        # link_trf maps link coords -> host coords (optional).
+        if link_trf is not None:
+            host_corners = [link_trf.OfPoint(p) for p in corners_link]
+        else:
+            host_corners = corners_link
     except Exception:
         return None, None
 
