@@ -493,11 +493,11 @@ doc = get_current_document()
 view = get_current_view()
 
 cfg = Config(
-    cell_size_ft=1.0,
+    cell_size_paper_in=0.125,          # Cell size in paper inches
     adaptive_tile_size=True,
     tiny_max=2,
     thin_max=2,
-    anno_proxies_in_overmodel=False
+    over_model_includes_proxies=False  # Whether proxies affect "over model"
 )
 
 result = run_vop_pipeline(doc, [view.Id], cfg)
@@ -664,7 +664,7 @@ OUT = "\n".join(results)
 
 **Goal**: Add CSV export matching SSM exporter format for analytics integration
 
-**Status**: 📋 Planned (see PHASE7_CSV_EXPORT_PLAN.md for detailed spec)
+**Status**: ✅ Complete (implemented in `csv_export.py`)
 
 ### Why This Phase?
 
@@ -795,7 +795,7 @@ OUT = result
 
 **Goal**: Collect 2D annotation elements and rasterize to anno_key layer
 
-**Status**: ⏸️ Not Started (deferred from Phase 6)
+**Status**: ✅ Complete (implemented in `revit/annotation.py`)
 
 ### Why This Phase?
 
@@ -920,7 +920,7 @@ OUT = f"✅ Phase 8a: {len(annotations)} annotations collected"
 
 **Goal**: Process elements from linked Revit models
 
-**Status**: ⏸️ Not Started
+**Status**: ✅ Complete (implemented in `revit/linked_documents.py`)
 
 ### Why This Phase?
 
