@@ -15,35 +15,41 @@ The **Revit SSM Exporter** exports 2D orthographic views from Autodesk Revit to 
 
 ```
 Revit_SSM_Exporter/
-├── vop_interwoven/           # Main active codebase
+├── vop_interwoven/           # Main active codebase (feature complete)
 │   ├── config.py             # Configuration dataclass (40+ parameters)
-│   ├── pipeline.py           # Main processing logic (3700+ lines)
+│   ├── pipeline.py           # Main processing logic
 │   ├── entry_dynamo.py       # Dynamo Python node entry point
-│   ├── csv_export.py         # CSV export (2000+ lines)
-│   ├── png_export.py         # PNG visualization
+│   ├── csv_export.py         # CSV export (SSM-compatible format)
+│   ├── png_export.py         # PNG visualization export
 │   ├── streaming.py          # Data streaming utilities
 │   ├── core/                 # Core algorithms
 │   │   ├── raster.py         # ViewRaster & TileMap structures
-│   │   ├── silhouette.py     # Geometry extraction strategies
+│   │   ├── silhouette.py     # Multi-strategy geometry extraction
 │   │   ├── geometry.py       # UV classification & proxy generation
-│   │   ├── areal_extraction.py # AreaL element extraction
+│   │   ├── areal_extraction.py # AREAL element geometry extraction
 │   │   ├── element_cache.py  # Element caching (LRU)
+│   │   ├── face_selection.py # Front-facing face selection
 │   │   ├── math_utils.py     # Geometric utilities
-│   │   ├── face_selection.py # Face filtering logic
 │   │   ├── diagnostics.py    # Diagnostic tracking
-│   │   └── cache.py          # LRU cache implementation
+│   │   ├── cache.py          # General caching utilities
+│   │   ├── footprint.py      # Footprint computation
+│   │   ├── hull.py           # Convex hull utilities
+│   │   ├── pca2d.py          # 2D PCA for OBB fitting
+│   │   └── source_identity.py # Source identity (HOST|LINK|DWG)
 │   ├── revit/                # Revit API integration
 │   │   ├── collection.py     # Element collection & visibility
 │   │   ├── annotation.py     # 2D annotation processing
 │   │   ├── view_basis.py     # View coordinate system extraction
 │   │   ├── linked_documents.py # Linked RVT/DWG handling
-│   │   └── safe_api.py       # Safe Revit API wrapper
+│   │   ├── collection_policy.py # Collection policy configuration
+│   │   ├── safe_api.py       # Safe Revit API wrapper
+│   │   └── tierb_proxy.py    # Tier B proxy generation
 │   ├── diagnostics/          # Diagnostics module
 │   │   └── strategy_tracker.py
 │   ├── export/               # Export infrastructure
 │   │   └── csv.py
 │   └── docs/                 # Internal documentation
-├── tests/                    # pytest-based unit tests (46+ files)
+├── tests/                    # pytest-based unit tests (40+ files)
 │   ├── conftest.py           # pytest configuration
 │   ├── golden/               # Golden baseline artifacts
 │   └── dynamo/               # Dynamo integration tests
@@ -55,6 +61,8 @@ Revit_SSM_Exporter/
 ├── legacy/                   # Original monolithic code (reference only)
 └── archive/                  # Previous refactor attempts
 ```
+
+> **Note**: Tests are in the repository root `tests/` directory, not inside `vop_interwoven/`.
 
 ## Core Architecture Principles
 
@@ -74,6 +82,23 @@ Elements are classified by projected footprint size (in grid cells):
 | TINY | Both dims ≤2 cells | Door hardware | UV_AABB proxy, no depth writes |
 | LINEAR | One dim ≤2, other >2 | Walls, doors | OBB proxy, no depth writes |
 | AREAL | Both dims >2 | Floors, roofs | Full tessellation, depth buffer |
+
+> **Terminology**: "AREAL" (all caps) refers to elements with large projected footprints. Use this spelling consistently throughout the codebase.
+
+### Key Configuration Parameters
+
+```python
+Config(
+    tile_size=16,                    # Tile size for spatial acceleration
+    adaptive_tile_size=True,         # Auto-adjust tile size based on grid
+    cell_size_paper_in=0.125,        # Cell size in paper inches
+    tiny_max=2,                      # Max cells for TINY classification
+    thin_max=2,                      # Max cells for LINEAR thin dimension
+    over_model_includes_proxies=True, # Whether proxies count as "model presence"
+    proxy_mask_mode="minmask",       # "minmask" or "edges"
+    depth_eps_ft=0.01,               # Depth epsilon for occlusion tests
+)
+```
 
 ## Refactor Rules
 
@@ -271,7 +296,17 @@ Throughout the codebase, these markers indicate:
 - **Proxy savings**: TINY/LINEAR skip triangle tessellation (10-100x faster)
 - **Memory**: ~2-4 bytes/cell for masks, ~4-8 bytes/cell for depth/edges
 
-## Recent Development Context
+## Project Status
+
+The VOP Interwoven pipeline is **feature complete** with full SSM parity:
+- Core pipeline (view basis, collection, classification, rasterization)
+- Multi-strategy silhouette extraction with fallbacks
+- 2D annotation collection and classification
+- External sources (RVT links, DWG imports)
+- CSV and PNG export
+- LRU caching and diagnostics
+
+### Recent Development
 
 Recent work has focused on:
 - Fixing geometry duplication in family instance extraction
@@ -283,3 +318,10 @@ See git log for detailed history:
 ```bash
 git log --oneline -20
 ```
+
+### Documentation Hierarchy
+
+1. **CLAUDE.md** (this file) - Primary reference for AI assistants
+2. **vop_interwoven/README.md** - Architecture overview and API reference
+3. **vop_interwoven/IMPLEMENTATION_PLAN.md** - Historical development phases (now complete)
+4. **vop_interwoven/docs/refactor_rules.md** - Coding standards (mandatory reading)
