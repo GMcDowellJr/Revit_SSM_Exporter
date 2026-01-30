@@ -493,11 +493,11 @@ doc = get_current_document()
 view = get_current_view()
 
 cfg = Config(
-    cell_size_ft=1.0,
+    cell_size_paper_in=0.125,          # Cell size in paper inches
     adaptive_tile_size=True,
     tiny_max=2,
     thin_max=2,
-    anno_proxies_in_overmodel=False
+    over_model_includes_proxies=False  # Whether proxies affect "over model"
 )
 
 result = run_vop_pipeline(doc, [view.Id], cfg)
@@ -664,7 +664,7 @@ OUT = "\n".join(results)
 
 **Goal**: Add CSV export matching SSM exporter format for analytics integration
 
-**Status**: 📋 Planned (see PHASE7_CSV_EXPORT_PLAN.md for detailed spec)
+**Status**: ✅ Complete (implemented in `csv_export.py`)
 
 ### Why This Phase?
 
@@ -795,7 +795,7 @@ OUT = result
 
 **Goal**: Collect 2D annotation elements and rasterize to anno_key layer
 
-**Status**: ⏸️ Not Started (deferred from Phase 6)
+**Status**: ✅ Complete (implemented in `revit/annotation.py`)
 
 ### Why This Phase?
 
@@ -920,7 +920,7 @@ OUT = f"✅ Phase 8a: {len(annotations)} annotations collected"
 
 **Goal**: Process elements from linked Revit models
 
-**Status**: ⏸️ Not Started
+**Status**: ✅ Complete (implemented in `revit/linked_documents.py`)
 
 ### Why This Phase?
 
@@ -1425,17 +1425,17 @@ Phase 2 (Element Collection) ✅
   ↓
 Phase 3 (Classification) ✅
   ↓
-Phase 4 (Geometry Tessellation) ⏸️ Deferred
+Phase 4 (Geometry Tessellation) ✅
   ↓
 Phase 5 (Simplified Pipeline) ✅
-  ├─→ Phase 6 (Edge Rasterization) ⏸️ Deferred
-  ├─→ Phase 7 (CSV Export) 📋 Planned
-  ├─→ Phase 8a (Annotations) ⏸️
-  ├─→ Phase 8b (RVT Links) ⏸️
-  ├─→ Phase 8c (DWG Imports) ⏸️
-  ├─→ Phase 8d (Caching) ⏸️
-  ├─→ Phase 8e (Adaptive Thresholds) ⏸️
-  └─→ Phase 8f (Silhouette Extraction) ⏸️
+  ├─→ Phase 6 (Edge Rasterization) ✅
+  ├─→ Phase 7 (CSV Export) ✅
+  ├─→ Phase 8a (Annotations) ✅
+  ├─→ Phase 8b (RVT Links) ✅
+  ├─→ Phase 8c (DWG Imports) ✅
+  ├─→ Phase 8d (Caching) ✅
+  ├─→ Phase 8e (Adaptive Thresholds) ⏸️ Future
+  └─→ Phase 8f (Silhouette Extraction) ✅
 ```
 
 ---
@@ -1461,32 +1461,41 @@ Phase 5 (Simplified Pipeline) ✅
 
 ## Summary
 
-### Current Status (Phases 0-3, 5 Complete)
-✅ **Working end-to-end pipeline**:
-- View coordinate extraction
-- 3D element collection
-- UV classification
-- Bbox-based rasterization
-- JSON + PNG export
-- Dynamo integration
+### Current Status: ✅ Feature Complete
+The VOP Interwoven pipeline is fully implemented with SSM parity:
 
-### Phase 7: Next Immediate Goal
-📋 **CSV Export** - Match SSM format, enable analytics
+**Core Pipeline (Phases 0-6)**:
+- ✅ View coordinate extraction and transforms
+- ✅ 3D element collection with visibility filtering
+- ✅ UV classification (TINY/LINEAR/AREAL)
+- ✅ Multi-strategy silhouette extraction
+- ✅ Triangle tessellation and depth-buffered rasterization
+- ✅ Edge rasterization (depth-tested)
+- ✅ Dynamo integration (CPython3 compatible)
 
-### Phases 8a-8f: Future Enhancements
-⏸️ **Missing SSM Features**:
-- Annotations (8a)
-- RVT Links (8b)
-- DWG Imports (8c)
-- Caching (8d)
-- Adaptive Thresholds (8e)
-- Silhouette Extraction (8f)
+**Export (Phase 7)**:
+- ✅ CSV export (SSM-compatible format)
+- ✅ PNG visualization export
 
-### Total Estimated Effort
-- Phase 7: 5-7 hours
-- Tier 1 (7, 8a, 8d): 12-18 hours
-- Tier 2 (8b, 8e): 8-12 hours
-- Tier 3 (4, 6, 8c, 8f): 18-28 hours
-- **Grand Total**: ~38-58 hours for full SSM parity
+**External Sources (Phases 8a-8c)**:
+- ✅ 2D annotation collection and classification
+- ✅ RVT link document handling
+- ✅ DWG import geometry extraction
 
-Start with **Phase 7** for immediate analytics value!
+**Performance (Phase 8d, 8f)**:
+- ✅ LRU element caching
+- ✅ Tile-based spatial acceleration
+- ✅ Multi-strategy silhouette extraction with fallbacks
+
+### Future Enhancements
+⏸️ **Optional improvements**:
+- Adaptive threshold computation (8e)
+- RLE compression for output arrays
+- Multi-view parallelization
+- Cut plane handling for plan views
+
+### Documentation
+This plan is now primarily a **historical reference**. For current development guidance, see:
+- `CLAUDE.md` (AI assistant guide)
+- `README.md` (architecture overview)
+- `docs/refactor_rules.md` (coding standards)
