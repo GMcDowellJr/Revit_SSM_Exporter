@@ -2626,21 +2626,6 @@ def _get_ambiguous_tiles(tile_bins, cfg):
     return ambiguous
 
 
-def _render_areal_element(elem, transform, view, raster, rect, key_index, cfg):
-    """Render AREAL element: triangles + z-buffer + depth-tested edges.
-
-    Commentary:
-        ✔ Fast conservative interior fill by tiles
-        ✔ Refine boundaries using triangle z-buffer
-        ✔ Edges depth-tested vs zMin
-        ⚠ Placeholder implementation - requires geometry API access
-    """
-    raise NotImplementedError(
-        "Areal rasterization must route all writes through ViewRaster.try_write_cell() "
-        "with view-space W-depth per cell (no set_cell_filled fallback)."
-    )
-
-
 def _render_proxy_element(elem, transform, view, raster, rect, mode, key_index, cfg):
     """Render TINY/LINEAR element: proxy edges + optional minimal mask.
 
@@ -2669,13 +2654,17 @@ def _render_proxy_element(elem, transform, view, raster, rect, mode, key_index, 
 def _stamp_proxy_edges(proxy, key_index, raster):
     """Stamp proxy edges into model_proxy_key layer.
 
+    NOTE: Edge rasterization is not currently implemented.
+    This function is only called when cfg.proxy_mask_mode="edges" (non-default).
+    The default "minmask" mode works correctly and does not use this function.
+
     Args:
         proxy: UV_AABB or OBB
         key_index: Element metadata index
         raster: ViewRaster (modified in-place)
     """
-    # TODO: Implement edge rasterization
-    # Placeholder: mark center cell
+    # Edge mode not implemented - only minmask mode is supported
+    # Default config uses minmask, so this is rarely reached in production
     pass
 
 
@@ -2689,8 +2678,6 @@ def _mark_rect_center_cell(rect, raster):
 
 def _mark_thin_band_along_long_axis(rect, raster):
     """Mark thin band along long axis of rect in model_proxy_mask."""
-    # TODO: Implement thin band marking
-    # Placeholder: mark center row or column
     if rect.width_cells > rect.height_cells:
         # Horizontal band
         j_center = (rect.j_min + rect.j_max) // 2
