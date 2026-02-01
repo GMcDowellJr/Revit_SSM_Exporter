@@ -47,7 +47,7 @@ from datetime import datetime
 try:
     from .config import Config
     from .pipeline import process_document_views
-except Exception:
+except Exception as e:
     # Dynamo sometimes imports modules without package context; fall back to absolute.
     from vop_interwoven.config import Config
     from vop_interwoven.pipeline import process_document_views
@@ -99,7 +99,14 @@ def _pipeline_result_for_json(pipeline_result, cfg):
     detail = "full"
     try:
         detail = getattr(cfg, "debug_json_detail", "full")
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="general",
+                callsite="_pipeline_result_for_json",
+                message="Exception in _pipeline_result_for_json: {}".format(e),
+                exc=e,
+            )
         detail = "full"
 
     d = (detail or "full").strip().lower()
@@ -131,9 +138,15 @@ def _pipeline_result_for_json(pipeline_result, cfg):
             # Prune raster payload on the COPY only
             try:
                 _prune_view_raster_for_json(vr, d)
-            except Exception:
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="general",
+                        callsite="_pipeline_result_for_json",
+                        message="Exception in _pipeline_result_for_json: {}".format(e),
+                        exc=e,
+                    )
                 # Never block export; keep whatever raster shape exists
-                pass
 
             pr_views.append(vr)
 
@@ -246,9 +259,9 @@ def _normalize_view_ids(view_ids):
             try:
                 normalized.append(v.Id)
                 continue
-            except Exception:
-                pass
-
+            except Exception as e:
+                # Exception in _normalize_view_ids - no diag in scope
+                pass  # TODO: Add diagnostics when diag becomes available
         # Dynamo wrapper: try InternalElement / InternalElementId
         for attr in ("InternalElementId", "InternalElement"):
             if hasattr(v, attr):
@@ -264,8 +277,9 @@ def _normalize_view_ids(view_ids):
                     else:
                         normalized.append(inner)
                         break
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Exception in _normalize_view_ids - no diag in scope
+                    pass  # TODO: Add diagnostics when diag becomes available
         else:
             # ElementId has IntegerValue; keep as-is
             normalized.append(v)
@@ -356,9 +370,9 @@ def run_vop_pipeline_with_png(doc, view_ids, cfg=None, output_dir=None, pixels_p
     try:
         if cfg is not None and getattr(cfg, "view_cache_dir", None) in (None, ""):
             cfg.view_cache_dir = os.path.join(output_dir, ".vop_view_cache")
-    except Exception:
-        pass
-
+    except Exception as e:
+        # Exception in run_vop_pipeline_with_png - no diag in scope
+        pass  # TODO: Add diagnostics when diag becomes available
     # Run pipeline
     pipeline_result = run_vop_pipeline(doc, view_ids, cfg)
 
@@ -446,9 +460,9 @@ def run_vop_pipeline_with_csv(doc, view_ids, cfg=None, output_dir=None, pixels_p
     try:
         if cfg is not None and getattr(cfg, "view_cache_dir", None) in (None, ""):
             cfg.view_cache_dir = os.path.join(output_dir, ".vop_view_cache")
-    except Exception:
-        pass
-
+    except Exception as e:
+        # Exception in run_vop_pipeline_with_csv - no diag in scope
+        pass  # TODO: Add diagnostics when diag becomes available
     # Ensure output directory exists
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -677,9 +691,14 @@ def quick_test_current_view():
             # Don't fail the pipeline test because UI failed; surface error in return payload.
             try:
                 result.setdefault("errors", []).append(f"TaskDialog failed: {e}")
-            except Exception:
-                pass
-
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="general",
+                        callsite="quick_test_current_view",
+                        message="Exception in quick_test_current_view: {}".format(e),
+                        exc=e,
+                    )
         return result
 
     except Exception as e:
@@ -691,5 +710,12 @@ if __name__ == "__main__":
     try:
         result = quick_test_current_view()
         OUT = result
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="general",
+                callsite="quick_test_current_view",
+                message="Exception in quick_test_current_view: {}".format(e),
+                exc=e,
+            )
         OUT = {"success": False, "errors": ["Not running in Revit/Dynamo context"]}

@@ -27,7 +27,7 @@ def _safe_elem_id(elem):
         if elem_id is None:
             return None
         return getattr(elem_id, 'IntegerValue', None)
-    except Exception:
+    except Exception as e:
         return None
 
 
@@ -46,7 +46,7 @@ def _safe_category(elem):
             return 'Unknown'
         cname = getattr(cat, 'Name', None)
         return cname if cname else 'Unknown'
-    except Exception:
+    except Exception as e:
         return 'Unknown'
 
 
@@ -89,7 +89,7 @@ def _get_aabb_loops_from_bbox(bbox, view_basis):
                 (bbox.Max.X, bbox.Max.Y, bbox.Min.Z),
                 (bbox.Min.X, bbox.Max.Y, bbox.Min.Z),
             ]
-        except Exception:
+        except Exception as e:
             # Fallback: use Min/Max as tuples
             corners = [
                 (bbox.Min.X, bbox.Min.Y, bbox.Min.Z),
@@ -104,7 +104,7 @@ def _get_aabb_loops_from_bbox(bbox, view_basis):
             try:
                 uvw = _transform_to_uvw(corner, view_basis)
                 uvws.append(uvw)
-            except Exception:
+            except Exception as e:
                 return None
 
         if len(uvws) < 4:
@@ -133,7 +133,7 @@ def _get_aabb_loops_from_bbox(bbox, view_basis):
 
         return [{'points': points_uvw, 'is_hole': False}]
 
-    except Exception:
+    except Exception as e:
         return None
 
 
@@ -179,9 +179,14 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
     if strategy_diag is not None and elem_id is not None:
         try:
             strategy_diag.record_method_attempt(elem_id, 'planar_face')
-        except Exception:
-            pass
-
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="geometry_extraction",
+                    callsite="extract_areal_geometry",
+                    message="Exception in extract_areal_geometry: {}".format(e),
+                    exc=e,
+                )
     try:
         from .silhouette import _front_face_loops_silhouette
 
@@ -215,9 +220,14 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
                         success=True,
                         confidence='HIGH'
                     )
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="geometry_extraction",
+                            callsite="extract_areal_geometry",
+                            message="Exception in extract_areal_geometry: {}".format(e),
+                            exc=e,
+                        )
             # DEBUG: Log Tier 1A success
             print("[DEBUG] Element {} ({}): Tier 1A - planar_face SUCCESS ({} loops)".format(
                 elem_id, category, len(loops)))
@@ -236,9 +246,14 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
     if strategy_diag is not None and elem_id is not None:
         try:
             strategy_diag.record_method_attempt(elem_id, 'silhouette')
-        except Exception:
-            pass
-
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="geometry_extraction",
+                    callsite="extract_areal_geometry",
+                    message="Exception in extract_areal_geometry: {}".format(e),
+                    exc=e,
+                )
     try:
         from .silhouette import _silhouette_edges
 
@@ -272,9 +287,14 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
                         success=True,
                         confidence='HIGH'
                     )
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="geometry_extraction",
+                            callsite="extract_areal_geometry",
+                            message="Exception in extract_areal_geometry: {}".format(e),
+                            exc=e,
+                        )
             # DEBUG: Log Tier 1B success
             print("[DEBUG] Element {} ({}): Tier 1B - silhouette SUCCESS ({} loops), confidence=HIGH".format(
                 elem_id, category, len(loops)))
@@ -303,9 +323,14 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
                 success=False,
                 category=category
             )
-        except Exception:
-            pass
-
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="geometry_extraction",
+                    callsite="extract_areal_geometry",
+                    message="Exception in extract_areal_geometry: {}".format(e),
+                    exc=e,
+                )
     # ========================================================================
     # TIER 2: MEDIUM/LOW CONFIDENCE - Geometry extraction with OBB/AABB
     # ========================================================================
@@ -317,9 +342,14 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
     if strategy_diag is not None and elem_id is not None:
         try:
             strategy_diag.record_method_attempt(elem_id, 'geometry_polygon')
-        except Exception:
-            pass
-
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="geometry_extraction",
+                    callsite="extract_areal_geometry",
+                    message="Exception in extract_areal_geometry: {}".format(e),
+                    exc=e,
+                )
     try:
         from ..revit.collection import get_element_obb_loops
 
@@ -368,9 +398,14 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
                         confidence=confidence
                     )
                     strategy_diag.record_confidence(elem_id, confidence, category)
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="geometry_extraction",
+                            callsite="extract_areal_geometry",
+                            message="Exception in extract_areal_geometry: {}".format(e),
+                            exc=e,
+                        )
             return (loops, confidence, strategy_name)
         else:
             # DEBUG: Log Tier 2 failure
@@ -391,9 +426,14 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
     if strategy_diag is not None and elem_id is not None:
         try:
             strategy_diag.record_method_attempt(elem_id, 'aabb')
-        except Exception:
-            pass
-
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="geometry_extraction",
+                    callsite="extract_areal_geometry",
+                    message="Exception in extract_areal_geometry: {}".format(e),
+                    exc=e,
+                )
     try:
         from ..revit.collection import resolve_element_bbox
 
@@ -437,9 +477,14 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
                             confidence='LOW'
                         )
                         strategy_diag.record_confidence(elem_id, 'LOW', category)
-                    except Exception:
-                        pass
-
+                    except Exception as e:
+                        if diag is not None:
+                            diag.error(
+                                phase="geometry_extraction",
+                                callsite="extract_areal_geometry",
+                                message="Exception in extract_areal_geometry: {}".format(e),
+                                exc=e,
+                            )
                 return (loops, 'LOW', 'aabb_fallback')
             else:
                 # DEBUG: Log Tier 3 failure
@@ -470,7 +515,12 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
             # Phase 3.1: Record failed extraction (no method succeeded)
             # Note: We don't call record_extraction_method here because no method succeeded
             # The method_attempted_order will show all methods tried via record_method_attempt
-        except Exception:
-            pass
-
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="geometry_extraction",
+                    callsite="extract_areal_geometry",
+                    message="Exception in extract_areal_geometry: {}".format(e),
+                    exc=e,
+                )
     return (None, None, 'failed')

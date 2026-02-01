@@ -154,7 +154,7 @@ class StreamingExporter:
                         run_dt = datetime.strptime(s, "%Y-%m-%d")
                     else:
                         run_dt = datetime.fromisoformat(s)
-                except Exception:
+                except Exception as e:
                     tag = s
             else:
                 tag = str(date_override)
@@ -254,9 +254,9 @@ class StreamingExporter:
                 is_cache_hit = True
             if isinstance(c, dict) and str(c.get("cache_type", "")).lower() == "root":
                 is_cache_hit = True
-        except Exception:
-            pass
-
+        except Exception as e:
+            # Exception in on_view_complete - no diag in scope
+            pass  # TODO: Add diagnostics when diag becomes available
         if self.export_png and not is_cache_hit:
             t0 = time.perf_counter()
             png_path = self._write_png(view_result)
@@ -335,7 +335,7 @@ class StreamingExporter:
                     # Prefer signature-agnostic fetch: pipeline already validated signature on hit.
                     try:
                         cached = self.root_cache.get_view_any(vid)
-                    except Exception:
+                    except Exception as e:
                         cached = None
 
                     if isinstance(cached, dict):
@@ -358,9 +358,8 @@ class StreamingExporter:
                                 t = cached.get("timings")
                                 if isinstance(t, dict):
                                     view_result["timings"] = t
-        except Exception:
+        except Exception as e:
             # Never block export due to cache rehydration issues; downstream will fill sentinels.
-            pass
 
         from vop_interwoven.csv_export import (
             view_result_to_core_row,
@@ -532,9 +531,9 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                         is_cache_hit = True
                     if isinstance(c, dict) and str(c.get("cache_type", "")).lower() == "root":
                         is_cache_hit = True
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    # Exception in process_document_views_streaming - no diag in scope
+                    pass  # TODO: Add diagnostics when diag becomes available
                 if (("raster" not in view_result) or (view_result.get("raster") is None)) and not is_cache_hit:
                     print(f"[Streaming] WARNING: No raster in view_result for view {view_id}")
                     print(f"[Streaming]   This should not happen - check cfg.retain_rasters_in_memory")
@@ -676,8 +675,9 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
         ok = root_cache.save()
         try:
             print(f"[Streaming] Root cache stats: {root_cache.stats()}")
-        except Exception:
-            pass
+        except Exception as e:
+            # Exception in run_vop_pipeline_streaming - no diag in scope
+            pass  # TODO: Add diagnostics when diag becomes available
         if not ok:
             print("[Streaming] Root cache save returned False")
     except Exception as e:

@@ -86,7 +86,14 @@ def collect_view_elements(doc, view, raster, diag=None, cfg=None):
     view_id = None
     try:
         view_id = getattr(getattr(view, "Id", None), "IntegerValue", None)
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="collection",
+                callsite="collect_view_elements",
+                message="Exception in collect_view_elements: {}".format(e),
+                exc=e,
+            )
         view_id = None
 
     # Category allowlist (policy is still authoritative; this is only a coarse filter)
@@ -205,7 +212,14 @@ def collect_view_elements(doc, view, raster, diag=None, cfg=None):
         elem_id = None
         try:
             elem_id = getattr(getattr(elem, "Id", None), "IntegerValue", None)
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="collection",
+                    callsite="collect_view_elements",
+                    message="Exception in collect_view_elements: {}".format(e),
+                    exc=e,
+                )
             elem_id = None
 
         include, _pol_reason, _pol_cat = should_include_element(
@@ -340,9 +354,14 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None, 
                     view=None,  # Use model bbox for reuse
                     extract_params=None
                 )
-            except Exception:
-                pass  # Graceful degradation
-
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="collection",
+                        callsite="expand_host_link_import_model_elements",
+                        message="Exception in expand_host_link_import_model_elements: {}".format(e),
+                        exc=e,
+                    )
         result.append(
             {
                 "element": e,
@@ -425,9 +444,14 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None, 
                     "bbox": {"view": bbox_view, "model": bbox_model, "none": bbox_none},
                 },
             )
-        except Exception:
-            pass
-
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="collection",
+                    callsite="expand_host_link_import_model_elements",
+                    message="Exception in expand_host_link_import_model_elements: {}".format(e),
+                    exc=e,
+                )
     return result
 
 
@@ -499,13 +523,21 @@ def estimate_nearest_depth_from_bbox(elem, transform, view, raster, bbox=None, d
 
         try:
             corners = [transform.OfPoint(c) for c in corners]
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="collection",
+                    callsite="estimate_nearest_depth_from_bbox",
+                    message="Exception in estimate_nearest_depth_from_bbox: {}".format(e),
+                    exc=e,
+                )
             try:
                 from Autodesk.Revit.DB import XYZ
                 xyzs = [XYZ(c[0], c[1], c[2]) for c in corners]
                 corners_xyz = [transform.OfPoint(p) for p in xyzs]
                 corners = [(p.X, p.Y, p.Z) for p in corners_xyz]
-            except Exception:
+            except Exception as e:
+                # Transform failed - return infinity to indicate unknown depth
                 return float("inf")
 
     min_depth = float("inf")
@@ -565,7 +597,14 @@ def estimate_depth_range_from_bbox(elem, transform, view, raster, bbox=None, dia
                     "elem_id": getattr(getattr(elem, "Id", None), "IntegerValue", None),
                 },
             )
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="collection",
+                    callsite="estimate_depth_range_from_bbox",
+                    message="Exception in estimate_depth_range_from_bbox: {}".format(e),
+                    exc=e,
+                )
             bbox = None
 
     if bbox is None:
@@ -586,7 +625,14 @@ def estimate_depth_range_from_bbox(elem, transform, view, raster, bbox=None, dia
     try:
         min_x, min_y, min_z = bbox.Min.X, bbox.Min.Y, bbox.Min.Z
         max_x, max_y, max_z = bbox.Max.X, bbox.Max.Y, bbox.Max.Z
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="collection",
+                callsite="estimate_depth_range_from_bbox",
+                message="Exception in estimate_depth_range_from_bbox: {}".format(e),
+                exc=e,
+            )
         return (float("inf"), float("inf"))
 
     corners = [
@@ -606,7 +652,14 @@ def estimate_depth_range_from_bbox(elem, transform, view, raster, bbox=None, dia
     for corner in corners:
         try:
             _u, _v, w = world_to_view(corner, vb)
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="collection",
+                    callsite="estimate_depth_range_from_bbox",
+                    message="Exception in estimate_depth_range_from_bbox: {}".format(e),
+                    exc=e,
+                )
             continue
         if w < min_depth:
             min_depth = w
@@ -653,7 +706,14 @@ def _project_element_bbox_to_cell_rect(elem, vb, raster, bbox=None, diag=None, v
                     "elem_id": getattr(getattr(elem, "Id", None), "IntegerValue", None),
                 },
             )
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="collection",
+                    callsite="_project_element_bbox_to_cell_rect",
+                    message="Exception in _project_element_bbox_to_cell_rect: {}".format(e),
+                    exc=e,
+                )
             bbox = None
 
     if bbox is None:
@@ -680,9 +740,15 @@ def _project_element_bbox_to_cell_rect(elem, vb, raster, bbox=None, diag=None, v
             xyzs = [XYZ(c[0], c[1], c[2]) for c in corners]
             corners_w = [trf.OfPoint(p) for p in xyzs]
             corners = [(p.X, p.Y, p.Z) for p in corners_w]
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="collection",
+                    callsite="_project_element_bbox_to_cell_rect",
+                    message="Exception in _project_element_bbox_to_cell_rect: {}".format(e),
+                    exc=e,
+                )
             # Best-effort: keep tuple corners if Transform application fails
-            pass
 
     # PR12: if bbox is link-space, transform corners into host/world before projecting.
     if bbox_is_link_space:
@@ -690,7 +756,14 @@ def _project_element_bbox_to_cell_rect(elem, vb, raster, bbox=None, diag=None, v
             return None  # cannot correctly project link-space bbox without transform
         try:
             corners = [transform.OfPoint(c) for c in corners]
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="collection",
+                    callsite="_project_element_bbox_to_cell_rect",
+                    message="Exception in _project_element_bbox_to_cell_rect: {}".format(e),
+                    exc=e,
+                )
             return None
 
     # PR12: if bbox is in link-space, transform corners into host/world before projecting.
@@ -701,13 +774,21 @@ def _project_element_bbox_to_cell_rect(elem, vb, raster, bbox=None, diag=None, v
         # Revit Transform expects XYZ; some test stubs may accept tuples.
         try:
             corners = [transform.OfPoint(c) for c in corners]
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="collection",
+                    callsite="_project_element_bbox_to_cell_rect",
+                    message="Exception in _project_element_bbox_to_cell_rect: {}".format(e),
+                    exc=e,
+                )
             try:
                 from Autodesk.Revit.DB import XYZ
                 xyzs = [XYZ(c[0], c[1], c[2]) for c in corners]
                 corners_xyz = [transform.OfPoint(p) for p in xyzs]
                 corners = [(p.X, p.Y, p.Z) for p in corners_xyz]
-            except Exception:
+            except Exception as e:
+                # Transform failed - return None to indicate failure
                 return None
 
     uvs = [world_to_view(corner, vb) for corner in corners]
@@ -778,7 +859,7 @@ def _get_element_category_name(elem):
             return "Unknown"
         cname = getattr(cat, "Name", None)
         return cname if cname else "Unknown"
-    except Exception:
+    except Exception as e:
         return "Unknown"
 
 
@@ -1032,9 +1113,14 @@ def _extract_geometry_footprint_uv(elem, vb, diag=None, strategy_diag=None):
     try:
         elem_id = getattr(getattr(elem, "Id", None), "IntegerValue", None)
         category = _get_element_category_name(elem)
-    except Exception:
-        pass
-
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="collection",
+                callsite="_extract_geometry_footprint_uv",
+                message="Exception in _extract_geometry_footprint_uv: {}".format(e),
+                exc=e,
+            )
     try:
         from Autodesk.Revit.DB import Options, Solid, Face, Edge, GeometryInstance
 
@@ -1056,8 +1142,14 @@ def _extract_geometry_footprint_uv(elem, vb, diag=None, strategy_diag=None):
                         category=category,
                         details={'reason': 'get_Geometry returned None'}
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="collection",
+                            callsite="_extract_geometry_footprint_uv",
+                            message="Exception in _extract_geometry_footprint_uv: {}".format(e),
+                            exc=e,
+                        )
             return None
 
         # Extract link transform for LinkedElementProxy
@@ -1149,12 +1241,25 @@ def _extract_geometry_footprint_uv(elem, vb, diag=None, strategy_diag=None):
                                                     # Project to UV
                                                     uvw = world_to_view((pt.X, pt.Y, pt.Z), vb)
                                                     points_uv.append((uvw[0], uvw[1]))
-                                                except Exception:
+                                                except Exception as e:
+                                                    if diag is not None:
+                                                        diag.error(
+                                                            phase="collection",
+                                                            callsite="process_geometry",
+                                                            message="Exception in process_geometry: {}".format(e),
+                                                            exc=e,
+                                                        )
                                                     edge_sample_failures += 1
                                                     continue
-                            except Exception:
+                            except Exception as e:
+                                if diag is not None:
+                                    diag.error(
+                                        phase="collection",
+                                        callsite="process_geometry",
+                                        message="Exception in process_geometry: {}".format(e),
+                                        exc=e,
+                                    )
                                 edge_loop_failures += 1
-                                pass
 
                             if edge_sample_failures or edge_loop_failures:
                                 print(
@@ -1191,8 +1296,14 @@ def _extract_geometry_footprint_uv(elem, vb, diag=None, strategy_diag=None):
                             category=category,
                             details={'vertices': len(unique_points), 'raw_vertices': len(points_uv)}
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        if diag is not None:
+                            diag.error(
+                                phase="collection",
+                                callsite="process_geometry",
+                                message="Exception in process_geometry: {}".format(e),
+                                exc=e,
+                            )
                 return unique_points
             else:
                 # Track insufficient_points failure
@@ -1204,8 +1315,14 @@ def _extract_geometry_footprint_uv(elem, vb, diag=None, strategy_diag=None):
                             category=category,
                             details={'unique_points': len(unique_points), 'required': 3}
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        if diag is not None:
+                            diag.error(
+                                phase="collection",
+                                callsite="process_geometry",
+                                message="Exception in process_geometry: {}".format(e),
+                                exc=e,
+                            )
                 return None
 
         # Track insufficient_points failure (less than 3 raw points)
@@ -1217,8 +1334,14 @@ def _extract_geometry_footprint_uv(elem, vb, diag=None, strategy_diag=None):
                     category=category,
                     details={'points': len(points_uv), 'required': 3}
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="collection",
+                        callsite="process_geometry",
+                        message="Exception in process_geometry: {}".format(e),
+                        exc=e,
+                    )
         return None
 
     except Exception as e:
@@ -1231,8 +1354,14 @@ def _extract_geometry_footprint_uv(elem, vb, diag=None, strategy_diag=None):
                     category=category,
                     details={'error': '{}: {}'.format(type(e).__name__, str(e))}
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="collection",
+                        callsite="process_geometry",
+                        message="Exception in process_geometry: {}".format(e),
+                        exc=e,
+                    )
         return None
 
 
@@ -1265,9 +1394,14 @@ def get_element_obb_loops(elem, vb, raster, bbox=None, diag=None, view=None, str
     try:
         elem_id = getattr(getattr(elem, "Id", None), "IntegerValue", None)
         category = _get_element_category_name(elem)
-    except Exception:
-        pass
-
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="collection",
+                callsite="get_element_obb_loops",
+                message="Exception in get_element_obb_loops: {}".format(e),
+                exc=e,
+            )
     # Always need bbox for depth + UV projection. Prefer provided bbox, else resolve.
     if bbox is None:
         try:
@@ -1280,7 +1414,14 @@ def get_element_obb_loops(elem, vb, raster, bbox=None, diag=None, view=None, str
                     "elem_id": getattr(getattr(elem, "Id", None), "IntegerValue", None),
                 },
             )
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="collection",
+                    callsite="get_element_obb_loops",
+                    message="Exception in get_element_obb_loops: {}".format(e),
+                    exc=e,
+                )
             bbox = None
 
     if bbox is None:
@@ -1301,7 +1442,14 @@ def get_element_obb_loops(elem, vb, raster, bbox=None, diag=None, view=None, str
     # CRITICAL: BoundingBoxXYZ may be oriented; apply bbox.Transform if present.
     try:
         bbox_tf = getattr(bbox, "Transform", None)
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="collection",
+                callsite="get_element_obb_loops",
+                message="Exception in get_element_obb_loops: {}".format(e),
+                exc=e,
+            )
         bbox_tf = None
 
     if bbox_tf is not None:
@@ -1311,9 +1459,15 @@ def get_element_obb_loops(elem, vb, raster, bbox=None, diag=None, view=None, str
             for (x, y, z) in corners:
                 corners_world.append(bbox_tf.OfPoint(XYZ(x, y, z)))
             corners = [(p.X, p.Y, p.Z) for p in corners_world]
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="collection",
+                    callsite="get_element_obb_loops",
+                    message="Exception in get_element_obb_loops: {}".format(e),
+                    exc=e,
+                )
             # If transform application fails, fall back to raw corners.
-            pass
 
     uvs = [world_to_view(corner, vb) for corner in corners]
 
@@ -1376,8 +1530,14 @@ def get_element_obb_loops(elem, vb, raster, bbox=None, diag=None, view=None, str
                         success=True,
                         category=category
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="collection",
+                            callsite="get_element_obb_loops",
+                            message="Exception in get_element_obb_loops: {}".format(e),
+                            exc=e,
+                        )
         else:
             # Not enough vertices, fall back to bbox OBB
             used_geometry = False
@@ -1413,8 +1573,14 @@ def get_element_obb_loops(elem, vb, raster, bbox=None, diag=None, view=None, str
                         success=True,
                         category=category
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="collection",
+                            callsite="get_element_obb_loops",
+                            message="Exception in get_element_obb_loops: {}".format(e),
+                            exc=e,
+                        )
         else:
             polygon_uv = obb_rect
             strategy_name = 'uv_obb'
@@ -1428,9 +1594,14 @@ def get_element_obb_loops(elem, vb, raster, bbox=None, diag=None, view=None, str
                         success=True,
                         category=category
                     )
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="collection",
+                            callsite="get_element_obb_loops",
+                            message="Exception in get_element_obb_loops: {}".format(e),
+                            exc=e,
+                        )
     # Get minimum depth for occlusion
     w_min = min(uv[2] for uv in uvs)
 

@@ -3,7 +3,7 @@
 def _exc_to_str(e):
     try:
         return str(e)
-    except Exception:
+    except Exception as e:
         return "<unstringifiable exception>"
 
 
@@ -155,9 +155,15 @@ class Diagnostics(object):
                 ev_extra = ev.get("extra")
                 if isinstance(ev_extra, dict):
                     ev_extra["suppressed_count"] = entry["suppressed"]
-            except Exception:
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="general",
+                        callsite="debug_dedupe",
+                        message="Exception in debug_dedupe: {}".format(e),
+                        exc=e,
+                    )
                 # Diagnostics must never throw.
-                pass
 
     def warn(
         self,

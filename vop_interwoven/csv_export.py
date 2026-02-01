@@ -11,7 +11,7 @@ from datetime import datetime
 def _round6(x):
     try:
         return round(float(x), 6)
-    except Exception:
+    except Exception as e:
         return x
 
 def _is_from_cache(view_result):
@@ -30,8 +30,9 @@ def _is_from_cache(view_result):
             cache_status = cache_info.get("view_cache", "")
             if "HIT" in str(cache_status).upper():
                 return True
-    except Exception:
-        pass
+    except Exception as e:
+        # Exception in _is_from_cache - no diag in scope
+        pass  # TODO: Add diagnostics when diag becomes available
     return False
 
 def compute_external_cell_metrics(raster):
@@ -64,7 +65,7 @@ def compute_external_cell_metrics(raster):
                 # Guard: some rasters reserve 0 for "none"
                 if 0 <= int(key_index) < len(em):
                     meta = em[int(key_index)]
-        except Exception:
+        except Exception as e:
             meta = None
         if isinstance(meta, dict):
             return meta.get("source_type")
@@ -258,9 +259,9 @@ def compute_annotation_type_metrics(raster):
                     cat_id = meta.get("cat_id", None)
                     if cat_id is not None and int(cat_id) == int(BuiltInCategory.OST_FilledRegion):
                         anno_type = "REGION"
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    # Exception in compute_annotation_type_metrics - no diag in scope
+                    pass  # TODO: Add diagnostics when diag becomes available
                 if anno_type in counts:
                     counts[anno_type] += 1
                 else:
@@ -287,7 +288,7 @@ def _coerce_view_id_int(view_id):
         if s.isdigit():
             try:
                 return int(s)
-            except Exception:
+            except Exception as e:
                 return None
         return None
 
@@ -296,17 +297,17 @@ def _coerce_view_id_int(view_id):
         iv = getattr(view_id, "IntegerValue", None)
         if isinstance(iv, int):
             return iv
-    except Exception:
-        pass
-
+    except Exception as e:
+        # Exception in _coerce_view_id_int - no diag in scope
+        pass  # TODO: Add diagnostics when diag becomes available
     # Some wrappers may expose .Id
     try:
         inner = getattr(view_id, "Id", None)
         if inner is not None:
             return _coerce_view_id_int(inner)
-    except Exception:
-        pass
-
+    except Exception as e:
+        # Exception in _coerce_view_id_int - no diag in scope
+        pass  # TODO: Add diagnostics when diag becomes available
     return None
 
 def _viewtype_name_from_value(v):
@@ -331,14 +332,14 @@ def _viewtype_name_from_value(v):
         if s.isdigit():
             try:
                 iv = int(s)
-            except Exception:
+            except Exception as e:
                 return ""
             try:
                 from System import Enum  # type: ignore
                 from Autodesk.Revit.DB import ViewType as RevitViewType  # type: ignore
                 name = Enum.GetName(RevitViewType, iv)
                 return str(name) if name else ""
-            except Exception:
+            except Exception as e:
                 return ""
         return s
 
@@ -348,9 +349,9 @@ def _viewtype_name_from_value(v):
         name = Enum.GetName(type(v), v)
         if name:
             return str(name)
-    except Exception:
-        pass
-
+    except Exception as e:
+        # Exception in _viewtype_name_from_value - no diag in scope
+        pass  # TODO: Add diagnostics when diag becomes available
     # Int case: map against Autodesk.Revit.DB.ViewType
     if isinstance(v, int):
         try:
@@ -359,9 +360,9 @@ def _viewtype_name_from_value(v):
             name = Enum.GetName(RevitViewType, v)
             if name:
                 return str(name)
-        except Exception:
-            pass
-
+        except Exception as e:
+            # Exception in _viewtype_name_from_value - no diag in scope
+            pass  # TODO: Add diagnostics when diag becomes available
     return ""
 
 def extract_view_metadata(view, doc, diag=None):
@@ -401,18 +402,39 @@ def extract_view_metadata(view, doc, diag=None):
     # ViewId and UniqueId
     try:
         metadata["ViewId"] = view.Id.IntegerValue
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="export",
+                callsite="extract_view_metadata",
+                message="Exception in extract_view_metadata: {}".format(e),
+                exc=e,
+            )
         metadata["ViewId"] = 0
 
     try:
         metadata["ViewUniqueId"] = view.UniqueId or ""
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="export",
+                callsite="extract_view_metadata",
+                message="Exception in extract_view_metadata: {}".format(e),
+                exc=e,
+            )
         metadata["ViewUniqueId"] = ""
 
     # ViewName
     try:
         metadata["ViewName"] = view.Name or ""
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="export",
+                callsite="extract_view_metadata",
+                message="Exception in extract_view_metadata: {}".format(e),
+                exc=e,
+            )
         metadata["ViewName"] = ""
         
     # ViewType (human-readable name; CPython/pythonnet-safe)
@@ -426,7 +448,14 @@ def extract_view_metadata(view, doc, diag=None):
                 # If vt is already an enum, this works
                 from System import Enum  # type: ignore
                 name = Enum.GetName(type(vt), vt) or ""
-            except Exception:
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="export",
+                        callsite="extract_view_metadata",
+                        message="Exception in extract_view_metadata: {}".format(e),
+                        exc=e,
+                    )
                 name = ""
 
             if not name:
@@ -436,18 +465,39 @@ def extract_view_metadata(view, doc, diag=None):
                         from System import Enum  # type: ignore
                         from Autodesk.Revit.DB import ViewType as RevitViewType  # type: ignore
                         name = Enum.GetName(RevitViewType, vt) or ""
-                except Exception:
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="export",
+                            callsite="extract_view_metadata",
+                            message="Exception in extract_view_metadata: {}".format(e),
+                            exc=e,
+                        )
                     name = ""
 
             if not name:
                 # Last-resort fallback: ToString if present (IronPython / some pythonnet cases)
                 try:
                     name = vt.ToString()
-                except Exception:
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="export",
+                            callsite="extract_view_metadata",
+                            message="Exception in extract_view_metadata: {}".format(e),
+                            exc=e,
+                        )
                     name = ""
 
             metadata["ViewType"] = name or ""
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="export",
+                callsite="extract_view_metadata",
+                message="Exception in extract_view_metadata: {}".format(e),
+                exc=e,
+            )
         metadata["ViewType"] = ""
 
     # Sheet placement
@@ -493,7 +543,14 @@ def extract_view_metadata(view, doc, diag=None):
     try:
         scale_val = view.Scale
         metadata["Scale"] = int(scale_val) if isinstance(scale_val, int) else ""
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="export",
+                callsite="extract_view_metadata",
+                message="Exception in extract_view_metadata: {}".format(e),
+                exc=e,
+            )
         metadata["Scale"] = ""
 
     # Discipline (readable; parameter-first; CPython-safe)
@@ -505,14 +562,35 @@ def extract_view_metadata(view, doc, diag=None):
             if p is not None:
                 try:
                     disc = p.AsValueString() or ""
-                except Exception:
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="export",
+                            callsite="extract_view_metadata",
+                            message="Exception in extract_view_metadata: {}".format(e),
+                            exc=e,
+                        )
                     disc = ""
                 if not disc:
                     try:
                         disc = p.AsString() or ""
-                    except Exception:
+                    except Exception as e:
+                        if diag is not None:
+                            diag.error(
+                                phase="export",
+                                callsite="extract_view_metadata",
+                                message="Exception in extract_view_metadata: {}".format(e),
+                                exc=e,
+                            )
                         disc = ""
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="export",
+                    callsite="extract_view_metadata",
+                    message="Exception in extract_view_metadata: {}".format(e),
+                    exc=e,
+                )
             disc = ""
 
         if not disc:
@@ -520,11 +598,25 @@ def extract_view_metadata(view, doc, diag=None):
             if d is not None:
                 try:
                     disc = d.ToString()
-                except Exception:
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="export",
+                            callsite="extract_view_metadata",
+                            message="Exception in extract_view_metadata: {}".format(e),
+                            exc=e,
+                        )
                     disc = str(d)
 
         metadata["Discipline"] = disc or ""
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="export",
+                callsite="extract_view_metadata",
+                message="Exception in extract_view_metadata: {}".format(e),
+                exc=e,
+            )
         metadata["Discipline"] = ""
 
     # Phase (readable name)
@@ -535,11 +627,25 @@ def extract_view_metadata(view, doc, diag=None):
             try:
                 phase_elem = doc.GetElement(p.AsElementId())
                 metadata["Phase"] = phase_elem.Name if phase_elem is not None else ""
-            except Exception:
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="export",
+                        callsite="extract_view_metadata",
+                        message="Exception in extract_view_metadata: {}".format(e),
+                        exc=e,
+                    )
                 metadata["Phase"] = ""
         else:
             metadata["Phase"] = ""
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="export",
+                callsite="extract_view_metadata",
+                message="Exception in extract_view_metadata: {}".format(e),
+                exc=e,
+            )
         metadata["Phase"] = ""
 
     # View Template
@@ -550,13 +656,27 @@ def extract_view_metadata(view, doc, diag=None):
             metadata["ViewTemplate_Name"] = vt_elem.Name if vt_elem is not None else ""
         else:
             metadata["ViewTemplate_Name"] = ""
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="export",
+                callsite="extract_view_metadata",
+                message="Exception in extract_view_metadata: {}".format(e),
+                exc=e,
+            )
         metadata["ViewTemplate_Name"] = ""
 
     # IsTemplate
     try:
         metadata["IsTemplate"] = bool(view.IsTemplate)
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="export",
+                callsite="extract_view_metadata",
+                message="Exception in extract_view_metadata: {}".format(e),
+                exc=e,
+            )
         metadata["IsTemplate"] = False
 
     return metadata
@@ -787,9 +907,15 @@ def build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metada
                 high_conf_count = strategy_planar_face + strategy_silhouette + strategy_geom_extract
                 areal_high_confidence_rate = (high_conf_count * 100.0) / areal_count
 
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="export",
+                    callsite="build_vop_csv_row",
+                    message="Exception in build_vop_csv_row: {}".format(e),
+                    exc=e,
+                )
             # Diagnostic extraction failures should not crash export
-            pass
 
     # Append strategy diagnostic columns
     row.extend([
@@ -850,9 +976,15 @@ def build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metada
             method_bbox_obb_count = method_stats.get('bbox_obb', {}).get('count', 0)
             method_aabb_count = method_stats.get('aabb', {}).get('count', 0)
 
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="export",
+                    callsite="build_vop_csv_row",
+                    message="Exception in build_vop_csv_row: {}".format(e),
+                    exc=e,
+                )
             # Diagnostic extraction failures should not crash export
-            pass
 
     # Append category statistics and method counts (Phase 3.3)
     row.extend([
@@ -913,7 +1045,14 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
         try:
             from .entry_dynamo import get_current_document
             doc = get_current_document()
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="export",
+                    callsite="export_pipeline_to_csv",
+                    message="Exception in export_pipeline_to_csv: {}".format(e),
+                    exc=e,
+                )
             doc = None
 
     # Resolve run datetime / date string
@@ -929,7 +1068,14 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
                     run_dt = datetime.strptime(s, "%Y-%m-%d")
                 else:
                     run_dt = datetime.fromisoformat(s)
-            except Exception:
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="export",
+                        callsite="export_pipeline_to_csv",
+                        message="Exception in export_pipeline_to_csv: {}".format(e),
+                        exc=e,
+                    )
                 # Treat as opaque tag (commit hash, label, etc.)
                 tag = s
         else:
@@ -1029,7 +1175,14 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
                 vid = _coerce_view_id_int(view_result.get("view_id", None))
                 if vid is not None:
                     view = doc.GetElement(ElementId(vid))
-            except Exception:
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="export",
+                        callsite="export_pipeline_to_csv",
+                        message="Exception in export_pipeline_to_csv: {}".format(e),
+                        exc=e,
+                    )
                 view = None
 
         from .core.raster import ViewRaster
@@ -1089,8 +1242,14 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
                                 "model_presence_mode": getattr(config, "model_presence_mode", "ink"),
                             },
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        if diag is not None:
+                            diag.error(
+                                phase="export",
+                                callsite="export_pipeline_to_csv",
+                                message="Exception in export_pipeline_to_csv: {}".format(e),
+                                exc=e,
+                            )
                 raise
 
         # External-cell metrics
@@ -1107,9 +1266,14 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
                             exc=e,
                             extra={"view_id": view_result.get("view_id", 0)},
                         )
-                    except Exception:
-                        pass
-
+                    except Exception as e:
+                        if diag is not None:
+                            diag.error(
+                                phase="export",
+                                callsite="export_pipeline_to_csv",
+                                message="Exception in export_pipeline_to_csv: {}".format(e),
+                                exc=e,
+                            )
         bounds_meta = raster_dict.get("bounds_meta") or {}
 
         cell_size_eff = raster_dict.get("cell_size_ft", 0.0)
@@ -1123,7 +1287,14 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
                 timings = view_result.get("timings", {}) or {}
                 total_ms = float(timings.get("total_ms", 0.0) or 0.0)
                 elapsed_sec = total_ms / 1000.0
-            except Exception:
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="export",
+                        callsite="export_pipeline_to_csv",
+                        message="Exception in export_pipeline_to_csv: {}".format(e),
+                        exc=e,
+                    )
                 elapsed_sec = float(view_result.get("elapsed_sec", 0.0) or 0.0)
 
         bounds_meta = raster_dict.get("bounds_meta") or {}
@@ -1153,16 +1324,28 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
         if view is not None:
             try:
                 view_metadata = extract_view_metadata(view, doc, diag=diag)
-            except Exception:
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="export",
+                        callsite="export_pipeline_to_csv",
+                        message="Exception in export_pipeline_to_csv: {}".format(e),
+                        exc=e,
+                    )
                 view_metadata = {}
 
         # Extract strategy_diag from view_result if available
         strategy_diag = None
         try:
             strategy_diag = view_result.get("strategy_diag")
-        except Exception:
-            pass
-
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="export",
+                    callsite="export_pipeline_to_csv",
+                    message="Exception in export_pipeline_to_csv: {}".format(e),
+                    exc=e,
+                )
         if view is not None:
             core_rows.append(build_core_csv_row(view, doc, metrics, config, run_info, view_metadata=view_metadata))
         vop_rows.append(build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metadata=view_metadata, diag=diag, strategy_diag=strategy_diag))
@@ -1191,8 +1374,14 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
                     exc=e,
                     extra={"output_dir": output_dir},
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="export",
+                        callsite="warn",
+                        message="Exception in warn: {}".format(e),
+                        exc=e,
+                    )
         raise
 
     return {"core_csv_path": core_path, "vop_csv_path": vop_path, "rows_exported": len(vop_rows)}
@@ -1275,7 +1464,7 @@ def view_result_to_core_row(view_result, config, doc, date_override=None, run_id
                         run_dt = datetime.strptime(s, "%Y-%m-%d")
                     else:
                         run_dt = datetime.fromisoformat(s)
-                except Exception:
+                except Exception as e:
                     tag = s
             else:
                 tag = str(date_override)
@@ -1293,7 +1482,7 @@ def view_result_to_core_row(view_result, config, doc, date_override=None, run_id
                         date_str = datetime.strptime(s, "%Y-%m-%d").strftime("%Y-%m-%d")
                     else:
                         date_str = datetime.fromisoformat(s).strftime("%Y-%m-%d")
-                except Exception:
+                except Exception as e:
                     date_str = datetime.now().strftime("%Y-%m-%d")
             else:
                 date_str = datetime.now().strftime("%Y-%m-%d")
@@ -1302,7 +1491,7 @@ def view_result_to_core_row(view_result, config, doc, date_override=None, run_id
             try:
                 date_part = run_id.split('_')[0].split('T')[0]
                 date_str = f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:8]}"
-            except Exception:
+            except Exception as e:
                 date_str = datetime.now().strftime("%Y-%m-%d")
  
     # Get view object (needed for metadata)
@@ -1313,7 +1502,7 @@ def view_result_to_core_row(view_result, config, doc, date_override=None, run_id
             vid = _coerce_view_id_int(view_result.get("view_id", None))
             if vid is not None:
                 view = doc.GetElement(ElementId(vid))
-        except Exception:
+        except Exception as e:
             view = None
     
     # Extract view metadata
@@ -1337,9 +1526,9 @@ def view_result_to_core_row(view_result, config, doc, date_override=None, run_id
             else:
                 # When perf timing collection is disabled, pipeline may omit timings; fall back to top-level elapsed.
                 elapsed_sec = float(view_result.get("elapsed_sec", 0.0) or 0.0)
-        except Exception:
-            pass
-    
+        except Exception as e:
+            # Exception in view_result_to_core_row - no diag in scope
+            pass  # TODO: Add diagnostics when diag becomes available
     row = {
         "Date": date_str,
         "RunId": run_id,
@@ -1402,7 +1591,7 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
                         run_dt = datetime.strptime(s, "%Y-%m-%d")
                     else:
                         run_dt = datetime.fromisoformat(s)
-                except Exception:
+                except Exception as e:
                     tag = s
             else:
                 tag = str(date_override)
@@ -1420,7 +1609,7 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
                         date_str = datetime.strptime(s, "%Y-%m-%d").strftime("%Y-%m-%d")
                     else:
                         date_str = datetime.fromisoformat(s).strftime("%Y-%m-%d")
-                except Exception:
+                except Exception as e:
                     date_str = datetime.now().strftime("%Y-%m-%d")
             else:
                 date_str = datetime.now().strftime("%Y-%m-%d")
@@ -1429,7 +1618,7 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
             try:
                 date_part = run_id.split('_')[0].split('T')[0]
                 date_str = f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:8]}"
-            except Exception:
+            except Exception as e:
                 date_str = datetime.now().strftime("%Y-%m-%d")
 
     if metrics_only:
@@ -1481,7 +1670,7 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
             vid = _coerce_view_id_int(view_result.get("view_id", None))
             if vid is not None:
                 view = doc.GetElement(ElementId(vid))
-        except Exception:
+        except Exception as e:
             view = None
     
     view_metadata = extract_view_metadata(view, doc) if view else {}
@@ -1494,9 +1683,9 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
         timings = view_result.get("timings", {})
         total_ms = timings.get("total_ms", 0.0)
         elapsed_sec = total_ms / 1000.0
-    except Exception:
-        pass
-    
+    except Exception as e:
+        # Exception in view_result_to_vop_row - no diag in scope
+        pass  # TODO: Add diagnostics when diag becomes available
     # FromCache flag (supports legacy + root)
     from_cache = "Y" if _is_from_cache(view_result) else "N"
 
@@ -1513,7 +1702,7 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
                     return ""
                 try:
                     s = str(v)
-                except Exception:
+                except Exception as e:
                     return ""
                 if s == "<MISSING_FROM_CACHE>":
                     return ""
@@ -1558,9 +1747,9 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
                     row["ViewType"] = _viewtype_name_from_value(row.get("ViewType"))
                 elif "view_type" in row:
                     row["ViewType"] = _viewtype_name_from_value(row.get("view_type"))
-            except Exception:
-                pass
-
+            except Exception as e:
+                # Exception in _blank_if_missing_token - no diag in scope
+                pass  # TODO: Add diagnostics when diag becomes available
             # Overwrite run-scoped fields
             row["Date"] = date_str
             row["RunId"] = run_id
@@ -1582,9 +1771,9 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
             else:
                 # When perf timing collection is disabled, pipeline may omit timings; fall back to top-level elapsed.
                 elapsed_sec = float(view_result.get("elapsed_sec", 0.0) or 0.0)
-        except Exception:
-            pass
-    
+        except Exception as e:
+            # Exception in _blank_if_missing_token - no diag in scope
+            pass  # TODO: Add diagnostics when diag becomes available
     bounds_meta = raster_dict.get("bounds_meta") or {}
 
     cell_size_ft = raster_dict.get("cell_size_ft", 0.0)
@@ -1661,7 +1850,7 @@ def view_result_to_perf_row(view_result, date_override=None, run_id=None):
                         run_dt = datetime.strptime(s, "%Y-%m-%d")
                     else:
                         run_dt = datetime.fromisoformat(s)
-                except Exception:
+                except Exception as e:
                     tag = s
             else:
                 tag = str(date_override)
@@ -1679,7 +1868,7 @@ def view_result_to_perf_row(view_result, date_override=None, run_id=None):
                         date_str = datetime.strptime(s, "%Y-%m-%d").strftime("%Y-%m-%d")
                     else:
                         date_str = datetime.fromisoformat(s).strftime("%Y-%m-%d")
-                except Exception:
+                except Exception as e:
                     date_str = datetime.now().strftime("%Y-%m-%d")
             else:
                 date_str = datetime.now().strftime("%Y-%m-%d")
@@ -1688,7 +1877,7 @@ def view_result_to_perf_row(view_result, date_override=None, run_id=None):
             try:
                 date_part = run_id.split('_')[0].split('T')[0]
                 date_str = f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:8]}"
-            except Exception:
+            except Exception as e:
                 date_str = datetime.now().strftime("%Y-%m-%d")
 
     timings = view_result.get("timings", {})

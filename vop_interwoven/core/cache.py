@@ -24,7 +24,7 @@ class LRUCache(object):
     def __init__(self, max_items=0):
         try:
             self.max_items = int(max_items)
-        except Exception:
+        except Exception as e:
             self.max_items = 0
         self._od = OrderedDict()
         self.hits = 0
@@ -46,7 +46,7 @@ class LRUCache(object):
                 return val
             self.misses += 1
             return default
-        except Exception:
+        except Exception as e:
             # Cache must never break callers.
             self.misses += 1
             return default
@@ -58,8 +58,9 @@ class LRUCache(object):
             if key in self._od:
                 try:
                     self._od.pop(key)
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Exception in set - no diag in scope
+                    pass  # TODO: Add diagnostics when diag becomes available
             self._od[key] = value
 
             # Evict LRU until size <= max_items
@@ -67,18 +68,17 @@ class LRUCache(object):
                 try:
                     self._od.popitem(last=False)
                     self.evictions += 1
-                except Exception:
+                except Exception as e:
                     break
-        except Exception:
+        except Exception as e:
             # Never crash on cache writes.
-            pass
 
     def clear(self):
         try:
             self._od.clear()
-        except Exception:
-            pass
-
+        except Exception as e:
+            # Exception in clear - no diag in scope
+            pass  # TODO: Add diagnostics when diag becomes available
     def stats(self):
         return {
             "max_items": self.max_items,

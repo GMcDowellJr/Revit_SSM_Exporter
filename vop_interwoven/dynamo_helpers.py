@@ -206,11 +206,12 @@ def filter_supported_views(views_input):
                 supported_ids.append(view_id)
             else:
                 skipped_info.append((view.Name, view.ViewType.ToString()))
-        except Exception:
+        except Exception as e:
             # Preserve behavior: treat as skipped/unknown without failing the whole filter.
             try:
                 name = view.Name
-            except Exception:
+            except Exception as e:
+                # Safe fallback: view.Name access failed, use placeholder
                 name = "<UnknownView>"
             skipped_info.append((name, "Unknown"))
 

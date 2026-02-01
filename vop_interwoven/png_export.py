@@ -67,7 +67,14 @@ def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_pro
                     iv = int(v)
                     if iv > 0:
                         return iv
-                except Exception:
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="export",
+                            callsite="_pick_int",
+                            message="Exception in _pick_int: {}".format(e),
+                            exc=e,
+                        )
                     continue
             return 0
 
@@ -99,7 +106,14 @@ def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_pro
                 model_presence_mode = cfg.get("model_presence_mode", None)
             else:
                 model_presence_mode = getattr(cfg, "model_presence_mode", None)
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="export",
+                    callsite="_pick_int",
+                    message="Exception in _pick_int: {}".format(e),
+                    exc=e,
+                )
             model_presence_mode = None
             
         # PR8: default PNG should visualize model ink (edge-only), not occlusion fills
@@ -116,7 +130,14 @@ def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_pro
                 png_render_channel = cfg.get("png_render_channel", None)
             else:
                 png_render_channel = getattr(cfg, "png_render_channel", None)
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="export",
+                    callsite="_pick_int",
+                    message="Exception in _pick_int: {}".format(e),
+                    exc=e,
+                )
             png_render_channel = None
 
         if png_render_channel:
@@ -361,10 +382,14 @@ def export_pipeline_results_to_pngs(pipeline_result, output_dir, pixels_per_cell
             try:
                 timings = view_data.setdefault("timings", {})
                 timings["png_ms"] = (t1 - t0) * 1000.0
-            except Exception:
-                pass
-
-
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="export",
+                        callsite="export_pipeline_results_to_pngs",
+                        message="Exception in export_pipeline_results_to_pngs: {}".format(e),
+                        exc=e,
+                    )
             if png_path:
                 saved_files.append(png_path)
                 print(f"Saved: {png_path}")

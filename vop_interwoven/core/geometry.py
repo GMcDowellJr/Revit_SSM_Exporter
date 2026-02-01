@@ -32,21 +32,21 @@ def _mesh_vertex_count(mesh):
         if verts is not None:
             try:
                 return len(verts)
-            except Exception:
+            except Exception as e:
                 # Some Revit collections expose Size instead of __len__
                 size = getattr(verts, "Size", None)
                 if isinstance(size, int):
                     return size
-    except Exception:
-        pass
-
+    except Exception as e:
+        # Exception in _mesh_vertex_count - no diag in scope
+        pass  # TODO: Add diagnostics when diag becomes available
     try:
         n = getattr(mesh, "NumVertices", None)
         if isinstance(n, int):
             return n
-    except Exception:
-        pass
-
+    except Exception as e:
+        # Exception in _mesh_vertex_count - no diag in scope
+        pass  # TODO: Add diagnostics when diag becomes available
     return 0
     
 def tier_a_is_ambiguous(minor_cells, aabb_area_cells, grid_area, cell_size_world, cfg):

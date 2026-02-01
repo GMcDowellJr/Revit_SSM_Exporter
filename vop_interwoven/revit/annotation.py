@@ -27,9 +27,9 @@ def is_extent_driver_annotation(elem):
             from Autodesk.Revit.DB import TextNote, Dimension, IndependentTag
             if isinstance(elem, (TextNote, Dimension, IndependentTag)):
                 return True
-        except Exception:
-            pass
-
+        except Exception as e:
+            # Exception in is_extent_driver_annotation - no diag in scope
+            pass  # TODO: Add diagnostics when diag becomes available
         cat = getattr(elem, "Category", None)
         if cat is None or getattr(cat, "Id", None) is None:
             return False
@@ -66,12 +66,13 @@ def is_extent_driver_annotation(elem):
                     driver_cats.append(int(getattr(BuiltInCategory, n)))
 
             return cat_id in set(driver_cats)
-        except Exception:
+        except Exception as e:
             # Last-resort fallback (keep prior behavior, but only as a final fallback)
             name = ""
             try:
                 name = (cat.Name or "").lower()
-            except Exception:
+            except Exception as e:
+                # Safe fallback: cat.Name access failed, use empty string
                 name = ""
             return ("tag" in name) or ("dimension" in name) or ("text" in name)
 
@@ -147,7 +148,14 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
     if cfg and hasattr(cfg, 'anno_expand_cap_in'):
         try:
             cap_in_printed = float(cfg.anno_expand_cap_in)
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="annotation",
+                    callsite="compute_annotation_extents",
+                    message="Exception in compute_annotation_extents: {}".format(e),
+                    exc=e,
+                )
             cap_in_printed = None
 
     # Back-compat: treat existing cfg.anno_expand_cap_cells as printed inches
@@ -155,7 +163,14 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
     if cap_in_printed is None:
         try:
             cap_in_printed = float(hard_cap_cells)
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="annotation",
+                    callsite="compute_annotation_extents",
+                    message="Exception in compute_annotation_extents: {}".format(e),
+                    exc=e,
+                )
             cap_in_printed = 0.0
 
     cap_ft = (cap_in_printed / 12.0) * float(scale)
@@ -191,9 +206,14 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
                     "allow_bounds_xy": (allow_min_x, allow_min_y, allow_max_x, allow_max_y),
                 },
             )
-        except Exception:
-            pass
-
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="annotation",
+                    callsite="compute_annotation_extents",
+                    message="Exception in compute_annotation_extents: {}".format(e),
+                    exc=e,
+                )
     if not driver_annotations:
         return None
 
@@ -214,7 +234,14 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
                 if cat is not None:
                     try:
                         cid = int(cat.Id.IntegerValue)
-                    except Exception:
+                    except Exception as e:
+                        if diag is not None:
+                            diag.error(
+                                phase="annotation",
+                                callsite="compute_annotation_extents",
+                                message="Exception in compute_annotation_extents: {}".format(e),
+                                exc=e,
+                            )
                         cid = None
                 diag.info(
                     phase="annotation",
@@ -224,8 +251,14 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
                     elem_id=getattr(getattr(elem, "Id", None), "IntegerValue", None),
                     extra={"anno_type": anno_type, "cat_name": cname, "cat_id": cid},
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="annotation",
+                        callsite="compute_annotation_extents",
+                        message="Exception in compute_annotation_extents: {}".format(e),
+                        exc=e,
+                    )
             sample_count += 1
 
         try:
@@ -273,7 +306,14 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
             if TB is not None:
                 try:
                     pts_to_check.extend([TB.OfPoint(p) for p in corners_local])
-                except Exception:
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="annotation",
+                            callsite="compute_annotation_extents",
+                            message="Exception in compute_annotation_extents: {}".format(e),
+                            exc=e,
+                        )
                     pts_to_check.extend(corners_local)
             else:
                 pts_to_check.extend(corners_local)
@@ -322,9 +362,14 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
                                     "base_bounds_xy": (base_bounds_xy.xmin, base_bounds_xy.ymin, base_bounds_xy.xmax, base_bounds_xy.ymax),
                                 },
                             )
-                    except Exception:
-                        pass
-
+                    except Exception as e:
+                        if diag is not None:
+                            diag.error(
+                                phase="annotation",
+                                callsite="compute_annotation_extents",
+                                message="Exception in compute_annotation_extents: {}".format(e),
+                                exc=e,
+                            )
         except Exception as e:
             if diag is not None:
                 try:
@@ -336,8 +381,14 @@ def compute_annotation_extents(doc, view, view_basis, base_bounds_xy, cell_size_
                         elem_id=getattr(getattr(elem, "Id", None), "IntegerValue", None),
                         extra={"exc_type": type(e).__name__, "exc": str(e)},
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="annotation",
+                            callsite="compute_annotation_extents",
+                            message="Exception in compute_annotation_extents: {}".format(e),
+                            exc=e,
+                        )
             continue
 
 
@@ -424,14 +475,25 @@ def collect_2d_annotations(doc, view, diag=None):
                     extra=extra or {},
                 )
                 return
-            except Exception:
-                pass
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="annotation",
+                        callsite="_diag_info",
+                        message="Exception in _diag_info: {}".format(e),
+                        exc=e,
+                    )
         # Fallback: print
         try:
             print("[INFO] annotation.{0}: {1} {2}".format(callsite, message, extra or {}))
-        except Exception:
-            pass
-
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="annotation",
+                    callsite="_diag_info",
+                    message="Exception in _diag_info: {}".format(e),
+                    exc=e,
+                )
     # Helper to safely collect category
     def collect_category(built_in_cat, anno_type_override=None, label=None):
         """Collect elements from a category and classify them."""
@@ -461,7 +523,14 @@ def collect_2d_annotations(doc, view, diag=None):
                         anno_type = "REGION"
                     else:
                         anno_type = None
-                except Exception:
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="annotation",
+                            callsite="collect_category",
+                            message="Exception in collect_category: {}".format(e),
+                            exc=e,
+                        )
                     anno_type = None
 
                 # Classify the element
@@ -476,16 +545,27 @@ def collect_2d_annotations(doc, view, diag=None):
                 # Diag counts
                 try:
                     type_counts[anno_type] = type_counts.get(anno_type, 0) + 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="annotation",
+                            callsite="collect_category",
+                            message="Exception in collect_category: {}".format(e),
+                            exc=e,
+                        )
                 try:
                     cat = getattr(elem, "Category", None)
                     cname = getattr(cat, "Name", None) if cat is not None else None
                     key = label or cname or str(built_in_cat)
                     cat_counts[key] = cat_counts.get(key, 0) + 1
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="annotation",
+                            callsite="collect_category",
+                            message="Exception in collect_category: {}".format(e),
+                            exc=e,
+                        )
         except Exception as e:
             if diag is not None:
                 try:
@@ -497,9 +577,14 @@ def collect_2d_annotations(doc, view, diag=None):
                         extra={"category": str(built_in_cat), "exc_type": type(e).__name__, "exc": str(e)},
                     )
                     return
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="annotation",
+                            callsite="collect_category",
+                            message="Exception in collect_category: {}".format(e),
+                            exc=e,
+                        )
             print(
                 f"[WARN] revit.annotation:collector failed "
                 f"(view_id={getattr(view,'Id',None)}, cat={built_in_cat}) "
@@ -557,13 +642,24 @@ def collect_2d_annotations(doc, view, diag=None):
 
                 try:
                     type_counts[anno_type] = type_counts.get(anno_type, 0) + 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="annotation",
+                            callsite="collect_category",
+                            message="Exception in collect_category: {}".format(e),
+                            exc=e,
+                        )
                 try:
                     cat_counts["OST_KeynoteTags"] = cat_counts.get("OST_KeynoteTags", 0) + 1
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="annotation",
+                            callsite="collect_category",
+                            message="Exception in collect_category: {}".format(e),
+                            exc=e,
+                        )
         except Exception as e:
             if diag is not None:
                 try:
@@ -574,8 +670,14 @@ def collect_2d_annotations(doc, view, diag=None):
                         view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
                         extra={"exc_type": type(e).__name__, "exc": str(e)},
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="annotation",
+                            callsite="collect_category",
+                            message="Exception in collect_category: {}".format(e),
+                            exc=e,
+                        )
             else:
                 print(
                     f"[WARN] revit.annotation:keynote collector failed "
@@ -618,9 +720,9 @@ def classify_annotation(elem):
         from Autodesk.Revit.DB import FilledRegion
         if isinstance(elem, FilledRegion):
             return "REGION"
-    except Exception:
-        pass
-
+    except Exception as e:
+        # Exception in classify_annotation - no diag in scope
+        pass  # TODO: Add diagnostics when diag becomes available
     try:
         category = elem.Category
         if category is None:
@@ -764,7 +866,14 @@ def rasterize_annotations(doc, view, raster, cfg, diag=None):
     view_id = None
     try:
         view_id = getattr(getattr(view, "Id", None), "IntegerValue", None)
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="annotation",
+                callsite="rasterize_annotations",
+                message="Exception in rasterize_annotations: {}".format(e),
+                exc=e,
+            )
         view_id = None
 
     # Collect all annotations
@@ -786,9 +895,14 @@ def rasterize_annotations(doc, view, raster, cfg, diag=None):
                 view_id=view_id,
                 extra={"total": len(annotations), "region_count": region_count, "region_elem_ids_sample": region_samples},
             )
-        except Exception:
-            pass
-
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="annotation",
+                    callsite="rasterize_annotations",
+                    message="Exception in rasterize_annotations: {}".format(e),
+                    exc=e,
+                )
     if not annotations:
         return
 
@@ -807,7 +921,14 @@ def rasterize_annotations(doc, view, raster, cfg, diag=None):
         elem_id = None
         try:
             elem_id = getattr(getattr(elem, "Id", None), "IntegerValue", None)
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="annotation",
+                    callsite="rasterize_annotations",
+                    message="Exception in rasterize_annotations: {}".format(e),
+                    exc=e,
+                )
             elem_id = None
 
         bbox = get_annotation_bbox(elem, view)
@@ -827,7 +948,14 @@ def rasterize_annotations(doc, view, raster, cfg, diag=None):
                 cat = getattr(elem, "Category", None)
                 if cat is not None and getattr(cat, "Id", None) is not None:
                     cat_id = int(cat.Id.IntegerValue)
-            except Exception:
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="annotation",
+                        callsite="rasterize_annotations",
+                        message="Exception in rasterize_annotations: {}".format(e),
+                        exc=e,
+                    )
                 cat_id = None
 
             raster.anno_meta.append({
@@ -846,7 +974,14 @@ def rasterize_annotations(doc, view, raster, cfg, diag=None):
                     if cat is not None:
                         try:
                             cid = int(cat.Id.IntegerValue)
-                        except Exception:
+                        except Exception as e:
+                            if diag is not None:
+                                diag.error(
+                                    phase="annotation",
+                                    callsite="rasterize_annotations",
+                                    message="Exception in rasterize_annotations: {}".format(e),
+                                    exc=e,
+                                )
                             cid = None
 
                     stored_type = raster.anno_meta[anno_idx].get("type") if anno_idx < len(raster.anno_meta) else None
@@ -865,9 +1000,14 @@ def rasterize_annotations(doc, view, raster, cfg, diag=None):
                                 "anno_idx": anno_idx,
                             },
                         )
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="annotation",
+                            callsite="rasterize_annotations",
+                            message="Exception in rasterize_annotations: {}".format(e),
+                            exc=e,
+                        )
             # Stamping strategy:
             # - DIM: stamp dimension curve as a thin line (no filled bbox)
             # - TEXT/TAG/LINES: stamp bbox outline (lightweight)
@@ -910,10 +1050,22 @@ def rasterize_annotations(doc, view, raster, cfg, diag=None):
                                             "cell1": (cx1, cy1),
                                         },
                                     )
-                                except Exception:
-                                    pass
-
-                except Exception:
+                                except Exception as e:
+                                    if diag is not None:
+                                        diag.error(
+                                            phase="annotation",
+                                            callsite="rasterize_annotations",
+                                            message="Exception in rasterize_annotations: {}".format(e),
+                                            exc=e,
+                                        )
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="annotation",
+                            callsite="rasterize_annotations",
+                            message="Exception in rasterize_annotations: {}".format(e),
+                            exc=e,
+                        )
                     stamped = False
 
                 if not stamped:
@@ -930,9 +1082,14 @@ def rasterize_annotations(doc, view, raster, cfg, diag=None):
                                     "cell_rect": (cell_rect.x0, cell_rect.y0, cell_rect.x1, cell_rect.y1),
                                 },
                             )
-                        except Exception:
-                            pass
-
+                        except Exception as e:
+                            if diag is not None:
+                                diag.error(
+                                    phase="annotation",
+                                    callsite="rasterize_annotations",
+                                    message="Exception in rasterize_annotations: {}".format(e),
+                                    exc=e,
+                                )
                     # Fallback: outline bbox (still not filled)
                     _stamp_rect_outline(raster, cell_rect, anno_idx)
 
@@ -1004,10 +1161,22 @@ def rasterize_annotations(doc, view, raster, cfg, diag=None):
                                             "cell1": (cx1, cy1),
                                         },
                                     )
-                                except Exception:
-                                    pass
-
-                except Exception:
+                                except Exception as e:
+                                    if diag is not None:
+                                        diag.error(
+                                            phase="annotation",
+                                            callsite="rasterize_annotations",
+                                            message="Exception in rasterize_annotations: {}".format(e),
+                                            exc=e,
+                                        )
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="annotation",
+                            callsite="rasterize_annotations",
+                            message="Exception in rasterize_annotations: {}".format(e),
+                            exc=e,
+                        )
                     stamped = False
 
                 # Fallback: if curve extraction failed, use bbox outline
@@ -1024,9 +1193,14 @@ def rasterize_annotations(doc, view, raster, cfg, diag=None):
                                     "cell_rect": (cell_rect.x0, cell_rect.y0, cell_rect.x1, cell_rect.y1),
                                 },
                             )
-                        except Exception:
-                            pass
-
+                        except Exception as e:
+                            if diag is not None:
+                                diag.error(
+                                    phase="annotation",
+                                    callsite="rasterize_annotations",
+                                    message="Exception in rasterize_annotations: {}".format(e),
+                                    exc=e,
+                                )
                     _stamp_rect_outline(raster, cell_rect, anno_idx)
 
             # DETAIL/REGION: keep legacy fill unless you want otherwise
@@ -1103,9 +1277,14 @@ def rasterize_annotations(doc, view, raster, cfg, diag=None):
                     "H": int(getattr(raster, "H", 0)),
                 },
             )
-        except Exception:
-            pass
- 
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="annotation",
+                    callsite="rasterize_annotations",
+                    message="Exception in rasterize_annotations: {}".format(e),
+                    exc=e,
+                )
 def _stamp_detail_line_band(raster, cx0, cy0, cx1, cy1, anno_idx, cfg):
     """
     Stamp detail line as oriented band (2-cell-wide rectangle along line tangent).
