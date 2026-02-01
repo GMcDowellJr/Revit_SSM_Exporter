@@ -180,7 +180,7 @@ def _fix_loop_points_uv(points_uv, tol_ft):
                 out[-1] = (float(u0), float(v0))
 
         return out
-    except Exception:
+    except Exception as e:
         return list(points_uv) if points_uv else []
 
 
@@ -585,7 +585,7 @@ class ViewRaster:
                     self.w_occ_key[idx] = int(key_index)
                 else:
                     self.w_occ_key[idx] = -1
-            except Exception:
+            except Exception as e:
                 self.w_occ_key[idx] = -1
 
             self.model_mask[idx] = True
@@ -610,9 +610,9 @@ class ViewRaster:
                 try:
                     if 0 <= key_index < len(self.element_meta):
                         self.element_meta[key_index]["occlusion_cells"] += 1
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    # Exception in try_write_cell - no diag in scope
+                    pass  # TODO: Add diagnostics when diag becomes available
             self.depth_test_wins += 1
             return True
 
@@ -710,9 +710,14 @@ class ViewRaster:
             print("[diag][raster] model_occ={0} model_edge={1} model_proxy={2} anno={3} overlap={4} W={5} H={6}".format(
                 n_model_occ, n_model_edge, n_model_proxy, n_anno, n_overlap, self.W, self.H
             ))
-        except Exception:
-            pass
-
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="rasterization",
+                    callsite="finalize_anno_over_model",
+                    message="Exception in finalize_anno_over_model: {}".format(e),
+                    exc=e,
+                )
     def stamp_model_edge_idx(self, idx, key_index, depth=0.0):
         """Stamp a model ink edge cell (edge-only occupancy), with depth visibility check."""
         if idx is None or not (0 <= idx < len(self.model_edge_key)):
@@ -740,8 +745,14 @@ class ViewRaster:
                 try:
                     if 0 <= key_index < len(self.element_meta):
                         self.element_meta[key_index]["model_edge_cells"] += 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="rasterization",
+                            callsite="stamp_model_edge_idx",
+                            message="Exception in stamp_model_edge_idx: {}".format(e),
+                            exc=e,
+                        )
             return True
         return False
 
@@ -764,8 +775,14 @@ class ViewRaster:
                 try:
                     if 0 <= key_index < len(self.element_meta):
                         self.element_meta[key_index]["proxy_edge_cells"] += 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="rasterization",
+                            callsite="stamp_proxy_edge_idx",
+                            message="Exception in stamp_proxy_edge_idx: {}".format(e),
+                            exc=e,
+                        )
             return True
         return False
 
@@ -1246,7 +1263,14 @@ class ViewRaster:
                     meta = em[int(key_index)]
             elem_id_dbg = meta.get("elem_id") if isinstance(meta, dict) else None
             cat_dbg = meta.get("category") if isinstance(meta, dict) else None
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="rasterization",
+                    callsite="rasterize_silhouette_loops",
+                    message="Exception in rasterize_silhouette_loops: {}".format(e),
+                    exc=e,
+                )
             elem_id_dbg = None
             cat_dbg = None
 
@@ -1303,7 +1327,14 @@ class ViewRaster:
                     k = -1
                     try:
                         k = int(self.w_occ_key[idx])
-                    except Exception:
+                    except Exception as e:
+                        if diag is not None:
+                            diag.error(
+                                phase="rasterization",
+                                callsite="rasterize_silhouette_loops",
+                                message="Exception in rasterize_silhouette_loops: {}".format(e),
+                                exc=e,
+                            )
                         k = -1
                     counts[k] = counts.get(k, 0) + 1
                     samples += 1
@@ -1321,7 +1352,14 @@ class ViewRaster:
                             elif isinstance(em, list):
                                 if 0 <= k < len(em):
                                     meta = em[k]
-                    except Exception:
+                    except Exception as e:
+                        if diag is not None:
+                            diag.error(
+                                phase="rasterization",
+                                callsite="rasterize_silhouette_loops",
+                                message="Exception in rasterize_silhouette_loops: {}".format(e),
+                                exc=e,
+                            )
                         meta = None
 
                     top_pretty.append(
@@ -1345,12 +1383,22 @@ class ViewRaster:
                         depths.append(float(self.w_occ[idx]))
                     if depths:
                         print(f"thin_runner: [DEBUG] silhouette w_occ in target: min={min(depths)} max={max(depths)} floor_depth={depth}")
-                except Exception:
-                    pass
-
-            except Exception:
-                pass
-
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="rasterization",
+                            callsite="rasterize_silhouette_loops",
+                            message="Exception in rasterize_silhouette_loops: {}".format(e),
+                            exc=e,
+                        )
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="rasterization",
+                        callsite="rasterize_silhouette_loops",
+                        message="Exception in rasterize_silhouette_loops: {}".format(e),
+                        exc=e,
+                    )
         # Only stamp edges if any interior cells were actually written.
         # This prevents "L + rect" when the pipeline falls through to bbox.
         if filled > 0:
@@ -1367,9 +1415,14 @@ class ViewRaster:
                         if occlude_edges:
                             try:
                                 self.try_write_cell(i, j, w_depth=depth, source=source, key_index=key_index)
-                            except Exception:
-                                pass
-
+                            except Exception as e:
+                                if diag is not None:
+                                    diag.error(
+                                        phase="rasterization",
+                                        callsite="rasterize_silhouette_loops",
+                                        message="Exception in rasterize_silhouette_loops: {}".format(e),
+                                        exc=e,
+                                    )
                         self.stamp_model_edge_idx(idx, key_index, depth=depth)
 
         return filled
@@ -1410,7 +1463,14 @@ class ViewRaster:
                     if (j0 < j <= j1) or (j1 < j <= j0):
                         try:
                             t = float(j - j0) / float(j1 - j0)
-                        except Exception:
+                        except Exception as e:
+                            if diag is not None:
+                                diag.error(
+                                    phase="rasterization",
+                                    callsite="_scanline_cells",
+                                    message="Exception in _scanline_cells: {}".format(e),
+                                    exc=e,
+                                )
                             continue
                         i_intersect = float(i0 + t * (i1 - i0))
                         intersections.append(i_intersect)
@@ -1427,7 +1487,14 @@ class ViewRaster:
                         import math
                         x_left = float(intersections[k])
                         x_right = float(intersections[k + 1])
-                    except Exception:
+                    except Exception as e:
+                        if diag is not None:
+                            diag.error(
+                                phase="rasterization",
+                                callsite="_scanline_cells",
+                                message="Exception in _scanline_cells: {}".format(e),
+                                exc=e,
+                            )
                         continue
 
                     if x_right < x_left:
@@ -1444,7 +1511,14 @@ class ViewRaster:
                             filled.add((i, j))
 
             return filled
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="rasterization",
+                    callsite="_scanline_cells",
+                    message="Exception in _scanline_cells: {}".format(e),
+                    exc=e,
+                )
             return set()
 
     def _scanline_fill(self, points_ij, key_index, depth, source):
@@ -1491,7 +1565,14 @@ class ViewRaster:
                 if (j0 < j <= j1) or (j1 < j <= j0):
                     try:
                         t = float(j - j0) / float(j1 - j0)
-                    except Exception:
+                    except Exception as e:
+                        if diag is not None:
+                            diag.error(
+                                phase="rasterization",
+                                callsite="_scanline_fill",
+                                message="Exception in _scanline_fill: {}".format(e),
+                                exc=e,
+                            )
                         continue
                     i_intersect = float(i0 + t * (i1 - i0))
                     intersections.append(i_intersect)
@@ -1509,7 +1590,14 @@ class ViewRaster:
                     import math
                     x_left = float(intersections[k])
                     x_right = float(intersections[k + 1])
-                except Exception:
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="rasterization",
+                            callsite="_scanline_fill",
+                            message="Exception in _scanline_fill: {}".format(e),
+                            exc=e,
+                        )
                     continue
 
                 if x_right < x_left:
@@ -1523,7 +1611,9 @@ class ViewRaster:
 
                 for i in range(i_start, i_end + 1):
                     if self._is_valid_cell(i, j):
-                        filled.add((i, j))
+                        # Use try_write_cell for depth-tested occlusion
+                        if self.try_write_cell(i, j, w_depth=depth, source=source, key_index=key_index):
+                            filled += 1
 
         return filled
 
@@ -1703,9 +1793,14 @@ class ViewRaster:
         if bm is not None:
             try:
                 r.bounds_meta = bm
-            except Exception:
-                pass
-
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="rasterization",
+                        callsite="from_dict",
+                        message="Exception in from_dict: {}".format(e),
+                        exc=e,
+                    )
         # w_occ uses None as sentinel for +inf in JSON
         w_occ_in = d.get("w_occ") or []
         if w_occ_in:
@@ -1780,7 +1875,14 @@ class ViewRaster:
                     "anno_cells": sum(1 for k in self.anno_key if k != -1),
                     "overlap_cells": sum(1 for b in self.anno_over_model if b),
                 }
-            except Exception:
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="rasterization",
+                        callsite="to_debug_dict",
+                        message="Exception in to_debug_dict: {}".format(e),
+                        exc=e,
+                    )
                 out["counts"] = None
 
         return out
