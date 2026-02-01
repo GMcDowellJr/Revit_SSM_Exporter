@@ -145,8 +145,6 @@
 - `OBB.__repr__` (method, L237)
 - `make_uv_aabb` (function, L241)
 - `make_obb_or_skinny_aabb` (function, L267)
-- `mark_rect_center_cell` (function, L333)
-- `mark_thin_band_along_long_axis` (function, L356)
 
 ### `core/hull.py`
 
@@ -413,12 +411,11 @@
 - `_bin_elements_to_tiles` (function, L2533)
 - `_tile_has_depth_conflict` (function, L2565)
 - `_get_ambiguous_tiles` (function, L2599)
-- `_render_areal_element` (function, L2629)
-- `_render_proxy_element` (function, L2644)
-- `_stamp_proxy_edges` (function, L2669)
-- `_mark_rect_center_cell` (function, L2682)
-- `_mark_thin_band_along_long_axis` (function, L2690)
-- `export_view_raster` (function, L2710)
+- `_render_proxy_element` (function, L2629)
+- `_stamp_proxy_edges` (function, L2654)
+- `_mark_rect_center_cell` (function, L2671)
+- `_mark_thin_band_along_long_axis` (function, L2679)
+- `export_view_raster` (function, L2697)
 
 ### `png_export.py`
 
@@ -457,17 +454,17 @@
 - `resolve_element_bbox` (function, L10)
 - `collect_view_elements` (function, L64)
 - `is_element_visible_in_view` (function, L266)
-- `expand_host_link_import_model_elements` (function, L294)
-- `sort_front_to_back` (function, L438)
-- `estimate_nearest_depth_from_bbox` (function, L456)
-- `estimate_depth_from_loops_or_bbox` (function, L524)
-- `estimate_depth_range_from_bbox` (function, L552)
-- `_project_element_bbox_to_cell_rect` (function, L626)
-- `_get_element_category_name` (function, L770)
-- `_diagnose_coordinate_spaces` (function, L789)
-- `_extract_geometry_footprint_uv` (function, L1016)
-- `get_element_obb_loops` (function, L1243)
-- `_pca_obb_uv` (function, L1465)
+- `expand_host_link_import_model_elements` (function, L290)
+- `sort_front_to_back` (function, L434)
+- `estimate_nearest_depth_from_bbox` (function, L452)
+- `estimate_depth_from_loops_or_bbox` (function, L520)
+- `estimate_depth_range_from_bbox` (function, L548)
+- `_project_element_bbox_to_cell_rect` (function, L622)
+- `_get_element_category_name` (function, L766)
+- `_diagnose_coordinate_spaces` (function, L785)
+- `_extract_geometry_footprint_uv` (function, L1012)
+- `get_element_obb_loops` (function, L1239)
+- `_pca_obb_uv` (function, L1461)
 
 ### `revit/collection_policy.py`
 

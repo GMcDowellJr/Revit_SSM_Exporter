@@ -264,30 +264,26 @@ def collect_view_elements(doc, view, raster, diag=None, cfg=None):
 
 
 def is_element_visible_in_view(elem, view):
-    """Check if element is visible in view (respects view settings).
+    """Check if element is visible in view.
+
+    NOTE: Currently uses permissive/optimistic mode - returns True for all elements.
+    This allows the pipeline to collect all elements and rely on Revit's built-in
+    visibility filtering through FilteredElementCollector(doc, view.Id).
+
+    Future enhancement: Add explicit visibility checks for:
+    - elem.IsHidden(view)
+    - view.GetCategoryHidden(category.Id)
+    - View template visibility overrides
 
     Args:
         elem: Revit Element
         view: Revit View
 
     Returns:
-        True if element is visible in view
-
-    Commentary:
-        ✔ Checks element visibility settings (IsHidden, Category visibility, etc.)
-        ✔ Respects view template visibility overrides
-        ✔ Does NOT check geometry occlusion (that's done in the pipeline)
-        ⚠ This is a placeholder - full implementation requires Revit API
-
-    Example (with actual Revit API):
-        >>> # if elem.IsHidden(view):
-        >>> #     return False
-        >>> # category = elem.Category
-        >>> # if not view.GetCategoryHidden(category.Id):
-        >>> #     return True
+        True (always - permissive mode)
     """
-    # TODO: Implement actual Revit visibility check
-    # Placeholder: return True (optimistic)
+    # Permissive mode: let FilteredElementCollector handle visibility filtering
+    # Production impact: LOW - Revit API collector already filters by view visibility
     return True
 
 
