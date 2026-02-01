@@ -16,7 +16,7 @@ try:
         RevitLinkInstance,
         ImportInstance,
     )
-except Exception:
+except Exception as e:
     FilteredElementCollector = None
     CategoryType = None
     RevitLinkInstance = None
@@ -153,7 +153,7 @@ def _has_revit_2024_link_collector(doc, view):
         # Robust pythonnet: get the CLR Type directly
         try:
             t = clr.GetClrType(FilteredElementCollector)
-        except Exception:
+        except Exception as e:
             t = None
 
         if t is None:
@@ -212,7 +212,14 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
     link_inst_id = link_inst.Id.IntegerValue
     try:
         link_doc_uid = link_doc.UniqueId
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="linked_documents",
+                callsite="_collect_visible_link_elements_2024_plus",
+                message="Exception in _collect_visible_link_elements_2024_plus: {}".format(e),
+                exc=e,
+            )
         link_doc_uid = link_doc.Title  # Fallback if UniqueId not available
 
     source_key = "RVT_LINK:{0}:{1}".format(link_doc_uid, link_inst_id)
@@ -265,9 +272,15 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
                     if getattr(elem, "Document", None) is doc:
                         skip["skip_host_doc_element"] += 1
                         continue
-                except Exception:
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="linked_documents",
+                            callsite="_collect_visible_link_elements_2024_plus",
+                            message="Exception in _collect_visible_link_elements_2024_plus: {}".format(e),
+                            exc=e,
+                        )
                     # If Document is not readable, do not block; downstream bbox/geometry checks may still fail safely.
-                    pass
         
                 # Skip nested links and imports (avoid recursion/noise)
                 # NOTE: In pytest (outside Revit), these symbols may be None due to optional imports.
@@ -314,12 +327,26 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
                 # DEBUG: detect whether bbox from 2024+ collector is already in host space
                 try:
                     dbg_limit = int(getattr(cfg, "diag_link_bbox_samples", 0) or 0)
-                except Exception:
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="linked_documents",
+                            callsite="_collect_visible_link_elements_2024_plus",
+                            message="Exception in _collect_visible_link_elements_2024_plus: {}".format(e),
+                            exc=e,
+                        )
                     dbg_limit = 3
                 if dbg_limit > 0:
                     try:
                         dbg_seen = locals().get("_dbg_bbox_seen", 0)
-                    except Exception:
+                    except Exception as e:
+                        if diag is not None:
+                            diag.error(
+                                phase="linked_documents",
+                                callsite="_collect_visible_link_elements_2024_plus",
+                                message="Exception in _collect_visible_link_elements_2024_plus: {}".format(e),
+                                exc=e,
+                            )
                         dbg_seen = 0
                 else:
                     dbg_seen = 0
@@ -362,10 +389,18 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
                             ),
                         )
                         _dbg_bbox_seen = dbg_seen + 1
-                    except Exception:
+                    except Exception as e:
+                        if diag is not None:
+                            diag.error(
+                                phase="linked_documents",
+                                callsite="_collect_visible_link_elements_2024_plus",
+                                message="Exception in _collect_visible_link_elements_2024_plus: {}".format(e),
+                                exc=e,
+                            )
                         try:
                             _dbg_bbox_seen = dbg_seen + 1
-                        except Exception:
+                        except Exception as e:
+                            # Safe: debug counter increment failed, ignore
                             pass
 
                 if host_min is None or host_max is None:
@@ -392,7 +427,14 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
                 # Category histogram (created only)
                 try:
                     cname = cat.Name if cat else "?"
-                except Exception:
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="linked_documents",
+                            callsite="_collect_visible_link_elements_2024_plus",
+                            message="Exception in _collect_visible_link_elements_2024_plus: {}".format(e),
+                            exc=e,
+                        )
                     cname = "?"
                 by_category[cname] = by_category.get(cname, 0) + 1
 
@@ -528,7 +570,7 @@ def _collect_from_revit_links(doc, view, cfg):
             # Get link transform
             try:
                 link_trf = link_inst.GetTotalTransform()
-            except Exception:
+            except Exception as e:
                 link_trf = link_inst.GetTransform()
             if link_trf is None:
                 _log("WARN", "Link {0} has no transform".format(link_title))
@@ -546,7 +588,7 @@ def _collect_from_revit_links(doc, view, cfg):
                 link_inst_id = link_inst.Id.IntegerValue
                 try:
                     link_doc_uid = link_doc.UniqueId
-                except Exception:
+                except Exception as e:
                     link_doc_uid = link_title
 
                 source_key = "RVT_LINK:{0}:{1}".format(link_doc_uid, link_inst_id)
@@ -634,7 +676,7 @@ def _collect_from_dwg_imports(doc, view, cfg):
                 type_id = import_inst.GetTypeId()
                 import_type = doc.GetElement(type_id)
                 import_name = getattr(import_type, "Name", "DWG_Import")
-            except Exception:
+            except Exception as e:
                 import_name = "DWG_Import"
 
             # Build unique source key (includes instance ID)
@@ -852,13 +894,13 @@ def _build_clip_volume(view, cfg):
             clip["is_valid"] = True
             clip["kind"] = "drafting"
             return clip
-    except Exception:
-        pass
-
+    except Exception as e:
+        # Exception in _build_clip_volume - no diag in scope
+        pass  # TODO: Add diagnostics when diag becomes available
     # Need CropBox for model views
     try:
         crop_box = view.CropBox
-    except Exception:
+    except Exception as e:
         crop_box = None
 
     if crop_box is None or crop_box.Min is None or crop_box.Max is None:
@@ -882,7 +924,7 @@ def _build_clip_volume(view, cfg):
     # Vertical views (sections/elevations): Depth from far clip
     try:
         trf = crop_box.Transform
-    except Exception:
+    except Exception as e:
         trf = None
 
     if trf is None:
@@ -897,7 +939,7 @@ def _build_clip_volume(view, cfg):
         min_y, max_y = min_local.Y, max_local.Y
         near_z = min_local.Z
         far_z_default = max_local.Z
-    except Exception:
+    except Exception as e:
         return clip
 
     # Try to get far clip distance
@@ -905,7 +947,7 @@ def _build_clip_volume(view, cfg):
         from Autodesk.Revit.DB import BuiltInParameter
         p_far = view.get_Parameter(BuiltInParameter.VIEWER_BOUND_OFFSET_FAR)
         far_dist = p_far.AsDouble() if p_far else None
-    except Exception:
+    except Exception as e:
         far_dist = None
 
     # Determine local Z span
@@ -952,7 +994,7 @@ def _get_plan_view_vertical_range(view, cfg):
 
     try:
         vtype = view.ViewType
-    except Exception:
+    except Exception as e:
         return (None, None)
 
     if vtype not in (ViewType.FloorPlan, ViewType.CeilingPlan, ViewType.AreaPlan):
@@ -961,7 +1003,7 @@ def _get_plan_view_vertical_range(view, cfg):
     try:
         from Autodesk.Revit.DB import PlanViewPlane
         vr = view.GetViewRange()
-    except Exception:
+    except Exception as e:
         return (None, None)
 
     if vr is None:
@@ -976,7 +1018,7 @@ def _get_plan_view_vertical_range(view, cfg):
             base_z = lvl.Elevation
             off = vr.GetOffset(plane)
             return base_z + off
-        except Exception:
+        except Exception as e:
             return None
 
     top_z = _plane_z(PlanViewPlane.TopClipPlane)
@@ -1013,7 +1055,7 @@ def _build_crop_prism_corners(view, z_min, z_max):
         trf = crop_box.Transform
         mn = crop_box.Min
         mx = crop_box.Max
-    except Exception:
+    except Exception as e:
         return None
 
     # Local XY corners (Z ignored here)
@@ -1063,7 +1105,7 @@ def _get_host_visible_model_categories(view):
 
     try:
         categories = doc.Settings.Categories
-    except Exception:
+    except Exception as e:
         return None
 
     visible_ids = set()
@@ -1082,7 +1124,7 @@ def _get_host_visible_model_categories(view):
             is_hidden = view.GetCategoryHidden(cat.Id)
             if not is_hidden:
                 visible_ids.add(cat_id_val)
-        except Exception:
+        except Exception as e:
             continue
 
     return visible_ids if visible_ids else None
@@ -1113,7 +1155,7 @@ def _transform_bbox_to_host(bbox_link, link_trf):
     try:
         mn = bbox_link.Min
         mx = bbox_link.Max
-    except Exception:
+    except Exception as e:
         return None, None
 
     # DEBUG: report whether BoundingBoxXYZ.Transform is non-identity (oriented bbox)
@@ -1125,14 +1167,14 @@ def _transform_bbox_to_host(bbox_link, link_trf):
         if bb_trf is not None:
             try:
                 bbox_tf_identity = bool(getattr(bb_trf, "IsIdentity"))
-            except Exception:
+            except Exception as e:
                 bbox_tf_identity = None
 
             try:
                 o = getattr(bb_trf, "Origin", None)
                 if o is not None:
                     bbox_tf_origin = (float(o.X), float(o.Y), float(o.Z))
-            except Exception:
+            except Exception as e:
                 bbox_tf_origin = None
 
         link_tf_origin = None
@@ -1141,7 +1183,7 @@ def _transform_bbox_to_host(bbox_link, link_trf):
                 o = getattr(link_trf, "Origin", None)
                 if o is not None:
                     link_tf_origin = (float(o.X), float(o.Y), float(o.Z))
-            except Exception:
+            except Exception as e:
                 link_tf_origin = None
 
         _log(
@@ -1150,9 +1192,9 @@ def _transform_bbox_to_host(bbox_link, link_trf):
                 bbox_tf_identity, bbox_tf_origin, link_tf_origin
             ),
         )
-    except Exception:
-        pass
-
+    except Exception as e:
+        # Exception in _transform_bbox_to_host - no diag in scope
+        pass  # TODO: Add diagnostics when diag becomes available
     # Transform all 8 corners to host space
     try:
         corners_local = [
@@ -1174,7 +1216,7 @@ def _transform_bbox_to_host(bbox_link, link_trf):
             host_corners = [link_trf.OfPoint(p) for p in corners_link]
         else:
             host_corners = corners_link
-    except Exception:
+    except Exception as e:
         return None, None
 
     # Compute AABB in host space

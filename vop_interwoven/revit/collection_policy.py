@@ -160,7 +160,7 @@ def _try_get_category_id(doc, bic_name: str) -> Optional[int]:
         if cat is None or cat.Id is None:
             return None
         return int(cat.Id.IntegerValue)
-    except Exception:
+    except Exception as e:
         return None
 
 def resolve_category_ids(doc, bic_names: Iterable[str]) -> Set[int]:
@@ -170,7 +170,7 @@ def resolve_category_ids(doc, bic_names: Iterable[str]) -> Set[int]:
         cached = _CATEGORY_ID_CACHE.get(key)
         if cached is not None:
             return set(cached)
-    except Exception:
+    except Exception as e:
         key = None
 
     out: Set[int] = set()
@@ -182,8 +182,9 @@ def resolve_category_ids(doc, bic_names: Iterable[str]) -> Set[int]:
     if key is not None:
         try:
             _CATEGORY_ID_CACHE[key] = set(out)
-        except Exception:
-            pass
+        except Exception as e:
+            # Exception in resolve_category_ids - no diag in scope
+            pass  # TODO: Add diagnostics when diag becomes available
     return out
 
 def should_include_element(
@@ -218,14 +219,14 @@ def should_include_element(
 
     try:
         cname = getattr(cat, "Name", None) or "<UNKNOWN_CATEGORY>"
-    except Exception:
+    except Exception as e:
         cname = "<UNKNOWN_CATEGORY>"
 
     # Resolve id via cat.Id if available.
     cat_id_val = None
     try:
         cat_id_val = int(cat.Id.IntegerValue)
-    except Exception:
+    except Exception as e:
         cat_id_val = None
 
     st = (source_type or "HOST").upper()
@@ -245,7 +246,7 @@ def should_include_element(
                     if stats is not None:
                         stats.mark_excluded("view_specific_line", cname)
                     return False, "view_specific_line", cname
-            except Exception:
+            except Exception as e:
                 # Preserve legacy behavior: if ViewSpecific probe fails, do not exclude.
                 pass
     else:

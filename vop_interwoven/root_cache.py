@@ -14,7 +14,7 @@ import hashlib
 def _round6(x):
     try:
         return round(float(x), 6)
-    except Exception:
+    except Exception as e:
         return x
 
 class RootStyleCache:
@@ -183,9 +183,9 @@ class RootStyleCache:
             # (In non-Revit test environments, enum name resolution may be unavailable.)
             if _vt_name:
                 row_payload["view_type"] = _vt_name
-        except Exception:
-            pass
-
+        except Exception as e:
+            # Exception in set_view - no diag in scope
+            pass  # TODO: Add diagnostics when diag becomes available
         # CSV invariants for cache-hit rehydration
         # These are safe defaults; streaming layer may overwrite with actual lookup timing.
         row_payload.setdefault("FromCache", "Y")
@@ -200,9 +200,9 @@ class RootStyleCache:
                 row_payload["ViewName"] = metadata.get("view_name", row_payload.get("view_name"))
             if "ViewType" not in row_payload:
                 row_payload["ViewType"] = row_payload.get("view_type") or metadata.get("view_type", "")
-        except Exception:
-            pass
-
+        except Exception as e:
+            # Exception in set_view - no diag in scope
+            pass  # TODO: Add diagnostics when diag becomes available
         view_key = str(view_id)
         self._cache.setdefault("views", {})[view_key] = {
             "view_signature": signature,
@@ -251,9 +251,9 @@ class RootStyleCache:
                 try:
                     if os.path.exists(tmp_path):
                         os.remove(tmp_path)
-                except Exception:
-                    pass
-                    
+                except Exception as e:
+                    # Exception in save - no diag in scope
+                    pass  # TODO: Add diagnostics when diag becomes available
         except Exception as e:
             print(f"[RootCache] Save failed: {e}")
             return False
@@ -303,7 +303,7 @@ def compute_config_hash(cfg):
         
         payload = json.dumps(config_dict, sort_keys=True)
         return hashlib.sha256(payload.encode()).hexdigest()[:8]
-    except Exception:
+    except Exception as e:
         return "00000000"
 
 

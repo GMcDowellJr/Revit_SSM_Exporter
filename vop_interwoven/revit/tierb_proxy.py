@@ -40,7 +40,7 @@ def _sample_geom_object(obj, emit_point):
      for face in obj.Faces:
          try:
              mesh = face.Triangulate()
-         except Exception:
+         except Exception as e:
              continue
 
          # Mesh API varies across Revit wrappers:
@@ -52,14 +52,15 @@ def _sample_geom_object(obj, emit_point):
              try:
                  for vtx in verts:
                      emit_point(vtx)
-             except Exception:
+             except Exception as e:
                  # Some Vertex collections aren't iterable; try index access.
                  try:
                      size = getattr(verts, "Size", None)
                      if isinstance(size, int):
                          for i in range(size):
                              emit_point(verts[i])
-                 except Exception:
+                 except Exception as e:
+                     # Safe fallback: index access failed, continue with other methods
                      pass
          else:
              # Fallback: use best-effort vertex count helper + get_Vertex(i)
@@ -70,9 +71,9 @@ def _sample_geom_object(obj, emit_point):
                  if callable(get_v) and isinstance(n, int) and n > 0:
                      for i in range(n):
                          emit_point(get_v(i))
-             except Exception:
-                 pass
-
+             except Exception as e:
+                 # Exception in _sample_geom_object - no diag in scope
+                 pass  # TODO: Add diagnostics when diag becomes available
      return
 
  # Curves
@@ -81,5 +82,6 @@ def _sample_geom_object(obj, emit_point):
      if hasattr(curve, "Tessellate"):
          for p in curve.Tessellate():
              emit_point(p)
- except Exception:
-     pass
+ except Exception as e:
+     # Exception in _sample_geom_object - no diag in scope
+     pass  # TODO: Add diagnostics when diag becomes available

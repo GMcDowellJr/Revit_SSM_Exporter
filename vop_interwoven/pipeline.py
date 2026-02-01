@@ -204,14 +204,14 @@ def _perf_ms(t0, t1):
 def _safe_int(v):
     try:
         return int(v)
-    except Exception:
+    except Exception as e:
         return None
 
 
 def _safe_bool(v):
     try:
         return bool(v)
-    except Exception:
+    except Exception as e:
         return None
 
 
@@ -239,8 +239,9 @@ def _cropbox_fingerprint(view_obj):
                 round(float(getattr(mx, "Y", 0.0)), 6),
                 round(float(getattr(mx, "Z", 0.0)), 6),
             )
-    except Exception:
-        pass
+    except Exception as e:
+        # Exception in _cropbox_fingerprint - no diag in scope
+        pass  # TODO: Add diagnostics when diag becomes available
     return fp
 
 def _cfg_hash(cfg_obj, exclude_cache_wiring=False):
@@ -256,7 +257,7 @@ def _cfg_hash(cfg_obj, exclude_cache_wiring=False):
 
         blob = json.dumps(d, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return hashlib.sha1(blob).hexdigest()
-    except Exception:
+    except Exception as e:
         return None
 
 def _view_signature(doc_obj, view_obj, view_mode_val, cfg_obj=None, elem_cache=None, track_elements=None):
@@ -298,20 +299,20 @@ def _view_signature(doc_obj, view_obj, view_mode_val, cfg_obj=None, elem_cache=N
                         elem_fps.append(str(elem_id))
                 else:
                     elem_fps.append(str(elem_id))
-            except Exception:
+            except Exception as e:
                 continue
-    except Exception:
-        pass  # Empty list on failure
-
+    except Exception as e:
+        # Exception in _view_signature - no diag in scope
+        pass  # TODO: Add diagnostics when diag becomes available
     # Store element-view relationship for CSV export
     if track_elements is not None:
         try:
             view_id_int = _safe_int(getattr(getattr(view_obj, "Id", None), "IntegerValue", None))
             if view_id_int is not None:
                 track_elements[view_id_int] = elem_ids_for_tracking
-        except Exception:
-            pass
-
+        except Exception as e:
+            # Exception in _view_signature - no diag in scope
+            pass  # TODO: Add diagnostics when diag becomes available
     # Sort for deterministic signature
     elem_fps_str = "|".join(sorted(elem_fps))
 
@@ -326,7 +327,7 @@ def _view_signature(doc_obj, view_obj, view_mode_val, cfg_obj=None, elem_cache=N
         try:
             v = getter()
             return None if v is None else int(v)
-        except Exception:
+        except Exception as e:
             return None
 
     sig = {
@@ -369,9 +370,9 @@ def _extract_view_identity_for_csv(doc, view):
     try:
         vt = getattr(view, "ViewType", None)
         out["view_type"] = "" if vt is None else str(vt)
-    except Exception:
-        pass
-
+    except Exception as e:
+        # Exception in _extract_view_identity_for_csv - no diag in scope
+        pass  # TODO: Add diagnostics when diag becomes available
     # discipline (readable)
     try:
         # Prefer parameter value string if available (more "UI-like" than enum)
@@ -381,12 +382,12 @@ def _extract_view_identity_for_csv(doc, view):
             s = None
             try:
                 s = p.AsValueString()
-            except Exception:
+            except Exception as e:
                 s = None
             if not s:
                 try:
                     s = p.AsString()
-                except Exception:
+                except Exception as e:
                     s = None
             if s:
                 out["discipline"] = str(s)
@@ -395,11 +396,12 @@ def _extract_view_identity_for_csv(doc, view):
         if not out["discipline"]:
             d = getattr(view, "Discipline", None)
             out["discipline"] = "" if d is None else str(d)
-    except Exception:
+    except Exception as e:
         try:
             d = getattr(view, "Discipline", None)
             out["discipline"] = "" if d is None else str(d)
-        except Exception:
+        except Exception as e2:
+            # Safe fallback: discipline extraction completely failed
             pass
 
     # phase (readable NAME only)
@@ -410,7 +412,7 @@ def _extract_view_identity_for_csv(doc, view):
             eid = None
             try:
                 eid = p.AsElementId()
-            except Exception:
+            except Exception as e:
                 eid = None
 
             if eid is not None and doc is not None:
@@ -419,19 +421,20 @@ def _extract_view_identity_for_csv(doc, view):
                     name = getattr(ph, "Name", None)
                     if name:
                         out["phase"] = str(name)
-                except Exception:
-                    pass
-    except Exception:
-        pass
-
+                except Exception as e:
+                    # Exception in _extract_view_identity_for_csv - no diag in scope
+                    pass  # TODO: Add diagnostics when diag becomes available
+    except Exception as e:
+        # Exception in _extract_view_identity_for_csv - no diag in scope
+        pass  # TODO: Add diagnostics when diag becomes available
     # sheet_number (readable)
     try:
         # Some view types expose SheetNumber directly when placed; else keep blank
         sn = getattr(view, "SheetNumber", None)
         out["sheet_number"] = "" if sn is None else str(sn)
-    except Exception:
-        pass
-
+    except Exception as e:
+        # Exception in _extract_view_identity_for_csv - no diag in scope
+        pass  # TODO: Add diagnostics when diag becomes available
     # view_template_name (readable)
     try:
         vtid = getattr(view, "ViewTemplateId", None)
@@ -440,11 +443,11 @@ def _extract_view_identity_for_csv(doc, view):
                 vt_elem = doc.GetElement(vtid)
                 name = getattr(vt_elem, "Name", None)
                 out["view_template_name"] = "" if name is None else str(name)
-            except Exception:
+            except Exception as e:
                 out["view_template_name"] = ""
-    except Exception:
-        pass
-
+    except Exception as e:
+        # Exception in _extract_view_identity_for_csv - no diag in scope
+        pass  # TODO: Add diagnostics when diag becomes available
     return out
 
 def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
@@ -496,7 +499,14 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
     if view_cache_enabled and not view_cache_dir:
         try:
             view_cache_dir = getattr(cfg, "output_dir", None)
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="pipeline",
+                    callsite="process_document_views",
+                    message="Exception in process_document_views: {}".format(e),
+                    exc=e,
+                )
             view_cache_dir = None
 
     # Streaming-only policy: root_cache (single JSON) is the authoritative cache.
@@ -506,7 +516,14 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
     if view_cache_enabled:
         try:
             os.makedirs(view_cache_dir, exist_ok=True)
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="pipeline",
+                    callsite="process_document_views",
+                    message="Exception in process_document_views: {}".format(e),
+                    exc=e,
+                )
             # If cache dir can't be created, disable caching (must never break pipeline)
             view_cache_enabled = False
 
@@ -523,7 +540,14 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
             if payload.get("signature") != signature_hex:
                 return None
             return payload.get("result")
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="pipeline",
+                    callsite="_load_cached_view",
+                    message="Exception in _load_cached_view: {}".format(e),
+                    exc=e,
+                )
             return None
 
     def _save_cached_view(view_id_int, signature_hex, result_obj):
@@ -544,11 +568,22 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
                 try:
                     if os.path.exists(tmp_path):
                         os.remove(tmp_path)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="pipeline",
+                            callsite="_save_cached_view",
+                            message="Exception in _save_cached_view: {}".format(e),
+                            exc=e,
+                        )
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="pipeline",
+                    callsite="_save_cached_view",
+                    message="Exception in _save_cached_view: {}".format(e),
+                    exc=e,
+                )
     # Guardrail: cfg must be vop_interwoven.config.Config (attribute-based), not a dict.
     # This prevents silent drift when new code accidentally uses cfg.get(...).
     if isinstance(cfg, dict):
@@ -559,7 +594,14 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
     try:
         from .core.cache import LRUCache
         geometry_cache = LRUCache(max_items=getattr(cfg, "geometry_cache_max_items", 0))
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="pipeline",
+                callsite="_save_cached_view",
+                message="Exception in _save_cached_view: {}".format(e),
+                exc=e,
+            )
         geometry_cache = None
 
     # PR13: Document-scoped element cache for bbox reuse across views
@@ -592,16 +634,36 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
                                 message=f"Loaded element cache from previous run ({prev_size} elements)",
                                 extra={"cache_path": elem_cache_path, "prev_size": prev_size}
                             )
-                        except Exception:
-                            pass
-                except Exception:
+                        except Exception as e:
+                            if diag is not None:
+                                diag.error(
+                                    phase="pipeline",
+                                    callsite="_save_cached_view",
+                                    message="Exception in _save_cached_view: {}".format(e),
+                                    exc=e,
+                                )
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="pipeline",
+                            callsite="_save_cached_view",
+                            message="Exception in _save_cached_view: {}".format(e),
+                            exc=e,
+                        )
                     # Failed to load - start fresh
                     elem_cache = ElementCache(max_elements=max_items)
             else:
                 # No persistence - start fresh
                 elem_cache = ElementCache(max_elements=max_items)
 
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="pipeline",
+                    callsite="_save_cached_view",
+                    message="Exception in _save_cached_view: {}".format(e),
+                    exc=e,
+                )
             elem_cache = None  # Graceful degradation
 
     # Track element-view relationships for CSV export
@@ -658,9 +720,15 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
                             view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
                             extra=payload,
                         )
-                except Exception:
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="pipeline",
+                            callsite="_tmark",
+                            message="Exception in _tmark: {}".format(e),
+                            exc=e,
+                        )
                     # Never allow diagnostics logging to fail the pipeline
-                    pass
 
             if view_mode == VIEW_MODE_REJECTED:
                 
@@ -680,9 +748,15 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
                                 "mode_reason": mode_reason,
                             },
                         )
-                    except Exception:
+                    except Exception as e:
+                        if diag is not None:
+                            diag.error(
+                                phase="pipeline",
+                                callsite="_tmark",
+                                message="Exception in _tmark: {}".format(e),
+                                exc=e,
+                            )
                         # Diagnostics must never break the pipeline
-                        pass
 
                 results.append(
                     {
@@ -705,9 +779,14 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
                 try:
                     if bool(getattr(doc, "IsModified", False)):
                         can_use_cache = False
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="pipeline",
+                            callsite="_tmark",
+                            message="Exception in _tmark: {}".format(e),
+                            exc=e,
+                        )
             # Compute signature ONCE (and populate view_elements consistently)
             sig_hex, sig_obj = _view_signature(
                 doc, view, view_mode,
@@ -784,18 +863,29 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
             try:
                 raster.view_mode = view_mode
                 raster.view_mode_reason = mode_reason
-            except Exception:
-                pass
-
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="pipeline",
+                        callsite="_tmark",
+                        message="Exception in _tmark: {}".format(e),
+                        exc=e,
+                    )
             # Create strategy diagnostics tracker if enabled (used by render and CSV export)
             strategy_diag = None
             if getattr(cfg, "export_strategy_diagnostics", False):
                 try:
                     from .diagnostics import StrategyDiagnostics
                     strategy_diag = StrategyDiagnostics()
-                except Exception:
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="pipeline",
+                            callsite="_tmark",
+                            message="Exception in _tmark: {}".format(e),
+                            exc=e,
+                        )
                     # Graceful degradation: continue without diagnostics
-                    pass
 
             if view_mode == VIEW_MODE_MODEL_AND_ANNOTATION:
                 # 2) Broad-phase visible elements
@@ -850,9 +940,14 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
                         out["sheet_number"] = ident.get("sheet_number", "")
                     if out.get("view_template_name") in (None, ""):
                         out["view_template_name"] = ident.get("view_template_name", "")
-            except Exception:
-                pass
-
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="pipeline",
+                        callsite="_tmark",
+                        message="Exception in _tmark: {}".format(e),
+                        exc=e,
+                    )
             t1 = _perf_now()
             _tmark("export_ms", t0, t1)
 
@@ -889,29 +984,55 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
                                     c = out.setdefault("cache", {})
                                     if isinstance(c, dict):
                                         c.setdefault("signature", sig_hex)
-                            except Exception:
-                                pass
-
-                        except Exception:
-                            pass
-            except Exception:
-                pass
-            
+                            except Exception as e:
+                                if diag is not None:
+                                    diag.error(
+                                        phase="pipeline",
+                                        callsite="_tmark",
+                                        message="Exception in _tmark: {}".format(e),
+                                        exc=e,
+                                    )
+                        except Exception as e:
+                            if diag is not None:
+                                diag.error(
+                                    phase="pipeline",
+                                    callsite="_tmark",
+                                    message="Exception in _tmark: {}".format(e),
+                                    exc=e,
+                                )
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="pipeline",
+                        callsite="_tmark",
+                        message="Exception in _tmark: {}".format(e),
+                        exc=e,
+                    )
             t_view1 = _perf_now()
             _tmark("total_ms", t_view0, t_view1)
 
             # Always expose a wall-clock elapsed seconds for this view, even if timing collection is disabled
             try:
                 out["elapsed_sec"] = round((_perf_ms(t_view0, t_view1) / 1000.0), 3)
-            except Exception:
-                pass
-
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="pipeline",
+                        callsite="_tmark",
+                        message="Exception in _tmark: {}".format(e),
+                        exc=e,
+                    )
             # Convenience mirror at top-level for callers that don't dive into diagnostics
             try:
                 out["timings"] = dict(timings)
-            except Exception:
-                pass
-
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="pipeline",
+                        callsite="_tmark",
+                        message="Exception in _tmark: {}".format(e),
+                        exc=e,
+                    )
             # Memory management: conditionally retain or discard raster data
             if getattr(cfg, 'retain_rasters_in_memory', True):
                 # Keep full raster (needed for streaming exports or debug)
@@ -953,9 +1074,14 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
                 message="Element cache statistics for this run",
                 extra=elem_cache.stats()
             )
-        except Exception:
-            pass
-
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="pipeline",
+                    callsite="_tmark",
+                    message="Exception in _tmark: {}".format(e),
+                    exc=e,
+                )
     # Phase 2.5: Persistent element cache - save/export/detect changes
     if elem_cache is not None and getattr(cfg, "element_cache_persist", True):
         try:
@@ -975,9 +1101,14 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
                             message="Saved element cache for next run",
                             extra={"cache_path": elem_cache_path, "size": len(elem_cache.cache)}
                         )
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="pipeline",
+                            callsite="_tmark",
+                            message="Exception in _tmark: {}".format(e),
+                            exc=e,
+                        )
             # Export analysis CSV
             if getattr(cfg, "element_cache_export_csv", True) and output_dir is not None:
                 try:
@@ -990,9 +1121,14 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
                             message="Exported element cache analysis CSV",
                             extra={"csv_path": csv_path, "elements": len(elem_cache.cache), "views": len(view_elements)}
                         )
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="pipeline",
+                            callsite="_tmark",
+                            message="Exception in _tmark: {}".format(e),
+                            exc=e,
+                        )
             # Detect changes from previous run
             if getattr(cfg, "element_cache_detect_changes", True) and elem_cache_prev is not None:
                 try:
@@ -1035,14 +1171,30 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
                                     message="Exported element changes CSV",
                                     extra={"csv_path": changes_csv_path}
                                 )
-                        except Exception:
-                            pass
-
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
+                        except Exception as e:
+                            if diag is not None:
+                                diag.error(
+                                    phase="pipeline",
+                                    callsite="_tmark",
+                                    message="Exception in _tmark: {}".format(e),
+                                    exc=e,
+                                )
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="pipeline",
+                            callsite="_tmark",
+                            message="Exception in _tmark: {}".format(e),
+                            exc=e,
+                        )
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="pipeline",
+                    callsite="_tmark",
+                    message="Exception in _tmark: {}".format(e),
+                    exc=e,
+                )
     return results
 
 
@@ -1140,9 +1292,14 @@ def init_view_raster(doc, view, cfg, diag=None):
                     "cap_after": bounds_result.get("cap_after"),
                 },
             )
-        except Exception:
-            pass
-
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="pipeline",
+                    callsite="init_view_raster",
+                    message="Exception in init_view_raster: {}".format(e),
+                    exc=e,
+                )
     # Compute adaptive tile size based on grid dimensions
     tile_size = cfg.compute_adaptive_tile_size(W, H)
 
@@ -1159,9 +1316,14 @@ def init_view_raster(doc, view, cfg, diag=None):
     # as a model-only clip region. Model writes consult this; annotation writes do not.
     try:
         raster.model_clip_bounds = bounds_result.get("model_bounds_uv", None)
-    except Exception:
-        pass
-
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="pipeline",
+                callsite="init_view_raster",
+                message="Exception in init_view_raster: {}".format(e),
+                exc=e,
+            )
     # Persist bounds/resolution metadata for export diagnostics (never silent)
     raster.bounds_meta = {
         "reason": bounds_result.get("reason"),
@@ -1304,9 +1466,9 @@ def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, con
                     filled += raster.rasterize_silhouette_loops(
                         closed_loops, key_index, depth=elem_depth, source=source_type, occlude_edges=True
                     )
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    # Exception in rasterize_areal_loops - no diag in scope
+                    pass  # TODO: Add diagnostics when diag becomes available
             # Rasterize open polylines (edges)
             if open_loops:
                 try:
@@ -1315,18 +1477,18 @@ def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, con
                     )
                     if len(open_loops) > 0:
                         open_polyline_success = True
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    # Exception in rasterize_areal_loops - no diag in scope
+                    pass  # TODO: Add diagnostics when diag becomes available
             # For MEDIUM/LOW, show boundary ink via proxy edges ONLY, with NO occlusion.
             if closed_loops:
                 try:
                     filled += raster.rasterize_closed_loops_to_proxy_edges(
                         closed_loops, key_index, depth=elem_depth, source=source_type
                     )
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    # Exception in rasterize_areal_loops - no diag in scope
+                    pass  # TODO: Add diagnostics when diag becomes available
             if open_loops:
                 try:
                     filled += raster.rasterize_open_polylines_to_proxy_edges(
@@ -1334,9 +1496,9 @@ def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, con
                     )
                     if len(open_loops) > 0:
                         open_polyline_success = True
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    # Exception in rasterize_areal_loops - no diag in scope
+                    pass  # TODO: Add diagnostics when diag becomes available
         # Mark open-polyline-only rendering in metadata
         if open_polyline_success and filled == 0:
             if key_index < len(raster.element_meta):
@@ -1346,7 +1508,7 @@ def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, con
         success = (filled > 0) or open_polyline_success
         return (success, filled)
 
-    except Exception:
+    except Exception as e:
         return (False, 0)
 
 
@@ -1388,9 +1550,14 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
         raster.view_w0 = W0
         raster.view_wmax = Wmax
         raster.view_wvol_meta = _wvol_meta
-    except Exception:
-        pass
-
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="pipeline",
+                callsite="render_model_front_to_back",
+                message="Exception in render_model_front_to_back: {}".format(e),
+                exc=e,
+            )
     # Expand to include linked/imported elements
     expanded_elements = expand_host_link_import_model_elements(doc, view, elements, cfg, diag=diag, elem_cache=elem_cache)
 
@@ -1426,7 +1593,14 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 view=view,
             )
             wrapper["uv_bbox_rect"] = rect
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="pipeline",
+                    callsite="render_model_front_to_back",
+                    message="Exception in render_model_front_to_back: {}".format(e),
+                    exc=e,
+                )
             wrapper["depth_range"] = (0.0, 0.0)
             wrapper["uv_bbox_rect"] = None
 
@@ -1473,13 +1647,25 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 len_u = float(obb.get("len_u", 0.0) or 0.0)
                 len_v = float(obb.get("len_v", 0.0) or 0.0)
                 return (abs(len_u) / cell, abs(len_v) / cell)
-        except Exception:
-            pass
-
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="pipeline",
+                    callsite="_rect_dims_for_classification",
+                    message="Exception in _rect_dims_for_classification: {}".format(e),
+                    exc=e,
+                )
         # Fallback: AABB in cell units
         try:
             return (float(rect.width()), float(rect.height()))
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="pipeline",
+                    callsite="_rect_dims_for_classification",
+                    message="Exception in _rect_dims_for_classification: {}".format(e),
+                    exc=e,
+                )
             return (0.0, 0.0)
 
     def _occlusion_allowed(elem_class, confidence):
@@ -1513,12 +1699,24 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                             # key_index may not exist yet here; only write later if available
                             elem_wrapper["_skipped_outside_view_volume"] = True
                             elem_wrapper["_skip_w_range"] = (dmin, dmax)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            if diag is not None:
+                                diag.error(
+                                    phase="pipeline",
+                                    callsite="_occlusion_allowed",
+                                    message="Exception in _occlusion_allowed: {}".format(e),
+                                    exc=e,
+                                )
                         continue
-            except Exception:
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="pipeline",
+                        callsite="_occlusion_allowed",
+                        message="Exception in _occlusion_allowed: {}".format(e),
+                        exc=e,
+                    )
                 # Conservative: do not gate if we cannot determine depth range
-                pass
 
         # Get element metadata
         try:
@@ -1544,16 +1742,26 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 if 0 <= key_index < len(raster.element_meta):
                     raster.element_meta[key_index]["skipped_outside_view_volume"] = True
                     raster.element_meta[key_index]["skip_w_range"] = elem_wrapper.get("_skip_w_range")
-        except Exception:
-            pass
-
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="pipeline",
+                    callsite="_occlusion_allowed",
+                    message="Exception in _occlusion_allowed: {}".format(e),
+                    exc=e,
+                )
         # PR9: persist bbox provenance into element meta (auditable)
         try:
             if 0 <= key_index < len(raster.element_meta):
                 raster.element_meta[key_index]["bbox_source"] = elem_wrapper.get("bbox_source")
-        except Exception:
-            pass
-
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="pipeline",
+                    callsite="_occlusion_allowed",
+                    message="Exception in _occlusion_allowed: {}".format(e),
+                    exc=e,
+                )
         if source_type not in ("HOST", "LINK", "DWG"):
             raise ValueError("Invalid source_type from wrapper: {0} (source_id={1})".format(source_type, source_id))
 
@@ -1564,7 +1772,14 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
             v = getattr(cfg, "diag_link_elem_ids", None)
             if v:
                 diag_link_ids = set(int(x) for x in v)
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="pipeline",
+                    callsite="_occlusion_allowed",
+                    message="Exception in _occlusion_allowed: {}".format(e),
+                    exc=e,
+                )
             diag_link_ids = set()
 
         # DIAGNOSTIC: Stage 1 - Right after extracting wrapper data
@@ -1590,7 +1805,14 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     diag=diag,
                     view=view,
                 )
-            except Exception:
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="pipeline",
+                        callsite="_occlusion_allowed",
+                        message="Exception in _occlusion_allowed: {}".format(e),
+                        exc=e,
+                    )
                 rect = None
 
         # Classify element based on rect dimensions
@@ -1599,7 +1821,14 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
             try:
                 cls_w_cells, cls_h_cells = _rect_dims_for_classification(rect, raster)
                 elem_class = _classify_uv_rect(cls_w_cells, cls_h_cells)
-            except Exception:
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="pipeline",
+                        callsite="_occlusion_allowed",
+                        message="Exception in _occlusion_allowed: {}".format(e),
+                        exc=e,
+                    )
                 elem_class = "AREAL"  # Safe default on classification failure
 
         # Extract geometry using appropriate strategy based on classification
@@ -1642,7 +1871,14 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 if geometry_cache is not None:
                     try:
                         view_id_int = getattr(getattr(view, "Id", None), "IntegerValue", None)
-                    except Exception:
+                    except Exception as e:
+                        if diag is not None:
+                            diag.error(
+                                phase="pipeline",
+                                callsite="_occlusion_allowed",
+                                message="Exception in _occlusion_allowed: {}".format(e),
+                                exc=e,
+                            )
                         view_id_int = None
                     cache_key = (
                         source_id,
@@ -1821,15 +2057,27 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     bbox=elem_wrapper.get("bbox"),
                     diag=diag,
                 )
-            except Exception:
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="pipeline",
+                        callsite="_occlusion_allowed",
+                        message="Exception in _occlusion_allowed: {}".format(e),
+                        exc=e,
+                    )
                 elem_depth = 0.0
 
             try:
                 if key_index < len(raster.element_meta):
                     raster.element_meta[key_index]["depth_invalid"] = True
-            except Exception:
-                pass
-
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="pipeline",
+                        callsite="_occlusion_allowed",
+                        message="Exception in _occlusion_allowed: {}".format(e),
+                        exc=e,
+                    )
         # Clamp depth used for early-out comparisons to the view volume (min depth >= W0).
         # Do NOT change silhouette strategy; this only prevents out-of-volume depths from driving occlusion logic.
         if (W0 is not None) and isinstance(elem_depth, (int, float)) and math.isfinite(elem_depth):
@@ -1837,8 +2085,14 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 try:
                     if key_index < len(raster.element_meta):
                         raster.element_meta[key_index]["depth_clamped_to_w0"] = True
-                except Exception:
-                    pass
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="pipeline",
+                            callsite="_occlusion_allowed",
+                            message="Exception in _occlusion_allowed: {}".format(e),
+                            exc=e,
+                        )
                 elem_depth = W0
 
         # DEBUG: Log depth values and silhouette status for first few elements
@@ -1922,9 +2176,14 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                                 confidence=confidence,
                                 category=category
                             )
-                    except Exception:
-                        pass  # Diagnostic failures must not crash pipeline
-
+                    except Exception as e:
+                        if diag is not None:
+                            diag.error(
+                                phase="pipeline",
+                                callsite="_occlusion_allowed",
+                                message="Exception in _occlusion_allowed: {}".format(e),
+                                exc=e,
+                            )
                 # DEBUG: Log classification for diagonal-looking elements (first 10)
                 if not hasattr(render_model_front_to_back, '_classify_debug_count'):
                     render_model_front_to_back._classify_debug_count = 0
@@ -1936,9 +2195,14 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                             print("[DEBUG classify] Elem {}: {}x{} cells → class={}, category='{}'".format(
                                 elem_id, width_cells, height_cells, elem_class, category))
                             render_model_front_to_back._classify_debug_count += 1
-                        except Exception:
-                            pass
-            
+                        except Exception as e:
+                            if diag is not None:
+                                diag.error(
+                                    phase="pipeline",
+                                    callsite="_occlusion_allowed",
+                                    message="Exception in _occlusion_allowed: {}".format(e),
+                                    exc=e,
+                                )
                 aabb_area_cells = aabb_w_cells * aabb_h_cells
                 grid_area = raster.W * raster.H
 
@@ -2012,9 +2276,15 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                             "exc": str(e),
                         },
                     )
-                except Exception:
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="pipeline",
+                            callsite="_occlusion_allowed",
+                            message="Exception in _occlusion_allowed: {}".format(e),
+                            exc=e,
+                        )
                     # Diagnostics must never throw.
-                    pass
 
         # Rasterize silhouette loops if we have them
         if loops:
@@ -2105,9 +2375,14 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                             # (Bresenham draws edges, doesn't "fill" cells like closed loops)
                             if len(open_loops) > 0:
                                 open_polyline_success = True
-                        except Exception:
-                            pass
-
+                        except Exception as e:
+                            if diag is not None:
+                                diag.error(
+                                    phase="pipeline",
+                                    callsite="_occlusion_allowed",
+                                    message="Exception in _occlusion_allowed: {}".format(e),
+                                    exc=e,
+                                )
                     # Check for any successful rendering (filled cells OR open polylines drawn)
                     if filled > 0 or open_polyline_success:
                         # Update confidence if needed (TINY/LINEAR use simple model)
@@ -2252,15 +2527,27 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 if key_index < len(raster.element_meta):
                     raster.element_meta[key_index]['strategy'] = 'CATASTROPHIC_FAILURE'
                     raster.element_meta[key_index]['error'] = str(e)
-            except Exception:
-                pass
-
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="pipeline",
+                        callsite="_occlusion_allowed",
+                        message="Exception in _occlusion_allowed: {}".format(e),
+                        exc=e,
+                    )
             skipped += 1
 
             if skipped <= 10:
                 try:
                     safe_elem_id = getattr(getattr(elem, "Id", None), "IntegerValue", None)
-                except Exception:
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="pipeline",
+                            callsite="_occlusion_allowed",
+                            message="Exception in _occlusion_allowed: {}".format(e),
+                            exc=e,
+                        )
                     safe_elem_id = None
                 print("[ERROR] vop.pipeline: Catastrophic failure for element {0}: {1}".format(safe_elem_id, e))
 
@@ -2276,9 +2563,14 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                         elem_id=getattr(getattr(elem, "Id", None), "IntegerValue", None),
                         extra={"doc_key": doc_key if "doc_key" in locals() else None},
                     )
-            except Exception:
-                pass
-
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="pipeline",
+                        callsite="_occlusion_allowed",
+                        message="Exception in _occlusion_allowed: {}".format(e),
+                        exc=e,
+                    )
             # Continue with remaining elements
             continue
 
@@ -2306,9 +2598,14 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
     # Persist view-volume metric for export/diagnostics
     try:
         raster.skipped_outside_view_volume = int(skipped_outside_view_volume)
-    except Exception:
-        pass
-
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="pipeline",
+                callsite="_occlusion_allowed",
+                message="Exception in _occlusion_allowed: {}".format(e),
+                exc=e,
+            )
     if skipped > 0:
         print("[WARN] vop.pipeline: Skipped {0} elements due to errors".format(skipped))
 
@@ -2333,7 +2630,14 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     return
                 try:
                     os.makedirs(path)
-                except Exception:
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="pipeline",
+                            callsite="_makedirs",
+                            message="Exception in _makedirs: {}".format(e),
+                            exc=e,
+                        )
                     # If it already exists due to race/permissions quirks, ignore.
                     if not os.path.isdir(path):
                         raise
@@ -2384,9 +2688,14 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     try:
                         if not os.path.isdir(dump_dir):
                             os.makedirs(dump_dir)
-                    except Exception:
-                        pass
-
+                    except Exception as e:
+                        if diag is not None:
+                            diag.error(
+                                phase="pipeline",
+                                callsite="_makedirs",
+                                message="Exception in _makedirs: {}".format(e),
+                                exc=e,
+                            )
                     # Per-element CSV (existing)
                     csv_filename = "strategy_diagnostics_{0}_{1}.csv".format(view_name, view_id)
                     csv_path = os.path.join(dump_dir, csv_filename)
@@ -2457,8 +2766,14 @@ def _is_supported_2d_view(view, diag=None):
                     view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
                     extra={"view_name": getattr(view, "Name", None), "exc": str(e)},
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="pipeline",
+                    callsite="_is_supported_2d_view",
+                    message="Exception in _is_supported_2d_view: {}".format(e),
+                    exc=e,
+                )
         return False
 
         return False
@@ -2474,7 +2789,7 @@ def _should_skip_outside_view_volume(depth_range, W0, Wmax):
 
     try:
         dmin, dmax = depth_range
-    except Exception:
+    except Exception as e:
         return False
 
     if (dmin is None) or (dmax is None):
@@ -2485,7 +2800,7 @@ def _should_skip_outside_view_volume(depth_range, W0, Wmax):
         dmax = float(dmax)
         W0 = float(W0)
         Wmax = float(Wmax)
-    except Exception:
+    except Exception as e:
         return False
 
     if not (math.isfinite(dmin) and math.isfinite(dmax) and math.isfinite(W0) and math.isfinite(Wmax)):
@@ -2716,13 +3031,27 @@ def export_view_raster(view, raster, cfg, diag=None, timings=None, strategy_diag
     model_ink_edge_cells = 0
     try:
         model_ink_edge_cells = sum(1 for k in raster.model_edge_key if k != -1)
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="pipeline",
+                callsite="export_view_raster",
+                message="Exception in export_view_raster: {}".format(e),
+                exc=e,
+            )
         model_ink_edge_cells = 0
 
     proxy_edge_cells = 0
     try:
         proxy_edge_cells = sum(1 for k in raster.model_proxy_key if k != -1)
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="pipeline",
+                callsite="export_view_raster",
+                message="Exception in export_view_raster: {}".format(e),
+                exc=e,
+            )
         proxy_edge_cells = 0
 
     # PR8: dominance detector (once per view)
@@ -2789,9 +3118,15 @@ def export_view_raster(view, raster, cfg, diag=None, timings=None, strategy_diag
                         "source_type": (max_occ_meta or {}).get("source_type", None),
                     },
                 )
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="pipeline",
+                callsite="export_view_raster",
+                message="Exception in export_view_raster: {}".format(e),
+                exc=e,
+            )
         # Never allow diagnostics to break export
-        pass
 
     return {
         "view_id": view.Id.IntegerValue,

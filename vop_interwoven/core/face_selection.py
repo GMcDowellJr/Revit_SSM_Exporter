@@ -26,7 +26,7 @@ def _to_xyz_tuple(v):
     """Accept Revit XYZ-like or tuple/list; return (x,y,z) floats."""
     try:
         return (float(v.X), float(v.Y), float(v.Z))
-    except Exception:
+    except Exception as e:
         return (float(v[0]), float(v[1]), float(v[2]))
 
 
@@ -84,7 +84,7 @@ def _plane_from_planar_face(face):
     try:
         n = _to_xyz_tuple(getattr(face, "FaceNormal"))
         p0 = _to_xyz_tuple(getattr(face, "Origin"))
-    except Exception:
+    except Exception as e:
         return (None, None)
 
     n_unit = _normalize(n)
@@ -196,9 +196,14 @@ def iter_front_facing_planar_faces(
                 elem_id=elem_id,
                 extra={"nonplanar_count": int(nonplanar)},
             )
-        except Exception:
-            pass
-
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="general",
+                    callsite="iter_front_facing_planar_faces",
+                    message="Exception in iter_front_facing_planar_faces: {}".format(e),
+                    exc=e,
+                )
     candidates.sort(key=lambda t: t[0])
     for _k, f in candidates:
         yield f
@@ -290,11 +295,11 @@ def projected_outer_loop_area_uv(
                             tess = crv.Tessellate()
                             for p in tess:
                                 pts.append(_to_xyz_tuple(p))
-                        except Exception:
+                        except Exception as e:
                             continue
                     if pts:
                         loops.append(pts)
-        except Exception:
+        except Exception as e:
             loops = None
 
     if not loops:

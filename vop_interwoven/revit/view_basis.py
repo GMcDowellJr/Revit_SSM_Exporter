@@ -103,7 +103,7 @@ class ViewBasis:
         try:
             # Autodesk.Revit.DB.XYZ
             x, y, z = p.X, p.Y, p.Z
-        except Exception:
+        except Exception as e:
             # tuple/list
             x, y, z = p[0], p[1], p[2]
         return self.transform_to_view_uvw((x, y, z))
@@ -137,7 +137,14 @@ def make_view_basis(view, diag=None):
     view_id = None
     try:
         view_id = getattr(getattr(view, "Id", None), "IntegerValue", None)
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="view_basis",
+                callsite="make_view_basis",
+                message="Exception in make_view_basis: {}".format(e),
+                exc=e,
+            )
         view_id = None
 
     try:
@@ -150,7 +157,14 @@ def make_view_basis(view, diag=None):
         # and front-to-back sorting, we want the opposite sign.
         try:
             vd = view.ViewDirection.Normalize()
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="view_basis",
+                    callsite="make_view_basis",
+                    message="Exception in make_view_basis: {}".format(e),
+                    exc=e,
+                )
             vd = right.CrossProduct(up).Normalize()
 
         forward = vd.Negate()
@@ -177,9 +191,14 @@ def make_view_basis(view, diag=None):
                         view_id=view_id,
                         extra={"exc_type": type(e).__name__, "exc": str(e)},
                     )
-            except Exception:
-                pass
-
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="view_basis",
+                        callsite="make_view_basis",
+                        message="Exception in make_view_basis: {}".format(e),
+                        exc=e,
+                    )
         return ViewBasis(
             origin=(origin.X, origin.Y, origin_z),
             right=(right.X, right.Y, right.Z),
@@ -198,9 +217,14 @@ def make_view_basis(view, diag=None):
                     exc=e,
                     view_id=view_id,
                 )
-        except Exception:
-            pass
-
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="view_basis",
+                    callsite="make_view_basis",
+                    message="Exception in make_view_basis: {}".format(e),
+                    exc=e,
+                )
         return ViewBasis(
             origin=(0.0, 0.0, 0.0),
             right=(1.0, 0.0, 0.0),
@@ -233,8 +257,14 @@ def resolve_view_w_volume(view, vb, cfg, diag=None):
                     view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
                     extra={"exc_type": type(e).__name__, "exc": str(e)},
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="view_basis",
+                        callsite="resolve_view_w_volume",
+                        message="Exception in resolve_view_w_volume: {}".format(e),
+                        exc=e,
+                    )
         return (None, None, {"is_valid": False, "reason": "import_failed"})
 
     clip = None
@@ -250,8 +280,14 @@ def resolve_view_w_volume(view, vb, cfg, diag=None):
                     view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
                     extra={"exc_type": type(e).__name__, "exc": str(e)},
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="view_basis",
+                        callsite="resolve_view_w_volume",
+                        message="Exception in resolve_view_w_volume: {}".format(e),
+                        exc=e,
+                    )
         return (None, None, {"is_valid": False, "reason": "build_failed"})
 
     if not clip or not clip.get("is_valid", False):
@@ -266,7 +302,14 @@ def resolve_view_w_volume(view, vb, cfg, diag=None):
         try:
             u, v, w = vb.world_to_view_local(p)
             ws.append(float(w))
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="view_basis",
+                    callsite="resolve_view_w_volume",
+                    message="Exception in resolve_view_w_volume: {}".format(e),
+                    exc=e,
+                )
             continue
 
     if not ws:
@@ -372,15 +415,28 @@ def xy_bounds_effective(doc, view, basis, buffer=0.0, diag=None):
     # Prefer crop box when the view supports it and crop is active
     try:
         crop_active = bool(view.CropBoxActive)
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="view_basis",
+                callsite="xy_bounds_effective",
+                message="Exception in xy_bounds_effective: {}".format(e),
+                exc=e,
+            )
         crop_active = False
 
     if crop_active:
         try:
             return xy_bounds_from_crop_box_all_corners(view, basis, buffer=buffer)
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="view_basis",
+                    callsite="xy_bounds_effective",
+                    message="Exception in xy_bounds_effective: {}".format(e),
+                    exc=e,
+                )
             # fall through to synthetic extents
-            pass
 
     # Fallback: extents derived from what is in the view (drafting-safe)
     return synthetic_bounds_from_visible_extents(doc, view, basis, buffer=buffer)
@@ -418,7 +474,14 @@ def synthetic_bounds_from_visible_extents(
     view_id = None
     try:
         view_id = getattr(getattr(view, "Id", None), "IntegerValue", None)
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="view_basis",
+                callsite="synthetic_bounds_from_visible_extents",
+                message="Exception in synthetic_bounds_from_visible_extents: {}".format(e),
+                exc=e,
+            )
         view_id = None
 
     is_drafting = isinstance(view, ViewDrafting)
@@ -474,10 +537,16 @@ def synthetic_bounds_from_visible_extents(
                     try:
                         if bool(getattr(elem, "ViewSpecific", False)):
                             continue
-                    except Exception:
+                    except Exception as e:
+                        if diag is not None:
+                            diag.error(
+                                phase="view_basis",
+                                callsite="synthetic_bounds_from_visible_extents",
+                                message="Exception in synthetic_bounds_from_visible_extents: {}".format(e),
+                                exc=e,
+                            )
                         viewspecific_fail += 1
                         # Preserve prior behavior: don't skip on failure; just treat as not view-specific
-                        pass
 
                 mn = bbox.Min
                 mx = bbox.Max
@@ -507,7 +576,14 @@ def synthetic_bounds_from_visible_extents(
                     max_v = max(max_v, v)
 
                 found += 1
-            except Exception:
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="view_basis",
+                        callsite="synthetic_bounds_from_visible_extents",
+                        message="Exception in synthetic_bounds_from_visible_extents: {}".format(e),
+                        exc=e,
+                    )
                 elem_fail += 1
                 continue
 
@@ -526,9 +602,14 @@ def synthetic_bounds_from_visible_extents(
                 view_id=view_id,
                 extra={"exc_type": type(collector_fail).__name__, "exc": str(collector_fail)},
             )
-        except Exception:
-            pass
-
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="view_basis",
+                    callsite="synthetic_bounds_from_visible_extents",
+                    message="Exception in synthetic_bounds_from_visible_extents: {}".format(e),
+                    exc=e,
+                )
     # Budget-trigger diagnostic (explicit, aggregated, non-spammy)
     if budget_triggered and diag is not None:
         try:
@@ -549,9 +630,14 @@ def synthetic_bounds_from_visible_extents(
                     "is_drafting": bool(is_drafting),
                 },
             )
-        except Exception:
-            pass
-
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="view_basis",
+                    callsite="synthetic_bounds_from_visible_extents",
+                    message="Exception in synthetic_bounds_from_visible_extents: {}".format(e),
+                    exc=e,
+                )
     # If scan yielded no usable bounds, fallback to default
     if found == 0 or min_u == float("inf") or collector_fail is not None:
         # Preserve existing explicit warning for empty scans
@@ -572,9 +658,14 @@ def synthetic_bounds_from_visible_extents(
                         "budget_reason": budget_reason,
                     },
                 )
-            except Exception:
-                pass
-
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="view_basis",
+                        callsite="synthetic_bounds_from_visible_extents",
+                        message="Exception in synthetic_bounds_from_visible_extents: {}".format(e),
+                        exc=e,
+                    )
         return {
             "bounds_uv": default_bounds,
             "confidence": "low",
@@ -607,9 +698,14 @@ def synthetic_bounds_from_visible_extents(
                     "budget_reason": budget_reason,
                 },
             )
-        except Exception:
-            pass
-
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="view_basis",
+                    callsite="synthetic_bounds_from_visible_extents",
+                    message="Exception in synthetic_bounds_from_visible_extents: {}".format(e),
+                    exc=e,
+                )
     bounds = Bounds2D(min_u - buffer, min_v - buffer, max_u + buffer, max_v + buffer)
     confidence = "low" if budget_triggered else "med"
 
@@ -630,7 +726,7 @@ def synthetic_bounds_from_visible_extents(
 def _bounds_to_tuple(b):
     try:
         return (float(b.xmin), float(b.ymin), float(b.xmax), float(b.ymax))
-    except Exception:
+    except Exception as e:
         return None
 
 
@@ -685,7 +781,14 @@ def resolve_view_bounds(view, diag=None, policy=None):
     view_id = None
     try:
         view_id = getattr(getattr(view, "Id", None), "IntegerValue", None)
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="view_basis",
+                callsite="resolve_view_bounds",
+                message="Exception in resolve_view_bounds: {}".format(e),
+                exc=e,
+            )
         view_id = None
 
     buffer_ft = float(policy.get("buffer_ft", 0.0) or 0.0)
@@ -711,7 +814,14 @@ def resolve_view_bounds(view, diag=None, policy=None):
     if crop_active is None:
         try:
             crop_active = bool(getattr(view, "CropBoxActive"))
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="view_basis",
+                    callsite="resolve_view_bounds",
+                    message="Exception in resolve_view_bounds: {}".format(e),
+                    exc=e,
+                )
             crop_active = False
 
     bounds_crop_fn = policy.get("bounds_crop_fn", None)
@@ -758,9 +868,14 @@ def resolve_view_bounds(view, diag=None, policy=None):
                         view_id=view_id,
                         extra={"exc_type": type(e).__name__, "exc": str(e)},
                     )
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="view_basis",
+                            callsite="bounds_default_fn",
+                            message="Exception in bounds_default_fn: {}".format(e),
+                            exc=e,
+                        )
     if base_bounds is None:
         try:
             if bounds_extents_fn is not None:
@@ -821,9 +936,14 @@ def resolve_view_bounds(view, diag=None, policy=None):
                         view_id=view_id,
                         extra={"exc_type": type(e).__name__, "exc": str(e)},
                     )
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="view_basis",
+                            callsite="bounds_default_fn",
+                            message="Exception in bounds_default_fn: {}".format(e),
+                            exc=e,
+                        )
     # 2) Annotation-driven expansion (optional)
     anno_expanded = False
     try:
@@ -863,9 +983,14 @@ def resolve_view_bounds(view, diag=None, policy=None):
                     view_id=view_id,
                     extra={"exc_type": type(e).__name__, "exc": str(e)},
                 )
-            except Exception:
-                pass
-                
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="view_basis",
+                        callsite="bounds_default_fn",
+                        message="Exception in bounds_default_fn: {}".format(e),
+                        exc=e,
+                    )
     # 3) Cap reporting (optional)
     width_ft = float(base_bounds.width())
     height_ft = float(base_bounds.height())
@@ -952,9 +1077,14 @@ def resolve_view_bounds(view, diag=None, policy=None):
                             "cell_size_increase_factor": float(cell_size_ft_effective / cell_size_ft_requested),
                         },
                     )
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="view_basis",
+                            callsite="bounds_default_fn",
+                            message="Exception in bounds_default_fn: {}".format(e),
+                            exc=e,
+                        )
     # Report final grid dimensions using effective cell size
     W = max(1, int(math.ceil(width_ft / cell_size_ft_effective)))
     H = max(1, int(math.ceil(height_ft / cell_size_ft_effective)))
@@ -1039,9 +1169,9 @@ def _view_type_name(view):
                 return "EngineeringPlan"
             if hasattr(_VT, "ThreeD") and (vt == getattr(_VT, "ThreeD", None)):
                 return "ThreeD"
-        except Exception:
-            pass
-
+        except Exception as e:
+            # Exception in _view_type_name - no diag in scope
+            pass  # TODO: Add diagnostics when diag becomes available
         # 1) If the enum stringifies to a meaningful name, use it.
         try:
             s = str(vt) or ""
@@ -1049,17 +1179,17 @@ def _view_type_name(view):
             # If it's not purely numeric, assume it's already a name like "FloorPlan"
             if s_clean and not s_clean.isdigit():
                 return s_clean
-        except Exception:
-            pass
-
+        except Exception as e:
+            # Exception in _view_type_name - no diag in scope
+            pass  # TODO: Add diagnostics when diag becomes available
         # 2) Some stubs expose Name on the enum
         try:
             name = getattr(vt, "Name", "") or ""
             if name:
                 return name
-        except Exception:
-            pass
-
+        except Exception as e:
+            # Exception in _view_type_name - no diag in scope
+            pass  # TODO: Add diagnostics when diag becomes available
         # 3) Fallback: numeric mapping (covers int-valued enums or numeric stringification)
         # This mapping is conservative and can be extended as you encounter more values.
         try:
@@ -1067,7 +1197,7 @@ def _view_type_name(view):
                 code = vt
             else:
                 code = int(str(vt))
-        except Exception:
+        except Exception as e:
             return ""
 
         # Common Revit ViewType codes (observed in some Dynamo contexts)
@@ -1098,7 +1228,14 @@ def _view_type_name(view):
         }
         return code_map.get(code, str(code))
 
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="view_basis",
+                callsite="_view_type_name",
+                message="Exception in _view_type_name: {}".format(e),
+                exc=e,
+            )
         return ""
 
 def supports_model_geometry(view, diag=None):
@@ -1113,7 +1250,14 @@ def supports_model_geometry(view, diag=None):
     try:
         if bool(getattr(view, "IsTemplate", False)):
             return False
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="view_basis",
+                callsite="supports_model_geometry",
+                message="Exception in supports_model_geometry: {}".format(e),
+                exc=e,
+            )
         # If we cannot read IsTemplate, do not assume it's safe
         return False
 
@@ -1153,7 +1297,14 @@ def supports_crop_bounds(view, diag=None):
     try:
         _ = getattr(view, "CropBox", None)
         return True
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="view_basis",
+                callsite="supports_crop_bounds",
+                message="Exception in supports_crop_bounds: {}".format(e),
+                exc=e,
+            )
         return False
 
 
@@ -1191,7 +1342,14 @@ def resolve_view_mode(view, diag=None, policy=None):
         reason["is_template"] = bool(getattr(view, "IsTemplate", False))
         if reason["is_template"]:
             return VIEW_MODE_REJECTED, {**reason, "why": "view_is_template"}
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="view_basis",
+                callsite="resolve_view_mode",
+                message="Exception in resolve_view_mode: {}".format(e),
+                exc=e,
+            )
         # Hard-fail conservative: we cannot safely classify this view
         return VIEW_MODE_REJECTED, {**reason, "why": "cannot_read_is_template"}
 
@@ -1228,7 +1386,14 @@ def resolve_annotation_only_bounds(doc, view, basis, cell_size_ft, cfg=None, dia
     view_id = None
     try:
         view_id = getattr(getattr(view, "Id", None), "IntegerValue", None)
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="view_basis",
+                callsite="resolve_annotation_only_bounds",
+                message="Exception in resolve_annotation_only_bounds: {}".format(e),
+                exc=e,
+            )
         view_id = None
 
     # Collect view-specific annotations and compute UV extents
@@ -1250,7 +1415,14 @@ def resolve_annotation_only_bounds(doc, view, basis, cell_size_ft, cfg=None, dia
         try:
             if is_extent_driver_annotation(elem):
                 drivers.append(elem)
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="view_basis",
+                    callsite="resolve_annotation_only_bounds",
+                    message="Exception in resolve_annotation_only_bounds: {}".format(e),
+                    exc=e,
+                )
             continue
 
     if not drivers:
@@ -1268,9 +1440,14 @@ def resolve_annotation_only_bounds(doc, view, basis, cell_size_ft, cfg=None, dia
                     view_id=view_id,
                     extra={"num_annos": len(annos)},
                 )
-            except Exception:
-                pass
-
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="view_basis",
+                        callsite="resolve_annotation_only_bounds",
+                        message="Exception in resolve_annotation_only_bounds: {}".format(e),
+                        exc=e,
+                    )
     min_u = min_v = max_u = max_v = None
 
     for elem in drivers:

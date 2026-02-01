@@ -34,7 +34,7 @@ import math
 try:
     # core/cache.py in this repo provides a bounded LRU implementation
     from .cache import LRUCache
-except Exception:
+except Exception as e:
     LRUCache = None
 
 # Conservative defaults; override via cfg.* if present.
@@ -58,10 +58,11 @@ def _compose_transform(parent_T, child_T):
         return parent_T
     try:
         return parent_T.Multiply(child_T)
-    except Exception:
+    except Exception as e:
         try:
             return child_T.Multiply(parent_T)
-        except Exception:
+        except Exception as e2:
+            # Safe fallback: multiply failed both ways, return child_T
             return child_T
 
 def _collect_regions_recursive(
@@ -117,7 +118,14 @@ def _collect_regions_recursive(
             fam_local_loops = []
             try:
                 from Autodesk.Revit.DB import FilteredElementCollector, FilledRegion
-            except Exception:
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="geometry_extraction",
+                        callsite="_collect_regions_recursive",
+                        message="Exception in _collect_regions_recursive: {}".format(e),
+                        exc=e,
+                    )
                 return []
 
             # Collect ALL filled regions (normal + masking)
@@ -143,7 +151,14 @@ def _collect_regions_recursive(
                         },
                     )
 
-            except Exception:
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="geometry_extraction",
+                        callsite="_collect_regions_recursive",
+                        message="Exception in _collect_regions_recursive: {}".format(e),
+                        exc=e,
+                    )
                 regions = []
 
             for fr in regions:
@@ -154,12 +169,24 @@ def _collect_regions_recursive(
                 is_masking = False
                 try:
                     is_masking = bool(getattr(fr, "IsMasking", False))
-                except Exception:
-                    pass
-                    
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="geometry_extraction",
+                            callsite="_collect_regions_recursive",
+                            message="Exception in _collect_regions_recursive: {}".format(e),
+                            exc=e,
+                        )
                 try:
                     loops = fr.GetBoundaries()
-                except Exception:
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="geometry_extraction",
+                            callsite="_collect_regions_recursive",
+                            message="Exception in _collect_regions_recursive: {}".format(e),
+                            exc=e,
+                        )
                     loops = None
                 if not loops:
                     continue
@@ -176,7 +203,14 @@ def _collect_regions_recursive(
                             cname = ""
                             try:
                                 cname = c.__class__.__name__
-                            except Exception:
+                            except Exception as e:
+                                if diag is not None:
+                                    diag.error(
+                                        phase="geometry_extraction",
+                                        callsite="_collect_regions_recursive",
+                                        message="Exception in _collect_regions_recursive: {}".format(e),
+                                        exc=e,
+                                    )
                                 cname = ""
 
                             if hasattr(c, "GetEndPoint") and cname in ("Line", "BoundLine"):
@@ -185,17 +219,36 @@ def _collect_regions_recursive(
                                     p1 = c.GetEndPoint(1)
                                     pts.append(_xyz_tuple(p0))
                                     pts.append(_xyz_tuple(p1))
-                                except Exception:
-                                    pass
+                                except Exception as e:
+                                    if diag is not None:
+                                        diag.error(
+                                            phase="geometry_extraction",
+                                            callsite="_collect_regions_recursive",
+                                            message="Exception in _collect_regions_recursive: {}".format(e),
+                                            exc=e,
+                                        )
                             else:
                                 try:
                                     tess = c.Tessellate()
                                     n = min(len(tess), max_pts)
                                     for k in range(n):
                                         pts.append(_xyz_tuple(tess[k]))
-                                except Exception:
-                                    pass
-                    except Exception:
+                                except Exception as e:
+                                    if diag is not None:
+                                        diag.error(
+                                            phase="geometry_extraction",
+                                            callsite="_collect_regions_recursive",
+                                            message="Exception in _collect_regions_recursive: {}".format(e),
+                                            exc=e,
+                                        )
+                    except Exception as e:
+                        if diag is not None:
+                            diag.error(
+                                phase="geometry_extraction",
+                                callsite="_collect_regions_recursive",
+                                message="Exception in _collect_regions_recursive: {}".format(e),
+                                exc=e,
+                            )
                         continue
 
                     if len(pts) >= 2:
@@ -227,7 +280,14 @@ def _collect_regions_recursive(
 
         try:
             from Autodesk.Revit.DB import FilteredElementCollector, FamilyInstance
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="geometry_extraction",
+                    callsite="_collect_regions_recursive",
+                    message="Exception in _collect_regions_recursive: {}".format(e),
+                    exc=e,
+                )
             FamilyInstance = None
 
         if FamilyInstance is not None:
@@ -238,7 +298,14 @@ def _collect_regions_recursive(
                     .WhereElementIsNotElementType()
                     .ToElements()
                 )
-            except Exception:
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="geometry_extraction",
+                        callsite="_collect_regions_recursive",
+                        message="Exception in _collect_regions_recursive: {}".format(e),
+                        exc=e,
+                    )
                 nested_insts = []
 
             for inst in nested_insts:
@@ -248,7 +315,14 @@ def _collect_regions_recursive(
                 try:
                     sym = getattr(inst, "Symbol", None)
                     nested_fam = getattr(sym, "Family", None) if sym is not None else None
-                except Exception:
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="geometry_extraction",
+                            callsite="_collect_regions_recursive",
+                            message="Exception in _collect_regions_recursive: {}".format(e),
+                            exc=e,
+                        )
                     nested_fam = None
 
                 if nested_fam is None:
@@ -261,7 +335,14 @@ def _collect_regions_recursive(
                         inst_T = inst.GetTransform()
                     else:
                         inst_T = getattr(inst, "Transform", None)
-                except Exception:
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="geometry_extraction",
+                            callsite="_collect_regions_recursive",
+                            message="Exception in _collect_regions_recursive: {}".format(e),
+                            exc=e,
+                        )
                     inst_T = None
 
                 # nested local -> host family = T_into_host_family * inst_T
@@ -300,27 +381,39 @@ def _collect_regions_recursive(
     finally:
         try:
             visited_family_ids.discard(fam_id)
-        except Exception:
-            pass
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="geometry_extraction",
+                    callsite="_collect_regions_recursive",
+                    message="Exception in _collect_regions_recursive: {}".format(e),
+                    exc=e,
+                )
         try:
             if fam_doc is not None:
                 fam_doc.Close(False)
-        except Exception:
-            pass
-
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="geometry_extraction",
+                    callsite="_collect_regions_recursive",
+                    message="Exception in _collect_regions_recursive: {}".format(e),
+                    exc=e,
+                )
 def _safe_int_id(x):
     try:
         return int(getattr(getattr(x, "Id", None), "IntegerValue", 0))
-    except Exception:
+    except Exception as e:
         try:
             return int(x)
-        except Exception:
+        except Exception as e2:
+            # Safe fallback: all ID extraction failed, return 0
             return 0
 
 def _xyz_tuple(p):
     try:
         return (float(p.X), float(p.Y), float(p.Z))
-    except Exception:
+    except Exception as e:
         return (float(p[0]), float(p[1]), float(p[2]))
 
 def _apply_transform_xyz_tuple(T, xyz):
@@ -332,7 +425,7 @@ def _apply_transform_xyz_tuple(T, xyz):
         p = XYZ(xyz[0], xyz[1], xyz[2])
         q = T.OfPoint(p)
         return (float(q.X), float(q.Y), float(q.Z))
-    except Exception:
+    except Exception as e:
         return xyz
 
 def _cache_get(cache_obj, key, default=None):
@@ -340,7 +433,7 @@ def _cache_get(cache_obj, key, default=None):
         if hasattr(cache_obj, "get"):
             return cache_obj.get(key, default=default)
         return cache_obj.get(key, default)
-    except Exception:
+    except Exception as e:
         return default
 
 def _cache_set(cache_obj, key, value):
@@ -349,9 +442,9 @@ def _cache_set(cache_obj, key, value):
             cache_obj.set(key, value)
         else:
             cache_obj[key] = value
-    except Exception:
-        pass
-
+    except Exception as e:
+        # Exception in _cache_set - no diag in scope
+        pass  # TODO: Add diagnostics when diag becomes available
 def _maybe_resize_lru(cache_obj, max_items):
     # Best-effort: only affects LRUCache; dict fallback ignores.
     try:
@@ -362,9 +455,9 @@ def _maybe_resize_lru(cache_obj, max_items):
                 # If downsizing, evict immediately by re-setting a no-op key pattern.
                 # LRUCache evicts on set(); forcing eviction without storing a new item
                 # isn't supported, so we accept that downsizing takes effect on next set.
-    except Exception:
-        pass
-
+    except Exception as e:
+        # Exception in _maybe_resize_lru - no diag in scope
+        pass  # TODO: Add diagnostics when diag becomes available
 def _family_region_outlines_cached(base_elem, view, cfg=None, diag=None):
     """
     Return list of HOST-FAMILY-local XYZ loops representing FilledRegion boundaries
@@ -384,7 +477,14 @@ def _family_region_outlines_cached(base_elem, view, cfg=None, diag=None):
     budget_s = getattr(cfg, "family_region_outline_budget_s", 0.25) if cfg else 0.25
     try:
         budget_s = float(budget_s)
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="geometry_extraction",
+                callsite="_family_region_outlines_cached",
+                message="Exception in _family_region_outlines_cached: {}".format(e),
+                exc=e,
+            )
         budget_s = 0.25
     if budget_s <= 0:
         return []
@@ -393,7 +493,14 @@ def _family_region_outlines_cached(base_elem, view, cfg=None, diag=None):
     max_pts = getattr(cfg, "family_region_outline_max_pts_per_curve", 50) if cfg else 50
     try:
         max_pts = int(max_pts)
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="geometry_extraction",
+                callsite="_family_region_outlines_cached",
+                message="Exception in _family_region_outlines_cached: {}".format(e),
+                exc=e,
+            )
         max_pts = 50
     if max_pts < 2:
         max_pts = 2
@@ -402,7 +509,14 @@ def _family_region_outlines_cached(base_elem, view, cfg=None, diag=None):
     max_depth = getattr(cfg, "family_region_outline_nested_max_depth", 3) if cfg else 3
     try:
         max_depth = int(max_depth)
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="geometry_extraction",
+                callsite="_family_region_outlines_cached",
+                message="Exception in _family_region_outlines_cached: {}".format(e),
+                exc=e,
+            )
         max_depth = 3
     if max_depth < 0:
         max_depth = 0
@@ -410,7 +524,14 @@ def _family_region_outlines_cached(base_elem, view, cfg=None, diag=None):
     # Symbol key
     try:
         sym = getattr(base_elem, "Symbol", None)
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="geometry_extraction",
+                callsite="_family_region_outlines_cached",
+                message="Exception in _family_region_outlines_cached: {}".format(e),
+                exc=e,
+            )
         sym = None
     sym_id = _safe_int_id(sym)
     if sym is None or sym_id <= 0:
@@ -419,11 +540,25 @@ def _family_region_outlines_cached(base_elem, view, cfg=None, diag=None):
     # Optional runtime cap overrides from cfg (no config dependency)
     try:
         max_syms = int(getattr(cfg, "family_region_outline_cache_max_symbols", _DEFAULT_FAMILY_REGION_CACHE_MAX_SYMBOLS))
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="geometry_extraction",
+                callsite="_family_region_outlines_cached",
+                message="Exception in _family_region_outlines_cached: {}".format(e),
+                exc=e,
+            )
         max_syms = _DEFAULT_FAMILY_REGION_CACHE_MAX_SYMBOLS
     try:
         max_fams = int(getattr(cfg, "family_region_outline_cache_max_families", _DEFAULT_FAMILY_REGION_CACHE_MAX_FAMILIES))
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="geometry_extraction",
+                callsite="_family_region_outlines_cached",
+                message="Exception in _family_region_outlines_cached: {}".format(e),
+                exc=e,
+            )
         max_fams = _DEFAULT_FAMILY_REGION_CACHE_MAX_FAMILIES
 
     _maybe_resize_lru(_FAMILY_REGION_OUTLINE_CACHE, max_syms)
@@ -477,8 +612,14 @@ def _family_region_outlines_cached(base_elem, view, cfg=None, diag=None):
                     elem_id=_safe_int_id(base_elem),
                     extra={"exc_type": type(e).__name__, "exc": str(e), "sym_id": sym_id},
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="geometry_extraction",
+                    callsite="_family_region_outlines_cached",
+                    message="Exception in _family_region_outlines_cached: {}".format(e),
+                    exc=e,
+                )
         _cache_set(_FAMILY_REGION_OUTLINE_CACHE, sym_id, {"xyz_loops": xyz_loops, "ts": time.time()})
         return xyz_loops
 
@@ -489,7 +630,7 @@ def _bbox_corners_world(bbox):
     """
     try:
         from Autodesk.Revit.DB import XYZ, Transform
-    except Exception:
+    except Exception as e:
         XYZ = None
 
     if not bbox or not bbox.Min or not bbox.Max:
@@ -518,7 +659,7 @@ def _bbox_corners_world(bbox):
 
     try:
         return [trf.OfPoint(p) for p in local]
-    except Exception:
+    except Exception as e:
         return local
 
 
@@ -613,7 +754,7 @@ def _uv_obb_rect_from_bbox(elem, view, view_basis):
         rect, lu, lv = _pca_obb_uv(pts_uv)
         return (rect, lu, lv)
 
-    except Exception:
+    except Exception as e:
         return ([], 0.0, 0.0)
 
 
@@ -658,7 +799,7 @@ def _determine_uv_mode(elem, view, view_basis, raster, cfg):
         else:
             return 'AREAL'
 
-    except Exception:
+    except Exception as e:
         return 'AREAL'
 
 def _location_curve_obb_silhouette(elem, view, view_basis, cfg=None):
@@ -702,7 +843,14 @@ def _location_curve_obb_silhouette(elem, view, view_basis, cfg=None):
             "is_hole": False
         }]
 
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="geometry_extraction",
+                callsite="_location_curve_obb_silhouette",
+                message="Exception in _location_curve_obb_silhouette: {}".format(e),
+                exc=e,
+            )
         return []
 
 
@@ -753,9 +901,14 @@ def _detail_line_band_silhouette(elem, view, view_basis, cfg=None, diag=None):
                 elem_id = getattr(getattr(elem, 'Id', None), 'IntegerValue', 'unknown')
                 print("[DEBUG detail_line_band] Elem {}: category='{}'".format(elem_id, cat_name))
                 _detail_line_band_silhouette._debug_count += 1
-            except Exception:
-                pass
-
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="geometry_extraction",
+                        callsite="_detail_line_band_silhouette",
+                        message="Exception in _detail_line_band_silhouette: {}".format(e),
+                        exc=e,
+                    )
         # Archive used: cat_name in ("Lines", "Detail Lines")
         if cat_name not in ("Lines", "Detail Lines"):
             return []  # Not a detail line - try other strategies
@@ -773,7 +926,14 @@ def _detail_line_band_silhouette(elem, view, view_basis, cfg=None, diag=None):
         try:
             p0 = curve.GetEndPoint(0)
             p1 = curve.GetEndPoint(1)
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="geometry_extraction",
+                    callsite="_detail_line_band_silhouette",
+                    message="Exception in _detail_line_band_silhouette: {}".format(e),
+                    exc=e,
+                )
             return []
 
         # Transform to view UV space
@@ -836,9 +996,14 @@ def _detail_line_band_silhouette(elem, view, view_basis, cfg=None, diag=None):
                 print("  UV endpoints: ({:.1f},{:.1f}) → ({:.1f},{:.1f})".format(x0, y0, x1, y1))
                 print("  Band width: {:.2f} cells (half={:.2f})".format(band_cells, band_half_cells))
                 _detail_line_band_silhouette._success_count += 1
-            except Exception:
-                pass
-
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="geometry_extraction",
+                        callsite="_detail_line_band_silhouette",
+                        message="Exception in _detail_line_band_silhouette: {}".format(e),
+                        exc=e,
+                    )
         # CRITICAL: Do NOT set "open": True
         # This is a CLOSED loop that should be filled, not a Bresenham edge
 
@@ -866,15 +1031,26 @@ def _symbolic_curves_silhouette(elem, view, view_basis, cfg=None, diag=None):
         if not hasattr(elem, 'transform'):  # Host element only
             try:
                 opts.View = view
-            except Exception:
-                pass
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="geometry_extraction",
+                        callsite="_symbolic_curves_silhouette",
+                        message="Exception in _symbolic_curves_silhouette: {}".format(e),
+                        exc=e,
+                    )
         # For linked elements: leave opts.View = None (extract in link coordinates)
 
         try:
             opts.DetailLevel = ViewDetailLevel.Fine
-        except Exception:
-            pass
-
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="geometry_extraction",
+                    callsite="_symbolic_curves_silhouette",
+                    message="Exception in _symbolic_curves_silhouette: {}".format(e),
+                    exc=e,
+                )
         base_elem = _unwrap_elem(elem)
         geom = base_elem.get_Geometry(opts)
         if geom is None:
@@ -890,7 +1066,14 @@ def _symbolic_curves_silhouette(elem, view, view_basis, cfg=None, diag=None):
         budget_s = getattr(cfg, "symbolic_time_budget_s", 0.10) if cfg else 0.10
         try:
             budget_s = float(budget_s) if budget_s is not None else None
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="geometry_extraction",
+                    callsite="_symbolic_curves_silhouette",
+                    message="Exception in _symbolic_curves_silhouette: {}".format(e),
+                    exc=e,
+                )
             budget_s = 0.10
         if budget_s is not None and budget_s <= 0:
             budget_s = None
@@ -915,8 +1098,14 @@ def _symbolic_curves_silhouette(elem, view, view_basis, cfg=None, diag=None):
                             elem_id=getattr(getattr(base_elem, "Id", None), "IntegerValue", None),
                             extra={"budget_s": budget_s, "paths_emitted": count, "max_paths": max_paths},
                         )
-                except Exception:
-                    pass
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="geometry_extraction",
+                            callsite="_symbolic_curves_silhouette",
+                            message="Exception in _symbolic_curves_silhouette: {}".format(e),
+                            exc=e,
+                        )
                 break
 
             pts_uv = []
@@ -927,7 +1116,14 @@ def _symbolic_curves_silhouette(elem, view, view_basis, cfg=None, diag=None):
             g_name = ""
             try:
                 g_name = g.__class__.__name__
-            except Exception:
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="geometry_extraction",
+                        callsite="_symbolic_curves_silhouette",
+                        message="Exception in _symbolic_curves_silhouette: {}".format(e),
+                        exc=e,
+                    )
                 g_name = ""
 
             if g_name == "PolyLine":
@@ -941,7 +1137,14 @@ def _symbolic_curves_silhouette(elem, view, view_basis, cfg=None, diag=None):
                         p = _to_host_point(elem, coords[k])
                         uv = view_basis.transform_to_view_uv((p.X, p.Y, p.Z))
                         pts_uv.append((uv[0], uv[1]))
-                except Exception:
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="geometry_extraction",
+                            callsite="_symbolic_curves_silhouette",
+                            message="Exception in _symbolic_curves_silhouette: {}".format(e),
+                            exc=e,
+                        )
                     continue
 
             elif hasattr(g, "GetEndPoint"):
@@ -952,7 +1155,14 @@ def _symbolic_curves_silhouette(elem, view, view_basis, cfg=None, diag=None):
                 try:
                     p0 = g.GetEndPoint(0)
                     p1 = g.GetEndPoint(1)
-                except Exception:
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="geometry_extraction",
+                            callsite="_symbolic_curves_silhouette",
+                            message="Exception in _symbolic_curves_silhouette: {}".format(e),
+                            exc=e,
+                        )
                     p0 = None
                     p1 = None
 
@@ -973,7 +1183,14 @@ def _symbolic_curves_silhouette(elem, view, view_basis, cfg=None, diag=None):
                         uv0 = view_basis.transform_to_view_uv((p0h.X, p0h.Y, p0h.Z))
                         uv1 = view_basis.transform_to_view_uv((p1h.X, p1h.Y, p1h.Z))
                         pts_uv = [(uv0[0], uv0[1]), (uv1[0], uv1[1])]
-                    except Exception:
+                    except Exception as e:
+                        if diag is not None:
+                            diag.error(
+                                phase="geometry_extraction",
+                                callsite="_symbolic_curves_silhouette",
+                                message="Exception in _symbolic_curves_silhouette: {}".format(e),
+                                exc=e,
+                            )
                         pts_uv = []
 
                 else:
@@ -989,7 +1206,14 @@ def _symbolic_curves_silhouette(elem, view, view_basis, cfg=None, diag=None):
                                 p = _to_host_point(elem, tess[k])
                                 uv = view_basis.transform_to_view_uv((p.X, p.Y, p.Z))
                                 pts_uv.append((uv[0], uv[1]))
-                        except Exception:
+                        except Exception as e:
+                            if diag is not None:
+                                diag.error(
+                                    phase="geometry_extraction",
+                                    callsite="_symbolic_curves_silhouette",
+                                    message="Exception in _symbolic_curves_silhouette: {}".format(e),
+                                    exc=e,
+                                )
                             continue
 
             elif hasattr(g, "Tessellate"):
@@ -1003,7 +1227,14 @@ def _symbolic_curves_silhouette(elem, view, view_basis, cfg=None, diag=None):
                         p = _to_host_point(elem, tess[k])
                         uv = view_basis.transform_to_view_uv((p.X, p.Y, p.Z))
                         pts_uv.append((uv[0], uv[1]))
-                except Exception:
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="geometry_extraction",
+                            callsite="_symbolic_curves_silhouette",
+                            message="Exception in _symbolic_curves_silhouette: {}".format(e),
+                            exc=e,
+                        )
                     continue
 
             if len(pts_uv) >= 2:
@@ -1048,7 +1279,14 @@ def _symbolic_curves_silhouette(elem, view, view_basis, cfg=None, diag=None):
                         inst_T = base_elem.GetTransform()
                     else:
                         inst_T = getattr(base_elem, "Transform", None)
-                except Exception:
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="geometry_extraction",
+                            callsite="_symbolic_curves_silhouette",
+                            message="Exception in _symbolic_curves_silhouette: {}".format(e),
+                            exc=e,
+                        )
                     inst_T = None
 
                 for xyzs in xyz_loops:
@@ -1062,19 +1300,38 @@ def _symbolic_curves_silhouette(elem, view, view_basis, cfg=None, diag=None):
                             p = XYZ(xyz_w[0], xyz_w[1], xyz_w[2])
                             p = _to_host_point(elem, p)
                             uv = view_basis.transform_to_view_uv((p.X, p.Y, p.Z))
-                        except Exception:
+                        except Exception as e:
+                            if diag is not None:
+                                diag.error(
+                                    phase="geometry_extraction",
+                                    callsite="_symbolic_curves_silhouette",
+                                    message="Exception in _symbolic_curves_silhouette: {}".format(e),
+                                    exc=e,
+                                )
                             uv = view_basis.transform_to_view_uv((xyz_w[0], xyz_w[1], xyz_w[2]))
                         pts_uv.append((uv[0], uv[1]))
 
                     # Keep as OPEN polyline but include closure point (last==first) so stroke closes.
                     if len(pts_uv) >= 3:
                         loops.append({"points": pts_uv, "is_hole": False, "open": True})
-        except Exception:
-            pass
-
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="geometry_extraction",
+                    callsite="_symbolic_curves_silhouette",
+                    message="Exception in _symbolic_curves_silhouette: {}".format(e),
+                    exc=e,
+                )
         return loops
 
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="geometry_extraction",
+                callsite="_symbolic_curves_silhouette",
+                message="Exception in _symbolic_curves_silhouette: {}".format(e),
+                exc=e,
+            )
         return []
 
 def _iter_curve_primitives(geom, _depth=0, _max_depth=4):
@@ -1095,7 +1352,7 @@ def _iter_curve_primitives(geom, _depth=0, _max_depth=4):
     def _name(x):
         try:
             return x.__class__.__name__
-        except Exception:
+        except Exception as e:
             return ""
 
     # Conservative "container" predicate:
@@ -1112,7 +1369,7 @@ def _iter_curve_primitives(geom, _depth=0, _max_depth=4):
     # Prefer enumerator when available
     try:
         it = geom.GetEnumerator()
-    except Exception:
+    except Exception as e:
         it = None
 
     if it:
@@ -1128,15 +1385,17 @@ def _iter_curve_primitives(geom, _depth=0, _max_depth=4):
                         ig = g.GetInstanceGeometry()
                         for x in _iter_curve_primitives(ig, _depth=_depth + 1, _max_depth=_max_depth):
                             yield x
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        # Exception in _is_curve_container - no diag in scope
+                        pass  # TODO: Add diagnostics when diag becomes available
                 if hasattr(g, "GetSymbolGeometry"):
                     try:
                         sg = g.GetSymbolGeometry()
                         for x in _iter_curve_primitives(sg, _depth=_depth + 1, _max_depth=_max_depth):
                             yield x
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        # Exception in _is_curve_container - no diag in scope
+                        pass  # TODO: Add diagnostics when diag becomes available
                 continue
 
             # Direct curve primitives
@@ -1149,8 +1408,9 @@ def _iter_curve_primitives(geom, _depth=0, _max_depth=4):
                 try:
                     for x in _iter_curve_primitives(g, _depth=_depth + 1, _max_depth=_max_depth):
                         yield x
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Exception in _is_curve_container - no diag in scope
+                    pass  # TODO: Add diagnostics when diag becomes available
                 continue
 
     else:
@@ -1166,15 +1426,17 @@ def _iter_curve_primitives(geom, _depth=0, _max_depth=4):
                             ig = g.GetInstanceGeometry()
                             for x in _iter_curve_primitives(ig, _depth=_depth + 1, _max_depth=_max_depth):
                                 yield x
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            # Exception in _is_curve_container - no diag in scope
+                            pass  # TODO: Add diagnostics when diag becomes available
                     if hasattr(g, "GetSymbolGeometry"):
                         try:
                             sg = g.GetSymbolGeometry()
                             for x in _iter_curve_primitives(sg, _depth=_depth + 1, _max_depth=_max_depth):
                                 yield x
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            # Exception in _is_curve_container - no diag in scope
+                            pass  # TODO: Add diagnostics when diag becomes available
                     continue
 
                 if _name(g) == "PolyLine" or hasattr(g, "GetEndPoint"):
@@ -1185,10 +1447,11 @@ def _iter_curve_primitives(geom, _depth=0, _max_depth=4):
                     try:
                         for x in _iter_curve_primitives(g, _depth=_depth + 1, _max_depth=_max_depth):
                             yield x
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        # Exception in _is_curve_container - no diag in scope
+                        pass  # TODO: Add diagnostics when diag becomes available
                     continue
-        except Exception:
+        except Exception as e:
             return
 
 def _merge_paths_by_endpoints(paths, eps=1e-6, max_iters=500):
@@ -1278,7 +1541,7 @@ def _cad_curves_silhouette(elem, view, view_basis, raster, cfg=None):
     """
     try:
         from Autodesk.Revit.DB import Options, ViewDetailLevel
-    except Exception:
+    except Exception as e:
         return []
 
     base_elem = _unwrap_elem(elem)
@@ -1321,7 +1584,7 @@ def _cad_curves_silhouette(elem, view, view_basis, raster, cfg=None):
                 return
             try:
                 it2 = g.GetEnumerator()
-            except Exception:
+            except Exception as e:
                 it2 = None
 
             if it2:
@@ -1337,8 +1600,9 @@ def _cad_curves_silhouette(elem, view, view_basis, raster, cfg=None):
                             ig = o.GetInstanceGeometry()
                             for x in _iter_geom_objects(ig):
                                 yield x
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            # Exception in _iter_geom_objects - no diag in scope
+                            pass  # TODO: Add diagnostics when diag becomes available
             else:
                 try:
                     for o in g:
@@ -1350,16 +1614,17 @@ def _cad_curves_silhouette(elem, view, view_basis, raster, cfg=None):
                                 ig = o.GetInstanceGeometry()
                                 for x in _iter_geom_objects(ig):
                                     yield x
-                            except Exception:
-                                pass
-                except Exception:
+                            except Exception as e:
+                                # Exception in _iter_geom_objects - no diag in scope
+                                pass  # TODO: Add diagnostics when diag becomes available
+                except Exception as e:
                     return
 
         try:
             for obj in _iter_geom_objects(geom):
                 try:
                     name = obj.__class__.__name__
-                except Exception:
+                except Exception as e:
                     name = None
 
                 # Skip obvious curve primitives (handled below)
@@ -1371,21 +1636,21 @@ def _cad_curves_silhouette(elem, view, view_basis, raster, cfg=None):
                 bb = None
                 try:
                     bb = getattr(obj, "BoundingBox", None)
-                except Exception:
+                except Exception as e:
                     bb = None
 
                 if bb is None:
                     try:
                         bb = obj.GetBoundingBox()
-                    except Exception:
+                    except Exception as e:
                         bb = None
 
                 if bb is not None:
                     _try_add_bbox_fill(loops, bb)
 
-        except Exception:
-            pass
-
+        except Exception as e:
+            # Exception in _iter_geom_objects - no diag in scope
+            pass  # TODO: Add diagnostics when diag becomes available
         for (g, g_trf) in _iter_curve_primitives_xform(geom, trf=None):
             if count >= max_paths:
                 break
@@ -1396,7 +1661,7 @@ def _cad_curves_silhouette(elem, view, view_basis, raster, cfg=None):
             if g.__class__.__name__ == "PolyLine":
                 try:
                     coords = g.GetCoordinates()
-                except Exception:
+                except Exception as e:
                     coords = None
 
                 if coords:
@@ -1405,8 +1670,9 @@ def _cad_curves_silhouette(elem, view, view_basis, raster, cfg=None):
                         if g_trf is not None:
                             try:
                                 p = g_trf.OfPoint(p)
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                # Exception in _iter_geom_objects - no diag in scope
+                                pass  # TODO: Add diagnostics when diag becomes available
                         p = _to_host_point(elem, p)
                         uv = view_basis.transform_to_view_uv((p.X, p.Y, p.Z))
                         pts_uv.append((uv[0], uv[1]))
@@ -1415,7 +1681,7 @@ def _cad_curves_silhouette(elem, view, view_basis, raster, cfg=None):
             elif hasattr(g, "Tessellate"):
                 try:
                     tess = g.Tessellate()
-                except Exception:
+                except Exception as e:
                     tess = None
 
                 if tess:
@@ -1424,8 +1690,9 @@ def _cad_curves_silhouette(elem, view, view_basis, raster, cfg=None):
                         if g_trf is not None:
                             try:
                                 p = g_trf.OfPoint(p)
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                # Exception in _iter_geom_objects - no diag in scope
+                                pass  # TODO: Add diagnostics when diag becomes available
                         p = _to_host_point(elem, p)
                         uv = view_basis.transform_to_view_uv((p.X, p.Y, p.Z))
                         pts_uv.append((uv[0], uv[1]))
@@ -1502,14 +1769,14 @@ def _cad_curves_silhouette(elem, view, view_basis, raster, cfg=None):
             mx = bbox.Max
             if mn is None or mx is None:
                 return False
-        except Exception:
+        except Exception as e:
             return False
 
         # Project bbox corners to UV (axis-aligned in UV)
         try:
             uv_mn = view_basis.transform_to_view_uv((mn.X, mn.Y, mn.Z))
             uv_mx = view_basis.transform_to_view_uv((mx.X, mx.Y, mx.Z))
-        except Exception:
+        except Exception as e:
             return False
 
         u0 = min(uv_mn[0], uv_mx[0])
@@ -1549,22 +1816,44 @@ def _cad_curves_silhouette(elem, view, view_basis, raster, cfg=None):
             # Imports can hide curve primitives unless this is True in some cases
             try:
                 opts.IncludeNonVisibleObjects = True
-            except Exception:
-                pass
-
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="geometry_extraction",
+                        callsite="_get_geom",
+                        message="Exception in _get_geom: {}".format(e),
+                        exc=e,
+                    )
             try:
                 opts.DetailLevel = ViewDetailLevel.Fine
-            except Exception:
-                pass
-
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="geometry_extraction",
+                        callsite="_get_geom",
+                        message="Exception in _get_geom: {}".format(e),
+                        exc=e,
+                    )
             if bind_view:
                 try:
                     opts.View = view
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="geometry_extraction",
+                            callsite="_get_geom",
+                            message="Exception in _get_geom: {}".format(e),
+                            exc=e,
+                        )
             return base_elem.get_Geometry(opts)
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="geometry_extraction",
+                    callsite="_get_geom",
+                    message="Exception in _get_geom: {}".format(e),
+                    exc=e,
+                )
             return None
 
     # Attempt 1: NO view binding (preferred for ImportInstance curve primitives)
@@ -1589,7 +1878,7 @@ def _to_host_point(elem, xyz):
     try:
         if type(elem).__name__ != "LinkedElementProxy":
             return xyz
-    except Exception:
+    except Exception as e:
         return xyz
 
     trf = getattr(elem, "transform", None)
@@ -1597,7 +1886,7 @@ def _to_host_point(elem, xyz):
         return xyz
     try:
         return trf.OfPoint(xyz)
-    except Exception:
+    except Exception as e:
         return xyz
 
 def _unwrap_elem(elem):
@@ -1609,7 +1898,7 @@ def _unwrap_elem(elem):
     try:
         inner = getattr(elem, "element", None)
         return inner if inner is not None else elem
-    except Exception:
+    except Exception as e:
         return elem
 
 def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None, cache_key=None, diag=None):
@@ -1639,11 +1928,25 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
     # Precompute ids used by diagnostics / planar-face selection (safe in tests and in Revit).
     try:
         view_id = int(getattr(getattr(view, "Id", None), "IntegerValue", 0))
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="geometry_extraction",
+                callsite="get_element_silhouette",
+                message="Exception in get_element_silhouette: {}".format(e),
+                exc=e,
+            )
         view_id = 0
     try:
         elem_id = int(getattr(getattr(elem, "Id", None), "IntegerValue", 0))
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="geometry_extraction",
+                callsite="get_element_silhouette",
+                message="Exception in get_element_silhouette: {}".format(e),
+                exc=e,
+            )
         elem_id = 0
 
     # Best-effort face collection for planar-face selection strategy.
@@ -1651,7 +1954,14 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
     element_faces = []
     try:
         from Autodesk.Revit.DB import Options, ViewDetailLevel
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="geometry_extraction",
+                callsite="get_element_silhouette",
+                message="Exception in get_element_silhouette: {}".format(e),
+                exc=e,
+            )
         Options = None
         ViewDetailLevel = None
 
@@ -1663,23 +1973,40 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
             try:
                 if ViewDetailLevel is not None:
                     opts.DetailLevel = ViewDetailLevel.Medium
-            except Exception:
-                pass
-
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="geometry_extraction",
+                        callsite="get_element_silhouette",
+                        message="Exception in get_element_silhouette: {}".format(e),
+                        exc=e,
+                    )
             # Same linked-element guard as elsewhere: don't bind opts.View for linked proxies
             if not hasattr(elem, "transform"):
                 try:
                     opts.View = view
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="geometry_extraction",
+                            callsite="get_element_silhouette",
+                            message="Exception in get_element_silhouette: {}".format(e),
+                            exc=e,
+                        )
             geom = elem.get_Geometry(opts)
             if geom is not None:
                 # Collect faces from solids (PlanarFace filtering happens downstream in face_selection)
                 for solid in _iter_solids(geom):
                     try:
                         faces = getattr(solid, "Faces", None)
-                    except Exception:
+                    except Exception as e:
+                        if diag is not None:
+                            diag.error(
+                                phase="geometry_extraction",
+                                callsite="get_element_silhouette",
+                                message="Exception in get_element_silhouette: {}".format(e),
+                                exc=e,
+                            )
                         faces = None
                     if not faces:
                         continue
@@ -1687,9 +2014,23 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
                         for f in faces:
                             if f is not None:
                                 element_faces.append(f)
-                    except Exception:
+                    except Exception as e:
+                        if diag is not None:
+                            diag.error(
+                                phase="geometry_extraction",
+                                callsite="get_element_silhouette",
+                                message="Exception in get_element_silhouette: {}".format(e),
+                                exc=e,
+                            )
                         continue
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="geometry_extraction",
+                    callsite="get_element_silhouette",
+                    message="Exception in get_element_silhouette: {}".format(e),
+                    exc=e,
+                )
             # Best-effort only; keep element_faces empty on failure.
             element_faces = []
 
@@ -1700,15 +2041,27 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
             cached = cache.get(cache_key, default=None)
             if cached is not None:
                 return cached
-        except Exception:
-            pass
-
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="geometry_extraction",
+                    callsite="get_element_silhouette",
+                    message="Exception in get_element_silhouette: {}".format(e),
+                    exc=e,
+                )
     # Special-cases first (DWG + family symbolic)
     base_elem = _unwrap_elem(elem)
 
     try:
         from Autodesk.Revit.DB import ImportInstance, FamilyInstance
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="geometry_extraction",
+                callsite="get_element_silhouette",
+                message="Exception in get_element_silhouette: {}".format(e),
+                exc=e,
+            )
         ImportInstance = None
         FamilyInstance = None
 
@@ -1728,9 +2081,14 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
                 ln = str(cat_name).lower()
                 if (".dwg" in ln) or (".dxf" in ln):
                     strategies = ['cad_curves', 'bbox']
-        except Exception:
-            pass
-
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="geometry_extraction",
+                    callsite="get_element_silhouette",
+                    message="Exception in get_element_silhouette: {}".format(e),
+                    exc=e,
+                )
     # Family instances: prefer symbolic curves where possible
     if strategies is None and FamilyInstance is not None and isinstance(base_elem, FamilyInstance):
         if cfg is None:
@@ -1769,7 +2127,14 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
                         strategies = list(s)
                     else:
                         strategies = None
-                except Exception:
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="geometry_extraction",
+                            callsite="get_element_silhouette",
+                            message="Exception in get_element_silhouette: {}".format(e),
+                            exc=e,
+                        )
                     strategies = None
 
             # Fallback to legacy defaults if cfg doesn't provide strategies (or failed).
@@ -1844,24 +2209,39 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
                                     "attempts": list(_silhouette_attempts) if '_silhouette_attempts' in locals() else None,
                                 },
                             )
-                    except Exception:
-                        pass
-
+                    except Exception as e:
+                        if diag is not None:
+                            diag.error(
+                                phase="geometry_extraction",
+                                callsite="get_element_silhouette",
+                                message="Exception in get_element_silhouette: {}".format(e),
+                                exc=e,
+                            )
                 if cache is not None and cache_key is not None:
                     try:
                         cache.set(cache_key, [dict(loop) for loop in loops])
-                    except Exception:
-                        pass
-
+                    except Exception as e:
+                        if diag is not None:
+                            diag.error(
+                                phase="geometry_extraction",
+                                callsite="get_element_silhouette",
+                                message="Exception in get_element_silhouette: {}".format(e),
+                                exc=e,
+                            )
                 return loops
 
             # Record that we tried this strategy (success/failure appended below).
             if diag is not None:
                 try:
                     _silhouette_attempts.append({"strategy": str(strategy_name), "ok": None})
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="geometry_extraction",
+                            callsite="get_element_silhouette",
+                            message="Exception in get_element_silhouette: {}".format(e),
+                            exc=e,
+                        )
         except Exception as e:
             # Strategy failed, try next
             if diag is not None:
@@ -1873,8 +2253,14 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
                             "err_type": type(e).__name__,
                         }
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="geometry_extraction",
+                            callsite="get_element_silhouette",
+                            message="Exception in get_element_silhouette: {}".format(e),
+                            exc=e,
+                        )
             pass
 
     # Ultimate fallback: bbox
@@ -1901,12 +2287,24 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
                         "attempts": list(_silhouette_attempts),
                     },
                 )
-            except Exception:
-                pass
-
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="geometry_extraction",
+                        callsite="get_element_silhouette",
+                        message="Exception in get_element_silhouette: {}".format(e),
+                        exc=e,
+                    )
         return loops
 
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="geometry_extraction",
+                callsite="get_element_silhouette",
+                message="Exception in get_element_silhouette: {}".format(e),
+                exc=e,
+            )
 
         if diag is not None:
             try:
@@ -1922,7 +2320,8 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
                         "attempts": list(_silhouette_attempts) if '_silhouette_attempts' in locals() else None,
                     },
                 )
-            except Exception:
+            except Exception as diag_e:
+                # Safe: diagnostics recording failed, continue without crashing
                 pass
 
         if diag is not None:
@@ -1993,7 +2392,7 @@ def _bbox_silhouette(elem, view, view_basis):
 
         return [{'points': points, 'is_hole': False}]
 
-    except Exception:
+    except Exception as e:
         return []
 
 
@@ -2055,7 +2454,7 @@ def _obb_silhouette(elem, view, view_basis):
 
         return [{'points': hull_uvw, 'is_hole': False}]
 
-    except Exception:
+    except Exception as e:
         return []
 
 def _front_face_loops_silhouette(elem, view, view_basis, cfg=None):
@@ -2066,12 +2465,12 @@ def _front_face_loops_silhouette(elem, view, view_basis, cfg=None):
     """
     try:
         from Autodesk.Revit.DB import Options, ViewDetailLevel, UV, PlanarFace
-    except Exception:
+    except Exception as e:
         return []
 
     try:
         view_direction = view.ViewDirection
-    except Exception:
+    except Exception as e:
         return []
 
     try:
@@ -2080,20 +2479,20 @@ def _front_face_loops_silhouette(elem, view, view_basis, cfg=None):
         opts.IncludeNonVisibleObjects = False
         try:
             opts.DetailLevel = ViewDetailLevel.Medium
-        except Exception:
-            pass
-
+        except Exception as e:
+            # Exception in _front_face_loops_silhouette - no diag in scope
+            pass  # TODO: Add diagnostics when diag becomes available
         # Same linked-element rule as elsewhere
         if not hasattr(elem, 'transform'):
             try:
                 opts.View = view
-            except Exception:
-                pass
-
+            except Exception as e:
+                # Exception in _front_face_loops_silhouette - no diag in scope
+                pass  # TODO: Add diagnostics when diag becomes available
         geom = elem.get_Geometry(opts)
         if geom is None:
             return []
-    except Exception:
+    except Exception as e:
         return []
 
     loops_out = []
@@ -2110,7 +2509,7 @@ def _front_face_loops_silhouette(elem, view, view_basis, cfg=None):
                 # Prefer planar faces (stable normals + edge loops)
                 try:
                     is_planar = isinstance(face, PlanarFace)
-                except Exception:
+                except Exception as e:
                     is_planar = False
                 if not is_planar:
                     continue
@@ -2122,12 +2521,12 @@ def _front_face_loops_silhouette(elem, view, view_basis, cfg=None):
                     u_mid = (bbox_uv.Min.U + bbox_uv.Max.U) / 2.0
                     v_mid = (bbox_uv.Min.V + bbox_uv.Max.V) / 2.0
                     normal = face.ComputeNormal(UV(u_mid, v_mid))
-                except Exception:
+                except Exception as e:
                     continue
 
                 try:
                     dot = normal.DotProduct(view_direction)
-                except Exception:
+                except Exception as e:
                     continue
 
                 # Front-facing in your convention: dot < 0
@@ -2135,10 +2534,10 @@ def _front_face_loops_silhouette(elem, view, view_basis, cfg=None):
                     # Use face area to pick dominant face when multiple exist
                     try:
                         area = float(getattr(face, "Area", 0.0))
-                    except Exception:
+                    except Exception as e:
                         area = 0.0
                     faces.append((area, face))
-        except Exception:
+        except Exception as e:
             continue
 
     if not faces:
@@ -2153,7 +2552,7 @@ def _front_face_loops_silhouette(elem, view, view_basis, cfg=None):
     for _, face in faces[:max_faces]:
         try:
             edge_loops = face.EdgeLoops
-        except Exception:
+        except Exception as e:
             continue
         if not edge_loops:
             continue
@@ -2164,7 +2563,7 @@ def _front_face_loops_silhouette(elem, view, view_basis, cfg=None):
         # EdgeLoops is an EdgeArrayArray; use enumerators explicitly for IronPython safety
         try:
             loops_it = edge_loops.GetEnumerator()
-        except Exception:
+        except Exception as e:
             loops_it = None
 
         li = 0
@@ -2174,7 +2573,7 @@ def _front_face_loops_silhouette(elem, view, view_basis, cfg=None):
 
             try:
                 edges_it = edge_loop.GetEnumerator()
-            except Exception:
+            except Exception as e:
                 edges_it = None
 
             while edges_it and edges_it.MoveNext():
@@ -2186,14 +2585,14 @@ def _front_face_loops_silhouette(elem, view, view_basis, cfg=None):
                     try:
                         tess = curve.Tessellate()
                         points_3d = list(tess)
-                    except Exception:
+                    except Exception as e:
                         points_3d = [curve.GetEndPoint(0), curve.GetEndPoint(1)]
 
                     for p in points_3d:
                         ph = _to_host_point(elem, p)
                         uvw = world_to_view((ph.X, ph.Y, ph.Z), view_basis)
                         pts.append(uvw)
-                except Exception:
+                except Exception as e:
                     continue
 
             if len(pts) >= 3:
@@ -2235,7 +2634,7 @@ def _silhouette_edges(elem, view, view_basis, cfg):
     """
     try:
         from Autodesk.Revit.DB import Options, ViewDetailLevel, UV
-    except Exception:
+    except Exception as e:
         return []
 
     if not hasattr(elem, 'get_Geometry'):
@@ -2244,7 +2643,7 @@ def _silhouette_edges(elem, view, view_basis, cfg):
     # Get view direction for silhouette detection
     try:
         view_direction = view.ViewDirection
-    except Exception:
+    except Exception as e:
         # Can't determine view direction, fall back
         return []
 
@@ -2260,14 +2659,15 @@ def _silhouette_edges(elem, view, view_basis, cfg):
         if not hasattr(elem, 'transform'):  # Host element only
             try:
                 opts.View = view
-            except Exception:
-                pass
+            except Exception as e:
+                # Exception in _silhouette_edges - no diag in scope
+                pass  # TODO: Add diagnostics when diag becomes available
         # For linked elements: leave opts.View = None (extract in link coordinates)
 
         geom = elem.get_Geometry(opts)
         if geom is None:
             return []
-    except Exception:
+    except Exception as e:
         return []
 
     # Collect silhouette edges
@@ -2279,7 +2679,7 @@ def _silhouette_edges(elem, view, view_basis, cfg):
 
         try:
             faces = solid.Faces
-        except Exception:
+        except Exception as e:
             continue
 
         if not faces:
@@ -2301,7 +2701,7 @@ def _silhouette_edges(elem, view, view_basis, cfg):
                 try:
                     uv = UV(u_mid, v_mid)
                     normal = face.ComputeNormal(uv)
-                except Exception:
+                except Exception as e:
                     continue
 
                 # Check if face is front-facing
@@ -2312,7 +2712,7 @@ def _silhouette_edges(elem, view, view_basis, cfg):
                 # Get edges of this face
                 try:
                     edge_loops = face.EdgeLoops
-                except Exception:
+                except Exception as e:
                     continue
 
                 if not edge_loops:
@@ -2339,10 +2739,10 @@ def _silhouette_edges(elem, view, view_basis, cfg):
 
                             edge_face_map[key].append((edge, is_front_facing))
 
-                        except Exception:
+                        except Exception as e:
                             continue
 
-            except Exception:
+            except Exception as e:
                 continue
 
         # Find silhouette edges (boundary or front/back transition)
@@ -2369,7 +2769,7 @@ def _silhouette_edges(elem, view, view_basis, cfg):
                     try:
                         tess = curve.Tessellate()
                         points_3d = list(tess)
-                    except Exception:
+                    except Exception as e:
                         # Fallback: use endpoints
                         points_3d = [curve.GetEndPoint(0), curve.GetEndPoint(1)]
 
@@ -2380,7 +2780,7 @@ def _silhouette_edges(elem, view, view_basis, cfg):
                         uvw = world_to_view((pt_h.X, pt_h.Y, pt_h.Z), view_basis)
                         silhouette_points.append(uvw)
 
-                except Exception:
+                except Exception as e:
                     continue
 
     if len(silhouette_points) < 3:
@@ -2420,10 +2820,18 @@ def _planar_face_loops_silhouette(
     # core/silhouette.py and core/face_selection.py are siblings inside vop_interwoven.core.
     try:
         from . import face_selection as fs  # type: ignore
-    except Exception:
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="geometry_extraction",
+                callsite="_planar_face_loops_silhouette",
+                message="Exception in _planar_face_loops_silhouette: {}".format(e),
+                exc=e,
+            )
         try:
             from vop_interwoven.core import face_selection as fs  # type: ignore
-        except Exception:
+        except Exception as import_e:
+            # Fallback import path for different module structures
             import face_selection as fs  # type: ignore
 
     def _tessellated_xyz_points_from_curveloop(curveloop):
@@ -2435,11 +2843,32 @@ def _planar_face_loops_silhouette(
                     for p in tess:
                         try:
                             pts.append((float(p.X), float(p.Y), float(p.Z)))
-                        except Exception:
+                        except Exception as e:
+                            if diag is not None:
+                                diag.error(
+                                    phase="geometry_extraction",
+                                    callsite="_tessellated_xyz_points_from_curveloop",
+                                    message="Exception in _tessellated_xyz_points_from_curveloop: {}".format(e),
+                                    exc=e,
+                                )
                             pts.append((float(p[0]), float(p[1]), float(p[2])))
-                except Exception:
+                except Exception as e:
+                    if diag is not None:
+                        diag.error(
+                            phase="geometry_extraction",
+                            callsite="_tessellated_xyz_points_from_curveloop",
+                            message="Exception in _tessellated_xyz_points_from_curveloop: {}".format(e),
+                            exc=e,
+                        )
                     continue
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="geometry_extraction",
+                    callsite="_tessellated_xyz_points_from_curveloop",
+                    message="Exception in _tessellated_xyz_points_from_curveloop: {}".format(e),
+                    exc=e,
+                )
             return []
         return pts
 
@@ -2451,7 +2880,14 @@ def _planar_face_loops_silhouette(
                 return xyz_tup
             # _apply_transform_xyz_tuple(T, xyz)
             return _apply_transform_xyz_tuple(trf, xyz_tup)
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="geometry_extraction",
+                    callsite="_xyz_to_host",
+                    message="Exception in _xyz_to_host: {}".format(e),
+                    exc=e,
+                )
             return xyz_tup
 
     def _project_xyz_to_uv(points_xyz):
@@ -2461,7 +2897,14 @@ def _planar_face_loops_silhouette(
                 ph = _xyz_to_host(p)
                 u, v = view_basis.transform_to_view_uv(ph)
                 out.append((float(u), float(v)))
-            except Exception:
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="geometry_extraction",
+                        callsite="_project_xyz_to_uv",
+                        message="Exception in _project_xyz_to_uv: {}".format(e),
+                        exc=e,
+                    )
                 continue
         return out
 
@@ -2521,7 +2964,14 @@ def _planar_face_loops_silhouette(
 
         try:
             edge_loops = getattr(face, "EdgeLoops", None)
-        except Exception:
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="geometry_extraction",
+                    callsite="_ensure_closed",
+                    message="Exception in _ensure_closed: {}".format(e),
+                    exc=e,
+                )
             edge_loops = None
 
         if not edge_loops:
@@ -2624,7 +3074,7 @@ def _iter_solids(geom):
     """
     try:
         from Autodesk.Revit.DB import Solid, GeometryInstance
-    except Exception:
+    except Exception as e:
         return
 
     if geom is None:
@@ -2641,15 +3091,15 @@ def _iter_solids(geom):
                     for s in _iter_solids(inst):
                         yield s
                     continue
-            except Exception:
-                pass
-
+            except Exception as e:
+                # Exception in _iter_solids - no diag in scope
+                pass  # TODO: Add diagnostics when diag becomes available
             try:
                 if isinstance(obj, Solid) and getattr(obj, 'Volume', 0) > 1e-9:
                     yield obj
-            except Exception:
+            except Exception as e:
                 continue
-    except Exception:
+    except Exception as e:
         return
 
 
@@ -2701,5 +3151,5 @@ def _convex_hull_2d(points):
         else:
             return []
 
-    except Exception:
+    except Exception as e:
         return []

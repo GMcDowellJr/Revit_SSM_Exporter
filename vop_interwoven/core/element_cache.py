@@ -62,7 +62,7 @@ class ElementFingerprint:
                 d = float(max_pt.Z - min_pt.Z)
                 self.size = (w, h, d)
 
-            except Exception:
+            except Exception as e:
                 # Failed to extract bbox - use placeholder
                 self.centroid = (0.0, 0.0, 0.0)
                 self.size = (0.0, 0.0, 0.0)
@@ -99,7 +99,7 @@ class ElementFingerprint:
 
             return f"{self.elem_id}:{centroid_str}:{size_str}:{self.category}"
 
-        except Exception:
+        except Exception as e:
             # Fallback: ID only
             return str(self.elem_id) if self.elem_id is not None else "UNKNOWN"
 
@@ -211,9 +211,9 @@ class ElementCache:
             try:
                 if hasattr(elem, "Category") and elem.Category is not None:
                     category = str(elem.Category.Name)
-            except Exception:
-                pass
-
+            except Exception as e:
+                # Exception in get_or_create_fingerprint - no diag in scope
+                pass  # TODO: Add diagnostics when diag becomes available
             # Create fingerprint
             fingerprint = ElementFingerprint(
                 elem_id=elem_id,
@@ -232,7 +232,7 @@ class ElementCache:
 
             return fingerprint
 
-        except Exception:
+        except Exception as e:
             # Never raise - graceful degradation
             return None
 
@@ -264,7 +264,7 @@ class ElementCache:
                 "hit_rate": hit_rate,
                 "age_sec": age_sec,
             }
-        except Exception:
+        except Exception as e:
             # Never raise on stats query
             return {
                 "size": 0,
@@ -321,7 +321,7 @@ class ElementCache:
 
             return True
 
-        except Exception:
+        except Exception as e:
             # Never raise - graceful degradation
             return False
 
@@ -379,7 +379,7 @@ class ElementCache:
 
             return cache
 
-        except Exception:
+        except Exception as e:
             # Never raise - return empty cache
             return cls(max_elements=max_elements)
 
@@ -463,7 +463,7 @@ class ElementCache:
 
             return True
 
-        except Exception:
+        except Exception as e:
             # Never raise - graceful degradation
             return False
 
@@ -542,7 +542,7 @@ class ElementCache:
                 "total_previous": len(previous_keys),
             }
 
-        except Exception:
+        except Exception as e:
             # Never raise - return empty results
             return {
                 "added": [],
