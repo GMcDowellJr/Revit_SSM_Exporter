@@ -60,7 +60,7 @@ class Config:
         adaptive_tile_size=True,
         over_model_includes_proxies=True,
         proxy_mask_mode="minmask",
-        depth_eps_ft=0.01,
+        depth_eps_ft=1.0 * 10**-2,  # 0.01 ft depth tolerance (~3mm)
         tiny_max=2,
         thin_max=2,
         anno_crop_margin_in=None,
@@ -128,7 +128,7 @@ class Config:
         element_cache_persist=True,  # Save/load cache between runs
         element_cache_export_csv=True,  # Export analysis CSV
         element_cache_detect_changes=True,  # Compare with previous run
-        element_cache_change_tolerance=0.01,  # Position/size tolerance (feet)
+        element_cache_change_tolerance=1.0 * 10**-2,  # 0.01 ft position/size tolerance (~3mm)
 
         # Strategy diagnostics: track geometry extraction performance
         export_strategy_diagnostics=False,  # Export strategy diagnostics CSV and print summary
@@ -503,7 +503,7 @@ class Config:
             adaptive_tile_size=d.get("adaptive_tile_size", True),
             over_model_includes_proxies=d.get("over_model_includes_proxies", True),
             proxy_mask_mode=d.get("proxy_mask_mode", "minmask"),
-            depth_eps_ft=d.get("depth_eps_ft", 0.01),
+            depth_eps_ft=d.get("depth_eps_ft", 1.0 * 10**-2),
             tiny_max=d.get("tiny_max", 2),
             thin_max=d.get("thin_max", 2),
             anno_crop_margin_in=d.get("anno_crop_margin_in"),  # None = tied to bounds_buffer_in
@@ -541,7 +541,7 @@ class Config:
             element_cache_persist=d.get("element_cache_persist", True),
             element_cache_export_csv=d.get("element_cache_export_csv", True),
             element_cache_detect_changes=d.get("element_cache_detect_changes", True),
-            element_cache_change_tolerance=d.get("element_cache_change_tolerance", 0.01),
+            element_cache_change_tolerance=d.get("element_cache_change_tolerance", 1.0 * 10**-2),
 
             # Strategy diagnostics
             export_strategy_diagnostics=d.get("export_strategy_diagnostics", True),

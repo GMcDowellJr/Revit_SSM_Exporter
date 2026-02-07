@@ -221,7 +221,7 @@ class TestStrategyDiagnostics(unittest.TestCase):
             # Verify header
             self.assertEqual(len(lines), 6)  # Header + 5 elements
             header = lines[0].strip()
-            self.assertEqual(header, 'element_id,category,classification,strategy_used,confidence,extraction_outcome,failure_reason')
+            self.assertEqual(header, 'element_id,category,classification,strategy_used,confidence,extraction_outcome,failure_reason,extraction_method,method_attempted_order')
 
             # Verify first element (TINY)
             self.assertIn('1001,Doors,TINY,,,success,', lines[1])

@@ -61,7 +61,7 @@ def resolve_element_bbox(elem, view=None, diag=None, context=None):
     return None, "none"
 
 
-def collect_view_elements(doc, view, raster, diag=None, cfg=None):
+def collect_view_elements(doc, view, raster, diag=None, cfg=None, exclude_ids=None):
     """Collect all potentially visible elements in view (broad-phase).
 
     Performance contract:
@@ -75,6 +75,7 @@ def collect_view_elements(doc, view, raster, diag=None, cfg=None):
         raster: ViewRaster (currently unused; reserved for future spatial hints)
         diag: Diagnostics (optional)
         cfg: config dict (optional)
+        exclude_ids: Optional list/set of ElementIds to exclude from collection (for debugging)
 
     Returns:
         List[Element] (host elements only; link expansion happens downstream)
@@ -130,6 +131,50 @@ def collect_view_elements(doc, view, raster, diag=None, cfg=None):
             )
         return []
 
+    # Optional exclusion filter (for debugging problematic elements)
+    if exclude_ids:
+        try:
+            from Autodesk.Revit.DB import ExclusionFilter
+            from System.Collections.Generic import List as NetList
+            from Autodesk.Revit.DB import ElementId as EId
+
+            exclude_eid_list = NetList[EId]()
+            excluded_count = 0
+
+            for eid in exclude_ids:
+                try:
+                    elem = doc.GetElement(eid)
+                    if elem is not None:
+                        exclude_eid_list.Add(eid)
+                        excluded_count += 1
+                except Exception:
+                    pass  # Skip invalid element IDs
+
+            if excluded_count > 0:
+                exclusion_filter = ExclusionFilter(exclude_eid_list)
+                collector = collector.WherePasses(exclusion_filter)
+
+                if diag is not None:
+                    diag.info(
+                        phase="collection",
+                        callsite="collect_view_elements.exclusion_filter",
+                        message="Applied exclusion filter: {0} elements excluded".format(excluded_count),
+                        view_id=view_id,
+                        extra={"excluded_count": excluded_count},
+                    )
+        except Exception as e:
+            if diag is not None:
+                diag.warn(
+                    phase="collection",
+                    callsite="collect_view_elements.exclusion_filter",
+                    message="Exclusion filter failed; continuing without it",
+                    view_id=view_id,
+                    extra={
+                        "exc_type": type(e).__name__,
+                        "exc": str(e),
+                    },
+                )
+
     # Best-effort: ElementMulticategoryFilter to avoid scanning categories we never include.
     if enable_multicat_filter and model_categories:
         try:
@@ -137,9 +182,8 @@ def collect_view_elements(doc, view, raster, diag=None, cfg=None):
             from System.Collections.Generic import List
 
             # ElementMulticategoryFilter expects a .NET collection (typically ICollection<ElementId>)
-            cat_ids = List[ElementId]()
-            for bic in model_categories:
-                cat_ids.Add(ElementId(int(bic)))
+            # Construct List directly from Python list comprehension (cleaner, more Pythonic)
+            cat_ids = List[ElementId]([ElementId(int(bic)) for bic in model_categories])
 
             collector = collector.WherePasses(ElementMulticategoryFilter(cat_ids))
         except Exception as e:
