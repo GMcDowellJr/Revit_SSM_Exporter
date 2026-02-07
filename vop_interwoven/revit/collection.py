@@ -137,9 +137,8 @@ def collect_view_elements(doc, view, raster, diag=None, cfg=None):
             from System.Collections.Generic import List
 
             # ElementMulticategoryFilter expects a .NET collection (typically ICollection<ElementId>)
-            cat_ids = List[ElementId]()
-            for bic in model_categories:
-                cat_ids.Add(ElementId(int(bic)))
+            # Construct List directly from Python list comprehension (cleaner, more Pythonic)
+            cat_ids = List[ElementId]([ElementId(int(bic)) for bic in model_categories])
 
             collector = collector.WherePasses(ElementMulticategoryFilter(cat_ids))
         except Exception as e:
