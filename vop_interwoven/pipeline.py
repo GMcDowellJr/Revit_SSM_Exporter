@@ -92,6 +92,11 @@ Core principles:
 import math
 import time
 
+# Boundary tolerance for crop volume intersection tests.
+# Prevents exclusion of elements coplanar with crop boundaries.
+# Value smaller than typical cell size to maintain accuracy.
+BOUNDARY_TOLERANCE = 1e-6  # feet
+
 from .config import Config
 from .core.raster import ViewRaster, TileMap
 from .core.geometry import Mode, classify_by_uv, make_uv_aabb, make_obb_or_skinny_aabb
@@ -1692,7 +1697,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
 
                 # Non-overlap => skip
                 if (dmin is not None) and (dmax is not None):
-                    if (dmax < W0) or (dmin > Wmax):
+                    if (dmax < W0 - BOUNDARY_TOLERANCE) or (dmin > Wmax + BOUNDARY_TOLERANCE):
                         skipped_outside_view_volume += 1
                         try:
                             # Minimal, auditable tag (no spam)
@@ -2778,8 +2783,37 @@ def _is_supported_2d_view(view, diag=None):
 
         return False
 
+def _intersects_crop_volume(aabb_min, aabb_max, crop_min, crop_max):
+    """Test if AABB intersects crop volume with boundary tolerance.
+
+    Applies small epsilon to boundaries to include coplanar geometry,
+    matching Revit's display pipeline behavior where elements exactly
+    at crop boundaries are visible.
+
+    Args:
+        aabb_min: (w_min, x_min, y_min) tuple of element AABB minimum coords
+        aabb_max: (w_max, x_max, y_max) tuple of element AABB maximum coords
+        crop_min: (w_min, x_min, y_min) tuple of crop volume minimum
+        crop_max: (w_max, x_max, y_max) tuple of crop volume maximum
+
+    Returns:
+        True if AABB intersects crop volume (within tolerance), False otherwise
+    """
+    return not (
+        aabb_max[0] < crop_min[0] - BOUNDARY_TOLERANCE or
+        aabb_min[0] > crop_max[0] + BOUNDARY_TOLERANCE or
+        aabb_max[1] < crop_min[1] - BOUNDARY_TOLERANCE or
+        aabb_min[1] > crop_max[1] + BOUNDARY_TOLERANCE or
+        aabb_max[2] < crop_min[2] - BOUNDARY_TOLERANCE or
+        aabb_min[2] > crop_max[2] + BOUNDARY_TOLERANCE
+    )
+
+
 def _should_skip_outside_view_volume(depth_range, W0, Wmax):
     """Pure predicate: True iff element depth_range does NOT overlap [W0, Wmax].
+
+    Applies BOUNDARY_TOLERANCE to prevent exclusion of elements coplanar
+    with crop boundaries, matching Revit's display behavior.
 
     depth_range: (dmin, dmax) in view-space W.
     W0/Wmax: view-space W interval, both finite numbers.
@@ -2812,7 +2846,7 @@ def _should_skip_outside_view_volume(depth_range, W0, Wmax):
     if W0 > Wmax:
         W0, Wmax = Wmax, W0
 
-    return (dmax < W0) or (dmin > Wmax)
+    return (dmax < W0 - BOUNDARY_TOLERANCE) or (dmin > Wmax + BOUNDARY_TOLERANCE)
 
 def _tiles_fully_covered_and_nearer(tile_map, footprint, elem_min_w):
     """Check if all tiles overlapping rect are fully covered AND nearer than element.
