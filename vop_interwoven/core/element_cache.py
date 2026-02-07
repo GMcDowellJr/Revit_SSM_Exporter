@@ -467,12 +467,12 @@ class ElementCache:
             # Never raise - graceful degradation
             return False
 
-    def detect_changes(self, previous_cache, tolerance=0.01):
+    def detect_changes(self, previous_cache, tolerance=1.0 * 10**-2):
         """Detect element changes between current and previous cache.
 
         Args:
             previous_cache: ElementCache from previous run (loaded from JSON)
-            tolerance: Position/size change threshold in feet (default: 0.01 ft = 1/8 inch)
+            tolerance: Position/size change threshold in feet (default: 0.01 ft ≈ 3mm)
 
         Returns:
             Dict with change detection results:
@@ -508,6 +508,9 @@ class ElementCache:
                 removed.append(key)
 
             # Find moved/resized elements
+            # Epsilon for floating-point comparison (0.001 ft ≈ 0.3mm)
+            POSITION_EPSILON = 1.0 * 10**-3
+            SIZE_EPSILON = 1.0 * 10**-3
             for key in current_keys & previous_keys:
                 curr_fp = self.cache[key]
                 prev_fp = previous_cache.cache[key]
