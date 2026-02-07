@@ -15,9 +15,9 @@ class TestPipelineDiagnostics(unittest.TestCase):
     """Test strategy diagnostics integration in pipeline."""
 
     def test_config_default_export_strategy_diagnostics(self):
-        """Test that export_strategy_diagnostics defaults to True."""
+        """Test that export_strategy_diagnostics defaults to False."""
         cfg = Config()
-        self.assertTrue(cfg.export_strategy_diagnostics)
+        self.assertFalse(cfg.export_strategy_diagnostics)
 
     def test_config_export_strategy_diagnostics_can_be_disabled(self):
         """Test that export_strategy_diagnostics can be disabled."""

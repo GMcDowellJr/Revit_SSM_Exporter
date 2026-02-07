@@ -61,11 +61,11 @@ class TestCSVExportDiagnostics(unittest.TestCase):
         # Call without strategy_diag
         row = build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metadata=view_metadata)
 
-        # Should have 38 columns (31 original + 7 strategy diagnostics)
-        self.assertEqual(len(row), 38)
+        # Should have 52 columns (31 original + 7 strategy diagnostics + 14 category/method stats)
+        self.assertEqual(len(row), 52)
 
-        # Last 7 columns should be strategy diagnostics (all zeros)
-        strategy_cols = row[-7:]
+        # Strategy diagnostic columns are at indices 31-37 (after the 31 core columns)
+        strategy_cols = row[31:38]
         self.assertEqual(strategy_cols, [0, 0, 0, 0, 0, 0.0, 0.0])
 
     def test_build_vop_csv_row_with_diagnostics(self):
@@ -139,11 +139,11 @@ class TestCSVExportDiagnostics(unittest.TestCase):
         row = build_vop_csv_row(view, metrics, anno_metrics, config, run_info,
                                view_metadata=view_metadata, strategy_diag=strategy_diag)
 
-        # Should have 38 columns (31 original + 7 strategy diagnostics)
-        self.assertEqual(len(row), 38)
+        # Should have 52 columns (31 original + 7 strategy diagnostics + 14 category/method stats)
+        self.assertEqual(len(row), 52)
 
-        # Extract strategy diagnostic columns (last 7)
-        strategy_cols = row[-7:]
+        # Extract strategy diagnostic columns (indices 31-37)
+        strategy_cols = row[31:38]
 
         planar_face_count = strategy_cols[0]
         silhouette_count = strategy_cols[1]
@@ -197,9 +197,9 @@ class TestCSVExportDiagnostics(unittest.TestCase):
         row = build_vop_csv_row(view, metrics, anno_metrics, config, run_info,
                                view_metadata=view_metadata, strategy_diag=strategy_diag)
 
-        # Extract percentage columns
-        geom_success_rate = row[-2]
-        areal_high_conf_rate = row[-1]
+        # Extract percentage columns (indices 36 and 37)
+        geom_success_rate = row[36]
+        areal_high_conf_rate = row[37]
 
         # Verify percentages are in valid range
         self.assertGreaterEqual(geom_success_rate, 0.0)
@@ -252,8 +252,8 @@ class TestCSVExportDiagnostics(unittest.TestCase):
         row = build_vop_csv_row(view, metrics, anno_metrics, config, run_info,
                                view_metadata=view_metadata, strategy_diag=strategy_diag)
 
-        # Extract strategy counts
-        strategy_counts = row[-7:-2]  # First 5 of the 7 new columns
+        # Extract strategy counts (indices 31-35: first 5 of the 7 strategy columns)
+        strategy_counts = row[31:36]
 
         # Verify individual counts
         self.assertEqual(strategy_counts[0], 3)  # planar_face
@@ -296,8 +296,8 @@ class TestCSVExportDiagnostics(unittest.TestCase):
                                view_metadata=view_metadata, strategy_diag=BrokenDiagnostics())
 
         # Should still have all columns with zeros for strategy stats
-        self.assertEqual(len(row), 38)
-        strategy_cols = row[-7:]
+        self.assertEqual(len(row), 52)
+        strategy_cols = row[31:38]
         self.assertEqual(strategy_cols, [0, 0, 0, 0, 0, 0.0, 0.0])
 
 
