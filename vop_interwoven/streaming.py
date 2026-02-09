@@ -360,6 +360,7 @@ class StreamingExporter:
                                     view_result["timings"] = t
         except Exception as e:
             # Never block export due to cache rehydration issues; downstream will fill sentinels.
+            pass
 
         from vop_interwoven.csv_export import (
             view_result_to_core_row,

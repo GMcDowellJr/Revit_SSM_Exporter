@@ -1418,7 +1418,11 @@ def get_perf_csv_header():
     """Get header for performance CSV file."""
     return [
         "Date", "RunId", "view_id", "view_name", "success", "total_ms", "mode_ms",
-        "raster_init_ms", "collect_ms", "raster_ms", "anno_ms",
+        "raster_init_ms", "collect_ms", "raster_ms",
+        "raster_expand_ms", "raster_sorting_ms", "raster_enrich_ms",
+        "raster_geom_extract_ms", "raster_depth_test_ms", "raster_cell_write_ms",
+        "raster_element_iter_ms",
+        "anno_ms",
         "finalize_ms", "export_ms", "png_ms", "width", "height",
         "total_elements", "filled_cells"
     ]
@@ -1893,6 +1897,13 @@ def view_result_to_perf_row(view_result, date_override=None, run_id=None):
         "raster_init_ms": timings.get("raster_init_ms", 0.0),
         "collect_ms": timings.get("collect_ms", 0.0),
         "raster_ms": timings.get("raster_ms", 0.0),
+        "raster_expand_ms": timings.get("raster_expand_ms", 0.0),
+        "raster_sorting_ms": timings.get("raster_sorting_ms", 0.0),
+        "raster_enrich_ms": timings.get("raster_enrich_ms", 0.0),
+        "raster_geom_extract_ms": timings.get("raster_geom_extract_ms", 0.0),
+        "raster_depth_test_ms": timings.get("raster_depth_test_ms", 0.0),
+        "raster_cell_write_ms": timings.get("raster_cell_write_ms", 0.0),
+        "raster_element_iter_ms": timings.get("raster_element_iter_ms", 0.0),
         "anno_ms": timings.get("anno_ms", 0.0),
         "finalize_ms": timings.get("finalize_ms", 0.0),
         "export_ms": timings.get("export_ms", 0.0),
