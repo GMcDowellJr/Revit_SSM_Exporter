@@ -1204,6 +1204,29 @@ def rasterize_annotations(doc, view, raster, cfg, diag=None):
                     _stamp_rect_outline(raster, cell_rect, anno_idx)
 
             # DETAIL/REGION: FilledRegion should fill its true polygon shape (not bbox)
+            # REGION: rasterize FilledRegion by boundary loops (outer minus holes), stamp perimeters too
+            elif mode == "REGION":
+                stamped = _rasterize_filled_region_shape(
+                    raster, vb, elem, anno_idx, diag=diag, view_id=view_id, elem_id=elem_id
+                )
+
+                # Fallback: if we couldn't extract boundaries, preserve legacy bbox fill
+                if not stamped:
+                    x0 = max(0, cell_rect.x0)
+                    y0 = max(0, cell_rect.y0)
+                    x1 = min(raster.W, cell_rect.x1)
+                    y1 = min(raster.H, cell_rect.y1)
+
+                    bbox_width = x1 - x0
+                    bbox_height = y1 - y0
+                    if bbox_width > raster.W * 2 or bbox_height > raster.H * 2:
+                        continue
+
+                    for cy in range(y0, y1):
+                        row = cy * raster.W
+                        for cx in range(x0, x1):
+                            raster.anno_key[row + cx] = anno_idx
+
             else:
                 # REGION: attempt real boundary-based polygon fill for FilledRegion
                 if mode == "REGION":
@@ -1487,6 +1510,178 @@ def _stamp_line_cells(raster, x0, y0, x1, y1, anno_idx):
         if e2 <= dx:
             err += dx
             cy += sy
+
+def _rasterize_filled_region_shape(raster, vb, elem, anno_idx, diag=None, view_id=None, elem_id=None):
+    """
+    Rasterize a Revit FilledRegion by its boundary loops (outer minus holes),
+    and stamp perimeters for both outer + hole loops into anno_key.
+
+    Returns True if any cells were stamped, False otherwise.
+    """
+    try:
+        # Ensure this is a FilledRegion when Autodesk is available
+        try:
+            from Autodesk.Revit.DB import FilledRegion
+            if not isinstance(elem, FilledRegion):
+                return False
+        except Exception:
+            # If types aren't available, proceed best-effort.
+            pass
+
+        # Get boundaries (API shape varies by Revit version)
+        boundaries = None
+        try:
+            boundaries = elem.GetBoundaries()
+        except Exception:
+            boundaries = None
+
+        if not boundaries:
+            return False
+
+        # Normalize into: loops_curves = [ [curve, curve, ...], ... ]
+        loops_curves = []
+
+        # Case A: IList<IList<Curve>>
+        try:
+            for loop in boundaries:
+                # If loop is itself iterable of Curve, treat as such
+                curves = []
+                try:
+                    for c in loop:
+                        curves.append(c)
+                except Exception:
+                    curves = []
+                if curves:
+                    loops_curves.append(curves)
+        except Exception:
+            loops_curves = []
+
+        # Case B: IList<CurveLoop> (iterate curves inside each CurveLoop)
+        if not loops_curves:
+            try:
+                for cl in boundaries:
+                    curves = []
+                    try:
+                        for c in cl:
+                            curves.append(c)
+                    except Exception:
+                        curves = []
+                    if curves:
+                        loops_curves.append(curves)
+            except Exception:
+                loops_curves = []
+
+        if not loops_curves:
+            return False
+
+        # Build ij rings and cell sets (outer minus holes)
+        outer_cells = set()
+        hole_cells = set()
+
+        any_perimeter = False
+
+        for li, curves in enumerate(loops_curves):
+            # Convention: first loop is outer, subsequent loops are holes
+            is_hole = (li != 0)
+
+            # Tessellate loop curves into an ordered ij ring
+            ring_ij = []
+            for c in curves:
+                pts = []
+                try:
+                    pts = list(c.Tessellate())
+                except Exception:
+                    pts = []
+
+                for p in pts:
+                    try:
+                        u, v = vb.transform_to_view_uv((p.X, p.Y, p.Z))
+                        cx, cy = _uv_to_cell(u, v, raster)
+                        ring_ij.append((int(cx), int(cy)))
+                    except Exception:
+                        continue
+
+            # Dedupe consecutive duplicates
+            dedup = []
+            for pt in ring_ij:
+                if not dedup or dedup[-1] != pt:
+                    dedup.append(pt)
+            ring_ij = dedup
+
+            if len(ring_ij) < 3:
+                continue
+
+            # Ensure closure
+            if ring_ij[0] != ring_ij[-1]:
+                ring_ij.append(ring_ij[0])
+
+            if len(ring_ij) < 4:
+                continue
+
+            # Perimeter stamp (outer + hole boundaries)
+            for k in range(len(ring_ij) - 1):
+                x0, y0 = ring_ij[k]
+                x1, y1 = ring_ij[k + 1]
+                _stamp_line_cells(raster, x0, y0, x1, y1, anno_idx)
+                any_perimeter = True
+
+            # Interior cells via raster's scanline helper (best-effort, never raises)
+            try:
+                cells = raster._scanline_cells(ring_ij)
+            except Exception:
+                cells = set()
+
+            if cells:
+                if is_hole:
+                    hole_cells |= cells
+                else:
+                    outer_cells |= cells
+
+        target_cells = outer_cells - hole_cells
+
+        # Fill interior
+        filled = 0
+        for (i, j) in target_cells:
+            if 0 <= i < raster.W and 0 <= j < raster.H:
+                raster.anno_key[j * raster.W + i] = anno_idx
+                filled += 1
+
+        if diag is not None:
+            try:
+                diag.info(
+                    phase="annotation",
+                    callsite="rasterize_annotations.region_shape_summary",
+                    message="FilledRegion shape rasterization summary",
+                    view_id=view_id,
+                    elem_id=elem_id,
+                    extra={
+                        "outer_cells": int(len(outer_cells)),
+                        "hole_cells": int(len(hole_cells)),
+                        "target_cells": int(len(target_cells)),
+                        "filled_cells": int(filled),
+                        "perimeter_stamped": bool(any_perimeter),
+                        "loops": int(len(loops_curves)),
+                    },
+                )
+            except Exception:
+                pass
+
+        return (filled > 0) or any_perimeter
+
+    except Exception as e:
+        if diag is not None:
+            try:
+                diag.warn(
+                    phase="annotation",
+                    callsite="rasterize_annotations.region_shape_failed",
+                    message="FilledRegion shape rasterization failed; will fall back",
+                    view_id=view_id,
+                    elem_id=elem_id,
+                    extra={"exc_type": type(e).__name__, "exc": str(e)},
+                )
+            except Exception:
+                pass
+        return False
 
 def _project_element_bbox_to_cell_rect_for_anno(elem_or_bbox, view_basis, raster):
     """Project element bounding box to cell rectangle (annotation-specific).

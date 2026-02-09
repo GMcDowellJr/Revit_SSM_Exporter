@@ -901,9 +901,15 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
                 
                 # 3) MODEL PASS
                 t0 = _perf_now()
-                render_model_front_to_back(doc, view, raster, elements, cfg, diag=diag, geometry_cache=geometry_cache, elem_cache=elem_cache, strategy_diag=strategy_diag)
+                _raster_sub_timings = render_model_front_to_back(doc, view, raster, elements, cfg, diag=diag, geometry_cache=geometry_cache, elem_cache=elem_cache, strategy_diag=strategy_diag)
                 t1 = _perf_now()
-                _tmark("model_ms", t0, t1)
+                _tmark("raster_ms", t0, t1)
+
+                # Merge rasterization sub-timings into view timings
+                if _raster_sub_timings and isinstance(_raster_sub_timings, dict):
+                    if getattr(cfg, "perf_collect_timings", True):
+                        for _sk, _sv in _raster_sub_timings.items():
+                            timings[_sk] = round(float(_sv), 3)
 
             elif view_mode == VIEW_MODE_ANNOTATION_ONLY:
                 # Annotation-only: do NOT attempt model collection, depth sorting, or link expansion
@@ -1543,6 +1549,17 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
     """
     from .revit.collection import _project_element_bbox_to_cell_rect, expand_host_link_import_model_elements
 
+    # ── Sub-timing accumulators (milliseconds) ──
+    _sub_t = {
+        "raster_expand_ms": 0.0,
+        "raster_sorting_ms": 0.0,
+        "raster_enrich_ms": 0.0,
+        "raster_geom_extract_ms": 0.0,
+        "raster_depth_test_ms": 0.0,
+        "raster_cell_write_ms": 0.0,
+        "raster_element_iter_ms": 0.0,
+    }
+
     # Get view basis for transformations
     vb = make_view_basis(view, diag=diag)
 
@@ -1564,12 +1581,17 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 exc=e,
             )
     # Expand to include linked/imported elements
+    _t0_expand = _perf_now()
     expanded_elements = expand_host_link_import_model_elements(doc, view, elements, cfg, diag=diag, elem_cache=elem_cache)
+    _sub_t["raster_expand_ms"] = _perf_ms(_t0_expand, _perf_now())
 
     # Sort elements front-to-back by depth for proper occlusion
+    _t0_sort = _perf_now()
     expanded_elements = sort_front_to_back(expanded_elements, view, raster)
+    _sub_t["raster_sorting_ms"] = _perf_ms(_t0_sort, _perf_now())
 
     # Enrich elements with depth range and bbox for ambiguity detection
+    _t0_enrich = _perf_now()
     from .revit.collection import estimate_depth_range_from_bbox
     for wrapper in expanded_elements:
         try:
@@ -1608,6 +1630,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 )
             wrapper["depth_range"] = (0.0, 0.0)
             wrapper["uv_bbox_rect"] = None
+    _sub_t["raster_enrich_ms"] = _perf_ms(_t0_enrich, _perf_now())
 
     # Process each element (host + linked)
     processed = 0
@@ -1676,6 +1699,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
     def _occlusion_allowed(elem_class, confidence):
         return (elem_class == "AREAL") and (confidence == CONF_HIGH)
 
+    _t0_elem_iter = _perf_now()
     for elem_wrapper in expanded_elements:
         elem = elem_wrapper["element"]
         source_type = elem_wrapper.get("source_type", "HOST")
@@ -1837,6 +1861,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 elem_class = "AREAL"  # Safe default on classification failure
 
         # Extract geometry using appropriate strategy based on classification
+        _t0_geom = _perf_now()
         loops = None
         confidence = None
         strategy = None
@@ -2031,6 +2056,8 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     print("[DEBUG] Silhouette extraction failed for element {0} ({1}): {2}".format(
                         elem_id, category, silhouette_error))
 
+        _sub_t["raster_geom_extract_ms"] += _perf_ms(_t0_geom, _perf_now())
+
         bbox_link = elem_wrapper.get("bbox_link")
         bbox_for_metrics = bbox_link if bbox_link is not None else elem_wrapper.get("bbox")
         bbox_is_link_space = bbox_link is not None
@@ -2116,6 +2143,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 elem_id, category, silhouette_status, elem_depth, depth_source, source_type, classification))
 
         # Safe early-out occlusion using bbox footprint + tile depth (front-to-back streaming)
+        _t0_depth = _perf_now()
         try:
             rect = elem_wrapper.get("uv_bbox_rect")
             if rect is None:
@@ -2139,6 +2167,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 # Stage 1: tile-level conservative occlusion against bbox footprint
                 if _tiles_fully_covered_and_nearer(raster.tile, fp, elem_min_w):
                     skipped += 1
+                    _sub_t["raster_depth_test_ms"] += _perf_ms(_t0_depth, _perf_now())
                     continue
 
                 # Tier-A ambiguity trigger (selectively enable Tier-B proxy)
@@ -2241,6 +2270,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 # Stage 2: depth-aware early-out using chosen footprint (bbox or hull)
                 if _tiles_fully_covered_and_nearer(raster.tile, footprint, elem_min_w):
                     skipped += 1
+                    _sub_t["raster_depth_test_ms"] += _perf_ms(_t0_depth, _perf_now())
                     continue
 
                 # Stage 3: conservative stamping
@@ -2290,8 +2320,10 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                             exc=e,
                         )
                     # Diagnostics must never throw.
+        _sub_t["raster_depth_test_ms"] += _perf_ms(_t0_depth, _perf_now())
 
         # Rasterize silhouette loops if we have them
+        _t0_cell = _perf_now()
         if loops:
             # DIAGNOSTIC: Stage 3 - Right before rasterization
             if source_type == "LINK" and processed < 3:  # Only first 3 LINK elements
@@ -2329,6 +2361,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     if success:
                         silhouette_success += 1
                         processed += 1
+                        _sub_t["raster_cell_write_ms"] += _perf_ms(_t0_cell, _perf_now())
                         continue
                     else:
                         # Rasterization failed, fall through to bbox fallback
@@ -2406,6 +2439,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
 
                         silhouette_success += 1
                         processed += 1
+                        _sub_t["raster_cell_write_ms"] += _perf_ms(_t0_cell, _perf_now())
                         continue
 
                     else:
@@ -2426,6 +2460,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
             if strategy_used and strategy_used != 'unknown':
                 # Element already successfully rendered via silhouette
                 processed += 1
+                _sub_t["raster_cell_write_ms"] += _perf_ms(_t0_cell, _perf_now())
                 continue
 
         # Note: AREAL diagnostic tracking is now handled inside extract_areal_geometry()
@@ -2577,7 +2612,13 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                         exc=e,
                     )
             # Continue with remaining elements
+            _sub_t["raster_cell_write_ms"] += _perf_ms(_t0_cell, _perf_now())
             continue
+
+        # Normal path (AABB fallback completed without catastrophic exception)
+        _sub_t["raster_cell_write_ms"] += _perf_ms(_t0_cell, _perf_now())
+
+    _sub_t["raster_element_iter_ms"] = _perf_ms(_t0_elem_iter, _perf_now())
 
     # Phase 4.5: Ambiguity detection (selective z-buffer prep)
     # Build tile bins and detect ambiguous tiles where depth conflicts exist
@@ -2727,7 +2768,11 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
         except Exception as e:
             print("[WARN] vop.pipeline: Failed to export strategy diagnostics: {0}".format(e))
 
-    return processed
+    # Round sub-timings for consistency
+    for _k in _sub_t:
+        _sub_t[_k] = round(_sub_t[_k], 3)
+
+    return _sub_t
 
 
 def _is_supported_2d_view(view, diag=None):
