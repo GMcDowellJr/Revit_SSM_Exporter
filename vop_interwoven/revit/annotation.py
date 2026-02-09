@@ -1203,8 +1203,52 @@ def rasterize_annotations(doc, view, raster, cfg, diag=None):
                                 )
                     _stamp_rect_outline(raster, cell_rect, anno_idx)
 
-            # DETAIL/REGION: keep legacy fill unless you want otherwise
+            # DETAIL/REGION: FilledRegion should fill its true polygon shape (not bbox)
             else:
+                # REGION: attempt real boundary-based polygon fill for FilledRegion
+                if mode == "REGION":
+                    stamped = False
+                    try:
+                        from Autodesk.Revit.DB import FilledRegion
+                        if isinstance(elem, FilledRegion):
+                            loops = []
+                            boundaries = elem.GetBoundaries()  # IList<IList<Curve>>
+
+                            # Heuristic: first loop is outer; subsequent loops are holes.
+                            # (Revit typically returns outer + inner boundaries, but order is not formally guaranteed.)
+                            for li, curve_list in enumerate(boundaries):
+                                pts = []
+                                try:
+                                    for c in curve_list:
+                                        try:
+                                            for xyz in c.Tessellate():
+                                                u, v = vb.transform_to_view_uv((xyz.X, xyz.Y, xyz.Z))
+                                                pts.append((u, v))
+                                        except Exception:
+                                            continue
+                                except Exception:
+                                    pts = []
+
+                                # Dedupe consecutive points
+                                dedup = []
+                                for p in pts:
+                                    if not dedup or dedup[-1] != p:
+                                        dedup.append(p)
+
+                                if len(dedup) >= 3:
+                                    loops.append({"points": dedup, "is_hole": (li > 0)})
+
+                            if loops:
+                                raster.rasterize_polygon_to_anno(loops, anno_idx)
+                                stamped = True
+                    except Exception:
+                        stamped = False
+
+                    # If boundary extraction fails, fall back to bbox fill (legacy behavior)
+                    if stamped:
+                        continue
+
+                # Legacy bbox fill (DETAIL and REGION fallback)
                 x0 = max(0, cell_rect.x0)
                 y0 = max(0, cell_rect.y0)
                 x1 = min(raster.W, cell_rect.x1)

@@ -1003,6 +1003,107 @@ class ViewRaster:
 
         return filled_count
 
+    def rasterize_polygon_to_anno(self, loops, anno_idx):
+        """Rasterize polygon loops into the annotation channel (anno_key) using scanline fill.
+
+        Args:
+            loops: List of loop dicts [{'points': [(u,v), ...], 'is_hole': bool}]
+                  Points are UV in view-plane coordinates (feet).
+            anno_idx: Index into raster.anno_meta to write into raster.anno_key
+
+        Returns:
+            Number of cells written to anno_key
+        """
+        if not loops:
+            return 0
+
+        filled_count = 0
+
+        outer_cells = set()
+        hole_cells = set()
+
+        # Clip bounds: annotations should use full raster bounds (not model_clip_bounds)
+        xmin = self.bounds_xy.xmin
+        ymin = self.bounds_xy.ymin
+        xmax = self.bounds_xy.xmax
+        ymax = self.bounds_xy.ymax
+
+        for loop in loops:
+            points_uv = loop.get("points", [])
+            is_hole = bool(loop.get("is_hole", False))
+
+            if len(points_uv) < 3:
+                continue
+
+            # Normalize closure: remove duplicate last point
+            if len(points_uv) >= 2 and points_uv[0] == points_uv[-1]:
+                points_uv = list(points_uv[:-1])
+
+            if len(points_uv) < 3:
+                continue
+
+            # Clip polygon to raster bounds
+            clipped_uv = _clip_poly_to_rect_uv([(p[0], p[1]) for p in points_uv], xmin, ymin, xmax, ymax)
+            if len(clipped_uv) < 3:
+                continue
+
+            # Convert to cell coordinates
+            points_ij = []
+            for (u, v) in clipped_uv:
+                i = int((u - self.bounds_xy.xmin) / self.cell_size_ft)
+                j = int((v - self.bounds_xy.ymin) / self.cell_size_ft)
+
+                # Clamp to raster bounds
+                if i < 0:
+                    i = 0
+                elif i >= self.W:
+                    i = self.W - 1
+                if j < 0:
+                    j = 0
+                elif j >= self.H:
+                    j = self.H - 1
+
+                points_ij.append((i, j))
+
+            # Dedupe consecutive duplicates
+            dedup = []
+            for pt in points_ij:
+                if not dedup or dedup[-1] != pt:
+                    dedup.append(pt)
+            points_ij = dedup
+
+            if len(points_ij) < 3:
+                continue
+
+            # Ensure closure for scanline
+            if points_ij[0] != points_ij[-1]:
+                points_ij = points_ij + [points_ij[0]]
+
+            if len(points_ij) < 4:
+                continue
+
+            cells = self._scanline_cells(points_ij)
+            if cells:
+                if is_hole:
+                    hole_cells |= cells
+                else:
+                    outer_cells |= cells
+
+        target_cells = outer_cells - hole_cells
+        if not target_cells:
+            return 0
+
+        for (i, j) in target_cells:
+            idx = self.get_cell_index(i, j)
+            if idx is None:
+                continue
+            if 0 <= idx < len(self.anno_key):
+                if self.anno_key[idx] != anno_idx:
+                    self.anno_key[idx] = anno_idx
+                    filled_count += 1
+
+        return filled_count
+
     def rasterize_closed_loops_to_proxy_edges(self, loops, key_index, depth=0.0, source="HOST"):
         """Stamp CLOSED loop perimeters into proxy channel only (no fill, no occlusion)."""
         if not loops:
