@@ -1484,6 +1484,82 @@ def get_vop_csv_header():
     ]
 
 
+
+
+def get_occlusion_csv_header():
+    """Get header for occlusion diagnostics CSV file."""
+    return [
+        "Date", "RunId", "ViewId", "ViewName",
+        "coverage_pct", "saturation_pct",
+        "elements_processed", "elements_fully_occluded",
+        "elements_partially_occluded", "tiles_rejected",
+        "rejection_rate", "time_sorting_ms", "time_tests_ms",
+        "time_saved_est_ms", "net_benefit_ms", "occlusion_roi",
+        "first_saturated_at_pct",
+    ]
+
+
+def view_result_to_occlusion_row(view_result, date_override=None, run_id=None):
+    """Convert a single view result to an occlusion CSV row dict."""
+    tracker = view_result.get("occlusion_tracker")
+    if not isinstance(tracker, dict) or not tracker:
+        return None
+
+    # Resolve date/run id consistently with other streaming row helpers
+    if run_id is None:
+        run_dt = datetime.now()
+        tag = None
+        if date_override:
+            if isinstance(date_override, str):
+                s = date_override.strip()
+                try:
+                    if len(s) == 10:
+                        run_dt = datetime.strptime(s, "%Y-%m-%d")
+                    else:
+                        run_dt = datetime.fromisoformat(s)
+                except Exception:
+                    tag = s
+            else:
+                tag = str(date_override)
+        date_str = run_dt.strftime("%Y-%m-%d")
+        base_run_id = run_dt.strftime("%Y%m%dT%H%M%S")
+        run_id = f"{base_run_id}_{tag}" if tag else base_run_id
+    else:
+        if date_override and isinstance(date_override, str):
+            s = date_override.strip()
+            try:
+                if len(s) == 10:
+                    date_str = datetime.strptime(s, "%Y-%m-%d").strftime("%Y-%m-%d")
+                else:
+                    date_str = datetime.fromisoformat(s).strftime("%Y-%m-%d")
+            except Exception:
+                date_str = datetime.now().strftime("%Y-%m-%d")
+        else:
+            try:
+                date_part = run_id.split('_')[0].split('T')[0]
+                date_str = f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:8]}"
+            except Exception:
+                date_str = datetime.now().strftime("%Y-%m-%d")
+
+    return {
+        "Date": date_str,
+        "RunId": run_id,
+        "ViewId": view_result.get("view_id"),
+        "ViewName": view_result.get("view_name", ""),
+        "coverage_pct": _round6(tracker.get("coverage_pct", 0.0)),
+        "saturation_pct": _round6(tracker.get("saturation_pct", 0.0)),
+        "elements_processed": int(tracker.get("elements_processed", 0) or 0),
+        "elements_fully_occluded": int(tracker.get("elements_fully_occluded", 0) or 0),
+        "elements_partially_occluded": int(tracker.get("elements_partially_occluded", 0) or 0),
+        "tiles_rejected": int(tracker.get("tiles_rejected_total", 0) or 0),
+        "rejection_rate": _round6(tracker.get("occlusion_rejection_rate", 0.0)),
+        "time_sorting_ms": _round6(tracker.get("time_sorting_ms", 0.0)),
+        "time_tests_ms": _round6(tracker.get("time_occlusion_tests_ms", 0.0)),
+        "time_saved_est_ms": _round6(tracker.get("time_saved_est_ms", 0.0)),
+        "net_benefit_ms": _round6(tracker.get("net_occlusion_benefit_ms", 0.0)),
+        "occlusion_roi": _round6(tracker.get("occlusion_roi", 0.0)),
+        "first_saturated_at_pct": _round6(tracker.get("first_saturated_tile_at_pct", 0.0)),
+    }
 def get_perf_csv_header():
     """Get header for performance CSV file."""
     return [
