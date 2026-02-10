@@ -5,6 +5,7 @@ analytics integration and comparison workflows.
 """
 
 import os
+import csv
 import hashlib
 from datetime import datetime
 
@@ -1040,11 +1041,10 @@ def build_occlusion_row(view_result, run_info):
     ]
 
 
-def export_occlusion_diagnostics_csv(output_dir, view_results, run_info, logger):
-    """Export occlusion diagnostics to occlusion.csv."""
+def export_occlusion_diagnostics_csv(occlusion_path, view_results, run_info, logger):
+    """Export occlusion diagnostics to the provided occlusion CSV path."""
     from vop_interwoven.export.csv import _append_csv_rows
 
-    occlusion_path = os.path.join(output_dir, "occlusion.csv")
     headers = [
         "Date", "RunId", "ViewId", "ViewName",
         "coverage_pct", "saturation_pct",
@@ -1061,7 +1061,17 @@ def export_occlusion_diagnostics_csv(output_dir, view_results, run_info, logger)
         if tracker:
             rows.append(build_occlusion_row(view_result, run_info))
 
-    _append_csv_rows(occlusion_path, headers, rows, logger)
+    if rows:
+        _append_csv_rows(occlusion_path, headers, rows, logger)
+        return occlusion_path
+
+    # Keep file discoverable alongside other CSV outputs even when there are no tracker rows.
+    if (not os.path.exists(occlusion_path)) or os.path.getsize(occlusion_path) == 0:
+        with open(occlusion_path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+        logger.info("Export: wrote occlusion header to '{0}'".format(occlusion_path))
+
     return occlusion_path
 
 
@@ -1147,9 +1157,11 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
     # Filenames: include tag if present
     core_filename = f"views_core_{date_str}{'_' + tag if tag else ''}.csv"
     vop_filename = f"views_vop_{date_str}{'_' + tag if tag else ''}.csv"
+    occlusion_filename = f"views_occlusion_{date_str}{'_' + tag if tag else ''}.csv"
 
     core_path = os.path.join(output_dir, core_filename)
     vop_path = os.path.join(output_dir, vop_filename)
+    occlusion_path = os.path.join(output_dir, occlusion_filename)
 
     core_headers = [
         "Date", "RunId", "ViewId", "ViewUniqueId", "ViewName", "ViewType",
@@ -1415,14 +1427,13 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
             print(f"CSV Export WARNING: {msg}")
 
     logger = SimpleLogger()
-    occlusion_path = os.path.join(output_dir, "occlusion.csv")
 
     try:
         if core_rows:
             _append_csv_rows(core_path, core_headers, core_rows, logger)
         if vop_rows:
             _append_csv_rows(vop_path, vop_headers, vop_rows, logger)
-        occlusion_path = export_occlusion_diagnostics_csv(output_dir, views_data, run_info_common, logger)
+        occlusion_path = export_occlusion_diagnostics_csv(occlusion_path, views_data, run_info_common, logger)
     except Exception as e:
         if diag is not None:
             try:
