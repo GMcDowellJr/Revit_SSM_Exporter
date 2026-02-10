@@ -948,7 +948,7 @@ def _diagnose_coordinate_spaces(elem, geom, transform, link_transform, vb):
                         print(f"   BBox.Transform.BasisX: ({basis_x.X:.3f}, {basis_x.Y:.3f}, {basis_x.Z:.3f})")
                         print(f"   BBox.Transform.BasisY: ({basis_y.X:.3f}, {basis_y.Y:.3f}, {basis_y.Z:.3f})")
                         print(f"   BBox.Transform.BasisZ: ({basis_z.X:.3f}, {basis_z.Y:.3f}, {basis_z.Z:.3f})")
-                    except Exception as e:
+                    except:
                         pass
 
                 print(f"   BBox.Min (bbox-local): ({bbox.Min.X:.2f}, {bbox.Min.Y:.2f}, {bbox.Min.Z:.2f})")
@@ -993,7 +993,7 @@ def _diagnose_coordinate_spaces(elem, geom, transform, link_transform, vb):
                         print(f"   Instance BasisX: ({basis_x.X:.3f}, {basis_x.Y:.3f}, {basis_x.Z:.3f})")
                         print(f"   Instance BasisY: ({basis_y.X:.3f}, {basis_y.Y:.3f}, {basis_y.Z:.3f})")
                         print(f"   Instance BasisZ: ({basis_z.X:.3f}, {basis_z.Y:.3f}, {basis_z.Z:.3f})")
-                    except Exception as e:
+                    except:
                         pass
             else:
                 print(f"   Element type: {type(base_elem).__name__}")
@@ -1006,14 +1006,14 @@ def _diagnose_coordinate_spaces(elem, geom, transform, link_transform, vb):
         if transform:
             try:
                 print(f"   transform.Origin: ({transform.Origin.X:.2f}, {transform.Origin.Y:.2f}, {transform.Origin.Z:.2f})")
-            except Exception as e:
+            except:
                 pass
 
         print(f"   link_transform parameter: {link_transform is not None}")
         if link_transform:
             try:
                 print(f"   link_transform.Origin: ({link_transform.Origin.X:.2f}, {link_transform.Origin.Y:.2f}, {link_transform.Origin.Z:.2f})")
-            except Exception as e:
+            except:
                 pass
 
         # 4. Sample geometry and trace through transforms
@@ -1080,7 +1080,7 @@ def _diagnose_coordinate_spaces(elem, geom, transform, link_transform, vb):
                                                 break
                                         if sample_found:
                                             break
-                                except Exception as e:
+                                except:
                                     continue
                                 if sample_found:
                                     break
@@ -1118,7 +1118,7 @@ def _diagnose_coordinate_spaces(elem, geom, transform, link_transform, vb):
                                     break
                             if sample_found:
                                 break
-                    except Exception as e:
+                    except:
                         continue
                     if sample_found:
                         break
@@ -1207,7 +1207,7 @@ def _extract_geometry_footprint_uv(elem, vb, diag=None, strategy_diag=None):
             # Replace 987587 with the actual element ID of your problematic beam
             if elem_id and elem_id in [987587]:  # <-- PUT YOUR BEAM ID HERE
                 _diagnose_coordinate_spaces(elem, geom, None, link_transform, vb)
-        except Exception as e:
+        except:
             pass
         # =====================================================================
 

@@ -2,7 +2,7 @@ name: update-maps-on-pr
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, closed]
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch: {}
 
 permissions:
@@ -12,21 +12,14 @@ jobs:
   update-maps:
     runs-on: ubuntu-latest
 
-    # Don't run on bot-triggered sync loops or fork PRs, but do allow manual dispatch.
-    if: >-
-      github.actor != 'github-actions[bot]' &&
-      (github.event_name == 'workflow_dispatch' ||
-      (
-        github.event.pull_request.head.repo.full_name == github.repository &&
-        (github.event.action != 'closed' || github.event.pull_request.merged == true)
-      ))
+    # Don't run on PRs from forks (no safe push permissions)
+    if: github.event.pull_request.head.repo.full_name == github.repository
 
     steps:
       - name: Checkout PR branch
         uses: actions/checkout@v4
         with:
-          # On merge (closed+merged), update the base branch; otherwise update the PR branch.
-          ref: ${{ github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.base.ref || github.event.pull_request.head.ref }}
+          ref: ${{ github.event.pull_request.head.ref }}
           persist-credentials: true
           fetch-depth: 0
 
@@ -41,6 +34,14 @@ jobs:
 
       - name: Commit and push if changed
         run: |
+          # Avoid infinite loops: don't re-run if last commit was the bot updating maps
+          LAST_MSG="$(git log -1 --pretty=%s)"
+          echo "Last commit: $LAST_MSG"
+          if echo "$LAST_MSG" | grep -qiE '^chore: update navigation maps$'; then
+            echo "Last commit is map update; skipping."
+            exit 0
+          fi
+
           if [ -n "$(git status --porcelain)" ]; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -52,3 +53,4 @@ jobs:
           else
             echo "No map changes."
           fi
+

@@ -129,7 +129,7 @@ def _diagnose_link_geometry_transform(elem, link_trf, basis, stage_name):
             elem_id = elem_id.IntegerValue
         else:
             elem_id = "?"
-    except Exception as e:
+    except:
         elem_id = "?"
 
     print("\n" + "="*80)

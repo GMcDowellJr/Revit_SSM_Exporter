@@ -72,7 +72,6 @@ class LRUCache(object):
                     break
         except Exception as e:
             # Never crash on cache writes.
-            pass
 
     def clear(self):
         try:
