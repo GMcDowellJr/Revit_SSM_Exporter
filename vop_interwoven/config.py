@@ -133,6 +133,9 @@ class Config:
         # Strategy diagnostics: track geometry extraction performance
         export_strategy_diagnostics=False,  # Export strategy diagnostics CSV and print summary
 
+        # View diagnostics: track classification/strategy/fallback per view
+        export_view_diagnostics=True,  # Export view_diagnostics_*.json
+
         # Memory management: control raster retention behavior
         # True = keep full rasters in memory (needed for streaming exports)
         # False = discard rasters after cache writes (memory efficient)
@@ -286,6 +289,7 @@ class Config:
 
         # Strategy diagnostics
         self.export_strategy_diagnostics = bool(export_strategy_diagnostics)
+        self.export_view_diagnostics = bool(export_view_diagnostics)
 
         # Memory management
         self.retain_rasters_in_memory = bool(retain_rasters_in_memory)
@@ -493,6 +497,7 @@ class Config:
             "element_cache_change_tolerance": self.element_cache_change_tolerance,
             # Strategy diagnostics
             "export_strategy_diagnostics": self.export_strategy_diagnostics,
+            "export_view_diagnostics": self.export_view_diagnostics,
         }
 
     @classmethod
@@ -545,5 +550,6 @@ class Config:
 
             # Strategy diagnostics
             export_strategy_diagnostics=d.get("export_strategy_diagnostics", True),
+            export_view_diagnostics=d.get("export_view_diagnostics", True),
 
         )
