@@ -1246,7 +1246,7 @@ def _symbolic_curves_silhouette(elem, view, view_basis, cfg=None, diag=None):
                         print(f"[CURVE SOURCE] count={count}, g_name={g_name}, pts={len(pts_uv)}")
                         if len(pts_uv) >= 2:
                             print(f"  First point: ({pts_uv[0][0]:.2f}, {pts_uv[0][1]:.2f})")
-                except:
+                except Exception as e:
                     pass
         
                 loops.append({"points": pts_uv, "is_hole": False, "open": True})
