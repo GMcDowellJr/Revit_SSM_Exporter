@@ -386,6 +386,8 @@ class ElementCache:
     def export_analysis_csv(self, file_path, view_elements=None):
         """Export element cache to CSV for analysis.
 
+        Deprecated: prefer export_view_analysis_json() for view-element cross-reference.
+
         Args:
             file_path: Path to CSV file (e.g., "output/vop_element_cache_analysis_YYYY-MM-DD.csv")
             view_elements: Optional dict mapping view_id -> list of (elem_id, source_id)
@@ -465,6 +467,70 @@ class ElementCache:
 
         except Exception as e:
             # Never raise - graceful degradation
+            return False
+
+    def export_view_analysis_json(self, file_path, view_elements=None):
+        """Export view -> element index as JSON for cross-reference analysis.
+
+        Args:
+            file_path: Path to JSON file
+            view_elements: Dict mapping view_id -> list of (elem_id, source_id)
+
+        JSON schema (v1):
+            {
+                "schema": "vop.view_element_index.v1",
+                "views": [
+                    {
+                        "view_id": 123,
+                        "element_ids": [1001, 1002],
+                        "element_refs": [
+                            {"elem_id": 1001, "source_id": "HOST"}
+                        ]
+                    }
+                ]
+            }
+        """
+        try:
+            import json
+            import os
+
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+            views = []
+            for view_id, elem_list in sorted((view_elements or {}).items(), key=lambda kv: kv[0]):
+                element_ids = []
+                element_refs = []
+                seen_refs = set()
+
+                for elem_id, source_id in elem_list:
+                    elem_id_int = int(elem_id)
+                    source_id_str = str(source_id)
+                    key = (elem_id_int, source_id_str)
+                    if key in seen_refs:
+                        continue
+                    seen_refs.add(key)
+                    element_ids.append(elem_id_int)
+                    element_refs.append({"elem_id": elem_id_int, "source_id": source_id_str})
+
+                views.append(
+                    {
+                        "view_id": int(view_id),
+                        "element_ids": sorted(set(element_ids)),
+                        "element_refs": element_refs,
+                    }
+                )
+
+            payload = {
+                "schema": "vop.view_element_index.v1",
+                "generated_utc": time.time(),
+                "views": views,
+            }
+
+            with open(file_path, "w") as f:
+                json.dump(payload, f, indent=2)
+
+            return True
+        except Exception as e:
             return False
 
     def detect_changes(self, previous_cache, tolerance=1.0 * 10**-2):

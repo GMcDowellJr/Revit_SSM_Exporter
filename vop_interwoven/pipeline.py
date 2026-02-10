@@ -1152,17 +1152,17 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
                             message="Exception in _tmark: {}".format(e),
                             exc=e,
                         )
-            # Export analysis CSV
+            # Export view-analysis JSON (view -> element references)
             if getattr(cfg, "element_cache_export_csv", True) and output_dir is not None:
                 try:
-                    csv_path = os.path.join(output_dir, f"vop_element_cache_analysis_{date_str}.csv")
-                    exported = elem_cache.export_analysis_csv(csv_path, view_elements=view_elements)
+                    analysis_path = os.path.join(output_dir, f"vop_view_element_analysis_{date_str}.json")
+                    exported = elem_cache.export_view_analysis_json(analysis_path, view_elements=view_elements)
                     if exported and diag is not None:
                         diag.info(
                             phase="pipeline",
-                            callsite="process_document_views.element_cache_export_csv",
-                            message="Exported element cache analysis CSV",
-                            extra={"csv_path": csv_path, "elements": len(elem_cache.cache), "views": len(view_elements)}
+                            callsite="process_document_views.element_cache_export_json",
+                            message="Exported view-element analysis JSON",
+                            extra={"analysis_path": analysis_path, "elements": len(elem_cache.cache), "views": len(view_elements)}
                         )
                 except Exception as e:
                     if diag is not None:
