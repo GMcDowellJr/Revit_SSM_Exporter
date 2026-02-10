@@ -961,8 +961,8 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
             # 6) Export
             t0 = _perf_now()
             out = export_view_raster(view, raster, cfg, diag=diag, timings=timings, strategy_diag=strategy_diag)
-            if isinstance(render_result, dict):
-                out["diagnostics"] = render_result.get("diagnostics", {})
+            if isinstance(render_result, dict) and "diagnostics" in render_result:
+                out["diagnostics"] = render_result["diagnostics"]
                 tracker_obj = render_result.get("occlusion_tracker")
                 if tracker_obj is not None:
                     try:
@@ -1476,16 +1476,7 @@ def _extract_view_summary(view_result):
         "total_elements": view_result.get("total_elements"),
         "filled_cells": view_result.get("filled_cells"),
         "timings": view_result.get("timings"),
-        "diagnostics": {
-            # Keep only numeric stats, not full metadata lists
-            "num_elements": view_result.get("diagnostics", {}).get("num_elements"),
-            "num_annotations": view_result.get("diagnostics", {}).get("num_annotations"),
-            "num_filled_cells": view_result.get("diagnostics", {}).get("num_filled_cells"),
-            "occlusion_cells": view_result.get("diagnostics", {}).get("occlusion_cells"),
-            "model_ink_edge_cells": view_result.get("diagnostics", {}).get("model_ink_edge_cells"),
-            "proxy_edge_cells": view_result.get("diagnostics", {}).get("proxy_edge_cells"),
-            "timings": view_result.get("diagnostics", {}).get("timings"),
-        },
+        "diagnostics": view_result.get("diagnostics", {}),
         "cache": view_result.get("cache"),
         "config": view_result.get("config"),
         "occlusion_tracker": view_result.get("occlusion_tracker"),
