@@ -89,6 +89,7 @@ Core principles:
 # ────────────────────────────────────────────────────────────────────────────
 
 
+from datetime import datetime
 import math
 import time
 
@@ -483,6 +484,23 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
 
     results = []
 
+    # Run/date identity for dated exports and metadata
+    date_override = getattr(cfg, "date_override", None)
+    run_dt = datetime.now()
+    if date_override:
+        try:
+            if isinstance(date_override, str):
+                ds = date_override.strip()
+                if len(ds) == 10:
+                    run_dt = datetime.strptime(ds, "%Y-%m-%d")
+                else:
+                    run_dt = datetime.fromisoformat(ds)
+        except Exception:
+            pass
+
+    date_str = run_dt.strftime("%Y-%m-%d")
+    run_id = run_dt.strftime("%Y%m%dT%H%M%S")
+
     # ────────────────────────────────────────────────────────────────────
     # Persistent view-level cache (disk-backed)
     # Skip entire views when their signature matches a stored result.
@@ -618,9 +636,11 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
             from .core.element_cache import ElementCache
             max_items = int(getattr(cfg, "element_cache_max_items", 10000))
 
-            # Determine cache file path (stored with output files)
+            # Determine cache file path (dated for tracking changes over time)
             if output_dir is not None:
-                elem_cache_path = os.path.join(output_dir, ".vop_element_cache.json")
+                cache_date = date_override if date_override else datetime.now().strftime("%Y%m%d")
+                cache_date = str(cache_date).replace("-", "")
+                elem_cache_path = os.path.join(output_dir, f".vop_element_cache_{cache_date}.json")
             else:
                 elem_cache_path = None
 
@@ -892,6 +912,8 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
                         )
                     # Graceful degradation: continue without diagnostics
 
+            render_result = {}
+
             if view_mode == VIEW_MODE_MODEL_AND_ANNOTATION:
                 # 2) Broad-phase visible elements
                 t0 = _perf_now()
@@ -901,11 +923,12 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
                 
                 # 3) MODEL PASS
                 t0 = _perf_now()
-                _raster_sub_timings = render_model_front_to_back(doc, view, raster, elements, cfg, diag=diag, geometry_cache=geometry_cache, elem_cache=elem_cache, strategy_diag=strategy_diag)
+                render_result = render_model_front_to_back(doc, view, raster, elements, cfg, diag=diag, geometry_cache=geometry_cache, elem_cache=elem_cache, strategy_diag=strategy_diag)
                 t1 = _perf_now()
                 _tmark("raster_ms", t0, t1)
 
                 # Merge rasterization sub-timings into view timings
+                _raster_sub_timings = render_result.get("timings", {}) if isinstance(render_result, dict) else {}
                 if _raster_sub_timings and isinstance(_raster_sub_timings, dict):
                     if getattr(cfg, "perf_collect_timings", True):
                         for _sk, _sv in _raster_sub_timings.items():
@@ -937,6 +960,8 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
             # 6) Export
             t0 = _perf_now()
             out = export_view_raster(view, raster, cfg, diag=diag, timings=timings, strategy_diag=strategy_diag)
+            if isinstance(render_result, dict):
+                out["diagnostics"] = render_result.get("diagnostics", {})
 
             # Ensure identity fields exist on first-run results so CSV + cache row_payload are complete
             try:
@@ -1101,6 +1126,7 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
                 try:
                     metadata = {
                         "timestamp": time.time(),
+                        "date": cache_date,
                         "doc_path": getattr(doc, "PathName", None),
                         "doc_title": getattr(doc, "Title", None),
                     }
@@ -1204,6 +1230,57 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
                     phase="pipeline",
                     callsite="_tmark",
                     message="Exception in _tmark: {}".format(e),
+                    exc=e,
+                )
+
+    # Export per-view diagnostics JSON
+    if getattr(cfg, "export_view_diagnostics", True):
+        try:
+            diagnostics_output_dir = getattr(cfg, "view_diagnostics_output_dir", None) or output_dir
+            if diagnostics_output_dir:
+                os.makedirs(diagnostics_output_dir, exist_ok=True)
+
+            all_view_diags = {}
+            for view_result in results:
+                view_diag = view_result.get("diagnostics") if isinstance(view_result, dict) else None
+                if view_diag and view_diag.get("view_id"):
+                    all_view_diags[str(view_diag["view_id"])] = view_diag
+
+            if not diagnostics_output_dir:
+                raise ValueError("No diagnostics output directory configured (cfg.output_dir / view_diagnostics_output_dir)")
+
+            diag_filename = f"view_diagnostics_{date_str.replace('-', '')}.json"
+            diag_path = os.path.join(diagnostics_output_dir, diag_filename)
+
+            with open(diag_path, "w") as f:
+                json.dump(
+                    {
+                        "metadata": {
+                            "date": date_str,
+                            "run_id": run_id,
+                            "doc_title": getattr(doc, "Title", "Unknown"),
+                            "doc_path": getattr(doc, "PathName", None),
+                            "exporter_version": "vop_interwoven",
+                        },
+                        "views": all_view_diags,
+                    },
+                    f,
+                    indent=2,
+                )
+
+            if diag is not None:
+                diag.info(
+                    phase="pipeline",
+                    callsite="process_document_views.export_diagnostics",
+                    message=f"Exported view diagnostics: {len(all_view_diags)} views",
+                    extra={"path": diag_path},
+                )
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="pipeline",
+                    callsite="process_document_views.export_diagnostics",
+                    message=f"Failed to export view diagnostics: {e}",
                     exc=e,
                 )
     return results
@@ -1567,6 +1644,29 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
     from .revit.view_basis import resolve_view_w_volume
     W0, Wmax, _wvol_meta = resolve_view_w_volume(view, vb, cfg, diag=diag)
 
+    # DIAGNOSTICS: Initialize view-level diagnostic collection
+    view_diag = {
+        "view_id": None,
+        "view_name": None,
+        "total_elements": 0,
+        "element_ids": [],
+        "classification_counts": {"TINY": 0, "LINEAR": 0, "AREAL": 0},
+        "strategy_matrix": {"TINY": {}, "LINEAR": {}, "AREAL": {}},
+        "confidence_counts": {"HIGH": 0, "MEDIUM": 0, "LOW": 0},
+        "fallback_elements": [],
+    }
+    try:
+        view_diag["view_id"] = int(getattr(getattr(view, "Id", None), "IntegerValue", 0))
+        view_diag["view_name"] = str(getattr(view, "Name", "Unknown"))
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="pipeline",
+                callsite="render_model_front_to_back",
+                message=f"Failed to extract view identity: {e}",
+                exc=e,
+            )
+
     # Persist for export/diagnostics (safe: optional fields)
     try:
         raster.view_w0 = W0
@@ -1866,9 +1966,11 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
         confidence = None
         strategy = None
         silhouette_error = None
+        geom_extract_ms = 0.0
 
         if elem_class == "AREAL":
             # AREAL: Use unified extraction with confidence-based fallback
+            t_geom_start = time.perf_counter()
             try:
                 loops, confidence, strategy = extract_areal_geometry(
                     elem=elem,
@@ -1879,6 +1981,8 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     diag=diag,
                     strategy_diag=strategy_diag
                 )
+
+                geom_extract_ms = (time.perf_counter() - t_geom_start) * 1000.0
 
                 # Normalize confidence to uppercase (extract_areal_geometry returns 'HIGH', 'MEDIUM', 'LOW')
                 if confidence is None:
@@ -2057,6 +2161,40 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                         elem_id, category, silhouette_error))
 
         _sub_t["raster_geom_extract_ms"] += _perf_ms(_t0_geom, _perf_now())
+
+        # DIAGNOSTICS: track per-element classification/strategy/confidence and fallback details
+        try:
+            view_diag["total_elements"] += 1
+            view_diag["element_ids"].append(elem_id)
+
+            if elem_class in view_diag["classification_counts"]:
+                view_diag["classification_counts"][elem_class] += 1
+
+            if elem_class in view_diag["strategy_matrix"]:
+                strategy_key = strategy if strategy else "unknown"
+                view_diag["strategy_matrix"][elem_class][strategy_key] = view_diag["strategy_matrix"][elem_class].get(strategy_key, 0) + 1
+
+            conf_key = confidence if isinstance(confidence, str) else None
+            if conf_key in view_diag["confidence_counts"]:
+                view_diag["confidence_counts"][conf_key] += 1
+
+            if confidence == CONF_LOW and elem_class == "AREAL":
+                view_diag["fallback_elements"].append({
+                    "elem_id": elem_id,
+                    "category": category,
+                    "classification": elem_class,
+                    "final_strategy": strategy if strategy else "unknown",
+                    "confidence": confidence,
+                    "geom_extract_ms": round(geom_extract_ms, 2),
+                })
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="pipeline",
+                    callsite="render_model_front_to_back.diagnostics",
+                    message=f"Diagnostics collection failed: {e}",
+                    exc=e,
+                )
 
         bbox_link = elem_wrapper.get("bbox_link")
         bbox_for_metrics = bbox_link if bbox_link is not None else elem_wrapper.get("bbox")
@@ -2772,7 +2910,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
     for _k in _sub_t:
         _sub_t[_k] = round(_sub_t[_k], 3)
 
-    return _sub_t
+    return {"timings": _sub_t, "diagnostics": view_diag}
 
 
 def _is_supported_2d_view(view, diag=None):

@@ -118,6 +118,7 @@ class StreamingExporter:
         self.export_png = export_png
         self.export_csv = export_csv
         self.export_json = export_json
+        self.export_perf_csv = bool(getattr(cfg, "export_perf_csv", True))
         self.pixels_per_cell = pixels_per_cell
         self.date_override = date_override
         
@@ -180,6 +181,12 @@ class StreamingExporter:
             get_perf_csv_header
         )
         
+        # Output dirs (default perf CSV colocated with other CSVs)
+        csv_output_dir = self.output_dir
+        perf_output_dir = getattr(self.cfg, "perf_csv_output_dir", None) or csv_output_dir
+        os.makedirs(csv_output_dir, exist_ok=True)
+        os.makedirs(perf_output_dir, exist_ok=True)
+
         # Core CSV
         if isinstance(self.date_override, datetime):
             date_str = self.date_override.strftime("%Y-%m-%d")
@@ -189,7 +196,7 @@ class StreamingExporter:
             date_str = datetime.now().strftime("%Y-%m-%d")
             
         core_filename = f"views_core_{date_str}.csv"
-        self.core_csv_path = os.path.join(self.output_dir, core_filename)
+        self.core_csv_path = os.path.join(csv_output_dir, core_filename)
         self.csv_core_file = open(self.core_csv_path, 'w', newline='', encoding='utf-8')
         self.csv_core_writer = csv.DictWriter(
             self.csv_core_file, 
@@ -200,7 +207,7 @@ class StreamingExporter:
         
         # VOP CSV
         vop_filename = f"views_vop_{date_str}.csv"
-        self.vop_csv_path = os.path.join(self.output_dir, vop_filename)
+        self.vop_csv_path = os.path.join(csv_output_dir, vop_filename)
         self.csv_vop_file = open(self.vop_csv_path, 'w', newline='', encoding='utf-8')
         self.csv_vop_writer = csv.DictWriter(
             self.csv_vop_file,
@@ -209,16 +216,18 @@ class StreamingExporter:
         )
         self.csv_vop_writer.writeheader()
         
-        # Perf CSV
-        perf_filename = f"views_perf_{date_str}.csv"
-        self.perf_csv_path = os.path.join(self.output_dir, perf_filename)
-        self.perf_file = open(self.perf_csv_path, 'w', newline='', encoding='utf-8')
-        self.perf_writer = csv.DictWriter(
-            self.perf_file,
-            fieldnames=get_perf_csv_header(),
-            extrasaction='ignore'
-        )
-        self.perf_writer.writeheader()
+        # Perf CSV (optional via config)
+        self.perf_csv_path = None
+        if self.export_perf_csv:
+            perf_filename = f"views_perf_{date_str}.csv"
+            self.perf_csv_path = os.path.join(perf_output_dir, perf_filename)
+            self.perf_file = open(self.perf_csv_path, 'w', newline='', encoding='utf-8')
+            self.perf_writer = csv.DictWriter(
+                self.perf_file,
+                fieldnames=get_perf_csv_header(),
+                extrasaction='ignore'
+            )
+            self.perf_writer.writeheader()
     
     def on_view_complete(self, view_result):
         """Callback when a view completes processing.
@@ -409,15 +418,16 @@ class StreamingExporter:
             self.csv_vop_file.flush()
 
         # Perf row
-        perf_row = view_result_to_perf_row(
-            view_result,
-            date_override=self.date_override,
-            run_id=self.run_id
-        )
-        if perf_row:
-            perf_row = _fill_missing(perf_row, self.perf_writer.fieldnames, sentinel)
-            self.perf_writer.writerow(perf_row)
-            self.perf_file.flush()
+        if self.export_perf_csv and self.perf_writer is not None:
+            perf_row = view_result_to_perf_row(
+                view_result,
+                date_override=self.date_override,
+                run_id=self.run_id
+            )
+            if perf_row:
+                perf_row = _fill_missing(perf_row, self.perf_writer.fieldnames, sentinel)
+                self.perf_writer.writerow(perf_row)
+                self.perf_file.flush()
 
         print(f"[Streaming] Wrote CSV rows for view: {view_result.get('view_name')}")
     
@@ -621,6 +631,12 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
     
     if output_dir is None:
         output_dir = r"C:\temp\vop_output"
+
+    # Keep pipeline-side exports aligned with streaming output directory by default
+    try:
+        cfg.output_dir = output_dir
+    except Exception:
+        pass
 
     # CRITICAL: Force raster retention for streaming exports
     # This ensures PNGs and CSVs can be exported before memory is discarded

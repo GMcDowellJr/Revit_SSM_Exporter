@@ -366,6 +366,16 @@ def run_vop_pipeline_with_png(doc, view_ids, cfg=None, output_dir=None, pixels_p
     if output_dir is None:
         output_dir = r"C:\temp\vop_output"
 
+    # Use default config if not provided
+    if cfg is None:
+        cfg = Config()
+
+    # Keep pipeline-side exports aligned with caller output directory
+    try:
+        cfg.output_dir = output_dir
+    except Exception:
+        pass
+
     # Default view-cache location colocated with outputs (persistent between runs)
     try:
         if cfg is not None and getattr(cfg, "view_cache_dir", None) in (None, ""):
@@ -471,6 +481,12 @@ def run_vop_pipeline_with_csv(doc, view_ids, cfg=None, output_dir=None, pixels_p
     if cfg is None:
         cfg = Config()
 
+    # Keep pipeline-side exports aligned with CSV output directory by default
+    try:
+        cfg.output_dir = output_dir
+    except Exception:
+        pass
+
     # Run pipeline
     pipeline_result = run_vop_pipeline(doc, view_ids, cfg)
 
@@ -508,54 +524,34 @@ def run_vop_pipeline_with_csv(doc, view_ids, cfg=None, output_dir=None, pixels_p
     result['vop_csv_path'] = csv_result['vop_csv_path']
     result['rows_exported'] = csv_result['rows_exported']
 
-    # Export PERF CSV (optional; per-view coarse timings + png_ms if available)
-    if export_perf_csv:
-        perf_filename = "views_perf_{0}.csv".format(datetime.now().strftime("%Y-%m-%d_%H%M%S"))
-        perf_path = os.path.join(output_dir, perf_filename)
+    # Export PERF CSV (optional; config-aware with optional custom directory)
+    perf_enabled = bool(export_perf_csv) and bool(getattr(cfg, "export_perf_csv", True))
+    if perf_enabled:
+        from vop_interwoven.csv_export import get_perf_csv_header, view_result_to_perf_row
 
-        perf_fields = [
-            "view_id",
-            "view_name",
-            "success",
-            "total_ms",
-            "mode_ms",
-            "raster_init_ms",
-            "collect_ms",
-            "raster_ms",
-            "anno_ms",
-            "finalize_ms",
-            "export_ms",
-            "png_ms",
-            "width",
-            "height",
-            "total_elements",
-            "filled_cells",
-        ]
+        perf_output_dir = getattr(cfg, "perf_csv_output_dir", None) or output_dir
+        os.makedirs(perf_output_dir, exist_ok=True)
+
+        if date_override:
+            try:
+                ds = str(date_override).replace("-", "")
+            except Exception:
+                ds = datetime.now().strftime("%Y%m%d")
+        else:
+            ds = datetime.now().strftime("%Y%m%d")
+
+        perf_filename = "views_perf_{0}.csv".format(ds)
+        perf_path = os.path.join(perf_output_dir, perf_filename)
 
         with open(perf_path, "w", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=perf_fields)
+            w = csv.DictWriter(f, fieldnames=get_perf_csv_header(), extrasaction='ignore')
             w.writeheader()
             for v in (pipeline_result.get("views", []) or []):
                 if not isinstance(v, dict):
                     continue
-                w.writerow({
-                    "view_id": v.get("view_id"),
-                    "view_name": v.get("view_name"),
-                    "success": v.get("success"),
-                    "total_ms": v.get("total_ms"),
-                    "mode_ms": v.get("mode_ms"),
-                    "raster_init_ms": v.get("raster_init_ms"),
-                    "collect_ms": v.get("collect_ms"),
-                    "raster_ms": v.get("raster_ms"),
-                    "anno_ms": v.get("anno_ms"),
-                    "finalize_ms": v.get("finalize_ms"),
-                    "export_ms": v.get("export_ms"),
-                    "png_ms": v.get("png_ms"),
-                    "width": v.get("width"),
-                    "height": v.get("height"),
-                    "total_elements": v.get("total_elements"),
-                    "filled_cells": v.get("filled_cells"),
-                })
+                row = view_result_to_perf_row(v, date_override=date_override)
+                if row:
+                    w.writerow(row)
 
         result["perf_csv_path"] = perf_path
     else:

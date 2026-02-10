@@ -1424,7 +1424,10 @@ def get_perf_csv_header():
         "raster_element_iter_ms",
         "anno_ms",
         "finalize_ms", "export_ms", "png_ms", "width", "height",
-        "total_elements", "filled_cells"
+        "total_elements", "filled_cells",
+        "TinyCount", "LinearCount", "ArealCount",
+        "ArealHighConf", "ArealMediumConf", "ArealLowConf",
+        "FallbackCount", "FallbackRate", "AvgFallbackExtractMs", "ElemCacheHitRate"
     ]
 
 
@@ -1913,5 +1916,46 @@ def view_result_to_perf_row(view_result, date_override=None, run_id=None):
         "total_elements": view_result.get("total_elements", 0),
         "filled_cells": view_result.get("filled_cells", 0)
     }
+
+
+    # DIAGNOSTICS: Aggregate columns from per-view diagnostics
+    try:
+        diag_data = view_result.get("diagnostics", {}) or {}
+        class_counts = diag_data.get("classification_counts", {}) or {}
+        conf_counts = diag_data.get("confidence_counts", {}) or {}
+        fallback_elements = diag_data.get("fallback_elements", []) or []
+
+        row["TinyCount"] = class_counts.get("TINY", 0)
+        row["LinearCount"] = class_counts.get("LINEAR", 0)
+        row["ArealCount"] = class_counts.get("AREAL", 0)
+
+        areal_total = class_counts.get("AREAL", 0)
+        row["ArealHighConf"] = conf_counts.get("HIGH", 0) if areal_total > 0 else 0
+        row["ArealMediumConf"] = conf_counts.get("MEDIUM", 0) if areal_total > 0 else 0
+        row["ArealLowConf"] = conf_counts.get("LOW", 0) if areal_total > 0 else 0
+
+        fallback_count = len(fallback_elements)
+        row["FallbackCount"] = fallback_count
+        row["FallbackRate"] = round(fallback_count / max(areal_total, 1), 3)
+
+        areal_times = [f.get("geom_extract_ms") for f in fallback_elements if isinstance(f, dict) and "geom_extract_ms" in f]
+        areal_times = [float(v) for v in areal_times if v is not None]
+        row["AvgFallbackExtractMs"] = round(sum(areal_times) / len(areal_times), 2) if areal_times else 0.0
+
+        cache_info = view_result.get("cache", {}) or {}
+        elem_cache_stats = cache_info.get("element_cache_stats", {}) or {}
+        row["ElemCacheHitRate"] = round(float(elem_cache_stats.get("hit_rate", 0.0)), 3)
+
+    except Exception:
+        row["TinyCount"] = 0
+        row["LinearCount"] = 0
+        row["ArealCount"] = 0
+        row["ArealHighConf"] = 0
+        row["ArealMediumConf"] = 0
+        row["ArealLowConf"] = 0
+        row["FallbackCount"] = 0
+        row["FallbackRate"] = 0.0
+        row["AvgFallbackExtractMs"] = 0.0
+        row["ElemCacheHitRate"] = 0.0
 
     return row

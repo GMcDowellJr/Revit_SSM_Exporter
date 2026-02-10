@@ -133,6 +133,14 @@ class Config:
         # Strategy diagnostics: track geometry extraction performance
         export_strategy_diagnostics=False,  # Export strategy diagnostics CSV and print summary
 
+        # View diagnostics: track classification/strategy/fallback per view
+        export_view_diagnostics=True,  # Export view_diagnostics_*.json
+        view_diagnostics_output_dir=None,  # None = use output_dir (same as CSVs)
+
+        # Perf CSV export controls
+        export_perf_csv=True,  # Export views_perf_*.csv
+        perf_csv_output_dir=None,  # None = use output_dir (same as CSVs)
+
         # Memory management: control raster retention behavior
         # True = keep full rasters in memory (needed for streaming exports)
         # False = discard rasters after cache writes (memory efficient)
@@ -286,6 +294,12 @@ class Config:
 
         # Strategy diagnostics
         self.export_strategy_diagnostics = bool(export_strategy_diagnostics)
+        self.export_view_diagnostics = bool(export_view_diagnostics)
+        self.view_diagnostics_output_dir = view_diagnostics_output_dir
+
+        # Perf CSV export controls
+        self.export_perf_csv = bool(export_perf_csv)
+        self.perf_csv_output_dir = perf_csv_output_dir
 
         # Memory management
         self.retain_rasters_in_memory = bool(retain_rasters_in_memory)
@@ -493,6 +507,12 @@ class Config:
             "element_cache_change_tolerance": self.element_cache_change_tolerance,
             # Strategy diagnostics
             "export_strategy_diagnostics": self.export_strategy_diagnostics,
+            "export_view_diagnostics": self.export_view_diagnostics,
+            "view_diagnostics_output_dir": self.view_diagnostics_output_dir,
+
+            # Perf CSV export controls
+            "export_perf_csv": self.export_perf_csv,
+            "perf_csv_output_dir": self.perf_csv_output_dir,
         }
 
     @classmethod
@@ -545,5 +565,11 @@ class Config:
 
             # Strategy diagnostics
             export_strategy_diagnostics=d.get("export_strategy_diagnostics", True),
+            export_view_diagnostics=d.get("export_view_diagnostics", True),
+            view_diagnostics_output_dir=d.get("view_diagnostics_output_dir", None),
+
+            # Perf CSV export controls
+            export_perf_csv=d.get("export_perf_csv", True),
+            perf_csv_output_dir=d.get("perf_csv_output_dir", None),
 
         )
