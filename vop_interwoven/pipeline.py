@@ -1216,16 +1216,23 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
                 )
 
     # Export per-view diagnostics JSON
-    if output_dir is not None and getattr(cfg, "export_view_diagnostics", True):
+    if getattr(cfg, "export_view_diagnostics", True):
         try:
+            diagnostics_output_dir = getattr(cfg, "view_diagnostics_output_dir", None) or output_dir
+            if diagnostics_output_dir:
+                os.makedirs(diagnostics_output_dir, exist_ok=True)
+
             all_view_diags = {}
             for view_result in results:
                 view_diag = view_result.get("diagnostics") if isinstance(view_result, dict) else None
                 if view_diag and view_diag.get("view_id"):
                     all_view_diags[str(view_diag["view_id"])] = view_diag
 
+            if not diagnostics_output_dir:
+                raise ValueError("No diagnostics output directory configured (cfg.output_dir / view_diagnostics_output_dir)")
+
             diag_filename = f"view_diagnostics_{date_str.replace('-', '')}.json"
-            diag_path = os.path.join(output_dir, diag_filename)
+            diag_path = os.path.join(diagnostics_output_dir, diag_filename)
 
             with open(diag_path, "w") as f:
                 json.dump(
