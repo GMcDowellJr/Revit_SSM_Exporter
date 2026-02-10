@@ -14,17 +14,17 @@
 **Definitions**
 - `Config` (class, L11)
 - `Config.__init__` (method, L57)
-- `Config.compute_adaptive_tile_size` (method, L293)
-- `Config.max_grid_cells_width` (method, L343)
-- `Config.max_grid_cells_height` (method, L352)
-- `Config.bounds_buffer_ft` (method, L361)
-- `Config.silhouette_tiny_thresh_ft` (method, L370)
-- `Config.silhouette_large_thresh_ft` (method, L379)
-- `Config.coarse_tess_max_verts` (method, L388)
-- `Config.get_silhouette_strategies` (method, L396)
-- `Config.__repr__` (method, L430)
-- `Config.to_dict` (method, L450)
-- `Config.from_dict` (method, L499)
+- `Config.compute_adaptive_tile_size` (method, L307)
+- `Config.max_grid_cells_width` (method, L357)
+- `Config.max_grid_cells_height` (method, L366)
+- `Config.bounds_buffer_ft` (method, L375)
+- `Config.silhouette_tiny_thresh_ft` (method, L384)
+- `Config.silhouette_large_thresh_ft` (method, L393)
+- `Config.coarse_tess_max_verts` (method, L402)
+- `Config.get_silhouette_strategies` (method, L410)
+- `Config.__repr__` (method, L444)
+- `Config.to_dict` (method, L464)
+- `Config.from_dict` (method, L519)
 
 ### `core/areal_extraction.py`
 
@@ -45,8 +45,8 @@
 - `LRUCache.__len__` (method, L34)
 - `LRUCache.get` (method, L37)
 - `LRUCache.set` (method, L54)
-- `LRUCache.clear` (method, L76)
-- `LRUCache.stats` (method, L82)
+- `LRUCache.clear` (method, L77)
+- `LRUCache.stats` (method, L83)
 
 ### `core/diagnostics.py`
 
@@ -59,9 +59,9 @@
 - `Diagnostics.debug` (method, L55)
 - `Diagnostics.info` (method, L82)
 - `Diagnostics.debug_dedupe` (method, L109)
-- `Diagnostics.warn` (method, L162)
-- `Diagnostics.error` (method, L188)
-- `Diagnostics.to_dict` (method, L215)
+- `Diagnostics.warn` (method, L168)
+- `Diagnostics.error` (method, L194)
+- `Diagnostics.to_dict` (method, L221)
 
 ### `core/element_cache.py`
 
@@ -101,10 +101,10 @@
 - `signed_polygon_area_2d` (function, L116)
 - `polygon_area_2d` (function, L139)
 - `iter_front_facing_planar_faces` (function, L147)
-- `group_faces_by_plane` (function, L207)
-- `projected_outer_loop_area_uv` (function, L260)
-- `select_dominant_face_per_plane_group` (function, L316)
-- `select_top_plane_groups` (function, L356)
+- `group_faces_by_plane` (function, L212)
+- `projected_outer_loop_area_uv` (function, L265)
+- `select_dominant_face_per_plane_group` (function, L321)
+- `select_top_plane_groups` (function, L361)
 
 ### `core/footprint.py`
 
@@ -219,21 +219,22 @@
 - `ViewRaster.get_or_create_element_meta_index` (method, L622)
 - `ViewRaster.get_or_create_anno_meta_index` (method, L662)
 - `ViewRaster.finalize_anno_over_model` (method, L680)
-- `ViewRaster.stamp_model_edge_idx` (method, L716)
-- `ViewRaster.stamp_proxy_edge_idx` (method, L748)
-- `ViewRaster.rasterize_proxy_loops` (method, L772)
-- `ViewRaster.rasterize_polygon_to_proxy` (method, L855)
-- `ViewRaster.rasterize_closed_loops_to_proxy_edges` (method, L989)
-- `ViewRaster.rasterize_open_polylines_to_proxy_edges` (method, L1077)
-- `ViewRaster.rasterize_silhouette_loops` (method, L1132)
-- `ViewRaster._scanline_cells` (method, L1377)
-- `ViewRaster._scanline_fill` (method, L1450)
-- `ViewRaster.dump_occlusion_debug` (method, L1530)
-- `ViewRaster.to_dict` (method, L1635)
-- `ViewRaster.from_dict` (method, L1677)
-- `ViewRaster.to_debug_dict` (method, L1733)
-- `_clip_poly_to_rect_uv` (function, L1788)
-- `_bresenham_line` (function, L1852)
+- `ViewRaster.stamp_model_edge_idx` (method, L721)
+- `ViewRaster.stamp_proxy_edge_idx` (method, L759)
+- `ViewRaster.rasterize_proxy_loops` (method, L789)
+- `ViewRaster.rasterize_polygon_to_proxy` (method, L872)
+- `ViewRaster.rasterize_polygon_to_anno` (method, L1006)
+- `ViewRaster.rasterize_closed_loops_to_proxy_edges` (method, L1107)
+- `ViewRaster.rasterize_open_polylines_to_proxy_edges` (method, L1195)
+- `ViewRaster.rasterize_silhouette_loops` (method, L1250)
+- `ViewRaster._scanline_cells` (method, L1531)
+- `ViewRaster._scanline_fill` (method, L1625)
+- `ViewRaster.dump_occlusion_debug` (method, L1721)
+- `ViewRaster.to_dict` (method, L1826)
+- `ViewRaster.from_dict` (method, L1868)
+- `ViewRaster.to_debug_dict` (method, L1929)
+- `_clip_poly_to_rect_uv` (function, L1991)
+- `_bresenham_line` (function, L2055)
 
 ### `core/silhouette.py`
 
@@ -242,36 +243,36 @@
 
 **Definitions**
 - `_compose_transform` (function, L54)
-- `_collect_regions_recursive` (function, L67)
-- `_safe_int_id` (function, L311)
-- `_xyz_tuple` (function, L320)
-- `_apply_transform_xyz_tuple` (function, L326)
-- `_cache_get` (function, L338)
-- `_cache_set` (function, L346)
-- `_maybe_resize_lru` (function, L355)
-- `_family_region_outlines_cached` (function, L368)
-- `_bbox_corners_world` (function, L485)
-- `_pca_obb_uv` (function, L525)
-- `_uv_obb_rect_from_bbox` (function, L591)
-- `_determine_uv_mode` (function, L620)
-- `_location_curve_obb_silhouette` (function, L664)
-- `_detail_line_band_silhouette` (function, L709)
-- `_symbolic_curves_silhouette` (function, L853)
-- `_iter_curve_primitives` (function, L1080)
-- `_merge_paths_by_endpoints` (function, L1194)
-- `_cad_curves_silhouette` (function, L1267)
-- `_to_host_point` (function, L1581)
-- `_unwrap_elem` (function, L1603)
-- `get_element_silhouette` (function, L1615)
-- `_uv_obb_rect_silhouette` (function, L1936)
-- `_bbox_silhouette` (function, L1948)
-- `_obb_silhouette` (function, L2000)
-- `_front_face_loops_silhouette` (function, L2061)
-- `_silhouette_edges` (function, L2221)
-- `_planar_face_loops_silhouette` (function, L2399)
-- `_order_points_by_connectivity` (function, L2560)
-- `_iter_solids` (function, L2616)
-- `_convex_hull_2d` (function, L2656)
+- `_collect_regions_recursive` (function, L68)
+- `_safe_int_id` (function, L403)
+- `_xyz_tuple` (function, L413)
+- `_apply_transform_xyz_tuple` (function, L419)
+- `_cache_get` (function, L431)
+- `_cache_set` (function, L439)
+- `_maybe_resize_lru` (function, L448)
+- `_family_region_outlines_cached` (function, L461)
+- `_bbox_corners_world` (function, L626)
+- `_pca_obb_uv` (function, L666)
+- `_uv_obb_rect_from_bbox` (function, L732)
+- `_determine_uv_mode` (function, L761)
+- `_location_curve_obb_silhouette` (function, L805)
+- `_detail_line_band_silhouette` (function, L857)
+- `_symbolic_curves_silhouette` (function, L1018)
+- `_iter_curve_primitives` (function, L1337)
+- `_merge_paths_by_endpoints` (function, L1457)
+- `_cad_curves_silhouette` (function, L1530)
+- `_to_host_point` (function, L1870)
+- `_unwrap_elem` (function, L1892)
+- `get_element_silhouette` (function, L1904)
+- `_uv_obb_rect_silhouette` (function, L2335)
+- `_bbox_silhouette` (function, L2347)
+- `_obb_silhouette` (function, L2399)
+- `_front_face_loops_silhouette` (function, L2460)
+- `_silhouette_edges` (function, L2620)
+- `_planar_face_loops_silhouette` (function, L2799)
+- `_order_points_by_connectivity` (function, L3010)
+- `_iter_solids` (function, L3066)
+- `_convex_hull_2d` (function, L3106)
 
 ### `core/source_identity.py`
 
@@ -281,30 +282,48 @@
 ### `csv_export.py`
 
 **Imports**
+- `csv`
 - `datetime:datetime`
 - `hashlib`
 - `os`
 
 **Definitions**
-- `_round6` (function, L11)
-- `_is_from_cache` (function, L17)
-- `compute_external_cell_metrics` (function, L37)
-- `compute_cell_metrics` (function, L106)
-- `compute_annotation_type_metrics` (function, L216)
-- `_coerce_view_id_int` (function, L271)
-- `_viewtype_name_from_value` (function, L312)
-- `extract_view_metadata` (function, L367)
-- `compute_config_hash` (function, L565)
-- `compute_view_frame_hash` (function, L597)
-- `build_core_csv_row` (function, L619)
-- `build_vop_csv_row` (function, L672)
-- `export_pipeline_to_csv` (function, L884)
-- `get_core_csv_header` (function, L1206)
-- `get_vop_csv_header` (function, L1216)
-- `get_perf_csv_header` (function, L1228)
-- `view_result_to_core_row` (function, L1238)
-- `view_result_to_vop_row` (function, L1367)
-- `view_result_to_perf_row` (function, L1639)
+- `_round6` (function, L12)
+- `_is_from_cache` (function, L18)
+- `compute_external_cell_metrics` (function, L39)
+- `compute_cell_metrics` (function, L108)
+- `compute_annotation_type_metrics` (function, L218)
+- `_coerce_view_id_int` (function, L273)
+- `_viewtype_name_from_value` (function, L314)
+- `extract_view_metadata` (function, L369)
+- `compute_config_hash` (function, L686)
+- `compute_view_frame_hash` (function, L718)
+- `build_core_csv_row` (function, L740)
+- `build_vop_csv_row` (function, L793)
+- `build_occlusion_row` (function, L1017)
+- `export_occlusion_diagnostics_csv` (function, L1044)
+- `export_pipeline_to_csv` (function, L1078)
+- `get_core_csv_header` (function, L1465)
+- `get_vop_csv_header` (function, L1475)
+- `get_occlusion_csv_header` (function, L1489)
+- `view_result_to_occlusion_row` (function, L1502)
+- `get_perf_csv_header` (function, L1563)
+- `view_result_to_core_row` (function, L1580)
+- `view_result_to_vop_row` (function, L1709)
+- `view_result_to_perf_row` (function, L1981)
+
+### `diagnostics/occlusion_tracker.py`
+
+**Definitions**
+- `OcclusionTracker` (class, L4)
+- `OcclusionTracker.__init__` (method, L7)
+- `OcclusionTracker.record_element` (method, L33)
+- `OcclusionTracker.record_bbox_rejection` (method, L36)
+- `OcclusionTracker.record_partial_occlusion` (method, L39)
+- `OcclusionTracker.record_occlusion_test_ms` (method, L51)
+- `OcclusionTracker.check_saturation` (method, L57)
+- `OcclusionTracker.finalize` (method, L73)
+- `OcclusionTracker.as_dict` (method, L115)
 
 ### `diagnostics/strategy_tracker.py`
 
@@ -338,7 +357,7 @@
 - `get_all_floor_plans` (function, L101)
 - `get_all_sections` (function, L129)
 - `filter_supported_views` (function, L154)
-- `run_pipeline_from_dynamo_input` (function, L226)
+- `run_pipeline_from_dynamo_input` (function, L227)
 
 ### `entry_dynamo.py`
 
@@ -352,17 +371,17 @@
 **Definitions**
 - `_prune_view_raster_for_json` (function, L57)
 - `_pipeline_result_for_json` (function, L91)
-- `get_current_document` (function, L151)
-- `get_current_view` (function, L187)
-- `_normalize_view_ids` (function, L223)
-- `run_vop_pipeline` (function, L276)
-- `run_vop_pipeline_with_png` (function, L324)
-- `run_vop_pipeline_with_csv` (function, L401)
-- `run_vop_pipeline_json` (function, L553)
-- `get_test_config_tiny` (function, L587)
-- `get_test_config_linear` (function, L603)
-- `get_test_config_areal_heavy` (function, L619)
-- `quick_test_current_view` (function, L636)
+- `get_current_document` (function, L164)
+- `get_current_view` (function, L200)
+- `_normalize_view_ids` (function, L236)
+- `run_vop_pipeline` (function, L290)
+- `run_vop_pipeline_with_png` (function, L338)
+- `run_vop_pipeline_with_csv` (function, L425)
+- `run_vop_pipeline_json` (function, L563)
+- `get_test_config_tiny` (function, L597)
+- `get_test_config_linear` (function, L613)
+- `get_test_config_areal_heavy` (function, L629)
+- `quick_test_current_view` (function, L646)
 
 ### `export/csv.py`
 
@@ -383,39 +402,42 @@
 - `.core.math_utils:Bounds2D,CellRect`
 - `.core.raster:ViewRaster,TileMap`
 - `.core.silhouette:get_element_silhouette`
+- `.diagnostics:OcclusionTracker`
 - `.revit.annotation:rasterize_annotations`
 - `.revit.collection:collect_view_elements,expand_host_link_import_model_elements,sort_front_to_back,is_element_visible_in_view,estimate_nearest_depth_from_bbox`
 - `.revit.safe_api:safe_call`
 - `.revit.view_basis:make_view_basis,resolve_view_bounds`
+- `datetime:datetime`
 - `math`
 - `time`
 
 **Definitions**
-- `_diagnose_link_geometry_transform` (function, L113)
-- `_perf_now` (function, L196)
-- `_perf_ms` (function, L201)
-- `_safe_int` (function, L204)
-- `_safe_bool` (function, L211)
-- `_cropbox_fingerprint` (function, L218)
-- `_cfg_hash` (function, L246)
-- `_view_signature` (function, L262)
-- `_extract_view_identity_for_csv` (function, L352)
-- `process_document_views` (function, L450)
-- `init_view_raster` (function, L1050)
-- `_extract_view_summary` (function, L1192)
-- `rasterize_areal_loops` (function, L1238)
-- `render_model_front_to_back` (function, L1353)
-- `_is_supported_2d_view` (function, L2419)
-- `_should_skip_outside_view_volume` (function, L2466)
-- `_tiles_fully_covered_and_nearer` (function, L2502)
-- `_bin_elements_to_tiles` (function, L2533)
-- `_tile_has_depth_conflict` (function, L2565)
-- `_get_ambiguous_tiles` (function, L2599)
-- `_render_proxy_element` (function, L2629)
-- `_stamp_proxy_edges` (function, L2654)
-- `_mark_rect_center_cell` (function, L2671)
-- `_mark_thin_band_along_long_axis` (function, L2679)
-- `export_view_raster` (function, L2697)
+- `_diagnose_link_geometry_transform` (function, L120)
+- `_perf_now` (function, L203)
+- `_perf_ms` (function, L208)
+- `_safe_int` (function, L211)
+- `_safe_bool` (function, L218)
+- `_cropbox_fingerprint` (function, L225)
+- `_cfg_hash` (function, L254)
+- `_view_signature` (function, L270)
+- `_extract_view_identity_for_csv` (function, L360)
+- `process_document_views` (function, L460)
+- `init_view_raster` (function, L1297)
+- `_extract_view_summary` (function, L1449)
+- `rasterize_areal_loops` (function, L1487)
+- `render_model_front_to_back` (function, L1602)
+- `_is_supported_2d_view` (function, L2951)
+- `_intersects_crop_volume` (function, L3004)
+- `_should_skip_outside_view_volume` (function, L3030)
+- `_tiles_fully_covered_and_nearer` (function, L3069)
+- `_bin_elements_to_tiles` (function, L3107)
+- `_tile_has_depth_conflict` (function, L3139)
+- `_get_ambiguous_tiles` (function, L3173)
+- `_render_proxy_element` (function, L3203)
+- `_stamp_proxy_edges` (function, L3228)
+- `_mark_rect_center_cell` (function, L3245)
+- `_mark_thin_band_along_long_axis` (function, L3253)
+- `export_view_raster` (function, L3271)
 
 ### `png_export.py`
 
@@ -425,25 +447,26 @@
 
 **Definitions**
 - `export_raster_to_png` (function, L10)
-- `export_pipeline_results_to_pngs` (function, L297)
+- `export_pipeline_results_to_pngs` (function, L318)
 
 ### `revit/annotation.py`
 
 **Definitions**
 - `is_extent_driver_annotation` (function, L12)
-- `compute_annotation_extents` (function, L83)
-- `collect_2d_annotations` (function, L362)
-- `classify_annotation` (function, L599)
-- `classify_keynote` (function, L679)
-- `get_annotation_bbox` (function, L731)
-- `rasterize_annotations` (function, L762)
-- `_stamp_detail_line_band` (function, L1109)
-- `_point_in_quad` (function, L1181)
-- `_uv_to_cell` (function, L1211)
-- `_stamp_cell` (function, L1220)
-- `_stamp_rect_outline` (function, L1227)
-- `_stamp_line_cells` (function, L1247)
-- `_project_element_bbox_to_cell_rect_for_anno` (function, L1268)
+- `compute_annotation_extents` (function, L84)
+- `collect_2d_annotations` (function, L413)
+- `classify_annotation` (function, L701)
+- `classify_keynote` (function, L781)
+- `get_annotation_bbox` (function, L833)
+- `rasterize_annotations` (function, L864)
+- `_stamp_detail_line_band` (function, L1355)
+- `_point_in_quad` (function, L1427)
+- `_uv_to_cell` (function, L1457)
+- `_stamp_cell` (function, L1466)
+- `_stamp_rect_outline` (function, L1473)
+- `_stamp_line_cells` (function, L1493)
+- `_rasterize_filled_region_shape` (function, L1514)
+- `_project_element_bbox_to_cell_rect_for_anno` (function, L1686)
 
 ### `revit/collection.py`
 
@@ -453,18 +476,18 @@
 **Definitions**
 - `resolve_element_bbox` (function, L10)
 - `collect_view_elements` (function, L64)
-- `is_element_visible_in_view` (function, L266)
-- `expand_host_link_import_model_elements` (function, L290)
-- `sort_front_to_back` (function, L434)
-- `estimate_nearest_depth_from_bbox` (function, L452)
-- `estimate_depth_from_loops_or_bbox` (function, L520)
-- `estimate_depth_range_from_bbox` (function, L548)
-- `_project_element_bbox_to_cell_rect` (function, L622)
-- `_get_element_category_name` (function, L766)
-- `_diagnose_coordinate_spaces` (function, L785)
-- `_extract_geometry_footprint_uv` (function, L1012)
-- `get_element_obb_loops` (function, L1239)
-- `_pca_obb_uv` (function, L1461)
+- `is_element_visible_in_view` (function, L324)
+- `expand_host_link_import_model_elements` (function, L348)
+- `sort_front_to_back` (function, L502)
+- `estimate_nearest_depth_from_bbox` (function, L520)
+- `estimate_depth_from_loops_or_bbox` (function, L596)
+- `estimate_depth_range_from_bbox` (function, L624)
+- `_project_element_bbox_to_cell_rect` (function, L719)
+- `_get_element_category_name` (function, L891)
+- `_diagnose_coordinate_spaces` (function, L910)
+- `_extract_geometry_footprint_uv` (function, L1137)
+- `get_element_obb_loops` (function, L1412)
+- `_pca_obb_uv` (function, L1676)
 
 ### `revit/collection_policy.py`
 
@@ -481,7 +504,7 @@
 - `_try_import_bic` (function, L147)
 - `_try_get_category_id` (function, L152)
 - `resolve_category_ids` (function, L166)
-- `should_include_element` (function, L189)
+- `should_include_element` (function, L190)
 
 ### `revit/linked_documents.py`
 
@@ -494,23 +517,27 @@
 - `collect_all_linked_elements` (function, L97)
 - `_has_revit_2024_link_collector` (function, L143)
 - `_collect_visible_link_elements_2024_plus` (function, L186)
-- `_collect_from_revit_links` (function, L457)
-- `_collect_from_dwg_imports` (function, L577)
-- `_collect_link_elements_with_clipping` (function, L674)
-- `_build_clip_volume` (function, L818)
-- `_get_plan_view_vertical_range` (function, L939)
-- `_build_crop_prism_corners` (function, L998)
-- `_get_host_visible_model_categories` (function, L1047)
-- `_get_excluded_3d_category_ids` (function, L1091)
-- `_transform_bbox_to_host` (function, L1100)
+- `_collect_from_revit_links` (function, L499)
+- `_collect_from_dwg_imports` (function, L619)
+- `_collect_link_elements_with_clipping` (function, L716)
+- `_build_clip_volume` (function, L860)
+- `_get_plan_view_vertical_range` (function, L981)
+- `_build_crop_prism_corners` (function, L1040)
+- `_get_host_visible_model_categories` (function, L1089)
+- `_get_excluded_3d_category_ids` (function, L1133)
+- `_transform_bbox_to_host` (function, L1142)
 
 ### `revit/safe_api.py`
 
 **Imports**
+- `sys`
 - `typing:Any,Callable,Dict,Optional,TypeVar`
 
 **Definitions**
-- `safe_call` (function, L8)
+- `_diag_fallback_stderr` (function, L9)
+- `record_error` (function, L58)
+- `record_warning` (function, L92)
+- `safe_call` (function, L121)
 
 ### `revit/tierb_proxy.py`
 
@@ -534,18 +561,18 @@
 - `ViewBasis.__repr__` (method, L111)
 - `world_to_view` (function, L115)
 - `make_view_basis` (function, L133)
-- `resolve_view_w_volume` (function, L211)
-- `xy_bounds_from_crop_box_all_corners` (function, L288)
-- `xy_bounds_effective` (function, L355)
-- `synthetic_bounds_from_visible_extents` (function, L388)
-- `_bounds_to_tuple` (function, L630)
-- `resolve_view_bounds` (function, L637)
-- `_view_type_name` (function, L1000)
-- `supports_model_geometry` (function, L1104)
-- `supports_crop_bounds` (function, L1141)
-- `supports_depth` (function, L1160)
-- `resolve_view_mode` (function, L1174)
-- `resolve_annotation_only_bounds` (function, L1220)
+- `resolve_view_w_volume` (function, L235)
+- `xy_bounds_from_crop_box_all_corners` (function, L331)
+- `xy_bounds_effective` (function, L398)
+- `synthetic_bounds_from_visible_extents` (function, L444)
+- `_bounds_to_tuple` (function, L726)
+- `resolve_view_bounds` (function, L733)
+- `_view_type_name` (function, L1130)
+- `supports_model_geometry` (function, L1241)
+- `supports_crop_bounds` (function, L1285)
+- `supports_depth` (function, L1311)
+- `resolve_view_mode` (function, L1325)
+- `resolve_annotation_only_bounds` (function, L1378)
 
 ### `root_cache.py`
 
@@ -582,14 +609,14 @@
 - `process_with_streaming` (function, L21)
 - `StreamingExporter` (class, L91)
 - `StreamingExporter.__init__` (method, L94)
-- `StreamingExporter._init_csv_writers` (method, L174)
-- `StreamingExporter.on_view_complete` (method, L223)
-- `StreamingExporter._write_png` (method, L289)
-- `StreamingExporter._write_csv_rows` (method, L317)
-- `StreamingExporter._extract_summary` (method, L424)
-- `StreamingExporter.finalize` (method, L437)
-- `process_document_views_streaming` (function, L488)
-- `run_vop_pipeline_streaming` (function, L576)
+- `StreamingExporter._init_csv_writers` (method, L175)
+- `StreamingExporter.on_view_complete` (method, L244)
+- `StreamingExporter._write_png` (method, L310)
+- `StreamingExporter._write_csv_rows` (method, L338)
+- `StreamingExporter._extract_summary` (method, L458)
+- `StreamingExporter.finalize` (method, L471)
+- `process_document_views_streaming` (function, L525)
+- `run_vop_pipeline_streaming` (function, L613)
 
 ### `thinrunner_streaming.py`
 
