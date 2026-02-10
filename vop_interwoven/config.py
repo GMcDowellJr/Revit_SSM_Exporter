@@ -131,7 +131,7 @@ class Config:
         element_cache_change_tolerance=1.0 * 10**-2,  # 0.01 ft position/size tolerance (~3mm)
 
         # Strategy diagnostics: track geometry extraction performance
-        export_strategy_diagnostics=False,  # Export strategy diagnostics CSV and print summary
+        export_strategy_diagnostics=True,  # Export strategy diagnostics CSV and print summary
 
         # View diagnostics: track classification/strategy/fallback per view
         export_view_diagnostics=True,  # Export view_diagnostics_*.json

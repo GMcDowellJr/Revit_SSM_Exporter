@@ -176,9 +176,10 @@ class StreamingExporter:
         """Initialize CSV writers for incremental writing."""
         import csv
         from vop_interwoven.csv_export import (
-            get_core_csv_header, 
+            get_core_csv_header,
             get_vop_csv_header,
-            get_perf_csv_header
+            get_occlusion_csv_header,
+            get_perf_csv_header,
         )
         
         # Output dirs (default perf CSV colocated with other CSVs)
@@ -216,6 +217,17 @@ class StreamingExporter:
         )
         self.csv_vop_writer.writeheader()
         
+        # Occlusion diagnostics CSV
+        occlusion_filename = f"views_occlusion_{date_str}.csv"
+        self.occlusion_csv_path = os.path.join(csv_output_dir, occlusion_filename)
+        self.csv_occlusion_file = open(self.occlusion_csv_path, 'w', newline='', encoding='utf-8')
+        self.csv_occlusion_writer = csv.DictWriter(
+            self.csv_occlusion_file,
+            fieldnames=get_occlusion_csv_header(),
+            extrasaction='ignore'
+        )
+        self.csv_occlusion_writer.writeheader()
+
         # Perf CSV (optional via config)
         self.perf_csv_path = None
         if self.export_perf_csv:
@@ -374,7 +386,8 @@ class StreamingExporter:
         from vop_interwoven.csv_export import (
             view_result_to_core_row,
             view_result_to_vop_row,
-            view_result_to_perf_row
+            view_result_to_occlusion_row,
+            view_result_to_perf_row,
         )
         
         # Helper: ensure all required header columns exist (no blanks on cache hits).
@@ -417,6 +430,17 @@ class StreamingExporter:
             self.csv_vop_writer.writerow(vop_row)
             self.csv_vop_file.flush()
 
+        # Occlusion diagnostics row (may be empty on cache/annotation-only paths)
+        occ_row = view_result_to_occlusion_row(
+            view_result,
+            date_override=self.date_override,
+            run_id=self.run_id,
+        )
+        if occ_row:
+            occ_row = _fill_missing(occ_row, self.csv_occlusion_writer.fieldnames, sentinel)
+            self.csv_occlusion_writer.writerow(occ_row)
+            self.csv_occlusion_file.flush()
+
         # Perf row
         if self.export_perf_csv and self.perf_writer is not None:
             perf_row = view_result_to_perf_row(
@@ -455,6 +479,8 @@ class StreamingExporter:
             self.csv_core_file.close()
         if self.csv_vop_file:
             self.csv_vop_file.close()
+        if getattr(self, 'csv_occlusion_file', None):
+            self.csv_occlusion_file.close()
         if self.perf_file:
             self.perf_file.close()
         
@@ -488,6 +514,7 @@ class StreamingExporter:
             "png_files": self.png_files,
             "core_csv_path": getattr(self, 'core_csv_path', None),
             "vop_csv_path": getattr(self, 'vop_csv_path', None),
+            "occlusion_csv_path": getattr(self, 'occlusion_csv_path', None),
             "perf_csv_path": getattr(self, 'perf_csv_path', None),
             "csv_rows_written": self.csv_rows_written,
             "json_path": json_path,
@@ -610,6 +637,7 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
             'png_files': [paths],
             'core_csv_path': str,
             'vop_csv_path': str,
+            'occlusion_csv_path': str,
             'perf_csv_path': str,
             'csv_rows_written': int,
             'json_path': str | None,

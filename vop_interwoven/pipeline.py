@@ -114,6 +114,7 @@ from .revit.collection import (
 )
 from .revit.annotation import rasterize_annotations
 from .revit.safe_api import safe_call
+from .diagnostics import OcclusionTracker
 
 
 def _diagnose_link_geometry_transform(elem, link_trf, basis, stage_name):
@@ -960,8 +961,14 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
             # 6) Export
             t0 = _perf_now()
             out = export_view_raster(view, raster, cfg, diag=diag, timings=timings, strategy_diag=strategy_diag)
-            if isinstance(render_result, dict):
-                out["diagnostics"] = render_result.get("diagnostics", {})
+            if isinstance(render_result, dict) and "diagnostics" in render_result:
+                out["diagnostics"] = render_result["diagnostics"]
+                tracker_obj = render_result.get("occlusion_tracker")
+                if tracker_obj is not None:
+                    try:
+                        out["occlusion_tracker"] = tracker_obj.as_dict()
+                    except Exception:
+                        out["occlusion_tracker"] = None
 
             # Ensure identity fields exist on first-run results so CSV + cache row_payload are complete
             try:
@@ -1469,18 +1476,10 @@ def _extract_view_summary(view_result):
         "total_elements": view_result.get("total_elements"),
         "filled_cells": view_result.get("filled_cells"),
         "timings": view_result.get("timings"),
-        "diagnostics": {
-            # Keep only numeric stats, not full metadata lists
-            "num_elements": view_result.get("diagnostics", {}).get("num_elements"),
-            "num_annotations": view_result.get("diagnostics", {}).get("num_annotations"),
-            "num_filled_cells": view_result.get("diagnostics", {}).get("num_filled_cells"),
-            "occlusion_cells": view_result.get("diagnostics", {}).get("occlusion_cells"),
-            "model_ink_edge_cells": view_result.get("diagnostics", {}).get("model_ink_edge_cells"),
-            "proxy_edge_cells": view_result.get("diagnostics", {}).get("proxy_edge_cells"),
-            "timings": view_result.get("diagnostics", {}).get("timings"),
-        },
+        "diagnostics": view_result.get("diagnostics", {}),
         "cache": view_result.get("cache"),
         "config": view_result.get("config"),
+        "occlusion_tracker": view_result.get("occlusion_tracker"),
         # Explicitly omit "raster" key to free memory
     }
 
@@ -1685,10 +1684,18 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
     expanded_elements = expand_host_link_import_model_elements(doc, view, elements, cfg, diag=diag, elem_cache=elem_cache)
     _sub_t["raster_expand_ms"] = _perf_ms(_t0_expand, _perf_now())
 
+    # Occlusion diagnostics tracker (lightweight counters + aggregate timings)
+    occlusion_tracker = OcclusionTracker(
+        extraction_est_ms=getattr(cfg, "occlusion_extraction_est_ms", 5.0),
+        raster_tile_est_ms=getattr(cfg, "occlusion_raster_tile_est_ms", 0.1),
+    )
+
     # Sort elements front-to-back by depth for proper occlusion
     _t0_sort = _perf_now()
     expanded_elements = sort_front_to_back(expanded_elements, view, raster)
-    _sub_t["raster_sorting_ms"] = _perf_ms(_t0_sort, _perf_now())
+    _t1_sort = _perf_now()
+    _sub_t["raster_sorting_ms"] = _perf_ms(_t0_sort, _t1_sort)
+    occlusion_tracker.time_sorting_ms = _perf_ms(_t0_sort, _t1_sort)
 
     # Enrich elements with depth range and bbox for ambiguity detection
     _t0_enrich = _perf_now()
@@ -1800,12 +1807,13 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
         return (elem_class == "AREAL") and (confidence == CONF_HIGH)
 
     _t0_elem_iter = _perf_now()
-    for elem_wrapper in expanded_elements:
+    for element_idx, elem_wrapper in enumerate(expanded_elements):
         elem = elem_wrapper["element"]
         source_type = elem_wrapper.get("source_type", "HOST")
         source_id = elem_wrapper.get("source_id", source_type)
         source_label = elem_wrapper.get("source_label", source_id)
         world_transform = elem_wrapper["world_transform"]
+        occlusion_tracker.record_element()
 
         # View-volume gating: skip elements whose bbox W-range does not overlap [W0, Wmax].
         # This is the ONLY intended semantic change: exclude truly-outside elements.
@@ -2296,15 +2304,18 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
             if rect and (not rect.empty):
                 from .core.footprint import CellRectFootprint
                 fp = CellRectFootprint(rect)
+                fp_tile_count = len(fp.tiles(raster.tile))
 
                 # Defaults must be defined on the non-ambiguous path
                 uvw_pts = None
                 footprint = fp
+                footprint_tile_count = fp_tile_count
                 elem_min_w = elem_depth  # conservative: element depth from loops-or-bbox
 
                 # Stage 1: tile-level conservative occlusion against bbox footprint
-                if _tiles_fully_covered_and_nearer(raster.tile, fp, elem_min_w):
+                if _tiles_fully_covered_and_nearer(raster.tile, fp, elem_min_w, tracker=occlusion_tracker):
                     skipped += 1
+                    occlusion_tracker.record_bbox_rejection()
                     _sub_t["raster_depth_test_ms"] += _perf_ms(_t0_depth, _perf_now())
                     continue
 
@@ -2401,15 +2412,22 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
 
                         from .core.footprint import HullFootprint
                         footprint = HullFootprint(hull_uv, raster)
+                        footprint_tile_count = len(footprint.tiles(raster.tile))
 
                         # Minimum sampled W becomes the conservative depth for early-out + stamping
                         elem_min_w = min(w for (_, _, w) in uvw_pts)
 
                 # Stage 2: depth-aware early-out using chosen footprint (bbox or hull)
-                if _tiles_fully_covered_and_nearer(raster.tile, footprint, elem_min_w):
+                rejected_tiles = max(0, fp_tile_count - footprint_tile_count)
+
+                if _tiles_fully_covered_and_nearer(raster.tile, footprint, elem_min_w, tracker=occlusion_tracker):
                     skipped += 1
+                    occlusion_tracker.record_bbox_rejection()
                     _sub_t["raster_depth_test_ms"] += _perf_ms(_t0_depth, _perf_now())
                     continue
+
+                if rejected_tiles > 0:
+                    occlusion_tracker.record_partial_occlusion(rejected_tiles)
 
                 # Stage 3: conservative stamping
                 #
@@ -2500,6 +2518,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                         silhouette_success += 1
                         processed += 1
                         _sub_t["raster_cell_write_ms"] += _perf_ms(_t0_cell, _perf_now())
+                        occlusion_tracker.check_saturation(raster.tile, processed)
                         continue
                     else:
                         # Rasterization failed, fall through to bbox fallback
@@ -2578,6 +2597,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                         silhouette_success += 1
                         processed += 1
                         _sub_t["raster_cell_write_ms"] += _perf_ms(_t0_cell, _perf_now())
+                        occlusion_tracker.check_saturation(raster.tile, processed)
                         continue
 
                     else:
@@ -2599,6 +2619,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 # Element already successfully rendered via silhouette
                 processed += 1
                 _sub_t["raster_cell_write_ms"] += _perf_ms(_t0_cell, _perf_now())
+                occlusion_tracker.check_saturation(raster.tile, processed)
                 continue
 
         # Note: AREAL diagnostic tracking is now handled inside extract_areal_geometry()
@@ -2751,10 +2772,12 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     )
             # Continue with remaining elements
             _sub_t["raster_cell_write_ms"] += _perf_ms(_t0_cell, _perf_now())
+            occlusion_tracker.check_saturation(raster.tile, processed)
             continue
 
         # Normal path (AABB fallback completed without catastrophic exception)
         _sub_t["raster_cell_write_ms"] += _perf_ms(_t0_cell, _perf_now())
+        occlusion_tracker.check_saturation(raster.tile, processed)
 
     _sub_t["raster_element_iter_ms"] = _perf_ms(_t0_elem_iter, _perf_now())
 
@@ -2778,6 +2801,18 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
     if processed > 0:
         print("[INFO] vop.pipeline: Processed {0} elements ({1} silhouette, {2} bbox fallback)".format(
             processed, silhouette_success, bbox_fallback))
+
+    # Finalize occlusion diagnostics (coverage + ROI)
+    try:
+        occlusion_tracker.finalize(raster.tile)
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="pipeline",
+                callsite="render_model_front_to_back",
+                message="Exception finalizing occlusion diagnostics: {}".format(e),
+                exc=e,
+            )
 
     # Persist view-volume metric for export/diagnostics
     try:
@@ -2910,7 +2945,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
     for _k in _sub_t:
         _sub_t[_k] = round(_sub_t[_k], 3)
 
-    return {"timings": _sub_t, "diagnostics": view_diag}
+    return {"timings": _sub_t, "diagnostics": view_diag, "occlusion_tracker": occlusion_tracker}
 
 
 def _is_supported_2d_view(view, diag=None):
@@ -3031,7 +3066,7 @@ def _should_skip_outside_view_volume(depth_range, W0, Wmax):
 
     return (dmax < W0 - BOUNDARY_TOLERANCE) or (dmin > Wmax + BOUNDARY_TOLERANCE)
 
-def _tiles_fully_covered_and_nearer(tile_map, footprint, elem_min_w):
+def _tiles_fully_covered_and_nearer(tile_map, footprint, elem_min_w, tracker=None):
     """Check if all tiles overlapping rect are fully covered AND nearer than element.
 
     Args:
@@ -3048,17 +3083,24 @@ def _tiles_fully_covered_and_nearer(tile_map, footprint, elem_min_w):
         1. Fully filled (no empty cells)
         2. Nearer than element's minimum W-depth (w_min_tile < elem_min_w)
     """
+    t0 = _perf_now()
     tiles = footprint.tiles(tile_map)
 
     for t in tiles:
         # Check if tile is fully filled
         if not tile_map.is_tile_full(t):
+            if tracker is not None:
+                tracker.record_occlusion_test_ms(_perf_ms(t0, _perf_now()))
             return False
 
         # SAFE occlusion: ALL cells in tile must be nearer => tile max depth < elem_min_w
         if tile_map.w_max_tile[t] >= elem_min_w:
+            if tracker is not None:
+                tracker.record_occlusion_test_ms(_perf_ms(t0, _perf_now()))
             return False
 
+    if tracker is not None:
+        tracker.record_occlusion_test_ms(_perf_ms(t0, _perf_now()))
     return True
 
 

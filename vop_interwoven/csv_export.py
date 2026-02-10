@@ -5,6 +5,7 @@ analytics integration and comparison workflows.
 """
 
 import os
+import csv
 import hashlib
 from datetime import datetime
 
@@ -1013,6 +1014,67 @@ def build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metada
 
     return row
 
+def build_occlusion_row(view_result, run_info):
+    """Build one occlusion diagnostics CSV row from a view result."""
+    tracker = view_result.get("occlusion_tracker") or {}
+    view_id = view_result.get("view_id")
+    view_name = view_result.get("view_name", "")
+
+    return [
+        run_info.get("date", ""),
+        run_info.get("run_id", ""),
+        view_id,
+        view_name,
+        _round6(tracker.get("coverage_pct", 0.0)),
+        _round6(tracker.get("saturation_pct", 0.0)),
+        int(tracker.get("elements_processed", 0) or 0),
+        int(tracker.get("elements_fully_occluded", 0) or 0),
+        int(tracker.get("elements_partially_occluded", 0) or 0),
+        int(tracker.get("tiles_rejected_total", 0) or 0),
+        _round6(tracker.get("occlusion_rejection_rate", 0.0)),
+        _round6(tracker.get("time_sorting_ms", 0.0)),
+        _round6(tracker.get("time_occlusion_tests_ms", 0.0)),
+        _round6(tracker.get("time_saved_est_ms", 0.0)),
+        _round6(tracker.get("net_occlusion_benefit_ms", 0.0)),
+        _round6(tracker.get("occlusion_roi", 0.0)),
+        _round6(tracker.get("first_saturated_tile_at_pct", 0.0)),
+    ]
+
+
+def export_occlusion_diagnostics_csv(occlusion_path, view_results, run_info, logger):
+    """Export occlusion diagnostics to the provided occlusion CSV path."""
+    from vop_interwoven.export.csv import _append_csv_rows
+
+    headers = [
+        "Date", "RunId", "ViewId", "ViewName",
+        "coverage_pct", "saturation_pct",
+        "elements_processed", "elements_fully_occluded",
+        "elements_partially_occluded", "tiles_rejected",
+        "rejection_rate", "time_sorting_ms", "time_tests_ms",
+        "time_saved_est_ms", "net_benefit_ms", "occlusion_roi",
+        "first_saturated_at_pct",
+    ]
+
+    rows = []
+    for view_result in view_results:
+        tracker = view_result.get("occlusion_tracker")
+        if tracker:
+            rows.append(build_occlusion_row(view_result, run_info))
+
+    if rows:
+        _append_csv_rows(occlusion_path, headers, rows, logger)
+        return occlusion_path
+
+    # Keep file discoverable alongside other CSV outputs even when there are no tracker rows.
+    if (not os.path.exists(occlusion_path)) or os.path.getsize(occlusion_path) == 0:
+        with open(occlusion_path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+        logger.info("Export: wrote occlusion header to '{0}'".format(occlusion_path))
+
+    return occlusion_path
+
+
 def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=None, date_override=None):
     """Export pipeline results to core + VOP CSV files.
 
@@ -1032,6 +1094,7 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
         Dict with:
             - core_csv_path: str
             - vop_csv_path: str
+            - occlusion_csv_path: str
             - rows_exported: int
     """
     from vop_interwoven.export.csv import _append_csv_rows, _ensure_dir
@@ -1086,13 +1149,19 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
     # RunId: deterministic but tag-aware
     base_run_id = run_dt.strftime("%Y%m%dT%H%M%S")
     run_id = f"{base_run_id}_{tag}" if tag else base_run_id
+    run_info_common = {
+        "date": date_str,
+        "run_id": run_id,
+    }
 
     # Filenames: include tag if present
     core_filename = f"views_core_{date_str}{'_' + tag if tag else ''}.csv"
     vop_filename = f"views_vop_{date_str}{'_' + tag if tag else ''}.csv"
+    occlusion_filename = f"views_occlusion_{date_str}{'_' + tag if tag else ''}.csv"
 
     core_path = os.path.join(output_dir, core_filename)
     vop_path = os.path.join(output_dir, vop_filename)
+    occlusion_path = os.path.join(output_dir, occlusion_filename)
 
     core_headers = [
         "Date", "RunId", "ViewId", "ViewUniqueId", "ViewName", "ViewType",
@@ -1364,6 +1433,7 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
             _append_csv_rows(core_path, core_headers, core_rows, logger)
         if vop_rows:
             _append_csv_rows(vop_path, vop_headers, vop_rows, logger)
+        occlusion_path = export_occlusion_diagnostics_csv(occlusion_path, views_data, run_info_common, logger)
     except Exception as e:
         if diag is not None:
             try:
@@ -1384,7 +1454,7 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
                     )
         raise
 
-    return {"core_csv_path": core_path, "vop_csv_path": vop_path, "rows_exported": len(vop_rows)}
+    return {"core_csv_path": core_path, "vop_csv_path": vop_path, "occlusion_csv_path": occlusion_path, "rows_exported": len(vop_rows)}
 
 # =============================================================================
 # STREAMING SUPPORT - Append to end of csv_export.py
@@ -1414,6 +1484,82 @@ def get_vop_csv_header():
     ]
 
 
+
+
+def get_occlusion_csv_header():
+    """Get header for occlusion diagnostics CSV file."""
+    return [
+        "Date", "RunId", "ViewId", "ViewName",
+        "coverage_pct", "saturation_pct",
+        "elements_processed", "elements_fully_occluded",
+        "elements_partially_occluded", "tiles_rejected",
+        "rejection_rate", "time_sorting_ms", "time_tests_ms",
+        "time_saved_est_ms", "net_benefit_ms", "occlusion_roi",
+        "first_saturated_at_pct",
+    ]
+
+
+def view_result_to_occlusion_row(view_result, date_override=None, run_id=None):
+    """Convert a single view result to an occlusion CSV row dict."""
+    tracker = view_result.get("occlusion_tracker")
+    if not isinstance(tracker, dict) or not tracker:
+        return None
+
+    # Resolve date/run id consistently with other streaming row helpers
+    if run_id is None:
+        run_dt = datetime.now()
+        tag = None
+        if date_override:
+            if isinstance(date_override, str):
+                s = date_override.strip()
+                try:
+                    if len(s) == 10:
+                        run_dt = datetime.strptime(s, "%Y-%m-%d")
+                    else:
+                        run_dt = datetime.fromisoformat(s)
+                except Exception:
+                    tag = s
+            else:
+                tag = str(date_override)
+        date_str = run_dt.strftime("%Y-%m-%d")
+        base_run_id = run_dt.strftime("%Y%m%dT%H%M%S")
+        run_id = f"{base_run_id}_{tag}" if tag else base_run_id
+    else:
+        if date_override and isinstance(date_override, str):
+            s = date_override.strip()
+            try:
+                if len(s) == 10:
+                    date_str = datetime.strptime(s, "%Y-%m-%d").strftime("%Y-%m-%d")
+                else:
+                    date_str = datetime.fromisoformat(s).strftime("%Y-%m-%d")
+            except Exception:
+                date_str = datetime.now().strftime("%Y-%m-%d")
+        else:
+            try:
+                date_part = run_id.split('_')[0].split('T')[0]
+                date_str = f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:8]}"
+            except Exception:
+                date_str = datetime.now().strftime("%Y-%m-%d")
+
+    return {
+        "Date": date_str,
+        "RunId": run_id,
+        "ViewId": view_result.get("view_id"),
+        "ViewName": view_result.get("view_name", ""),
+        "coverage_pct": _round6(tracker.get("coverage_pct", 0.0)),
+        "saturation_pct": _round6(tracker.get("saturation_pct", 0.0)),
+        "elements_processed": int(tracker.get("elements_processed", 0) or 0),
+        "elements_fully_occluded": int(tracker.get("elements_fully_occluded", 0) or 0),
+        "elements_partially_occluded": int(tracker.get("elements_partially_occluded", 0) or 0),
+        "tiles_rejected": int(tracker.get("tiles_rejected_total", 0) or 0),
+        "rejection_rate": _round6(tracker.get("occlusion_rejection_rate", 0.0)),
+        "time_sorting_ms": _round6(tracker.get("time_sorting_ms", 0.0)),
+        "time_tests_ms": _round6(tracker.get("time_occlusion_tests_ms", 0.0)),
+        "time_saved_est_ms": _round6(tracker.get("time_saved_est_ms", 0.0)),
+        "net_benefit_ms": _round6(tracker.get("net_occlusion_benefit_ms", 0.0)),
+        "occlusion_roi": _round6(tracker.get("occlusion_roi", 0.0)),
+        "first_saturated_at_pct": _round6(tracker.get("first_saturated_tile_at_pct", 0.0)),
+    }
 def get_perf_csv_header():
     """Get header for performance CSV file."""
     return [
