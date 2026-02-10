@@ -639,9 +639,8 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
 
             # Determine cache file path (dated for tracking changes over time)
             if output_dir is not None:
-                cache_date = date_override if date_override else datetime.now().strftime("%Y%m%d")
-                cache_date = str(cache_date).replace("-", "")
-                elem_cache_path = os.path.join(output_dir, f".vop_element_cache_{cache_date}.json")
+                cache_date = date_str
+                elem_cache_path = os.path.join(output_dir, f"vop_element_cache_{cache_date}.json")
             else:
                 elem_cache_path = None
 
@@ -1156,7 +1155,7 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
             # Export analysis CSV
             if getattr(cfg, "element_cache_export_csv", True) and output_dir is not None:
                 try:
-                    csv_path = os.path.join(output_dir, "element_cache_analysis.csv")
+                    csv_path = os.path.join(output_dir, f"vop_element_cache_analysis_{date_str}.csv")
                     exported = elem_cache.export_analysis_csv(csv_path, view_elements=view_elements)
                     if exported and diag is not None:
                         diag.info(
@@ -1256,30 +1255,42 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
             if not diagnostics_output_dir:
                 raise ValueError("No diagnostics output directory configured (cfg.output_dir / view_diagnostics_output_dir)")
 
-            diag_filename = f"view_diagnostics_{date_str.replace('-', '')}.json"
+            diag_filename = f"views_diagnostics_{date_str}.json"
             diag_path = os.path.join(diagnostics_output_dir, diag_filename)
 
+            payload = {
+                "metadata": {
+                    "date": date_str,
+                    "run_id": run_id,
+                    "doc_title": getattr(doc, "Title", "Unknown"),
+                    "doc_path": getattr(doc, "PathName", None),
+                    "exporter_version": "vop_interwoven",
+                },
+                "views": all_view_diags,
+            }
+
+            # Append behavior across multiple process_document_views() calls in the same run date:
+            # if diagnostics already exists for this day, merge prior views so entries are not lost.
+            if os.path.exists(diag_path):
+                try:
+                    with open(diag_path, "r") as f:
+                        existing_payload = json.load(f)
+                    existing_views = existing_payload.get("views", {}) if isinstance(existing_payload, dict) else {}
+                    if isinstance(existing_views, dict):
+                        existing_views.update(payload["views"])
+                        payload["views"] = existing_views
+                except Exception:
+                    # Best-effort merge only; fall back to writing current payload.
+                    pass
+
             with open(diag_path, "w") as f:
-                json.dump(
-                    {
-                        "metadata": {
-                            "date": date_str,
-                            "run_id": run_id,
-                            "doc_title": getattr(doc, "Title", "Unknown"),
-                            "doc_path": getattr(doc, "PathName", None),
-                            "exporter_version": "vop_interwoven",
-                        },
-                        "views": all_view_diags,
-                    },
-                    f,
-                    indent=2,
-                )
+                json.dump(payload, f, indent=2)
 
             if diag is not None:
                 diag.info(
                     phase="pipeline",
                     callsite="process_document_views.export_diagnostics",
-                    message=f"Exported view diagnostics: {len(all_view_diags)} views",
+                    message=f"Exported view diagnostics: {len(payload.get('views', {}))} views",
                     extra={"path": diag_path},
                 )
         except Exception as e:
