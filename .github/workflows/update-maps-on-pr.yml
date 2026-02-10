@@ -1,32 +1,52 @@
-name: update-maps-on-pr
+name: update-maps
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, closed]
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main, master]
   workflow_dispatch: {}
 
-permissions:
-  contents: write
-
 jobs:
-  update-maps:
+  verify-maps:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-
-    # Don't run on bot-triggered sync loops or fork PRs, but do allow manual dispatch.
-    if: >-
-      github.actor != 'github-actions[bot]' &&
-      (github.event_name == 'workflow_dispatch' ||
-      (
-        github.event.pull_request.head.repo.full_name == github.repository &&
-        (github.event.action != 'closed' || github.event.pull_request.merged == true)
-      ))
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout PR branch
         uses: actions/checkout@v4
         with:
-          # On merge (closed+merged), update the base branch; otherwise update the PR branch.
-          ref: ${{ github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.base.ref || github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Generate maps
+        working-directory: vop_interwoven
+        run: |
+          python ../tools/gen_maps.py
+
+      - name: Ensure maps are up to date
+        run: |
+          if [ -n "$(git status --porcelain -- vop_interwoven/vop_interwoven_code_map_authoritative.md vop_interwoven/vop_interwoven_trace_map.md vop_interwoven/vop_interwoven_symbol_index.md)" ]; then
+            echo "Navigation maps are out of date. Run 'python tools/gen_maps.py' and commit the results."
+            git --no-pager diff -- vop_interwoven/vop_interwoven_code_map_authoritative.md vop_interwoven/vop_interwoven_trace_map.md vop_interwoven/vop_interwoven_symbol_index.md
+            exit 1
+          fi
+
+  update-maps:
+    if: github.event_name != 'pull_request' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
           persist-credentials: true
           fetch-depth: 0
 
@@ -41,7 +61,7 @@ jobs:
 
       - name: Commit and push if changed
         run: |
-          if [ -n "$(git status --porcelain)" ]; then
+          if [ -n "$(git status --porcelain -- vop_interwoven/vop_interwoven_code_map_authoritative.md vop_interwoven/vop_interwoven_trace_map.md vop_interwoven/vop_interwoven_symbol_index.md)" ]; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git add vop_interwoven/vop_interwoven_code_map_authoritative.md
