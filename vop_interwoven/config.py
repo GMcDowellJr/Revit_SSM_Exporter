@@ -134,7 +134,7 @@ class Config:
         export_strategy_diagnostics=True,  # Export strategy diagnostics CSV and print summary
 
         # View diagnostics: track classification/strategy/fallback per view
-        export_view_diagnostics=True,  # Export view_diagnostics_*.json
+        export_view_diagnostics=True,  # Export views_diagnostics_*.json
         view_diagnostics_output_dir=None,  # None = use output_dir (same as CSVs)
 
         # Perf CSV export controls

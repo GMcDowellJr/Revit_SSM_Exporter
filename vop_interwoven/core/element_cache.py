@@ -387,7 +387,7 @@ class ElementCache:
         """Export element cache to CSV for analysis.
 
         Args:
-            file_path: Path to CSV file (e.g., "output/element_cache_analysis.csv")
+            file_path: Path to CSV file (e.g., "output/vop_element_cache_analysis_YYYY-MM-DD.csv")
             view_elements: Optional dict mapping view_id -> list of (elem_id, source_id)
                           for element-view relationship tracking
 
