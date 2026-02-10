@@ -366,6 +366,16 @@ def run_vop_pipeline_with_png(doc, view_ids, cfg=None, output_dir=None, pixels_p
     if output_dir is None:
         output_dir = r"C:\temp\vop_output"
 
+    # Use default config if not provided
+    if cfg is None:
+        cfg = Config()
+
+    # Keep pipeline-side exports aligned with caller output directory
+    try:
+        cfg.output_dir = output_dir
+    except Exception:
+        pass
+
     # Default view-cache location colocated with outputs (persistent between runs)
     try:
         if cfg is not None and getattr(cfg, "view_cache_dir", None) in (None, ""):
