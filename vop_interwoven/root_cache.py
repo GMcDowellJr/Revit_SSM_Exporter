@@ -37,7 +37,7 @@ class RootStyleCache:
         # Cache file path
         self.cache_path = os.path.join(
             output_dir, 
-            f"vop_cache.json"
+            f"vop_view_cache.json"
         )
         
         #safe_guid = str(project_guid).replace(":", "_").replace("\\", "_").replace("/", "_")
