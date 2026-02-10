@@ -89,6 +89,7 @@ Core principles:
 # ────────────────────────────────────────────────────────────────────────────
 
 
+from datetime import datetime
 import math
 import time
 
@@ -482,6 +483,23 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
     from .core.diagnostics import Diagnostics
 
     results = []
+
+    # Run/date identity for dated exports and metadata
+    date_override = getattr(cfg, "date_override", None)
+    run_dt = datetime.now()
+    if date_override:
+        try:
+            if isinstance(date_override, str):
+                ds = date_override.strip()
+                if len(ds) == 10:
+                    run_dt = datetime.strptime(ds, "%Y-%m-%d")
+                else:
+                    run_dt = datetime.fromisoformat(ds)
+        except Exception:
+            pass
+
+    date_str = run_dt.strftime("%Y-%m-%d")
+    run_id = run_dt.strftime("%Y%m%dT%H%M%S")
 
     # ────────────────────────────────────────────────────────────────────
     # Persistent view-level cache (disk-backed)
