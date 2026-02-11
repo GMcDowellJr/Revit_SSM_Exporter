@@ -31,3 +31,35 @@ def test_export_view_element_map_json_writes_view_index(tmp_path):
     assert first["view_id"] == 2001
     assert first["element_ids"] == [1001, 1002]
     assert set(first.keys()) == {"view_id", "element_ids"}
+
+
+def test_export_view_element_map_json_merges_existing_file(tmp_path):
+    cache = ElementCache(max_elements=10)
+    out = tmp_path / "view_map.json"
+
+    existing = {
+        "schema": "vop.view_element_map.v1",
+        "generated_utc": 0,
+        "views": [
+            {"view_id": 2001, "element_ids": [1001]},
+            {"view_id": 2002, "element_ids": [2001]},
+        ],
+    }
+    out.write_text(json.dumps(existing))
+
+    view_elements = {
+        2001: [(1002, "HOST")],
+        2003: [(3001, "HOST")],
+    }
+
+    assert cache.export_view_element_map_json(
+        str(out),
+        view_elements=view_elements,
+        merge_existing=True,
+    )
+
+    payload = json.loads(out.read_text())
+    views = {v["view_id"]: v["element_ids"] for v in payload["views"]}
+    assert views[2001] == [1001, 1002]
+    assert views[2002] == [2001]
+    assert views[2003] == [3001]

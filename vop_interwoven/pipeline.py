@@ -486,16 +486,23 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
     results = []
 
     # Run/date identity for dated exports and metadata
+    # Keep this aligned with CSV/PERF naming date semantics.
     date_override = getattr(cfg, "date_override", None)
     run_dt = datetime.now()
     if date_override:
         try:
-            if isinstance(date_override, str):
+            if isinstance(date_override, datetime):
+                run_dt = date_override
+            elif isinstance(date_override, str):
                 ds = date_override.strip()
                 if len(ds) == 10:
                     run_dt = datetime.strptime(ds, "%Y-%m-%d")
+                elif len(ds) == 8 and ds.isdigit():
+                    run_dt = datetime.strptime(ds, "%Y%m%d")
                 else:
                     run_dt = datetime.fromisoformat(ds)
+            else:
+                run_dt = datetime.fromisoformat(str(date_override))
         except Exception:
             pass
 
@@ -1169,7 +1176,11 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
             if getattr(cfg, "element_cache_export_csv", True) and output_dir is not None:
                 try:
                     analysis_path = os.path.join(output_dir, f"vop_view_element_map_{date_str}.json")
-                    exported = elem_cache.export_view_element_map_json(analysis_path, view_elements=view_elements)
+                    exported = elem_cache.export_view_element_map_json(
+                        analysis_path,
+                        view_elements=view_elements,
+                        merge_existing=True,
+                    )
                     if exported and diag is not None:
                         diag.info(
                             phase="pipeline",
@@ -1672,7 +1683,6 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
         "view_id": None,
         "view_name": None,
         "total_elements": 0,
-        "element_ids": [],
         "classification_counts": {"TINY": 0, "LINEAR": 0, "AREAL": 0},
         "strategy_matrix": {"TINY": {}, "LINEAR": {}, "AREAL": {}},
         "confidence_counts": {"HIGH": 0, "MEDIUM": 0, "LOW": 0},
@@ -2197,7 +2207,6 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
         # DIAGNOSTICS: track per-element classification/strategy/confidence and fallback details
         try:
             view_diag["total_elements"] += 1
-            view_diag["element_ids"].append(elem_id)
 
             if elem_class in view_diag["classification_counts"]:
                 view_diag["classification_counts"][elem_class] += 1
