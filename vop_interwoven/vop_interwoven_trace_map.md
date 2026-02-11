@@ -193,7 +193,7 @@ Notes:
     - `select_top_plane_groups`
       - called from: core/silhouette.py
     - `should_include_element`
-      - called from: revit/collection.py, revit/linked_documents.py
+      - called from: pipeline.py, revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -408,7 +408,7 @@ Notes:
     - `select_top_plane_groups`
       - called from: core/silhouette.py
     - `should_include_element`
-      - called from: revit/collection.py, revit/linked_documents.py
+      - called from: pipeline.py, revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -623,7 +623,7 @@ Notes:
     - `select_top_plane_groups`
       - called from: core/silhouette.py
     - `should_include_element`
-      - called from: revit/collection.py, revit/linked_documents.py
+      - called from: pipeline.py, revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -838,7 +838,7 @@ Notes:
     - `select_top_plane_groups`
       - called from: core/silhouette.py
     - `should_include_element`
-      - called from: revit/collection.py, revit/linked_documents.py
+      - called from: pipeline.py, revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -1055,7 +1055,7 @@ Notes:
     - `select_top_plane_groups`
       - called from: core/silhouette.py
     - `should_include_element`
-      - called from: revit/collection.py, revit/linked_documents.py
+      - called from: pipeline.py, revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -1083,7 +1083,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `process_document_views` (pipeline.py:L460)
+## Trace: `process_document_views` (pipeline.py:L481)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1270,7 +1270,7 @@ Notes:
     - `select_top_plane_groups`
       - called from: core/silhouette.py
     - `should_include_element`
-      - called from: revit/collection.py, revit/linked_documents.py
+      - called from: pipeline.py, revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -1485,7 +1485,7 @@ Notes:
     - `select_top_plane_groups`
       - called from: core/silhouette.py
     - `should_include_element`
-      - called from: revit/collection.py, revit/linked_documents.py
+      - called from: pipeline.py, revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -1513,7 +1513,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `render_model_front_to_back` (pipeline.py:L1613)
+## Trace: `render_model_front_to_back` (pipeline.py:L1658)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1700,7 +1700,7 @@ Notes:
     - `select_top_plane_groups`
       - called from: core/silhouette.py
     - `should_include_element`
-      - called from: revit/collection.py, revit/linked_documents.py
+      - called from: pipeline.py, revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -1728,7 +1728,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `init_view_raster` (pipeline.py:L1308)
+## Trace: `init_view_raster` (pipeline.py:L1353)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1915,7 +1915,7 @@ Notes:
     - `select_top_plane_groups`
       - called from: core/silhouette.py
     - `should_include_element`
-      - called from: revit/collection.py, revit/linked_documents.py
+      - called from: pipeline.py, revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -2130,7 +2130,7 @@ Notes:
     - `select_top_plane_groups`
       - called from: core/silhouette.py
     - `should_include_element`
-      - called from: revit/collection.py, revit/linked_documents.py
+      - called from: pipeline.py, revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -2345,7 +2345,7 @@ Notes:
     - `select_top_plane_groups`
       - called from: core/silhouette.py
     - `should_include_element`
-      - called from: revit/collection.py, revit/linked_documents.py
+      - called from: pipeline.py, revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -2560,7 +2560,7 @@ Notes:
     - `select_top_plane_groups`
       - called from: core/silhouette.py
     - `should_include_element`
-      - called from: revit/collection.py, revit/linked_documents.py
+      - called from: pipeline.py, revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -2775,7 +2775,7 @@ Notes:
     - `select_top_plane_groups`
       - called from: core/silhouette.py
     - `should_include_element`
-      - called from: revit/collection.py, revit/linked_documents.py
+      - called from: pipeline.py, revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -2990,7 +2990,7 @@ Notes:
     - `select_top_plane_groups`
       - called from: core/silhouette.py
     - `should_include_element`
-      - called from: revit/collection.py, revit/linked_documents.py
+      - called from: pipeline.py, revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -3205,7 +3205,7 @@ Notes:
     - `select_top_plane_groups`
       - called from: core/silhouette.py
     - `should_include_element`
-      - called from: revit/collection.py, revit/linked_documents.py
+      - called from: pipeline.py, revit/collection.py, revit/linked_documents.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
