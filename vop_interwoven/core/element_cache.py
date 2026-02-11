@@ -386,7 +386,7 @@ class ElementCache:
     def export_analysis_csv(self, file_path, view_elements=None):
         """Export element cache to CSV for analysis.
 
-        Deprecated: prefer export_view_analysis_json() for view-element cross-reference.
+        Deprecated: prefer export_view_element_map_json() for view-element cross-reference.
 
         Args:
             file_path: Path to CSV file (e.g., "output/vop_element_cache_analysis_YYYY-MM-DD.csv")
@@ -469,8 +469,8 @@ class ElementCache:
             # Never raise - graceful degradation
             return False
 
-    def export_view_analysis_json(self, file_path, view_elements=None):
-        """Export view -> element index as JSON for cross-reference analysis.
+    def export_view_element_map_json(self, file_path, view_elements=None):
+        """Export view -> element ID map as JSON for cross-reference analysis.
 
         Args:
             file_path: Path to JSON file
@@ -478,14 +478,11 @@ class ElementCache:
 
         JSON schema (v1):
             {
-                "schema": "vop.view_element_index.v1",
+                "schema": "vop.view_element_map.v1",
                 "views": [
                     {
                         "view_id": 123,
-                        "element_ids": [1001, 1002],
-                        "element_refs": [
-                            {"elem_id": 1001, "source_id": "HOST"}
-                        ]
+                        "element_ids": [1001, 1002]
                     }
                 ]
             }
@@ -499,29 +496,24 @@ class ElementCache:
             views = []
             for view_id, elem_list in sorted((view_elements or {}).items(), key=lambda kv: kv[0]):
                 element_ids = []
-                element_refs = []
-                seen_refs = set()
+                seen_ids = set()
 
                 for elem_id, source_id in elem_list:
                     elem_id_int = int(elem_id)
-                    source_id_str = str(source_id)
-                    key = (elem_id_int, source_id_str)
-                    if key in seen_refs:
+                    if elem_id_int in seen_ids:
                         continue
-                    seen_refs.add(key)
+                    seen_ids.add(elem_id_int)
                     element_ids.append(elem_id_int)
-                    element_refs.append({"elem_id": elem_id_int, "source_id": source_id_str})
 
                 views.append(
                     {
                         "view_id": int(view_id),
-                        "element_ids": sorted(set(element_ids)),
-                        "element_refs": element_refs,
+                        "element_ids": sorted(element_ids),
                     }
                 )
 
             payload = {
-                "schema": "vop.view_element_index.v1",
+                "schema": "vop.view_element_map.v1",
                 "generated_utc": time.time(),
                 "views": views,
             }

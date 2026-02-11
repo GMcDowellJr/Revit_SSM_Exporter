@@ -691,8 +691,21 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
                 )
             elem_cache = None  # Graceful degradation
 
-    # Track element-view relationships for CSV export
-    view_elements = {}  # view_id -> list of (elem_id, source_id)
+    # Track element-view relationships for export (view_id -> list of (elem_id, source_id))
+    view_elements = {}
+    try:
+        for requested_view_id in view_ids:
+            view_id_seed = _safe_int(getattr(getattr(requested_view_id, "Id", None), "IntegerValue", requested_view_id))
+            if view_id_seed is not None:
+                view_elements.setdefault(view_id_seed, [])
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="pipeline",
+                callsite="_tmark",
+                message="Exception in _tmark: {}".format(e),
+                exc=e,
+            )
 
     for view_id in view_ids:
         diag = Diagnostics()  # per-view diag
@@ -1152,16 +1165,16 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
                             message="Exception in _tmark: {}".format(e),
                             exc=e,
                         )
-            # Export view-analysis JSON (view -> element references)
+            # Export view-element map JSON (view -> element ids)
             if getattr(cfg, "element_cache_export_csv", True) and output_dir is not None:
                 try:
-                    analysis_path = os.path.join(output_dir, f"vop_view_element_analysis_{date_str}.json")
-                    exported = elem_cache.export_view_analysis_json(analysis_path, view_elements=view_elements)
+                    analysis_path = os.path.join(output_dir, f"vop_view_element_map_{date_str}.json")
+                    exported = elem_cache.export_view_element_map_json(analysis_path, view_elements=view_elements)
                     if exported and diag is not None:
                         diag.info(
                             phase="pipeline",
-                            callsite="process_document_views.element_cache_export_json",
-                            message="Exported view-element analysis JSON",
+                            callsite="process_document_views.element_cache_export_view_element_map_json",
+                            message="Exported view-element map JSON",
                             extra={"analysis_path": analysis_path, "elements": len(elem_cache.cache), "views": len(view_elements)}
                         )
                 except Exception as e:
