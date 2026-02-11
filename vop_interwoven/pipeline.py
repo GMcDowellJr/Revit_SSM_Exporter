@@ -282,13 +282,33 @@ def _view_signature(doc_obj, view_obj, view_mode_val, cfg_obj=None, elem_cache=N
         from Autodesk.Revit.DB import FilteredElementCollector
 
         col = FilteredElementCollector(doc_obj, view_obj.Id).WhereElementIsNotElementType()
+
+        # Apply the same inclusion policy used by the main collectors so that
+        # view_elements (and the exported vop_view_element_map_*.json) does not
+        # include categories like Cameras, Section Boxes, etc.
+        try:
+            from .revit.collection_policy import should_include_element  # local import (Revit runtime)
+        except Exception:
+            should_include_element = None
+
         for elem in col:
             try:
                 elem_id = getattr(getattr(elem, "Id", None), "IntegerValue", None)
                 if elem_id is None:
                     continue
 
-                # Track for CSV export
+                # Policy gating (HOST source)
+                if should_include_element is not None:
+                    include, reason, category_name = should_include_element(
+                        elem=elem,
+                        doc=doc_obj,
+                        source_type="HOST",
+                        stats=None,
+                    )
+                    if not include:
+                        continue
+
+                # Track for view-element map export
                 elem_ids_for_tracking.append((elem_id, "HOST"))
 
                 if elem_cache is not None:
@@ -308,6 +328,7 @@ def _view_signature(doc_obj, view_obj, view_mode_val, cfg_obj=None, elem_cache=N
                     elem_fps.append(str(elem_id))
             except Exception as e:
                 continue
+
     except Exception as e:
         # Exception in _view_signature - no diag in scope
         pass  # TODO: Add diagnostics when diag becomes available
@@ -486,16 +507,23 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
     results = []
 
     # Run/date identity for dated exports and metadata
+    # Keep this aligned with CSV/PERF naming date semantics.
     date_override = getattr(cfg, "date_override", None)
     run_dt = datetime.now()
     if date_override:
         try:
-            if isinstance(date_override, str):
+            if isinstance(date_override, datetime):
+                run_dt = date_override
+            elif isinstance(date_override, str):
                 ds = date_override.strip()
                 if len(ds) == 10:
                     run_dt = datetime.strptime(ds, "%Y-%m-%d")
+                elif len(ds) == 8 and ds.isdigit():
+                    run_dt = datetime.strptime(ds, "%Y%m%d")
                 else:
                     run_dt = datetime.fromisoformat(ds)
+            else:
+                run_dt = datetime.fromisoformat(str(date_override))
         except Exception:
             pass
 
@@ -691,8 +719,21 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
                 )
             elem_cache = None  # Graceful degradation
 
-    # Track element-view relationships for CSV export
-    view_elements = {}  # view_id -> list of (elem_id, source_id)
+    # Track element-view relationships for export (view_id -> list of (elem_id, source_id))
+    view_elements = {}
+    try:
+        for requested_view_id in view_ids:
+            view_id_seed = _safe_int(getattr(getattr(requested_view_id, "Id", None), "IntegerValue", requested_view_id))
+            if view_id_seed is not None:
+                view_elements.setdefault(view_id_seed, [])
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="pipeline",
+                callsite="_tmark",
+                message="Exception in _tmark: {}".format(e),
+                exc=e,
+            )
 
     for view_id in view_ids:
         diag = Diagnostics()  # per-view diag
@@ -1152,17 +1193,21 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
                             message="Exception in _tmark: {}".format(e),
                             exc=e,
                         )
-            # Export analysis CSV
+            # Export view-element map JSON (view -> element ids)
             if getattr(cfg, "element_cache_export_csv", True) and output_dir is not None:
                 try:
-                    csv_path = os.path.join(output_dir, f"vop_element_cache_analysis_{date_str}.csv")
-                    exported = elem_cache.export_analysis_csv(csv_path, view_elements=view_elements)
+                    analysis_path = os.path.join(output_dir, f"vop_view_element_map_{date_str}.json")
+                    exported = elem_cache.export_view_element_map_json(
+                        analysis_path,
+                        view_elements=view_elements,
+                        merge_existing=True,
+                    )
                     if exported and diag is not None:
                         diag.info(
                             phase="pipeline",
-                            callsite="process_document_views.element_cache_export_csv",
-                            message="Exported element cache analysis CSV",
-                            extra={"csv_path": csv_path, "elements": len(elem_cache.cache), "views": len(view_elements)}
+                            callsite="process_document_views.element_cache_export_view_element_map_json",
+                            message="Exported view-element map JSON",
+                            extra={"analysis_path": analysis_path, "elements": len(elem_cache.cache), "views": len(view_elements)}
                         )
                 except Exception as e:
                     if diag is not None:
@@ -1659,7 +1704,6 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
         "view_id": None,
         "view_name": None,
         "total_elements": 0,
-        "element_ids": [],
         "classification_counts": {"TINY": 0, "LINEAR": 0, "AREAL": 0},
         "strategy_matrix": {"TINY": {}, "LINEAR": {}, "AREAL": {}},
         "confidence_counts": {"HIGH": 0, "MEDIUM": 0, "LOW": 0},
@@ -2184,7 +2228,6 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
         # DIAGNOSTICS: track per-element classification/strategy/confidence and fallback details
         try:
             view_diag["total_elements"] += 1
-            view_diag["element_ids"].append(elem_id)
 
             if elem_class in view_diag["classification_counts"]:
                 view_diag["classification_counts"][elem_class] += 1
