@@ -102,7 +102,7 @@ from .config import Config
 from .core.raster import ViewRaster, TileMap
 from .core.geometry import Mode, classify_by_uv, make_uv_aabb, make_obb_or_skinny_aabb
 from .core.math_utils import Bounds2D, CellRect
-from .core.silhouette import get_element_silhouette
+from .core.silhouette import get_element_silhouette, reset_family_region_caches
 from .core.areal_extraction import extract_areal_geometry
 from .revit.view_basis import make_view_basis, resolve_view_bounds
 from .revit.collection import (
@@ -478,7 +478,7 @@ def _extract_view_identity_for_csv(doc, view):
         pass  # TODO: Add diagnostics when diag becomes available
     return out
 
-def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
+def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset_family_caches=True):
     """Process multiple views through the VOP interwoven pipeline.
 
     Args:
@@ -505,11 +505,14 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
     # Revit hosts can keep the Python runtime alive across document sessions.
     # Reset module-level family caches so geometry from prior documents does not
     # accumulate in memory over repeated exporter runs.
-    try:
-        from .core.silhouette import reset_family_region_caches
-        reset_family_region_caches()
-    except Exception:
-        pass
+    #
+    # NOTE: Streaming mode processes one view per invocation and intentionally
+    # disables this per-call reset so caches can be reused across views.
+    if reset_family_caches:
+        try:
+            reset_family_region_caches()
+        except Exception:
+            pass
 
     from .core.diagnostics import Diagnostics
 
