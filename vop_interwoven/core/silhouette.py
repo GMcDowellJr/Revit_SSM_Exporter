@@ -49,7 +49,23 @@ else:
     _FAMILY_REGION_OUTLINE_CACHE = {}  # symbol_id_int -> {"xyz_loops": [...], "ts": float}
     _FAMILY_FAMDOC_REGION_CACHE = {}   # family_id_int -> {"xyz_loops": [...], "ts": float}
 
-_FAMILY_FAMDOC_REGION_CACHE = {}  # family_id_int -> {"xyz_loops": [...], "ts": float}
+
+def reset_family_region_caches():
+    """Clear module-level family-region caches.
+
+    Revit add-ins can execute in a long-lived Python process across many document
+    opens/closes. Clearing these caches between exporter runs avoids retaining
+    stale family geometry from previously processed documents.
+    """
+    try:
+        _FAMILY_REGION_OUTLINE_CACHE.clear()
+    except Exception:
+        pass
+
+    try:
+        _FAMILY_FAMDOC_REGION_CACHE.clear()
+    except Exception:
+        pass
 
 def _compose_transform(parent_T, child_T):
     if parent_T is None:

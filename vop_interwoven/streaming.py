@@ -36,6 +36,12 @@ def process_with_streaming(doc, view_ids, cfg, on_view_complete, root_cache=None
     )
     root_cache.load()
     
+    try:
+        from vop_interwoven.core.silhouette import reset_family_region_caches
+        reset_family_region_caches()
+    except Exception:
+        pass
+
     summaries = []
     
     for view_id in view_ids:
@@ -61,7 +67,7 @@ def process_with_streaming(doc, view_ids, cfg, on_view_complete, root_cache=None
             #     continue
             
             # Process view (cache miss)
-            results = process_document_views(doc, [view_id], cfg)
+            results = process_document_views(doc, [view_id], cfg, reset_family_caches=False)
             
             if results and len(results) > 0:
                 view_result = results[0]
@@ -549,13 +555,21 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
     cfg._is_streaming_mode = True
     cfg.retain_rasters_in_memory = True
     
+    # Reset family-level silhouette caches once per exporter run.
+    # Keep per-view process_document_views() calls cache-hot within this run.
+    try:
+        from vop_interwoven.core.silhouette import reset_family_region_caches
+        reset_family_region_caches()
+    except Exception:
+        pass
+
     # Process views one at a time with callback
     summaries = []
     
     for view_id in view_ids:
         try:
             # Process single view (cache miss)
-            results = process_document_views(doc, [view_id], cfg, root_cache=root_cache)
+            results = process_document_views(doc, [view_id], cfg, root_cache=root_cache, reset_family_caches=False)
 
             if results and len(results) > 0:
                 view_result = results[0]
