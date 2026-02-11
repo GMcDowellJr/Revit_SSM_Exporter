@@ -166,6 +166,8 @@ Notes:
       - called from: revit/safe_api.py
     - `render_model_front_to_back`
       - called from: pipeline.py
+    - `reset_family_region_caches`
+      - called from: pipeline.py, streaming.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -381,6 +383,8 @@ Notes:
       - called from: revit/safe_api.py
     - `render_model_front_to_back`
       - called from: pipeline.py
+    - `reset_family_region_caches`
+      - called from: pipeline.py, streaming.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -596,6 +600,8 @@ Notes:
       - called from: revit/safe_api.py
     - `render_model_front_to_back`
       - called from: pipeline.py
+    - `reset_family_region_caches`
+      - called from: pipeline.py, streaming.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -651,7 +657,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `run_vop_pipeline_streaming` (streaming.py:L613)
+## Trace: `run_vop_pipeline_streaming` (streaming.py:L627)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -811,6 +817,8 @@ Notes:
       - called from: revit/safe_api.py
     - `render_model_front_to_back`
       - called from: pipeline.py
+    - `reset_family_region_caches`
+      - called from: pipeline.py, streaming.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -1026,6 +1034,8 @@ Notes:
       - called from: revit/safe_api.py
     - `render_model_front_to_back`
       - called from: pipeline.py
+    - `reset_family_region_caches`
+      - called from: pipeline.py, streaming.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -1241,6 +1251,8 @@ Notes:
       - called from: revit/safe_api.py
     - `render_model_front_to_back`
       - called from: pipeline.py
+    - `reset_family_region_caches`
+      - called from: pipeline.py, streaming.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -1298,7 +1310,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `process_document_views_streaming` (streaming.py:L525)
+## Trace: `process_document_views_streaming` (streaming.py:L531)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1456,6 +1468,8 @@ Notes:
       - called from: revit/safe_api.py
     - `render_model_front_to_back`
       - called from: pipeline.py
+    - `reset_family_region_caches`
+      - called from: pipeline.py, streaming.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -1513,7 +1527,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `render_model_front_to_back` (pipeline.py:L1658)
+## Trace: `render_model_front_to_back` (pipeline.py:L1670)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1671,6 +1685,8 @@ Notes:
       - called from: pipeline.py
     - `record_error`
       - called from: revit/safe_api.py
+    - `reset_family_region_caches`
+      - called from: pipeline.py, streaming.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -1728,7 +1744,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `init_view_raster` (pipeline.py:L1353)
+## Trace: `init_view_raster` (pipeline.py:L1365)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1886,6 +1902,8 @@ Notes:
       - called from: revit/safe_api.py
     - `render_model_front_to_back`
       - called from: pipeline.py
+    - `reset_family_region_caches`
+      - called from: pipeline.py, streaming.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -2101,6 +2119,8 @@ Notes:
       - called from: revit/safe_api.py
     - `render_model_front_to_back`
       - called from: pipeline.py
+    - `reset_family_region_caches`
+      - called from: pipeline.py, streaming.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -2318,6 +2338,8 @@ Notes:
       - called from: revit/safe_api.py
     - `render_model_front_to_back`
       - called from: pipeline.py
+    - `reset_family_region_caches`
+      - called from: pipeline.py, streaming.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -2533,6 +2555,8 @@ Notes:
       - called from: revit/safe_api.py
     - `render_model_front_to_back`
       - called from: pipeline.py
+    - `reset_family_region_caches`
+      - called from: pipeline.py, streaming.py
     - `resolve_category_ids`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `resolve_element_bbox`
@@ -2746,6 +2770,8 @@ Notes:
       - called from: revit/safe_api.py
     - `render_model_front_to_back`
       - called from: pipeline.py
+    - `reset_family_region_caches`
+      - called from: pipeline.py, streaming.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -2961,6 +2987,8 @@ Notes:
       - called from: revit/safe_api.py
     - `render_model_front_to_back`
       - called from: pipeline.py
+    - `reset_family_region_caches`
+      - called from: pipeline.py, streaming.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -3018,7 +3046,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `get_element_silhouette` (core/silhouette.py:L1904)
+## Trace: `get_element_silhouette` (core/silhouette.py:L1920)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -3176,6 +3204,8 @@ Notes:
       - called from: revit/safe_api.py
     - `render_model_front_to_back`
       - called from: pipeline.py
+    - `reset_family_region_caches`
+      - called from: pipeline.py, streaming.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
