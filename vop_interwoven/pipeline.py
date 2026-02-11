@@ -282,13 +282,33 @@ def _view_signature(doc_obj, view_obj, view_mode_val, cfg_obj=None, elem_cache=N
         from Autodesk.Revit.DB import FilteredElementCollector
 
         col = FilteredElementCollector(doc_obj, view_obj.Id).WhereElementIsNotElementType()
+
+        # Apply the same inclusion policy used by the main collectors so that
+        # view_elements (and the exported vop_view_element_map_*.json) does not
+        # include categories like Cameras, Section Boxes, etc.
+        try:
+            from .revit.collection_policy import should_include_element  # local import (Revit runtime)
+        except Exception:
+            should_include_element = None
+
         for elem in col:
             try:
                 elem_id = getattr(getattr(elem, "Id", None), "IntegerValue", None)
                 if elem_id is None:
                     continue
 
-                # Track for CSV export
+                # Policy gating (HOST source)
+                if should_include_element is not None:
+                    include, reason, category_name = should_include_element(
+                        elem=elem,
+                        doc=doc_obj,
+                        source_type="HOST",
+                        stats=None,
+                    )
+                    if not include:
+                        continue
+
+                # Track for view-element map export
                 elem_ids_for_tracking.append((elem_id, "HOST"))
 
                 if elem_cache is not None:
@@ -308,6 +328,7 @@ def _view_signature(doc_obj, view_obj, view_mode_val, cfg_obj=None, elem_cache=N
                     elem_fps.append(str(elem_id))
             except Exception as e:
                 continue
+
     except Exception as e:
         # Exception in _view_signature - no diag in scope
         pass  # TODO: Add diagnostics when diag becomes available
