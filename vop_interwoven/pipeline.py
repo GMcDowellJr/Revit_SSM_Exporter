@@ -502,6 +502,15 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None):
         >>> len(results)
         2
     """
+    # Revit hosts can keep the Python runtime alive across document sessions.
+    # Reset module-level family caches so geometry from prior documents does not
+    # accumulate in memory over repeated exporter runs.
+    try:
+        from .core.silhouette import reset_family_region_caches
+        reset_family_region_caches()
+    except Exception:
+        pass
+
     from .core.diagnostics import Diagnostics
 
     results = []
