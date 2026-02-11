@@ -665,6 +665,10 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
         cfg.output_dir = output_dir
     except Exception:
         pass
+    try:
+        cfg.date_override = date_override
+    except Exception:
+        pass
 
     # CRITICAL: Force raster retention for streaming exports
     # This ensures PNGs and CSVs can be exported before memory is discarded
