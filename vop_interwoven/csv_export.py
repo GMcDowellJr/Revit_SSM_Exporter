@@ -366,6 +366,38 @@ def _viewtype_name_from_value(v):
             pass  # TODO: Add diagnostics when diag becomes available
     return ""
 
+def _extract_view_unique_id(view_result=None, view=None, metadata=None):
+    """Best-effort extraction of view unique id across export paths."""
+    # Prefer explicit metadata first
+    try:
+        if isinstance(metadata, dict):
+            v = metadata.get("ViewUniqueId", "")
+            if v:
+                return v
+    except Exception:
+        pass
+
+    # Prefer payload key when present
+    try:
+        if isinstance(view_result, dict):
+            v = view_result.get("view_unique_id", "")
+            if v:
+                return v
+    except Exception:
+        pass
+
+    # Fall back to runtime view object
+    try:
+        if view is not None:
+            v = getattr(view, "UniqueId", "") or ""
+            if v:
+                return v
+    except Exception:
+        pass
+
+    return ""
+
+
 def extract_view_metadata(view, doc, diag=None):
     """Extract view metadata for CSV export.
 
@@ -1404,6 +1436,21 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
                     )
                 view_metadata = {}
 
+        # Ensure identity metadata exists even when Revit view lookup is unavailable
+        try:
+            if "ViewId" not in view_metadata:
+                view_metadata["ViewId"] = view_result.get("view_id", 0)
+            if "ViewName" not in view_metadata:
+                view_metadata["ViewName"] = view_result.get("view_name", "")
+            if "ViewUniqueId" not in view_metadata or not view_metadata.get("ViewUniqueId"):
+                view_metadata["ViewUniqueId"] = _extract_view_unique_id(
+                    view_result=view_result,
+                    view=view,
+                    metadata=view_metadata,
+                )
+        except Exception:
+            pass
+
         # Extract strategy_diag from view_result if available
         strategy_diag = None
         try:
@@ -1686,9 +1733,9 @@ def view_result_to_core_row(view_result, config, doc, date_override=None, run_id
     row = {
         "Date": date_str,
         "RunId": run_id,
-        "ViewId": view_metadata.get("ViewId", 0),
-        "ViewUniqueId": view_metadata.get("ViewUniqueId", ""),
-        "ViewName": view_metadata.get("ViewName", ""),
+        "ViewId": view_metadata.get("ViewId", view_result.get("view_id", 0)),
+        "ViewUniqueId": _extract_view_unique_id(view_result=view_result, view=view, metadata=view_metadata),
+        "ViewName": view_metadata.get("ViewName", view_result.get("view_name", "")),
         "ViewType": view_metadata.get("ViewType", ""),
         "SheetNumber": view_metadata.get("SheetNumber", ""),
         "IsOnSheet": view_metadata.get("IsOnSheet", "N"),
@@ -1942,7 +1989,7 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
         "Date": date_str,
         "RunId": run_id,
         "ViewId": view_result.get("view_id", 0),
-        "ViewUniqueId": view_metadata.get("ViewUniqueId", ""),
+        "ViewUniqueId": _extract_view_unique_id(view_result=view_result, view=view, metadata=view_metadata),
         "ViewName": view_result.get("view_name", ""),
         "ViewType": view_metadata.get("ViewType", ""),
         "TotalCells": metrics.get("TotalCells", 0),

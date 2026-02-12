@@ -2,6 +2,8 @@ from vop_interwoven.csv_export import (
     get_perf_csv_header,
     get_vop_csv_header,
     view_result_to_perf_row,
+    view_result_to_vop_row,
+    view_result_to_core_row,
 )
 
 
@@ -44,3 +46,55 @@ def test_perf_row_includes_view_unique_id_from_result_or_view_object():
         run_id="20260101T000000",
     )
     assert row2["ViewUniqueId"] == "UID-OBJ"
+
+
+class _Cfg:
+    tiny_max = 0
+    thin_max = 0
+    adaptive_tile_size = False
+    proxy_mask_mode = ""
+    over_model_includes_proxies = False
+    tile_size = 0
+    depth_eps_ft = 0.0
+    anno_crop_margin_in = 0.0
+    anno_expand_cap_cells = 0
+    cell_size_paper_in = 0.0
+    max_sheet_width_in = 0.0
+    max_sheet_height_in = 0.0
+    bounds_buffer_in = 0.0
+
+
+def test_vop_row_uses_view_unique_id_without_view_object():
+    row = view_result_to_vop_row(
+        {
+            "success": True,
+            "view_id": 140929,
+            "view_name": "Model QC-Level 1-Generic Element Check",
+            "view_unique_id": "uid-140929",
+            "metrics": {"TotalCells": 1, "Empty": 1, "ModelOnly": 0, "AnnoOnly": 0, "Overlap": 0},
+            "raster": {},
+        },
+        config=_Cfg(),
+        doc=None,
+        run_id="20260101T000000",
+    )
+    assert row["ViewUniqueId"] == "uid-140929"
+
+
+def test_core_row_uses_view_unique_id_without_view_object():
+    row = view_result_to_core_row(
+        {
+            "success": True,
+            "view_id": 140929,
+            "view_name": "Model QC-Level 1-Generic Element Check",
+            "view_unique_id": "uid-140929",
+            "metrics": {"TotalCells": 1},
+            "raster": {},
+            "timings": {},
+        },
+        config=_Cfg(),
+        doc=None,
+        run_id="20260101T000000",
+    )
+    assert row is not None
+    assert row["ViewUniqueId"] == "uid-140929"
