@@ -135,6 +135,22 @@ def _pipeline_result_for_json(pipeline_result, cfg):
             # Shallow copy per-view dict
             vr = dict(view_result)
 
+            # Normalize identity fields for export consistency
+            try:
+                if "ViewId" not in vr and "view_id" in vr:
+                    vr["ViewId"] = vr.get("view_id")
+                if "ViewName" not in vr and "view_name" in vr:
+                    vr["ViewName"] = vr.get("view_name")
+
+                if "ViewUniqueId" not in vr:
+                    view_unique_id = vr.get("view_unique_id", "")
+                    if not view_unique_id:
+                        view_obj = vr.get("view")
+                        view_unique_id = getattr(view_obj, "UniqueId", "") if view_obj is not None else ""
+                    vr["ViewUniqueId"] = view_unique_id or ""
+            except Exception:
+                pass
+
             # Prune raster payload on the COPY only
             try:
                 _prune_view_raster_for_json(vr, d)

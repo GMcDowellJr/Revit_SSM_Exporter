@@ -366,6 +366,38 @@ def _viewtype_name_from_value(v):
             pass  # TODO: Add diagnostics when diag becomes available
     return ""
 
+def _extract_view_unique_id(view_result=None, view=None, metadata=None):
+    """Best-effort extraction of view unique id across export paths."""
+    # Prefer explicit metadata first
+    try:
+        if isinstance(metadata, dict):
+            v = metadata.get("ViewUniqueId", "") or metadata.get("view_unique_id", "")
+            if v:
+                return v
+    except Exception:
+        pass
+
+    # Prefer payload key when present
+    try:
+        if isinstance(view_result, dict):
+            v = view_result.get("view_unique_id", "")
+            if v:
+                return v
+    except Exception:
+        pass
+
+    # Fall back to runtime view object
+    try:
+        if view is not None:
+            v = getattr(view, "UniqueId", "") or ""
+            if v:
+                return v
+    except Exception:
+        pass
+
+    return ""
+
+
 def extract_view_metadata(view, doc, diag=None):
     """Extract view metadata for CSV export.
 
@@ -805,7 +837,7 @@ def build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metada
 
     Returns:
         List of values matching vop_headers order:
-        [Date, RunId, ViewId, ViewName, ViewType, TotalCells, Empty, ModelOnly, AnnoOnly,
+        [Date, RunId, ViewId, ViewUniqueId, ViewName, ViewType, TotalCells, Empty, ModelOnly, AnnoOnly,
          Overlap, Ext_Cells_Any, Ext_Cells_Only, Ext_Cells_DWG, Ext_Cells_RVT,
          AnnoCells_TEXT, AnnoCells_TAG, AnnoCells_DIM, AnnoCells_DETAIL, AnnoCells_LINES,
          AnnoCells_REGION, AnnoCells_OTHER, CellSize_ft, RowSource, ExporterVersion,
@@ -838,6 +870,7 @@ def build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metada
         run_info.get("date", ""),
         run_info.get("run_id", ""),
         view_metadata.get("ViewId", ""),
+        view_metadata.get("ViewUniqueId", ""),
         view_metadata.get("ViewName", ""),
         view_metadata.get("ViewType", ""),
         metrics.get("TotalCells", 0),
@@ -1171,7 +1204,7 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
     ]
 
     vop_headers = [
-        "Date", "RunId", "ViewId", "ViewName", "ViewType", "TotalCells",
+        "Date", "RunId", "ViewId", "ViewUniqueId", "ViewName", "ViewType", "TotalCells",
         "Empty", "ModelOnly", "AnnoOnly", "Overlap", "Ext_Cells_Any",
         "Ext_Cells_Only", "Ext_Cells_DWG", "Ext_Cells_RVT", "AnnoCells_TEXT",
         "AnnoCells_TAG", "AnnoCells_DIM", "AnnoCells_DETAIL", "AnnoCells_LINES",
@@ -1403,6 +1436,21 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
                     )
                 view_metadata = {}
 
+        # Ensure identity metadata exists even when Revit view lookup is unavailable
+        try:
+            if "ViewId" not in view_metadata:
+                view_metadata["ViewId"] = view_result.get("view_id", 0)
+            if "ViewName" not in view_metadata:
+                view_metadata["ViewName"] = view_result.get("view_name", "")
+            if "ViewUniqueId" not in view_metadata or not view_metadata.get("ViewUniqueId"):
+                view_metadata["ViewUniqueId"] = _extract_view_unique_id(
+                    view_result=view_result,
+                    view=view,
+                    metadata=view_metadata,
+                )
+        except Exception:
+            pass
+
         # Extract strategy_diag from view_result if available
         strategy_diag = None
         try:
@@ -1475,7 +1523,7 @@ def get_core_csv_header():
 def get_vop_csv_header():
     """Get header for VOP CSV file."""
     return [
-        "Date", "RunId", "ViewId", "ViewName", "ViewType", "TotalCells",
+        "Date", "RunId", "ViewId", "ViewUniqueId", "ViewName", "ViewType", "TotalCells",
         "Empty", "ModelOnly", "AnnoOnly", "Overlap", "Ext_Cells_Any",
         "Ext_Cells_Only", "Ext_Cells_DWG", "Ext_Cells_RVT", "AnnoCells_TEXT",
         "AnnoCells_TAG", "AnnoCells_DIM", "AnnoCells_DETAIL", "AnnoCells_LINES",
@@ -1563,14 +1611,14 @@ def view_result_to_occlusion_row(view_result, date_override=None, run_id=None):
 def get_perf_csv_header():
     """Get header for performance CSV file."""
     return [
-        "Date", "RunId", "view_id", "view_name", "success", "total_ms", "mode_ms",
-        "raster_init_ms", "collect_ms", "raster_ms",
-        "raster_expand_ms", "raster_sorting_ms", "raster_enrich_ms",
-        "raster_geom_extract_ms", "raster_depth_test_ms", "raster_cell_write_ms",
-        "raster_element_iter_ms",
-        "anno_ms",
-        "finalize_ms", "export_ms", "png_ms", "width", "height",
-        "total_elements", "filled_cells",
+        "Date", "RunId", "ViewId", "ViewUniqueId", "ViewName", "Success", "TotalMs", "ModeMs",
+        "RasterInitMs", "CollectMs", "RasterMs",
+        "RasterExpandMs", "RasterSortingMs", "RasterEnrichMs",
+        "RasterGeomExtractMs", "RasterDepthTestMs", "RasterCellWriteMs",
+        "RasterElementIterMs",
+        "AnnoMs",
+        "FinalizeMs", "ExportMs", "PngMs", "Width", "Height",
+        "TotalElements", "FilledCells",
         "TinyCount", "LinearCount", "ArealCount",
         "ArealHighConf", "ArealMediumConf", "ArealLowConf",
         "FallbackCount", "FallbackRate", "AvgFallbackExtractMs", "ElemCacheHitRate"
@@ -1685,9 +1733,9 @@ def view_result_to_core_row(view_result, config, doc, date_override=None, run_id
     row = {
         "Date": date_str,
         "RunId": run_id,
-        "ViewId": view_metadata.get("ViewId", 0),
-        "ViewUniqueId": view_metadata.get("ViewUniqueId", ""),
-        "ViewName": view_metadata.get("ViewName", ""),
+        "ViewId": view_metadata.get("ViewId", view_result.get("view_id", 0)),
+        "ViewUniqueId": _extract_view_unique_id(view_result=view_result, view=view, metadata=view_metadata),
+        "ViewName": view_metadata.get("ViewName", view_result.get("view_name", "")),
         "ViewType": view_metadata.get("ViewType", ""),
         "SheetNumber": view_metadata.get("SheetNumber", ""),
         "IsOnSheet": view_metadata.get("IsOnSheet", "N"),
@@ -1868,6 +1916,10 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
                 row["ViewName"] = row.get("view_name")
             if "ViewType" not in row and "view_type" in row:
                 row["ViewType"] = row.get("view_type")
+            if "ViewUniqueId" not in row and "view_unique_id" in row:
+                row["ViewUniqueId"] = row.get("view_unique_id")
+            if not row.get("ViewUniqueId"):
+                row["ViewUniqueId"] = view_metadata.get("ViewUniqueId", "")
 
             # Normalize additional slicer keys from cached payload (snake_case → CSV schema)
             if "Discipline" not in row and "discipline" in row:
@@ -1939,6 +1991,7 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
         "Date": date_str,
         "RunId": run_id,
         "ViewId": view_result.get("view_id", 0),
+        "ViewUniqueId": _extract_view_unique_id(view_result=view_result, view=view, metadata=view_metadata),
         "ViewName": view_result.get("view_name", ""),
         "ViewType": view_metadata.get("ViewType", ""),
         "TotalCells": metrics.get("TotalCells", 0),
@@ -2034,33 +2087,44 @@ def view_result_to_perf_row(view_result, date_override=None, run_id=None):
                 date_str = datetime.now().strftime("%Y-%m-%d")
 
     timings = view_result.get("timings", {})
+    view_obj = view_result.get("view")
+    view_unique_id = (
+        view_result.get("ViewUniqueId")
+        or view_result.get("view_unique_id")
+        or (view_result.get("row_payload", {}) or {}).get("ViewUniqueId")
+        or (view_result.get("row_payload", {}) or {}).get("view_unique_id")
+        or ""
+    )
+    if not view_unique_id and view_obj is not None:
+        view_unique_id = getattr(view_obj, "UniqueId", "") or ""
 
     row = {
         "Date": date_str,
         "RunId": run_id,
-        "view_id": view_result.get("view_id", 0),
-        "view_name": view_result.get("view_name", ""),
-        "success": "Y" if view_result.get("success", True) else "N",
-        "total_ms": timings.get("total_ms", 0.0),
-        "mode_ms": timings.get("mode_ms", 0.0),
-        "raster_init_ms": timings.get("raster_init_ms", 0.0),
-        "collect_ms": timings.get("collect_ms", 0.0),
-        "raster_ms": timings.get("raster_ms", 0.0),
-        "raster_expand_ms": timings.get("raster_expand_ms", 0.0),
-        "raster_sorting_ms": timings.get("raster_sorting_ms", 0.0),
-        "raster_enrich_ms": timings.get("raster_enrich_ms", 0.0),
-        "raster_geom_extract_ms": timings.get("raster_geom_extract_ms", 0.0),
-        "raster_depth_test_ms": timings.get("raster_depth_test_ms", 0.0),
-        "raster_cell_write_ms": timings.get("raster_cell_write_ms", 0.0),
-        "raster_element_iter_ms": timings.get("raster_element_iter_ms", 0.0),
-        "anno_ms": timings.get("anno_ms", 0.0),
-        "finalize_ms": timings.get("finalize_ms", 0.0),
-        "export_ms": timings.get("export_ms", 0.0),
-        "png_ms": timings.get("png_ms", 0.0),
-        "width": view_result.get("width", 0),
-        "height": view_result.get("height", 0),
-        "total_elements": view_result.get("total_elements", 0),
-        "filled_cells": view_result.get("filled_cells", 0)
+        "ViewId": view_result.get("view_id", 0),
+        "ViewUniqueId": view_unique_id,
+        "ViewName": view_result.get("view_name", ""),
+        "Success": "Y" if view_result.get("success", True) else "N",
+        "TotalMs": timings.get("total_ms", 0.0),
+        "ModeMs": timings.get("mode_ms", 0.0),
+        "RasterInitMs": timings.get("raster_init_ms", 0.0),
+        "CollectMs": timings.get("collect_ms", 0.0),
+        "RasterMs": timings.get("raster_ms", 0.0),
+        "RasterExpandMs": timings.get("raster_expand_ms", 0.0),
+        "RasterSortingMs": timings.get("raster_sorting_ms", 0.0),
+        "RasterEnrichMs": timings.get("raster_enrich_ms", 0.0),
+        "RasterGeomExtractMs": timings.get("raster_geom_extract_ms", 0.0),
+        "RasterDepthTestMs": timings.get("raster_depth_test_ms", 0.0),
+        "RasterCellWriteMs": timings.get("raster_cell_write_ms", 0.0),
+        "RasterElementIterMs": timings.get("raster_element_iter_ms", 0.0),
+        "AnnoMs": timings.get("anno_ms", 0.0),
+        "FinalizeMs": timings.get("finalize_ms", 0.0),
+        "ExportMs": timings.get("export_ms", 0.0),
+        "PngMs": timings.get("png_ms", 0.0),
+        "Width": view_result.get("width", 0),
+        "Height": view_result.get("height", 0),
+        "TotalElements": view_result.get("total_elements", 0),
+        "FilledCells": view_result.get("filled_cells", 0)
     }
 
 
