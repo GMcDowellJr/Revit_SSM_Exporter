@@ -1,3 +1,4 @@
+from vop_interwoven.root_cache import extract_metrics_from_view_result
 from vop_interwoven.csv_export import (
     get_perf_csv_header,
     get_vop_csv_header,
@@ -98,3 +99,31 @@ def test_core_row_uses_view_unique_id_without_view_object():
     )
     assert row is not None
     assert row["ViewUniqueId"] == "uid-140929"
+
+
+def test_root_cache_metadata_carries_view_unique_id():
+    class _Cfg:
+        model_presence_mode = "ink"
+
+    metadata, metrics, element_summary, timings = extract_metrics_from_view_result(
+        {
+            "view_id": 146925,
+            "view_name": "SEA LEVEL",
+            "view_unique_id": "64d3f457-04cb-481e-9da9-2f91f48e8823-00023ded",
+            "view_type": "CeilingPlan",
+            "raster": {
+                "width": 1,
+                "height": 1,
+                "cell_size_ft": 1.0,
+                "model_mask": [0],
+                "anno_over_model": [0],
+                "anno_key": [-1],
+                "anno_meta": [],
+                "element_meta": [],
+            },
+            "timings": {},
+        },
+        _Cfg(),
+    )
+
+    assert metadata["view_unique_id"] == "64d3f457-04cb-481e-9da9-2f91f48e8823-00023ded"

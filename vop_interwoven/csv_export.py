@@ -371,7 +371,7 @@ def _extract_view_unique_id(view_result=None, view=None, metadata=None):
     # Prefer explicit metadata first
     try:
         if isinstance(metadata, dict):
-            v = metadata.get("ViewUniqueId", "")
+            v = metadata.get("ViewUniqueId", "") or metadata.get("view_unique_id", "")
             if v:
                 return v
     except Exception:
