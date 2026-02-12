@@ -1918,6 +1918,8 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
                 row["ViewType"] = row.get("view_type")
             if "ViewUniqueId" not in row and "view_unique_id" in row:
                 row["ViewUniqueId"] = row.get("view_unique_id")
+            if not row.get("ViewUniqueId"):
+                row["ViewUniqueId"] = view_metadata.get("ViewUniqueId", "")
 
             # Normalize additional slicer keys from cached payload (snake_case → CSV schema)
             if "Discipline" not in row and "discipline" in row:
@@ -2086,7 +2088,13 @@ def view_result_to_perf_row(view_result, date_override=None, run_id=None):
 
     timings = view_result.get("timings", {})
     view_obj = view_result.get("view")
-    view_unique_id = view_result.get("view_unique_id", "")
+    view_unique_id = (
+        view_result.get("ViewUniqueId")
+        or view_result.get("view_unique_id")
+        or (view_result.get("row_payload", {}) or {}).get("ViewUniqueId")
+        or (view_result.get("row_payload", {}) or {}).get("view_unique_id")
+        or ""
+    )
     if not view_unique_id and view_obj is not None:
         view_unique_id = getattr(view_obj, "UniqueId", "") or ""
 
