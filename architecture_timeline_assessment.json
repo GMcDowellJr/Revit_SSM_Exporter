@@ -1,0 +1,219 @@
+{
+  "phase_status": [
+    {
+      "phase": "SSM spec parity and export contract",
+      "status": "Partially Implemented",
+      "evidence": [
+        "Implementation plan claims feature-complete SSM parity with Phase 7 complete.",
+        "CSV builder still contains stale commentary saying \"FromCache always False for now (no caching yet)\" even though cache-aware logic exists in the same module.",
+        "One regression test around config defaults currently fails (expected export_strategy_diagnostics=False, actual True), suggesting test/spec drift."
+      ],
+      "gaps": [
+        "Conflicting contract signals between docs/comments and runtime behavior in CSV export path.",
+        "Config default expectation mismatch indicates incomplete alignment between tests and intended baseline behavior."
+      ]
+    },
+    {
+      "phase": "Dead-code removal and cleanup",
+      "status": "Absent",
+      "evidence": [
+        "Repository intentionally retains legacy and archive trees as historical code paths.",
+        "A test file with a space in filename (`tests/new test_geometry_cache_lru.py`) is likely skipped by normal test discovery and behaves like orphaned test debt.",
+        "A workflow file appears parked/disabled by suffix (`.github/workflows/no-bare-except.yml_dep`)."
+      ],
+      "gaps": [
+        "No clear pruning boundary for historical code vs active runtime code.",
+        "Potentially dead CI quality gate for bare-except policy enforcement.",
+        "At least one unit test appears structurally easy to miss in standard tooling."
+      ]
+    },
+    {
+      "phase": "API consolidation (safe wrappers and single-source contracts)",
+      "status": "Partially Implemented",
+      "evidence": [
+        "Safe API wrapper exists (`revit/safe_api.py`) and is used in collection/pipeline call paths.",
+        "Pipeline still has broad print-based exception handling in export/debug branches instead of consistently funneling through diagnostics helpers.",
+        "safe_api fallback helper references `diag` in local scopes where it is not defined, indicating error-path fragility."
+      ],
+      "gaps": [
+        "Error handling style is not fully consolidated under one policy abstraction.",
+        "Fallback diagnostics path has potential NameError risk while handling exceptions."
+      ]
+    },
+    {
+      "phase": "Geometry extraction refactor",
+      "status": "Implemented",
+      "evidence": [
+        "Core geometry modules are split into focused units (`core/silhouette.py`, `core/areal_extraction.py`, `core/face_selection.py`).",
+        "Implementation plan marks geometry and silhouette phases complete.",
+        "Dedicated geometry-related tests exist for areal extraction, silhouette/front-face strategies, and raster semantics."
+      ],
+      "gaps": [
+        "Proxy edge rasterization mode still has a declared non-implementation path in pipeline (`_stamp_proxy_edges` with pass), which weakens complete mode parity."
+      ]
+    },
+    {
+      "phase": "Regression discipline (tests, diagnostics, quality gates)",
+      "status": "Partially Implemented",
+      "evidence": [
+        "Large pytest suite exists and mostly passes (151 passed, 1 failed in local run).",
+        "Diagnostics and no-silent-failure rules are documented in `refactor_rules.md`.",
+        "Tooling includes bare-except checker and golden comparison utilities."
+      ],
+      "gaps": [
+        "Current branch has at least one failing regression test.",
+        "If `_dep` workflow is inactive, CI enforcement does not fully match documented discipline."
+      ]
+    }
+  ],
+  "obsolete_elements": [
+    {
+      "element": "Legacy and archive code trees retained in root",
+      "why_obsolete_or_risky": "They preserve historical context but can confuse active ownership boundaries and static analysis scope.",
+      "pointers": [
+        "legacy/",
+        "archive/refactor1/",
+        "README.md"
+      ]
+    },
+    {
+      "element": "Potentially orphaned test file naming",
+      "why_obsolete_or_risky": "Filename with embedded space may bypass conventional test selectors and editor/test integrations.",
+      "pointers": [
+        "tests/new test_geometry_cache_lru.py"
+      ]
+    },
+    {
+      "element": "Dormant CI policy workflow",
+      "why_obsolete_or_risky": "`no-bare-except` enforcement appears parked (`.yml_dep`) and may no longer run automatically.",
+      "pointers": [
+        ".github/workflows/no-bare-except.yml_dep"
+      ]
+    },
+    {
+      "element": "Stale CSV export commentary",
+      "why_obsolete_or_risky": "Inline comment says caching is unavailable while module now supports cache-hit semantics, increasing maintenance confusion.",
+      "pointers": [
+        "vop_interwoven/csv_export.py"
+      ]
+    }
+  ],
+  "drift_observations": [
+    {
+      "observation": "Caching architecture has expanded beyond initial CSV-plan assumptions.",
+      "impact": "Behavior now includes root/per-view cache-hit row rehydration and multiple hash/signature paths, which may diverge from single-contract expectations.",
+      "pointers": [
+        "vop_interwoven/root_cache.py",
+        "vop_interwoven/pipeline.py",
+        "vop_interwoven/csv_export.py"
+      ]
+    },
+    {
+      "observation": "Plan documentation claims edge rasterization complete, code contains explicit not-implemented branch.",
+      "impact": "Mode-level contract ambiguity: feature appears complete in plan status but not behaviorally complete in code path.",
+      "pointers": [
+        "vop_interwoven/IMPLEMENTATION_PLAN.md",
+        "vop_interwoven/pipeline.py"
+      ]
+    },
+    {
+      "observation": "Regression baseline intent and current config defaults are inconsistent.",
+      "impact": "Tests and runtime defaults disagree on `export_strategy_diagnostics`, making contract unclear for downstream users.",
+      "pointers": [
+        "vop_interwoven/config.py",
+        "tests/test_pipeline_diagnostics.py"
+      ]
+    }
+  ],
+  "recommendations": [
+    {
+      "priority": "P0",
+      "action": "Resolve `export_strategy_diagnostics` contract drift",
+      "details": "Either restore default False in Config or update tests/docs to intentional True default, then add changelog note and explicit migration guidance."
+    },
+    {
+      "priority": "P0",
+      "action": "Reconcile edge rasterization status",
+      "details": "Implement `_stamp_proxy_edges` fully or hard-disable `proxy_mask_mode='edges'` with explicit diagnostics and docs updates."
+    },
+    {
+      "priority": "P1",
+      "action": "Consolidate error handling under safe API + diagnostics",
+      "details": "Replace print-based exception paths in pipeline/caching export branches with `record_error`/`safe_call`; fix undefined-name risk in `safe_api` fallback helper."
+    },
+    {
+      "priority": "P1",
+      "action": "Re-enable or replace bare-except CI quality gate",
+      "details": "Convert `.github/workflows/no-bare-except.yml_dep` into an active workflow and fail PRs on violations."
+    },
+    {
+      "priority": "P2",
+      "action": "Clean test/discovery hygiene",
+      "details": "Rename `tests/new test_geometry_cache_lru.py` to a conventional pytest filename and remove/relocate any archival tests from active suite paths."
+    },
+    {
+      "priority": "P2",
+      "action": "Establish active vs historical code boundary",
+      "details": "Add explicit ownership markers and CI excludes for `legacy/` and `archive/` to prevent accidental coupling."
+    },
+    {
+      "status_table": [
+        {
+          "phase_feature": "SSM spec parity and export contract",
+          "status": "Partially Implemented",
+          "evidence": [
+            "IMPLEMENTATION_PLAN phase summary",
+            "csv_export stale no-cache comment",
+            "failing test_pipeline_diagnostics default assertion"
+          ],
+          "risks_conflicts": "Contract ambiguity for consumers and analysts",
+          "next_steps": "Align defaults, tests, docs, and migration notes"
+        },
+        {
+          "phase_feature": "Dead-code removal",
+          "status": "Absent",
+          "evidence": [
+            "root README references legacy/archive",
+            "space-named test file",
+            "_dep workflow"
+          ],
+          "risks_conflicts": "Noise, confusion, and unenforced quality policies",
+          "next_steps": "Prune/archive strategy + CI path filters + file cleanup"
+        },
+        {
+          "phase_feature": "API consolidation",
+          "status": "Partially Implemented",
+          "evidence": [
+            "revit/safe_api.py present",
+            "safe_call usage in collection",
+            "print-based handlers in pipeline"
+          ],
+          "risks_conflicts": "Inconsistent observability and fragile exception paths",
+          "next_steps": "Standardize call wrappers and diagnostics routing"
+        },
+        {
+          "phase_feature": "Geometry extraction refactor",
+          "status": "Implemented",
+          "evidence": [
+            "modular core geometry files",
+            "phase plan completion claims",
+            "geometry-focused tests"
+          ],
+          "risks_conflicts": "Mode completeness gap for edge proxies",
+          "next_steps": "Close or gate edge proxy branch"
+        },
+        {
+          "phase_feature": "Regression discipline",
+          "status": "Partially Implemented",
+          "evidence": [
+            "broad pytest suite",
+            "diagnostics/refactor rules docs",
+            "one currently failing test"
+          ],
+          "risks_conflicts": "False confidence if failing tests tolerated",
+          "next_steps": "Make suite green + enforce CI gates"
+        }
+      ]
+    }
+  ]
+}
