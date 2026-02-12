@@ -54,6 +54,7 @@ class TestCSVExportDiagnostics(unittest.TestCase):
         }
         view_metadata = {
             "ViewId": "123456",
+            "ViewUniqueId": "uid-123456",
             "ViewName": "Test View",
             "ViewType": "FloorPlan",
         }
@@ -61,11 +62,11 @@ class TestCSVExportDiagnostics(unittest.TestCase):
         # Call without strategy_diag
         row = build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metadata=view_metadata)
 
-        # Should have 52 columns (31 original + 7 strategy diagnostics + 14 category/method stats)
-        self.assertEqual(len(row), 52)
+        # Should have 53 columns (32 original + 7 strategy diagnostics + 14 category/method stats)
+        self.assertEqual(len(row), 53)
 
-        # Strategy diagnostic columns are at indices 31-37 (after the 31 core columns)
-        strategy_cols = row[31:38]
+        # Strategy diagnostic columns are at indices 32-38 (after the 32 core columns)
+        strategy_cols = row[32:39]
         self.assertEqual(strategy_cols, [0, 0, 0, 0, 0, 0.0, 0.0])
 
     def test_build_vop_csv_row_with_diagnostics(self):
@@ -131,6 +132,7 @@ class TestCSVExportDiagnostics(unittest.TestCase):
         }
         view_metadata = {
             "ViewId": "123456",
+            "ViewUniqueId": "uid-123456",
             "ViewName": "Test View",
             "ViewType": "FloorPlan",
         }
@@ -139,11 +141,11 @@ class TestCSVExportDiagnostics(unittest.TestCase):
         row = build_vop_csv_row(view, metrics, anno_metrics, config, run_info,
                                view_metadata=view_metadata, strategy_diag=strategy_diag)
 
-        # Should have 52 columns (31 original + 7 strategy diagnostics + 14 category/method stats)
-        self.assertEqual(len(row), 52)
+        # Should have 53 columns (32 original + 7 strategy diagnostics + 14 category/method stats)
+        self.assertEqual(len(row), 53)
 
-        # Extract strategy diagnostic columns (indices 31-37)
-        strategy_cols = row[31:38]
+        # Extract strategy diagnostic columns (indices 32-38)
+        strategy_cols = row[32:39]
 
         planar_face_count = strategy_cols[0]
         silhouette_count = strategy_cols[1]
@@ -192,14 +194,14 @@ class TestCSVExportDiagnostics(unittest.TestCase):
             "resolution_mode": "canonical",
             "cap_triggered": False,
         }
-        view_metadata = {"ViewId": "1", "ViewName": "Test", "ViewType": "FloorPlan"}
+        view_metadata = {"ViewId": "1", "ViewUniqueId": "uid-1", "ViewName": "Test", "ViewType": "FloorPlan"}
 
         row = build_vop_csv_row(view, metrics, anno_metrics, config, run_info,
                                view_metadata=view_metadata, strategy_diag=strategy_diag)
 
-        # Extract percentage columns (indices 36 and 37)
-        geom_success_rate = row[36]
-        areal_high_conf_rate = row[37]
+        # Extract percentage columns (indices 37 and 38)
+        geom_success_rate = row[37]
+        areal_high_conf_rate = row[38]
 
         # Verify percentages are in valid range
         self.assertGreaterEqual(geom_success_rate, 0.0)
@@ -247,13 +249,13 @@ class TestCSVExportDiagnostics(unittest.TestCase):
             "resolution_mode": "canonical",
             "cap_triggered": False,
         }
-        view_metadata = {"ViewId": "1", "ViewName": "Test", "ViewType": "FloorPlan"}
+        view_metadata = {"ViewId": "1", "ViewUniqueId": "uid-1", "ViewName": "Test", "ViewType": "FloorPlan"}
 
         row = build_vop_csv_row(view, metrics, anno_metrics, config, run_info,
                                view_metadata=view_metadata, strategy_diag=strategy_diag)
 
-        # Extract strategy counts (indices 31-35: first 5 of the 7 strategy columns)
-        strategy_counts = row[31:36]
+        # Extract strategy counts (indices 32-36: first 5 of the 7 strategy columns)
+        strategy_counts = row[32:37]
 
         # Verify individual counts
         self.assertEqual(strategy_counts[0], 3)  # planar_face
@@ -289,15 +291,15 @@ class TestCSVExportDiagnostics(unittest.TestCase):
             "resolution_mode": "canonical",
             "cap_triggered": False,
         }
-        view_metadata = {"ViewId": "1", "ViewName": "Test", "ViewType": "FloorPlan"}
+        view_metadata = {"ViewId": "1", "ViewUniqueId": "uid-1", "ViewName": "Test", "ViewType": "FloorPlan"}
 
         # Should not crash, should return zeros for strategy columns
         row = build_vop_csv_row(view, metrics, anno_metrics, config, run_info,
                                view_metadata=view_metadata, strategy_diag=BrokenDiagnostics())
 
         # Should still have all columns with zeros for strategy stats
-        self.assertEqual(len(row), 52)
-        strategy_cols = row[31:38]
+        self.assertEqual(len(row), 53)
+        strategy_cols = row[32:39]
         self.assertEqual(strategy_cols, [0, 0, 0, 0, 0, 0.0, 0.0])
 
 
