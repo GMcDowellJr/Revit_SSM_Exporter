@@ -44,3 +44,33 @@ def test_perf_row_includes_view_unique_id_from_result_or_view_object():
         run_id="20260101T000000",
     )
     assert row2["ViewUniqueId"] == "UID-OBJ"
+
+
+def test_root_cache_payload_persists_view_unique_id(tmp_path):
+    from vop_interwoven.root_cache import RootStyleCache
+
+    cache = RootStyleCache(
+        output_dir=str(tmp_path),
+        project_guid="proj",
+        exporter_version="vop_interwoven",
+        config_hash="cfg",
+    )
+
+    cache.set_view(
+        view_id=7,
+        signature="sig",
+        metadata={
+            "view_id": 7,
+            "view_name": "View 7",
+            "view_type": "FloorPlan",
+            "view_unique_id": "UID-7",
+        },
+        metrics={"TotalCells": 1},
+        element_summary={},
+        timings={},
+    )
+
+    cached = cache.get_view_any(7)
+    payload = cached["row_payload"]
+    assert payload["view_unique_id"] == "UID-7"
+    assert payload["ViewUniqueId"] == "UID-7"

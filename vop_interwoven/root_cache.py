@@ -200,6 +200,10 @@ class RootStyleCache:
                 row_payload["ViewName"] = metadata.get("view_name", row_payload.get("view_name"))
             if "ViewType" not in row_payload:
                 row_payload["ViewType"] = row_payload.get("view_type") or metadata.get("view_type", "")
+            if "view_unique_id" not in row_payload:
+                row_payload["view_unique_id"] = metadata.get("view_unique_id", "")
+            if "ViewUniqueId" not in row_payload:
+                row_payload["ViewUniqueId"] = row_payload.get("view_unique_id") or metadata.get("view_unique_id", "")
         except Exception as e:
             # Exception in set_view - no diag in scope
             pass  # TODO: Add diagnostics when diag becomes available
@@ -375,6 +379,7 @@ def extract_metrics_from_view_result(view_result, cfg):
     metadata = {
         "view_id": view_result.get("view_id"),
         "view_name": view_result.get("view_name"),
+        "view_unique_id": view_result.get("view_unique_id") or "",
 
         # IMPORTANT: view_type is a human-readable Revit view type (e.g., FloorPlan),
         # NOT the pipeline view_mode (e.g., ANNOTATION_ONLY).
