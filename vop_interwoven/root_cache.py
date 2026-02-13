@@ -200,8 +200,15 @@ class RootStyleCache:
                 row_payload["ViewName"] = metadata.get("view_name", row_payload.get("view_name"))
             if "ViewType" not in row_payload:
                 row_payload["ViewType"] = row_payload.get("view_type") or metadata.get("view_type", "")
+
+            if "view_unique_id" not in row_payload:
+                row_payload["view_unique_id"] = metadata.get("view_unique_id", metadata.get("ViewUniqueId", ""))
             if "ViewUniqueId" not in row_payload:
-                row_payload["ViewUniqueId"] = metadata.get("view_unique_id", row_payload.get("view_unique_id", ""))
+                row_payload["ViewUniqueId"] = (
+                    metadata.get("view_unique_id", "")
+                    or metadata.get("ViewUniqueId", "")
+                    or row_payload.get("view_unique_id", "")
+                )
         except Exception as e:
             # Exception in set_view - no diag in scope
             pass  # TODO: Add diagnostics when diag becomes available

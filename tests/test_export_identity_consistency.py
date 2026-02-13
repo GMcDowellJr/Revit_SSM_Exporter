@@ -127,3 +127,44 @@ def test_root_cache_metadata_carries_view_unique_id():
     )
 
     assert metadata["view_unique_id"] == "64d3f457-04cb-481e-9da9-2f91f48e8823-00023ded"
+
+def test_vop_cache_row_uses_view_result_uid_when_cached_payload_missing_uid():
+    row = view_result_to_vop_row(
+        {
+            "success": True,
+            "from_cache": True,
+            "view_id": 140929,
+            "view_name": "Model QC-Level 1-Generic Element Check",
+            "view_unique_id": "uid-140929",
+            "row_payload": {
+                "ViewId": 140929,
+                "ViewName": "Model QC-Level 1-Generic Element Check",
+                "ViewType": "FloorPlan",
+            },
+            "metrics": {"TotalCells": 1, "Empty": 1, "ModelOnly": 0, "AnnoOnly": 0, "Overlap": 0},
+        },
+        config=_Cfg(),
+        doc=None,
+        run_id="20260101T000000",
+    )
+    assert row["ViewUniqueId"] == "uid-140929"
+
+
+def test_root_cache_row_payload_stores_uid_from_pascal_metadata(tmp_path):
+    from vop_interwoven.root_cache import RootStyleCache
+
+    rc = RootStyleCache(str(tmp_path), project_guid="test", exporter_version="vop_interwoven", config_hash="cfg")
+    rc.set_view(
+        view_id=123,
+        signature="sig",
+        metadata={"view_id": 123, "view_name": "V", "ViewUniqueId": "UID-123", "view_type": "FloorPlan"},
+        metrics={"TotalCells": 1},
+        element_summary={},
+        timings={},
+    )
+
+    cached = rc.get_view_any(123)
+    assert cached is not None
+    payload = cached.get("row_payload", {})
+    assert payload.get("view_unique_id") == "UID-123"
+    assert payload.get("ViewUniqueId") == "UID-123"

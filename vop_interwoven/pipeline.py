@@ -900,6 +900,25 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset
                     cached_meta = cached.get("metadata") or {}
                     cached_metrics = cached.get("metrics") or {}
 
+                    # Backfill legacy cache entries missing UID; persist repaired metadata.
+                    try:
+                        cached_uid = cached_meta.get("view_unique_id", "")
+                        ident_uid = ident.get("view_unique_id", "")
+                        if (not cached_uid) and ident_uid:
+                            patched_meta = dict(cached_meta)
+                            patched_meta["view_unique_id"] = ident_uid
+                            root_cache.set_view(
+                                view_id=view_id_int,
+                                signature=sig_hex,
+                                metadata=patched_meta,
+                                metrics=cached_metrics,
+                                element_summary=cached.get("element_summary") or {},
+                                timings=cached.get("timings") or {},
+                            )
+                            cached_meta = patched_meta
+                    except Exception:
+                        pass
+
                     # Minimal raster stub so CSV export can populate bounds_meta-driven fields on metrics-only hits.
                     cell_size_ft = cached_meta.get("CellSize_ft", cached_metrics.get("CellSize_ft", 0.0))
                     raster_stub = {
