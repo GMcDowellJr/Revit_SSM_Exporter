@@ -1853,6 +1853,19 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
             except Exception as e:
                 date_str = datetime.now().strftime("%Y-%m-%d")
 
+    # Get view object + metadata (used by both manifest and compat row paths)
+    view = view_result.get("view")
+    if view is None and doc is not None:
+        try:
+            from Autodesk.Revit.DB import ElementId  # type: ignore
+            vid = _coerce_view_id_int(view_result.get("view_id", None))
+            if vid is not None:
+                view = doc.GetElement(ElementId(vid))
+        except Exception as e:
+            view = None
+
+    view_metadata = extract_view_metadata(view, doc) if view else {}
+
     metrics, anno_metrics, ext_metrics = _get_metrics_triplet_from_view_result(view_result)
     if not getattr(config, "csv_compat_mode", True):
         manifest_cols = get_vop_csv_header(config)
@@ -1912,19 +1925,6 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
         ext_metrics = compute_external_cell_metrics(raster)
 
 
-    # Get view object
-    view = view_result.get("view")
-    if view is None and doc is not None:
-        try:
-            from Autodesk.Revit.DB import ElementId  # type: ignore
-            vid = _coerce_view_id_int(view_result.get("view_id", None))
-            if vid is not None:
-                view = doc.GetElement(ElementId(vid))
-        except Exception as e:
-            view = None
-    
-    view_metadata = extract_view_metadata(view, doc) if view else {}
-    
     config_hash = compute_config_hash(config)
     
     # Elapsed time
