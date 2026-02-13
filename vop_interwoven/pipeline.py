@@ -385,6 +385,7 @@ def _extract_view_identity_for_csv(doc, view):
     """
     out = {
         "view_type": "",
+        "view_unique_id": "",
         "discipline": "",
         "phase": "",
         "sheet_number": "",
@@ -408,6 +409,12 @@ def _extract_view_identity_for_csv(doc, view):
     except Exception as e:
         # Exception in _extract_view_identity_for_csv - no diag in scope
         pass  # TODO: Add diagnostics when diag becomes available
+
+    # unique id (stable identity)
+    try:
+        out["view_unique_id"] = getattr(view, "UniqueId", "") or ""
+    except Exception as e:
+        pass
     # discipline (readable)
     try:
         # Prefer parameter value string if available (more "UI-like" than enum)
@@ -934,6 +941,7 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset
                         "view_name": cached_meta.get("view_name", ""),
                         "view_unique_id": cached_meta.get("view_unique_id", "") or ident.get("view_unique_id", ""),
                         "view_type": cached_meta.get("view_type", "") or ident.get("view_type", ""),
+                        "view_unique_id": cached_meta.get("view_unique_id", "") or ident.get("view_unique_id", ""),
                         "discipline": cached_meta.get("discipline", "") or ident.get("discipline", ""),
                         "phase": cached_meta.get("phase", "") or ident.get("phase", ""),
 
@@ -1056,6 +1064,8 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset
                         out["view_unique_id"] = ident.get("view_unique_id", "")
                     if out.get("view_type") in (None, ""):
                         out["view_type"] = ident.get("view_type", "")
+                    if out.get("view_unique_id") in (None, ""):
+                        out["view_unique_id"] = ident.get("view_unique_id", "")
                     if out.get("discipline") in (None, ""):
                         out["discipline"] = ident.get("discipline", "")
                     if out.get("phase") in (None, ""):
