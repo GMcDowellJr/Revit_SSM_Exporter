@@ -1,3 +1,13 @@
+# HISTORICAL OPERATIONAL REVIEW / SUPERSEDED
+
+This operational review reflects a prior snapshot assessment.
+
+**Superseded by `CURRENT_ARCHITECTURE.md` for current architecture truth and `ROADMAP.md` for prioritized remaining work.**
+
+Use this document as historical context only.
+
+---
+
 # Repository Operational Review
 
 ## Executive Assessment

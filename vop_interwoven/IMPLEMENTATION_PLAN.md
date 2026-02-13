@@ -1,3 +1,15 @@
+# HISTORICAL / SUPERSEDED
+
+This implementation plan is preserved for historical context and phase rationale.
+
+**Superseded by `CURRENT_ARCHITECTURE.md` for current-state behavior and contracts.**
+
+What landed vs not-landed (summary):
+- Landed: interwoven pipeline execution, Dynamo entry points, CSV/PNG export surfaces, root-style metrics cache, and broad test coverage.
+- Not fully landed: proxy `edges` mask path remains a stub and some diagnostics TODO placeholders remain in exception handlers.
+
+---
+
 # VOP Interwoven Pipeline - Progressive Implementation Plan
 
 ## Overview

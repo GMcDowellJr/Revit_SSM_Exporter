@@ -1,3 +1,13 @@
+# HISTORICAL ANALYSIS / SUPERSEDED
+
+This comparison document captures a point-in-time architecture analysis and migration framing.
+
+**Superseded by `CURRENT_ARCHITECTURE.md` for canonical current behavior and module ownership.**
+
+Use this document for rationale and tradeoff history, not as current implementation contract.
+
+---
+
 # Exporter Pipeline Comparison: Proposed Contract-Aligned Flow vs Current VOP Interwoven Code
 
 ## What the current code is doing conceptually

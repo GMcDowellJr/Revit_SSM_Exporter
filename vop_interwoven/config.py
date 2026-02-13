@@ -435,7 +435,7 @@ class Config:
         elif uv_mode == 'AREAL':
             # Large area elements:
             # Primary: planar front-facing face loops (semantic, preserves openings)
-            # Fallback: silhouette edges (temporary), then OBB → BBox
+            # Fallback chain: silhouette edges, then OBB → BBox
             return ['planar_face_loops', 'silhouette_edges', 'obb', 'bbox']
         else:
             # Default fallback: full chain

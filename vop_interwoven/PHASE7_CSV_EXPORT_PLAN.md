@@ -1,3 +1,15 @@
+# HISTORICAL / SUPERSEDED
+
+This CSV phase plan is preserved as historical planning material.
+
+**Superseded by `CURRENT_ARCHITECTURE.md` for current-state architecture and by `ROADMAP.md` for forward work.**
+
+What landed vs not-landed (summary):
+- Landed: core + VOP CSV exports, occupancy invariant enforcement, config/view hashes, cache-aware `FromCache`, and external-cell metrics computation.
+- Not landed as originally written: assumptions that cache fields were always false and external-ref metrics were always zero.
+
+---
+
 # Phase 7: CSV Export Implementation Plan
 
 ## Overview
