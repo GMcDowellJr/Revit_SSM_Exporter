@@ -8,7 +8,7 @@ from vop_interwoven.metrics_manifest import load_manifest_json
 def test_get_vop_csv_header_uses_manifest_columns_when_compat_off():
     cfg = Config(csv_compat_mode=False)
     manifest_cols = load_manifest_json(cfg.metrics_manifest_path).data["outputs"]["csv_columns"]
-    assert get_vop_csv_header(cfg) == manifest_cols
+    assert get_vop_csv_header(cfg) == ["Date", "RunId", "ViewId", "ViewUniqueId", "ViewName", "ViewType"] + manifest_cols
 
 
 def test_export_pipeline_to_csv_manifest_header_exact_order_when_compat_off(tmp_path):
@@ -38,5 +38,5 @@ def test_export_pipeline_to_csv_manifest_header_exact_order_when_compat_off(tmp_
         header = next(reader)
         row = next(reader)
 
-    assert header == manifest_cols
+    assert header == ["Date", "RunId", "ViewId", "ViewUniqueId", "ViewName", "ViewType"] + manifest_cols
     assert len(row) == len(header)

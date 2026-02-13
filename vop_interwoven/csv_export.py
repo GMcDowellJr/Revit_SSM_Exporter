@@ -1157,6 +1157,9 @@ def export_occlusion_diagnostics_csv(occlusion_path, view_results, run_info, log
 
 
 
+MANIFEST_VOP_METADATA_COLUMNS = ["Date", "RunId", "ViewId", "ViewUniqueId", "ViewName", "ViewType"]
+
+
 def _get_manifest_csv_columns(config):
     from .metrics_manifest import load_manifest_json
 
@@ -1165,11 +1168,18 @@ def _get_manifest_csv_columns(config):
     return cols
 
 
-def _build_manifest_vop_row_from_metrics(view_result, metrics, manifest_columns):
+def _build_manifest_vop_row_from_metrics(view_result, metrics, manifest_columns, metadata_values):
     raw = view_result.get("metrics") if isinstance(view_result.get("metrics"), dict) else {}
     merged = dict(metrics or {})
     merged.update(raw or {})
-    return [int(merged.get(col, 0) or 0) for col in manifest_columns]
+
+    row = []
+    for col in manifest_columns:
+        if col in MANIFEST_VOP_METADATA_COLUMNS:
+            row.append(metadata_values.get(col, ""))
+        else:
+            row.append(int(merged.get(col, 0) or 0))
+    return row
 
 
 def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=None, date_override=None):
@@ -1465,7 +1475,15 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
         if getattr(config, "csv_compat_mode", True):
             vop_rows.append(build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metadata=view_metadata, diag=diag, strategy_diag=strategy_diag))
         else:
-            vop_rows.append(_build_manifest_vop_row_from_metrics(view_result, metrics, vop_headers))
+            metadata_values = {
+                "Date": run_info.get("date", ""),
+                "RunId": run_info.get("run_id", ""),
+                "ViewId": view_result.get("view_id", 0),
+                "ViewUniqueId": _extract_view_unique_id(view_result=view_result, view=view, metadata=view_metadata),
+                "ViewName": view_result.get("view_name", ""),
+                "ViewType": view_metadata.get("ViewType", ""),
+            }
+            vop_rows.append(_build_manifest_vop_row_from_metrics(view_result, metrics, vop_headers, metadata_values))
 
     # Simple logger stub (export/csv expects logger-like object)
     class SimpleLogger:
@@ -1523,7 +1541,7 @@ def get_core_csv_header():
 def get_vop_csv_header(config=None):
     """Get header for VOP CSV file."""
     if config is not None and (not getattr(config, "csv_compat_mode", True)):
-        return _get_manifest_csv_columns(config)
+        return MANIFEST_VOP_METADATA_COLUMNS + _get_manifest_csv_columns(config)
 
     return [
         "Date", "RunId", "ViewId", "ViewUniqueId", "ViewName", "ViewType", "TotalCells",
@@ -1829,7 +1847,21 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
         raw_metrics = view_result.get("metrics") if isinstance(view_result.get("metrics"), dict) else {}
         merged = dict(metrics or {})
         merged.update(raw_metrics or {})
-        return {col: int(merged.get(col, 0) or 0) for col in manifest_cols}
+        metadata_values = {
+            "Date": date_str,
+            "RunId": run_id,
+            "ViewId": view_result.get("view_id", 0),
+            "ViewUniqueId": _extract_view_unique_id(view_result=view_result, view=view, metadata=view_metadata),
+            "ViewName": view_result.get("view_name", ""),
+            "ViewType": view_metadata.get("ViewType", ""),
+        }
+        out = {}
+        for col in manifest_cols:
+            if col in MANIFEST_VOP_METADATA_COLUMNS:
+                out[col] = metadata_values.get(col, "")
+            else:
+                out[col] = int(merged.get(col, 0) or 0)
+        return out
 
     if metrics is None:
         # Reconstruct raster object for metrics computation (existing behavior)
