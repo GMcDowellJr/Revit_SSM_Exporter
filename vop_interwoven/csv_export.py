@@ -215,6 +215,53 @@ def compute_cell_metrics(raster, model_presence_mode="ink", diag=None):
     }
 
 
+def _normalize_locked_metrics_for_legacy_csv(metrics):
+    """Map locked scanner metric keys to legacy CSV metric keys."""
+    m = dict(metrics or {})
+
+    if "Cells_Empty" in m and "Empty" not in m:
+        m["Empty"] = int(m.get("Cells_Empty", 0) or 0)
+    if "Cells_ModelOnly" in m and "ModelOnly" not in m:
+        m["ModelOnly"] = int(m.get("Cells_ModelOnly", 0) or 0)
+    if "Cells_AnnoOnly" in m and "AnnoOnly" not in m:
+        m["AnnoOnly"] = int(m.get("Cells_AnnoOnly", 0) or 0)
+    if "Overlap" not in m:
+        m["Overlap"] = int(m.get("Cells_ModelAnno", 0) or 0)
+
+    if "ExtFinalCells_Any" in m and "Ext_Cells_Any" not in m:
+        m["Ext_Cells_Any"] = int(m.get("ExtFinalCells_Any", 0) or 0)
+    if "ExtFinalCells_Only" in m and "Ext_Cells_Only" not in m:
+        m["Ext_Cells_Only"] = int(m.get("ExtFinalCells_Only", 0) or 0)
+    if "ExtFinalCells_DWG" in m and "Ext_Cells_DWG" not in m:
+        m["Ext_Cells_DWG"] = int(m.get("ExtFinalCells_DWG", 0) or 0)
+    if "ExtFinalCells_RVT" in m and "Ext_Cells_RVT" not in m:
+        m["Ext_Cells_RVT"] = int(m.get("ExtFinalCells_RVT", 0) or 0)
+
+    anno_map = {
+        "AnnoFinalCells_TEXT": "AnnoCells_TEXT",
+        "AnnoFinalCells_TAG": "AnnoCells_TAG",
+        "AnnoFinalCells_DIM": "AnnoCells_DIM",
+        "AnnoFinalCells_DETAIL": "AnnoCells_DETAIL",
+        "AnnoFinalCells_LINES": "AnnoCells_LINES",
+        "AnnoFinalCells_REGION": "AnnoCells_REGION",
+        "AnnoFinalCells_OTHER": "AnnoCells_OTHER",
+    }
+    for src, dst in anno_map.items():
+        if src in m and dst not in m:
+            m[dst] = int(m.get(src, 0) or 0)
+
+    return m
+
+
+def _get_metrics_triplet_from_view_result(view_result):
+    """Return (metrics, anno_metrics, ext_metrics) from precomputed view payload when available."""
+    pre = view_result.get("metrics")
+    if isinstance(pre, dict) and pre:
+        normalized = _normalize_locked_metrics_for_legacy_csv(pre)
+        return normalized, normalized, normalized
+    return None, None, None
+
+
 def compute_annotation_type_metrics(raster):
     """Count annotation cells by type.
 
@@ -1108,6 +1155,23 @@ def export_occlusion_diagnostics_csv(occlusion_path, view_results, run_info, log
     return occlusion_path
 
 
+
+
+def _get_manifest_csv_columns(config):
+    from .metrics_manifest import load_manifest_json
+
+    manifest = load_manifest_json(getattr(config, "metrics_manifest_path", None))
+    cols = list(manifest.data.get("outputs", {}).get("csv_columns", []))
+    return cols
+
+
+def _build_manifest_vop_row_from_metrics(view_result, metrics, manifest_columns):
+    raw = view_result.get("metrics") if isinstance(view_result.get("metrics"), dict) else {}
+    merged = dict(metrics or {})
+    merged.update(raw or {})
+    return [int(merged.get(col, 0) or 0) for col in manifest_columns]
+
+
 def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=None, date_override=None):
     """Export pipeline results to core + VOP CSV files.
 
@@ -1203,52 +1267,7 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
         "ViewFrameHash", "FromCache", "ElapsedSec"
     ]
 
-    vop_headers = [
-        "Date", "RunId", "ViewId", "ViewUniqueId", "ViewName", "ViewType", "TotalCells",
-        "Empty", "ModelOnly", "AnnoOnly", "Overlap", "Ext_Cells_Any",
-        "Ext_Cells_Only", "Ext_Cells_DWG", "Ext_Cells_RVT", "AnnoCells_TEXT",
-        "AnnoCells_TAG", "AnnoCells_DIM", "AnnoCells_DETAIL", "AnnoCells_LINES",
-        "AnnoCells_REGION", "AnnoCells_OTHER",
-
-        # Back-compat: actual (effective) cell size used to construct raster
-        "CellSize_ft",
-
-        # Option 2 contract fields
-        "CellSizeRequested_ft",
-        "CellSizeEffective_ft",
-        "ResolutionMode",
-        "CapTriggered",
-
-        "RowSource",
-        "ExporterVersion", "ConfigHash", "FromCache", "ElapsedSec",
-
-        # Strategy diagnostics (Phase 1.4)
-        "Strategy_AREAL_PlanarFace",
-        "Strategy_AREAL_Silhouette",
-        "Strategy_AREAL_GeometryExtract",
-        "Strategy_AREAL_BBoxOBB",
-        "Strategy_AREAL_AABB",
-        "GeomExtract_SuccessRate",
-        "AREAL_HighConfidenceRate",
-
-        # Category statistics (Phase 3.3)
-        "Category_Walls_Total",
-        "Category_Walls_Success",
-        "Category_Walls_SuccessRate",
-        "Category_Floors_Total",
-        "Category_Floors_Success",
-        "Category_Floors_SuccessRate",
-        "Category_Roofs_Total",
-        "Category_Roofs_Success",
-        "Category_Roofs_SuccessRate",
-
-        # Method counts (Phase 3.3)
-        "Method_PlanarFace_Count",
-        "Method_GeometryPolygon_Count",
-        "Method_Silhouette_Count",
-        "Method_BBoxOBB_Count",
-        "Method_AABB_Count",
-    ]
+    vop_headers = get_vop_csv_header(config)
 
     core_rows = []
     vop_rows = []
@@ -1318,16 +1337,14 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
         # Cache status for this view_result (legacy or root)
         from_cache = _is_from_cache(view_result)
 
-        # Compute metrics
-        if metrics_only:
-            metrics = view_result.get("metrics") or {}
-            # For root-cache metrics, annotation/external counts are already flattened into metrics
-            anno_metrics = metrics
-        else:
+        # Compute metrics (prefer precomputed view_result metrics when present)
+        metrics, anno_metrics, ext_metrics = _get_metrics_triplet_from_view_result(view_result)
+        if metrics is None:
             try:
                 model_presence_mode = getattr(config, "model_presence_mode", "ink")
                 metrics = compute_cell_metrics(raster, model_presence_mode=model_presence_mode, diag=diag)
                 anno_metrics = compute_annotation_type_metrics(raster)
+                ext_metrics = compute_external_cell_metrics(raster)
             except Exception as e:
                 if diag is not None:
                     try:
@@ -1354,28 +1371,8 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
                             )
                 raise
 
-        # External-cell metrics
-        if not metrics_only:
-            try:
-                metrics.update(compute_external_cell_metrics(raster))
-            except Exception as e:
-                if diag is not None:
-                    try:
-                        diag.warn(
-                            phase="export_csv",
-                            callsite="export_pipeline_to_csv.ext_cells",
-                            message="Failed to compute external-cell metrics; using zeros",
-                            exc=e,
-                            extra={"view_id": view_result.get("view_id", 0)},
-                        )
-                    except Exception as e:
-                        if diag is not None:
-                            diag.error(
-                                phase="export",
-                                callsite="export_pipeline_to_csv",
-                                message="Exception in export_pipeline_to_csv: {}".format(e),
-                                exc=e,
-                            )
+        if ext_metrics is None:
+            ext_metrics = metrics
         bounds_meta = raster_dict.get("bounds_meta") or {}
 
         cell_size_eff = raster_dict.get("cell_size_ft", 0.0)
@@ -1465,7 +1462,10 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
                 )
         if view is not None:
             core_rows.append(build_core_csv_row(view, doc, metrics, config, run_info, view_metadata=view_metadata))
-        vop_rows.append(build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metadata=view_metadata, diag=diag, strategy_diag=strategy_diag))
+        if getattr(config, "csv_compat_mode", True):
+            vop_rows.append(build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metadata=view_metadata, diag=diag, strategy_diag=strategy_diag))
+        else:
+            vop_rows.append(_build_manifest_vop_row_from_metrics(view_result, metrics, vop_headers))
 
     # Simple logger stub (export/csv expects logger-like object)
     class SimpleLogger:
@@ -1520,8 +1520,11 @@ def get_core_csv_header():
     ]
 
 
-def get_vop_csv_header():
+def get_vop_csv_header(config=None):
     """Get header for VOP CSV file."""
+    if config is not None and (not getattr(config, "csv_compat_mode", True)):
+        return _get_manifest_csv_columns(config)
+
     return [
         "Date", "RunId", "ViewId", "ViewUniqueId", "ViewName", "ViewType", "TotalCells",
         "Empty", "ModelOnly", "AnnoOnly", "Overlap", "Ext_Cells_Any",
@@ -1530,8 +1533,6 @@ def get_vop_csv_header():
         "AnnoCells_REGION", "AnnoCells_OTHER", "CellSize_ft", "CellSizeRequested_ft", "CellSizeEffective_ft", "ResolutionMode", "CapTriggered","RowSource",
         "ExporterVersion", "ConfigHash", "FromCache", "ElapsedSec"
     ]
-
-
 
 
 def get_occlusion_csv_header():
@@ -1822,11 +1823,15 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
             except Exception as e:
                 date_str = datetime.now().strftime("%Y-%m-%d")
 
-    if metrics_only:
-        metrics = view_result.get("metrics") or {}
-        anno_metrics = metrics  # anno counts already flattened in root_cache metrics
-        ext_metrics = metrics   # ext counts already flattened in root_cache metrics
-    else:
+    metrics, anno_metrics, ext_metrics = _get_metrics_triplet_from_view_result(view_result)
+    if not getattr(config, "csv_compat_mode", True):
+        manifest_cols = get_vop_csv_header(config)
+        raw_metrics = view_result.get("metrics") if isinstance(view_result.get("metrics"), dict) else {}
+        merged = dict(metrics or {})
+        merged.update(raw_metrics or {})
+        return {col: int(merged.get(col, 0) or 0) for col in manifest_cols}
+
+    if metrics is None:
         # Reconstruct raster object for metrics computation (existing behavior)
         from .core.raster import ViewRaster
         from .core.math_utils import Bounds2D
@@ -1920,6 +1925,8 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
                 row["ViewUniqueId"] = row.get("view_unique_id")
             if ("ViewUniqueId" not in row or not row.get("ViewUniqueId")) and view_result.get("view_unique_id"):
                 row["ViewUniqueId"] = view_result.get("view_unique_id")
+            if ("ViewUniqueId" not in row or not row.get("ViewUniqueId")):
+                row["ViewUniqueId"] = _extract_view_unique_id(view_result=view_result, view=view, metadata=view_metadata)
 
             # Normalize additional slicer keys from cached payload (snake_case → CSV schema)
             if "Discipline" not in row and "discipline" in row:
