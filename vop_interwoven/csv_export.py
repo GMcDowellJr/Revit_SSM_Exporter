@@ -864,6 +864,11 @@ def build_core_csv_row(view, doc, metrics, config, run_info, view_metadata=None)
         view_frame_hash,
         ("Y" if bool(run_info.get("from_cache", False)) else "N"),
         run_info.get("elapsed_sec", 0.0),
+        _round6(run_info.get("cell_size_ft", 0.0)),
+        _round6(run_info.get("cell_size_ft_requested", run_info.get("cell_size_ft", 0.0))),
+        _round6(run_info.get("cell_size_ft_effective", run_info.get("cell_size_ft", 0.0))),
+        run_info.get("resolution_mode", "canonical"),
+        bool(run_info.get("cap_triggered", False)),
     ]
 
     return row
@@ -1274,7 +1279,8 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
         "Date", "RunId", "ViewId", "ViewUniqueId", "ViewName", "ViewType",
         "SheetNumber", "IsOnSheet", "Scale", "Discipline", "Phase",
         "ViewTemplate_Name", "IsTemplate", "ExporterVersion", "ConfigHash",
-        "ViewFrameHash", "FromCache", "ElapsedSec"
+        "ViewFrameHash", "FromCache", "ElapsedSec",
+        "CellSize_ft", "CellSizeRequested_ft", "CellSizeEffective_ft", "ResolutionMode", "CapTriggered",
     ]
 
     vop_headers = get_vop_csv_header(config)
@@ -1534,7 +1540,8 @@ def get_core_csv_header():
         "Date", "RunId", "ViewId", "ViewUniqueId", "ViewName", "ViewType",
         "SheetNumber", "IsOnSheet", "Scale", "Discipline", "Phase",
         "ViewTemplate_Name", "IsTemplate", "ExporterVersion", "ConfigHash",
-        "ViewFrameHash", "FromCache", "ElapsedSec"
+        "ViewFrameHash", "FromCache", "ElapsedSec",
+        "CellSize_ft", "CellSizeRequested_ft", "CellSizeEffective_ft", "ResolutionMode", "CapTriggered",
     ]
 
 
@@ -1767,7 +1774,12 @@ def view_result_to_core_row(view_result, config, doc, date_override=None, run_id
         "ConfigHash": config_hash,
         "ViewFrameHash": view_frame_hash,
         "FromCache": from_cache,
-        "ElapsedSec": f"{elapsed_sec:.3f}"
+        "ElapsedSec": f"{elapsed_sec:.3f}",
+        "CellSize_ft": _round6(raster_dict.get("cell_size_ft", 0.0)),
+        "CellSizeRequested_ft": _round6((raster_dict.get("bounds_meta") or {}).get("cell_size_ft_requested", raster_dict.get("cell_size_ft", 0.0))),
+        "CellSizeEffective_ft": _round6((raster_dict.get("bounds_meta") or {}).get("cell_size_ft_effective", raster_dict.get("cell_size_ft", 0.0))),
+        "ResolutionMode": (raster_dict.get("bounds_meta") or {}).get("resolution_mode", "canonical"),
+        "CapTriggered": bool((raster_dict.get("bounds_meta") or {}).get("cap_triggered", (raster_dict.get("bounds_meta") or {}).get("capped", False))),
     }
     
     return row
