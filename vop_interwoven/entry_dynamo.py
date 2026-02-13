@@ -695,7 +695,7 @@ def quick_test_current_view():
 
             views = result.get("views") or []
             if views:
-                # NOTE: current code uses "diagnostics" numeric stats; keep as-is for now.
+                # NOTE: summary uses numeric stats exposed under the "diagnostics" payload.
                 diag = views[0].get("diagnostics", {}) or {}
                 msg += f"\nElements: {diag.get('num_elements', 0)}\n"
                 msg += f"Filled cells: {diag.get('num_filled_cells', 0)}"

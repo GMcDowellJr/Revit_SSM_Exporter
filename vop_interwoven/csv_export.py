@@ -788,7 +788,7 @@ def build_core_csv_row(view, doc, metrics, config, run_info, view_metadata=None)
 
     Commentary:
         ✔ 18 columns matching SSM core CSV
-        ✔ FromCache always False for now (no caching yet)
+        ✔ FromCache reflects cache-hit status from run metadata
     """
     # Extract view metadata if not provided
     if view_metadata is None:
@@ -852,7 +852,7 @@ def build_vop_csv_row(view, metrics, anno_metrics, config, run_info, view_metada
 
     Commentary:
         ✔ 48 columns (27 original + 7 strategy diagnostics + 14 category/method stats)
-        ✔ External cells (DWG, RVT) all 0 for now (no link support yet)
+        ✔ External cell fields are computed from element source_type metadata
         ✔ RowSource = "VOP_Interwoven_v1"
         ✔ Strategy diagnostics default to 0 if strategy_diag=None
         ✔ Category statistics (Phase 3.3) default to 0 if strategy_diag=None
