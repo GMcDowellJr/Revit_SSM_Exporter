@@ -10,21 +10,22 @@
 
 **Imports**
 - `math`
+- `os`
 
 **Definitions**
-- `Config` (class, L11)
-- `Config.__init__` (method, L57)
-- `Config.compute_adaptive_tile_size` (method, L307)
-- `Config.max_grid_cells_width` (method, L357)
-- `Config.max_grid_cells_height` (method, L366)
-- `Config.bounds_buffer_ft` (method, L375)
-- `Config.silhouette_tiny_thresh_ft` (method, L384)
-- `Config.silhouette_large_thresh_ft` (method, L393)
-- `Config.coarse_tess_max_verts` (method, L402)
-- `Config.get_silhouette_strategies` (method, L410)
-- `Config.__repr__` (method, L444)
-- `Config.to_dict` (method, L464)
-- `Config.from_dict` (method, L519)
+- `Config` (class, L12)
+- `Config.__init__` (method, L58)
+- `Config.compute_adaptive_tile_size` (method, L326)
+- `Config.max_grid_cells_width` (method, L376)
+- `Config.max_grid_cells_height` (method, L385)
+- `Config.bounds_buffer_ft` (method, L394)
+- `Config.silhouette_tiny_thresh_ft` (method, L403)
+- `Config.silhouette_large_thresh_ft` (method, L412)
+- `Config.coarse_tess_max_verts` (method, L421)
+- `Config.get_silhouette_strategies` (method, L429)
+- `Config.__repr__` (method, L463)
+- `Config.to_dict` (method, L483)
+- `Config.from_dict` (method, L542)
 
 ### `core/areal_extraction.py`
 
@@ -294,26 +295,30 @@
 - `_is_from_cache` (function, L18)
 - `compute_external_cell_metrics` (function, L39)
 - `compute_cell_metrics` (function, L108)
-- `compute_annotation_type_metrics` (function, L218)
-- `_coerce_view_id_int` (function, L273)
-- `_viewtype_name_from_value` (function, L314)
-- `_extract_view_unique_id` (function, L369)
-- `extract_view_metadata` (function, L401)
-- `compute_config_hash` (function, L718)
-- `compute_view_frame_hash` (function, L750)
-- `build_core_csv_row` (function, L772)
-- `build_vop_csv_row` (function, L825)
-- `build_occlusion_row` (function, L1050)
-- `export_occlusion_diagnostics_csv` (function, L1077)
-- `export_pipeline_to_csv` (function, L1111)
-- `get_core_csv_header` (function, L1513)
-- `get_vop_csv_header` (function, L1523)
-- `get_occlusion_csv_header` (function, L1537)
-- `view_result_to_occlusion_row` (function, L1550)
-- `get_perf_csv_header` (function, L1611)
-- `view_result_to_core_row` (function, L1628)
-- `view_result_to_vop_row` (function, L1757)
-- `view_result_to_perf_row` (function, L2034)
+- `_normalize_locked_metrics_for_legacy_csv` (function, L218)
+- `_get_metrics_triplet_from_view_result` (function, L256)
+- `compute_annotation_type_metrics` (function, L265)
+- `_coerce_view_id_int` (function, L320)
+- `_viewtype_name_from_value` (function, L361)
+- `_extract_view_unique_id` (function, L416)
+- `extract_view_metadata` (function, L448)
+- `compute_config_hash` (function, L765)
+- `compute_view_frame_hash` (function, L797)
+- `build_core_csv_row` (function, L819)
+- `build_vop_csv_row` (function, L877)
+- `build_occlusion_row` (function, L1102)
+- `export_occlusion_diagnostics_csv` (function, L1129)
+- `_get_manifest_csv_columns` (function, L1168)
+- `_build_manifest_vop_row_from_metrics` (function, L1176)
+- `export_pipeline_to_csv` (function, L1190)
+- `get_core_csv_header` (function, L1537)
+- `get_vop_csv_header` (function, L1548)
+- `get_occlusion_csv_header` (function, L1563)
+- `view_result_to_occlusion_row` (function, L1576)
+- `get_perf_csv_header` (function, L1637)
+- `view_result_to_core_row` (function, L1654)
+- `view_result_to_vop_row` (function, L1788)
+- `view_result_to_perf_row` (function, L2085)
 
 ### `diagnostics/occlusion_tracker.py`
 
@@ -396,6 +401,59 @@
 - `_ensure_dir` (function, L8)
 - `_append_csv_rows` (function, L20)
 
+### `metrics/final_state_scanner.py`
+
+**Imports**
+- `__future__:annotations`
+- `typing:Any,Callable`
+
+**Definitions**
+- `_get_source_type` (function, L12)
+- `_get_element_meta` (function, L33)
+- `_normalize_anno_type` (function, L52)
+- `_default_model_class_resolver` (function, L63)
+- `scan_final_state_totals` (function, L82)
+
+### `metrics/manifest_evaluator.py`
+
+**Imports**
+- `__future__:annotations`
+- `typing:Any`
+
+**Definitions**
+- `MetricsValidationError` (class, L8)
+- `_family_sum` (function, L50)
+- `_eval_expr` (function, L55)
+- `evaluate_metrics_manifest` (function, L118)
+
+### `metrics_manifest.py`
+
+**Imports**
+- `__future__:annotations`
+- `dataclasses:dataclass`
+- `hashlib`
+- `json`
+- `pathlib:Path`
+- `typing:Any`
+
+**Definitions**
+- `ManifestValidationError` (class, L21)
+- `MetricsManifest` (class, L26)
+- `ManifestLoader` (class, L35)
+- `ManifestLoader.load` (method, L39)
+- `_ensure_object` (function, L43)
+- `_ensure_string` (function, L49)
+- `_ensure_string_list` (function, L57)
+- `validate_manifest_schema_version` (function, L65)
+- `validate_manifest_top_level_keys` (function, L71)
+- `validate_requires_block` (function, L80)
+- `validate_families_block` (function, L90)
+- `validate_invariants_block` (function, L103)
+- `validate_outputs_block` (function, L127)
+- `canonicalize_manifest_json` (function, L138)
+- `compute_manifest_sha256` (function, L144)
+- `load_manifest_json` (function, L148)
+
 ### `pipeline.py`
 
 **Imports**
@@ -424,23 +482,24 @@
 - `_cfg_hash` (function, L254)
 - `_view_signature` (function, L270)
 - `_extract_view_identity_for_csv` (function, L381)
-- `process_document_views` (function, L495)
-- `init_view_raster` (function, L1404)
-- `_extract_view_summary` (function, L1556)
-- `rasterize_areal_loops` (function, L1594)
-- `render_model_front_to_back` (function, L1709)
-- `_is_supported_2d_view` (function, L3056)
-- `_intersects_crop_volume` (function, L3109)
-- `_should_skip_outside_view_volume` (function, L3135)
-- `_tiles_fully_covered_and_nearer` (function, L3174)
-- `_bin_elements_to_tiles` (function, L3212)
-- `_tile_has_depth_conflict` (function, L3244)
-- `_get_ambiguous_tiles` (function, L3278)
-- `_render_proxy_element` (function, L3308)
-- `_stamp_proxy_edges` (function, L3333)
-- `_mark_rect_center_cell` (function, L3350)
-- `_mark_thin_band_along_long_axis` (function, L3358)
-- `export_view_raster` (function, L3376)
+- `_compute_manifest_metrics_payload` (function, L495)
+- `process_document_views` (function, L538)
+- `init_view_raster` (function, L1449)
+- `_extract_view_summary` (function, L1601)
+- `rasterize_areal_loops` (function, L1639)
+- `render_model_front_to_back` (function, L1754)
+- `_is_supported_2d_view` (function, L3101)
+- `_intersects_crop_volume` (function, L3154)
+- `_should_skip_outside_view_volume` (function, L3180)
+- `_tiles_fully_covered_and_nearer` (function, L3219)
+- `_bin_elements_to_tiles` (function, L3257)
+- `_tile_has_depth_conflict` (function, L3289)
+- `_get_ambiguous_tiles` (function, L3323)
+- `_render_proxy_element` (function, L3353)
+- `_stamp_proxy_edges` (function, L3378)
+- `_mark_rect_center_cell` (function, L3395)
+- `_mark_thin_band_along_long_axis` (function, L3403)
+- `export_view_raster` (function, L3421)
 
 ### `png_export.py`
 

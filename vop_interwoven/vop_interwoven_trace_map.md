@@ -28,6 +28,12 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `ManifestValidationError`
+    - called from: metrics_manifest.py
+  - `MetricsManifest`
+    - called from: metrics_manifest.py
+  - `MetricsValidationError`
+    - called from: metrics/manifest_evaluator.py
   - `OBB`
     - called from: core/geometry.py
   - `OcclusionTracker`
@@ -56,6 +62,8 @@ Notes:
     - called from: csv_export.py
   - `build_vop_csv_row`
     - called from: csv_export.py
+  - `canonicalize_manifest_json`
+    - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
   - `classify_annotation`
@@ -78,16 +86,20 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_view_frame_hash`
-    - called from: csv_export.py
-  - `convex_hull_uv`
-    - called from: pipeline.py
-  - `estimate_depth_from_loops_or_bbox`
-    - called from: pipeline.py
-  - `estimate_depth_range_from_bbox`
-    - called from: pipeline.py
-  - `estimate_nearest_depth_from_bbox`
-    - called from: pipeline.py, revit/collection.py
+  - `compute_manifest_sha256`
+    - called from: metrics_manifest.py
+    - `compute_view_frame_hash`
+      - called from: csv_export.py
+    - `convex_hull_uv`
+      - called from: pipeline.py
+    - `estimate_depth_from_loops_or_bbox`
+      - called from: pipeline.py
+    - `estimate_depth_range_from_bbox`
+      - called from: pipeline.py
+    - `estimate_nearest_depth_from_bbox`
+      - called from: pipeline.py, revit/collection.py
+    - `evaluate_metrics_manifest`
+      - called from: pipeline.py
     - `excluded_bic_names_global`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `expand_host_link_import_model_elements`
@@ -129,7 +141,7 @@ Notes:
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
-      - called from: streaming.py
+      - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `included_bic_names_for_source`
@@ -140,6 +152,8 @@ Notes:
       - called from: revit/annotation.py, revit/view_basis.py
     - `iter_front_facing_planar_faces`
       - called from: core/silhouette.py
+    - `load_manifest_json`
+      - called from: csv_export.py, metrics_manifest.py, pipeline.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -190,6 +204,8 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `scan_final_state_totals`
+      - called from: pipeline.py
     - `select_dominant_face_per_plane_group`
       - called from: core/silhouette.py
     - `select_top_plane_groups`
@@ -210,6 +226,18 @@ Notes:
       - called from: revit/view_basis.py
     - `tier_a_is_ambiguous`
       - called from: pipeline.py
+    - `validate_families_block`
+      - called from: metrics_manifest.py
+    - `validate_invariants_block`
+      - called from: metrics_manifest.py
+    - `validate_manifest_schema_version`
+      - called from: metrics_manifest.py
+    - `validate_manifest_top_level_keys`
+      - called from: metrics_manifest.py
+    - `validate_outputs_block`
+      - called from: metrics_manifest.py
+    - `validate_requires_block`
+      - called from: metrics_manifest.py
     - `view_result_to_core_row`
       - called from: streaming.py
     - `view_result_to_occlusion_row`
@@ -245,6 +273,12 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `ManifestValidationError`
+    - called from: metrics_manifest.py
+  - `MetricsManifest`
+    - called from: metrics_manifest.py
+  - `MetricsValidationError`
+    - called from: metrics/manifest_evaluator.py
   - `OBB`
     - called from: core/geometry.py
   - `OcclusionTracker`
@@ -273,6 +307,8 @@ Notes:
     - called from: csv_export.py
   - `build_vop_csv_row`
     - called from: csv_export.py
+  - `canonicalize_manifest_json`
+    - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
   - `classify_annotation`
@@ -295,16 +331,20 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_view_frame_hash`
-    - called from: csv_export.py
-  - `convex_hull_uv`
-    - called from: pipeline.py
-  - `estimate_depth_from_loops_or_bbox`
-    - called from: pipeline.py
-  - `estimate_depth_range_from_bbox`
-    - called from: pipeline.py
-  - `estimate_nearest_depth_from_bbox`
-    - called from: pipeline.py, revit/collection.py
+  - `compute_manifest_sha256`
+    - called from: metrics_manifest.py
+    - `compute_view_frame_hash`
+      - called from: csv_export.py
+    - `convex_hull_uv`
+      - called from: pipeline.py
+    - `estimate_depth_from_loops_or_bbox`
+      - called from: pipeline.py
+    - `estimate_depth_range_from_bbox`
+      - called from: pipeline.py
+    - `estimate_nearest_depth_from_bbox`
+      - called from: pipeline.py, revit/collection.py
+    - `evaluate_metrics_manifest`
+      - called from: pipeline.py
     - `excluded_bic_names_global`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `expand_host_link_import_model_elements`
@@ -346,7 +386,7 @@ Notes:
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
-      - called from: streaming.py
+      - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `included_bic_names_for_source`
@@ -357,6 +397,8 @@ Notes:
       - called from: revit/annotation.py, revit/view_basis.py
     - `iter_front_facing_planar_faces`
       - called from: core/silhouette.py
+    - `load_manifest_json`
+      - called from: csv_export.py, metrics_manifest.py, pipeline.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -407,6 +449,8 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `scan_final_state_totals`
+      - called from: pipeline.py
     - `select_dominant_face_per_plane_group`
       - called from: core/silhouette.py
     - `select_top_plane_groups`
@@ -427,6 +471,18 @@ Notes:
       - called from: revit/view_basis.py
     - `tier_a_is_ambiguous`
       - called from: pipeline.py
+    - `validate_families_block`
+      - called from: metrics_manifest.py
+    - `validate_invariants_block`
+      - called from: metrics_manifest.py
+    - `validate_manifest_schema_version`
+      - called from: metrics_manifest.py
+    - `validate_manifest_top_level_keys`
+      - called from: metrics_manifest.py
+    - `validate_outputs_block`
+      - called from: metrics_manifest.py
+    - `validate_requires_block`
+      - called from: metrics_manifest.py
     - `view_result_to_core_row`
       - called from: streaming.py
     - `view_result_to_occlusion_row`
@@ -462,6 +518,12 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `ManifestValidationError`
+    - called from: metrics_manifest.py
+  - `MetricsManifest`
+    - called from: metrics_manifest.py
+  - `MetricsValidationError`
+    - called from: metrics/manifest_evaluator.py
   - `OBB`
     - called from: core/geometry.py
   - `OcclusionTracker`
@@ -490,6 +552,8 @@ Notes:
     - called from: csv_export.py
   - `build_vop_csv_row`
     - called from: csv_export.py
+  - `canonicalize_manifest_json`
+    - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
   - `classify_annotation`
@@ -512,16 +576,20 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_view_frame_hash`
-    - called from: csv_export.py
-  - `convex_hull_uv`
-    - called from: pipeline.py
-  - `estimate_depth_from_loops_or_bbox`
-    - called from: pipeline.py
-  - `estimate_depth_range_from_bbox`
-    - called from: pipeline.py
-  - `estimate_nearest_depth_from_bbox`
-    - called from: pipeline.py, revit/collection.py
+  - `compute_manifest_sha256`
+    - called from: metrics_manifest.py
+    - `compute_view_frame_hash`
+      - called from: csv_export.py
+    - `convex_hull_uv`
+      - called from: pipeline.py
+    - `estimate_depth_from_loops_or_bbox`
+      - called from: pipeline.py
+    - `estimate_depth_range_from_bbox`
+      - called from: pipeline.py
+    - `estimate_nearest_depth_from_bbox`
+      - called from: pipeline.py, revit/collection.py
+    - `evaluate_metrics_manifest`
+      - called from: pipeline.py
     - `excluded_bic_names_global`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `expand_host_link_import_model_elements`
@@ -563,7 +631,7 @@ Notes:
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
-      - called from: streaming.py
+      - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `included_bic_names_for_source`
@@ -574,6 +642,8 @@ Notes:
       - called from: revit/annotation.py, revit/view_basis.py
     - `iter_front_facing_planar_faces`
       - called from: core/silhouette.py
+    - `load_manifest_json`
+      - called from: csv_export.py, metrics_manifest.py, pipeline.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -624,6 +694,8 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `scan_final_state_totals`
+      - called from: pipeline.py
     - `select_dominant_face_per_plane_group`
       - called from: core/silhouette.py
     - `select_top_plane_groups`
@@ -644,6 +716,18 @@ Notes:
       - called from: revit/view_basis.py
     - `tier_a_is_ambiguous`
       - called from: pipeline.py
+    - `validate_families_block`
+      - called from: metrics_manifest.py
+    - `validate_invariants_block`
+      - called from: metrics_manifest.py
+    - `validate_manifest_schema_version`
+      - called from: metrics_manifest.py
+    - `validate_manifest_top_level_keys`
+      - called from: metrics_manifest.py
+    - `validate_outputs_block`
+      - called from: metrics_manifest.py
+    - `validate_requires_block`
+      - called from: metrics_manifest.py
     - `view_result_to_core_row`
       - called from: streaming.py
     - `view_result_to_occlusion_row`
@@ -679,6 +763,12 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `ManifestValidationError`
+    - called from: metrics_manifest.py
+  - `MetricsManifest`
+    - called from: metrics_manifest.py
+  - `MetricsValidationError`
+    - called from: metrics/manifest_evaluator.py
   - `OBB`
     - called from: core/geometry.py
   - `OcclusionTracker`
@@ -707,6 +797,8 @@ Notes:
     - called from: csv_export.py
   - `build_vop_csv_row`
     - called from: csv_export.py
+  - `canonicalize_manifest_json`
+    - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
   - `classify_annotation`
@@ -729,16 +821,20 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_view_frame_hash`
-    - called from: csv_export.py
-  - `convex_hull_uv`
-    - called from: pipeline.py
-  - `estimate_depth_from_loops_or_bbox`
-    - called from: pipeline.py
-  - `estimate_depth_range_from_bbox`
-    - called from: pipeline.py
-  - `estimate_nearest_depth_from_bbox`
-    - called from: pipeline.py, revit/collection.py
+  - `compute_manifest_sha256`
+    - called from: metrics_manifest.py
+    - `compute_view_frame_hash`
+      - called from: csv_export.py
+    - `convex_hull_uv`
+      - called from: pipeline.py
+    - `estimate_depth_from_loops_or_bbox`
+      - called from: pipeline.py
+    - `estimate_depth_range_from_bbox`
+      - called from: pipeline.py
+    - `estimate_nearest_depth_from_bbox`
+      - called from: pipeline.py, revit/collection.py
+    - `evaluate_metrics_manifest`
+      - called from: pipeline.py
     - `excluded_bic_names_global`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `expand_host_link_import_model_elements`
@@ -780,7 +876,7 @@ Notes:
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
-      - called from: streaming.py
+      - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `included_bic_names_for_source`
@@ -791,6 +887,8 @@ Notes:
       - called from: revit/annotation.py, revit/view_basis.py
     - `iter_front_facing_planar_faces`
       - called from: core/silhouette.py
+    - `load_manifest_json`
+      - called from: csv_export.py, metrics_manifest.py, pipeline.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -841,6 +939,8 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `scan_final_state_totals`
+      - called from: pipeline.py
     - `select_dominant_face_per_plane_group`
       - called from: core/silhouette.py
     - `select_top_plane_groups`
@@ -861,6 +961,18 @@ Notes:
       - called from: revit/view_basis.py
     - `tier_a_is_ambiguous`
       - called from: pipeline.py
+    - `validate_families_block`
+      - called from: metrics_manifest.py
+    - `validate_invariants_block`
+      - called from: metrics_manifest.py
+    - `validate_manifest_schema_version`
+      - called from: metrics_manifest.py
+    - `validate_manifest_top_level_keys`
+      - called from: metrics_manifest.py
+    - `validate_outputs_block`
+      - called from: metrics_manifest.py
+    - `validate_requires_block`
+      - called from: metrics_manifest.py
     - `view_result_to_core_row`
       - called from: streaming.py
     - `view_result_to_occlusion_row`
@@ -896,6 +1008,12 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `ManifestValidationError`
+    - called from: metrics_manifest.py
+  - `MetricsManifest`
+    - called from: metrics_manifest.py
+  - `MetricsValidationError`
+    - called from: metrics/manifest_evaluator.py
   - `OBB`
     - called from: core/geometry.py
   - `OcclusionTracker`
@@ -924,6 +1042,8 @@ Notes:
     - called from: csv_export.py
   - `build_vop_csv_row`
     - called from: csv_export.py
+  - `canonicalize_manifest_json`
+    - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
   - `classify_annotation`
@@ -946,16 +1066,20 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_view_frame_hash`
-    - called from: csv_export.py
-  - `convex_hull_uv`
-    - called from: pipeline.py
-  - `estimate_depth_from_loops_or_bbox`
-    - called from: pipeline.py
-  - `estimate_depth_range_from_bbox`
-    - called from: pipeline.py
-  - `estimate_nearest_depth_from_bbox`
-    - called from: pipeline.py, revit/collection.py
+  - `compute_manifest_sha256`
+    - called from: metrics_manifest.py
+    - `compute_view_frame_hash`
+      - called from: csv_export.py
+    - `convex_hull_uv`
+      - called from: pipeline.py
+    - `estimate_depth_from_loops_or_bbox`
+      - called from: pipeline.py
+    - `estimate_depth_range_from_bbox`
+      - called from: pipeline.py
+    - `estimate_nearest_depth_from_bbox`
+      - called from: pipeline.py, revit/collection.py
+    - `evaluate_metrics_manifest`
+      - called from: pipeline.py
     - `excluded_bic_names_global`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `expand_host_link_import_model_elements`
@@ -997,7 +1121,7 @@ Notes:
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
-      - called from: streaming.py
+      - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `included_bic_names_for_source`
@@ -1008,6 +1132,8 @@ Notes:
       - called from: revit/annotation.py, revit/view_basis.py
     - `iter_front_facing_planar_faces`
       - called from: core/silhouette.py
+    - `load_manifest_json`
+      - called from: csv_export.py, metrics_manifest.py, pipeline.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -1060,6 +1186,8 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `scan_final_state_totals`
+      - called from: pipeline.py
     - `select_dominant_face_per_plane_group`
       - called from: core/silhouette.py
     - `select_top_plane_groups`
@@ -1080,6 +1208,18 @@ Notes:
       - called from: revit/view_basis.py
     - `tier_a_is_ambiguous`
       - called from: pipeline.py
+    - `validate_families_block`
+      - called from: metrics_manifest.py
+    - `validate_invariants_block`
+      - called from: metrics_manifest.py
+    - `validate_manifest_schema_version`
+      - called from: metrics_manifest.py
+    - `validate_manifest_top_level_keys`
+      - called from: metrics_manifest.py
+    - `validate_outputs_block`
+      - called from: metrics_manifest.py
+    - `validate_requires_block`
+      - called from: metrics_manifest.py
     - `view_result_to_core_row`
       - called from: streaming.py
     - `view_result_to_occlusion_row`
@@ -1093,7 +1233,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `process_document_views` (pipeline.py:L495)
+## Trace: `process_document_views` (pipeline.py:L538)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1115,6 +1255,12 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `ManifestValidationError`
+    - called from: metrics_manifest.py
+  - `MetricsManifest`
+    - called from: metrics_manifest.py
+  - `MetricsValidationError`
+    - called from: metrics/manifest_evaluator.py
   - `OBB`
     - called from: core/geometry.py
   - `OcclusionTracker`
@@ -1143,6 +1289,8 @@ Notes:
     - called from: csv_export.py
   - `build_vop_csv_row`
     - called from: csv_export.py
+  - `canonicalize_manifest_json`
+    - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
   - `classify_annotation`
@@ -1165,16 +1313,20 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_view_frame_hash`
-    - called from: csv_export.py
-  - `convex_hull_uv`
-    - called from: pipeline.py
-  - `estimate_depth_from_loops_or_bbox`
-    - called from: pipeline.py
-  - `estimate_depth_range_from_bbox`
-    - called from: pipeline.py
-  - `estimate_nearest_depth_from_bbox`
-    - called from: pipeline.py, revit/collection.py
+  - `compute_manifest_sha256`
+    - called from: metrics_manifest.py
+    - `compute_view_frame_hash`
+      - called from: csv_export.py
+    - `convex_hull_uv`
+      - called from: pipeline.py
+    - `estimate_depth_from_loops_or_bbox`
+      - called from: pipeline.py
+    - `estimate_depth_range_from_bbox`
+      - called from: pipeline.py
+    - `estimate_nearest_depth_from_bbox`
+      - called from: pipeline.py, revit/collection.py
+    - `evaluate_metrics_manifest`
+      - called from: pipeline.py
     - `excluded_bic_names_global`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `expand_host_link_import_model_elements`
@@ -1216,7 +1368,7 @@ Notes:
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
-      - called from: streaming.py
+      - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `included_bic_names_for_source`
@@ -1227,6 +1379,8 @@ Notes:
       - called from: revit/annotation.py, revit/view_basis.py
     - `iter_front_facing_planar_faces`
       - called from: core/silhouette.py
+    - `load_manifest_json`
+      - called from: csv_export.py, metrics_manifest.py, pipeline.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -1277,6 +1431,8 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `scan_final_state_totals`
+      - called from: pipeline.py
     - `select_dominant_face_per_plane_group`
       - called from: core/silhouette.py
     - `select_top_plane_groups`
@@ -1297,6 +1453,18 @@ Notes:
       - called from: revit/view_basis.py
     - `tier_a_is_ambiguous`
       - called from: pipeline.py
+    - `validate_families_block`
+      - called from: metrics_manifest.py
+    - `validate_invariants_block`
+      - called from: metrics_manifest.py
+    - `validate_manifest_schema_version`
+      - called from: metrics_manifest.py
+    - `validate_manifest_top_level_keys`
+      - called from: metrics_manifest.py
+    - `validate_outputs_block`
+      - called from: metrics_manifest.py
+    - `validate_requires_block`
+      - called from: metrics_manifest.py
     - `view_result_to_core_row`
       - called from: streaming.py
     - `view_result_to_occlusion_row`
@@ -1332,6 +1500,12 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `ManifestValidationError`
+    - called from: metrics_manifest.py
+  - `MetricsManifest`
+    - called from: metrics_manifest.py
+  - `MetricsValidationError`
+    - called from: metrics/manifest_evaluator.py
   - `OBB`
     - called from: core/geometry.py
   - `OcclusionTracker`
@@ -1360,6 +1534,8 @@ Notes:
     - called from: csv_export.py
   - `build_vop_csv_row`
     - called from: csv_export.py
+  - `canonicalize_manifest_json`
+    - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
   - `classify_annotation`
@@ -1382,16 +1558,20 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_view_frame_hash`
-    - called from: csv_export.py
-  - `convex_hull_uv`
-    - called from: pipeline.py
-  - `estimate_depth_from_loops_or_bbox`
-    - called from: pipeline.py
-  - `estimate_depth_range_from_bbox`
-    - called from: pipeline.py
-  - `estimate_nearest_depth_from_bbox`
-    - called from: pipeline.py, revit/collection.py
+  - `compute_manifest_sha256`
+    - called from: metrics_manifest.py
+    - `compute_view_frame_hash`
+      - called from: csv_export.py
+    - `convex_hull_uv`
+      - called from: pipeline.py
+    - `estimate_depth_from_loops_or_bbox`
+      - called from: pipeline.py
+    - `estimate_depth_range_from_bbox`
+      - called from: pipeline.py
+    - `estimate_nearest_depth_from_bbox`
+      - called from: pipeline.py, revit/collection.py
+    - `evaluate_metrics_manifest`
+      - called from: pipeline.py
     - `excluded_bic_names_global`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `expand_host_link_import_model_elements`
@@ -1433,7 +1613,7 @@ Notes:
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
-      - called from: streaming.py
+      - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `included_bic_names_for_source`
@@ -1444,6 +1624,8 @@ Notes:
       - called from: revit/annotation.py, revit/view_basis.py
     - `iter_front_facing_planar_faces`
       - called from: core/silhouette.py
+    - `load_manifest_json`
+      - called from: csv_export.py, metrics_manifest.py, pipeline.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -1494,6 +1676,8 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `scan_final_state_totals`
+      - called from: pipeline.py
     - `select_dominant_face_per_plane_group`
       - called from: core/silhouette.py
     - `select_top_plane_groups`
@@ -1514,6 +1698,18 @@ Notes:
       - called from: revit/view_basis.py
     - `tier_a_is_ambiguous`
       - called from: pipeline.py
+    - `validate_families_block`
+      - called from: metrics_manifest.py
+    - `validate_invariants_block`
+      - called from: metrics_manifest.py
+    - `validate_manifest_schema_version`
+      - called from: metrics_manifest.py
+    - `validate_manifest_top_level_keys`
+      - called from: metrics_manifest.py
+    - `validate_outputs_block`
+      - called from: metrics_manifest.py
+    - `validate_requires_block`
+      - called from: metrics_manifest.py
     - `view_result_to_core_row`
       - called from: streaming.py
     - `view_result_to_occlusion_row`
@@ -1527,7 +1723,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `render_model_front_to_back` (pipeline.py:L1709)
+## Trace: `render_model_front_to_back` (pipeline.py:L1754)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1549,6 +1745,12 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `ManifestValidationError`
+    - called from: metrics_manifest.py
+  - `MetricsManifest`
+    - called from: metrics_manifest.py
+  - `MetricsValidationError`
+    - called from: metrics/manifest_evaluator.py
   - `OBB`
     - called from: core/geometry.py
   - `OcclusionTracker`
@@ -1577,6 +1779,8 @@ Notes:
     - called from: csv_export.py
   - `build_vop_csv_row`
     - called from: csv_export.py
+  - `canonicalize_manifest_json`
+    - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
   - `classify_annotation`
@@ -1599,16 +1803,20 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_view_frame_hash`
-    - called from: csv_export.py
-  - `convex_hull_uv`
-    - called from: pipeline.py
-  - `estimate_depth_from_loops_or_bbox`
-    - called from: pipeline.py
-  - `estimate_depth_range_from_bbox`
-    - called from: pipeline.py
-  - `estimate_nearest_depth_from_bbox`
-    - called from: pipeline.py, revit/collection.py
+  - `compute_manifest_sha256`
+    - called from: metrics_manifest.py
+    - `compute_view_frame_hash`
+      - called from: csv_export.py
+    - `convex_hull_uv`
+      - called from: pipeline.py
+    - `estimate_depth_from_loops_or_bbox`
+      - called from: pipeline.py
+    - `estimate_depth_range_from_bbox`
+      - called from: pipeline.py
+    - `estimate_nearest_depth_from_bbox`
+      - called from: pipeline.py, revit/collection.py
+    - `evaluate_metrics_manifest`
+      - called from: pipeline.py
     - `excluded_bic_names_global`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `expand_host_link_import_model_elements`
@@ -1650,7 +1858,7 @@ Notes:
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
-      - called from: streaming.py
+      - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `included_bic_names_for_source`
@@ -1661,6 +1869,8 @@ Notes:
       - called from: revit/annotation.py, revit/view_basis.py
     - `iter_front_facing_planar_faces`
       - called from: core/silhouette.py
+    - `load_manifest_json`
+      - called from: csv_export.py, metrics_manifest.py, pipeline.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -1711,6 +1921,8 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `scan_final_state_totals`
+      - called from: pipeline.py
     - `select_dominant_face_per_plane_group`
       - called from: core/silhouette.py
     - `select_top_plane_groups`
@@ -1731,6 +1943,18 @@ Notes:
       - called from: revit/view_basis.py
     - `tier_a_is_ambiguous`
       - called from: pipeline.py
+    - `validate_families_block`
+      - called from: metrics_manifest.py
+    - `validate_invariants_block`
+      - called from: metrics_manifest.py
+    - `validate_manifest_schema_version`
+      - called from: metrics_manifest.py
+    - `validate_manifest_top_level_keys`
+      - called from: metrics_manifest.py
+    - `validate_outputs_block`
+      - called from: metrics_manifest.py
+    - `validate_requires_block`
+      - called from: metrics_manifest.py
     - `view_result_to_core_row`
       - called from: streaming.py
     - `view_result_to_occlusion_row`
@@ -1744,7 +1968,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `init_view_raster` (pipeline.py:L1404)
+## Trace: `init_view_raster` (pipeline.py:L1449)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1766,6 +1990,12 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `ManifestValidationError`
+    - called from: metrics_manifest.py
+  - `MetricsManifest`
+    - called from: metrics_manifest.py
+  - `MetricsValidationError`
+    - called from: metrics/manifest_evaluator.py
   - `OBB`
     - called from: core/geometry.py
   - `OcclusionTracker`
@@ -1794,6 +2024,8 @@ Notes:
     - called from: csv_export.py
   - `build_vop_csv_row`
     - called from: csv_export.py
+  - `canonicalize_manifest_json`
+    - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
   - `classify_annotation`
@@ -1816,16 +2048,20 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_view_frame_hash`
-    - called from: csv_export.py
-  - `convex_hull_uv`
-    - called from: pipeline.py
-  - `estimate_depth_from_loops_or_bbox`
-    - called from: pipeline.py
-  - `estimate_depth_range_from_bbox`
-    - called from: pipeline.py
-  - `estimate_nearest_depth_from_bbox`
-    - called from: pipeline.py, revit/collection.py
+  - `compute_manifest_sha256`
+    - called from: metrics_manifest.py
+    - `compute_view_frame_hash`
+      - called from: csv_export.py
+    - `convex_hull_uv`
+      - called from: pipeline.py
+    - `estimate_depth_from_loops_or_bbox`
+      - called from: pipeline.py
+    - `estimate_depth_range_from_bbox`
+      - called from: pipeline.py
+    - `estimate_nearest_depth_from_bbox`
+      - called from: pipeline.py, revit/collection.py
+    - `evaluate_metrics_manifest`
+      - called from: pipeline.py
     - `excluded_bic_names_global`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `expand_host_link_import_model_elements`
@@ -1867,7 +2103,7 @@ Notes:
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
-      - called from: streaming.py
+      - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `included_bic_names_for_source`
@@ -1876,6 +2112,8 @@ Notes:
       - called from: revit/annotation.py, revit/view_basis.py
     - `iter_front_facing_planar_faces`
       - called from: core/silhouette.py
+    - `load_manifest_json`
+      - called from: csv_export.py, metrics_manifest.py, pipeline.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -1928,6 +2166,8 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `scan_final_state_totals`
+      - called from: pipeline.py
     - `select_dominant_face_per_plane_group`
       - called from: core/silhouette.py
     - `select_top_plane_groups`
@@ -1948,6 +2188,18 @@ Notes:
       - called from: revit/view_basis.py
     - `tier_a_is_ambiguous`
       - called from: pipeline.py
+    - `validate_families_block`
+      - called from: metrics_manifest.py
+    - `validate_invariants_block`
+      - called from: metrics_manifest.py
+    - `validate_manifest_schema_version`
+      - called from: metrics_manifest.py
+    - `validate_manifest_top_level_keys`
+      - called from: metrics_manifest.py
+    - `validate_outputs_block`
+      - called from: metrics_manifest.py
+    - `validate_requires_block`
+      - called from: metrics_manifest.py
     - `view_result_to_core_row`
       - called from: streaming.py
     - `view_result_to_occlusion_row`
@@ -1983,6 +2235,12 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `ManifestValidationError`
+    - called from: metrics_manifest.py
+  - `MetricsManifest`
+    - called from: metrics_manifest.py
+  - `MetricsValidationError`
+    - called from: metrics/manifest_evaluator.py
   - `OBB`
     - called from: core/geometry.py
   - `OcclusionTracker`
@@ -2009,6 +2267,8 @@ Notes:
     - called from: csv_export.py
   - `build_vop_csv_row`
     - called from: csv_export.py
+  - `canonicalize_manifest_json`
+    - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
   - `classify_annotation`
@@ -2031,18 +2291,22 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
+  - `compute_manifest_sha256`
+    - called from: metrics_manifest.py
   - `compute_view_frame_hash`
     - called from: csv_export.py
-  - `convex_hull_uv`
-    - called from: pipeline.py
-  - `estimate_depth_from_loops_or_bbox`
-    - called from: pipeline.py
-  - `estimate_depth_range_from_bbox`
-    - called from: pipeline.py
-  - `estimate_nearest_depth_from_bbox`
-    - called from: pipeline.py, revit/collection.py
-  - `excluded_bic_names_global`
-    - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `convex_hull_uv`
+      - called from: pipeline.py
+    - `estimate_depth_from_loops_or_bbox`
+      - called from: pipeline.py
+    - `estimate_depth_range_from_bbox`
+      - called from: pipeline.py
+    - `estimate_nearest_depth_from_bbox`
+      - called from: pipeline.py, revit/collection.py
+    - `evaluate_metrics_manifest`
+      - called from: pipeline.py
+    - `excluded_bic_names_global`
+      - called from: revit/collection_policy.py, revit/linked_documents.py
     - `expand_host_link_import_model_elements`
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
@@ -2082,7 +2346,7 @@ Notes:
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
-      - called from: streaming.py
+      - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `included_bic_names_for_source`
@@ -2093,6 +2357,8 @@ Notes:
       - called from: revit/annotation.py, revit/view_basis.py
     - `iter_front_facing_planar_faces`
       - called from: core/silhouette.py
+    - `load_manifest_json`
+      - called from: csv_export.py, metrics_manifest.py, pipeline.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -2145,6 +2411,8 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `scan_final_state_totals`
+      - called from: pipeline.py
     - `select_dominant_face_per_plane_group`
       - called from: core/silhouette.py
     - `select_top_plane_groups`
@@ -2165,6 +2433,18 @@ Notes:
       - called from: revit/view_basis.py
     - `tier_a_is_ambiguous`
       - called from: pipeline.py
+    - `validate_families_block`
+      - called from: metrics_manifest.py
+    - `validate_invariants_block`
+      - called from: metrics_manifest.py
+    - `validate_manifest_schema_version`
+      - called from: metrics_manifest.py
+    - `validate_manifest_top_level_keys`
+      - called from: metrics_manifest.py
+    - `validate_outputs_block`
+      - called from: metrics_manifest.py
+    - `validate_requires_block`
+      - called from: metrics_manifest.py
     - `view_result_to_core_row`
       - called from: streaming.py
     - `view_result_to_occlusion_row`
@@ -2200,6 +2480,12 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `ManifestValidationError`
+    - called from: metrics_manifest.py
+  - `MetricsManifest`
+    - called from: metrics_manifest.py
+  - `MetricsValidationError`
+    - called from: metrics/manifest_evaluator.py
   - `OBB`
     - called from: core/geometry.py
   - `OcclusionTracker`
@@ -2228,6 +2514,8 @@ Notes:
     - called from: csv_export.py
   - `build_vop_csv_row`
     - called from: csv_export.py
+  - `canonicalize_manifest_json`
+    - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
   - `classify_annotation`
@@ -2250,16 +2538,20 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_view_frame_hash`
-    - called from: csv_export.py
-  - `convex_hull_uv`
-    - called from: pipeline.py
-  - `estimate_depth_from_loops_or_bbox`
-    - called from: pipeline.py
-  - `estimate_depth_range_from_bbox`
-    - called from: pipeline.py
-  - `estimate_nearest_depth_from_bbox`
-    - called from: pipeline.py, revit/collection.py
+  - `compute_manifest_sha256`
+    - called from: metrics_manifest.py
+    - `compute_view_frame_hash`
+      - called from: csv_export.py
+    - `convex_hull_uv`
+      - called from: pipeline.py
+    - `estimate_depth_from_loops_or_bbox`
+      - called from: pipeline.py
+    - `estimate_depth_range_from_bbox`
+      - called from: pipeline.py
+    - `estimate_nearest_depth_from_bbox`
+      - called from: pipeline.py, revit/collection.py
+    - `evaluate_metrics_manifest`
+      - called from: pipeline.py
     - `excluded_bic_names_global`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `expand_host_link_import_model_elements`
@@ -2301,7 +2593,7 @@ Notes:
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
-      - called from: streaming.py
+      - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `included_bic_names_for_source`
@@ -2312,6 +2604,8 @@ Notes:
       - called from: revit/annotation.py, revit/view_basis.py
     - `iter_front_facing_planar_faces`
       - called from: core/silhouette.py
+    - `load_manifest_json`
+      - called from: csv_export.py, metrics_manifest.py, pipeline.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -2362,6 +2656,8 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `scan_final_state_totals`
+      - called from: pipeline.py
     - `select_dominant_face_per_plane_group`
       - called from: core/silhouette.py
     - `select_top_plane_groups`
@@ -2382,6 +2678,18 @@ Notes:
       - called from: revit/view_basis.py
     - `tier_a_is_ambiguous`
       - called from: pipeline.py
+    - `validate_families_block`
+      - called from: metrics_manifest.py
+    - `validate_invariants_block`
+      - called from: metrics_manifest.py
+    - `validate_manifest_schema_version`
+      - called from: metrics_manifest.py
+    - `validate_manifest_top_level_keys`
+      - called from: metrics_manifest.py
+    - `validate_outputs_block`
+      - called from: metrics_manifest.py
+    - `validate_requires_block`
+      - called from: metrics_manifest.py
     - `view_result_to_core_row`
       - called from: streaming.py
     - `view_result_to_occlusion_row`
@@ -2417,6 +2725,12 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `ManifestValidationError`
+    - called from: metrics_manifest.py
+  - `MetricsManifest`
+    - called from: metrics_manifest.py
+  - `MetricsValidationError`
+    - called from: metrics/manifest_evaluator.py
   - `OBB`
     - called from: core/geometry.py
   - `OcclusionTracker`
@@ -2445,6 +2759,8 @@ Notes:
     - called from: csv_export.py
   - `build_vop_csv_row`
     - called from: csv_export.py
+  - `canonicalize_manifest_json`
+    - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
   - `classify_annotation`
@@ -2467,16 +2783,20 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_view_frame_hash`
-    - called from: csv_export.py
-  - `convex_hull_uv`
-    - called from: pipeline.py
-  - `estimate_depth_from_loops_or_bbox`
-    - called from: pipeline.py
-  - `estimate_depth_range_from_bbox`
-    - called from: pipeline.py
-  - `estimate_nearest_depth_from_bbox`
-    - called from: pipeline.py, revit/collection.py
+  - `compute_manifest_sha256`
+    - called from: metrics_manifest.py
+    - `compute_view_frame_hash`
+      - called from: csv_export.py
+    - `convex_hull_uv`
+      - called from: pipeline.py
+    - `estimate_depth_from_loops_or_bbox`
+      - called from: pipeline.py
+    - `estimate_depth_range_from_bbox`
+      - called from: pipeline.py
+    - `estimate_nearest_depth_from_bbox`
+      - called from: pipeline.py, revit/collection.py
+    - `evaluate_metrics_manifest`
+      - called from: pipeline.py
     - `excluded_bic_names_global`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `expand_host_link_import_model_elements`
@@ -2518,7 +2838,7 @@ Notes:
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
-      - called from: streaming.py
+      - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `included_bic_names_for_source`
@@ -2529,6 +2849,8 @@ Notes:
       - called from: revit/annotation.py, revit/view_basis.py
     - `iter_front_facing_planar_faces`
       - called from: core/silhouette.py
+    - `load_manifest_json`
+      - called from: csv_export.py, metrics_manifest.py, pipeline.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -2579,6 +2901,8 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `scan_final_state_totals`
+      - called from: pipeline.py
     - `select_dominant_face_per_plane_group`
       - called from: core/silhouette.py
     - `select_top_plane_groups`
@@ -2599,6 +2923,18 @@ Notes:
       - called from: revit/view_basis.py
     - `tier_a_is_ambiguous`
       - called from: pipeline.py
+    - `validate_families_block`
+      - called from: metrics_manifest.py
+    - `validate_invariants_block`
+      - called from: metrics_manifest.py
+    - `validate_manifest_schema_version`
+      - called from: metrics_manifest.py
+    - `validate_manifest_top_level_keys`
+      - called from: metrics_manifest.py
+    - `validate_outputs_block`
+      - called from: metrics_manifest.py
+    - `validate_requires_block`
+      - called from: metrics_manifest.py
     - `view_result_to_core_row`
       - called from: streaming.py
     - `view_result_to_occlusion_row`
@@ -2634,6 +2970,12 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `ManifestValidationError`
+    - called from: metrics_manifest.py
+  - `MetricsManifest`
+    - called from: metrics_manifest.py
+  - `MetricsValidationError`
+    - called from: metrics/manifest_evaluator.py
   - `OBB`
     - called from: core/geometry.py
   - `OcclusionTracker`
@@ -2662,6 +3004,8 @@ Notes:
     - called from: csv_export.py
   - `build_vop_csv_row`
     - called from: csv_export.py
+  - `canonicalize_manifest_json`
+    - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
   - `classify_annotation`
@@ -2684,16 +3028,20 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_view_frame_hash`
-    - called from: csv_export.py
-  - `convex_hull_uv`
-    - called from: pipeline.py
-  - `estimate_depth_from_loops_or_bbox`
-    - called from: pipeline.py
-  - `estimate_depth_range_from_bbox`
-    - called from: pipeline.py
-  - `estimate_nearest_depth_from_bbox`
-    - called from: pipeline.py, revit/collection.py
+  - `compute_manifest_sha256`
+    - called from: metrics_manifest.py
+    - `compute_view_frame_hash`
+      - called from: csv_export.py
+    - `convex_hull_uv`
+      - called from: pipeline.py
+    - `estimate_depth_from_loops_or_bbox`
+      - called from: pipeline.py
+    - `estimate_depth_range_from_bbox`
+      - called from: pipeline.py
+    - `estimate_nearest_depth_from_bbox`
+      - called from: pipeline.py, revit/collection.py
+    - `evaluate_metrics_manifest`
+      - called from: pipeline.py
     - `excluded_bic_names_global`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `expand_host_link_import_model_elements`
@@ -2735,7 +3083,7 @@ Notes:
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
-      - called from: streaming.py
+      - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `included_bic_names_for_source`
@@ -2746,6 +3094,8 @@ Notes:
       - called from: revit/annotation.py, revit/view_basis.py
     - `iter_front_facing_planar_faces`
       - called from: core/silhouette.py
+    - `load_manifest_json`
+      - called from: csv_export.py, metrics_manifest.py, pipeline.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -2796,6 +3146,8 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `scan_final_state_totals`
+      - called from: pipeline.py
     - `select_dominant_face_per_plane_group`
       - called from: core/silhouette.py
     - `select_top_plane_groups`
@@ -2816,6 +3168,18 @@ Notes:
       - called from: revit/view_basis.py
     - `tier_a_is_ambiguous`
       - called from: pipeline.py
+    - `validate_families_block`
+      - called from: metrics_manifest.py
+    - `validate_invariants_block`
+      - called from: metrics_manifest.py
+    - `validate_manifest_schema_version`
+      - called from: metrics_manifest.py
+    - `validate_manifest_top_level_keys`
+      - called from: metrics_manifest.py
+    - `validate_outputs_block`
+      - called from: metrics_manifest.py
+    - `validate_requires_block`
+      - called from: metrics_manifest.py
     - `view_result_to_core_row`
       - called from: streaming.py
     - `view_result_to_occlusion_row`
@@ -2851,6 +3215,12 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `ManifestValidationError`
+    - called from: metrics_manifest.py
+  - `MetricsManifest`
+    - called from: metrics_manifest.py
+  - `MetricsValidationError`
+    - called from: metrics/manifest_evaluator.py
   - `OBB`
     - called from: core/geometry.py
   - `OcclusionTracker`
@@ -2879,6 +3249,8 @@ Notes:
     - called from: csv_export.py
   - `build_vop_csv_row`
     - called from: csv_export.py
+  - `canonicalize_manifest_json`
+    - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
   - `classify_annotation`
@@ -2899,18 +3271,22 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
+  - `compute_manifest_sha256`
+    - called from: metrics_manifest.py
   - `compute_view_frame_hash`
     - called from: csv_export.py
-  - `convex_hull_uv`
-    - called from: pipeline.py
-  - `estimate_depth_from_loops_or_bbox`
-    - called from: pipeline.py
-  - `estimate_depth_range_from_bbox`
-    - called from: pipeline.py
-  - `estimate_nearest_depth_from_bbox`
-    - called from: pipeline.py, revit/collection.py
-  - `excluded_bic_names_global`
-    - called from: revit/collection_policy.py, revit/linked_documents.py
+    - `convex_hull_uv`
+      - called from: pipeline.py
+    - `estimate_depth_from_loops_or_bbox`
+      - called from: pipeline.py
+    - `estimate_depth_range_from_bbox`
+      - called from: pipeline.py
+    - `estimate_nearest_depth_from_bbox`
+      - called from: pipeline.py, revit/collection.py
+    - `evaluate_metrics_manifest`
+      - called from: pipeline.py
+    - `excluded_bic_names_global`
+      - called from: revit/collection_policy.py, revit/linked_documents.py
     - `expand_host_link_import_model_elements`
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
@@ -2950,7 +3326,7 @@ Notes:
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
-      - called from: streaming.py
+      - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `included_bic_names_for_source`
@@ -2961,6 +3337,8 @@ Notes:
       - called from: revit/annotation.py, revit/view_basis.py
     - `iter_front_facing_planar_faces`
       - called from: core/silhouette.py
+    - `load_manifest_json`
+      - called from: csv_export.py, metrics_manifest.py, pipeline.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -3013,6 +3391,8 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `scan_final_state_totals`
+      - called from: pipeline.py
     - `select_dominant_face_per_plane_group`
       - called from: core/silhouette.py
     - `select_top_plane_groups`
@@ -3033,6 +3413,18 @@ Notes:
       - called from: revit/view_basis.py
     - `tier_a_is_ambiguous`
       - called from: pipeline.py
+    - `validate_families_block`
+      - called from: metrics_manifest.py
+    - `validate_invariants_block`
+      - called from: metrics_manifest.py
+    - `validate_manifest_schema_version`
+      - called from: metrics_manifest.py
+    - `validate_manifest_top_level_keys`
+      - called from: metrics_manifest.py
+    - `validate_outputs_block`
+      - called from: metrics_manifest.py
+    - `validate_requires_block`
+      - called from: metrics_manifest.py
     - `view_result_to_core_row`
       - called from: streaming.py
     - `view_result_to_occlusion_row`
@@ -3068,6 +3460,12 @@ Notes:
     - called from: core/silhouette.py, pipeline.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
+  - `ManifestValidationError`
+    - called from: metrics_manifest.py
+  - `MetricsManifest`
+    - called from: metrics_manifest.py
+  - `MetricsValidationError`
+    - called from: metrics/manifest_evaluator.py
   - `OBB`
     - called from: core/geometry.py
   - `OcclusionTracker`
@@ -3096,6 +3494,8 @@ Notes:
     - called from: csv_export.py
   - `build_vop_csv_row`
     - called from: csv_export.py
+  - `canonicalize_manifest_json`
+    - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
   - `classify_annotation`
@@ -3118,16 +3518,20 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_view_frame_hash`
-    - called from: csv_export.py
-  - `convex_hull_uv`
-    - called from: pipeline.py
-  - `estimate_depth_from_loops_or_bbox`
-    - called from: pipeline.py
-  - `estimate_depth_range_from_bbox`
-    - called from: pipeline.py
-  - `estimate_nearest_depth_from_bbox`
-    - called from: pipeline.py, revit/collection.py
+  - `compute_manifest_sha256`
+    - called from: metrics_manifest.py
+    - `compute_view_frame_hash`
+      - called from: csv_export.py
+    - `convex_hull_uv`
+      - called from: pipeline.py
+    - `estimate_depth_from_loops_or_bbox`
+      - called from: pipeline.py
+    - `estimate_depth_range_from_bbox`
+      - called from: pipeline.py
+    - `estimate_nearest_depth_from_bbox`
+      - called from: pipeline.py, revit/collection.py
+    - `evaluate_metrics_manifest`
+      - called from: pipeline.py
     - `excluded_bic_names_global`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `expand_host_link_import_model_elements`
@@ -3167,7 +3571,7 @@ Notes:
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
-      - called from: streaming.py
+      - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `included_bic_names_for_source`
@@ -3178,6 +3582,8 @@ Notes:
       - called from: revit/annotation.py, revit/view_basis.py
     - `iter_front_facing_planar_faces`
       - called from: core/silhouette.py
+    - `load_manifest_json`
+      - called from: csv_export.py, metrics_manifest.py, pipeline.py
     - `make_obb_or_skinny_aabb`
       - called from: pipeline.py
     - `make_uv_aabb`
@@ -3230,6 +3636,8 @@ Notes:
       - called from: revit/collection.py
     - `sample_element_uvw_points`
       - called from: pipeline.py
+    - `scan_final_state_totals`
+      - called from: pipeline.py
     - `select_dominant_face_per_plane_group`
       - called from: core/silhouette.py
     - `select_top_plane_groups`
@@ -3250,6 +3658,18 @@ Notes:
       - called from: revit/view_basis.py
     - `tier_a_is_ambiguous`
       - called from: pipeline.py
+    - `validate_families_block`
+      - called from: metrics_manifest.py
+    - `validate_invariants_block`
+      - called from: metrics_manifest.py
+    - `validate_manifest_schema_version`
+      - called from: metrics_manifest.py
+    - `validate_manifest_top_level_keys`
+      - called from: metrics_manifest.py
+    - `validate_outputs_block`
+      - called from: metrics_manifest.py
+    - `validate_requires_block`
+      - called from: metrics_manifest.py
     - `view_result_to_core_row`
       - called from: streaming.py
     - `view_result_to_occlusion_row`
