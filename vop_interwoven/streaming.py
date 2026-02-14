@@ -218,7 +218,7 @@ class StreamingExporter:
         self.csv_vop_file = open(self.vop_csv_path, 'w', newline='', encoding='utf-8')
         self.csv_vop_writer = csv.DictWriter(
             self.csv_vop_file,
-            fieldnames=get_vop_csv_header(), 
+            fieldnames=get_vop_csv_header(self.cfg), 
             extrasaction='ignore'
         )
         self.csv_vop_writer.writeheader()

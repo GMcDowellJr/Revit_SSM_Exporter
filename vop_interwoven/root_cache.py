@@ -329,57 +329,69 @@ def extract_metrics_from_view_result(view_result, cfg):
     from vop_interwoven.csv_export import (
         compute_cell_metrics,
         compute_external_cell_metrics,
-        compute_annotation_type_metrics
+        compute_annotation_type_metrics,
+        _normalize_locked_metrics_for_legacy_csv,
     )
     
-    # Reconstruct raster object for metric computation (no ViewRaster.from_dict exists)
-    from vop_interwoven.core.raster import ViewRaster
-    from vop_interwoven.core.math_utils import Bounds2D
     raster_dict = view_result.get("raster", {}) or {}
 
-    bounds_dict = raster_dict.get("bounds_xy", {}) or {}
-    bounds = Bounds2D(
-        bounds_dict.get("xmin", 0),
-        bounds_dict.get("ymin", 0),
-        bounds_dict.get("xmax", 100),
-        bounds_dict.get("ymax", 100)
-    )
+    # Prefer precomputed per-view metrics (scanner output) when present.
+    precomputed_metrics = view_result.get("metrics")
+    if isinstance(precomputed_metrics, dict) and precomputed_metrics:
+        pre = _normalize_locked_metrics_for_legacy_csv(precomputed_metrics)
+        metrics = {
+            **pre,
+            "CellSize_ft": view_result.get("cell_size")
+            or (view_result.get("raster", {}) or {}).get("cell_size_ft", 0.0),
+        }
+    else:
+        # Reconstruct raster object for metric computation (fallback for legacy payloads)
+        from vop_interwoven.core.raster import ViewRaster
+        from vop_interwoven.core.math_utils import Bounds2D
+        bounds_dict = raster_dict.get("bounds_xy", {}) or {}
+        bounds = Bounds2D(
+            bounds_dict.get("xmin", 0),
+            bounds_dict.get("ymin", 0),
+            bounds_dict.get("xmax", 100),
+            bounds_dict.get("ymax", 100)
+        )
 
-    raster = ViewRaster(
-        width=raster_dict.get("width", 0),
-        height=raster_dict.get("height", 0),
-        cell_size=raster_dict.get("cell_size_ft", raster_dict.get("cell_size", 1.0)),
-        bounds=bounds,
-        tile_size=getattr(cfg, "tile_size", 16) or 16
-    )
+        raster = ViewRaster(
+            width=raster_dict.get("width", 0),
+            height=raster_dict.get("height", 0),
+            cell_size=raster_dict.get("cell_size_ft", raster_dict.get("cell_size", 1.0)),
+            bounds=bounds,
+            tile_size=getattr(cfg, "tile_size", 16) or 16
+        )
 
-    raster.model_edge_key = raster_dict.get("model_edge_key", [])
-    raster.model_proxy_mask = raster_dict.get("model_proxy_mask", raster_dict.get("model_proxy_presence", []))
-    raster.model_proxy_key = raster_dict.get("model_proxy_key", [])
-    raster.model_mask = raster_dict.get("model_mask", [])
-    raster.anno_over_model = raster_dict.get("anno_over_model", [])
-    raster.anno_key = raster_dict.get("anno_key", [])
-    raster.anno_meta = raster_dict.get("anno_meta", [])
-    raster.element_meta = raster_dict.get("element_meta", raster_dict.get("elements_meta", []))
- 
-    # Compute metrics
-    model_presence_mode = getattr(cfg, "model_presence_mode", "ink")
-    cell_metrics = compute_cell_metrics(raster, model_presence_mode=model_presence_mode)
-    external_metrics = compute_external_cell_metrics(raster)
-    anno_metrics = compute_annotation_type_metrics(raster)
-    
-    metrics = {
-        **cell_metrics,
-        **external_metrics,
-        **anno_metrics,
-        "CellSize_ft": raster.cell_size_ft
-    }
+        raster.model_edge_key = raster_dict.get("model_edge_key", [])
+        raster.model_proxy_mask = raster_dict.get("model_proxy_mask", raster_dict.get("model_proxy_presence", []))
+        raster.model_proxy_key = raster_dict.get("model_proxy_key", [])
+        raster.model_mask = raster_dict.get("model_mask", [])
+        raster.anno_over_model = raster_dict.get("anno_over_model", [])
+        raster.anno_key = raster_dict.get("anno_key", [])
+        raster.anno_meta = raster_dict.get("anno_meta", [])
+        raster.element_meta = raster_dict.get("element_meta", raster_dict.get("elements_meta", []))
+
+        # Compute metrics
+        model_presence_mode = getattr(cfg, "model_presence_mode", "ink")
+        cell_metrics = compute_cell_metrics(raster, model_presence_mode=model_presence_mode)
+        external_metrics = compute_external_cell_metrics(raster)
+        anno_metrics = compute_annotation_type_metrics(raster)
+
+        metrics = {
+            **cell_metrics,
+            **external_metrics,
+            **anno_metrics,
+            "CellSize_ft": raster.cell_size_ft
+        }
     
     # Extract metadata
     bounds_meta = raster_dict.get("bounds_meta", {}) or {}
+    cell_size_base = float(metrics.get("CellSize_ft", raster_dict.get("cell_size_ft", 0.0)) or 0.0)
 
-    cell_size_req = bounds_meta.get("cell_size_ft_requested", raster.cell_size_ft)
-    cell_size_eff = bounds_meta.get("cell_size_ft_effective", raster.cell_size_ft)
+    cell_size_req = bounds_meta.get("cell_size_ft_requested", cell_size_base)
+    cell_size_eff = bounds_meta.get("cell_size_ft_effective", cell_size_base)
 
     metadata = {
         "view_id": view_result.get("view_id"),
@@ -403,7 +415,7 @@ def extract_metrics_from_view_result(view_result, cfg):
         "height": view_result.get("height"),
 
         # Back-compat / existing
-        "CellSize_ft": _round6(raster.cell_size_ft),
+        "CellSize_ft": _round6(cell_size_base),
 
         # Option 2 contract fields (persisted for CSV + cache parity)
         "CellSizeRequested_ft": _round6(cell_size_req),

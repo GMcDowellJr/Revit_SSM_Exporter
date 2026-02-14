@@ -6,6 +6,7 @@ proxy stamping, and depth-buffer occlusion logic.
 """
 
 import math
+import os
 
 
 class Config:
@@ -145,6 +146,11 @@ class Config:
         # True = keep full rasters in memory (needed for streaming exports)
         # False = discard rasters after cache writes (memory efficient)
         retain_rasters_in_memory=False,  # Default True for backward compatibility
+
+        # Metrics manifest wiring
+        metrics_manifest_path=None,
+        metrics_validation_mode="warn",
+        csv_compat_mode=True,
         
     ):
         """Initialize VOP configuration.
@@ -303,6 +309,19 @@ class Config:
 
         # Memory management
         self.retain_rasters_in_memory = bool(retain_rasters_in_memory)
+
+        # Metrics manifest wiring
+        if metrics_manifest_path is None:
+            self.metrics_manifest_path = os.path.join(
+                os.path.dirname(__file__), "metrics", "manifest", "metrics_manifest.v1.json"
+            )
+        else:
+            self.metrics_manifest_path = str(metrics_manifest_path)
+
+        self.metrics_validation_mode = str(metrics_validation_mode or "warn").lower()
+        if self.metrics_validation_mode not in ("warn", "strict"):
+            raise ValueError("metrics_validation_mode must be 'warn' or 'strict'")
+        self.csv_compat_mode = bool(csv_compat_mode)
         
     def compute_adaptive_tile_size(self, grid_width, grid_height):
         """Compute optimal tile size based on grid dimensions.
@@ -513,6 +532,10 @@ class Config:
             # Perf CSV export controls
             "export_perf_csv": self.export_perf_csv,
             "perf_csv_output_dir": self.perf_csv_output_dir,
+            # Metrics manifest wiring
+            "metrics_manifest_path": self.metrics_manifest_path,
+            "metrics_validation_mode": self.metrics_validation_mode,
+            "csv_compat_mode": self.csv_compat_mode,
         }
 
     @classmethod
@@ -571,5 +594,9 @@ class Config:
             # Perf CSV export controls
             export_perf_csv=d.get("export_perf_csv", True),
             perf_csv_output_dir=d.get("perf_csv_output_dir", None),
+            # Metrics manifest wiring
+            metrics_manifest_path=d.get("metrics_manifest_path", None),
+            metrics_validation_mode=d.get("metrics_validation_mode", "warn"),
+            csv_compat_mode=d.get("csv_compat_mode", True),
 
         )

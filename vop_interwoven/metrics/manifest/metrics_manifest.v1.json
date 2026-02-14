@@ -1,0 +1,155 @@
+{
+  "schema_version": "metrics_manifest.v1",
+  "metrics_version": "2026-02-13.locked.v2",
+  "requires": {
+    "primitives": ["M", "A", "E", "AnnoType", "ExtType", "ModelClasses"],
+    "capabilities": [
+      "source_partition_8",
+      "count_by_anno_type_final",
+      "count_by_ext_type_final_flags",
+      "count_by_ext_type_final_intersection",
+      "count_model_class_multihot"
+    ]
+  },
+  "families": {
+    "source_partition_8": { "enabled": true },
+    "anno_types_final": { "enabled": true },
+    "ext_types_final_flags": {
+      "enabled": true,
+      "notes": "Non-disjoint flags. DWG and RVT may both be present in the same cell."
+    },
+    "ext_types_final_intersection": {
+      "enabled": true,
+      "notes": "Explicit intersection term enabling inclusion-exclusion reconciliation."
+    },
+    "model_classes_multihot": {
+      "enabled": true,
+      "classes": ["WALL", "DOOR", "STAIR", "COLUMN", "LIGHT", "OTHER"]
+    },
+    "diag_hits": { "enabled": false }
+  },
+  "invariants": [
+    {
+      "id": "partition_sums_to_total",
+      "level": "error",
+      "expr": {
+        "eq": [
+          { "sum": { "family": "source_partition_8" } },
+          { "ref": "TotalCells" }
+        ]
+      }
+    },
+    {
+      "id": "anno_types_sum_to_anno_present",
+      "level": "error",
+      "expr": {
+        "eq": [
+          { "sum": { "family": "anno_types_final" } },
+          { "ref": "AnnoPresentFinal" }
+        ]
+      }
+    },
+    {
+      "id": "ext_only_le_ext_any",
+      "level": "error",
+      "expr": {
+        "le": [
+          { "ref": "ExtFinalCells_Only" },
+          { "ref": "ExtFinalCells_Any" }
+        ]
+      }
+    },
+    {
+      "id": "ext_dwg_le_ext_any",
+      "level": "error",
+      "expr": {
+        "le": [
+          { "ref": "ExtFinalCells_DWG" },
+          { "ref": "ExtFinalCells_Any" }
+        ]
+      }
+    },
+    {
+      "id": "ext_rvt_le_ext_any",
+      "level": "error",
+      "expr": {
+        "le": [
+          { "ref": "ExtFinalCells_RVT" },
+          { "ref": "ExtFinalCells_Any" }
+        ]
+      }
+    },
+    {
+      "id": "ext_dwg_rvt_intersection_le_each",
+      "level": "error",
+      "expr": {
+        "and": [
+          {
+            "le": [
+              { "ref": "ExtFinalCells_DWG_RVT" },
+              { "ref": "ExtFinalCells_DWG" }
+            ]
+          },
+          {
+            "le": [
+              { "ref": "ExtFinalCells_DWG_RVT" },
+              { "ref": "ExtFinalCells_RVT" }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "ext_any_inclusion_exclusion",
+      "level": "error",
+      "expr": {
+        "eq": [
+          { "ref": "ExtFinalCells_Any" },
+          {
+            "sub": [
+              {
+                "add": [
+                  { "ref": "ExtFinalCells_DWG" },
+                  { "ref": "ExtFinalCells_RVT" }
+                ]
+              },
+              { "ref": "ExtFinalCells_DWG_RVT" }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "outputs": {
+    "csv_columns": [
+      "TotalCells",
+      "Cells_Empty",
+      "Cells_ModelOnly",
+      "Cells_AnnoOnly",
+      "Cells_ExtOnly",
+      "Cells_ModelAnno",
+      "Cells_ModelExt",
+      "Cells_AnnoExt",
+      "Cells_All3",
+      "AnnoPresentFinal",
+      "AnnoFinalCells_TEXT",
+      "AnnoFinalCells_TAG",
+      "AnnoFinalCells_DIM",
+      "AnnoFinalCells_DETAIL",
+      "AnnoFinalCells_LINES",
+      "AnnoFinalCells_REGION",
+      "AnnoFinalCells_OTHER",
+      "ExtFinalCells_Any",
+      "ExtFinalCells_Only",
+      "ExtFinalCells_DWG",
+      "ExtFinalCells_RVT",
+      "ExtFinalCells_DWG_RVT",
+      "ModelClassCells_WALL",
+      "ModelClassCells_DOOR",
+      "ModelClassCells_STAIR",
+      "ModelClassCells_COLUMN",
+      "ModelClassCells_LIGHT",
+      "ModelClassCells_OTHER"
+    ]
+  }
+}

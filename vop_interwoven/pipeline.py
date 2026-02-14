@@ -492,6 +492,49 @@ def _extract_view_identity_for_csv(doc, view):
         pass  # TODO: Add diagnostics when diag becomes available
     return out
 
+def _compute_manifest_metrics_payload(raster, cfg):
+    """Compute manifest-scanned metrics totals and validation payload."""
+    from .metrics.final_state_scanner import scan_final_state_totals
+    from .metrics.manifest_evaluator import evaluate_metrics_manifest
+    from .metrics_manifest import load_manifest_json
+
+    manifest_obj = load_manifest_json(getattr(cfg, "metrics_manifest_path", None))
+
+    totals = scan_final_state_totals(
+        raster,
+        manifest_obj.data,
+        model_presence_mode="any",
+    )
+
+    available_primitives = ["M", "A", "E", "AnnoType", "ExtType", "ModelClasses"]
+    available_capabilities = [
+        "source_partition_8",
+        "count_by_anno_type_final",
+        "count_by_ext_type_final_flags",
+        "count_by_ext_type_final_intersection",
+        "count_model_class_multihot",
+    ]
+
+    validation = evaluate_metrics_manifest(
+        totals,
+        manifest_obj.data,
+        manifest_sha256=manifest_obj.sha256,
+        manifest_file_name=manifest_obj.file_name,
+        available_primitives=available_primitives,
+        available_capabilities=available_capabilities,
+        mode=getattr(cfg, "metrics_validation_mode", "warn"),
+    )
+
+    return {
+        "metrics": totals,
+        "metrics_validation": validation,
+        "metrics_version": manifest_obj.data.get("metrics_version"),
+        "metrics_manifest_file": manifest_obj.file_name,
+        "metrics_manifest_sha256": manifest_obj.sha256,
+        "metrics_validation_mode": getattr(cfg, "metrics_validation_mode", "warn"),
+    }
+
+
 def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset_family_caches=True):
     """Process multiple views through the VOP interwoven pipeline.
 
@@ -1045,9 +1088,11 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset
             t1 = _perf_now()
             _tmark("finalize_ms", t0, t1)
 
+            metrics_payload = _compute_manifest_metrics_payload(raster, cfg)
+
             # 6) Export
             t0 = _perf_now()
-            out = export_view_raster(view, raster, cfg, diag=diag, timings=timings, strategy_diag=strategy_diag)
+            out = export_view_raster(view, raster, cfg, diag=diag, timings=timings, strategy_diag=strategy_diag, metrics_payload=metrics_payload)
             if isinstance(render_result, dict) and "diagnostics" in render_result:
                 out["diagnostics"] = render_result["diagnostics"]
                 tracker_obj = render_result.get("occlusion_tracker")
@@ -3373,7 +3418,7 @@ def _mark_thin_band_along_long_axis(rect, raster):
                 raster.model_proxy_mask[idx] = True
 
 
-def export_view_raster(view, raster, cfg, diag=None, timings=None, strategy_diag=None):
+def export_view_raster(view, raster, cfg, diag=None, timings=None, strategy_diag=None, metrics_payload=None):
     """Export view raster to dictionary for JSON serialization.
 
     Args:
@@ -3518,5 +3563,11 @@ def export_view_raster(view, raster, cfg, diag=None, timings=None, strategy_diag
             "skipped_outside_view_volume": int(getattr(raster, "skipped_outside_view_volume", 0) or 0),
             "timings": (dict(timings) if timings is not None else None),
         },
+        "metrics": (metrics_payload or {}).get("metrics"),
+        "metrics_validation": (metrics_payload or {}).get("metrics_validation"),
+        "metrics_version": (metrics_payload or {}).get("metrics_version"),
+        "metrics_manifest_file": (metrics_payload or {}).get("metrics_manifest_file"),
+        "metrics_manifest_sha256": (metrics_payload or {}).get("metrics_manifest_sha256"),
+        "metrics_validation_mode": (metrics_payload or {}).get("metrics_validation_mode"),
         "strategy_diag": strategy_diag,  # StrategyDiagnostics instance for CSV export
     }
