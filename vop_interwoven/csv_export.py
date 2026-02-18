@@ -15,6 +15,43 @@ def _round6(x):
     except Exception as e:
         return x
 
+def _raster_to_dict_like(raster_payload):
+    """Return a dict-like raster view without forcing ViewRaster.to_dict() copies."""
+    if isinstance(raster_payload, dict):
+        return raster_payload
+    if raster_payload is None:
+        return {}
+
+    bounds = getattr(raster_payload, "bounds_xy", None)
+    bounds_dict = {}
+    if bounds is not None:
+        bounds_dict = {
+            "xmin": getattr(bounds, "xmin", 0.0),
+            "ymin": getattr(bounds, "ymin", 0.0),
+            "xmax": getattr(bounds, "xmax", 0.0),
+            "ymax": getattr(bounds, "ymax", 0.0),
+        }
+
+    return {
+        "width": int(getattr(raster_payload, "W", 0) or 0),
+        "height": int(getattr(raster_payload, "H", 0) or 0),
+        "W": int(getattr(raster_payload, "W", 0) or 0),
+        "H": int(getattr(raster_payload, "H", 0) or 0),
+        "cell_size_ft": float(getattr(raster_payload, "cell_size_ft", 0.0) or 0.0),
+        "bounds_xy": bounds_dict,
+        "bounds_meta": getattr(raster_payload, "bounds_meta", {}) or {},
+        "model_edge_key": getattr(raster_payload, "model_edge_key", []) or [],
+        "model_proxy_mask": getattr(raster_payload, "model_proxy_mask", []) or [],
+        "model_proxy_presence": getattr(raster_payload, "model_proxy_presence", []) or [],
+        "model_proxy_key": getattr(raster_payload, "model_proxy_key", []) or [],
+        "model_mask": getattr(raster_payload, "model_mask", []) or [],
+        "anno_over_model": getattr(raster_payload, "anno_over_model", []) or [],
+        "anno_key": getattr(raster_payload, "anno_key", []) or [],
+        "anno_meta": getattr(raster_payload, "anno_meta", []) or [],
+        "element_meta": getattr(raster_payload, "element_meta", []) or [],
+        "elements_meta": getattr(raster_payload, "elements_meta", []) or [],
+    }
+
 def _is_from_cache(view_result):
     """Return True if the view_result represents any cache hit (legacy or root)."""
     try:
@@ -1297,7 +1334,7 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
         if view_result.get("view_mode") == "REJECTED":
             continue
 
-        raster_dict = view_result.get("raster", {}) or {}
+        raster_dict = _raster_to_dict_like(view_result.get("raster", None))
         metrics_only = (not raster_dict) and isinstance(view_result.get("metrics"), dict) and bool(view_result.get("metrics"))
 
         # Allow metrics-only results (root cache hits)
@@ -1671,7 +1708,7 @@ def view_result_to_core_row(view_result, config, doc, date_override=None, run_id
     if view_result.get("view_mode") == "REJECTED":
         return None
 
-    raster_dict = view_result.get("raster", {}) or {}
+    raster_dict = _raster_to_dict_like(view_result.get("raster", None))
     metrics_only = (not raster_dict) and isinstance(view_result.get("metrics"), dict) and bool(view_result.get("metrics"))
     
     # Allow metrics-only results for cache hits (root cache)
@@ -1805,7 +1842,7 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
     if view_result.get("view_mode") == "REJECTED":
         return None
 
-    raster_dict = view_result.get("raster", {}) or {}
+    raster_dict = _raster_to_dict_like(view_result.get("raster", None))
     metrics_only = (not raster_dict) and isinstance(view_result.get("metrics"), dict) and bool(view_result.get("metrics"))
     if not raster_dict and not metrics_only:
         return None
@@ -2197,9 +2234,7 @@ def view_result_to_perf_row(view_result, date_override=None, run_id=None):
         areal_times = [float(v) for v in areal_times if v is not None]
         row["AvgFallbackExtractMs"] = round(sum(areal_times) / len(areal_times), 2) if areal_times else 0.0
 
-        cache_info = view_result.get("cache", {}) or {}
-        elem_cache_stats = cache_info.get("element_cache_stats", {}) or {}
-        row["ElemCacheHitRate"] = round(float(elem_cache_stats.get("hit_rate", 0.0)), 3)
+        row["ElemCacheHitRate"] = round(float(view_result.get("elem_cache_hit_rate", 0.0) or 0.0), 3)
 
     except Exception:
         row["TinyCount"] = 0

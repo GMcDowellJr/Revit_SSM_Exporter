@@ -16,7 +16,10 @@ Key principles:
 import os
 import time
 import json
+import gc
 from datetime import datetime
+
+MAX_SAFE_GRID_CELLS = 500000
 
 def process_with_streaming(doc, view_ids, cfg, on_view_complete, root_cache=None):
     """Process views with per-view callback and cache support."""
@@ -304,10 +307,17 @@ class StreamingExporter:
         # otherwise it can overwrite valid entries with signature="" on import failures.
         pass
         
+        # Free heavy raster payload as soon as PNG/CSV export is complete.
+        if "raster" in view_result:
+            try:
+                del view_result["raster"]
+            finally:
+                gc.collect()
+
         # Store lightweight summary (no raster)
         summary = self._extract_summary(view_result)
         self.view_summaries.append(summary)
-        
+
         # Optionally store full result if JSON export requested
         if self.full_results is not None:
             self.full_results.append(view_result)
@@ -596,6 +606,28 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                     })
                     continue
                     
+                width = int(view_result.get("width", 0) or 0)
+                height = int(view_result.get("height", 0) or 0)
+                filled_cells = int(view_result.get("filled_cells", 0) or 0)
+                grid_cells = width * height
+                if grid_cells > MAX_SAFE_GRID_CELLS and filled_cells < 10:
+                    print(
+                        "[Streaming] WARNING: Grid explosion guard tripped for view {0} "
+                        "(width={1}, height={2}, grid_cells={3}, filled_cells={4})".format(
+                            view_result.get("view_id"), width, height, grid_cells, filled_cells
+                        )
+                    )
+                    summaries.append({
+                        "view_id": view_result.get("view_id"),
+                        "view_name": view_result.get("view_name"),
+                        "success": False,
+                        "error": "Grid explosion guard tripped",
+                        "width": width,
+                        "height": height,
+                        "filled_cells": filled_cells,
+                    })
+                    continue
+
                 # Call user callback
                 on_view_complete(view_result)
 
