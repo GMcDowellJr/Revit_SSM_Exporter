@@ -987,25 +987,23 @@ def resolve_view_bounds(view, diag=None, policy=None):
             cur_h_ft = float(base_bounds.height())
 
             if (cur_w_ft > max_w_ft) or (cur_h_ft > max_h_ft):
-                new_xmin = float(base_bounds.xmin)
-                new_ymin = float(base_bounds.ymin)
+                clipped_w_ft = min(cur_w_ft, max_w_ft)
+                clipped_h_ft = min(cur_h_ft, max_h_ft)
 
-                if cur_w_ft > max_w_ft:
-                    min_xmin = float(pre_annotation_bounds.xmax) - max_w_ft
-                    max_xmin = float(pre_annotation_bounds.xmin)
-                    new_xmin = max(min_xmin, min(max_xmin, new_xmin))
+                # Keep capped bounds centered on the model-grid basis (pre-annotation bounds)
+                # so annotation clipping cannot shift the raster away from the model crop region.
+                center_x = 0.5 * (float(pre_annotation_bounds.xmin) + float(pre_annotation_bounds.xmax))
+                center_y = 0.5 * (float(pre_annotation_bounds.ymin) + float(pre_annotation_bounds.ymax))
 
-                if cur_h_ft > max_h_ft:
-                    min_ymin = float(pre_annotation_bounds.ymax) - max_h_ft
-                    max_ymin = float(pre_annotation_bounds.ymin)
-                    new_ymin = max(min_ymin, min(max_ymin, new_ymin))
+                new_xmin = center_x - (0.5 * clipped_w_ft)
+                new_ymin = center_y - (0.5 * clipped_h_ft)
 
                 from ..core.math_utils import Bounds2D as _Bounds2D
                 base_bounds = _Bounds2D(
                     new_xmin,
                     new_ymin,
-                    new_xmin + min(cur_w_ft, max_w_ft),
-                    new_ymin + min(cur_h_ft, max_h_ft),
+                    new_xmin + clipped_w_ft,
+                    new_ymin + clipped_h_ft,
                 )
     except Exception as e:
         # Annotation expansion failing should never block model export.
