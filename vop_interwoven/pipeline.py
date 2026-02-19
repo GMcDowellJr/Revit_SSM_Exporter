@@ -202,7 +202,7 @@ def _diagnose_link_geometry_transform(elem, link_trf, basis, stage_name):
 
 def _perf_now():
     # perf_counter is monotonic and high-resolution where available.
-    return time.perf_counter()
+    return time.process_time()
 
 
 def _perf_ms(t0, t1):
