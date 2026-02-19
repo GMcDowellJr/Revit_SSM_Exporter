@@ -814,6 +814,8 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset
                 timings[name] = round(_perf_ms(t0, t1), 3)
 
         view = None
+        elem_hits_before = int(getattr(elem_cache, "hits", 0) or 0) if elem_cache is not None else 0
+        elem_misses_before = int(getattr(elem_cache, "misses", 0) or 0) if elem_cache is not None else 0
 
         try:
             # Convert int to ElementId if needed
@@ -1212,6 +1214,26 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset
                         message="Exception in _tmark: {}".format(e),
                         exc=e,
                     )
+            # Per-view element-cache hit rate (delta over this view only)
+            try:
+                if isinstance(out, dict):
+                    elem_hits_after = int(getattr(elem_cache, "hits", 0) or 0) if elem_cache is not None else elem_hits_before
+                    elem_misses_after = int(getattr(elem_cache, "misses", 0) or 0) if elem_cache is not None else elem_misses_before
+                    delta_hits = max(0, elem_hits_after - elem_hits_before)
+                    delta_misses = max(0, elem_misses_after - elem_misses_before)
+                    delta_total = delta_hits + delta_misses
+                    out["elem_cache_hit_rate"] = (float(delta_hits) / float(delta_total)) if delta_total > 0 else 0.0
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="pipeline",
+                        callsite="process_document_views.elem_cache_hit_rate",
+                        message="Failed to compute per-view element cache hit rate",
+                        exc=e,
+                    )
+                if isinstance(out, dict):
+                    out["elem_cache_hit_rate"] = 0.0
+
             # Memory management: conditionally retain or discard raster data
             if getattr(cfg, 'retain_rasters_in_memory', True):
                 # Keep full raster (needed for streaming exports or debug)
@@ -3548,7 +3570,7 @@ def export_view_raster(view, raster, cfg, diag=None, timings=None, strategy_diag
         "tile_size": raster.tile.tile_size,
         "total_elements": len(raster.element_meta),
         "filled_cells": num_filled,
-        "raster": raster.to_dict(),
+        "raster": raster if bool(getattr(cfg, "_is_streaming_mode", False)) else raster.to_dict(),
         "config": cfg.to_dict(),
         "timings": (dict(timings) if timings is not None else None),
         "diagnostics": {

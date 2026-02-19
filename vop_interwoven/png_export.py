@@ -49,16 +49,20 @@ def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_pro
         # Accept either:
         #   - full view_result dict: {"width","height","raster",...}
         #   - raw raster dict: {"width","height",...} (common in Dynamo glue)
+        #   - live ViewRaster object in view_result["raster"] (streaming path)
         if isinstance(view_result, dict) and ("raster" in view_result):
-            raster_dict = view_result.get("raster") or {}
+            raster_payload = view_result.get("raster")
             width = view_result.get("width")
             height = view_result.get("height")
             cfg = view_result.get("config") or {}
         else:
-            raster_dict = view_result if isinstance(view_result, dict) else {}
+            raster_payload = view_result if isinstance(view_result, dict) else {}
             width = None
             height = None
             cfg = {}
+
+        is_raster_obj = hasattr(raster_payload, "W") and hasattr(raster_payload, "H")
+        raster_dict = raster_payload if isinstance(raster_payload, dict) else {}
 
         # Fallback to raster_dict width/height (ViewRaster.to_dict may include them)
         def _pick_int(*vals):
@@ -80,12 +84,14 @@ def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_pro
 
         width = _pick_int(
             width,
+            getattr(raster_payload, "W", None) if is_raster_obj else None,
             raster_dict.get("width", None),
             view_result.get("grid_W", None) if isinstance(view_result, dict) else None,
             raster_dict.get("grid_W", None),
         )
         height = _pick_int(
             height,
+            getattr(raster_payload, "H", None) if is_raster_obj else None,
             raster_dict.get("height", None),
             view_result.get("grid_H", None) if isinstance(view_result, dict) else None,
             raster_dict.get("grid_H", None),
@@ -151,17 +157,23 @@ def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_pro
             elif ch == "ink":
                 model_presence_mode = "ink"
 
-        model_edge_key = raster_dict.get("model_edge_key", [])
-        model_mask = raster_dict.get("model_mask", [])
+        if is_raster_obj:
+            model_edge_key = getattr(raster_payload, "model_edge_key", []) or []
+            model_mask = getattr(raster_payload, "model_mask", []) or []
+            model_proxy_key = getattr(raster_payload, "model_proxy_key", []) or []
+            model_proxy_mask = getattr(raster_payload, "model_proxy_mask", []) or []
+        else:
+            model_edge_key = raster_dict.get("model_edge_key", [])
+            model_mask = raster_dict.get("model_mask", [])
 
-        # Proxy ink may be stored as either:
-        #   - model_proxy_key (preferred: perimeter/ink attribution)
-        #   - model_proxy_mask / model_proxy_presence (legacy presence mask)
-        model_proxy_key = raster_dict.get("model_proxy_key", [])
-        model_proxy_mask = raster_dict.get(
-            "model_proxy_mask",
-            raster_dict.get("model_proxy_presence", []),
-        )
+            # Proxy ink may be stored as either:
+            #   - model_proxy_key (preferred: perimeter/ink attribution)
+            #   - model_proxy_mask / model_proxy_presence (legacy presence mask)
+            model_proxy_key = raster_dict.get("model_proxy_key", [])
+            model_proxy_mask = raster_dict.get(
+                "model_proxy_mask",
+                raster_dict.get("model_proxy_presence", []),
+            )
 
         def _has_model(idx):
             # PR8 (final semantics):
@@ -215,8 +227,12 @@ def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_pro
             raise ValueError("Unknown model_presence_mode: {0}".format(mode))
 
         # Get anno_over_model and anno_key for annotation visualization
-        anno_over_model = raster_dict.get('anno_over_model', [])
-        anno_key = raster_dict.get('anno_key', [])
+        if is_raster_obj:
+            anno_over_model = getattr(raster_payload, 'anno_over_model', []) or []
+            anno_key = getattr(raster_payload, 'anno_key', []) or []
+        else:
+            anno_over_model = raster_dict.get('anno_over_model', [])
+            anno_key = raster_dict.get('anno_key', [])
 
         # Calculate bitmap size
         width_px = width * pixels_per_cell

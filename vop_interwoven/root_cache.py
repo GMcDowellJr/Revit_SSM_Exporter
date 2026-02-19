@@ -333,7 +333,32 @@ def extract_metrics_from_view_result(view_result, cfg):
         _normalize_locked_metrics_for_legacy_csv,
     )
     
-    raster_dict = view_result.get("raster", {}) or {}
+    raster_payload = view_result.get("raster", None)
+    if isinstance(raster_payload, dict):
+        raster_dict = raster_payload
+    elif raster_payload is None:
+        raster_dict = {}
+    else:
+        b = getattr(raster_payload, "bounds_xy", None)
+        raster_dict = {
+            "width": int(getattr(raster_payload, "W", 0) or 0),
+            "height": int(getattr(raster_payload, "H", 0) or 0),
+            "cell_size_ft": float(getattr(raster_payload, "cell_size_ft", 0.0) or 0.0),
+            "bounds_xy": {
+                "xmin": getattr(b, "xmin", 0.0) if b is not None else 0.0,
+                "ymin": getattr(b, "ymin", 0.0) if b is not None else 0.0,
+                "xmax": getattr(b, "xmax", 0.0) if b is not None else 0.0,
+                "ymax": getattr(b, "ymax", 0.0) if b is not None else 0.0,
+            },
+            "model_edge_key": getattr(raster_payload, "model_edge_key", []) or [],
+            "model_proxy_mask": getattr(raster_payload, "model_proxy_mask", []) or [],
+            "model_proxy_key": getattr(raster_payload, "model_proxy_key", []) or [],
+            "model_mask": getattr(raster_payload, "model_mask", []) or [],
+            "anno_over_model": getattr(raster_payload, "anno_over_model", []) or [],
+            "anno_key": getattr(raster_payload, "anno_key", []) or [],
+            "anno_meta": getattr(raster_payload, "anno_meta", []) or [],
+            "element_meta": getattr(raster_payload, "element_meta", []) or [],
+        }
 
     # Prefer precomputed per-view metrics (scanner output) when present.
     precomputed_metrics = view_result.get("metrics")
@@ -342,7 +367,7 @@ def extract_metrics_from_view_result(view_result, cfg):
         metrics = {
             **pre,
             "CellSize_ft": view_result.get("cell_size")
-            or (view_result.get("raster", {}) or {}).get("cell_size_ft", 0.0),
+            or raster_dict.get("cell_size_ft", 0.0),
         }
     else:
         # Reconstruct raster object for metric computation (fallback for legacy payloads)

@@ -1546,6 +1546,22 @@ class ViewRaster:
             j_min = min(j_coords)
             j_max = max(j_coords)
 
+            # Clamp scanline range to model clip rows for model writes.
+            clip = getattr(self, "model_clip_bounds", None)
+            if clip is not None:
+                import math
+                half = 0.5 * self.cell_size_ft
+                ymin_valid = float(clip.ymin) + half
+                ymax_valid = float(clip.ymax) - half
+                if ymax_valid >= ymin_valid:
+                    j_clip_min = int(math.ceil(((ymin_valid - float(self.bounds_xy.ymin)) / float(self.cell_size_ft)) - 0.5))
+                    j_clip_max = int(math.floor(((ymax_valid - float(self.bounds_xy.ymin)) / float(self.cell_size_ft)) - 0.5))
+                    j_min = max(j_min, j_clip_min)
+                    j_max = min(j_max, j_clip_max)
+
+            if j_max < j_min:
+                return set()
+
             filled = set()
 
             for j in range(j_min, j_max + 1):

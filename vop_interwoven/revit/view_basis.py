@@ -946,6 +946,7 @@ def resolve_view_bounds(view, diag=None, policy=None):
                         )
     # 2) Annotation-driven expansion (optional)
     anno_expanded = False
+    pre_annotation_bounds = base_bounds
     try:
         anno_expand_fn = policy.get("anno_expand_fn", None)
         if anno_expand_fn is None:
@@ -972,6 +973,38 @@ def resolve_view_bounds(view, diag=None, policy=None):
         if anno_bounds is not None:
             base_bounds = anno_bounds
             anno_expanded = True
+
+        # Apply cap envelope to final annotation-expanded bounds as a hard safety net.
+        if (
+            anno_expanded
+            and (pre_annotation_bounds is not None)
+            and (max_W is not None)
+            and (max_H is not None)
+        ):
+            max_w_ft = float(max_W) * float(cell_size_ft)
+            max_h_ft = float(max_H) * float(cell_size_ft)
+            cur_w_ft = float(base_bounds.width())
+            cur_h_ft = float(base_bounds.height())
+
+            if (cur_w_ft > max_w_ft) or (cur_h_ft > max_h_ft):
+                clipped_w_ft = min(cur_w_ft, max_w_ft)
+                clipped_h_ft = min(cur_h_ft, max_h_ft)
+
+                # Keep capped bounds centered on the model-grid basis (pre-annotation bounds)
+                # so annotation clipping cannot shift the raster away from the model crop region.
+                center_x = 0.5 * (float(pre_annotation_bounds.xmin) + float(pre_annotation_bounds.xmax))
+                center_y = 0.5 * (float(pre_annotation_bounds.ymin) + float(pre_annotation_bounds.ymax))
+
+                new_xmin = center_x - (0.5 * clipped_w_ft)
+                new_ymin = center_y - (0.5 * clipped_h_ft)
+
+                from ..core.math_utils import Bounds2D as _Bounds2D
+                base_bounds = _Bounds2D(
+                    new_xmin,
+                    new_ymin,
+                    new_xmin + clipped_w_ft,
+                    new_ymin + clipped_h_ft,
+                )
     except Exception as e:
         # Annotation expansion failing should never block model export.
         if diag is not None:

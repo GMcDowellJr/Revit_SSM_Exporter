@@ -9,6 +9,41 @@ Phase 8a: Annotation Collection & Rasterization
 """
 
 
+def _is_excluded_from_extent_expansion(elem):
+    """Return True for annotation-like elements that must never drive extent expansion.
+
+    Explicitly excludes:
+      - Reference planes (typically OST_CLines / Reference Planes)
+      - Scope boxes (typically OST_VolumeOfInterest / Scope Boxes)
+    """
+    try:
+        cat = getattr(elem, "Category", None)
+        if cat is None or getattr(cat, "Id", None) is None:
+            return False
+
+        try:
+            from Autodesk.Revit.DB import BuiltInCategory
+            cat_id = int(cat.Id.IntegerValue)
+            excluded = set()
+            if hasattr(BuiltInCategory, "OST_CLines"):
+                excluded.add(int(getattr(BuiltInCategory, "OST_CLines")))
+            if hasattr(BuiltInCategory, "OST_VolumeOfInterest"):
+                excluded.add(int(getattr(BuiltInCategory, "OST_VolumeOfInterest")))
+            if cat_id in excluded:
+                return True
+        except Exception:
+            pass
+
+        name = ""
+        try:
+            name = str(getattr(cat, "Name", "") or "").strip().lower()
+        except Exception:
+            name = ""
+        return ("reference plane" in name) or ("scope box" in name)
+    except Exception:
+        return False
+
+
 def is_extent_driver_annotation(elem):
     """Check if annotation is an extent driver (can exist outside crop).
 
@@ -22,6 +57,10 @@ def is_extent_driver_annotation(elem):
         2) Fall back to BuiltInCategory id checks (stable)
     """
     try:
+        # Hard exclusions first: never allow these categories to expand bounds.
+        if _is_excluded_from_extent_expansion(elem):
+            return False
+
         # 1) Strongest signal: actual runtime types (when Autodesk is available)
         try:
             from Autodesk.Revit.DB import TextNote, Dimension, IndependentTag
