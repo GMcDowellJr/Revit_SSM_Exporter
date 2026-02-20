@@ -747,6 +747,9 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset
                     elem_cache_prev = ElementCache.load_from_json(elem_cache_path, max_elements=max_items)
                     # Start with previous cache (pre-populated)
                     elem_cache = elem_cache_prev
+                    # Avoid retaining duplicate refs once the active cache is seeded.
+                    if elem_cache is elem_cache_prev:
+                        elem_cache_prev = None
                     if diag is not None:
                         try:
                             prev_size = len(elem_cache.cache)
@@ -1393,6 +1396,8 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset
                             message="Exception in _tmark: {}".format(e),
                             exc=e,
                         )
+            # Release prev cache — no longer needed after change detection.
+            elem_cache_prev = None
         except Exception as e:
             if diag is not None:
                 diag.error(
