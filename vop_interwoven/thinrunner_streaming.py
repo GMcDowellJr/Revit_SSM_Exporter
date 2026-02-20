@@ -15,6 +15,7 @@ Output:
 
 import sys
 import os
+import ctypes
 
 # Add project to path
 PROJECT_PATH = r'C:\Users\gmcdowell\Documents\Revit_SSM_Exporter'
@@ -73,17 +74,23 @@ try:
     # Use STREAMING pipeline (no cache, minimal memory)
     from vop_interwoven.streaming import run_vop_pipeline_streaming
     
-    result = run_vop_pipeline_streaming(
-        doc=doc,
-        view_ids=view_ids,
-        cfg=cfg,
-        output_dir=output_dir,
-        export_png=True,
-        export_csv=True,  # Always export CSV (tag override just affects Date/RunId columns)
-        export_json=False,
-        pixels_per_cell=10,
-        date_override=tag_override,
-    )
+    ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
+    try:
+        result = run_vop_pipeline_streaming(
+            doc=doc,
+            view_ids=view_ids,
+            cfg=cfg,
+            output_dir=output_dir,
+            export_png=True,
+            export_csv=True,  # Always export CSV (tag override just affects Date/RunId columns)
+            export_json=False,
+            pixels_per_cell=10,
+            date_override=tag_override,
+        )
+        ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
+    except Exception:
+        ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
+        raise
 
     print("="*60)
     print("DEBUG: After streaming call")
