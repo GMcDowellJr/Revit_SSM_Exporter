@@ -745,11 +745,8 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset
             if getattr(cfg, "element_cache_persist", True) and elem_cache_path is not None:
                 try:
                     elem_cache_prev = ElementCache.load_from_json(elem_cache_path, max_elements=max_items)
-                    # Start with previous cache (pre-populated)
+                    # Start with previous cache (pre-populated) and keep prev ref for change detection.
                     elem_cache = elem_cache_prev
-                    # Avoid retaining duplicate refs once the active cache is seeded.
-                    if elem_cache is elem_cache_prev:
-                        elem_cache_prev = None
                     if diag is not None:
                         try:
                             prev_size = len(elem_cache.cache)
