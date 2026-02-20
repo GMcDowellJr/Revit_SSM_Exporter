@@ -101,7 +101,7 @@ class Config:
         extents_scan_time_budget_s=0.50,
         
         # PR12: Geometry caching (bounded LRU)
-        geometry_cache_max_items=2048,
+        geometry_cache_max_items=50000,
         
         # Perf: per-view timings (coarse always; optional sub-step)
         perf_collect_timings=True,
@@ -122,7 +122,7 @@ class Config:
 
         # Phase 2: Element cache for bbox reuse across views
         use_element_cache=True,
-        element_cache_max_items=10000,
+        element_cache_max_items=500000,
         signature_bbox_precision=2,
 
         # Phase 2.5: Persistent element cache for cross-run reuse
