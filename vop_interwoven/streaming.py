@@ -18,6 +18,8 @@ import time
 import json
 import gc
 from datetime import datetime
+from vop_interwoven.memory_telemetry import MemoryTracker
+from vop_interwoven.perf_export import export_perf_csv
 
 MAX_SAFE_GRID_CELLS = 500000
 
@@ -133,6 +135,12 @@ class StreamingExporter:
         
         # Stats
         self.views_processed = 0
+        self.memory_tracker = None
+        try:
+            self.memory_tracker = MemoryTracker()
+            self.memory_tracker.mark("run_start")
+        except Exception as e:
+            print("[Streaming] WARN memory tracker init failed: {}".format(e))
         self.views_failed = 0
         self.png_files = []
         self.csv_rows_written = 0
@@ -257,6 +265,11 @@ class StreamingExporter:
             view_result: Full view result dict with raster data
         """
         self.views_processed += 1
+        try:
+            if self.memory_tracker is not None:
+                self.memory_tracker.mark("view_start_{}".format(view_result.get("view_id")))
+        except Exception as e:
+            print("[Streaming] WARN memory mark failed: {}".format(e))
         
         # Check success
         is_success = view_result.get("success", True)
@@ -285,8 +298,7 @@ class StreamingExporter:
             if isinstance(c, dict) and str(c.get("cache_type", "")).lower() == "root":
                 is_cache_hit = True
         except Exception as e:
-            # Exception in on_view_complete - no diag in scope
-            pass  # TODO: Add diagnostics when diag becomes available
+            print("[Streaming] WARN cache-hit detect failed: {}".format(e))
         if self.export_png and not is_cache_hit:
             t0 = time.perf_counter()
             png_path = self._write_png(view_result)
@@ -301,6 +313,11 @@ class StreamingExporter:
         # Write CSV rows immediately (if enabled)
         if self.export_csv:
             self._write_csv_rows(view_result)
+        try:
+            if self.memory_tracker is not None:
+                self.memory_tracker.mark("after_raster_{}".format(view_result.get("view_id")))
+        except Exception as e:
+            print("[Streaming] WARN memory mark failed: {}".format(e))
         
         # Root cache write-through is owned by pipeline.process_document_views().
         # Streaming must NOT recompute signatures or call root_cache.set_view(),
@@ -504,6 +521,13 @@ class StreamingExporter:
         if self.perf_file:
             self.perf_file.close()
         
+        try:
+            if self.memory_tracker is not None:
+                self.memory_tracker.mark("run_end")
+                self.memory_tracker.mark_and_gc("after_run_gc")
+        except Exception as e:
+            print("[Streaming] WARN final memory mark failed: {}".format(e))
+
         # Write JSON if requested
         json_path = None
         if self.export_json and self.full_results:
@@ -528,6 +552,13 @@ class StreamingExporter:
             
             print(f"[Streaming] Wrote JSON: {json_path}")
         
+        perf_export_path = None
+        try:
+            if self.export_perf_csv:
+                perf_export_path = export_perf_csv(self.full_results or [], output_dir=getattr(self.cfg, "perf_csv_output_dir", None) or self.output_dir, run_id=self.run_id, memory_records=self.memory_tracker.to_dict() if self.memory_tracker is not None else None)
+        except Exception as e:
+            print("[Streaming] WARN export_perf_csv failed: {}".format(e))
+
         return {
             "views_processed": self.views_processed,
             "views_failed": self.views_failed,
@@ -538,7 +569,10 @@ class StreamingExporter:
             "perf_csv_path": getattr(self, 'perf_csv_path', None),
             "csv_rows_written": self.csv_rows_written,
             "json_path": json_path,
-            "view_summaries": self.view_summaries
+            "view_summaries": self.view_summaries,
+            "memory_report": self.memory_tracker.report() if self.memory_tracker is not None else "",
+            "memory_marks": self.memory_tracker.to_dict() if self.memory_tracker is not None else [],
+            "perf_export_path": perf_export_path,
         }
 
 
@@ -599,7 +633,7 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                         is_cache_hit = True
                 except Exception as e:
                     # Exception in process_document_views_streaming - no diag in scope
-                    pass  # TODO: Add diagnostics when diag becomes available
+                    print("[Streaming] WARN signature/cache inspection failed: {}".format(e))
                 if (("raster" not in view_result) or (view_result.get("raster") is None)) and not is_cache_hit:
                     print(f"[Streaming] WARNING: No raster in view_result for view {view_id}")
                     print(f"[Streaming]   This should not happen - check cfg.retain_rasters_in_memory")
@@ -657,8 +691,8 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                     System.GC.Collect()
                     System.GC.WaitForPendingFinalizers()
                     System.GC.Collect()
-                except Exception:
-                    pass
+                except Exception as e:
+                    print("[Streaming] WARN CLR GC failed: {}".format(e))
 
         except Exception as e:
             print(f"[Streaming] Error processing view {view_id}: {e}")
@@ -789,8 +823,7 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
         try:
             print(f"[Streaming] Root cache stats: {root_cache.stats()}")
         except Exception as e:
-            # Exception in run_vop_pipeline_streaming - no diag in scope
-            pass  # TODO: Add diagnostics when diag becomes available
+            print("[Streaming] WARN root cache stats failed: {}".format(e))
         if not ok:
             print("[Streaming] Root cache save returned False")
     except Exception as e:
