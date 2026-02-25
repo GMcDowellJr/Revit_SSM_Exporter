@@ -341,3 +341,36 @@ Part of the Revit SSM Exporter project.
 
 - Initial implementation: Claude Code (2026-01-01)
 - Specification: VOP Interwoven Pipeline Spec
+
+## Performance Setup (Optional)
+
+VOP uses NumPy and Pillow for significantly faster rasterization and PNG export when they are available. The pipeline runs correctly without them — these libraries only enable optional fast code paths.
+
+### One-time installation
+
+From a command prompt (replacing the path with your actual location):
+```
+python “C:\path\to\vop_interwoven\bootstrap.py”
+```
+Or from a Dynamo CPython3 Python node:
+
+```python
+exec(open(r"C:\path\to\vop_interwoven\bootstrap.py").read())
+```
+
+Restart Revit and Dynamo after running.
+
+### Verification
+
+In a Python node or terminal:
+
+```python
+from vop_interwoven.np_backend import NUMPY_AVAILABLE, PILLOW_AVAILABLE
+print("numpy:", NUMPY_AVAILABLE)    # True = fast path active
+print("pillow:", PILLOW_AVAILABLE)  # True = fast PNG export active
+```
+
+### Without installation
+
+If NumPy and Pillow are not installed, VOP automatically uses pure Python implementations. No configuration change is required.
+

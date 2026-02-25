@@ -106,6 +106,7 @@ class Config:
         # Perf: per-view timings (coarse always; optional sub-step)
         perf_collect_timings=True,
         perf_subtimings=True,
+        numpy_auto_install=False,
 
         # ────────────────────────────────────────────────────────────────────
         # Persistent view-level cache (disk-backed)
@@ -208,6 +209,7 @@ class Config:
         # Perf: timings
         self.perf_collect_timings = bool(perf_collect_timings)
         self.perf_subtimings = bool(perf_subtimings)
+        self.numpy_auto_install = bool(numpy_auto_install)
 
         # Debug and diagnostics
         self.debug_dump_occlusion = bool(debug_dump_occlusion)
@@ -511,6 +513,7 @@ class Config:
             
             "perf_collect_timings": self.perf_collect_timings,
             "perf_subtimings": self.perf_subtimings,
+            "numpy_auto_install": self.numpy_auto_install,
             
             "view_cache_enabled": self.view_cache_enabled,
             "view_cache_dir": self.view_cache_dir,
@@ -570,6 +573,7 @@ class Config:
 
             perf_collect_timings=d.get("perf_collect_timings", True),
             perf_subtimings=d.get("perf_subtimings", False),
+            numpy_auto_install=d.get("numpy_auto_install", False),
                         
             view_cache_enabled=d.get("view_cache_enabled", True),
             view_cache_dir=d.get("view_cache_dir", None),
