@@ -359,7 +359,8 @@ def _view_signature(doc_obj, view_obj, view_mode_val, cfg_obj=None, elem_cache=N
             return None
 
     sig = {
-        "schema": 4,
+        # Bump when signature-affecting pipeline behavior changes to force safe cache invalidation.
+        "schema": 5,
         "view_id": _safe_int(getattr(getattr(view_obj, "Id", None), "IntegerValue", None)),
         "view_uid": getattr(view_obj, "UniqueId", None),
         "view_name": getattr(view_obj, "Name", None),
