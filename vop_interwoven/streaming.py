@@ -87,11 +87,16 @@ def process_with_streaming(doc, view_ids, cfg, on_view_complete, root_cache=None
                 
         except Exception as e:
             print(f"[Streaming] Error processing view {view_id}: {e}")
-            summaries.append({
-                "view_id": view_id,
+            fail_payload = {
+                "view_id": requested_view_id if "requested_view_id" in locals() else view_id,
                 "success": False,
                 "error": str(e)
-            })
+            }
+            summaries.append(fail_payload)
+            try:
+                on_view_complete(fail_payload)
+            except Exception as cb_e:
+                print("[Streaming] WARN failure callback failed: {}".format(cb_e))
     
     # Save cache at end
     root_cache.save()
@@ -615,8 +620,26 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
     
     for view_id in view_ids:
         try:
+            # Normalize input to ElementId/int expected by process_document_views
+            try:
+                requested_view_id = view_id.Id if hasattr(view_id, "Id") else view_id
+            except Exception as e:
+                print("[Streaming] WARN view_id normalization failed: {}".format(e))
+                requested_view_id = view_id
+
             # Process single view (cache miss)
-            results = process_document_views(doc, [view_id], cfg, root_cache=root_cache, reset_family_caches=False)
+            results = process_document_views(doc, [requested_view_id], cfg, root_cache=root_cache, reset_family_caches=False)
+
+            if not results or len(results) == 0:
+                fail_payload = {
+                    "view_id": requested_view_id,
+                    "view_name": "Unknown",
+                    "success": False,
+                    "error": "No result returned from process_document_views",
+                }
+                summaries.append(fail_payload)
+                on_view_complete(fail_payload)
+                continue
 
             if results and len(results) > 0:
                 view_result = results[0]
@@ -636,11 +659,14 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                 if (("raster" not in view_result) or (view_result.get("raster") is None)) and not is_cache_hit:
                     print(f"[Streaming] WARNING: No raster in view_result for view {view_id}")
                     print(f"[Streaming]   This should not happen - check cfg.retain_rasters_in_memory")
-                    summaries.append({
-                        "view_id": view_id,
+                    fail_payload = {
+                        "view_id": view_result.get("view_id", requested_view_id),
+                        "view_name": view_result.get("view_name", "Unknown"),
                         "success": False,
                         "error": "Missing raster data"
-                    })
+                    }
+                    summaries.append(fail_payload)
+                    on_view_complete(fail_payload)
                     continue
                     
                 width = int(view_result.get("width", 0) or 0)
@@ -654,7 +680,7 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                             view_result.get("view_id"), width, height, grid_cells, filled_cells
                         )
                     )
-                    summaries.append({
+                    fail_payload = {
                         "view_id": view_result.get("view_id"),
                         "view_name": view_result.get("view_name"),
                         "success": False,
@@ -662,7 +688,9 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                         "width": width,
                         "height": height,
                         "filled_cells": filled_cells,
-                    })
+                    }
+                    summaries.append(fail_payload)
+                    on_view_complete(fail_payload)
                     continue
 
                 # Call user callback
@@ -695,11 +723,16 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
 
         except Exception as e:
             print(f"[Streaming] Error processing view {view_id}: {e}")
-            summaries.append({
-                "view_id": view_id,
+            fail_payload = {
+                "view_id": requested_view_id if "requested_view_id" in locals() else view_id,
                 "success": False,
                 "error": str(e)
-            })
+            }
+            summaries.append(fail_payload)
+            try:
+                on_view_complete(fail_payload)
+            except Exception as cb_e:
+                print("[Streaming] WARN failure callback failed: {}".format(cb_e))
     
     # Restore original setting (though caller usually doesn't reuse cfg)
     cfg.retain_rasters_in_memory = original_retain
@@ -805,7 +838,7 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
     # Process with streaming callback
     t0 = time.perf_counter()
     
-    process_document_views_streaming(
+    summaries = process_document_views_streaming(
         doc, 
         view_ids, 
         cfg,
@@ -818,6 +851,13 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
     # Finalize and get results
     result = exporter.finalize()
     result["total_time_sec"] = t1 - t0
+    try:
+        if result.get("views_processed", 0) == 0 and summaries:
+            result["views_processed"] = len(summaries)
+            result["views_failed"] = len([s for s in summaries if not s.get("success", True)])
+            result["view_summaries"] = summaries
+    except Exception as e:
+        print("[Streaming] WARN summary fallback failed: {}".format(e))
     
     # Persist root cache
     try:
