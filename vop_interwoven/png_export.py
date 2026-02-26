@@ -341,8 +341,26 @@ def _export_png_pillow(view_result, output_path, pixels_per_cell=4, cut_vs_proje
     if not raster:
         return None
 
-    W = raster.get("width", 0)
-    H = raster.get("height", 0)
+    def _pick_int(*vals):
+        for v in vals:
+            try:
+                iv = int(v)
+                if iv > 0:
+                    return iv
+            except Exception:
+                continue
+        return 0
+
+    W = _pick_int(
+        raster.get("width", 0),
+        view_result.get("width", 0),
+        view_result.get("grid_W", 0),
+    )
+    H = _pick_int(
+        raster.get("height", 0),
+        view_result.get("height", 0),
+        view_result.get("grid_H", 0),
+    )
     if W == 0 or H == 0:
         return None
 

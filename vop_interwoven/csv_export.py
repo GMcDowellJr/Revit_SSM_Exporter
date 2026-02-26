@@ -160,16 +160,20 @@ def compute_cell_metrics(raster, model_presence_mode="ink", diag=None):
 def _compute_cell_metrics_np(raster, mode, np):
     """NumPy-vectorised implementation of compute_cell_metrics."""
     def _arr_int(attr, default=-1):
-        v = getattr(raster, attr, None) or []
+        v = getattr(raster, attr, None)
+        if v is None:
+            return np.array([], dtype=np.int32)
         if hasattr(v, 'dtype'):
             return v.astype(np.int32)
-        return np.array(v, dtype=np.int32) if v else np.array([], dtype=np.int32)
+        return np.array(v, dtype=np.int32) if len(v) > 0 else np.array([], dtype=np.int32)
 
     def _arr_bool(attr):
-        v = getattr(raster, attr, None) or []
+        v = getattr(raster, attr, None)
+        if v is None:
+            return np.array([], dtype=bool)
         if hasattr(v, 'dtype') and v.dtype == bool:
             return v
-        return np.array(v, dtype=bool) if v else np.array([], dtype=bool)
+        return np.array(v, dtype=bool) if len(v) > 0 else np.array([], dtype=bool)
 
     ek  = _arr_int("model_edge_key")
     pk  = _arr_int("model_proxy_key")

@@ -1489,12 +1489,12 @@ class ViewRaster:
                 from vop_interwoven.np_backend import np as _np
                 m = _polygon_mask_np(points_ij, self.W, self.H, _np)
                 if is_hole:
-                    if not hasattr(self, '_np_hole_mask'):
+                    if (not hasattr(self, '_np_hole_mask')) or (self._np_hole_mask is None) or (self._np_outer_mask is None):
                         self._np_hole_mask  = _np.zeros((self.H, self.W), dtype=bool)
                         self._np_outer_mask = _np.zeros((self.H, self.W), dtype=bool)
                     self._np_hole_mask |= m
                 else:
-                    if not hasattr(self, '_np_outer_mask'):
+                    if (not hasattr(self, '_np_outer_mask')) or (self._np_outer_mask is None) or (self._np_hole_mask is None):
                         self._np_outer_mask = _np.zeros((self.H, self.W), dtype=bool)
                         self._np_hole_mask  = _np.zeros((self.H, self.W), dtype=bool)
                     self._np_outer_mask |= m
@@ -1512,8 +1512,12 @@ class ViewRaster:
         # Commit writes
         if self._numpy_backend:
             from vop_interwoven.np_backend import np as _np
-            outer_mask = getattr(self, '_np_outer_mask', _np.zeros((self.H, self.W), dtype=bool))
-            hole_mask  = getattr(self, '_np_hole_mask',  _np.zeros((self.H, self.W), dtype=bool))
+            outer_mask = getattr(self, '_np_outer_mask', None)
+            if outer_mask is None:
+                outer_mask = _np.zeros((self.H, self.W), dtype=bool)
+            hole_mask  = getattr(self, '_np_hole_mask', None)
+            if hole_mask is None:
+                hole_mask = _np.zeros((self.H, self.W), dtype=bool)
             # Clean up temporaries immediately
             self._np_outer_mask = None
             self._np_hole_mask  = None
