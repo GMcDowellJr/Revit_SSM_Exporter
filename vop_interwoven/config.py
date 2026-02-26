@@ -106,6 +106,8 @@ class Config:
         # Perf: per-view timings (coarse always; optional sub-step)
         perf_collect_timings=True,
         perf_subtimings=True,
+        perf_subtimings_geometry=True,
+        perf_subtimings_cache=True,
         numpy_auto_install=False,
 
         # ────────────────────────────────────────────────────────────────────
@@ -139,8 +141,10 @@ class Config:
         export_view_diagnostics=True,  # Export views_diagnostics_*.json
         view_diagnostics_output_dir=None,  # None = use output_dir (same as CSVs)
 
+        # Export controls
+        export_png=True,
         # Perf CSV export controls
-        export_perf_csv=True,  # Export views_perf_*.csv
+        export_perf_csv=False,  # Export views_perf_*.csv
         perf_csv_output_dir=None,  # None = use output_dir (same as CSVs)
 
         # Memory management: control raster retention behavior
@@ -209,6 +213,8 @@ class Config:
         # Perf: timings
         self.perf_collect_timings = bool(perf_collect_timings)
         self.perf_subtimings = bool(perf_subtimings)
+        self.perf_subtimings_geometry = bool(perf_subtimings_geometry)
+        self.perf_subtimings_cache = bool(perf_subtimings_cache)
         self.numpy_auto_install = bool(numpy_auto_install)
 
         # Debug and diagnostics
@@ -304,6 +310,9 @@ class Config:
         self.export_strategy_diagnostics = bool(export_strategy_diagnostics)
         self.export_view_diagnostics = bool(export_view_diagnostics)
         self.view_diagnostics_output_dir = view_diagnostics_output_dir
+
+        # Export controls
+        self.export_png = bool(export_png)
 
         # Perf CSV export controls
         self.export_perf_csv = bool(export_perf_csv)
@@ -513,6 +522,8 @@ class Config:
             
             "perf_collect_timings": self.perf_collect_timings,
             "perf_subtimings": self.perf_subtimings,
+            "perf_subtimings_geometry": self.perf_subtimings_geometry,
+            "perf_subtimings_cache": self.perf_subtimings_cache,
             "numpy_auto_install": self.numpy_auto_install,
             
             "view_cache_enabled": self.view_cache_enabled,
@@ -531,6 +542,9 @@ class Config:
             "export_strategy_diagnostics": self.export_strategy_diagnostics,
             "export_view_diagnostics": self.export_view_diagnostics,
             "view_diagnostics_output_dir": self.view_diagnostics_output_dir,
+
+            # Export controls
+            "export_png": self.export_png,
 
             # Perf CSV export controls
             "export_perf_csv": self.export_perf_csv,
@@ -573,6 +587,8 @@ class Config:
 
             perf_collect_timings=d.get("perf_collect_timings", True),
             perf_subtimings=d.get("perf_subtimings", False),
+            perf_subtimings_geometry=d.get("perf_subtimings_geometry", True),
+            perf_subtimings_cache=d.get("perf_subtimings_cache", True),
             numpy_auto_install=d.get("numpy_auto_install", False),
                         
             view_cache_enabled=d.get("view_cache_enabled", True),
@@ -595,8 +611,11 @@ class Config:
             export_view_diagnostics=d.get("export_view_diagnostics", True),
             view_diagnostics_output_dir=d.get("view_diagnostics_output_dir", None),
 
+            # Export controls
+            export_png=d.get("export_png", True),
+
             # Perf CSV export controls
-            export_perf_csv=d.get("export_perf_csv", True),
+            export_perf_csv=d.get("export_perf_csv", False),
             perf_csv_output_dir=d.get("perf_csv_output_dir", None),
             # Metrics manifest wiring
             metrics_manifest_path=d.get("metrics_manifest_path", None),

@@ -139,6 +139,49 @@ try:
     lines.append("")
     
     # Memory benefit
+    # Run summary / perf diagnostics
+    run_summary = None
+    for _v in view_summaries:
+        if isinstance(_v, dict) and _v.get("run_summary"):
+            run_summary = _v.get("run_summary")
+            break
+    if not run_summary:
+        run_summary = result.get("run_summary")
+
+    if run_summary:
+        lines.append("Run Summary:")
+        lines.append(f"  Views: {run_summary.get('view_count')}")
+        lines.append(f"  Elapsed: {run_summary.get('total_elapsed_s')} s")
+        lines.append(f"  Mem start/end/peak (priv MB): {run_summary.get('memory_start_priv_mb')} / {run_summary.get('memory_end_priv_mb')} / {run_summary.get('memory_peak_priv_mb')}")
+        slow = run_summary.get("slowest_views", [])[:3]
+        lines.append("  Top 3 slowest views:")
+        for sv in slow:
+            lines.append(f"    - {sv.get('view_name')} ({sv.get('view_id')}): {sv.get('total_ms')} ms")
+        lines.append("")
+
+    mem_report = result.get("memory_report", "")
+    if mem_report:
+        lines.append("Memory Tracker:")
+        lines.extend(str(mem_report).splitlines())
+        lines.append("")
+
+    perf_export_path = result.get("perf_export_path")
+    if perf_export_path:
+        lines.append(f"Perf CSV: {perf_export_path}")
+
+    mem_marks = result.get("memory_marks") or []
+    priv_vals = [m.get("priv_mb") for m in mem_marks if isinstance(m, dict) and m.get("priv_mb") is not None]
+    delta = (float(priv_vals[-1]) - float(priv_vals[0])) if len(priv_vals) >= 2 else 0.0
+    nviews = int(result.get("views_processed", 0) or 0)
+    if delta > 500:
+        verdict = f"[CRIT] Memory grew {delta:.0f} MB — pipeline at risk"
+    elif delta > 200:
+        verdict = f"[WARN] Memory grew {delta:.0f} MB — check CLR GC calls"
+    else:
+        verdict = f"[OK] Memory stable: +{delta:.0f} MB across {nviews} views"
+    lines.append(verdict)
+    lines.append("")
+
     lines.append("Memory: Streaming mode (minimal footprint)")
     lines.append("")
 
