@@ -79,7 +79,7 @@ class Config:
         debug_dump_occlusion=False,
         debug_dump_path=r"C:\temp\vop_output",
         # Dump w_occ as grayscale image (PGM)
-        debug_dump_occlusion_image = False,
+        debug_dump_occlusion_image = True,
     
         # Debug dump prefix (optional override)
         debug_dump_prefix=None,
