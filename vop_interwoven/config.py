@@ -537,6 +537,7 @@ class Config:
             # Perf CSV export controls
             "export_perf_csv": self.export_perf_csv,
             "perf_csv_output_dir": self.perf_csv_output_dir,
+            "retain_rasters_in_memory": self.retain_rasters_in_memory,
             # Metrics manifest wiring
             "metrics_manifest_path": self.metrics_manifest_path,
             "metrics_validation_mode": self.metrics_validation_mode,
@@ -600,6 +601,7 @@ class Config:
             # Perf CSV export controls
             export_perf_csv=d.get("export_perf_csv", True),
             perf_csv_output_dir=d.get("perf_csv_output_dir", None),
+            retain_rasters_in_memory=d.get("retain_rasters_in_memory", False),
             # Metrics manifest wiring
             metrics_manifest_path=d.get("metrics_manifest_path", None),
             metrics_validation_mode=d.get("metrics_validation_mode", "warn"),

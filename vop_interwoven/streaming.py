@@ -264,12 +264,10 @@ class StreamingExporter:
         is_cache_hit = bool(view_result.get("from_cache"))
         has_metrics = isinstance(view_result.get("metrics"), dict) and bool(view_result.get("metrics"))
 
-        # Metrics-only payloads are valid for CSV/perf export even without raster.
-        # PNG export is naturally skipped when no raster is present.
-        if not is_success or (not has_raster and not has_metrics):
+        # Accept raster-bearing, metrics-only, or cache-hit payloads.
+        # Cache-hit payloads may be rehydrated in _write_csv_rows.
+        if not is_success:
             self.views_failed += 1
-            if not has_raster:
-                print(f"[Streaming] No raster/metrics in view_result; skipping exports for view {view_result.get('view_id')}")
             self.view_summaries.append({
                 "view_id": view_result.get("view_id"),
                 "view_name": view_result.get("view_name"),
@@ -588,15 +586,28 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
             if results and len(results) > 0:
                 view_result = results[0]
                 
-                # Allow metrics-only payloads through callback (cache or lightweight paths).
+                # Allow three valid payload shapes:
+                #   1) raster-bearing (normal miss path),
+                #   2) metrics-only (lightweight/cache materialized metrics),
+                #   3) cache-hit without metrics (rehydrated later from root cache in _write_csv_rows).
                 has_raster = ("raster" in view_result) and (view_result.get("raster") is not None)
                 has_metrics = isinstance(view_result.get("metrics"), dict) and bool(view_result.get("metrics"))
-                if (not has_raster) and (not has_metrics):
-                    print(f"[Streaming] WARNING: No raster/metrics in view_result for view {view_id}")
+                is_cache_hit = bool(view_result.get("from_cache"))
+                try:
+                    c = view_result.get("cache", {})
+                    if isinstance(c, dict) and "HIT" in str(c.get("view_cache", "")).upper():
+                        is_cache_hit = True
+                    if isinstance(c, dict) and str(c.get("cache_type", "")).lower() == "root":
+                        is_cache_hit = True
+                except Exception:
+                    pass
+
+                if (not has_raster) and (not has_metrics) and (not is_cache_hit):
+                    print(f"[Streaming] WARNING: No raster/metrics/cache-hit in view_result for view {view_id}")
                     summaries.append({
                         "view_id": view_id,
                         "success": False,
-                        "error": "Missing raster and metrics data"
+                        "error": "Missing raster, metrics, and cache-hit marker"
                     })
                     continue
                     
