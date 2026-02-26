@@ -30,6 +30,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -86,8 +88,8 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
@@ -106,6 +108,8 @@ Notes:
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
+    - `export_perf_csv`
+      - called from: pipeline.py
     - `export_pipeline_results_to_pngs`
       - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
@@ -137,7 +141,7 @@ Notes:
     - `get_occlusion_csv_header`
       - called from: streaming.py
     - `get_perf_csv_header`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
@@ -245,7 +249,7 @@ Notes:
     - `view_result_to_occlusion_row`
       - called from: streaming.py
     - `view_result_to_perf_row`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
     - `world_to_view`
@@ -277,6 +281,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -333,8 +339,8 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
@@ -353,6 +359,8 @@ Notes:
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
+    - `export_perf_csv`
+      - called from: pipeline.py
     - `export_pipeline_results_to_pngs`
       - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
@@ -384,7 +392,7 @@ Notes:
     - `get_occlusion_csv_header`
       - called from: streaming.py
     - `get_perf_csv_header`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
@@ -492,7 +500,7 @@ Notes:
     - `view_result_to_occlusion_row`
       - called from: streaming.py
     - `view_result_to_perf_row`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
     - `world_to_view`
@@ -524,6 +532,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -580,8 +590,8 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
@@ -600,6 +610,8 @@ Notes:
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
+    - `export_perf_csv`
+      - called from: pipeline.py
     - `export_pipeline_results_to_pngs`
       - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
@@ -631,7 +643,7 @@ Notes:
     - `get_occlusion_csv_header`
       - called from: streaming.py
     - `get_perf_csv_header`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
@@ -739,7 +751,7 @@ Notes:
     - `view_result_to_occlusion_row`
       - called from: streaming.py
     - `view_result_to_perf_row`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
     - `world_to_view`
@@ -747,7 +759,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `run_vop_pipeline_streaming` (streaming.py:L677)
+## Trace: `run_vop_pipeline_streaming` (streaming.py:L743)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -771,6 +783,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -827,8 +841,8 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
@@ -847,6 +861,8 @@ Notes:
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
+    - `export_perf_csv`
+      - called from: pipeline.py
     - `export_pipeline_results_to_pngs`
       - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
@@ -878,7 +894,7 @@ Notes:
     - `get_occlusion_csv_header`
       - called from: streaming.py
     - `get_perf_csv_header`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
@@ -986,7 +1002,7 @@ Notes:
     - `view_result_to_occlusion_row`
       - called from: streaming.py
     - `view_result_to_perf_row`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
     - `world_to_view`
@@ -1018,6 +1034,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -1074,8 +1092,8 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
@@ -1094,6 +1112,8 @@ Notes:
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
+    - `export_perf_csv`
+      - called from: pipeline.py
     - `export_pipeline_results_to_pngs`
       - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
@@ -1125,7 +1145,7 @@ Notes:
     - `get_occlusion_csv_header`
       - called from: streaming.py
     - `get_perf_csv_header`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
@@ -1235,7 +1255,7 @@ Notes:
     - `view_result_to_occlusion_row`
       - called from: streaming.py
     - `view_result_to_perf_row`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
     - `world_to_view`
@@ -1243,7 +1263,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `process_document_views` (pipeline.py:L539)
+## Trace: `process_document_views` (pipeline.py:L542)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1267,6 +1287,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -1323,8 +1345,8 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
@@ -1343,6 +1365,8 @@ Notes:
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
+    - `export_perf_csv`
+      - called from: pipeline.py
     - `export_pipeline_results_to_pngs`
       - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
@@ -1374,7 +1398,7 @@ Notes:
     - `get_occlusion_csv_header`
       - called from: streaming.py
     - `get_perf_csv_header`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
@@ -1482,7 +1506,7 @@ Notes:
     - `view_result_to_occlusion_row`
       - called from: streaming.py
     - `view_result_to_perf_row`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
     - `world_to_view`
@@ -1490,7 +1514,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `process_document_views_streaming` (streaming.py:L545)
+## Trace: `process_document_views_streaming` (streaming.py:L583)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1514,6 +1538,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -1570,8 +1596,8 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
@@ -1590,6 +1616,8 @@ Notes:
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
+    - `export_perf_csv`
+      - called from: pipeline.py
     - `export_pipeline_results_to_pngs`
       - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
@@ -1621,7 +1649,7 @@ Notes:
     - `get_occlusion_csv_header`
       - called from: streaming.py
     - `get_perf_csv_header`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
@@ -1729,7 +1757,7 @@ Notes:
     - `view_result_to_occlusion_row`
       - called from: streaming.py
     - `view_result_to_perf_row`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
     - `world_to_view`
@@ -1737,7 +1765,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `render_model_front_to_back` (pipeline.py:L1779)
+## Trace: `render_model_front_to_back` (pipeline.py:L1906)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1761,6 +1789,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -1817,8 +1847,8 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
@@ -1837,6 +1867,8 @@ Notes:
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
+    - `export_perf_csv`
+      - called from: pipeline.py
     - `export_pipeline_results_to_pngs`
       - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
@@ -1868,7 +1900,7 @@ Notes:
     - `get_occlusion_csv_header`
       - called from: streaming.py
     - `get_perf_csv_header`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
@@ -1976,7 +2008,7 @@ Notes:
     - `view_result_to_occlusion_row`
       - called from: streaming.py
     - `view_result_to_perf_row`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
     - `world_to_view`
@@ -1984,7 +2016,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `init_view_raster` (pipeline.py:L1474)
+## Trace: `init_view_raster` (pipeline.py:L1601)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -2008,6 +2040,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -2064,8 +2098,8 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
@@ -2084,6 +2118,8 @@ Notes:
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
+    - `export_perf_csv`
+      - called from: pipeline.py
     - `export_pipeline_results_to_pngs`
       - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
@@ -2115,7 +2151,7 @@ Notes:
     - `get_occlusion_csv_header`
       - called from: streaming.py
     - `get_perf_csv_header`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
@@ -2223,7 +2259,7 @@ Notes:
     - `view_result_to_occlusion_row`
       - called from: streaming.py
     - `view_result_to_perf_row`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
     - `world_to_view`
@@ -2231,7 +2267,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `_view_signature` (pipeline.py:L270)
+## Trace: `_view_signature` (pipeline.py:L273)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -2255,6 +2291,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -2311,8 +2349,8 @@ Notes:
     - called from: csv_export.py, root_cache.py
   - `compute_manifest_sha256`
     - called from: metrics_manifest.py
-  - `compute_view_frame_hash`
-    - called from: csv_export.py
+    - `compute_view_frame_hash`
+      - called from: csv_export.py
     - `convex_hull_uv`
       - called from: pipeline.py
     - `estimate_depth_from_loops_or_bbox`
@@ -2329,6 +2367,8 @@ Notes:
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
+    - `export_perf_csv`
+      - called from: pipeline.py
     - `export_pipeline_results_to_pngs`
       - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
@@ -2360,7 +2400,7 @@ Notes:
     - `get_occlusion_csv_header`
       - called from: streaming.py
     - `get_perf_csv_header`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
@@ -2470,7 +2510,7 @@ Notes:
     - `view_result_to_occlusion_row`
       - called from: streaming.py
     - `view_result_to_perf_row`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
     - `world_to_view`
@@ -2502,6 +2542,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -2558,8 +2600,8 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
@@ -2578,6 +2620,8 @@ Notes:
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
+    - `export_perf_csv`
+      - called from: pipeline.py
     - `export_pipeline_results_to_pngs`
       - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
@@ -2609,7 +2653,7 @@ Notes:
     - `get_occlusion_csv_header`
       - called from: streaming.py
     - `get_perf_csv_header`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
@@ -2717,7 +2761,7 @@ Notes:
     - `view_result_to_occlusion_row`
       - called from: streaming.py
     - `view_result_to_perf_row`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
     - `world_to_view`
@@ -2749,6 +2793,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -2805,8 +2851,8 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
@@ -2825,6 +2871,8 @@ Notes:
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
+    - `export_perf_csv`
+      - called from: pipeline.py
     - `export_pipeline_results_to_pngs`
       - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
@@ -2856,7 +2904,7 @@ Notes:
     - `get_occlusion_csv_header`
       - called from: streaming.py
     - `get_perf_csv_header`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
@@ -2964,7 +3012,7 @@ Notes:
     - `view_result_to_occlusion_row`
       - called from: streaming.py
     - `view_result_to_perf_row`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
     - `world_to_view`
@@ -2996,6 +3044,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -3052,8 +3102,8 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
@@ -3072,6 +3122,8 @@ Notes:
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
+    - `export_perf_csv`
+      - called from: pipeline.py
     - `export_pipeline_results_to_pngs`
       - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
@@ -3103,7 +3155,7 @@ Notes:
     - `get_occlusion_csv_header`
       - called from: streaming.py
     - `get_perf_csv_header`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
@@ -3211,7 +3263,7 @@ Notes:
     - `view_result_to_occlusion_row`
       - called from: streaming.py
     - `view_result_to_perf_row`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
     - `world_to_view`
@@ -3243,6 +3295,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -3299,8 +3353,8 @@ Notes:
     - called from: csv_export.py, root_cache.py
   - `compute_manifest_sha256`
     - called from: metrics_manifest.py
-  - `compute_view_frame_hash`
-    - called from: csv_export.py
+    - `compute_view_frame_hash`
+      - called from: csv_export.py
     - `convex_hull_uv`
       - called from: pipeline.py
     - `estimate_depth_from_loops_or_bbox`
@@ -3317,6 +3371,8 @@ Notes:
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
+    - `export_perf_csv`
+      - called from: pipeline.py
     - `export_pipeline_results_to_pngs`
       - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
@@ -3348,7 +3404,7 @@ Notes:
     - `get_occlusion_csv_header`
       - called from: streaming.py
     - `get_perf_csv_header`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
@@ -3458,7 +3514,7 @@ Notes:
     - `view_result_to_occlusion_row`
       - called from: streaming.py
     - `view_result_to_perf_row`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
     - `world_to_view`
@@ -3490,6 +3546,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -3546,8 +3604,8 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
@@ -3566,6 +3624,8 @@ Notes:
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
+    - `export_perf_csv`
+      - called from: pipeline.py
     - `export_pipeline_results_to_pngs`
       - called from: entry_dynamo.py
     - `export_pipeline_to_csv`
@@ -3595,7 +3655,7 @@ Notes:
     - `get_occlusion_csv_header`
       - called from: streaming.py
     - `get_perf_csv_header`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
@@ -3705,7 +3765,7 @@ Notes:
     - `view_result_to_occlusion_row`
       - called from: streaming.py
     - `view_result_to_perf_row`
-      - called from: entry_dynamo.py, streaming.py
+      - called from: entry_dynamo.py, perf_export.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
     - `world_to_view`
