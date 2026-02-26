@@ -760,7 +760,7 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset
             if getattr(cfg, "element_cache_persist", True) and elem_cache_path is not None:
                 try:
                     elem_cache_prev = ElementCache.load_from_json(elem_cache_path, max_elements=max_items)
-                    # Start with previous cache (pre-populated) and keep prev ref for change detection.
+                    # Start with previous cache (pre-populated)
                     elem_cache = elem_cache_prev
                     if diag is not None:
                         try:
@@ -1477,8 +1477,6 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset
                             message="Exception in _tmark: {}".format(e),
                             exc=e,
                         )
-            # Release prev cache — no longer needed after change detection.
-            elem_cache_prev = None
         except Exception as e:
             if diag is not None:
                 diag.error(

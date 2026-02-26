@@ -346,11 +346,7 @@ class StreamingExporter:
 
         # Optionally store full result if JSON export requested
         if self.full_results is not None:
-            # Store metrics and identity only — never raster arrays.
-            self.full_results.append({
-                k: v for k, v in view_result.items()
-                if k not in ("raster", "diag")
-            })
+            self.full_results.append(view_result)
             
             
     def _write_png(self, view_result):
@@ -706,20 +702,6 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                     "timings": view_result.get("timings")
                 }
                 summaries.append(summary)
-
-                # Drop Python refs before CLR GC so Python.NET wrappers can release handles first.
-                view_result = None
-                results = None
-
-                # Force CLR GC to release Revit geometry objects from get_Geometry(opts.View=view).
-                # These accumulate on the .NET heap and are not freed by CPython refcounting alone.
-                try:
-                    import System
-                    System.GC.Collect()
-                    System.GC.WaitForPendingFinalizers()
-                    System.GC.Collect()
-                except Exception as e:
-                    print("[Streaming] WARN CLR GC failed: {}".format(e))
 
         except Exception as e:
             print(f"[Streaming] Error processing view {view_id}: {e}")
