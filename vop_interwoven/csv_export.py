@@ -22,6 +22,53 @@ def _round6(x):
     except Exception as e:
         return x
 
+
+
+def _normalize_locked_metrics_for_legacy_csv(locked_metrics):
+    """Map manifest locked metrics schema to legacy CSV metric keys.
+
+    Returns a dict with legacy keys expected by CSV/cache code:
+    TotalCells, Empty, ModelOnly, AnnoOnly, Overlap,
+    Ext_Cells_Any/Only/DWG/RVT and AnnoCells_* buckets.
+    """
+    m = locked_metrics if isinstance(locked_metrics, dict) else {}
+
+    # Legacy presence buckets
+    total = int(m.get("TotalCells", 0) or 0)
+    empty = int(m.get("Cells_Empty", 0) or 0)
+
+    # Legacy ModelOnly means model-present && !anno (includes ext-partitioned model cells)
+    model_only = int(m.get("Cells_ModelOnly", 0) or 0) + int(m.get("Cells_ModelExt", 0) or 0)
+
+    # Legacy AnnoOnly means anno-present && !model
+    anno_only = int(m.get("Cells_AnnoOnly", 0) or 0) + int(m.get("Cells_AnnoExt", 0) or 0)
+
+    # Legacy Overlap means model-present && anno-present
+    overlap = int(m.get("Cells_ModelAnno", 0) or 0) + int(m.get("Cells_All3", 0) or 0)
+
+    out = {
+        "TotalCells": total,
+        "Empty": empty,
+        "ModelOnly": model_only,
+        "AnnoOnly": anno_only,
+        "Overlap": overlap,
+
+        "Ext_Cells_Any": int(m.get("ExtFinalCells_Any", 0) or 0),
+        "Ext_Cells_Only": int(m.get("ExtFinalCells_Only", 0) or 0),
+        "Ext_Cells_DWG": int(m.get("ExtFinalCells_DWG", 0) or 0),
+        "Ext_Cells_RVT": int(m.get("ExtFinalCells_RVT", 0) or 0),
+
+        "AnnoCells_TEXT": int(m.get("AnnoFinalCells_TEXT", 0) or 0),
+        "AnnoCells_TAG": int(m.get("AnnoFinalCells_TAG", 0) or 0),
+        "AnnoCells_DIM": int(m.get("AnnoFinalCells_DIM", 0) or 0),
+        "AnnoCells_DETAIL": int(m.get("AnnoFinalCells_DETAIL", 0) or 0),
+        "AnnoCells_LINES": int(m.get("AnnoFinalCells_LINES", 0) or 0),
+        "AnnoCells_REGION": int(m.get("AnnoFinalCells_REGION", 0) or 0),
+        "AnnoCells_OTHER": int(m.get("AnnoFinalCells_OTHER", 0) or 0),
+    }
+
+    return out
+
 def _raster_to_dict_like(raster_payload):
     """Return a dict-like raster view without forcing ViewRaster.to_dict() copies."""
     if isinstance(raster_payload, dict):
