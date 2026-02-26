@@ -126,7 +126,10 @@ class StreamingExporter:
         self.output_dir = output_dir
         self.cfg = cfg
         self.doc = doc
-        self.export_png = export_png
+        if export_png is None:
+            self.export_png = bool(getattr(cfg, "export_png", True))
+        else:
+            self.export_png = bool(export_png)
         self.export_csv = export_csv
         self.export_json = export_json
         self.export_perf_csv = bool(getattr(cfg, "export_perf_csv", True))
@@ -309,6 +312,8 @@ class StreamingExporter:
 
             if png_path:
                 self.png_files.append(png_path)
+        elif self.export_png and is_cache_hit:
+            print("[Streaming] PNG skipped for cache-hit view {} (no raster payload to render)".format(view_result.get("view_id")))
 
         # Write CSV rows immediately (if enabled)
         if self.export_csv:
@@ -709,7 +714,7 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
 
 
 def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None, 
-                                export_png=True, export_csv=True, export_json=False,
+                                export_png=None, export_csv=True, export_json=False,
                                 pixels_per_cell=4, date_override=None):
     """Run VOP pipeline with streaming export to minimize memory usage.
     
@@ -757,6 +762,9 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
     
     if output_dir is None:
         output_dir = r"C:\temp\vop_output"
+
+    if export_png is None:
+        export_png = bool(getattr(cfg, "export_png", True))
 
     # Keep pipeline-side exports aligned with streaming output directory by default
     try:

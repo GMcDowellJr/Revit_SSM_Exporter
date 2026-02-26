@@ -141,6 +141,8 @@ class Config:
         export_view_diagnostics=True,  # Export views_diagnostics_*.json
         view_diagnostics_output_dir=None,  # None = use output_dir (same as CSVs)
 
+        # Export controls
+        export_png=True,
         # Perf CSV export controls
         export_perf_csv=False,  # Export views_perf_*.csv
         perf_csv_output_dir=None,  # None = use output_dir (same as CSVs)
@@ -308,6 +310,9 @@ class Config:
         self.export_strategy_diagnostics = bool(export_strategy_diagnostics)
         self.export_view_diagnostics = bool(export_view_diagnostics)
         self.view_diagnostics_output_dir = view_diagnostics_output_dir
+
+        # Export controls
+        self.export_png = bool(export_png)
 
         # Perf CSV export controls
         self.export_perf_csv = bool(export_perf_csv)
@@ -538,6 +543,9 @@ class Config:
             "export_view_diagnostics": self.export_view_diagnostics,
             "view_diagnostics_output_dir": self.view_diagnostics_output_dir,
 
+            # Export controls
+            "export_png": self.export_png,
+
             # Perf CSV export controls
             "export_perf_csv": self.export_perf_csv,
             "perf_csv_output_dir": self.perf_csv_output_dir,
@@ -602,6 +610,9 @@ class Config:
             export_strategy_diagnostics=d.get("export_strategy_diagnostics", True),
             export_view_diagnostics=d.get("export_view_diagnostics", True),
             view_diagnostics_output_dir=d.get("view_diagnostics_output_dir", None),
+
+            # Export controls
+            export_png=d.get("export_png", True),
 
             # Perf CSV export controls
             export_perf_csv=d.get("export_perf_csv", False),
