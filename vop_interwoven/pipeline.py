@@ -1586,7 +1586,7 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset
             if isinstance(_r, dict):
                 _r["run_summary"] = run_summary
                 _r["memory_marks"] = mem_records
-        if bool(getattr(cfg, "export_perf_csv", False)):
+        if bool(getattr(cfg, "export_perf_csv", False)) and not bool(getattr(cfg, "_is_streaming_mode", False)):
             try:
                 export_perf_csv(results, output_dir=getattr(cfg, "perf_csv_output_dir", None) or output_dir, run_id=run_id, date_str=date_str, memory_records=mem_records)
             except Exception as e:

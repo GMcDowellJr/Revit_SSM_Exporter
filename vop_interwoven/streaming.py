@@ -19,7 +19,6 @@ import json
 import gc
 from datetime import datetime
 from vop_interwoven.memory_telemetry import MemoryTracker
-from vop_interwoven.perf_export import export_perf_csv
 
 MAX_SAFE_GRID_CELLS = 500000
 
@@ -557,12 +556,7 @@ class StreamingExporter:
             
             print(f"[Streaming] Wrote JSON: {json_path}")
         
-        perf_export_path = None
-        try:
-            if self.export_perf_csv:
-                perf_export_path = export_perf_csv(self.full_results or [], output_dir=getattr(self.cfg, "perf_csv_output_dir", None) or self.output_dir, run_id=self.run_id, memory_records=self.memory_tracker.to_dict() if self.memory_tracker is not None else None)
-        except Exception as e:
-            print("[Streaming] WARN export_perf_csv failed: {}".format(e))
+        perf_export_path = self.perf_csv_path if self.export_perf_csv else None
 
         return {
             "views_processed": self.views_processed,
