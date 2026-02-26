@@ -119,6 +119,7 @@ class Config:
         view_cache_enabled=True,
         view_cache_dir=None,  # e.g. r"C:\temp\vop_output\.vop_view_cache"
         view_cache_require_doc_unmodified=True,
+        numpy_auto_install=False,
 
         # Phase 2: Element cache for bbox reuse across views
         use_element_cache=True,
@@ -286,6 +287,9 @@ class Config:
         self.view_cache_enabled = view_cache_enabled
         self.view_cache_dir = view_cache_dir
         self.view_cache_require_doc_unmodified = view_cache_require_doc_unmodified
+
+        # NumPy/Pillow backend (performance)
+        self.numpy_auto_install = bool(numpy_auto_install)  # If True, pip install numpy+Pillow on first run
 
         # Phase 2: Element cache for bbox reuse
         self.use_element_cache = bool(use_element_cache)
@@ -515,6 +519,7 @@ class Config:
             "view_cache_enabled": self.view_cache_enabled,
             "view_cache_dir": self.view_cache_dir,
             "view_cache_require_doc_unmodified": self.view_cache_require_doc_unmodified,
+            "numpy_auto_install": self.numpy_auto_install,
             # Phase 2: Element cache
             "use_element_cache": self.use_element_cache,
             "element_cache_max_items": self.element_cache_max_items,
@@ -574,6 +579,7 @@ class Config:
             view_cache_enabled=d.get("view_cache_enabled", True),
             view_cache_dir=d.get("view_cache_dir", None),
             view_cache_require_doc_unmodified=d.get("view_cache_require_doc_unmodified", True),
+            numpy_auto_install=d.get("numpy_auto_install", False),
 
             # Phase 2: Element cache
             use_element_cache=d.get("use_element_cache", True),

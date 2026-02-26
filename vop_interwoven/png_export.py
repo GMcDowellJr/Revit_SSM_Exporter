@@ -7,7 +7,7 @@ Generates visual representations of raster data with color-coded cells.
 import os
 import time
 
-def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_projection=False, diag=None):
+def _export_png_dotnet(view_result, output_path, pixels_per_cell=4, cut_vs_projection=False, diag=None):
     """Export VOP raster to PNG image with color-coded occupancy.
 
     Color Legend:
@@ -330,6 +330,102 @@ def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_pro
 
         return None
 
+
+
+def _export_png_pillow(view_result, output_path, pixels_per_cell=4, cut_vs_projection=False, diag=None):
+    """PNG export via NumPy + Pillow. Called only when both are available."""
+    from vop_interwoven.np_backend import np, Image
+    import os
+
+    raster = view_result.get("raster", {})
+    if not raster:
+        return None
+
+    W = raster.get("width", 0)
+    H = raster.get("height", 0)
+    if W == 0 or H == 0:
+        return None
+
+    try:
+        ek  = raster.get("model_edge_key",  [])
+        pk  = raster.get("model_proxy_key", [])
+        ak  = raster.get("anno_key",        [])
+
+        ek_arr = np.array(ek,  dtype=np.int32) if not hasattr(ek,  'dtype') else ek.astype(np.int32)
+        pk_arr = np.array(pk,  dtype=np.int32) if not hasattr(pk,  'dtype') else pk.astype(np.int32)
+        ak_arr = np.array(ak,  dtype=np.int32) if not hasattr(ak,  'dtype') else ak.astype(np.int32)
+
+        has_edge  = (ek_arr != -1)
+        has_proxy = (pk_arr != -1)
+        has_anno  = (ak_arr >= 0)
+        has_model = has_edge | has_proxy
+
+        # Build flat RGB array — white default
+        color_grid = np.full((H * W, 3), 255, dtype=np.uint8)
+
+        if cut_vs_projection:
+            # Dark gray = cut (HIGH conf edge), light gray = proxy/projection
+            color_grid[has_edge  & ~has_anno] = [64,  64,  64]
+            color_grid[has_proxy & ~has_anno & ~has_edge] = [192, 192, 192]
+        else:
+            # Bright green = HIGH confidence model ink
+            color_grid[has_edge  & ~has_anno] = [0,   200, 0]
+            # Dark green = proxy (MEDIUM/LOW)
+            color_grid[has_proxy & ~has_anno & ~has_edge] = [0,   100, 0]
+
+        # Cornflower blue = annotation only
+        color_grid[has_anno & ~has_model] = [100, 149, 237]
+        # Orange = annotation over model
+        color_grid[has_model & has_anno]  = [255, 165, 0]
+
+        # Reshape to (H, W, 3), flip vertically (j=0 is bottom row in raster)
+        grid = color_grid.reshape((H, W, 3))
+        grid = grid[::-1]
+
+        if pixels_per_cell > 1:
+            grid = np.repeat(np.repeat(grid, pixels_per_cell, axis=0), pixels_per_cell, axis=1)
+
+        out_dir = os.path.dirname(output_path)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+
+        Image.fromarray(grid, mode="RGB").save(output_path)
+        return output_path
+
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="export_png",
+                callsite="_export_png_pillow",
+                message="Pillow PNG export failed, will not retry: {}".format(e),
+                exc=e,
+            )
+        else:
+            print("[VOP png_export] Pillow path failed: {}".format(e))
+        return None
+
+
+def export_raster_to_png(view_result, output_path, pixels_per_cell=4, cut_vs_projection=False, diag=None):
+    """Export VOP raster to PNG. Uses Pillow if available, System.Drawing otherwise.
+
+    Colour legend (both paths produce identical colours):
+        White          — empty cell
+        Bright green   — HIGH confidence model ink (cut_vs_projection=False)
+        Dark green     — proxy/MEDIUM/LOW model ink
+        Dark gray 64   — cut element (cut_vs_projection=True)
+        Light gray 192 — projected element (cut_vs_projection=True)
+        Cornflower blue (100,149,237) — annotation only
+        Orange (255,165,0) — annotation over model
+    """
+    from vop_interwoven.np_backend import NUMPY_AVAILABLE, PILLOW_AVAILABLE
+
+    if NUMPY_AVAILABLE and PILLOW_AVAILABLE:
+        result = _export_png_pillow(view_result, output_path, pixels_per_cell, cut_vs_projection, diag)
+        if result is not None:
+            return result
+        # Fall through to dotnet on failure
+
+    return _export_png_dotnet(view_result, output_path, pixels_per_cell, cut_vs_projection, diag)
 
 def export_pipeline_results_to_pngs(pipeline_result, output_dir, pixels_per_cell=4, cut_vs_projection=False, diag=None):
     """Export all views from pipeline result to PNG files.
