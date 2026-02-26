@@ -59,6 +59,31 @@ def _raster_to_dict_like(raster_payload):
         "elements_meta": _safe_seq(getattr(raster_payload, "elements_meta", [])),
     }
 
+
+
+def _get_metrics_triplet_from_view_result(view_result):
+    """Extract (metrics, anno_metrics, ext_metrics) from a view_result payload.
+
+    Supports both nested and flat historical shapes.
+    Returns tuple of dict-or-None values.
+    """
+    if not isinstance(view_result, dict):
+        return None, None, None
+
+    metrics = view_result.get("metrics") if isinstance(view_result.get("metrics"), dict) else None
+    anno_metrics = view_result.get("anno_metrics") if isinstance(view_result.get("anno_metrics"), dict) else None
+    ext_metrics = view_result.get("ext_metrics") if isinstance(view_result.get("ext_metrics"), dict) else None
+
+    # Some payloads store metrics under a nested diagnostics-like envelope.
+    if metrics is None:
+        d = view_result.get("diagnostics")
+        if isinstance(d, dict):
+            m = d.get("metrics")
+            if isinstance(m, dict):
+                metrics = m
+
+    return metrics, anno_metrics, ext_metrics
+
 def _is_from_cache(view_result):
     """Return True if the view_result represents any cache hit (legacy or root)."""
     try:
@@ -1914,6 +1939,13 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
     view_metadata = extract_view_metadata(view, doc) if view else {}
 
     metrics, anno_metrics, ext_metrics = _get_metrics_triplet_from_view_result(view_result)
+    if metrics is None:
+        metrics = {}
+    if anno_metrics is None:
+        anno_metrics = {}
+    if ext_metrics is None:
+        ext_metrics = metrics
+
     if not getattr(config, "csv_compat_mode", True):
         manifest_cols = get_vop_csv_header(config)
         raw_metrics = view_result.get("metrics") if isinstance(view_result.get("metrics"), dict) else {}
