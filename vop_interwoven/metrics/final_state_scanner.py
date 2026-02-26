@@ -9,6 +9,12 @@ ANNO_BUCKETS = ("TEXT", "TAG", "DIM", "DETAIL", "LINES", "REGION", "OTHER")
 DEFAULT_MODEL_CLASSES = ("WALL", "DOOR", "STAIR", "COLUMN", "LIGHT", "OTHER")
 
 
+def _safe_seq(value: Any):
+    if value is None:
+        return []
+    return value
+
+
 def _get_source_type(raster: Any, key_index: int) -> str | None:
     if key_index is None or key_index < 0:
         return None
@@ -88,10 +94,10 @@ def scan_final_state_totals(
 ) -> dict[str, int]:
     """Scan finalized raster grids and emit locked aggregate totals."""
     total = int(getattr(raster, "W", 0)) * int(getattr(raster, "H", 0))
-    edge_keys = getattr(raster, "model_edge_key", []) or []
-    proxy_keys = getattr(raster, "model_proxy_key", []) or []
-    anno_keys = getattr(raster, "anno_key", []) or []
-    anno_meta = getattr(raster, "anno_meta", []) or []
+    edge_keys = _safe_seq(getattr(raster, "model_edge_key", []))
+    proxy_keys = _safe_seq(getattr(raster, "model_proxy_key", []))
+    anno_keys = _safe_seq(getattr(raster, "anno_key", []))
+    anno_meta = _safe_seq(getattr(raster, "anno_meta", []))
 
     classes = (
         manifest.get("families", {})
