@@ -9,6 +9,13 @@ import csv
 import hashlib
 from datetime import datetime
 
+
+def _safe_seq(value):
+    """Return sequence-like value without triggering ndarray truth evaluation."""
+    if value is None:
+        return []
+    return value
+
 def _round6(x):
     try:
         return round(float(x), 6)
@@ -40,16 +47,16 @@ def _raster_to_dict_like(raster_payload):
         "cell_size_ft": float(getattr(raster_payload, "cell_size_ft", 0.0) or 0.0),
         "bounds_xy": bounds_dict,
         "bounds_meta": getattr(raster_payload, "bounds_meta", {}) or {},
-        "model_edge_key": getattr(raster_payload, "model_edge_key", []) or [],
-        "model_proxy_mask": getattr(raster_payload, "model_proxy_mask", []) or [],
-        "model_proxy_presence": getattr(raster_payload, "model_proxy_presence", []) or [],
-        "model_proxy_key": getattr(raster_payload, "model_proxy_key", []) or [],
-        "model_mask": getattr(raster_payload, "model_mask", []) or [],
-        "anno_over_model": getattr(raster_payload, "anno_over_model", []) or [],
-        "anno_key": getattr(raster_payload, "anno_key", []) or [],
-        "anno_meta": getattr(raster_payload, "anno_meta", []) or [],
-        "element_meta": getattr(raster_payload, "element_meta", []) or [],
-        "elements_meta": getattr(raster_payload, "elements_meta", []) or [],
+        "model_edge_key": _safe_seq(getattr(raster_payload, "model_edge_key", [])),
+        "model_proxy_mask": _safe_seq(getattr(raster_payload, "model_proxy_mask", [])),
+        "model_proxy_presence": _safe_seq(getattr(raster_payload, "model_proxy_presence", [])),
+        "model_proxy_key": _safe_seq(getattr(raster_payload, "model_proxy_key", [])),
+        "model_mask": _safe_seq(getattr(raster_payload, "model_mask", [])),
+        "anno_over_model": _safe_seq(getattr(raster_payload, "anno_over_model", [])),
+        "anno_key": _safe_seq(getattr(raster_payload, "anno_key", [])),
+        "anno_meta": _safe_seq(getattr(raster_payload, "anno_meta", [])),
+        "element_meta": _safe_seq(getattr(raster_payload, "element_meta", [])),
+        "elements_meta": _safe_seq(getattr(raster_payload, "elements_meta", [])),
     }
 
 def _is_from_cache(view_result):
@@ -109,8 +116,8 @@ def compute_external_cell_metrics(raster):
             return meta.get("source_type")
         return None
 
-    edge_keys = getattr(raster, "model_edge_key", None) or []
-    proxy_keys = getattr(raster, "model_proxy_key", None) or []
+    edge_keys = _safe_seq(getattr(raster, "model_edge_key", None))
+    proxy_keys = _safe_seq(getattr(raster, "model_proxy_key", None))
 
     n = max(len(edge_keys), len(proxy_keys))
     if n == 0:

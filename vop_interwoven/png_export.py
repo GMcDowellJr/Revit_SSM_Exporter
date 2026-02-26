@@ -7,6 +7,12 @@ Generates visual representations of raster data with color-coded cells.
 import os
 import time
 
+def _safe_seq(value):
+    if value is None:
+        return []
+    return value
+
+
 def _export_png_dotnet(view_result, output_path, pixels_per_cell=4, cut_vs_projection=False, diag=None):
     """Export VOP raster to PNG image with color-coded occupancy.
 
@@ -158,10 +164,10 @@ def _export_png_dotnet(view_result, output_path, pixels_per_cell=4, cut_vs_proje
                 model_presence_mode = "ink"
 
         if is_raster_obj:
-            model_edge_key = getattr(raster_payload, "model_edge_key", []) or []
-            model_mask = getattr(raster_payload, "model_mask", []) or []
-            model_proxy_key = getattr(raster_payload, "model_proxy_key", []) or []
-            model_proxy_mask = getattr(raster_payload, "model_proxy_mask", []) or []
+            model_edge_key = _safe_seq(getattr(raster_payload, "model_edge_key", []))
+            model_mask = _safe_seq(getattr(raster_payload, "model_mask", []))
+            model_proxy_key = _safe_seq(getattr(raster_payload, "model_proxy_key", []))
+            model_proxy_mask = _safe_seq(getattr(raster_payload, "model_proxy_mask", []))
         else:
             model_edge_key = raster_dict.get("model_edge_key", [])
             model_mask = raster_dict.get("model_mask", [])
@@ -228,8 +234,8 @@ def _export_png_dotnet(view_result, output_path, pixels_per_cell=4, cut_vs_proje
 
         # Get anno_over_model and anno_key for annotation visualization
         if is_raster_obj:
-            anno_over_model = getattr(raster_payload, 'anno_over_model', []) or []
-            anno_key = getattr(raster_payload, 'anno_key', []) or []
+            anno_over_model = _safe_seq(getattr(raster_payload, 'anno_over_model', []))
+            anno_key = _safe_seq(getattr(raster_payload, 'anno_key', []))
         else:
             anno_over_model = raster_dict.get('anno_over_model', [])
             anno_key = raster_dict.get('anno_key', [])
@@ -341,6 +347,9 @@ def _export_png_pillow(view_result, output_path, pixels_per_cell=4, cut_vs_proje
     if not raster:
         return None
 
+    is_raster_obj = hasattr(raster, "W") and hasattr(raster, "H")
+    raster_dict = raster if isinstance(raster, dict) else {}
+
     def _pick_int(*vals):
         for v in vals:
             try:
@@ -352,12 +361,12 @@ def _export_png_pillow(view_result, output_path, pixels_per_cell=4, cut_vs_proje
         return 0
 
     W = _pick_int(
-        raster.get("width", 0),
+        (getattr(raster, "W", 0) if is_raster_obj else raster_dict.get("width", 0)),
         view_result.get("width", 0),
         view_result.get("grid_W", 0),
     )
     H = _pick_int(
-        raster.get("height", 0),
+        (getattr(raster, "H", 0) if is_raster_obj else raster_dict.get("height", 0)),
         view_result.get("height", 0),
         view_result.get("grid_H", 0),
     )
@@ -365,9 +374,9 @@ def _export_png_pillow(view_result, output_path, pixels_per_cell=4, cut_vs_proje
         return None
 
     try:
-        ek  = raster.get("model_edge_key",  [])
-        pk  = raster.get("model_proxy_key", [])
-        ak  = raster.get("anno_key",        [])
+        ek  = _safe_seq(getattr(raster, "model_edge_key", []) if is_raster_obj else raster_dict.get("model_edge_key",  []))
+        pk  = _safe_seq(getattr(raster, "model_proxy_key", []) if is_raster_obj else raster_dict.get("model_proxy_key", []))
+        ak  = _safe_seq(getattr(raster, "anno_key", []) if is_raster_obj else raster_dict.get("anno_key",        []))
 
         ek_arr = np.array(ek,  dtype=np.int32) if not hasattr(ek,  'dtype') else ek.astype(np.int32)
         pk_arr = np.array(pk,  dtype=np.int32) if not hasattr(pk,  'dtype') else pk.astype(np.int32)
