@@ -585,6 +585,26 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
 
             if results and len(results) > 0:
                 view_result = results[0]
+
+                # If pipeline returned a per-view failure stub, surface it directly.
+                if view_result.get("success") is False:
+                    err = view_result.get("error")
+                    if not err:
+                        try:
+                            d = view_result.get("diag", {}) or {}
+                            errs = d.get("errors", []) if isinstance(d, dict) else []
+                            if errs:
+                                err = errs[-1].get("message") if isinstance(errs[-1], dict) else str(errs[-1])
+                        except Exception:
+                            err = None
+                    print(f"[Streaming] WARNING: View {view_id} failed in pipeline; skipping exports. error={err}")
+                    summaries.append({
+                        "view_id": view_id,
+                        "view_name": view_result.get("view_name"),
+                        "success": False,
+                        "error": err or "Pipeline view failure",
+                    })
+                    continue
                 
                 # Allow three valid payload shapes:
                 #   1) raster-bearing (normal miss path),
