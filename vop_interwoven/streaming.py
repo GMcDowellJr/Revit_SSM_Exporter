@@ -592,9 +592,25 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                     if not err:
                         try:
                             d = view_result.get("diag", {}) or {}
-                            errs = d.get("errors", []) if isinstance(d, dict) else []
-                            if errs:
-                                err = errs[-1].get("message") if isinstance(errs[-1], dict) else str(errs[-1])
+                            if isinstance(d, dict):
+                                # Diagnostics.to_dict() stores entries in "events".
+                                events = d.get("events", []) or []
+                                if events:
+                                    ev = events[-1] if isinstance(events[-1], dict) else {}
+                                    msg = ev.get("message")
+                                    exc_type = ev.get("exc_type")
+                                    exc_msg = ev.get("exc_message")
+                                    phase = ev.get("phase")
+                                    callsite = ev.get("callsite")
+                                    parts = []
+                                    if phase or callsite:
+                                        parts.append("{}/{}".format(phase or "?", callsite or "?"))
+                                    if msg:
+                                        parts.append(str(msg))
+                                    if exc_type or exc_msg:
+                                        parts.append("{}{}".format(exc_type or "Exception", ": " + str(exc_msg) if exc_msg else ""))
+                                    if parts:
+                                        err = " | ".join(parts)
                         except Exception:
                             err = None
                     print(f"[Streaming] WARNING: View {view_id} failed in pipeline; skipping exports. error={err}")
