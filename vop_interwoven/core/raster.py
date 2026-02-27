@@ -184,6 +184,115 @@ def _fix_loop_points_uv(points_uv, tol_ft):
         return list(points_uv) if points_uv else []
 
 
+def _polygon_mask_np(points_ij, W, H, np):
+    """Return boolean mask shape (H, W) filled inside closed polygon.
+
+    Uses vectorised scanline with NumPy broadcasting.
+    points_ij: list of (i, j) integer tuples — CLOSED (last == first).
+    W, H: raster dimensions.
+    np: the numpy module (passed in to avoid repeated import lookups).
+    Never raises — returns empty mask on any error.
+    """
+    try:
+        if not points_ij or len(points_ij) < 4:
+            return np.zeros((H, W), dtype=bool)
+
+        pts = np.array(points_ij, dtype=np.float32)  # (N, 2)  col0=i, col1=j
+        n_segs = len(pts) - 1
+
+        i_a = pts[:n_segs, 0]
+        j_a = pts[:n_segs, 1]
+        i_b = pts[1:n_segs+1, 0]
+        j_b = pts[1:n_segs+1, 1]
+
+        j_min = max(0,     int(np.floor(pts[:, 1].min())))
+        j_max = min(H - 1, int(np.ceil( pts[:, 1].max())))
+
+        mask = np.zeros((H, W), dtype=bool)
+
+        for j in range(j_min, j_max + 1):
+            # Half-open rule — matches _scanline_cells exactly
+            cross = ((j_a < j) & (j_b >= j)) | ((j_b < j) & (j_a >= j))
+            if not cross.any():
+                continue
+
+            dj = (j_b - j_a)[cross]
+            # Guard against horizontal edges (dj==0) — should not occur after half-open filter
+            safe = dj != 0
+            if not safe.all():
+                dj    = dj[safe]
+                i_a_c = i_a[cross][safe]
+                i_b_c = i_b[cross][safe]
+                j_a_c = j_a[cross][safe]
+            else:
+                i_a_c = i_a[cross]
+                i_b_c = i_b[cross]
+                j_a_c = j_a[cross]
+
+            t       = (j - j_a_c) / dj
+            x_cross = np.sort(i_a_c + t * (i_b_c - i_a_c))
+
+            if len(x_cross) % 2 != 0:
+                continue  # Odd intersections — skip scanline (same as _scanline_cells)
+
+            for k in range(0, len(x_cross), 2):
+                x_l = int(np.ceil( x_cross[k]))
+                x_r = int(np.floor(x_cross[k + 1]))
+                x_l = max(0,     x_l)
+                x_r = min(W - 1, x_r)
+                if x_r >= x_l:
+                    mask[j, x_l:x_r + 1] = True
+
+        return mask
+
+    except Exception:
+        from vop_interwoven.np_backend import np as _np
+        return _np.zeros((H, W), dtype=bool) if _np is not None else None
+
+
+def _commit_polygon_mask(raster, mask, depth, source, key_index, np):
+    """Write polygon mask to raster arrays with depth testing — vectorised.
+
+    Applies model_clip_bounds guard, depth test, and all occupancy writes
+    in batch NumPy operations. Returns count of cells written.
+    """
+    flat = mask.ravel()  # view, no copy
+    candidates = np.where(flat)[0]
+
+    if len(candidates) == 0:
+        return 0
+
+    # model_clip_bounds guard
+    clip = raster._model_clip_mask_np(np)
+    if clip is not None:
+        candidates = candidates[clip[candidates]]
+
+    if len(candidates) == 0:
+        return 0
+
+    # Depth test: write if this element is closer (or ties within eps)
+    eps = 1e-6
+    current = raster.w_occ[candidates]
+    wins = (depth < current) | (np.abs(depth - current.astype(np.float64)) <= eps)
+    write_idx = candidates[wins]
+
+    if len(write_idx) == 0:
+        return 0
+
+    raster.w_occ[write_idx]      = np.float32(depth)
+    raster.w_occ_key[write_idx]  = key_index
+    raster.model_mask[write_idx] = True
+
+    if source == "HOST":
+        raster.occ_host[write_idx] = True
+    elif source == "LINK":
+        raster.occ_link[write_idx] = True
+    elif source == "DWG":
+        raster.occ_dwg[write_idx]  = True
+
+    return int(len(write_idx))
+
+
 class ViewRaster:
     """Raster representation of a single view for VOP interwoven pipeline.
 
@@ -385,35 +494,42 @@ class ViewRaster:
         # Bounds2D in view-local XY; model writes are clipped to this if present.
         self.model_clip_bounds = None
 
+        # NumPy backend detection — set once per raster instance
+        from vop_interwoven.np_backend import NUMPY_AVAILABLE as _NP_AVAIL, np as _np
+        self._numpy_backend = _NP_AVAIL
+        self._clip_mask_cache = None  # populated lazily by _model_clip_mask_np()
+
         N = self.W * self.H
 
-        # Global per-cell occlusion depth buffer (W-depth from view-space UVW)
-        self.w_occ = [float("inf")] * N
-
-        # Track which key_index last won the w_occ depth test (for debugging occlusion ownership).
-        self.w_occ_key = [-1] * N
+        if self._numpy_backend:
+            # --- NumPy path ---
+            self.w_occ            = _np.full(N, _np.inf,  dtype=_np.float32)
+            self.w_occ_key        = _np.full(N, -1,        dtype=_np.int32)
+            self.occ_host         = _np.zeros(N,            dtype=bool)
+            self.occ_link         = _np.zeros(N,            dtype=bool)
+            self.occ_dwg          = _np.zeros(N,            dtype=bool)
+            self.model_mask       = _np.zeros(N,            dtype=bool)
+            self.model_proxy_mask = _np.zeros(N,            dtype=bool)
+            self.anno_over_model  = _np.zeros(N,            dtype=bool)
+            self.model_edge_key   = _np.full(N, -1,         dtype=_np.int32)
+            self.model_proxy_key  = _np.full(N, -1,         dtype=_np.int32)
+            self.anno_key         = _np.full(N, -1,         dtype=_np.int32)
+        else:
+            # --- Python-list path (original) ---
+            self.w_occ            = [float("inf")] * N
+            self.w_occ_key        = [-1] * N
+            self.occ_host         = [False] * N
+            self.occ_link         = [False] * N
+            self.occ_dwg          = [False] * N
+            self.model_mask       = [False] * N
+            self.model_proxy_mask = [False] * N
+            self.anno_over_model  = [False] * N
+            self.model_edge_key   = [-1] * N
+            self.model_proxy_key  = [-1] * N
+            self.anno_key         = [-1] * N
 
         # Tile acceleration
         self.tile = TileMap(tile_size, self.W, self.H)
-
-        # Per-source occupancy layers (depth-tested)
-        self.occ_host = [False] * N
-        self.occ_link = [False] * N
-        self.occ_dwg = [False] * N
-
-        # Legacy model presence (unified, for backward compatibility)
-        self.model_mask = [False] * N
-
-        # Edge rasters
-        self.model_edge_key = [-1] * N
-        self.model_proxy_key = [-1] * N
-
-        # Proxy presence (optional)
-        self.model_proxy_mask = [False] * N
-
-        # Annotation
-        self.anno_key = [-1] * N
-        self.anno_over_model = [False] * N
 
         # Metadata tracking
         self.element_meta_index_by_key = {}
@@ -1247,6 +1363,35 @@ class ViewRaster:
 
         return stamped
 
+    def _model_clip_mask_np(self, np):
+        """Return cached boolean flat array [W*H] for model_clip_bounds.
+
+        Returns None if model_clip_bounds is not set (no clipping needed).
+        Computed once per raster instance; cached in self._clip_mask_cache.
+        np: the numpy module.
+        """
+        if self._clip_mask_cache is not None:
+            return self._clip_mask_cache
+
+        if self.model_clip_bounds is None:
+            # No clip — caller should skip this guard entirely
+            return None
+
+        N    = self.W * self.H
+        i_arr = np.arange(N, dtype=np.int32) % self.W
+        j_arr = np.arange(N, dtype=np.int32) // self.W
+
+        half = 0.5 * self.cell_size_ft
+        b    = self.model_clip_bounds
+        u    = self.bounds_xy.xmin + (i_arr.astype(np.float32) + 0.5) * self.cell_size_ft
+        v    = self.bounds_xy.ymin + (j_arr.astype(np.float32) + 0.5) * self.cell_size_ft
+
+        self._clip_mask_cache = (
+            (u >= b.xmin + half) & (u <= b.xmax - half) &
+            (v >= b.ymin + half) & (v <= b.ymax - half)
+        )
+        return self._clip_mask_cache
+
     def rasterize_silhouette_loops(self, loops, key_index, depth=0.0, source="HOST", occlude_edges=False):
         """Rasterize element silhouette loops into model layers with depth testing.
 
@@ -1340,166 +1485,61 @@ class ViewRaster:
                 continue
 
             # Collect interior cells
-            cells = self._scanline_cells(points_ij)
-            if cells:
+            if self._numpy_backend:
+                from vop_interwoven.np_backend import np as _np
+                m = _polygon_mask_np(points_ij, self.W, self.H, _np)
                 if is_hole:
-                    hole_cells |= cells
+                    if (not hasattr(self, '_np_hole_mask')) or (self._np_hole_mask is None) or (self._np_outer_mask is None):
+                        self._np_hole_mask  = _np.zeros((self.H, self.W), dtype=bool)
+                        self._np_outer_mask = _np.zeros((self.H, self.W), dtype=bool)
+                    self._np_hole_mask |= m
                 else:
-                    outer_cells |= cells
+                    if (not hasattr(self, '_np_outer_mask')) or (self._np_outer_mask is None) or (self._np_hole_mask is None):
+                        self._np_outer_mask = _np.zeros((self.H, self.W), dtype=bool)
+                        self._np_hole_mask  = _np.zeros((self.H, self.W), dtype=bool)
+                    self._np_outer_mask |= m
+            else:
+                cells = self._scanline_cells(points_ij)
+                if cells:
+                    if is_hole:
+                        hole_cells |= cells
+                    else:
+                        outer_cells |= cells
 
             # Preserve edge chain for possible stamping after commit
             edge_chains.append((points_ij, is_hole))
 
-        # Commit: outer minus holes
-        target_cells = outer_cells - hole_cells
-        
-        # TEMP DEBUG: identify element for this silhouette fill
-        try:
-            meta = None
-            em = getattr(self, "element_meta", None)
-            if isinstance(em, dict):
-                meta = em.get(key_index)
-            elif isinstance(em, list):
-                if 0 <= int(key_index) < len(em):
-                    meta = em[int(key_index)]
-            elem_id_dbg = meta.get("elem_id") if isinstance(meta, dict) else None
-            cat_dbg = meta.get("category") if isinstance(meta, dict) else None
-        except Exception as e:
-            if diag is not None:
-                diag.error(
-                    phase="rasterization",
-                    callsite="rasterize_silhouette_loops",
-                    message="Exception in rasterize_silhouette_loops: {}".format(e),
-                    exc=e,
-                )
-            elem_id_dbg = None
-            cat_dbg = None
+        # Commit writes
+        if self._numpy_backend:
+            from vop_interwoven.np_backend import np as _np
+            outer_mask = getattr(self, '_np_outer_mask', None)
+            if outer_mask is None:
+                outer_mask = _np.zeros((self.H, self.W), dtype=bool)
+            hole_mask  = getattr(self, '_np_hole_mask', None)
+            if hole_mask is None:
+                hole_mask = _np.zeros((self.H, self.W), dtype=bool)
+            # Clean up temporaries immediately
+            self._np_outer_mask = None
+            self._np_hole_mask  = None
 
-        print(
-            "thin_runner: [DEBUG] silhouette cells elem={} cat='{}' key_index={} target={} outer={} holes={}".format(
-                elem_id_dbg, cat_dbg, key_index, len(target_cells), len(outer_cells), len(hole_cells)
-            )
-        )
+            target_mask = outer_mask & ~hole_mask
+            filled = _commit_polygon_mask(self, target_mask, depth, source, key_index, _np)
+        else:
+            # Python-list path
+            target_cells = outer_cells - hole_cells
+            if not target_cells:
+                return 0
 
+            filled = 0
+            for (i, j) in target_cells:
+                if source in ("HOST", "LINK", "DWG") and (not self._cell_in_model_clip(i, j)):
+                    continue
+                idx = self.get_cell_index(i, j)
+                if idx is None:
+                    continue
+                if self.try_write_cell(i, j, w_depth=depth, source=source, key_index=key_index):
+                    filled += 1
 
-        if not target_cells:
-            return 0
-
-        # TEMP DEBUG: classify why try_write_cell rejects (clip vs depth)
-        _clip_rejects = 0
-        _depth_rejects = 0
-
-        filled = 0
-        for (i, j) in target_cells:
-            # Mirror try_write_cell's clip guard so we can count it without changing try_write_cell.
-            if source in ("HOST", "LINK", "DWG") and (not self._cell_in_model_clip(i, j)):
-                _clip_rejects += 1
-                continue
-
-            idx = self.get_cell_index(i, j)
-            if idx is None:
-                _clip_rejects += 1
-                continue
-
-            # Depth pre-check must match try_write_cell tie-break behavior.
-            occ = self.w_occ[idx]
-            eps = 1e-6
-
-            if not ((depth < occ) or (abs(float(depth) - float(occ)) <= eps)):
-                _depth_rejects += 1
-                continue
-
-            if self.try_write_cell(i, j, w_depth=depth, source=source, tie_breaker_eps=eps, key_index=key_index):
-                filled += 1
-            else:
-                # Keep attribution (depth/tie or other guard inside try_write_cell)
-                _depth_rejects += 1
-
-        # TEMP DEBUG: if silhouette is fully depth-rejected, identify which existing element(s)
-        # own the w_occ cells inside this polygon.
-        if filled == 0 and len(target_cells) > 0:
-            try:
-                counts = {}
-                samples = 0
-                for (i, j) in target_cells:
-                    idx = self.get_cell_index(i, j)
-                    if idx is None:
-                        continue
-                    k = -1
-                    try:
-                        k = int(self.w_occ_key[idx])
-                    except Exception as e:
-                        if diag is not None:
-                            diag.error(
-                                phase="rasterization",
-                                callsite="rasterize_silhouette_loops",
-                                message="Exception in rasterize_silhouette_loops: {}".format(e),
-                                exc=e,
-                            )
-                        k = -1
-                    counts[k] = counts.get(k, 0) + 1
-                    samples += 1
-
-                # Print top 3 occluders by cell coverage
-                top = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:3]
-                top_pretty = []
-                for k, n in top:
-                    meta = None
-                    try:
-                        if hasattr(self, "element_meta"):
-                            em = self.element_meta
-                            if isinstance(em, dict):
-                                meta = em.get(k)
-                            elif isinstance(em, list):
-                                if 0 <= k < len(em):
-                                    meta = em[k]
-                    except Exception as e:
-                        if diag is not None:
-                            diag.error(
-                                phase="rasterization",
-                                callsite="rasterize_silhouette_loops",
-                                message="Exception in rasterize_silhouette_loops: {}".format(e),
-                                exc=e,
-                            )
-                        meta = None
-
-                    top_pretty.append(
-                        {
-                            "key_index": k,
-                            "cells": n,
-                            "elem_id": (meta.get("elem_id") if isinstance(meta, dict) else None),
-                            "category": (meta.get("category") if isinstance(meta, dict) else None),
-                            "source": (meta.get("source") if isinstance(meta, dict) else None),
-                        }
-                    )
-
-                print(f"thin_runner: [DEBUG] silhouette occluders top={top_pretty} samples={samples}")
-
-                try:
-                    depths = []
-                    for (i, j) in target_cells:
-                        idx = self.get_cell_index(i, j)
-                        if idx is None:
-                            continue
-                        depths.append(float(self.w_occ[idx]))
-                    if depths:
-                        print(f"thin_runner: [DEBUG] silhouette w_occ in target: min={min(depths)} max={max(depths)} floor_depth={depth}")
-                except Exception as e:
-                    if diag is not None:
-                        diag.error(
-                            phase="rasterization",
-                            callsite="rasterize_silhouette_loops",
-                            message="Exception in rasterize_silhouette_loops: {}".format(e),
-                            exc=e,
-                        )
-            except Exception as e:
-                if diag is not None:
-                    diag.error(
-                        phase="rasterization",
-                        callsite="rasterize_silhouette_loops",
-                        message="Exception in rasterize_silhouette_loops: {}".format(e),
-                        exc=e,
-                    )
         # Only stamp edges if any interior cells were actually written.
         # This prevents "L + rect" when the pipeline falls through to bbox.
         if filled > 0:
@@ -1846,6 +1886,12 @@ class ViewRaster:
           - This must remain FULL. PNG + CSV rely on these arrays being present.
           - Debug JSON size trimming must happen at JSON export time, NOT here.
         """
+        def _ser(arr):
+            """Serialise a numpy array or Python list to a plain Python list."""
+            if hasattr(arr, 'tolist'):
+                return arr.tolist()
+            return arr
+
         return {
             "width": self.W,
             "height": self.H,
@@ -1860,16 +1906,20 @@ class ViewRaster:
             "bounds_meta": getattr(self, "bounds_meta", None),
 
             # Large per-cell arrays (required for PNG/CSV correctness)
-            "w_occ": [w if w != float("inf") else None for w in self.w_occ],
-            "occ_host": self.occ_host,
-            "occ_link": self.occ_link,
-            "occ_dwg": self.occ_dwg,
-            "model_mask": self.model_mask,
-            "model_edge_key": self.model_edge_key,
-            "model_proxy_key": self.model_proxy_key,
-            "model_proxy_mask": self.model_proxy_mask,
-            "anno_key": self.anno_key,
-            "anno_over_model": self.anno_over_model,
+            "w_occ": [
+                (None if (w is None or (hasattr(w, '__float__') and float(w) == float("inf")))
+                 else float(w))
+                for w in (self.w_occ.tolist() if hasattr(self.w_occ, 'tolist') else self.w_occ)
+            ],
+            "occ_host": _ser(self.occ_host),
+            "occ_link": _ser(self.occ_link),
+            "occ_dwg": _ser(self.occ_dwg),
+            "model_mask": _ser(self.model_mask),
+            "model_edge_key": _ser(self.model_edge_key),
+            "model_proxy_key": _ser(self.model_proxy_key),
+            "model_proxy_mask": _ser(self.model_proxy_mask),
+            "anno_key": _ser(self.anno_key),
+            "anno_over_model": _ser(self.anno_over_model),
             # Meta (can be large-ish, but not per-cell dense)
             "element_meta": self.element_meta,
             "anno_meta": self.anno_meta,
@@ -1930,6 +1980,32 @@ class ViewRaster:
             v = d.get(k)
             if v is not None:
                 setattr(r, k, v)
+
+        # If NumPy backend is active, convert all per-cell lists to NumPy arrays
+        if getattr(r, '_numpy_backend', False):
+            from vop_interwoven.np_backend import np as _np
+            def _to_np_bool(lst):
+                return _np.array(lst if lst is not None else [], dtype=bool)
+            def _to_np_int(lst):
+                return _np.array(lst if lst is not None else [], dtype=_np.int32)
+            def _to_np_float(lst, fill_inf=True):
+                arr = _np.array(
+                    [(float("inf") if v is None else v) for v in (lst or [])],
+                    dtype=_np.float32
+                )
+                return arr
+
+            r.w_occ            = _to_np_float(r.w_occ)
+            r.w_occ_key        = _to_np_int(r.w_occ_key)
+            r.occ_host         = _to_np_bool(r.occ_host)
+            r.occ_link         = _to_np_bool(r.occ_link)
+            r.occ_dwg          = _to_np_bool(r.occ_dwg)
+            r.model_mask       = _to_np_bool(r.model_mask)
+            r.model_proxy_mask = _to_np_bool(r.model_proxy_mask)
+            r.anno_over_model  = _to_np_bool(r.anno_over_model)
+            r.model_edge_key   = _to_np_int(r.model_edge_key)
+            r.model_proxy_key  = _to_np_int(r.model_proxy_key)
+            r.anno_key         = _to_np_int(r.anno_key)
 
         # Meta lists
         r.element_meta = d.get("element_meta") or []

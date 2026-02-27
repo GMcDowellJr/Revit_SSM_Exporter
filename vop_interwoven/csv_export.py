@@ -9,11 +9,65 @@ import csv
 import hashlib
 from datetime import datetime
 
+
+def _safe_seq(value):
+    """Return sequence-like value without triggering ndarray truth evaluation."""
+    if value is None:
+        return []
+    return value
+
 def _round6(x):
     try:
         return round(float(x), 6)
     except Exception as e:
         return x
+
+
+
+def _normalize_locked_metrics_for_legacy_csv(locked_metrics):
+    """Map manifest locked metrics schema to legacy CSV metric keys.
+
+    Returns a dict with legacy keys expected by CSV/cache code:
+    TotalCells, Empty, ModelOnly, AnnoOnly, Overlap,
+    Ext_Cells_Any/Only/DWG/RVT and AnnoCells_* buckets.
+    """
+    m = locked_metrics if isinstance(locked_metrics, dict) else {}
+
+    # Legacy presence buckets
+    total = int(m.get("TotalCells", 0) or 0)
+    empty = int(m.get("Cells_Empty", 0) or 0)
+
+    # Legacy ModelOnly means model-present && !anno (includes ext-partitioned model cells)
+    model_only = int(m.get("Cells_ModelOnly", 0) or 0) + int(m.get("Cells_ModelExt", 0) or 0)
+
+    # Legacy AnnoOnly means anno-present && !model
+    anno_only = int(m.get("Cells_AnnoOnly", 0) or 0) + int(m.get("Cells_AnnoExt", 0) or 0)
+
+    # Legacy Overlap means model-present && anno-present
+    overlap = int(m.get("Cells_ModelAnno", 0) or 0) + int(m.get("Cells_All3", 0) or 0)
+
+    out = {
+        "TotalCells": total,
+        "Empty": empty,
+        "ModelOnly": model_only,
+        "AnnoOnly": anno_only,
+        "Overlap": overlap,
+
+        "Ext_Cells_Any": int(m.get("ExtFinalCells_Any", 0) or 0),
+        "Ext_Cells_Only": int(m.get("ExtFinalCells_Only", 0) or 0),
+        "Ext_Cells_DWG": int(m.get("ExtFinalCells_DWG", 0) or 0),
+        "Ext_Cells_RVT": int(m.get("ExtFinalCells_RVT", 0) or 0),
+
+        "AnnoCells_TEXT": int(m.get("AnnoFinalCells_TEXT", 0) or 0),
+        "AnnoCells_TAG": int(m.get("AnnoFinalCells_TAG", 0) or 0),
+        "AnnoCells_DIM": int(m.get("AnnoFinalCells_DIM", 0) or 0),
+        "AnnoCells_DETAIL": int(m.get("AnnoFinalCells_DETAIL", 0) or 0),
+        "AnnoCells_LINES": int(m.get("AnnoFinalCells_LINES", 0) or 0),
+        "AnnoCells_REGION": int(m.get("AnnoFinalCells_REGION", 0) or 0),
+        "AnnoCells_OTHER": int(m.get("AnnoFinalCells_OTHER", 0) or 0),
+    }
+
+    return out
 
 def _raster_to_dict_like(raster_payload):
     """Return a dict-like raster view without forcing ViewRaster.to_dict() copies."""
@@ -40,17 +94,42 @@ def _raster_to_dict_like(raster_payload):
         "cell_size_ft": float(getattr(raster_payload, "cell_size_ft", 0.0) or 0.0),
         "bounds_xy": bounds_dict,
         "bounds_meta": getattr(raster_payload, "bounds_meta", {}) or {},
-        "model_edge_key": getattr(raster_payload, "model_edge_key", []) or [],
-        "model_proxy_mask": getattr(raster_payload, "model_proxy_mask", []) or [],
-        "model_proxy_presence": getattr(raster_payload, "model_proxy_presence", []) or [],
-        "model_proxy_key": getattr(raster_payload, "model_proxy_key", []) or [],
-        "model_mask": getattr(raster_payload, "model_mask", []) or [],
-        "anno_over_model": getattr(raster_payload, "anno_over_model", []) or [],
-        "anno_key": getattr(raster_payload, "anno_key", []) or [],
-        "anno_meta": getattr(raster_payload, "anno_meta", []) or [],
-        "element_meta": getattr(raster_payload, "element_meta", []) or [],
-        "elements_meta": getattr(raster_payload, "elements_meta", []) or [],
+        "model_edge_key": _safe_seq(getattr(raster_payload, "model_edge_key", [])),
+        "model_proxy_mask": _safe_seq(getattr(raster_payload, "model_proxy_mask", [])),
+        "model_proxy_presence": _safe_seq(getattr(raster_payload, "model_proxy_presence", [])),
+        "model_proxy_key": _safe_seq(getattr(raster_payload, "model_proxy_key", [])),
+        "model_mask": _safe_seq(getattr(raster_payload, "model_mask", [])),
+        "anno_over_model": _safe_seq(getattr(raster_payload, "anno_over_model", [])),
+        "anno_key": _safe_seq(getattr(raster_payload, "anno_key", [])),
+        "anno_meta": _safe_seq(getattr(raster_payload, "anno_meta", [])),
+        "element_meta": _safe_seq(getattr(raster_payload, "element_meta", [])),
+        "elements_meta": _safe_seq(getattr(raster_payload, "elements_meta", [])),
     }
+
+
+
+def _get_metrics_triplet_from_view_result(view_result):
+    """Extract (metrics, anno_metrics, ext_metrics) from a view_result payload.
+
+    Supports both nested and flat historical shapes.
+    Returns tuple of dict-or-None values.
+    """
+    if not isinstance(view_result, dict):
+        return None, None, None
+
+    metrics = view_result.get("metrics") if isinstance(view_result.get("metrics"), dict) else None
+    anno_metrics = view_result.get("anno_metrics") if isinstance(view_result.get("anno_metrics"), dict) else None
+    ext_metrics = view_result.get("ext_metrics") if isinstance(view_result.get("ext_metrics"), dict) else None
+
+    # Some payloads store metrics under a nested diagnostics-like envelope.
+    if metrics is None:
+        d = view_result.get("diagnostics")
+        if isinstance(d, dict):
+            m = d.get("metrics")
+            if isinstance(m, dict):
+                metrics = m
+
+    return metrics, anno_metrics, ext_metrics
 
 def _is_from_cache(view_result):
     """Return True if the view_result represents any cache hit (legacy or root)."""
@@ -109,8 +188,8 @@ def compute_external_cell_metrics(raster):
             return meta.get("source_type")
         return None
 
-    edge_keys = getattr(raster, "model_edge_key", None) or []
-    proxy_keys = getattr(raster, "model_proxy_key", None) or []
+    edge_keys = _safe_seq(getattr(raster, "model_edge_key", None))
+    proxy_keys = _safe_seq(getattr(raster, "model_proxy_key", None))
 
     n = max(len(edge_keys), len(proxy_keys))
     if n == 0:
@@ -143,39 +222,118 @@ def compute_external_cell_metrics(raster):
 
 
 def compute_cell_metrics(raster, model_presence_mode="ink", diag=None):
-    """Compute occupancy metrics from raster arrays.
+    """Compute Empty/ModelOnly/AnnoOnly/Overlap cell counts.
 
-    Args:
-        raster: ViewRaster object
-        model_presence_mode: "occ" | "edge" | "proxy" | "ink" | "any"
-            - "occ"  : occlusion coverage (depth-tested interior fill)
-            - "edge" : precise model ink edges only (model_edge_key)
-            - "proxy": proxy ink only (model_proxy_key or proxy presence mask)
-            - "ink"  : edge OR proxy (DEFAULT; ink-on-screen occupancy)
-            - "any"  : occ OR edge OR proxy
-        diag: optional diagnostics collector
+    Uses vectorised NumPy operations when available; falls back to the
+    original Python loop otherwise. Return dict is identical in both cases.
+
+    INVARIANT: TotalCells == Empty + ModelOnly + AnnoOnly + Overlap
     """
+    from vop_interwoven.np_backend import NUMPY_AVAILABLE, np as _np
+
+    if NUMPY_AVAILABLE:
+        return _compute_cell_metrics_np(raster, model_presence_mode, _np)
+    return _compute_cell_metrics_py(raster, model_presence_mode, diag)
+
+
+def _compute_cell_metrics_np(raster, mode, np):
+    """NumPy-vectorised implementation of compute_cell_metrics."""
+    def _arr_int(attr, default=-1):
+        v = getattr(raster, attr, None)
+        if v is None:
+            return np.array([], dtype=np.int32)
+        if hasattr(v, 'dtype'):
+            return v.astype(np.int32)
+        return np.array(v, dtype=np.int32) if len(v) > 0 else np.array([], dtype=np.int32)
+
+    def _arr_bool(attr):
+        v = getattr(raster, attr, None)
+        if v is None:
+            return np.array([], dtype=bool)
+        if hasattr(v, 'dtype') and v.dtype == bool:
+            return v
+        return np.array(v, dtype=bool) if len(v) > 0 else np.array([], dtype=bool)
+
+    ek  = _arr_int("model_edge_key")
+    pk  = _arr_int("model_proxy_key")
+    pm  = _arr_bool("model_proxy_mask")
+    mm  = _arr_bool("model_mask")
+    ak  = _arr_int("anno_key")
+
+    mode = (mode or "ink").lower()
+
+    N = raster.W * raster.H
+
+    # Pad short arrays defensively
+    def _pad_int(arr, fill):
+        if len(arr) < N:
+            return np.pad(arr, (0, N - len(arr)), constant_values=fill)
+        return arr[:N]
+    def _pad_bool(arr):
+        if len(arr) < N:
+            return np.pad(arr, (0, N - len(arr)), constant_values=False)
+        return arr[:N]
+
+    ek = _pad_int(ek, -1)
+    pk = _pad_int(pk, -1)
+    pm = _pad_bool(pm)
+    mm = _pad_bool(mm)
+    ak = _pad_int(ak, -1)
+
+    if mode == "ink":
+        has_model = (ek != -1) | (pk != -1) | pm
+    elif mode == "edge":
+        has_model = (ek != -1)
+    elif mode == "proxy":
+        has_model = (pk != -1) | pm
+    elif mode == "occ":
+        has_model = mm
+    else:  # "any"
+        has_model = mm | (ek != -1) | (pk != -1) | pm
+
+    has_anno = (ak >= 0)
+
+    overlap    = int((has_model & has_anno).sum())
+    model_only = int((has_model & ~has_anno).sum())
+    anno_only  = int((~has_model & has_anno).sum())
+    empty      = int((~has_model & ~has_anno).sum())
+    total      = N
+
+    return {
+        "TotalCells": total,
+        "Empty":      empty,
+        "ModelOnly":  model_only,
+        "AnnoOnly":   anno_only,
+        "Overlap":    overlap,
+    }
+
+
+def _compute_cell_metrics_py(raster, mode, diag):
+    """Original Python-loop implementation of compute_cell_metrics (fallback)."""
     total = raster.W * raster.H
     empty = 0
     model_only = 0
     anno_only = 0
     overlap = 0
 
-    mode = (model_presence_mode or "ink").lower()
+    mode = (mode or "ink").lower()
 
-    # Pull arrays defensively (tests / reconstructed rasters may be partial)
-    model_mask = getattr(raster, "model_mask", []) or []
-    model_edge_key = getattr(raster, "model_edge_key", []) or []
-    model_proxy_key = getattr(raster, "model_proxy_key", []) or []
-    model_proxy_mask = getattr(raster, "model_proxy_mask", []) or getattr(raster, "model_proxy_presence", []) or []
+    model_mask       = _safe_seq(getattr(raster, "model_mask",       []))
+    model_edge_key   = _safe_seq(getattr(raster, "model_edge_key",   []))
+    model_proxy_key  = _safe_seq(getattr(raster, "model_proxy_key",  []))
+    model_proxy_mask = _safe_seq(getattr(raster, "model_proxy_mask", None))
+    try:
+        _mp_len = len(model_proxy_mask)
+    except Exception:
+        _mp_len = 0
+    if _mp_len == 0:
+        model_proxy_mask = _safe_seq(getattr(raster, "model_proxy_presence", []))
 
     def _has_model(idx):
         if mode == "occ":
             return (idx < len(model_mask)) and bool(model_mask[idx])
-
         if mode == "edge":
             return (idx < len(model_edge_key)) and (model_edge_key[idx] != -1)
-
         if mode == "proxy":
             present = False
             if idx < len(model_proxy_key):
@@ -183,7 +341,6 @@ def compute_cell_metrics(raster, model_presence_mode="ink", diag=None):
             if idx < len(model_proxy_mask):
                 present = present or bool(model_proxy_mask[idx])
             return present
-
         if mode == "ink":
             present = False
             if idx < len(model_edge_key):
@@ -193,7 +350,6 @@ def compute_cell_metrics(raster, model_presence_mode="ink", diag=None):
             if idx < len(model_proxy_mask):
                 present = present or bool(model_proxy_mask[idx])
             return present
-
         if mode == "any":
             present = False
             if idx < len(model_mask):
@@ -205,21 +361,15 @@ def compute_cell_metrics(raster, model_presence_mode="ink", diag=None):
             if idx < len(model_proxy_mask):
                 present = present or bool(model_proxy_mask[idx])
             return present
-
         raise ValueError("Unknown model_presence_mode: {0}".format(mode))
 
-    anno_over_model = getattr(raster, "anno_over_model", []) or []
-    anno_key = getattr(raster, "anno_key", []) or []
+    anno_over_model = _safe_seq(getattr(raster, "anno_over_model", []))
+    anno_key        = _safe_seq(getattr(raster, "anno_key",        []))
 
     for idx in range(total):
         has_model = _has_model(idx)
-
-        # "Any annotation ink" should be driven by anno_key presence.
-        # Keep anno_over_model as a separate concept (overlap channel).
-        has_anno = (idx < len(anno_key)) and (anno_key[idx] != -1)
-        has_anno_over_model = (idx < len(anno_over_model)) and bool(anno_over_model[idx])
-
-        if has_model and has_anno_over_model:
+        has_anno  = (idx < len(anno_key)) and (anno_key[idx] >= 0)
+        if has_model and has_anno:
             overlap += 1
         elif has_model:
             model_only += 1
@@ -228,76 +378,13 @@ def compute_cell_metrics(raster, model_presence_mode="ink", diag=None):
         else:
             empty += 1
 
-    computed_total = empty + model_only + anno_only + overlap
-    if total != computed_total:
-        msg = (
-            "CSV invariant failed: TotalCells ({0}) != "
-            "Empty + ModelOnly + AnnoOnly + Overlap ({1})"
-        ).format(total, computed_total)
-        if diag is not None:
-            diag.error(
-                phase="export_csv",
-                callsite="compute_cell_metrics",
-                message=msg,
-                extra={"model_presence_mode": mode},
-            )
-        raise AssertionError(msg)
-
     return {
         "TotalCells": total,
-        "Empty": empty,
-        "ModelOnly": model_only,
-        "AnnoOnly": anno_only,
-        "Overlap": overlap,
+        "Empty":      empty,
+        "ModelOnly":  model_only,
+        "AnnoOnly":   anno_only,
+        "Overlap":    overlap,
     }
-
-
-def _normalize_locked_metrics_for_legacy_csv(metrics):
-    """Map locked scanner metric keys to legacy CSV metric keys."""
-    m = dict(metrics or {})
-
-    if "Cells_Empty" in m and "Empty" not in m:
-        m["Empty"] = int(m.get("Cells_Empty", 0) or 0)
-    if "Cells_ModelOnly" in m and "ModelOnly" not in m:
-        m["ModelOnly"] = int(m.get("Cells_ModelOnly", 0) or 0)
-    if "Cells_AnnoOnly" in m and "AnnoOnly" not in m:
-        m["AnnoOnly"] = int(m.get("Cells_AnnoOnly", 0) or 0)
-    if "Overlap" not in m:
-        m["Overlap"] = int(m.get("Cells_ModelAnno", 0) or 0)
-
-    if "ExtFinalCells_Any" in m and "Ext_Cells_Any" not in m:
-        m["Ext_Cells_Any"] = int(m.get("ExtFinalCells_Any", 0) or 0)
-    if "ExtFinalCells_Only" in m and "Ext_Cells_Only" not in m:
-        m["Ext_Cells_Only"] = int(m.get("ExtFinalCells_Only", 0) or 0)
-    if "ExtFinalCells_DWG" in m and "Ext_Cells_DWG" not in m:
-        m["Ext_Cells_DWG"] = int(m.get("ExtFinalCells_DWG", 0) or 0)
-    if "ExtFinalCells_RVT" in m and "Ext_Cells_RVT" not in m:
-        m["Ext_Cells_RVT"] = int(m.get("ExtFinalCells_RVT", 0) or 0)
-
-    anno_map = {
-        "AnnoFinalCells_TEXT": "AnnoCells_TEXT",
-        "AnnoFinalCells_TAG": "AnnoCells_TAG",
-        "AnnoFinalCells_DIM": "AnnoCells_DIM",
-        "AnnoFinalCells_DETAIL": "AnnoCells_DETAIL",
-        "AnnoFinalCells_LINES": "AnnoCells_LINES",
-        "AnnoFinalCells_REGION": "AnnoCells_REGION",
-        "AnnoFinalCells_OTHER": "AnnoCells_OTHER",
-    }
-    for src, dst in anno_map.items():
-        if src in m and dst not in m:
-            m[dst] = int(m.get(src, 0) or 0)
-
-    return m
-
-
-def _get_metrics_triplet_from_view_result(view_result):
-    """Return (metrics, anno_metrics, ext_metrics) from precomputed view payload when available."""
-    pre = view_result.get("metrics")
-    if isinstance(pre, dict) and pre:
-        normalized = _normalize_locked_metrics_for_legacy_csv(pre)
-        return normalized, normalized, normalized
-    return None, None, None
-
 
 def compute_annotation_type_metrics(raster):
     """Count annotation cells by type.
@@ -1904,6 +1991,13 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
     view_metadata = extract_view_metadata(view, doc) if view else {}
 
     metrics, anno_metrics, ext_metrics = _get_metrics_triplet_from_view_result(view_result)
+    if metrics is None:
+        metrics = {}
+    if anno_metrics is None:
+        anno_metrics = {}
+    if ext_metrics is None:
+        ext_metrics = metrics
+
     if not getattr(config, "csv_compat_mode", True):
         manifest_cols = get_vop_csv_header(config)
         raw_metrics = view_result.get("metrics") if isinstance(view_result.get("metrics"), dict) else {}

@@ -3497,7 +3497,12 @@ def export_view_raster(view, raster, cfg, diag=None, timings=None, strategy_diag
         max_occ = 0
         max_ink_meta = None
         max_occ_meta = None
-        for meta in getattr(raster, "element_meta", []) or []:
+        _em = getattr(raster, "element_meta", None)
+        if _em is None:
+            _em_iter = []
+        else:
+            _em_iter = _em
+        for meta in _em_iter:
             ink = int(meta.get("model_edge_cells", 0) or 0)
             occ = int(meta.get("occlusion_cells", 0) or 0)
             if ink > max_ink:
