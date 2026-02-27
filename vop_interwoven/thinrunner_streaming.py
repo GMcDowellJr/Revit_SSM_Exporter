@@ -125,6 +125,52 @@ try:
 
     lines.append("")
 
+
+    # Diagnostics summary block
+    run_summary = None
+    if view_summaries:
+        try:
+            run_summary = view_summaries[0].get("run_summary")
+        except Exception as e:
+            print("[thinrunner] failed to read run_summary: {}".format(e))
+
+    if run_summary:
+        lines.append("RUN SUMMARY:")
+        lines.append(str(run_summary))
+        slow3 = (run_summary.get("slowest_views") or [])[:3]
+        lines.append("Top-3 slowest views:")
+        for sv in slow3:
+            lines.append("  - {view_name} ({view_id}): {total_ms} ms elems={element_count}".format(**sv))
+
+    try:
+        mem_marks = []
+        if view_summaries:
+            mem_marks = view_summaries[0].get("memory_tracker", []) or []
+        if mem_marks:
+            lines.append("Memory tracker marks: {}".format(len(mem_marks)))
+            start = mem_marks[0].get("priv_mb")
+            end = mem_marks[-1].get("priv_mb")
+            if start is not None and end is not None:
+                delta = float(end) - float(start)
+                n = len(view_summaries)
+                if delta > 500:
+                    verdict = "[CRIT] Memory grew {:.0f} MB — pipeline at risk".format(delta)
+                elif delta > 200:
+                    verdict = "[WARN] Memory grew {:.0f} MB — check CLR GC calls".format(delta)
+                else:
+                    verdict = "[OK] Memory stable: +{:.0f} MB across {} views".format(delta, n)
+                lines.append(verdict)
+    except Exception as e:
+        lines.append("Memory verdict unavailable: {}".format(e))
+
+    try:
+        if getattr(cfg, "export_perf_csv", False):
+            from vop_interwoven.perf_export import export_perf_csv
+            perf_path = export_perf_csv(output_dir, view_summaries)
+            lines.append("Perf CSV: {}".format(perf_path))
+    except Exception as e:
+        lines.append("Perf CSV export failed: {}".format(e))
+
     # File outputs
     png_files = result.get('png_files', [])
     lines.append(f"PNGs written: {len(png_files)}")
