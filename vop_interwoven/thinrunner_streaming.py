@@ -165,14 +165,9 @@ try:
 
     try:
         if getattr(cfg, "export_perf_csv", False):
-            from vop_interwoven.perf_export import export_perf_csv, export_memory_diag_csv
+            from vop_interwoven.perf_export import export_perf_csv
             perf_path = export_perf_csv(output_dir, view_summaries)
             lines.append("Perf CSV: {}".format(perf_path))
-            mem_marks = []
-            if view_summaries:
-                mem_marks = view_summaries[0].get("memory_tracker", []) or []
-            mem_path = export_memory_diag_csv(output_dir, mem_marks)
-            lines.append("Memory CSV: {}".format(mem_path))
     except Exception as e:
         lines.append("Perf CSV export failed: {}".format(e))
 

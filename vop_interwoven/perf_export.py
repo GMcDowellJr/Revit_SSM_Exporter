@@ -24,16 +24,52 @@ def export_perf_csv(output_dir, view_results, run_id=None, date_value=None):
             "MemStartPrivMb", "MemEndPrivMb", "MemDeltaPrivMb",
         ]
 
+        # Build fallback memory map from run-level memory_tracker marks if present.
+        mem_by_view = {}
+        try:
+            tracker_marks = []
+            for vr0 in view_results or []:
+                if isinstance(vr0, dict) and isinstance(vr0.get("memory_tracker"), list):
+                    tracker_marks = vr0.get("memory_tracker") or []
+                    if tracker_marks:
+                        break
+            for m in tracker_marks:
+                if not isinstance(m, dict):
+                    continue
+                lbl = str(m.get("label") or "")
+                priv = m.get("priv_mb")
+                if "view_start_" in lbl:
+                    try:
+                        vid = int(lbl.split("view_start_")[1].split()[0])
+                        mem_by_view.setdefault(vid, {})["start_priv_mb"] = priv
+                    except Exception as e:
+                        print("[perf_export] parse view_start label failed: {}".format(e))
+                elif "after_clr_gc_" in lbl and "[post-GC]" in lbl:
+                    try:
+                        vid = int(lbl.split("after_clr_gc_")[1].split()[0])
+                        mem_by_view.setdefault(vid, {})["end_priv_mb"] = priv
+                    except Exception as e:
+                        print("[perf_export] parse after_clr_gc label failed: {}".format(e))
+            for vid, mm in mem_by_view.items():
+                s = mm.get("start_priv_mb")
+                e = mm.get("end_priv_mb")
+                mm["delta_priv_mb"] = (None if s is None or e is None else (float(e) - float(s)))
+        except Exception as e:
+            print("[perf_export] memory fallback map failed: {}".format(e))
+
         with open(path, "w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=cols)
             w.writeheader()
             for vr in view_results or []:
                 t = vr.get("timings", {}) if isinstance(vr, dict) else {}
                 mem = vr.get("memory", {}) if isinstance(vr, dict) else {}
+                vid = vr.get("view_id", "") if isinstance(vr, dict) else ""
+                if (not mem or mem.get("start_priv_mb") is None) and isinstance(vid, int) and vid in mem_by_view:
+                    mem = mem_by_view.get(vid, {})
                 row = {
                     "RunId": run_id,
                     "Date": date_value,
-                    "ViewId": vr.get("view_id", "") if isinstance(vr, dict) else "",
+                    "ViewId": vid,
                     "ViewName": vr.get("view_name", "") if isinstance(vr, dict) else "",
                     "ElementCount": t.get("element_count"),
                     "ArealCount": t.get("areal_count"),
@@ -65,38 +101,4 @@ def export_perf_csv(output_dir, view_results, run_id=None, date_value=None):
         return path
     except Exception as e:
         print("[perf_export] export_perf_csv failed: {}".format(e))
-        return None
-
-
-def export_memory_diag_csv(output_dir, memory_marks, run_id=None, date_value=None):
-    """Export raw memory tracker marks to a dedicated CSV."""
-    try:
-        if run_id is None:
-            run_id = datetime.now().strftime("%Y%m%dT%H%M%S")
-        if date_value is None:
-            date_value = datetime.now().strftime("%Y-%m-%d")
-
-        ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-        os.makedirs(output_dir, exist_ok=True)
-        path = os.path.join(output_dir, "memory_diag_{}.csv".format(ts))
-
-        cols = ["RunId", "Date", "Label", "ElapsedSec", "WallTime", "WorkingSetMb", "PrivateMb"]
-        with open(path, "w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=cols)
-            w.writeheader()
-            for mark in memory_marks or []:
-                if not isinstance(mark, dict):
-                    continue
-                w.writerow({
-                    "RunId": run_id,
-                    "Date": date_value,
-                    "Label": mark.get("label"),
-                    "ElapsedSec": mark.get("elapsed_s"),
-                    "WallTime": mark.get("wall_time"),
-                    "WorkingSetMb": mark.get("ws_mb"),
-                    "PrivateMb": mark.get("priv_mb"),
-                })
-        return path
-    except Exception as e:
-        print("[perf_export] export_memory_diag_csv failed: {}".format(e))
         return None
