@@ -476,46 +476,33 @@ class ViewRaster:
         return filled
     
     def __init__(self, width, height, cell_size, bounds, tile_size=16, cfg=None):
-        """Initialize view raster.
+            """Initialize view raster.
+            Args:
+                width: Raster width in cells
+                height: Raster height in cells
+                cell_size: Cell size in model units (feet)
+                bounds: Bounds2D in view-local XY
+                tile_size: Tile size for acceleration structure
+            """
+            self.W = int(width)
+            self.H = int(height)
+            self.cell_size_ft = float(cell_size)
+            self.bounds_xy = bounds
+            self.cfg = cfg
+            # Optional model-crop clip (set by pipeline if annotation-expanded bounds are used)
+            # Bounds2D in view-local XY; model writes are clipped to this if present.
+            self.model_clip_bounds = None
 
-        Args:
-            width: Raster width in cells
-            height: Raster height in cells
-            cell_size: Cell size in model units (feet)
-            bounds: Bounds2D in view-local XY
-            tile_size: Tile size for acceleration structure
-        """
-        self.W = int(width)
-        self.H = int(height)
-        self.cell_size_ft = float(cell_size)
-        self.bounds_xy = bounds
-        self.cfg = cfg
-        # Optional model-crop clip (set by pipeline if annotation-expanded bounds are used)
-        # Bounds2D in view-local XY; model writes are clipped to this if present.
-        self.model_clip_bounds = None
+            # NumPy flag for export consumers (png_export, csv_export) — never used for writes
+            from vop_interwoven.np_backend import NUMPY_AVAILABLE as _NP_AVAIL
+            self._numpy_backend = _NP_AVAIL
+            self._clip_mask_cache = None  # populated lazily by _model_clip_mask_np()
 
-        # NumPy backend detection — set once per raster instance
-        from vop_interwoven.np_backend import NUMPY_AVAILABLE as _NP_AVAIL, np as _np
-        self._numpy_backend = _NP_AVAIL
-        self._clip_mask_cache = None  # populated lazily by _model_clip_mask_np()
+            N = self.W * self.H
 
-        N = self.W * self.H
-
-        if self._numpy_backend:
-            # --- NumPy path ---
-            self.w_occ            = _np.full(N, _np.inf,  dtype=_np.float32)
-            self.w_occ_key        = _np.full(N, -1,        dtype=_np.int32)
-            self.occ_host         = _np.zeros(N,            dtype=bool)
-            self.occ_link         = _np.zeros(N,            dtype=bool)
-            self.occ_dwg          = _np.zeros(N,            dtype=bool)
-            self.model_mask       = _np.zeros(N,            dtype=bool)
-            self.model_proxy_mask = _np.zeros(N,            dtype=bool)
-            self.anno_over_model  = _np.zeros(N,            dtype=bool)
-            self.model_edge_key   = _np.full(N, -1,         dtype=_np.int32)
-            self.model_proxy_key  = _np.full(N, -1,         dtype=_np.int32)
-            self.anno_key         = _np.full(N, -1,         dtype=_np.int32)
-        else:
-            # --- Python-list path (original) ---
+            # Always Python lists — scalar indexed writes (try_write_cell, stamp_model_edge_idx,
+            # etc.) are 3-5x slower on numpy arrays due to Python->C overhead per call.
+            # Export consumers convert to numpy in bulk (np.array(...)) at read time.
             self.w_occ            = [float("inf")] * N
             self.w_occ_key        = [-1] * N
             self.occ_host         = [False] * N
@@ -528,19 +515,17 @@ class ViewRaster:
             self.model_proxy_key  = [-1] * N
             self.anno_key         = [-1] * N
 
-        # Tile acceleration
-        self.tile = TileMap(tile_size, self.W, self.H)
-
-        # Metadata tracking
-        self.element_meta_index_by_key = {}
-        self.element_meta = []
-        self.anno_meta_index_by_key = {}
-        self.anno_meta = []
-
-        # Depth test statistics
-        self.depth_test_attempted = 0
-        self.depth_test_wins = 0
-        self.depth_test_rejects = 0
+            # Tile acceleration
+            self.tile = TileMap(tile_size, self.W, self.H)
+            # Metadata tracking
+            self.element_meta_index_by_key = {}
+            self.element_meta = []
+            self.anno_meta_index_by_key = {}
+            self.anno_meta = []
+            # Depth test statistics
+            self.depth_test_attempted = 0
+            self.depth_test_wins = 0
+            self.depth_test_rejects = 0
 
     def _is_valid_cell(self, i, j):
         """Check if cell coordinates are within raster bounds.
