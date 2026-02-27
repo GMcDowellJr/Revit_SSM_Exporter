@@ -101,9 +101,6 @@ def process_with_streaming(doc, view_ids, cfg, on_view_complete, root_cache=None
     # Save cache at end
     root_cache.save()
     
-    for srow in summaries:
-        if isinstance(srow, dict):
-            srow["memory_tracker"] = mem_tracker.to_dict()
     return summaries
     
 class StreamingExporter:
@@ -734,9 +731,11 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
     # Restore original setting (though caller usually doesn't reuse cfg)
     cfg.retain_rasters_in_memory = original_retain
     
-    for srow in summaries:
-        if isinstance(srow, dict):
-            srow["memory_tracker"] = mem_tracker.to_dict()
+    if summaries:
+        try:
+            summaries[0]["memory_tracker"] = mem_tracker.to_dict()
+        except Exception as e:
+            print("[Streaming] failed attaching memory tracker: {}".format(e))
     return summaries
 
 

@@ -66,3 +66,37 @@ def export_perf_csv(output_dir, view_results, run_id=None, date_value=None):
     except Exception as e:
         print("[perf_export] export_perf_csv failed: {}".format(e))
         return None
+
+
+def export_memory_diag_csv(output_dir, memory_marks, run_id=None, date_value=None):
+    """Export raw memory tracker marks to a dedicated CSV."""
+    try:
+        if run_id is None:
+            run_id = datetime.now().strftime("%Y%m%dT%H%M%S")
+        if date_value is None:
+            date_value = datetime.now().strftime("%Y-%m-%d")
+
+        ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        os.makedirs(output_dir, exist_ok=True)
+        path = os.path.join(output_dir, "memory_diag_{}.csv".format(ts))
+
+        cols = ["RunId", "Date", "Label", "ElapsedSec", "WallTime", "WorkingSetMb", "PrivateMb"]
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=cols)
+            w.writeheader()
+            for mark in memory_marks or []:
+                if not isinstance(mark, dict):
+                    continue
+                w.writerow({
+                    "RunId": run_id,
+                    "Date": date_value,
+                    "Label": mark.get("label"),
+                    "ElapsedSec": mark.get("elapsed_s"),
+                    "WallTime": mark.get("wall_time"),
+                    "WorkingSetMb": mark.get("ws_mb"),
+                    "PrivateMb": mark.get("priv_mb"),
+                })
+        return path
+    except Exception as e:
+        print("[perf_export] export_memory_diag_csv failed: {}".format(e))
+        return None
