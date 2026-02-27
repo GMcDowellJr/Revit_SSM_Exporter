@@ -1771,7 +1771,8 @@ def get_perf_csv_header():
         "TotalElements", "FilledCells",
         "TinyCount", "LinearCount", "ArealCount",
         "ArealHighConf", "ArealMediumConf", "ArealLowConf",
-        "FallbackCount", "FallbackRate", "AvgFallbackExtractMs", "ElemCacheHitRate"
+        "FallbackCount", "FallbackRate", "AvgFallbackExtractMs", "ElemCacheHitRate",
+        "MemStartPrivMb", "MemEndPrivMb", "MemDeltaPrivMb"
     ]
 
 
@@ -2302,6 +2303,38 @@ def view_result_to_perf_row(view_result, date_override=None, run_id=None):
         "TotalElements": view_result.get("total_elements", 0),
         "FilledCells": view_result.get("filled_cells", 0)
     }
+
+    # Memory diagnostics: prefer explicit per-view memory payload,
+    # fall back to tracker marks embedded on the view_result.
+    try:
+        mem = view_result.get("memory", {}) or {}
+        mem_start = mem.get("start_priv_mb")
+        mem_end = mem.get("end_priv_mb")
+        mem_delta = mem.get("delta_priv_mb")
+
+        if mem_start is None or mem_end is None:
+            marks = view_result.get("memory_tracker", []) or []
+            view_id = view_result.get("view_id", None)
+            if view_id is not None:
+                for mark in marks:
+                    if not isinstance(mark, dict):
+                        continue
+                    label = str(mark.get("label") or "")
+                    if label == "view_start_{}".format(view_id):
+                        mem_start = mark.get("priv_mb")
+                    elif label == "after_clr_gc_{} [post-GC]".format(view_id):
+                        mem_end = mark.get("priv_mb")
+
+        if mem_delta is None and mem_start is not None and mem_end is not None:
+            mem_delta = float(mem_end) - float(mem_start)
+
+        row["MemStartPrivMb"] = mem_start
+        row["MemEndPrivMb"] = mem_end
+        row["MemDeltaPrivMb"] = mem_delta
+    except Exception:
+        row["MemStartPrivMb"] = None
+        row["MemEndPrivMb"] = None
+        row["MemDeltaPrivMb"] = None
 
 
     # DIAGNOSTICS: Aggregate columns from per-view diagnostics

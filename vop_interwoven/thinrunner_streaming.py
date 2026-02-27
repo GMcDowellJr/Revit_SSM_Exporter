@@ -165,8 +165,7 @@ try:
 
     try:
         if getattr(cfg, "export_perf_csv", False):
-            from vop_interwoven.perf_export import export_perf_csv
-            perf_path = export_perf_csv(output_dir, view_summaries)
+            perf_path = result.get('perf_csv_path', None)
             lines.append("Perf CSV: {}".format(perf_path))
     except Exception as e:
         lines.append("Perf CSV export failed: {}".format(e))
