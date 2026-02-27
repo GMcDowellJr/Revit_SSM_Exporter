@@ -194,6 +194,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `run`
+      - called from: bootstrap.py
     - `run_vop_pipeline_streaming`
       - called from: thinrunner_streaming.py
     - `run_vop_pipeline_with_csv`
@@ -439,6 +441,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `run`
+      - called from: bootstrap.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
     - `run_vop_pipeline_streaming`
@@ -684,6 +688,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `run`
+      - called from: bootstrap.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
     - `run_vop_pipeline_streaming`
@@ -741,7 +747,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `run_vop_pipeline_streaming` (streaming.py:L677)
+## Trace: `run_vop_pipeline_streaming` (streaming.py:L714)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -929,6 +935,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `run`
+      - called from: bootstrap.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
     - `run_vop_pipeline_with_csv`
@@ -1174,6 +1182,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `run`
+      - called from: bootstrap.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
     - `run_vop_pipeline_streaming`
@@ -1419,6 +1429,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `run`
+      - called from: bootstrap.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
     - `run_vop_pipeline_streaming`
@@ -1478,7 +1490,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `process_document_views_streaming` (streaming.py:L545)
+## Trace: `process_document_views_streaming` (streaming.py:L543)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1664,6 +1676,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `run`
+      - called from: bootstrap.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
     - `run_vop_pipeline_streaming`
@@ -1909,6 +1923,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `run`
+      - called from: bootstrap.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
     - `run_vop_pipeline_streaming`
@@ -2154,6 +2170,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `run`
+      - called from: bootstrap.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
     - `run_vop_pipeline_streaming`
@@ -2399,6 +2417,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `run`
+      - called from: bootstrap.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
     - `run_vop_pipeline_streaming`
@@ -2644,6 +2664,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `run`
+      - called from: bootstrap.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
     - `run_vop_pipeline_streaming`
@@ -2889,6 +2911,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `run`
+      - called from: bootstrap.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
     - `run_vop_pipeline_streaming`
@@ -3134,6 +3158,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `run`
+      - called from: bootstrap.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
     - `run_vop_pipeline_streaming`
@@ -3379,6 +3405,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `run`
+      - called from: bootstrap.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
     - `run_vop_pipeline_streaming`
@@ -3624,6 +3652,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `run`
+      - called from: bootstrap.py
     - `run_vop_pipeline`
       - called from: entry_dynamo.py
     - `run_vop_pipeline_streaming`

@@ -6,6 +6,17 @@
 
 ## Files
 
+### `bootstrap.py`
+
+**Imports**
+- `subprocess`
+- `sys`
+
+**Definitions**
+- `_is_importable` (function, L24)
+- `_install` (function, L32)
+- `run` (function, L48)
+
 ### `config.py`
 
 **Imports**
@@ -15,17 +26,17 @@
 **Definitions**
 - `Config` (class, L12)
 - `Config.__init__` (method, L58)
-- `Config.compute_adaptive_tile_size` (method, L326)
-- `Config.max_grid_cells_width` (method, L376)
-- `Config.max_grid_cells_height` (method, L385)
-- `Config.bounds_buffer_ft` (method, L394)
-- `Config.silhouette_tiny_thresh_ft` (method, L403)
-- `Config.silhouette_large_thresh_ft` (method, L412)
-- `Config.coarse_tess_max_verts` (method, L421)
-- `Config.get_silhouette_strategies` (method, L429)
-- `Config.__repr__` (method, L463)
-- `Config.to_dict` (method, L483)
-- `Config.from_dict` (method, L542)
+- `Config.compute_adaptive_tile_size` (method, L330)
+- `Config.max_grid_cells_width` (method, L380)
+- `Config.max_grid_cells_height` (method, L389)
+- `Config.bounds_buffer_ft` (method, L398)
+- `Config.silhouette_tiny_thresh_ft` (method, L407)
+- `Config.silhouette_large_thresh_ft` (method, L416)
+- `Config.coarse_tess_max_verts` (method, L425)
+- `Config.get_silhouette_strategies` (method, L433)
+- `Config.__repr__` (method, L467)
+- `Config.to_dict` (method, L487)
+- `Config.from_dict` (method, L548)
 
 ### `core/areal_extraction.py`
 
@@ -199,44 +210,47 @@
 - `TileMap.update_filled_count` (method, L129)
 - `TileMap.update_w_min` (method, L140)
 - `_fix_loop_points_uv` (function, L154)
-- `ViewRaster` (class, L187)
-- `ViewRaster._cell_in_model_clip` (method, L244)
-- `ViewRaster.rasterize_open_polylines` (method, L265)
-- `ViewRaster.__init__` (method, L369)
-- `ViewRaster._is_valid_cell` (method, L429)
-- `ViewRaster.width` (method, L442)
-- `ViewRaster.height` (method, L447)
-- `ViewRaster.cell_size` (method, L452)
-- `ViewRaster.bounds` (method, L457)
-- `ViewRaster.get_cell_index` (method, L461)
-- `ViewRaster.model_occ_mask` (method, L477)
-- `ViewRaster.model_occ_mask` (method, L482)
-- `ViewRaster.model_proxy_presence` (method, L486)
-- `ViewRaster.model_proxy_presence` (method, L491)
-- `ViewRaster.has_model_occ` (method, L494)
-- `ViewRaster.has_model_edge` (method, L498)
-- `ViewRaster.has_model_proxy` (method, L502)
-- `ViewRaster.has_model_present` (method, L506)
-- `ViewRaster.try_write_cell` (method, L537)
-- `ViewRaster.get_or_create_element_meta_index` (method, L622)
-- `ViewRaster.get_or_create_anno_meta_index` (method, L662)
-- `ViewRaster.finalize_anno_over_model` (method, L680)
-- `ViewRaster.stamp_model_edge_idx` (method, L721)
-- `ViewRaster.stamp_proxy_edge_idx` (method, L759)
-- `ViewRaster.rasterize_proxy_loops` (method, L789)
-- `ViewRaster.rasterize_polygon_to_proxy` (method, L872)
-- `ViewRaster.rasterize_polygon_to_anno` (method, L1006)
-- `ViewRaster.rasterize_closed_loops_to_proxy_edges` (method, L1107)
-- `ViewRaster.rasterize_open_polylines_to_proxy_edges` (method, L1195)
-- `ViewRaster.rasterize_silhouette_loops` (method, L1250)
-- `ViewRaster._scanline_cells` (method, L1531)
-- `ViewRaster._scanline_fill` (method, L1641)
-- `ViewRaster.dump_occlusion_debug` (method, L1737)
-- `ViewRaster.to_dict` (method, L1842)
-- `ViewRaster.from_dict` (method, L1884)
-- `ViewRaster.to_debug_dict` (method, L1945)
-- `_clip_poly_to_rect_uv` (function, L2007)
-- `_bresenham_line` (function, L2071)
+- `_polygon_mask_np` (function, L187)
+- `_commit_polygon_mask` (function, L253)
+- `ViewRaster` (class, L296)
+- `ViewRaster._cell_in_model_clip` (method, L353)
+- `ViewRaster.rasterize_open_polylines` (method, L374)
+- `ViewRaster.__init__` (method, L478)
+- `ViewRaster._is_valid_cell` (method, L545)
+- `ViewRaster.width` (method, L558)
+- `ViewRaster.height` (method, L563)
+- `ViewRaster.cell_size` (method, L568)
+- `ViewRaster.bounds` (method, L573)
+- `ViewRaster.get_cell_index` (method, L577)
+- `ViewRaster.model_occ_mask` (method, L593)
+- `ViewRaster.model_occ_mask` (method, L598)
+- `ViewRaster.model_proxy_presence` (method, L602)
+- `ViewRaster.model_proxy_presence` (method, L607)
+- `ViewRaster.has_model_occ` (method, L610)
+- `ViewRaster.has_model_edge` (method, L614)
+- `ViewRaster.has_model_proxy` (method, L618)
+- `ViewRaster.has_model_present` (method, L622)
+- `ViewRaster.try_write_cell` (method, L653)
+- `ViewRaster.get_or_create_element_meta_index` (method, L738)
+- `ViewRaster.get_or_create_anno_meta_index` (method, L778)
+- `ViewRaster.finalize_anno_over_model` (method, L796)
+- `ViewRaster.stamp_model_edge_idx` (method, L837)
+- `ViewRaster.stamp_proxy_edge_idx` (method, L875)
+- `ViewRaster.rasterize_proxy_loops` (method, L905)
+- `ViewRaster.rasterize_polygon_to_proxy` (method, L988)
+- `ViewRaster.rasterize_polygon_to_anno` (method, L1122)
+- `ViewRaster.rasterize_closed_loops_to_proxy_edges` (method, L1223)
+- `ViewRaster.rasterize_open_polylines_to_proxy_edges` (method, L1311)
+- `ViewRaster._model_clip_mask_np` (method, L1366)
+- `ViewRaster.rasterize_silhouette_loops` (method, L1395)
+- `ViewRaster._scanline_cells` (method, L1571)
+- `ViewRaster._scanline_fill` (method, L1681)
+- `ViewRaster.dump_occlusion_debug` (method, L1777)
+- `ViewRaster.to_dict` (method, L1882)
+- `ViewRaster.from_dict` (method, L1934)
+- `ViewRaster.to_debug_dict` (method, L2021)
+- `_clip_poly_to_rect_uv` (function, L2083)
+- `_bresenham_line` (function, L2147)
 
 ### `core/silhouette.py`
 
@@ -291,35 +305,38 @@
 - `os`
 
 **Definitions**
-- `_round6` (function, L12)
-- `_raster_to_dict_like` (function, L18)
-- `_is_from_cache` (function, L55)
-- `compute_external_cell_metrics` (function, L76)
-- `compute_cell_metrics` (function, L145)
-- `_normalize_locked_metrics_for_legacy_csv` (function, L255)
-- `_get_metrics_triplet_from_view_result` (function, L293)
-- `compute_annotation_type_metrics` (function, L302)
-- `_coerce_view_id_int` (function, L357)
-- `_viewtype_name_from_value` (function, L398)
-- `_extract_view_unique_id` (function, L453)
-- `extract_view_metadata` (function, L485)
-- `compute_config_hash` (function, L802)
-- `compute_view_frame_hash` (function, L834)
-- `build_core_csv_row` (function, L856)
-- `build_vop_csv_row` (function, L914)
-- `build_occlusion_row` (function, L1139)
-- `export_occlusion_diagnostics_csv` (function, L1166)
-- `_get_manifest_csv_columns` (function, L1205)
-- `_build_manifest_vop_row_from_metrics` (function, L1213)
-- `export_pipeline_to_csv` (function, L1227)
-- `get_core_csv_header` (function, L1574)
-- `get_vop_csv_header` (function, L1585)
-- `get_occlusion_csv_header` (function, L1600)
-- `view_result_to_occlusion_row` (function, L1613)
-- `get_perf_csv_header` (function, L1674)
-- `view_result_to_core_row` (function, L1691)
-- `view_result_to_vop_row` (function, L1825)
-- `view_result_to_perf_row` (function, L2122)
+- `_safe_seq` (function, L13)
+- `_round6` (function, L19)
+- `_normalize_locked_metrics_for_legacy_csv` (function, L27)
+- `_raster_to_dict_like` (function, L72)
+- `_get_metrics_triplet_from_view_result` (function, L111)
+- `_is_from_cache` (function, L134)
+- `compute_external_cell_metrics` (function, L155)
+- `compute_cell_metrics` (function, L224)
+- `_compute_cell_metrics_np` (function, L239)
+- `_compute_cell_metrics_py` (function, L311)
+- `compute_annotation_type_metrics` (function, L389)
+- `_coerce_view_id_int` (function, L444)
+- `_viewtype_name_from_value` (function, L485)
+- `_extract_view_unique_id` (function, L540)
+- `extract_view_metadata` (function, L572)
+- `compute_config_hash` (function, L889)
+- `compute_view_frame_hash` (function, L921)
+- `build_core_csv_row` (function, L943)
+- `build_vop_csv_row` (function, L1001)
+- `build_occlusion_row` (function, L1226)
+- `export_occlusion_diagnostics_csv` (function, L1253)
+- `_get_manifest_csv_columns` (function, L1292)
+- `_build_manifest_vop_row_from_metrics` (function, L1300)
+- `export_pipeline_to_csv` (function, L1314)
+- `get_core_csv_header` (function, L1661)
+- `get_vop_csv_header` (function, L1672)
+- `get_occlusion_csv_header` (function, L1687)
+- `view_result_to_occlusion_row` (function, L1700)
+- `get_perf_csv_header` (function, L1761)
+- `view_result_to_core_row` (function, L1778)
+- `view_result_to_vop_row` (function, L1912)
+- `view_result_to_perf_row` (function, L2216)
 
 ### `diagnostics/occlusion_tracker.py`
 
@@ -409,11 +426,12 @@
 - `typing:Any,Callable`
 
 **Definitions**
-- `_get_source_type` (function, L12)
-- `_get_element_meta` (function, L33)
-- `_normalize_anno_type` (function, L52)
-- `_default_model_class_resolver` (function, L63)
-- `scan_final_state_totals` (function, L82)
+- `_safe_seq` (function, L12)
+- `_get_source_type` (function, L18)
+- `_get_element_meta` (function, L39)
+- `_normalize_anno_type` (function, L58)
+- `_default_model_class_resolver` (function, L69)
+- `scan_final_state_totals` (function, L88)
 
 ### `metrics/manifest_evaluator.py`
 
@@ -454,6 +472,12 @@
 - `canonicalize_manifest_json` (function, L138)
 - `compute_manifest_sha256` (function, L144)
 - `load_manifest_json` (function, L148)
+
+### `np_backend.py`
+
+**Definitions**
+- `ensure_numpy` (function, L30)
+- `ensure_pillow` (function, L60)
 
 ### `pipeline.py`
 
@@ -509,8 +533,11 @@
 - `time`
 
 **Definitions**
-- `export_raster_to_png` (function, L10)
-- `export_pipeline_results_to_pngs` (function, L334)
+- `_safe_seq` (function, L10)
+- `_export_png_dotnet` (function, L16)
+- `_export_png_pillow` (function, L341)
+- `export_raster_to_png` (function, L435)
+- `export_pipeline_results_to_pngs` (function, L457)
 
 ### `revit/annotation.py`
 
@@ -648,18 +675,19 @@
 - `time`
 
 **Definitions**
-- `_round6` (function, L14)
-- `RootStyleCache` (class, L20)
-- `RootStyleCache.__init__` (method, L23)
-- `RootStyleCache.load` (method, L55)
-- `RootStyleCache.get_view` (method, L98)
-- `RootStyleCache.get_view_any` (method, L129)
-- `RootStyleCache.set_view` (method, L141)
-- `RootStyleCache.save` (method, L228)
-- `RootStyleCache.stats` (method, L270)
-- `RootStyleCache._empty_cache` (method, L284)
-- `compute_config_hash` (function, L295)
-- `extract_metrics_from_view_result` (function, L319)
+- `_safe_seq` (function, L14)
+- `_round6` (function, L19)
+- `RootStyleCache` (class, L25)
+- `RootStyleCache.__init__` (method, L28)
+- `RootStyleCache.load` (method, L60)
+- `RootStyleCache.get_view` (method, L103)
+- `RootStyleCache.get_view_any` (method, L134)
+- `RootStyleCache.set_view` (method, L146)
+- `RootStyleCache.save` (method, L233)
+- `RootStyleCache.stats` (method, L275)
+- `RootStyleCache._empty_cache` (method, L289)
+- `compute_config_hash` (function, L300)
+- `extract_metrics_from_view_result` (function, L324)
 
 ### `streaming.py`
 
@@ -676,12 +704,12 @@
 - `StreamingExporter.__init__` (method, L103)
 - `StreamingExporter._init_csv_writers` (method, L184)
 - `StreamingExporter.on_view_complete` (method, L253)
-- `StreamingExporter._write_png` (method, L330)
-- `StreamingExporter._write_csv_rows` (method, L358)
-- `StreamingExporter._extract_summary` (method, L478)
-- `StreamingExporter.finalize` (method, L491)
-- `process_document_views_streaming` (function, L545)
-- `run_vop_pipeline_streaming` (function, L677)
+- `StreamingExporter._write_png` (method, L328)
+- `StreamingExporter._write_csv_rows` (method, L356)
+- `StreamingExporter._extract_summary` (method, L476)
+- `StreamingExporter.finalize` (method, L489)
+- `process_document_views_streaming` (function, L543)
+- `run_vop_pipeline_streaming` (function, L714)
 
 ### `thinrunner_streaming.py`
 
