@@ -318,11 +318,16 @@ def _compute_cell_metrics_py(raster, mode, diag):
 
     mode = (mode or "ink").lower()
 
-    model_mask       = getattr(raster, "model_mask",       []) or []
-    model_edge_key   = getattr(raster, "model_edge_key",   []) or []
-    model_proxy_key  = getattr(raster, "model_proxy_key",  []) or []
-    model_proxy_mask = (getattr(raster, "model_proxy_mask", []) or
-                        getattr(raster, "model_proxy_presence", []) or [])
+    model_mask       = _safe_seq(getattr(raster, "model_mask",       []))
+    model_edge_key   = _safe_seq(getattr(raster, "model_edge_key",   []))
+    model_proxy_key  = _safe_seq(getattr(raster, "model_proxy_key",  []))
+    model_proxy_mask = _safe_seq(getattr(raster, "model_proxy_mask", None))
+    try:
+        _mp_len = len(model_proxy_mask)
+    except Exception:
+        _mp_len = 0
+    if _mp_len == 0:
+        model_proxy_mask = _safe_seq(getattr(raster, "model_proxy_presence", []))
 
     def _has_model(idx):
         if mode == "occ":
@@ -358,8 +363,8 @@ def _compute_cell_metrics_py(raster, mode, diag):
             return present
         raise ValueError("Unknown model_presence_mode: {0}".format(mode))
 
-    anno_over_model = getattr(raster, "anno_over_model", []) or []
-    anno_key        = getattr(raster, "anno_key",        []) or []
+    anno_over_model = _safe_seq(getattr(raster, "anno_over_model", []))
+    anno_key        = _safe_seq(getattr(raster, "anno_key",        []))
 
     for idx in range(total):
         has_model = _has_model(idx)

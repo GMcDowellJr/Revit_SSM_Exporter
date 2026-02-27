@@ -11,6 +11,11 @@ import time
 import tempfile
 import hashlib
 
+def _safe_seq(value):
+    if value is None:
+        return []
+    return value
+
 def _round6(x):
     try:
         return round(float(x), 6)
@@ -350,14 +355,14 @@ def extract_metrics_from_view_result(view_result, cfg):
                 "xmax": getattr(b, "xmax", 0.0) if b is not None else 0.0,
                 "ymax": getattr(b, "ymax", 0.0) if b is not None else 0.0,
             },
-            "model_edge_key": getattr(raster_payload, "model_edge_key", []) or [],
-            "model_proxy_mask": getattr(raster_payload, "model_proxy_mask", []) or [],
-            "model_proxy_key": getattr(raster_payload, "model_proxy_key", []) or [],
-            "model_mask": getattr(raster_payload, "model_mask", []) or [],
-            "anno_over_model": getattr(raster_payload, "anno_over_model", []) or [],
-            "anno_key": getattr(raster_payload, "anno_key", []) or [],
-            "anno_meta": getattr(raster_payload, "anno_meta", []) or [],
-            "element_meta": getattr(raster_payload, "element_meta", []) or [],
+            "model_edge_key": _safe_seq(getattr(raster_payload, "model_edge_key", [])),
+            "model_proxy_mask": _safe_seq(getattr(raster_payload, "model_proxy_mask", [])),
+            "model_proxy_key": _safe_seq(getattr(raster_payload, "model_proxy_key", [])),
+            "model_mask": _safe_seq(getattr(raster_payload, "model_mask", [])),
+            "anno_over_model": _safe_seq(getattr(raster_payload, "anno_over_model", [])),
+            "anno_key": _safe_seq(getattr(raster_payload, "anno_key", [])),
+            "anno_meta": _safe_seq(getattr(raster_payload, "anno_meta", [])),
+            "element_meta": _safe_seq(getattr(raster_payload, "element_meta", [])),
         }
 
     # Prefer precomputed per-view metrics (scanner output) when present.
