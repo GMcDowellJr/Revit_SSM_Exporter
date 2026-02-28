@@ -30,6 +30,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -86,8 +88,8 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
@@ -277,6 +279,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -333,8 +337,8 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
@@ -524,6 +528,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -580,8 +586,8 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
@@ -747,7 +753,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `run_vop_pipeline_streaming` (streaming.py:L714)
+## Trace: `run_vop_pipeline_streaming` (streaming.py:L742)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -771,6 +777,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -827,8 +835,8 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
@@ -1018,6 +1026,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -1074,8 +1084,8 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
@@ -1243,7 +1253,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `process_document_views` (pipeline.py:L538)
+## Trace: `process_document_views` (pipeline.py:L540)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1267,6 +1277,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -1323,8 +1335,8 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
@@ -1490,7 +1502,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `process_document_views_streaming` (streaming.py:L543)
+## Trace: `process_document_views_streaming` (streaming.py:L549)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1514,6 +1526,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -1570,8 +1584,8 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
@@ -1737,7 +1751,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `render_model_front_to_back` (pipeline.py:L1778)
+## Trace: `render_model_front_to_back` (pipeline.py:L1927)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1761,6 +1775,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -1817,8 +1833,8 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
@@ -1984,7 +2000,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `init_view_raster` (pipeline.py:L1473)
+## Trace: `init_view_raster` (pipeline.py:L1622)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -2008,6 +2024,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -2064,8 +2082,8 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
@@ -2231,7 +2249,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `_view_signature` (pipeline.py:L270)
+## Trace: `_view_signature` (pipeline.py:L272)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -2255,6 +2273,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -2311,8 +2331,8 @@ Notes:
     - called from: csv_export.py, root_cache.py
   - `compute_manifest_sha256`
     - called from: metrics_manifest.py
-  - `compute_view_frame_hash`
-    - called from: csv_export.py
+    - `compute_view_frame_hash`
+      - called from: csv_export.py
     - `convex_hull_uv`
       - called from: pipeline.py
     - `estimate_depth_from_loops_or_bbox`
@@ -2502,6 +2522,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -2558,8 +2580,8 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
@@ -2749,6 +2771,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -2805,8 +2829,8 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
@@ -2996,6 +3020,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -3052,8 +3078,8 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
@@ -3243,6 +3269,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -3299,8 +3327,8 @@ Notes:
     - called from: csv_export.py, root_cache.py
   - `compute_manifest_sha256`
     - called from: metrics_manifest.py
-  - `compute_view_frame_hash`
-    - called from: csv_export.py
+    - `compute_view_frame_hash`
+      - called from: csv_export.py
     - `convex_hull_uv`
       - called from: pipeline.py
     - `estimate_depth_from_loops_or_bbox`
@@ -3490,6 +3518,8 @@ Notes:
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
     - called from: metrics_manifest.py
+  - `MemoryTracker`
+    - called from: pipeline.py, streaming.py
   - `MetricsManifest`
     - called from: metrics_manifest.py
   - `MetricsValidationError`
@@ -3546,8 +3576,8 @@ Notes:
     - called from: csv_export.py, streaming.py
   - `compute_external_cell_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`

@@ -26,17 +26,17 @@
 **Definitions**
 - `Config` (class, L12)
 - `Config.__init__` (method, L58)
-- `Config.compute_adaptive_tile_size` (method, L330)
-- `Config.max_grid_cells_width` (method, L380)
-- `Config.max_grid_cells_height` (method, L389)
-- `Config.bounds_buffer_ft` (method, L398)
-- `Config.silhouette_tiny_thresh_ft` (method, L407)
-- `Config.silhouette_large_thresh_ft` (method, L416)
-- `Config.coarse_tess_max_verts` (method, L425)
-- `Config.get_silhouette_strategies` (method, L433)
-- `Config.__repr__` (method, L467)
-- `Config.to_dict` (method, L487)
-- `Config.from_dict` (method, L548)
+- `Config.compute_adaptive_tile_size` (method, L334)
+- `Config.max_grid_cells_width` (method, L384)
+- `Config.max_grid_cells_height` (method, L393)
+- `Config.bounds_buffer_ft` (method, L402)
+- `Config.silhouette_tiny_thresh_ft` (method, L411)
+- `Config.silhouette_large_thresh_ft` (method, L420)
+- `Config.coarse_tess_max_verts` (method, L429)
+- `Config.get_silhouette_strategies` (method, L437)
+- `Config.__repr__` (method, L471)
+- `Config.to_dict` (method, L491)
+- `Config.from_dict` (method, L554)
 
 ### `core/areal_extraction.py`
 
@@ -334,9 +334,9 @@
 - `get_occlusion_csv_header` (function, L1687)
 - `view_result_to_occlusion_row` (function, L1700)
 - `get_perf_csv_header` (function, L1761)
-- `view_result_to_core_row` (function, L1778)
-- `view_result_to_vop_row` (function, L1912)
-- `view_result_to_perf_row` (function, L2216)
+- `view_result_to_core_row` (function, L1779)
+- `view_result_to_vop_row` (function, L1913)
+- `view_result_to_perf_row` (function, L2217)
 
 ### `diagnostics/occlusion_tracker.py`
 
@@ -419,6 +419,25 @@
 - `_ensure_dir` (function, L8)
 - `_append_csv_rows` (function, L20)
 
+### `memory_telemetry.py`
+
+**Imports**
+- `csv`
+- `datetime:datetime`
+- `time`
+
+**Definitions**
+- `_get_memory_mb` (function, L8)
+- `_force_clr_gc` (function, L21)
+- `MemoryTracker` (class, L39)
+- `MemoryTracker.__init__` (method, L40)
+- `MemoryTracker.mark` (method, L45)
+- `MemoryTracker.mark_and_gc` (method, L69)
+- `MemoryTracker.delta` (method, L77)
+- `MemoryTracker.report` (method, L97)
+- `MemoryTracker.export_csv` (method, L121)
+- `MemoryTracker.to_dict` (method, L133)
+
 ### `metrics/final_state_scanner.py`
 
 **Imports**
@@ -479,6 +498,8 @@
 - `ensure_numpy` (function, L30)
 - `ensure_pillow` (function, L60)
 
+### `perf_constants.py`
+
 ### `pipeline.py`
 
 **Imports**
@@ -489,6 +510,8 @@
 - `.core.raster:ViewRaster,TileMap`
 - `.core.silhouette:get_element_silhouette,reset_family_region_caches`
 - `.diagnostics:OcclusionTracker`
+- `.memory_telemetry:MemoryTracker`
+- `.perf_constants:TIMING_KEYS,METRIC_KEYS`
 - `.revit.annotation:rasterize_annotations`
 - `.revit.collection:collect_view_elements,expand_host_link_import_model_elements,sort_front_to_back,is_element_visible_in_view,estimate_nearest_depth_from_bbox`
 - `.revit.safe_api:safe_call`
@@ -498,33 +521,33 @@
 - `time`
 
 **Definitions**
-- `_diagnose_link_geometry_transform` (function, L120)
-- `_perf_now` (function, L203)
-- `_perf_ms` (function, L208)
-- `_safe_int` (function, L211)
-- `_safe_bool` (function, L218)
-- `_cropbox_fingerprint` (function, L225)
-- `_cfg_hash` (function, L254)
-- `_view_signature` (function, L270)
-- `_extract_view_identity_for_csv` (function, L381)
-- `_compute_manifest_metrics_payload` (function, L495)
-- `process_document_views` (function, L538)
-- `init_view_raster` (function, L1473)
-- `_extract_view_summary` (function, L1625)
-- `rasterize_areal_loops` (function, L1663)
-- `render_model_front_to_back` (function, L1778)
-- `_is_supported_2d_view` (function, L3125)
-- `_intersects_crop_volume` (function, L3178)
-- `_should_skip_outside_view_volume` (function, L3204)
-- `_tiles_fully_covered_and_nearer` (function, L3243)
-- `_bin_elements_to_tiles` (function, L3281)
-- `_tile_has_depth_conflict` (function, L3313)
-- `_get_ambiguous_tiles` (function, L3347)
-- `_render_proxy_element` (function, L3377)
-- `_stamp_proxy_edges` (function, L3402)
-- `_mark_rect_center_cell` (function, L3419)
-- `_mark_thin_band_along_long_axis` (function, L3427)
-- `export_view_raster` (function, L3445)
+- `_diagnose_link_geometry_transform` (function, L122)
+- `_perf_now` (function, L205)
+- `_perf_ms` (function, L210)
+- `_safe_int` (function, L213)
+- `_safe_bool` (function, L220)
+- `_cropbox_fingerprint` (function, L227)
+- `_cfg_hash` (function, L256)
+- `_view_signature` (function, L272)
+- `_extract_view_identity_for_csv` (function, L383)
+- `_compute_manifest_metrics_payload` (function, L497)
+- `process_document_views` (function, L540)
+- `init_view_raster` (function, L1622)
+- `_extract_view_summary` (function, L1774)
+- `rasterize_areal_loops` (function, L1812)
+- `render_model_front_to_back` (function, L1927)
+- `_is_supported_2d_view` (function, L3294)
+- `_intersects_crop_volume` (function, L3347)
+- `_should_skip_outside_view_volume` (function, L3373)
+- `_tiles_fully_covered_and_nearer` (function, L3412)
+- `_bin_elements_to_tiles` (function, L3450)
+- `_tile_has_depth_conflict` (function, L3482)
+- `_get_ambiguous_tiles` (function, L3516)
+- `_render_proxy_element` (function, L3546)
+- `_stamp_proxy_edges` (function, L3571)
+- `_mark_rect_center_cell` (function, L3588)
+- `_mark_thin_band_along_long_axis` (function, L3596)
+- `export_view_raster` (function, L3614)
 
 ### `png_export.py`
 
@@ -697,19 +720,20 @@
 - `json`
 - `os`
 - `time`
+- `vop_interwoven.memory_telemetry:MemoryTracker`
 
 **Definitions**
-- `process_with_streaming` (function, L24)
-- `StreamingExporter` (class, L100)
-- `StreamingExporter.__init__` (method, L103)
-- `StreamingExporter._init_csv_writers` (method, L184)
-- `StreamingExporter.on_view_complete` (method, L253)
-- `StreamingExporter._write_png` (method, L328)
-- `StreamingExporter._write_csv_rows` (method, L356)
-- `StreamingExporter._extract_summary` (method, L476)
-- `StreamingExporter.finalize` (method, L489)
-- `process_document_views_streaming` (function, L543)
-- `run_vop_pipeline_streaming` (function, L714)
+- `process_with_streaming` (function, L25)
+- `StreamingExporter` (class, L106)
+- `StreamingExporter.__init__` (method, L109)
+- `StreamingExporter._init_csv_writers` (method, L190)
+- `StreamingExporter.on_view_complete` (method, L259)
+- `StreamingExporter._write_png` (method, L334)
+- `StreamingExporter._write_csv_rows` (method, L362)
+- `StreamingExporter._extract_summary` (method, L482)
+- `StreamingExporter.finalize` (method, L495)
+- `process_document_views_streaming` (function, L549)
+- `run_vop_pipeline_streaming` (function, L742)
 
 ### `thinrunner_streaming.py`
 
