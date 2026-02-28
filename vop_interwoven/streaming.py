@@ -18,6 +18,7 @@ import time
 import json
 import gc
 from datetime import datetime
+from vop_interwoven.memory_telemetry import MemoryTracker
 
 MAX_SAFE_GRID_CELLS = 500000
 
@@ -46,6 +47,11 @@ def process_with_streaming(doc, view_ids, cfg, on_view_complete, root_cache=None
         pass
 
     summaries = []
+    mem_tracker = MemoryTracker()
+    try:
+        mem_tracker.mark("run_start")
+    except Exception as e:
+        print("[Streaming] memory mark run_start failed: {}".format(e))
     
     for view_id in view_ids:
         try:
@@ -127,7 +133,7 @@ class StreamingExporter:
         self.export_png = export_png
         self.export_csv = export_csv
         self.export_json = export_json
-        self.export_perf_csv = bool(getattr(cfg, "export_perf_csv", True))
+        self.export_perf_csv = bool(getattr(cfg, "export_perf_csv", False))
         self.pixels_per_cell = pixels_per_cell
         self.date_override = date_override
         
@@ -577,9 +583,18 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
 
     # Process views one at a time with callback
     summaries = []
+    mem_tracker = MemoryTracker()
+    try:
+        mem_tracker.mark("run_start")
+    except Exception as e:
+        print("[Streaming] memory mark run_start failed: {}".format(e))
     
     for view_id in view_ids:
         try:
+            try:
+                mem_tracker.mark("view_start_{}".format(view_id))
+            except Exception as e:
+                print("[Streaming] memory mark view_start failed: {}".format(e))
             # Process single view (cache miss)
             results = process_document_views(doc, [view_id], cfg, root_cache=root_cache, reset_family_caches=False)
 
@@ -669,6 +684,11 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                     })
                     continue
 
+                try:
+                    mem_tracker.mark("after_raster_{}".format(view_result.get("view_id")))
+                except Exception as e:
+                    print("[Streaming] memory mark after_raster failed: {}".format(e))
+
                 # Call user callback
                 on_view_complete(view_result)
 
@@ -690,12 +710,9 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                 # Force CLR GC to release Revit geometry objects from get_Geometry(opts.View=view).
                 # These accumulate on the .NET heap and are not freed by CPython refcounting alone.
                 try:
-                    import System
-                    System.GC.Collect()
-                    System.GC.WaitForPendingFinalizers()
-                    System.GC.Collect()
-                except Exception:
-                    pass
+                    mem_tracker.mark_and_gc("after_clr_gc_{}".format(view_id))
+                except Exception as e:
+                    print("[Streaming] CLR GC mark failed: {}".format(e))
 
         except Exception as e:
             print(f"[Streaming] Error processing view {view_id}: {e}")
@@ -705,9 +722,20 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                 "error": str(e)
             })
     
+    try:
+        mem_tracker.mark("run_end")
+        mem_tracker.mark_and_gc("after_run_gc")
+    except Exception as e:
+        print("[Streaming] run-end memory marks failed: {}".format(e))
+
     # Restore original setting (though caller usually doesn't reuse cfg)
     cfg.retain_rasters_in_memory = original_retain
     
+    if summaries:
+        try:
+            summaries[0]["memory_tracker"] = mem_tracker.to_dict()
+        except Exception as e:
+            print("[Streaming] failed attaching memory tracker: {}".format(e))
     return summaries
 
 

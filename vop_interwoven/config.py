@@ -106,6 +106,8 @@ class Config:
         # Perf: per-view timings (coarse always; optional sub-step)
         perf_collect_timings=True,
         perf_subtimings=True,
+        perf_subtimings_geometry=True,
+        perf_subtimings_cache=True,
 
         # ────────────────────────────────────────────────────────────────────
         # Persistent view-level cache (disk-backed)
@@ -133,14 +135,14 @@ class Config:
         element_cache_change_tolerance=1.0 * 10**-2,  # 0.01 ft position/size tolerance (~3mm)
 
         # Strategy diagnostics: track geometry extraction performance
-        export_strategy_diagnostics=True,  # Export strategy diagnostics CSV and print summary
+        export_strategy_diagnostics=False,  # Export strategy diagnostics CSV and print summary
 
         # View diagnostics: track classification/strategy/fallback per view
         export_view_diagnostics=True,  # Export views_diagnostics_*.json
         view_diagnostics_output_dir=None,  # None = use output_dir (same as CSVs)
 
         # Perf CSV export controls
-        export_perf_csv=True,  # Export views_perf_*.csv
+        export_perf_csv=False,  # Export views_perf_*.csv
         perf_csv_output_dir=None,  # None = use output_dir (same as CSVs)
 
         # Memory management: control raster retention behavior
@@ -209,6 +211,8 @@ class Config:
         # Perf: timings
         self.perf_collect_timings = bool(perf_collect_timings)
         self.perf_subtimings = bool(perf_subtimings)
+        self.perf_subtimings_geometry = bool(perf_subtimings_geometry)
+        self.perf_subtimings_cache = bool(perf_subtimings_cache)
 
         # Debug and diagnostics
         self.debug_dump_occlusion = bool(debug_dump_occlusion)
@@ -515,6 +519,8 @@ class Config:
             
             "perf_collect_timings": self.perf_collect_timings,
             "perf_subtimings": self.perf_subtimings,
+            "perf_subtimings_geometry": self.perf_subtimings_geometry,
+            "perf_subtimings_cache": self.perf_subtimings_cache,
             
             "view_cache_enabled": self.view_cache_enabled,
             "view_cache_dir": self.view_cache_dir,
@@ -576,6 +582,8 @@ class Config:
 
             perf_collect_timings=d.get("perf_collect_timings", True),
             perf_subtimings=d.get("perf_subtimings", False),
+            perf_subtimings_geometry=d.get("perf_subtimings_geometry", True),
+            perf_subtimings_cache=d.get("perf_subtimings_cache", True),
                         
             view_cache_enabled=d.get("view_cache_enabled", True),
             view_cache_dir=d.get("view_cache_dir", None),
@@ -594,12 +602,12 @@ class Config:
             element_cache_change_tolerance=d.get("element_cache_change_tolerance", 1.0 * 10**-2),
 
             # Strategy diagnostics
-            export_strategy_diagnostics=d.get("export_strategy_diagnostics", True),
+            export_strategy_diagnostics=d.get("export_strategy_diagnostics", False),
             export_view_diagnostics=d.get("export_view_diagnostics", True),
             view_diagnostics_output_dir=d.get("view_diagnostics_output_dir", None),
 
             # Perf CSV export controls
-            export_perf_csv=d.get("export_perf_csv", True),
+            export_perf_csv=d.get("export_perf_csv", False),
             perf_csv_output_dir=d.get("perf_csv_output_dir", None),
             retain_rasters_in_memory=d.get("retain_rasters_in_memory", False),
             # Metrics manifest wiring

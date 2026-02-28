@@ -115,6 +115,8 @@ from .revit.collection import (
 from .revit.annotation import rasterize_annotations
 from .revit.safe_api import safe_call
 from .diagnostics import OcclusionTracker
+from .perf_constants import TIMING_KEYS, METRIC_KEYS
+from .memory_telemetry import MemoryTracker
 
 
 def _diagnose_link_geometry_transform(elem, link_trf, basis, stage_name):
@@ -202,7 +204,7 @@ def _diagnose_link_geometry_transform(elem, link_trf, basis, stage_name):
 
 def _perf_now():
     # perf_counter is monotonic and high-resolution where available.
-    return time.process_time()
+    return time.perf_counter()
 
 
 def _perf_ms(t0, t1):
@@ -574,6 +576,10 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset
     from .core.diagnostics import Diagnostics
 
     results = []
+    run_t0 = _perf_now()
+    mem_tracker = MemoryTracker()
+    gc_freed_total_mb = 0.0
+    clr_gc_call_count = 0
 
     # Run/date identity for dated exports and metadata
     # Keep this aligned with CSV/PERF naming date semantics.
@@ -788,6 +794,11 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset
                 )
             elem_cache = None  # Graceful degradation
 
+    try:
+        mem_tracker.mark("run_start")
+    except Exception as e:
+        print("[pipeline] run_start memory mark failed: {}".format(e))
+
     # Track element-view relationships for export (view_id -> list of (elem_id, source_id))
     view_elements = {}
     try:
@@ -814,8 +825,15 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset
                 timings[name] = round(_perf_ms(t0, t1), 3)
 
         view = None
+        view_id_int = _safe_int(getattr(getattr(view_id, "Id", None), "IntegerValue", view_id))
         elem_hits_before = int(getattr(elem_cache, "hits", 0) or 0) if elem_cache is not None else 0
         elem_misses_before = int(getattr(elem_cache, "misses", 0) or 0) if elem_cache is not None else 0
+
+        if getattr(cfg, "perf_collect_timings", True):
+            try:
+                mem_tracker.mark("view_start_{}".format(view_id_int))
+            except Exception as e:
+                print("[pipeline] view_start memory mark failed: {}".format(e))
 
         try:
             # Convert int to ElementId if needed
@@ -830,7 +848,7 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset
             t0 = _perf_now()
             view_mode, mode_reason = resolve_view_mode(view, diag=diag)
             t1 = _perf_now()
-            _tmark("mode_ms", t0, t1)
+            _tmark(TIMING_KEYS["MODE_MS"], t0, t1)
 
             if diag is not None:
                 # Diagnostics implementations differ (some do not implement .info()).
@@ -940,6 +958,7 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset
                 t_cache0 = _perf_now()
                 cached = root_cache.get_view(view_id_int, sig_hex)
                 t_cache1 = _perf_now()
+                _tmark(TIMING_KEYS["CACHE_READ_MS"], t_cache0, t_cache1)
 
                 if cached:
                     cached_meta = cached.get("metadata") or {}
@@ -1015,7 +1034,7 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset
             t0 = _perf_now()
             raster = init_view_raster(doc, view, cfg, diag=diag)
             t1 = _perf_now()
-            _tmark("raster_init_ms", t0, t1)       
+            _tmark("raster_init_ms", t0, t1)
             
             # Persist view mode for downstream exports/diagnostics
             try:
@@ -1052,13 +1071,13 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset
                 t0 = _perf_now()
                 elements = collect_view_elements(doc, view, raster, diag=diag, cfg=cfg)
                 t1 = _perf_now()
-                _tmark("collect_ms", t0, t1)
+                _tmark(TIMING_KEYS["COLLECT_MS"], t0, t1)
                 
                 # 3) MODEL PASS
                 t0 = _perf_now()
                 render_result = render_model_front_to_back(doc, view, raster, elements, cfg, diag=diag, geometry_cache=geometry_cache, elem_cache=elem_cache, strategy_diag=strategy_diag)
                 t1 = _perf_now()
-                _tmark("raster_ms", t0, t1)
+                _tmark(TIMING_KEYS["RASTER_MODEL_MS"], t0, t1)
 
                 # Merge rasterization sub-timings into view timings
                 _raster_sub_timings = render_result.get("timings", {}) if isinstance(render_result, dict) else {}
@@ -1066,6 +1085,18 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset
                     if getattr(cfg, "perf_collect_timings", True):
                         for _sk, _sv in _raster_sub_timings.items():
                             timings[_sk] = round(float(_sv), 3)
+                        timings[TIMING_KEYS["BBOX_MS"]] = round(float(_raster_sub_timings.get("bbox_ms", 0.0)), 3)
+                        timings[TIMING_KEYS["CLASSIFY_MS"]] = round(float(_raster_sub_timings.get("classify_ms", 0.0)), 3)
+                        timings[TIMING_KEYS["GEOM_EXTRACT_MS"]] = round(float(_raster_sub_timings.get("raster_geom_extract_ms", 0.0)), 3)
+                        if getattr(cfg, "perf_subtimings_geometry", True):
+                            timings[TIMING_KEYS["GEOM_SILHOUETTE_MS"]] = round(float(_raster_sub_timings.get("geom_silhouette_ms", 0.0)), 3)
+                            timings[TIMING_KEYS["GEOM_OBB_MS"]] = round(float(_raster_sub_timings.get("geom_obb_ms", 0.0)), 3)
+                            timings[TIMING_KEYS["GEOM_BBOX_MS"]] = round(float(_raster_sub_timings.get("geom_bbox_ms", 0.0)), 3)
+
+                try:
+                    mem_tracker.mark("after_geom_extract_{}".format(view_id_int))
+                except Exception as e:
+                    print("[pipeline] after_geom_extract memory mark failed: {}".format(e))
 
             elif view_mode == VIEW_MODE_ANNOTATION_ONLY:
                 # Annotation-only: do NOT attempt model collection, depth sorting, or link expansion
@@ -1082,13 +1113,17 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset
             t0 = _perf_now()
             rasterize_annotations(doc, view, raster, cfg, diag=diag)
             t1 = _perf_now()
-            _tmark("anno_ms", t0, t1)
+            _tmark(TIMING_KEYS["RASTER_ANNO_MS"], t0, t1)
 
             # 5) Derive annoOverModel (safe even if model is empty)
             t0 = _perf_now()
             raster.finalize_anno_over_model(cfg)
             t1 = _perf_now()
             _tmark("finalize_ms", t0, t1)
+            try:
+                mem_tracker.mark("after_raster_{}".format(view_id_int))
+            except Exception as e:
+                print("[pipeline] after_raster memory mark failed: {}".format(e))
 
             metrics_payload = _compute_manifest_metrics_payload(raster, cfg)
 
@@ -1130,7 +1165,7 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset
                         exc=e,
                     )
             t1 = _perf_now()
-            _tmark("export_ms", t0, t1)
+            _tmark(TIMING_KEYS["CSV_MS"], t0, t1)
 
             # Root cache write-through (metrics only; requires out+raster)
             if root_cache and out and out.get("success", True) and ("raster" in out):
@@ -1153,6 +1188,7 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset
             # Write-through persistent cache on successful export
             try:
                 if view_cache_enabled:
+                    t_cachew0 = _perf_now()
                     vid = getattr(getattr(view, "Id", None), "IntegerValue", None)
                     if vid is not None:
                         _save_cached_view(vid, sig_hex, out)
@@ -1189,8 +1225,52 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset
                         message="Exception in _tmark: {}".format(e),
                         exc=e,
                     )
+            finally:
+                if view_cache_enabled:
+                    _tmark(TIMING_KEYS["CACHE_WRITE_MS"], t_cachew0, _perf_now())
+
+            if getattr(cfg, "perf_subtimings_cache", True):
+                t_elem0 = _perf_now()
+                _ = _view_signature(doc, view, view_mode, cfg_obj=cfg, elem_cache=elem_cache, track_elements=None)
+                _tmark(TIMING_KEYS["ELEM_CACHE_MS"], t_elem0, _perf_now())
             t_view1 = _perf_now()
-            _tmark("total_ms", t_view0, t_view1)
+            _tmark(TIMING_KEYS["TOTAL_MS"], t_view0, t_view1)
+
+            try:
+                t_gc0 = _perf_now()
+                mem_tracker.mark_and_gc("after_clr_gc_{}".format(view_id_int))
+                t_gc1 = _perf_now()
+                _tmark(TIMING_KEYS["GC_MS"], t_gc0, t_gc1)
+                gc_info = mem_tracker.gc_events[-1] if mem_tracker.gc_events else {}
+                freed = gc_info.get("freed_mb") if isinstance(gc_info, dict) else None
+                if freed is not None:
+                    gc_freed_total_mb += float(freed)
+                clr_gc_call_count += 1
+            except Exception as e:
+                print("[pipeline] per-view clr gc failed: {}".format(e))
+
+            try:
+                diag_data = (render_result or {}).get("diagnostics", {}) if isinstance(render_result, dict) else {}
+                counts = diag_data.get("classification_counts", {}) if isinstance(diag_data, dict) else {}
+                element_count = int((render_result or {}).get("element_count", 0) or 0)
+                areal_count = int(counts.get("AREAL", 0) or 0)
+                linear_count = int(counts.get("LINEAR", 0) or 0)
+                tiny_count = int(counts.get("TINY", 0) or 0)
+                raster_cells = int((out.get("width", 0) or 0) * (out.get("height", 0) or 0)) if isinstance(out, dict) else 0
+                geom_ms = timings.get(TIMING_KEYS["GEOM_EXTRACT_MS"], 0.0) or 0.0
+                raster_model_ms = timings.get(TIMING_KEYS["RASTER_MODEL_MS"], 0.0) or 0.0
+                bbox_ms = timings.get(TIMING_KEYS["GEOM_BBOX_MS"], 0.0) or 0.0
+                timings[METRIC_KEYS["ELEMENT_COUNT"]] = element_count
+                timings[METRIC_KEYS["AREAL_COUNT"]] = areal_count
+                timings[METRIC_KEYS["LINEAR_COUNT"]] = linear_count
+                timings[METRIC_KEYS["TINY_COUNT"]] = tiny_count
+                timings[METRIC_KEYS["MS_PER_ELEMENT"]] = round(float(geom_ms) / float(element_count), 6) if element_count > 0 else None
+                timings[METRIC_KEYS["MS_PER_AREAL"]] = round(float(geom_ms) / float(areal_count), 6) if areal_count > 0 else None
+                timings[METRIC_KEYS["RASTER_CELLS"]] = raster_cells
+                timings[METRIC_KEYS["MS_PER_1K_CELLS"]] = round(float(raster_model_ms) / (float(raster_cells) / 1000.0), 6) if raster_cells > 0 else None
+                timings[METRIC_KEYS["FALLBACK_RATE_PCT"]] = round((float(bbox_ms) / max(float(geom_ms), 1e-9)) * 100.0, 3) if geom_ms else 0.0
+            except Exception as e:
+                print("[pipeline] normalized metric computation failed: {}".format(e))
 
             # Always expose a wall-clock elapsed seconds for this view, even if timing collection is disabled
             try:
@@ -1206,6 +1286,19 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset
             # Convenience mirror at top-level for callers that don't dive into diagnostics
             try:
                 out["timings"] = dict(timings)
+                marks = mem_tracker.to_dict()
+                pre = None
+                post = None
+                for m in marks:
+                    if m.get("label") == "view_start_{}".format(view_id_int):
+                        pre = m.get("priv_mb")
+                    if m.get("label") == "after_clr_gc_{} [post-GC]".format(view_id_int):
+                        post = m.get("priv_mb")
+                out["memory"] = {
+                    "start_priv_mb": pre,
+                    "end_priv_mb": post,
+                    "delta_priv_mb": (None if pre is None or post is None else float(post) - float(pre)),
+                }
             except Exception as e:
                 if diag is not None:
                     diag.error(
@@ -1466,6 +1559,62 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset
                     message=f"Failed to export view diagnostics: {e}",
                     exc=e,
                 )
+
+    try:
+        mem_tracker.mark("run_end")
+        mem_tracker.mark_and_gc("after_run_gc")
+        clr_gc_call_count += 1
+        if mem_tracker.gc_events:
+            _f = mem_tracker.gc_events[-1].get("freed_mb")
+            if _f is not None:
+                gc_freed_total_mb += float(_f)
+    except Exception as e:
+        print("[pipeline] final memory marks failed: {}".format(e))
+
+    run_elapsed_s = float(_perf_now() - run_t0)
+    try:
+        phase_keys = [TIMING_KEYS["COLLECT_MS"], TIMING_KEYS["GEOM_EXTRACT_MS"], TIMING_KEYS["RASTER_MODEL_MS"], TIMING_KEYS["RASTER_ANNO_MS"], TIMING_KEYS["PNG_MS"], TIMING_KEYS["CSV_MS"]]
+        phase_totals = {}
+        for pk in phase_keys:
+            phase_totals[pk] = round(sum(float((r.get("timings", {}) or {}).get(pk, 0.0) or 0.0) for r in results if isinstance(r, dict)), 3)
+        phase_sum = sum(phase_totals.values())
+        phase_pct = {k: (round((v / phase_sum) * 100.0, 3) if phase_sum > 0 else 0.0) for k, v in phase_totals.items()}
+        sortable = []
+        for r in results:
+            if not isinstance(r, dict):
+                continue
+            t = r.get("timings", {}) or {}
+            sortable.append({
+                "view_name": r.get("view_name", ""),
+                "view_id": r.get("view_id", 0),
+                "total_ms": float(t.get(TIMING_KEYS["TOTAL_MS"], 0.0) or 0.0),
+                "element_count": int(t.get(METRIC_KEYS["ELEMENT_COUNT"], 0) or 0),
+                "_full": r,
+            })
+        slowest = sorted(sortable, key=lambda x: x["total_ms"], reverse=True)[:5]
+        marks = mem_tracker.to_dict()
+        privs = [m.get("priv_mb") for m in marks if m.get("priv_mb") is not None]
+        run_summary = {
+            "view_count": len(results),
+            "total_elapsed_s": round(run_elapsed_s, 3),
+            "slowest_views": [{k: v for k, v in sv.items() if k != "_full"} for sv in slowest],
+            "phase_totals_ms": phase_totals,
+            "phase_pct": phase_pct,
+            "memory_start_priv_mb": (marks[0].get("priv_mb") if marks else None),
+            "memory_end_priv_mb": (marks[-1].get("priv_mb") if marks else None),
+            "memory_peak_priv_mb": (max(privs) if privs else None),
+            "memory_freed_by_gc_mb": round(gc_freed_total_mb, 3),
+            "clr_gc_call_count": int(clr_gc_call_count),
+        }
+        print("\n=== RUN SUMMARY ===")
+        print(json.dumps(run_summary, indent=2))
+        for r in results:
+            if isinstance(r, dict):
+                r["run_summary"] = run_summary
+                r["memory_tracker"] = marks
+    except Exception as e:
+        print("[pipeline] run summary failed: {}".format(e))
+
     return results
 
 
@@ -1807,6 +1956,11 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
         "raster_sorting_ms": 0.0,
         "raster_enrich_ms": 0.0,
         "raster_geom_extract_ms": 0.0,
+        "bbox_ms": 0.0,
+        "classify_ms": 0.0,
+        "geom_silhouette_ms": 0.0,
+        "geom_obb_ms": 0.0,
+        "geom_bbox_ms": 0.0,
         "raster_depth_test_ms": 0.0,
         "raster_cell_write_ms": 0.0,
         "raster_element_iter_ms": 0.0,
@@ -1913,6 +2067,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
             wrapper["depth_range"] = (0.0, 0.0)
             wrapper["uv_bbox_rect"] = None
     _sub_t["raster_enrich_ms"] = _perf_ms(_t0_enrich, _perf_now())
+    _sub_t["bbox_ms"] = _sub_t["raster_enrich_ms"]
 
     # Process each element (host + linked)
     processed = 0
@@ -1920,6 +2075,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
     skipped = 0
     silhouette_success = 0
     bbox_fallback = 0
+    obb_fallback = 0
 
     def _classify_uv_rect(width_cells, height_cells):
         # Local, explicit classification to avoid dependency on classify_by_uv signature.
@@ -2343,7 +2499,20 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     print("[DEBUG] Silhouette extraction failed for element {0} ({1}): {2}".format(
                         elem_id, category, silhouette_error))
 
-        _sub_t["raster_geom_extract_ms"] += _perf_ms(_t0_geom, _perf_now())
+        _t_geom1 = _perf_now()
+        _sub_t["raster_geom_extract_ms"] += _perf_ms(_t0_geom, _t_geom1)
+        try:
+            _s = str(strategy or "").lower()
+            if "silhouette" in _s or "planar_face" in _s:
+                _sub_t["geom_silhouette_ms"] += _perf_ms(_t0_geom, _t_geom1)
+            elif "obb" in _s:
+                _sub_t["geom_obb_ms"] += _perf_ms(_t0_geom, _t_geom1)
+                obb_fallback += 1
+            elif "bbox" in _s or "aabb" in _s or _s == "failed":
+                _sub_t["geom_bbox_ms"] += _perf_ms(_t0_geom, _t_geom1)
+        except Exception as e:
+            if diag is not None:
+                diag.error(phase="pipeline", callsite="render_model_front_to_back.strategy_timing", message="Strategy timing failed: {}".format(e), exc=e)
 
         # DIAGNOSTICS: track per-element classification/strategy/confidence and fallback details
         try:
@@ -3119,7 +3288,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
     for _k in _sub_t:
         _sub_t[_k] = round(_sub_t[_k], 3)
 
-    return {"timings": _sub_t, "diagnostics": view_diag, "occlusion_tracker": occlusion_tracker}
+    return {"timings": _sub_t, "diagnostics": view_diag, "occlusion_tracker": occlusion_tracker, "element_count": processed, "bbox_fallback_count": bbox_fallback, "obb_fallback_count": obb_fallback}
 
 
 def _is_supported_2d_view(view, diag=None):
