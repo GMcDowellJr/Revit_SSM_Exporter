@@ -81,7 +81,7 @@ Line numbers are from AST parsing of the current source.
 - `UV_AABB` — core/geometry.py (L117)
 - `ViewBasis` — revit/view_basis.py (L9)
 - `ViewRaster` — core/raster.py (L296)
-- `_append_csv` — thinrunner_streaming.py (L213)
+- `_append_csv` — thinrunner_streaming.py (L290)
 - `_append_csv_rows` — export/csv.py (L20)
 - `_apply_transform_xyz_tuple` — core/silhouette.py (L435)
 - `_bbox_corners_world` — core/silhouette.py (L642)
@@ -92,15 +92,16 @@ Line numbers are from AST parsing of the current source.
 - `_build_clip_volume` — revit/linked_documents.py (L860)
 - `_build_crop_prism_corners` — revit/linked_documents.py (L1040)
 - `_build_manifest_vop_row_from_metrics` — csv_export.py (L1300)
-- `_build_views_from_input` — thinrunner_streaming.py (L86)
+- `_build_views_from_input` — thinrunner_streaming.py (L126)
 - `_cache_get` — core/silhouette.py (L447)
 - `_cache_set` — core/silhouette.py (L455)
 - `_cad_curves_silhouette` — core/silhouette.py (L1546)
 - `_canonicalize_plane` — core/face_selection.py (L52)
 - `_cell_in_model_clip` — core/raster.py (L26)
 - `_cfg_hash` — pipeline.py (L256)
-- `_chunk_list` — thinrunner_streaming.py (L207)
+- `_chunk_list` — thinrunner_streaming.py (L284)
 - `_clip_poly_to_rect_uv` — core/raster.py (L2068)
+- `_coerce_view_id` — thinrunner_streaming.py (L142)
 - `_coerce_view_id_int` — csv_export.py (L444)
 - `_collect_from_dwg_imports` — revit/linked_documents.py (L619)
 - `_collect_from_revit_links` — revit/linked_documents.py (L499)
@@ -188,15 +189,15 @@ Line numbers are from AST parsing of the current source.
 - `_raster_to_dict_like` — csv_export.py (L72)
 - `_rasterize_filled_region_shape` — revit/annotation.py (L1553)
 - `_render_proxy_element` — pipeline.py (L3546)
-- `_resolve_view_object` — thinrunner_streaming.py (L57)
+- `_resolve_view_object` — thinrunner_streaming.py (L76)
 - `_round6` — root_cache.py (L19)
-- `_run_gc_between_chunks` — thinrunner_streaming.py (L234)
+- `_run_gc_between_chunks` — thinrunner_streaming.py (L311)
 - `_safe_bool` — pipeline.py (L220)
 - `_safe_category` — core/areal_extraction.py (L34)
 - `_safe_elem_id` — core/areal_extraction.py (L16)
 - `_safe_int` — pipeline.py (L213)
 - `_safe_int_id` — core/silhouette.py (L419)
-- `_safe_level_elevation` — thinrunner_streaming.py (L100)
+- `_safe_level_elevation` — thinrunner_streaming.py (L177)
 - `_safe_seq` — root_cache.py (L14)
 - `_sample_geom_object` — revit/tierb_proxy.py (L35)
 - `_should_skip_outside_view_volume` — pipeline.py (L3373)
@@ -325,7 +326,7 @@ Line numbers are from AST parsing of the current source.
 - `should_include_element` — revit/collection_policy.py (L190)
 - `signed_polygon_area_2d` — core/face_selection.py (L116)
 - `sort_front_to_back` — revit/collection.py (L502)
-- `sort_views_by_level` — thinrunner_streaming.py (L131)
+- `sort_views_by_level` — thinrunner_streaming.py (L208)
 - `supports_crop_bounds` — revit/view_basis.py (L1318)
 - `supports_depth` — revit/view_basis.py (L1344)
 - `supports_model_geometry` — revit/view_basis.py (L1274)
@@ -360,8 +361,8 @@ Line numbers are from AST parsing of the current source.
 - dynamo_helpers.py:L290
 
 ### `run_vop_pipeline_streaming`
-- thinrunner_streaming.py:L310
-- thinrunner_streaming.py:L345
+- thinrunner_streaming.py:L390
+- thinrunner_streaming.py:L425
 
 ### `process_document_views`
 - entry_dynamo.py:L338

@@ -746,10 +746,11 @@
 
 **Definitions**
 - `_to_sequence` (function, L41)
-- `_resolve_view_object` (function, L57)
-- `_build_views_from_input` (function, L86)
-- `_safe_level_elevation` (function, L100)
-- `sort_views_by_level` (function, L131)
-- `_chunk_list` (function, L207)
-- `_append_csv` (function, L213)
-- `_run_gc_between_chunks` (function, L234)
+- `_resolve_view_object` (function, L76)
+- `_build_views_from_input` (function, L126)
+- `_coerce_view_id` (function, L142)
+- `_safe_level_elevation` (function, L177)
+- `sort_views_by_level` (function, L208)
+- `_chunk_list` (function, L284)
+- `_append_csv` (function, L290)
+- `_run_gc_between_chunks` (function, L311)
