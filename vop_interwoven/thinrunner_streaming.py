@@ -36,6 +36,67 @@ if RELOAD_MODULES:
 from vop_interwoven.entry_dynamo import get_current_document, get_current_view
 
 
+
+
+def _to_sequence(value):
+    """Convert Dynamo/.NET collections to a Python list without exploding strings."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple):
+        return list(value)
+    if isinstance(value, str):
+        return [value]
+    try:
+        return list(value)
+    except Exception:
+        return [value]
+
+
+def _resolve_view_object(doc, candidate):
+    """Return a view object when possible; preserve candidate if resolution fails."""
+    if candidate is None:
+        return None
+    try:
+        if hasattr(candidate, "GenLevel") or hasattr(candidate, "ViewType"):
+            return candidate
+    except Exception:
+        pass
+
+    try:
+        if hasattr(candidate, "Id"):
+            candidate_id = candidate.Id
+            resolved = doc.GetElement(candidate_id)
+            if resolved is not None:
+                return resolved
+    except Exception:
+        pass
+
+    try:
+        resolved = doc.GetElement(candidate)
+        if resolved is not None:
+            return resolved
+    except Exception:
+        pass
+
+    return candidate
+
+
+def _build_views_from_input(doc, views_input):
+    """Normalize IN[0] into a list of view-like objects."""
+    if views_input is None:
+        current_view = get_current_view()
+        return [current_view] if current_view else []
+
+    raw_items = _to_sequence(views_input)
+    views = []
+    for item in raw_items:
+        resolved = _resolve_view_object(doc, item)
+        if resolved is not None:
+            views.append(resolved)
+    return views
+
 def _safe_level_elevation(doc, view):
     """Best-effort elevation lookup for a view."""
     elevation = None
@@ -222,14 +283,8 @@ try:
             batch_size = None
 
     # Get view objects from input
-    if views_input is None:
-        # Use current view
-        current_view = get_current_view()
-        views = [current_view] if current_view else []
-    elif isinstance(views_input, list):
-        views = [v for v in views_input if v is not None]
-    else:
-        views = [views_input]
+    views = _build_views_from_input(doc, views_input)
+    print("[VOP] Input view count: {}".format(len(views)))
 
     # Apply level sorting unless disabled
     if bool(getattr(cfg, "sort_views_by_level", True)) and views:
@@ -247,6 +302,9 @@ try:
     try:
         batches = _chunk_list(view_ids, batch_size)
         result = None
+
+        if batch_size:
+            print("[VOP] Batch size requested: {}".format(batch_size))
 
         if len(batches) <= 1:
             result = run_vop_pipeline_streaming(
@@ -277,8 +335,8 @@ try:
             for batch_index, batch_view_ids in enumerate(batches):
                 start_idx = batch_index * batch_size + 1
                 end_idx = start_idx + len(batch_view_ids) - 1
-                print("[VOP] Batch {}/{}: views {}-{}".format(
-                    batch_index + 1, len(batches), start_idx, end_idx
+                print("[VOP] Batch {}/{}: views {}-{} ({} ids)".format(
+                    batch_index + 1, len(batches), start_idx, end_idx, len(batch_view_ids)
                 ))
 
                 batch_output_dir = os.path.join(output_dir, "_batch_tmp_{}".format(batch_index + 1))
