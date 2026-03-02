@@ -39,25 +39,45 @@ from vop_interwoven.entry_dynamo import get_current_document, get_current_view
 
 
 def _to_sequence(value):
-    """Convert Dynamo/.NET collections to a Python list without exploding strings."""
+    """Convert Dynamo/.NET collections to a flat Python list without exploding strings."""
     if value is None:
         return []
-    if isinstance(value, list):
-        return value
-    if isinstance(value, tuple):
-        return list(value)
     if isinstance(value, str):
         return [value]
-    try:
-        return list(value)
-    except Exception:
-        return [value]
+
+    items = []
+
+    def _walk(v):
+        if v is None:
+            return
+        if isinstance(v, str):
+            items.append(v)
+            return
+        if isinstance(v, tuple):
+            for x in v:
+                _walk(x)
+            return
+        if isinstance(v, list):
+            for x in v:
+                _walk(x)
+            return
+        try:
+            iterator = iter(v)
+            for x in iterator:
+                _walk(x)
+            return
+        except Exception:
+            items.append(v)
+
+    _walk(value)
+    return items
 
 
 def _resolve_view_object(doc, candidate):
     """Return a view object when possible; preserve candidate if resolution fails."""
     if candidate is None:
         return None
+
     try:
         if hasattr(candidate, "GenLevel") or hasattr(candidate, "ViewType"):
             return candidate
@@ -65,9 +85,13 @@ def _resolve_view_object(doc, candidate):
         pass
 
     try:
+        from Autodesk.Revit.DB import ElementId
+    except Exception:
+        ElementId = None
+
+    try:
         if hasattr(candidate, "Id"):
-            candidate_id = candidate.Id
-            resolved = doc.GetElement(candidate_id)
+            resolved = doc.GetElement(candidate.Id)
             if resolved is not None:
                 return resolved
     except Exception:
@@ -77,6 +101,22 @@ def _resolve_view_object(doc, candidate):
         resolved = doc.GetElement(candidate)
         if resolved is not None:
             return resolved
+    except Exception:
+        pass
+
+    try:
+        if isinstance(candidate, int) and ElementId is not None:
+            resolved = doc.GetElement(ElementId(int(candidate)))
+            if resolved is not None:
+                return resolved
+    except Exception:
+        pass
+
+    try:
+        if isinstance(candidate, str) and candidate.isdigit() and ElementId is not None:
+            resolved = doc.GetElement(ElementId(int(candidate)))
+            if resolved is not None:
+                return resolved
     except Exception:
         pass
 
@@ -96,6 +136,43 @@ def _build_views_from_input(doc, views_input):
         if resolved is not None:
             views.append(resolved)
     return views
+
+
+
+def _coerce_view_id(value):
+    """Best-effort coercion to an integer view id for pipeline compatibility."""
+    if value is None:
+        return None
+
+    try:
+        if hasattr(value, "IntegerValue"):
+            return int(value.IntegerValue)
+    except Exception:
+        pass
+
+    try:
+        if hasattr(value, "Id") and hasattr(value.Id, "IntegerValue"):
+            return int(value.Id.IntegerValue)
+    except Exception:
+        pass
+
+    try:
+        if isinstance(value, int):
+            return int(value)
+    except Exception:
+        pass
+
+    try:
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+    except Exception:
+        pass
+
+    try:
+        return int(value)
+    except Exception:
+        return None
+
 
 def _safe_level_elevation(doc, view):
     """Best-effort elevation lookup for a view."""
@@ -293,7 +370,8 @@ try:
         print("[VOP] sort_views_by_level disabled; preserving input order.")
 
     # Assemble view IDs (existing shape remains unchanged)
-    view_ids = [v.Id if hasattr(v, "Id") else v for v in views]
+    view_ids = [_coerce_view_id(v) for v in views]
+    view_ids = [vid for vid in view_ids if vid is not None]
 
     # Use STREAMING pipeline (no cache, minimal memory)
     from vop_interwoven.streaming import run_vop_pipeline_streaming
@@ -305,6 +383,8 @@ try:
 
         if batch_size:
             print("[VOP] Batch size requested: {}".format(batch_size))
+            plan = [len(b) for b in batches]
+            print("[VOP] Planned batch sizes: {}".format(plan))
 
         if len(batches) <= 1:
             result = run_vop_pipeline_streaming(
