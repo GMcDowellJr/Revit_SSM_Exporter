@@ -581,6 +581,22 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
     except Exception:
         pass
 
+    geometry_cache = None
+    try:
+        from vop_interwoven.core.cache import LRUCache
+        geometry_cache = LRUCache(max_items=getattr(cfg, "geometry_cache_max_items", 0))
+    except Exception:
+        geometry_cache = None
+
+    elem_cache = None
+    if getattr(cfg, "use_element_cache", True):
+        try:
+            from vop_interwoven.core.element_cache import ElementCache
+            max_items = int(getattr(cfg, "element_cache_max_items", 10000))
+            elem_cache = ElementCache(max_elements=max_items)
+        except Exception:
+            elem_cache = None
+
     # Process views one at a time with callback
     summaries = []
     mem_tracker = MemoryTracker()
@@ -596,7 +612,15 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
             except Exception as e:
                 print("[Streaming] memory mark view_start failed: {}".format(e))
             # Process single view (cache miss)
-            results = process_document_views(doc, [view_id], cfg, root_cache=root_cache, reset_family_caches=False)
+            results = process_document_views(
+                doc,
+                [view_id],
+                cfg,
+                root_cache=root_cache,
+                reset_family_caches=False,
+                geometry_cache=geometry_cache,
+                elem_cache=elem_cache,
+            )
 
             if results and len(results) > 0:
                 view_result = results[0]

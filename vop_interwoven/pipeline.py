@@ -537,7 +537,16 @@ def _compute_manifest_metrics_payload(raster, cfg):
     }
 
 
-def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset_family_caches=True):
+def process_document_views(
+    doc,
+    view_ids,
+    cfg,
+    diag=None,
+    root_cache=None,
+    reset_family_caches=True,
+    geometry_cache=None,
+    elem_cache=None,
+):
     """Process multiple views through the VOP interwoven pipeline.
 
     Args:
@@ -718,34 +727,31 @@ def process_document_views(doc, view_ids, cfg, diag=None, root_cache=None, reset
 
     # PR12: bounded geometry cache shared across all views in this call.
     # Scoped to this run to avoid cross-run semantic drift.
-    try:
-        from .core.cache import LRUCache
-        geometry_cache = LRUCache(max_items=getattr(cfg, "geometry_cache_max_items", 0))
-    except Exception as e:
-        if diag is not None:
-            diag.error(
-                phase="pipeline",
-                callsite="_save_cached_view",
-                message="Exception in _save_cached_view: {}".format(e),
-                exc=e,
-            )
-        geometry_cache = None
+    if geometry_cache is None:
+        try:
+            from .core.cache import LRUCache
+            geometry_cache = LRUCache(max_items=getattr(cfg, "geometry_cache_max_items", 0))
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="pipeline",
+                    callsite="_save_cached_view",
+                    message="Exception in _save_cached_view: {}".format(e),
+                    exc=e,
+                )
+            geometry_cache = None
 
     # PR13: Document-scoped element cache for bbox reuse across views
-    elem_cache = None
     elem_cache_prev = None  # Previous run cache (for change detection)
     elem_cache_path = None
-    if getattr(cfg, "use_element_cache", True):
+    if output_dir is not None:
+        cache_date = date_str
+        elem_cache_path = os.path.join(output_dir, f"vop_element_cache_{cache_date}.json")
+
+    if elem_cache is None and getattr(cfg, "use_element_cache", True):
         try:
             from .core.element_cache import ElementCache
             max_items = int(getattr(cfg, "element_cache_max_items", 10000))
-
-            # Determine cache file path (dated for tracking changes over time)
-            if output_dir is not None:
-                cache_date = date_str
-                elem_cache_path = os.path.join(output_dir, f"vop_element_cache_{cache_date}.json")
-            else:
-                elem_cache_path = None
 
             # Load previous cache if persistence enabled
             if getattr(cfg, "element_cache_persist", True) and elem_cache_path is not None:
