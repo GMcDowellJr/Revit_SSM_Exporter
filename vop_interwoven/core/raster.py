@@ -493,16 +493,17 @@ class ViewRaster:
             # Bounds2D in view-local XY; model writes are clipped to this if present.
             self.model_clip_bounds = None
 
-            # NumPy flag for export consumers (png_export, csv_export) — never used for writes
+            # NumPy flag retained for export consumers (png_export, csv_export) — never used for writes.
+            # Scalar indexed writes (try_write_cell, stamp_model_edge_idx, _scanline_fill, etc.)
+            # are 3-5x slower on numpy arrays due to Python->C boundary crossing and dtype
+            # coercion on every call. Export consumers convert to numpy in bulk (np.array(...))
+            # at read time, which is the correct place for vectorization.
             from vop_interwoven.np_backend import NUMPY_AVAILABLE as _NP_AVAIL
             self._numpy_backend = _NP_AVAIL
-            self._clip_mask_cache = None  # populated lazily by _model_clip_mask_np()
+            self._clip_mask_cache = None
 
             N = self.W * self.H
 
-            # Always Python lists — scalar indexed writes (try_write_cell, stamp_model_edge_idx,
-            # etc.) are 3-5x slower on numpy arrays due to Python->C overhead per call.
-            # Export consumers convert to numpy in bulk (np.array(...)) at read time.
             self.w_occ            = [float("inf")] * N
             self.w_occ_key        = [-1] * N
             self.occ_host         = [False] * N
