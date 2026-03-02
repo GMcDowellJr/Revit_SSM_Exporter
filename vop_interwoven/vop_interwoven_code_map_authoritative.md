@@ -26,17 +26,17 @@
 **Definitions**
 - `Config` (class, L12)
 - `Config.__init__` (method, L58)
-- `Config.compute_adaptive_tile_size` (method, L334)
-- `Config.max_grid_cells_width` (method, L384)
-- `Config.max_grid_cells_height` (method, L393)
-- `Config.bounds_buffer_ft` (method, L402)
-- `Config.silhouette_tiny_thresh_ft` (method, L411)
-- `Config.silhouette_large_thresh_ft` (method, L420)
-- `Config.coarse_tess_max_verts` (method, L429)
-- `Config.get_silhouette_strategies` (method, L437)
-- `Config.__repr__` (method, L471)
-- `Config.to_dict` (method, L491)
-- `Config.from_dict` (method, L554)
+- `Config.compute_adaptive_tile_size` (method, L336)
+- `Config.max_grid_cells_width` (method, L386)
+- `Config.max_grid_cells_height` (method, L395)
+- `Config.bounds_buffer_ft` (method, L404)
+- `Config.silhouette_tiny_thresh_ft` (method, L413)
+- `Config.silhouette_large_thresh_ft` (method, L422)
+- `Config.coarse_tess_max_verts` (method, L431)
+- `Config.get_silhouette_strategies` (method, L439)
+- `Config.__repr__` (method, L473)
+- `Config.to_dict` (method, L493)
+- `Config.from_dict` (method, L557)
 
 ### `core/areal_extraction.py`
 
@@ -740,5 +740,16 @@
 **Imports**
 - `ctypes`
 - `os`
+- `shutil`
 - `sys`
 - `vop_interwoven.entry_dynamo:get_current_document,get_current_view`
+
+**Definitions**
+- `_to_sequence` (function, L41)
+- `_resolve_view_object` (function, L57)
+- `_build_views_from_input` (function, L86)
+- `_safe_level_elevation` (function, L100)
+- `sort_views_by_level` (function, L131)
+- `_chunk_list` (function, L207)
+- `_append_csv` (function, L213)
+- `_run_gc_between_chunks` (function, L234)
