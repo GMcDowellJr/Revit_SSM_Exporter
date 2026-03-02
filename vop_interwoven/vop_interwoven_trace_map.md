@@ -220,6 +220,8 @@ Notes:
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
+    - `sort_views_by_level`
+      - called from: thinrunner_streaming.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -469,6 +471,8 @@ Notes:
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
+    - `sort_views_by_level`
+      - called from: thinrunner_streaming.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -718,6 +722,8 @@ Notes:
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
+    - `sort_views_by_level`
+      - called from: thinrunner_streaming.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -967,6 +973,8 @@ Notes:
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
+    - `sort_views_by_level`
+      - called from: thinrunner_streaming.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -1218,6 +1226,8 @@ Notes:
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
+    - `sort_views_by_level`
+      - called from: thinrunner_streaming.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -1467,6 +1477,8 @@ Notes:
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
+    - `sort_views_by_level`
+      - called from: thinrunner_streaming.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -1716,6 +1728,8 @@ Notes:
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
+    - `sort_views_by_level`
+      - called from: thinrunner_streaming.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -1965,6 +1979,8 @@ Notes:
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
+    - `sort_views_by_level`
+      - called from: thinrunner_streaming.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -2214,6 +2230,8 @@ Notes:
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
+    - `sort_views_by_level`
+      - called from: thinrunner_streaming.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -2463,6 +2481,8 @@ Notes:
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
+    - `sort_views_by_level`
+      - called from: thinrunner_streaming.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -2712,6 +2732,8 @@ Notes:
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
+    - `sort_views_by_level`
+      - called from: thinrunner_streaming.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -2961,6 +2983,8 @@ Notes:
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
+    - `sort_views_by_level`
+      - called from: thinrunner_streaming.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -3210,6 +3234,8 @@ Notes:
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
+    - `sort_views_by_level`
+      - called from: thinrunner_streaming.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -3459,6 +3485,8 @@ Notes:
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
+    - `sort_views_by_level`
+      - called from: thinrunner_streaming.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -3708,6 +3736,8 @@ Notes:
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
       - called from: pipeline.py
+    - `sort_views_by_level`
+      - called from: thinrunner_streaming.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
