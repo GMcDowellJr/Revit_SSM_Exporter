@@ -16,6 +16,7 @@ Output:
 import sys
 import os
 import ctypes
+import shutil
 
 # Add project to path
 PROJECT_PATH = r'C:\Users\gmcdowell\Documents\Revit_SSM_Exporter'
@@ -33,6 +34,215 @@ if RELOAD_MODULES:
 
 # Now import after cleanup
 from vop_interwoven.entry_dynamo import get_current_document, get_current_view
+
+
+
+
+def _to_sequence(value):
+    """Convert Dynamo/.NET collections to a Python list without exploding strings."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple):
+        return list(value)
+    if isinstance(value, str):
+        return [value]
+    try:
+        return list(value)
+    except Exception:
+        return [value]
+
+
+def _resolve_view_object(doc, candidate):
+    """Return a view object when possible; preserve candidate if resolution fails."""
+    if candidate is None:
+        return None
+    try:
+        if hasattr(candidate, "GenLevel") or hasattr(candidate, "ViewType"):
+            return candidate
+    except Exception:
+        pass
+
+    try:
+        if hasattr(candidate, "Id"):
+            candidate_id = candidate.Id
+            resolved = doc.GetElement(candidate_id)
+            if resolved is not None:
+                return resolved
+    except Exception:
+        pass
+
+    try:
+        resolved = doc.GetElement(candidate)
+        if resolved is not None:
+            return resolved
+    except Exception:
+        pass
+
+    return candidate
+
+
+def _build_views_from_input(doc, views_input):
+    """Normalize IN[0] into a list of view-like objects."""
+    if views_input is None:
+        current_view = get_current_view()
+        return [current_view] if current_view else []
+
+    raw_items = _to_sequence(views_input)
+    views = []
+    for item in raw_items:
+        resolved = _resolve_view_object(doc, item)
+        if resolved is not None:
+            views.append(resolved)
+    return views
+
+def _safe_level_elevation(doc, view):
+    """Best-effort elevation lookup for a view."""
+    elevation = None
+    level_name = None
+
+    try:
+        gen_level = getattr(view, "GenLevel", None)
+        if gen_level is not None:
+            elevation = float(getattr(gen_level, "Elevation", 0.0))
+            level_name = getattr(gen_level, "Name", None)
+            return elevation, level_name, "GenLevel"
+    except Exception:
+        pass
+
+    try:
+        from Autodesk.Revit.DB import BuiltInParameter, ElementId
+        p = view.get_Parameter(BuiltInParameter.VIEWER_VOLUME_OF_INTEREST_CROP)
+        if p is not None:
+            ref_id = p.AsElementId()
+            if ref_id is not None and ref_id != ElementId.InvalidElementId:
+                ref_elem = doc.GetElement(ref_id)
+                if ref_elem is not None and hasattr(ref_elem, "Elevation"):
+                    elevation = float(getattr(ref_elem, "Elevation", 0.0))
+                    level_name = getattr(ref_elem, "Name", None)
+                    return elevation, level_name, "VOI"
+    except Exception:
+        pass
+
+    return None, None, None
+
+
+def sort_views_by_level(doc, views):
+    """Sort views by level elevation (ascending) with graceful fallback."""
+    if not views:
+        return views
+
+    try:
+        decorated = []
+        elevations_found = 0
+
+        for index, view in enumerate(views):
+            elev, level_name, source = _safe_level_elevation(doc, view)
+            view_name = getattr(view, "Name", "") or ""
+            has_elev = elev is not None
+            if has_elev:
+                elevations_found += 1
+
+            decorated.append({
+                "view": view,
+                "index": index,
+                "view_name": view_name,
+                "has_elev": has_elev,
+                "elev": elev if has_elev else 0.0,
+                "level_name": level_name,
+                "source": source,
+            })
+
+        if elevations_found == 0:
+            print("[VOP] sort_views_by_level: no level elevations found; preserving input order.")
+            return views
+
+        sorted_decorated = sorted(
+            decorated,
+            key=lambda x: (
+                0 if x["has_elev"] else 1,
+                x["elev"],
+                x["view_name"].lower(),
+                x["index"],
+            ),
+        )
+
+        print("[VOP] Sorting {} views by level elevation...".format(len(views)))
+        grouped = []
+        current_key = None
+        current_count = 0
+        for item in sorted_decorated:
+            if item["has_elev"]:
+                key = (item["level_name"] or "(unnamed level)", item["elev"])
+            else:
+                key = ("(no level)", None)
+
+            if key != current_key:
+                if current_key is not None:
+                    grouped.append((current_key, current_count))
+                current_key = key
+                current_count = 1
+            else:
+                current_count += 1
+        if current_key is not None:
+            grouped.append((current_key, current_count))
+
+        group_lines = []
+        for key, count in grouped:
+            level_name = key[0]
+            elev = key[1]
+            if elev is None:
+                group_lines.append("{} ({})".format(level_name, count))
+            else:
+                group_lines.append("{} (elev={:.3f}ft, {} views)".format(level_name, elev, count))
+        print("[VOP] Sort order: {}".format(", ".join(group_lines)))
+
+        return [x["view"] for x in sorted_decorated]
+    except Exception as e:
+        print("[VOP] sort_views_by_level failed: {}. Preserving input order.".format(e))
+        return views
+
+
+def _chunk_list(items, chunk_size):
+    if not chunk_size or chunk_size <= 0:
+        return [items]
+    return [items[i:i + chunk_size] for i in range(0, len(items), chunk_size)]
+
+
+def _append_csv(source_path, target_path):
+    if not source_path or not os.path.exists(source_path):
+        return
+
+    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+
+    if not os.path.exists(target_path):
+        shutil.copyfile(source_path, target_path)
+        return
+
+    with open(source_path, "r", encoding="utf-8") as src:
+        src_lines = src.readlines()
+    if not src_lines:
+        return
+    payload = src_lines[1:] if len(src_lines) > 1 else []
+    if not payload:
+        return
+    with open(target_path, "a", encoding="utf-8") as dst:
+        dst.writelines(payload)
+
+
+def _run_gc_between_chunks():
+    try:
+        import System
+        System.GC.Collect()
+        System.GC.WaitForPendingFinalizers()
+        System.GC.Collect()
+    except Exception:
+        try:
+            import gc
+            gc.collect()
+        except Exception:
+            pass
 
 # ============================================================================
 # RUN PIPELINE
@@ -57,36 +267,111 @@ try:
 
     print("="*60)
     print("DEBUG: About to call streaming")
-    print(f"  cfg.view_cache_enabled = {cfg.view_cache_enabled}")
-    print(f"  cfg.view_cache_dir = {cfg.view_cache_dir}")
+    print("  cfg.view_cache_enabled = {}".format(cfg.view_cache_enabled))
+    print("  cfg.view_cache_dir = {}".format(cfg.view_cache_dir))
     print("="*60)
 
-    # Get view IDs
-    if views_input is None:
-        # Use current view
-        current_view = get_current_view()
-        view_ids = [current_view.Id] if current_view else []
-    elif isinstance(views_input, list):
-        view_ids = [v.Id if hasattr(v, 'Id') else v for v in views_input]
+    # Optional batch size override
+    batch_size = IN[3] if len(IN) > 3 and IN[3] else None
+    if batch_size is not None:
+        try:
+            batch_size = int(batch_size)
+            if batch_size <= 0:
+                batch_size = None
+        except Exception:
+            print("[VOP] Invalid batch_size '{}'; ignoring batching.".format(batch_size))
+            batch_size = None
+
+    # Get view objects from input
+    views = _build_views_from_input(doc, views_input)
+    print("[VOP] Input view count: {}".format(len(views)))
+
+    # Apply level sorting unless disabled
+    if bool(getattr(cfg, "sort_views_by_level", True)) and views:
+        views = sort_views_by_level(doc, views)
     else:
-        view_ids = [views_input.Id if hasattr(views_input, 'Id') else views_input]
+        print("[VOP] sort_views_by_level disabled; preserving input order.")
+
+    # Assemble view IDs (existing shape remains unchanged)
+    view_ids = [v.Id if hasattr(v, "Id") else v for v in views]
 
     # Use STREAMING pipeline (no cache, minimal memory)
     from vop_interwoven.streaming import run_vop_pipeline_streaming
     
     ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
     try:
-        result = run_vop_pipeline_streaming(
-            doc=doc,
-            view_ids=view_ids,
-            cfg=cfg,
-            output_dir=output_dir,
-            export_png=True,
-            export_csv=True,  # Always export CSV (tag override just affects Date/RunId columns)
-            export_json=False,
-            pixels_per_cell=10,
-            date_override=tag_override,
-        )
+        batches = _chunk_list(view_ids, batch_size)
+        result = None
+
+        if batch_size:
+            print("[VOP] Batch size requested: {}".format(batch_size))
+
+        if len(batches) <= 1:
+            result = run_vop_pipeline_streaming(
+                doc=doc,
+                view_ids=view_ids,
+                cfg=cfg,
+                output_dir=output_dir,
+                export_png=True,
+                export_csv=True,  # Always export CSV (tag override just affects Date/RunId columns)
+                export_json=False,
+                pixels_per_cell=10,
+                date_override=tag_override,
+            )
+        else:
+            print("[VOP] Streaming exporter rewrites CSVs per run; enabling batch CSV append merge.")
+            merged = {
+                "views_processed": 0,
+                "views_failed": 0,
+                "png_files": [],
+                "csv_rows_written": 0,
+                "view_summaries": [],
+                "core_csv_path": None,
+                "vop_csv_path": None,
+                "occlusion_csv_path": None,
+                "perf_csv_path": None,
+            }
+
+            for batch_index, batch_view_ids in enumerate(batches):
+                start_idx = batch_index * batch_size + 1
+                end_idx = start_idx + len(batch_view_ids) - 1
+                print("[VOP] Batch {}/{}: views {}-{} ({} ids)".format(
+                    batch_index + 1, len(batches), start_idx, end_idx, len(batch_view_ids)
+                ))
+
+                batch_output_dir = os.path.join(output_dir, "_batch_tmp_{}".format(batch_index + 1))
+                os.makedirs(batch_output_dir, exist_ok=True)
+
+                batch_result = run_vop_pipeline_streaming(
+                    doc=doc,
+                    view_ids=batch_view_ids,
+                    cfg=cfg,
+                    output_dir=batch_output_dir,
+                    export_png=True,
+                    export_csv=True,
+                    export_json=False,
+                    pixels_per_cell=10,
+                    date_override=tag_override,
+                )
+
+                merged["views_processed"] += batch_result.get("views_processed", 0)
+                merged["views_failed"] += batch_result.get("views_failed", 0)
+                merged["csv_rows_written"] += batch_result.get("csv_rows_written", 0)
+                merged["view_summaries"].extend(batch_result.get("view_summaries", []))
+                merged["png_files"].extend(batch_result.get("png_files", []))
+
+                for key in ["core_csv_path", "vop_csv_path", "occlusion_csv_path", "perf_csv_path"]:
+                    chunk_csv = batch_result.get(key)
+                    if not chunk_csv:
+                        continue
+                    target_csv = os.path.join(output_dir, os.path.basename(chunk_csv))
+                    _append_csv(chunk_csv, target_csv)
+                    merged[key] = target_csv
+
+                _run_gc_between_chunks()
+
+            result = merged
+
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
     except Exception:
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
@@ -94,8 +379,8 @@ try:
 
     print("="*60)
     print("DEBUG: After streaming call")
-    print(f"  cfg.view_cache_enabled = {cfg.view_cache_enabled}")
-    print(f"  cfg.view_cache_dir = {cfg.view_cache_dir}")
+    print("  cfg.view_cache_enabled = {}".format(cfg.view_cache_enabled))
+    print("  cfg.view_cache_dir = {}".format(cfg.view_cache_dir))
     print("="*60)
 
     # Extract results
@@ -108,8 +393,8 @@ try:
     lines.append("=" * 60)
     lines.append("")
 
-    lines.append(f"Views processed: {result.get('views_processed', 0)}")
-    lines.append(f"Views failed: {result.get('views_failed', 0)}")
+    lines.append("Views processed: {}".format(result.get('views_processed', 0)))
+    lines.append("Views failed: {}".format(result.get('views_failed', 0)))
     lines.append("")
 
     # Per-view summary (limited info from lightweight summaries)
@@ -119,9 +404,9 @@ try:
         height = view_data.get('height', 0)
         filled = view_data.get('filled_cells', 0)
         
-        lines.append(f"  {view_name}:")
-        lines.append(f"    Grid: {width}×{height}")
-        lines.append(f"    Filled cells: {filled}")
+        lines.append("  {}:".format(view_name))
+        lines.append("    Grid: {}×{}".format(width, height))
+        lines.append("    Filled cells: {}".format(filled))
 
     lines.append("")
 
@@ -172,15 +457,15 @@ try:
 
     # File outputs
     png_files = result.get('png_files', [])
-    lines.append(f"PNGs written: {len(png_files)}")
+    lines.append("PNGs written: {}".format(len(png_files)))
     
     core_csv = result.get('core_csv_path', 'N/A')
     vop_csv = result.get('vop_csv_path', 'N/A')
     
     lines.append("")
     lines.append("CSV Output:")
-    lines.append(f"  Core: {core_csv}")
-    lines.append(f"  VOP:  {vop_csv}")
+    lines.append("  Core: {}".format(core_csv))
+    lines.append("  VOP:  {}".format(vop_csv))
     lines.append("")
     
     # Memory benefit
@@ -200,7 +485,7 @@ except Exception as e:
     error_lines.append("ERROR")
     error_lines.append("=" * 60)
     error_lines.append("")
-    error_lines.append(f"{type(e).__name__}: {e}")
+    error_lines.append("{}: {}".format(type(e).__name__, e))
     error_lines.append("")
     
     try:
