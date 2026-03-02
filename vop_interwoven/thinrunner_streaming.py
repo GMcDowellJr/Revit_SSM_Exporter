@@ -140,33 +140,39 @@ def _build_views_from_input(doc, views_input):
 
 
 def _coerce_view_id(value):
-    """Best-effort coercion to a Revit ElementId-compatible value."""
+    """Best-effort coercion to an integer view id for pipeline compatibility."""
     if value is None:
         return None
+
     try:
-        if hasattr(value, "Id"):
-            return value.Id
+        if hasattr(value, "IntegerValue"):
+            return int(value.IntegerValue)
     except Exception:
         pass
 
     try:
-        from Autodesk.Revit.DB import ElementId
-    except Exception:
-        ElementId = None
-
-    try:
-        if isinstance(value, int) and ElementId is not None:
-            return ElementId(int(value))
+        if hasattr(value, "Id") and hasattr(value.Id, "IntegerValue"):
+            return int(value.Id.IntegerValue)
     except Exception:
         pass
 
     try:
-        if isinstance(value, str) and value.isdigit() and ElementId is not None:
-            return ElementId(int(value))
+        if isinstance(value, int):
+            return int(value)
     except Exception:
         pass
 
-    return value
+    try:
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+    except Exception:
+        pass
+
+    try:
+        return int(value)
+    except Exception:
+        return None
+
 
 def _safe_level_elevation(doc, view):
     """Best-effort elevation lookup for a view."""
