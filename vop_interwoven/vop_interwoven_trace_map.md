@@ -19,13 +19,13 @@ Notes:
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
-    - called from: pipeline.py
+    - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
-    - called from: core/silhouette.py, pipeline.py
+    - called from: core/silhouette.py, pipeline.py, streaming.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
@@ -270,13 +270,13 @@ Notes:
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
-    - called from: pipeline.py
+    - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
-    - called from: core/silhouette.py, pipeline.py
+    - called from: core/silhouette.py, pipeline.py, streaming.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
@@ -521,13 +521,13 @@ Notes:
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
-    - called from: pipeline.py
+    - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
-    - called from: core/silhouette.py, pipeline.py
+    - called from: core/silhouette.py, pipeline.py, streaming.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
@@ -759,7 +759,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `run_vop_pipeline_streaming` (streaming.py:L742)
+## Trace: `run_vop_pipeline_streaming` (streaming.py:L766)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -772,13 +772,13 @@ Notes:
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
-    - called from: pipeline.py
+    - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
-    - called from: core/silhouette.py, pipeline.py
+    - called from: core/silhouette.py, pipeline.py, streaming.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
@@ -1023,13 +1023,13 @@ Notes:
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
-    - called from: pipeline.py
+    - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
-    - called from: core/silhouette.py, pipeline.py
+    - called from: core/silhouette.py, pipeline.py, streaming.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
@@ -1276,13 +1276,13 @@ Notes:
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
-    - called from: pipeline.py
+    - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
-    - called from: core/silhouette.py, pipeline.py
+    - called from: core/silhouette.py, pipeline.py, streaming.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
@@ -1527,13 +1527,13 @@ Notes:
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
-    - called from: pipeline.py
+    - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
-    - called from: core/silhouette.py, pipeline.py
+    - called from: core/silhouette.py, pipeline.py, streaming.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
@@ -1765,7 +1765,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `render_model_front_to_back` (pipeline.py:L1927)
+## Trace: `render_model_front_to_back` (pipeline.py:L1933)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1778,13 +1778,13 @@ Notes:
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
-    - called from: pipeline.py
+    - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
-    - called from: core/silhouette.py, pipeline.py
+    - called from: core/silhouette.py, pipeline.py, streaming.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
@@ -2016,7 +2016,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `init_view_raster` (pipeline.py:L1622)
+## Trace: `init_view_raster` (pipeline.py:L1628)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -2029,13 +2029,13 @@ Notes:
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
-    - called from: pipeline.py
+    - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
-    - called from: core/silhouette.py, pipeline.py
+    - called from: core/silhouette.py, pipeline.py, streaming.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
@@ -2280,13 +2280,13 @@ Notes:
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
-    - called from: pipeline.py
+    - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
-    - called from: core/silhouette.py, pipeline.py
+    - called from: core/silhouette.py, pipeline.py, streaming.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
@@ -2531,13 +2531,13 @@ Notes:
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
-    - called from: pipeline.py
+    - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
-    - called from: core/silhouette.py, pipeline.py
+    - called from: core/silhouette.py, pipeline.py, streaming.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
@@ -2782,13 +2782,13 @@ Notes:
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
-    - called from: pipeline.py
+    - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
-    - called from: core/silhouette.py, pipeline.py
+    - called from: core/silhouette.py, pipeline.py, streaming.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
@@ -3033,13 +3033,13 @@ Notes:
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
-    - called from: pipeline.py
+    - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
-    - called from: core/silhouette.py, pipeline.py
+    - called from: core/silhouette.py, pipeline.py, streaming.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
@@ -3284,13 +3284,13 @@ Notes:
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
-    - called from: pipeline.py
+    - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
-    - called from: core/silhouette.py, pipeline.py
+    - called from: core/silhouette.py, pipeline.py, streaming.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
@@ -3535,13 +3535,13 @@ Notes:
   - `Diagnostics`
     - called from: pipeline.py
   - `ElementCache`
-    - called from: pipeline.py
+    - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
-    - called from: core/silhouette.py, pipeline.py
+    - called from: core/silhouette.py, pipeline.py, streaming.py
   - `LinkedElementProxy`
     - called from: revit/linked_documents.py
   - `ManifestValidationError`
