@@ -2706,7 +2706,8 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                             strategy_diag.record_confidence(
                                 elem_id=elem_id,
                                 confidence=confidence,
-                                category=category
+                                category=category,
+                                elem_class=elem_class,
                             )
                     except Exception as e:
                         if diag is not None:

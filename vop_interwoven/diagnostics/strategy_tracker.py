@@ -191,7 +191,7 @@ class StrategyDiagnostics(object):
 
                 break
 
-    def record_confidence(self, elem_id, confidence, category):
+    def record_confidence(self, elem_id, confidence, category, elem_class=None):
         """
         Record confidence level for an element.
 
@@ -199,6 +199,10 @@ class StrategyDiagnostics(object):
             elem_id: Element ID (int or string)
             confidence: Confidence level ('HIGH', 'MEDIUM', 'LOW')
             category: Element category name
+            elem_class: Classification ('TINY', 'LINEAR', 'AREAL'). When provided,
+                        confidence_counts only accumulates for AREAL elements so that
+                        ArealHighConf/ArealMediumConf/ArealLowConf in perf CSV reflect
+                        AREAL-only counts rather than all elements.
         """
         elem_id = str(elem_id)
         category = str(category) if category else 'Unknown'
@@ -207,8 +211,11 @@ class StrategyDiagnostics(object):
         if confidence:
             confidence = str(confidence).upper()
 
-            # Update counters
-            self.confidence_counts[confidence] += 1
+            # confidence_counts feeds ArealHighConf/ArealMediumConf/ArealLowConf in the
+            # perf CSV.  Gate it on AREAL so TINY/LINEAR bbox successes don't inflate it.
+            # When elem_class is None (legacy callers) fall through unconditionally.
+            if elem_class is None or elem_class == 'AREAL':
+                self.confidence_counts[confidence] += 1
             self.category_confidence[category][confidence] += 1
 
             # Update element record
