@@ -2701,8 +2701,10 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                             category=category
                         )
 
-                        # Phase 2.2: Track confidence level (HIGH, MEDIUM, LOW)
-                        if confidence is not None:
+                        # Phase 2.2: Track confidence level (HIGH, MEDIUM, LOW).
+                        # AREAL confidence is recorded inside extract_areal_geometry()
+                        # (areal_extraction.py) so skip it here to avoid double-counting.
+                        if confidence is not None and elem_class != 'AREAL':
                             strategy_diag.record_confidence(
                                 elem_id=elem_id,
                                 confidence=confidence,
