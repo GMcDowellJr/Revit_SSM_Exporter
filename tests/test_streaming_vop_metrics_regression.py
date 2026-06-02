@@ -162,3 +162,59 @@ def test_locked_metrics_normalize_external_only_as_legacy_model_only():
     assert row["TotalCells"] == row["Empty"] + row["ModelOnly"] + row["AnnoOnly"] + row["Overlap"]
     assert row["Ext_Cells_Any"] == 5
     assert row["Ext_Cells_RVT"] == 4
+
+
+def test_view_result_to_vop_row_uses_annotation_metrics_embedded_in_metrics():
+    from vop_interwoven.csv_export import view_result_to_vop_row
+
+    row = view_result_to_vop_row(
+        {
+            "success": True,
+            "view_id": 2,
+            "view_name": "cached-anno",
+            "metrics": {
+                "TotalCells": 10,
+                "Empty": 5,
+                "ModelOnly": 0,
+                "AnnoOnly": 5,
+                "Overlap": 0,
+                "Ext_Cells_Any": 0,
+                "Ext_Cells_Only": 0,
+                "Ext_Cells_DWG": 0,
+                "Ext_Cells_RVT": 0,
+                "AnnoCells_TEXT": 2,
+                "AnnoCells_TAG": 3,
+                "AnnoCells_DIM": 0,
+                "AnnoCells_DETAIL": 0,
+                "AnnoCells_LINES": 0,
+                "AnnoCells_REGION": 0,
+                "AnnoCells_OTHER": 0,
+            },
+        },
+        _Cfg(),
+        doc=None,
+        run_id="RUN",
+    )
+
+    assert row["AnnoCells_TEXT"] == 2
+    assert row["AnnoCells_TAG"] == 3
+
+
+def test_external_metrics_uses_occupancy_layers_to_distinguish_only_from_rvt():
+    from types import SimpleNamespace
+    from vop_interwoven.csv_export import compute_external_cell_metrics
+
+    metrics = compute_external_cell_metrics(
+        SimpleNamespace(
+            model_edge_key=[-1, -1],
+            model_proxy_key=[-1, -1],
+            element_meta=[],
+            occ_host=[False, True],
+            occ_link=[True, True],
+            occ_dwg=[False, False],
+        )
+    )
+
+    assert metrics["Ext_Cells_Any"] == 2
+    assert metrics["Ext_Cells_RVT"] == 2
+    assert metrics["Ext_Cells_Only"] == 1

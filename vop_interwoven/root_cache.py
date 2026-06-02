@@ -361,6 +361,9 @@ def extract_metrics_from_view_result(view_result, cfg):
             "model_proxy_mask": _safe_seq(getattr(raster_payload, "model_proxy_mask", [])),
             "model_proxy_key": _safe_seq(getattr(raster_payload, "model_proxy_key", [])),
             "model_mask": _safe_seq(getattr(raster_payload, "model_mask", [])),
+            "occ_host": _safe_seq(getattr(raster_payload, "occ_host", [])),
+            "occ_link": _safe_seq(getattr(raster_payload, "occ_link", [])),
+            "occ_dwg": _safe_seq(getattr(raster_payload, "occ_dwg", [])),
             "anno_over_model": _safe_seq(getattr(raster_payload, "anno_over_model", [])),
             "anno_key": _safe_seq(getattr(raster_payload, "anno_key", [])),
             "anno_meta": _safe_seq(getattr(raster_payload, "anno_meta", [])),
@@ -407,6 +410,9 @@ def extract_metrics_from_view_result(view_result, cfg):
         raster.model_proxy_mask = raster_dict.get("model_proxy_mask", raster_dict.get("model_proxy_presence", []))
         raster.model_proxy_key = raster_dict.get("model_proxy_key", [])
         raster.model_mask = raster_dict.get("model_mask", [])
+        raster.occ_host = raster_dict.get("occ_host", [])
+        raster.occ_link = raster_dict.get("occ_link", [])
+        raster.occ_dwg = raster_dict.get("occ_dwg", [])
         raster.anno_over_model = raster_dict.get("anno_over_model", [])
         raster.anno_key = raster_dict.get("anno_key", [])
         raster.anno_meta = raster_dict.get("anno_meta", [])

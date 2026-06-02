@@ -96,3 +96,26 @@ def test_scan_final_state_totals_model_class_multihot_dedup_per_cell():
     assert totals["ModelClassCells_COLUMN"] == 1
     assert totals["ModelClassCells_LIGHT"] == 1
     assert totals["ModelClassCells_OTHER"] == 1
+
+
+def test_scan_final_state_totals_uses_occupancy_layers_for_external_only():
+    raster = SimpleNamespace(
+        W=2,
+        H=1,
+        model_edge_key=[-1, -1],
+        model_proxy_key=[-1, -1],
+        anno_key=[-1, -1],
+        anno_meta=[],
+        element_meta=[],
+        occ_host=[False, True],
+        occ_link=[True, True],
+        occ_dwg=[False, False],
+        has_model_present=lambda idx, mode="any": True,
+    )
+
+    totals = scan_final_state_totals(raster, _manifest())
+
+    assert totals["ExtFinalCells_Any"] == 2
+    assert totals["ExtFinalCells_RVT"] == 2
+    assert totals["ExtFinalCells_Only"] == 1
+    assert totals["Cells_ModelExt"] == 2

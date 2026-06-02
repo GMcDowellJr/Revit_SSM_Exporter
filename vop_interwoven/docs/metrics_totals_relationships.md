@@ -14,6 +14,7 @@ This document defines which metric totals are exact equalities vs subset/superse
 ## 2) Subset/superset inequalities (must always hold)
 
 - `ExtFinalCells_Only <= ExtFinalCells_Any`
+  - `ExtFinalCells_Only` means external-present cells with no host-present ink or occupancy.
 - `ExtFinalCells_DWG <= ExtFinalCells_Any`
 - `ExtFinalCells_RVT <= ExtFinalCells_Any`
 - `ExtFinalCells_DWG_RVT <= ExtFinalCells_DWG`

@@ -122,6 +122,9 @@ def _raster_to_dict_like(raster_payload):
         "model_proxy_presence": _safe_seq(getattr(raster_payload, "model_proxy_presence", [])),
         "model_proxy_key": _safe_seq(getattr(raster_payload, "model_proxy_key", [])),
         "model_mask": _safe_seq(getattr(raster_payload, "model_mask", [])),
+        "occ_host": _safe_seq(getattr(raster_payload, "occ_host", [])),
+        "occ_link": _safe_seq(getattr(raster_payload, "occ_link", [])),
+        "occ_dwg": _safe_seq(getattr(raster_payload, "occ_dwg", [])),
         "anno_over_model": _safe_seq(getattr(raster_payload, "anno_over_model", [])),
         "anno_key": _safe_seq(getattr(raster_payload, "anno_key", [])),
         "anno_meta": _safe_seq(getattr(raster_payload, "anno_meta", [])),
@@ -164,6 +167,12 @@ def _get_metrics_triplet_from_view_result(view_result):
         if anno_metrics is None:
             anno_metrics = {k: metrics[k] for k in metrics if k.startswith("AnnoCells_")}
         if ext_metrics is None:
+            ext_metrics = {k: metrics[k] for k in metrics if k.startswith("Ext_Cells_")}
+
+    if isinstance(metrics, dict):
+        if anno_metrics is None and any(k.startswith("AnnoCells_") for k in metrics):
+            anno_metrics = {k: metrics[k] for k in metrics if k.startswith("AnnoCells_")}
+        if ext_metrics is None and any(k.startswith("Ext_Cells_") for k in metrics):
             ext_metrics = {k: metrics[k] for k in metrics if k.startswith("Ext_Cells_")}
 
     return metrics, anno_metrics, ext_metrics
@@ -232,23 +241,32 @@ def compute_external_cell_metrics(raster):
 
     edge_keys = _safe_seq(getattr(raster, "model_edge_key", None))
     proxy_keys = _safe_seq(getattr(raster, "model_proxy_key", None))
+    occ_host = _safe_seq(getattr(raster, "occ_host", None))
+    occ_link = _safe_seq(getattr(raster, "occ_link", None))
+    occ_dwg = _safe_seq(getattr(raster, "occ_dwg", None))
 
-    n = max(len(edge_keys), len(proxy_keys))
+    n = max(len(edge_keys), len(proxy_keys), len(occ_host), len(occ_link), len(occ_dwg))
     if n == 0:
         return {"Ext_Cells_Any": 0, "Ext_Cells_Only": 0, "Ext_Cells_DWG": 0, "Ext_Cells_RVT": 0}
+
+    def _bool_at(seq, idx):
+        try:
+            return idx < len(seq) and bool(seq[idx])
+        except Exception:
+            return False
 
     ext_any = ext_only = ext_dwg = ext_rvt = 0
 
     for i in range(n):
-        k_edge = edge_keys[i] if i < len(edge_keys) else 0
-        k_proxy = proxy_keys[i] if i < len(proxy_keys) else 0
+        k_edge = edge_keys[i] if i < len(edge_keys) else -1
+        k_proxy = proxy_keys[i] if i < len(proxy_keys) else -1
 
         src_edge = _get_source_type(k_edge)
         src_proxy = _get_source_type(k_proxy)
 
-        host = (src_edge == "HOST") or (src_proxy == "HOST")
-        dwg = (src_edge == "DWG") or (src_proxy == "DWG")
-        rvt = (src_edge == "LINK") or (src_proxy == "LINK")
+        host = (src_edge == "HOST") or (src_proxy == "HOST") or _bool_at(occ_host, i)
+        dwg = (src_edge == "DWG") or (src_proxy == "DWG") or _bool_at(occ_dwg, i)
+        rvt = (src_edge == "LINK") or (src_proxy == "LINK") or _bool_at(occ_link, i)
 
         ext = dwg or rvt
         if ext:
@@ -1520,6 +1538,9 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
         raster.model_proxy_mask = raster_dict.get("model_proxy_mask", raster_dict.get("model_proxy_presence", []))
         raster.model_proxy_key = raster_dict.get("model_proxy_key", [])
         raster.model_mask = raster_dict.get("model_mask", [])
+        raster.occ_host = raster_dict.get("occ_host", [])
+        raster.occ_link = raster_dict.get("occ_link", [])
+        raster.occ_dwg = raster_dict.get("occ_dwg", [])
         raster.anno_over_model = raster_dict.get("anno_over_model", [])
         raster.anno_key = raster_dict.get("anno_key", [])
         raster.anno_meta = raster_dict.get("anno_meta", [])
@@ -2078,6 +2099,9 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
         raster.model_proxy_mask = raster_dict.get("model_proxy_mask", raster_dict.get("model_proxy_presence", []))
         raster.model_proxy_key = raster_dict.get("model_proxy_key", [])
         raster.model_mask = raster_dict.get("model_mask", [])
+        raster.occ_host = raster_dict.get("occ_host", [])
+        raster.occ_link = raster_dict.get("occ_link", [])
+        raster.occ_dwg = raster_dict.get("occ_dwg", [])
         raster.anno_over_model = raster_dict.get("anno_over_model", [])
         raster.anno_key = raster_dict.get("anno_key", [])
         raster.anno_meta = raster_dict.get("anno_meta", [])
@@ -2134,6 +2158,9 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
         raster.model_proxy_mask = raster_dict.get("model_proxy_mask", raster_dict.get("model_proxy_presence", []))
         raster.model_proxy_key = raster_dict.get("model_proxy_key", [])
         raster.model_mask = raster_dict.get("model_mask", [])
+        raster.occ_host = raster_dict.get("occ_host", [])
+        raster.occ_link = raster_dict.get("occ_link", [])
+        raster.occ_dwg = raster_dict.get("occ_dwg", [])
         raster.anno_over_model = raster_dict.get("anno_over_model", [])
         raster.anno_key = raster_dict.get("anno_key", [])
         raster.anno_meta = raster_dict.get("anno_meta", [])
