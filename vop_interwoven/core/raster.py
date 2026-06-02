@@ -602,8 +602,12 @@ class ViewRaster:
         return (0 <= idx < len(self.model_edge_key)) and (self.model_edge_key[idx] != -1)
 
     def has_model_proxy(self, idx):
-        """True if proxy presence is present at idx."""
-        return (0 <= idx < len(self.model_proxy_mask)) and bool(self.model_proxy_mask[idx])
+        """True if proxy presence is present at idx (mask OR key label)."""
+        if not (0 <= idx < len(self.model_proxy_mask)):
+            return False
+        return bool(self.model_proxy_mask[idx]) or (
+            idx < len(self.model_proxy_key) and self.model_proxy_key[idx] != -1
+        )
 
     def has_model_present(self, idx, mode="occ", include_proxy_if_any=True):
         """
@@ -872,6 +876,7 @@ class ViewRaster:
 
         w_here = self.w_occ[idx]
         if w_here == float("inf") or depth <= w_here:
+            self.model_proxy_mask[idx] = True
             if self.model_proxy_key[idx] != key_index:
                 self.model_proxy_key[idx] = key_index
                 try:
