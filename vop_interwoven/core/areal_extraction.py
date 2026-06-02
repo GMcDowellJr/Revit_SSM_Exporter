@@ -397,7 +397,7 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
                         success=True,
                         confidence=confidence
                     )
-                    strategy_diag.record_confidence(elem_id, confidence, category)
+                    strategy_diag.record_confidence(elem_id, confidence, category, elem_class='AREAL')
                 except Exception as e:
                     if diag is not None:
                         diag.error(
@@ -476,7 +476,7 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
                             success=True,
                             confidence='LOW'
                         )
-                        strategy_diag.record_confidence(elem_id, 'LOW', category)
+                        strategy_diag.record_confidence(elem_id, 'LOW', category, elem_class='AREAL')
                     except Exception as e:
                         if diag is not None:
                             diag.error(

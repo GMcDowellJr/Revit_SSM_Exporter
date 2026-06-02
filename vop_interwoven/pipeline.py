@@ -2312,6 +2312,10 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
         strategy = None
         silhouette_error = None
         geom_extract_ms = 0.0
+        # True only when extract_areal_geometry returned a non-None confidence, meaning
+        # it also called record_confidence internally.  False for failures/exceptions and
+        # for all TINY/LINEAR elements (which never go through areal_extraction.py).
+        _extractor_recorded_confidence = False
 
         if elem_class == "AREAL":
             # AREAL: Use unified extraction with confidence-based fallback
@@ -2332,6 +2336,9 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 # Normalize confidence to uppercase (extract_areal_geometry returns 'HIGH', 'MEDIUM', 'LOW')
                 if confidence is None:
                     confidence = CONF_LOW  # Failed extraction
+                else:
+                    # Extractor set confidence AND called record_confidence; don't duplicate.
+                    _extractor_recorded_confidence = True
 
             except Exception as e:
                 # Extraction failed completely
@@ -2701,12 +2708,16 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                             category=category
                         )
 
-                        # Phase 2.2: Track confidence level (HIGH, MEDIUM, LOW)
-                        if confidence is not None:
+                        # Phase 2.2: Track confidence level (HIGH, MEDIUM, LOW).
+                        # Skip when the AREAL extractor already called record_confidence
+                        # (success/AABB paths).  Fire for TINY/LINEAR and for AREAL elements
+                        # that exhausted all tiers and returned None confidence (failures).
+                        if confidence is not None and not _extractor_recorded_confidence:
                             strategy_diag.record_confidence(
                                 elem_id=elem_id,
                                 confidence=confidence,
-                                category=category
+                                category=category,
+                                elem_class=elem_class,
                             )
                     except Exception as e:
                         if diag is not None:

@@ -129,6 +129,20 @@ def _get_metrics_triplet_from_view_result(view_result):
             if isinstance(m, dict):
                 metrics = m
 
+    # Manifest scanner output uses Cells_* keys; normalize to legacy CSV keys
+    # (Empty, ModelOnly, AnnoOnly, Overlap) before callers attempt .get("Empty").
+    # Root cache already performs this normalization before storing, so cache-hit
+    # view_results carry the correct keys — this only fires for fresh-processed views.
+    if metrics is not None and "Cells_Empty" in metrics and "Empty" not in metrics:
+        metrics = _normalize_locked_metrics_for_legacy_csv(metrics)
+        # _normalize_locked_metrics_for_legacy_csv folds AnnoCells_* and Ext_Cells_*
+        # into the returned dict.  Populate anno_metrics/ext_metrics from it when
+        # they were not provided separately, so callers don't receive None.
+        if anno_metrics is None:
+            anno_metrics = {k: metrics[k] for k in metrics if k.startswith("AnnoCells_")}
+        if ext_metrics is None:
+            ext_metrics = {k: metrics[k] for k in metrics if k.startswith("Ext_Cells_")}
+
     return metrics, anno_metrics, ext_metrics
 
 def _is_from_cache(view_result):
