@@ -94,10 +94,15 @@ def _prepare_view_for_export(doc, view, W, H, cell_size_ft):
         print("[view_raster] Hid {} VOP-excluded categories".format(hidden_count))
 
         # ── 2. Expand crop box to exact VOP grid extent ───────────────────────
+        # Only run when valid grid dimensions are provided; with W=H=0 or
+        # cell_size_ft=0 the deltas would be negative and would shrink the
+        # crop box to zero, producing a blank export.
         # VOP computes W = ceil(crop_w_uv / cell_size_ft), so
         # W * cell_size_ft may exceed crop_w_uv by up to one cell.
         # We expand the crop box max corner by that delta so both images cover
         # the same spatial region.
+        if W <= 0 or H <= 0 or cell_size_ft <= 0:
+            return t
         try:
             cb = view.CropBox
             T = getattr(cb, "Transform", None)
@@ -291,9 +296,12 @@ def _resize_to_exact(path, width_px, height_px, diag=None):
         if PILLOW_AVAILABLE:
             from vop_interwoven.np_backend import Image
             img = Image.open(path)
-            if img.size != (width_px, height_px):
-                img = img.resize((width_px, height_px), Image.LANCZOS)
-                img.save(path)
+            needs_resize = img.size != (width_px, height_px)
+            if needs_resize:
+                resized = img.resize((width_px, height_px), Image.LANCZOS)
+            img.close()  # Release file handle before rename/overwrite (Windows lock)
+            if needs_resize:
+                resized.save(path)
             return
     except Exception:
         pass

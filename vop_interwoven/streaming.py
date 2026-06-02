@@ -132,6 +132,7 @@ class StreamingExporter:
         self.output_dir = output_dir
         self.cfg = cfg
         self.doc = doc
+        self.diag = None
         self.export_png = export_png
         self.export_csv = export_csv
         self.export_json = export_json
