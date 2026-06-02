@@ -370,11 +370,14 @@ def export_pipeline_views_to_pngs(doc, pipeline_result, output_dir, pixels_per_c
 
             view_id_raw = view_data.get("view_id")
             view_name = view_data.get("view_name", "unknown")
-            W = int(view_data.get("grid_W", 0) or 0)
-            H = int(view_data.get("grid_H", 0) or 0)
+            # Accept both pipeline naming ("width"/"height"/"cell_size") and
+            # streaming naming ("grid_W"/"grid_H"/"cell_size_ft_effective").
+            W = int(view_data.get("grid_W") or view_data.get("width") or 0)
+            H = int(view_data.get("grid_H") or view_data.get("height") or 0)
             cell_size_ft = float(
                 view_data.get("cell_size_ft_effective")
                 or view_data.get("cell_size_ft")
+                or view_data.get("cell_size")
                 or 0
             )
 

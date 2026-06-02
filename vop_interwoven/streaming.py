@@ -390,11 +390,14 @@ class StreamingExporter:
 
         view_name = view_result.get("view_name", "unknown")
         view_id = view_result.get("view_id", 0)
-        W = int(view_result.get("grid_W", 0) or 0)
-        H = int(view_result.get("grid_H", 0) or 0)
+        # Accept both pipeline naming ("width"/"height"/"cell_size") and
+        # streaming naming ("grid_W"/"grid_H"/"cell_size_ft_effective").
+        W = int(view_result.get("grid_W") or view_result.get("width") or 0)
+        H = int(view_result.get("grid_H") or view_result.get("height") or 0)
         cell_size_ft = float(
             view_result.get("cell_size_ft_effective")
             or view_result.get("cell_size_ft")
+            or view_result.get("cell_size")
             or 0
         )
 
