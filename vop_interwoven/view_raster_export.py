@@ -11,30 +11,42 @@ Counterpart:   vop_raster/
 
 Both folders use identical filenames ({safe_view_name}_{view_id}.png) and
 identical pixel dimensions (grid_W * pixels_per_cell  x  grid_H * pixels_per_cell)
-so images can be diffed or compared directly.
+so files can be matched, diffed, or compared directly by name.
 """
 
 import os
 import time
 
 
+def _snapshot(directory):
+    """Return the set of filenames currently in directory, or empty set on error."""
+    try:
+        return set(os.listdir(directory))
+    except Exception:
+        return set()
+
+
+def _canonical_name(view_name, view_id):
+    """Return the shared filename used in both vop_raster/ and view_raster/."""
+    safe = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in view_name)
+    return "{0}_{1}.png".format(safe, view_id)
+
+
 def export_view_image(doc, view_id, output_path, width_px, height_px, diag=None):
     """Export a single Revit view to PNG at the specified pixel dimensions.
 
-    Uses Document.ExportImage() with pixel-accurate sizing so the output matches
-    the corresponding vop_raster PNG dimensions exactly.
-
-    Revit's ExportImage appends view metadata to the filename it creates, so this
-    function searches the output directory for the generated file and renames it to
-    ``output_path``.
+    Uses Document.ExportImage() and a before/after directory snapshot to locate
+    whatever file Revit created, then renames it to ``output_path`` so both
+    vop_raster/ and view_raster/ always share the same canonical filename.
 
     Args:
-        doc:         Revit Document (clr-accessible Autodesk.Revit.DB.Document).
+        doc:         Revit Document.
         view_id:     Autodesk.Revit.DB.ElementId for the view.
-        output_path: Desired output path including ".png" extension.
-        width_px:    Image width in pixels  (= grid_W * pixels_per_cell).
-        height_px:   Image height in pixels (= grid_H * pixels_per_cell).
-        diag:        Optional Diagnostics instance for structured error recording.
+        output_path: Desired output path — the canonical filename is derived
+                     by the caller via _canonical_name().
+        width_px:    Target width in pixels  (= grid_W * pixels_per_cell).
+        height_px:   Target height in pixels (= grid_H * pixels_per_cell).
+        diag:        Optional Diagnostics instance.
 
     Returns:
         Absolute path of the saved PNG, or None on failure.
@@ -63,43 +75,44 @@ def export_view_image(doc, view_id, output_path, width_px, height_px, diag=None)
         if out_dir and not os.path.exists(out_dir):
             os.makedirs(out_dir)
 
-        # Revit appends view name and/or index to the base filename it creates,
-        # so we use a stable temp prefix and locate the result afterward.
-        base_name = os.path.splitext(os.path.basename(output_path))[0]
-        out_base = os.path.join(out_dir, base_name)
+        # Snapshot directory contents before export so we can find exactly
+        # what Revit creates regardless of its internal naming convention.
+        before = _snapshot(out_dir)
 
         opts = ImageExportOptions()
         opts.ExportRange = ExportRange.SetOfViews
         opts.SetViewsAndSheets([view_id])
         opts.ZoomType = ZoomFitType.FitToPage
-        # Fit to width first; we enforce exact height afterward via resize.
         opts.FitDirection = FitDirectionType.Horizontal
         opts.PixelSize = width_px
-        opts.FilePath = out_base
-        # Cover both wireframe/hidden-line views and shaded/realistic views.
+        # Use a temp base path so Revit's appended name doesn't collide with
+        # the canonical target filename.
+        opts.FilePath = os.path.join(out_dir, "_vr_tmp")
         opts.HLRandWFViewsFileType = ImageFileType.PNG
         opts.ShadowViewsFileType = ImageFileType.PNG
 
         doc.ExportImage(opts)
 
-        # Locate the file Revit created (name includes view metadata).
-        # Exclude the canonical target path so a stale pre-existing PNG is
-        # never mistaken for the freshly-exported file.
-        created = _find_exported_file(out_dir, base_name, ".png", exclude=output_path)
-        if created is None:
+        # Find new PNG(s) created since the snapshot.
+        after = _snapshot(out_dir)
+        new_pngs = [f for f in (after - before) if f.lower().endswith(".png")]
+
+        if not new_pngs:
+            msg = "ExportImage produced no new PNG in '{}'; dir had {} files after call".format(
+                out_dir, len(after))
             if diag is not None:
-                diag.error(
-                    phase="export",
-                    callsite="export_view_image",
-                    message="ExportImage completed but no PNG found with prefix '{}'".format(base_name),
-                    extra={"out_dir": out_dir},
-                )
+                diag.error(phase="export", callsite="export_view_image", message=msg,
+                           extra={"output_path": output_path})
+            else:
+                print("[view_raster] " + msg)
             return None
 
-        # Resize to exact target dimensions so vop_raster and view_raster PNGs
-        # are always pixel-identical in size regardless of Revit's aspect ratio.
+        created = os.path.join(out_dir, new_pngs[0])
+
+        # Resize to exact target dimensions before final rename.
         _resize_to_exact(created, width_px, height_px, diag=diag)
 
+        # Rename to canonical path (overwrites any stale copy).
         if os.path.exists(output_path):
             os.remove(output_path)
         os.rename(created, output_path)
@@ -121,30 +134,10 @@ def export_view_image(doc, view_id, output_path, width_px, height_px, diag=None)
         return None
 
 
-def _find_exported_file(out_dir, base_name, ext, exclude=None):
-    """Return the first file in out_dir whose name starts with base_name and ends with ext.
-
-    Files whose full path equals ``exclude`` are skipped so a pre-existing canonical
-    target is never confused with the freshly-exported Revit-generated file.
-    """
-    try:
-        ext_lower = ext.lower()
-        exclude_name = os.path.basename(exclude) if exclude else None
-        for fname in os.listdir(out_dir):
-            if exclude_name and fname == exclude_name:
-                continue
-            if fname.startswith(base_name) and fname.lower().endswith(ext_lower):
-                return os.path.join(out_dir, fname)
-    except Exception:
-        pass
-    return None
-
-
 def _resize_to_exact(path, width_px, height_px, diag=None):
-    """Resize the image at ``path`` in-place to exactly ``width_px`` × ``height_px``.
+    """Resize the image at ``path`` in-place to exactly ``width_px`` x ``height_px``.
 
     Tries Pillow first (CPython), then System.Drawing (IronPython/Revit).
-    If neither is available the file is left unchanged and a warning is recorded.
     """
     try:
         from vop_interwoven.np_backend import PILLOW_AVAILABLE
@@ -161,7 +154,7 @@ def _resize_to_exact(path, width_px, height_px, diag=None):
     try:
         import clr
         clr.AddReference('System.Drawing')
-        from System.Drawing import Bitmap, Graphics, Size
+        from System.Drawing import Bitmap, Graphics
         from System.Drawing.Imaging import ImageFormat
         bmp_src = Bitmap(path)
         if bmp_src.Width != width_px or bmp_src.Height != height_px:
@@ -178,35 +171,32 @@ def _resize_to_exact(path, width_px, height_px, diag=None):
     except Exception:
         pass
 
+    msg = "No image library available to enforce exact pixel dimensions for {}".format(
+        os.path.basename(path))
     if diag is not None:
-        diag.warn(
-            phase="export",
-            callsite="_resize_to_exact",
-            message="No image library available to enforce exact pixel dimensions; "
-                    "view_raster PNG may not match vop_raster dimensions",
-            extra={"path": path, "width_px": width_px, "height_px": height_px},
-        )
+        diag.warn(phase="export", callsite="_resize_to_exact", message=msg,
+                  extra={"width_px": width_px, "height_px": height_px})
     else:
-        print("[view_raster] WARNING: cannot resize {}; install Pillow for exact dimensions".format(
-            os.path.basename(path)))
+        print("[view_raster] WARNING: " + msg)
 
 
 def export_pipeline_views_to_pngs(doc, pipeline_result, output_dir, pixels_per_cell=4, diag=None):
     """Export all views from a pipeline result as raw Revit view images.
 
-    Produces one PNG per view in ``output_dir/`` using the same filename convention
-    and pixel dimensions as the corresponding vop_raster PNGs, enabling direct
-    side-by-side or diff comparison.
+    Produces one PNG per view using the same canonical filename as vop_raster/:
+        {safe_view_name}_{view_id}.png
 
-    Views without valid grid dimensions are skipped with a diagnostic warning.
+    Each view is exported individually so its PixelSize can be set to the correct
+    width for that view. The before/after snapshot in export_view_image() handles
+    Revit's internal filename mangling regardless of Revit version.
 
     Args:
-        doc:            Revit Document.
-        pipeline_result: Full pipeline result dict from run_vop_pipeline() or
-                         process_document_views().
-        output_dir:     Directory to write PNGs into (typically ``<base>/view_raster``).
-        pixels_per_cell: Pixels per grid cell — must match the vop_raster export value.
-        diag:           Optional Diagnostics instance.
+        doc:             Revit Document.
+        pipeline_result: List from process_document_views() or dict from
+                         run_vop_pipeline() — both forms accepted.
+        output_dir:      Directory to write PNGs into (typically ``<base>/view_raster``).
+        pixels_per_cell: Must match the vop_raster export value.
+        diag:            Optional Diagnostics instance.
 
     Returns:
         List of saved PNG file paths, or None if the batch itself failed.
@@ -216,19 +206,15 @@ def export_pipeline_views_to_pngs(doc, pipeline_result, output_dir, pixels_per_c
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
 
-        # Resolve ElementId type once so we can coerce int view_ids.
         ElementId = None
         try:
             from Autodesk.Revit.DB import ElementId
         except ImportError:
             pass
 
-        # Accept both process_document_views() (returns a list) and
-        # run_vop_pipeline() (returns {"views": [...]}).
-        if isinstance(pipeline_result, list):
-            views = pipeline_result
-        else:
-            views = pipeline_result.get("views", [])
+        # Accept both process_document_views() (list) and run_vop_pipeline() (dict).
+        views = pipeline_result if isinstance(pipeline_result, list) \
+            else pipeline_result.get("views", [])
 
         for view_data in views:
             if not isinstance(view_data, dict):
@@ -240,31 +226,17 @@ def export_pipeline_views_to_pngs(doc, pipeline_result, output_dir, pixels_per_c
             height = int(view_data.get("height", 0) or 0)
 
             if not view_id_raw or width <= 0 or height <= 0:
-                if diag is not None:
-                    diag.warn(
-                        phase="export",
-                        callsite="export_pipeline_views_to_pngs",
-                        message="Skipping view_raster export: missing id or zero dimensions",
-                        extra={
-                            "view_id": view_id_raw,
-                            "view_name": view_name,
-                            "width": width,
-                            "height": height,
-                        },
-                    )
+                print("[view_raster] Skipping view '{}' (id={}, w={}, h={})".format(
+                    view_name, view_id_raw, width, height))
                 continue
 
             width_px = width * pixels_per_cell
             height_px = height * pixels_per_cell
 
-            safe_name = "".join(
-                c if c.isalnum() or c in (' ', '-', '_') else '_'
-                for c in view_name
-            )
-            filename = "{0}_{1}.png".format(safe_name, view_id_raw)
+            # Canonical filename — identical to vop_raster counterpart.
+            filename = _canonical_name(view_name, view_id_raw)
             output_path = os.path.join(output_dir, filename)
 
-            # Coerce plain int to ElementId when Revit API is available.
             eid = view_id_raw
             if ElementId is not None and not hasattr(view_id_raw, 'IntegerValue'):
                 try:
@@ -282,7 +254,9 @@ def export_pipeline_views_to_pngs(doc, pipeline_result, output_dir, pixels_per_c
                     view_data.setdefault("timings", {})["view_raster_ms"] = elapsed_ms
                 except Exception:
                     pass
-                print("[view_raster] Saved: {}".format(os.path.basename(png_path)))
+                print("[view_raster] Saved: {}".format(filename))
+            else:
+                print("[view_raster] FAILED: {}".format(filename))
 
     except Exception as e:
         if diag is not None:
