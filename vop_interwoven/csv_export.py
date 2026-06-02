@@ -37,14 +37,26 @@ def _normalize_locked_metrics_for_legacy_csv(locked_metrics):
     total = int(m.get("TotalCells", 0) or 0)
     empty = int(m.get("Cells_Empty", 0) or 0)
 
-    # Legacy ModelOnly means model-present && !anno (includes ext-partitioned model cells)
-    model_only = int(m.get("Cells_ModelOnly", 0) or 0) + int(m.get("Cells_ModelExt", 0) or 0)
+    # Legacy 4-way VOP buckets are presence buckets over model-vs-annotation.
+    # In the locked 8-way manifest, external content (E) is linked/DWG model
+    # content.  Therefore E-only belongs in legacy ModelOnly, and A+E belongs
+    # in legacy Overlap.  Ext_Cells_* columns remain the source overlay that lets
+    # consumers distinguish host vs linked/DWG contribution.
+    model_only = (
+        int(m.get("Cells_ModelOnly", 0) or 0)
+        + int(m.get("Cells_ModelExt", 0) or 0)
+        + int(m.get("Cells_ExtOnly", 0) or 0)
+    )
 
-    # Legacy AnnoOnly means anno-present && !model
-    anno_only = int(m.get("Cells_AnnoOnly", 0) or 0) + int(m.get("Cells_AnnoExt", 0) or 0)
+    # Legacy AnnoOnly means annotation-present and no model (host or external).
+    anno_only = int(m.get("Cells_AnnoOnly", 0) or 0)
 
-    # Legacy Overlap means model-present && anno-present
-    overlap = int(m.get("Cells_ModelAnno", 0) or 0) + int(m.get("Cells_All3", 0) or 0)
+    # Legacy Overlap means annotation-present and model-present (host or external).
+    overlap = (
+        int(m.get("Cells_ModelAnno", 0) or 0)
+        + int(m.get("Cells_AnnoExt", 0) or 0)
+        + int(m.get("Cells_All3", 0) or 0)
+    )
 
     out = {
         "TotalCells": total,
@@ -935,7 +947,17 @@ def compute_config_hash(config):
         # Return a deterministic sentinel rather than crashing.
         return "00000000"
 
-    # Build config payload string using actual Config attributes
+    # Keep CSV ConfigHash aligned with the root cache's config_hash.  That hash
+    # uses Config.to_dict() and excludes only cache-location wiring, so cache JSON
+    # and CSV rows can be compared directly for the same run.
+    try:
+        from .root_cache import compute_config_hash as _root_compute_config_hash
+        if hasattr(config, "to_dict"):
+            return _root_compute_config_hash(config)
+    except Exception:
+        pass
+
+    # Fallback for lightweight test/config shims that do not implement to_dict().
     config_str = f"{config.tiny_max}|{config.thin_max}|" \
                  f"{config.adaptive_tile_size}|{config.proxy_mask_mode}|" \
                  f"{config.over_model_includes_proxies}|{config.tile_size}|" \
@@ -943,7 +965,6 @@ def compute_config_hash(config):
                  f"{config.cell_size_paper_in}|{config.max_sheet_width_in}|{config.max_sheet_height_in}|" \
                  f"{config.bounds_buffer_in}"
 
-    # Compute hash
     hash_obj = hashlib.sha256(config_str.encode('utf-8'))
     return hash_obj.hexdigest()[:8]
 

@@ -133,3 +133,32 @@ def test_extract_metrics_from_view_result_ignores_incomplete_precomputed_metrics
     assert metrics["Overlap"] == 1
     assert metrics["Empty"] == 1
     assert metrics["Ext_Cells_Any"] == 1
+
+
+def test_locked_metrics_normalize_external_only_as_legacy_model_only():
+    from vop_interwoven.csv_export import _normalize_locked_metrics_for_legacy_csv
+
+    row = _normalize_locked_metrics_for_legacy_csv(
+        {
+            "TotalCells": 10,
+            "Cells_Empty": 2,
+            "Cells_ModelOnly": 1,
+            "Cells_AnnoOnly": 1,
+            "Cells_ExtOnly": 3,
+            "Cells_ModelAnno": 1,
+            "Cells_ModelExt": 1,
+            "Cells_AnnoExt": 1,
+            "Cells_All3": 0,
+            "ExtFinalCells_Any": 5,
+            "ExtFinalCells_Only": 4,
+            "ExtFinalCells_DWG": 1,
+            "ExtFinalCells_RVT": 4,
+        }
+    )
+
+    assert row["ModelOnly"] == 5  # model-only + host/external + external-only
+    assert row["AnnoOnly"] == 1
+    assert row["Overlap"] == 2  # host model+anno + external+anno
+    assert row["TotalCells"] == row["Empty"] + row["ModelOnly"] + row["AnnoOnly"] + row["Overlap"]
+    assert row["Ext_Cells_Any"] == 5
+    assert row["Ext_Cells_RVT"] == 4
