@@ -71,12 +71,14 @@ def export_view_image(doc, view_id, output_path, width_px, height_px, diag=None)
         opts = ImageExportOptions()
         opts.ExportRange = ExportRange.SetOfViews
         opts.SetViewsAndSheets([view_id])
-        opts.ZoomType = ZoomFitType.FitPage
+        opts.ZoomType = ZoomFitType.FitToPage
         # Fit to width first; we enforce exact height afterward via resize.
         opts.FitDirection = FitDirectionType.Horizontal
         opts.PixelSize = width_px
         opts.FilePath = out_base
+        # Cover both wireframe/hidden-line views and shaded/realistic views.
         opts.HLRandWFViewsFileType = ImageFileType.PNG
+        opts.ShadowViewsFileType = ImageFileType.PNG
 
         doc.ExportImage(opts)
 
