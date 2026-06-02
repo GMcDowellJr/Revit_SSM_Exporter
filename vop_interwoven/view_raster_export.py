@@ -221,7 +221,14 @@ def export_pipeline_views_to_pngs(doc, pipeline_result, output_dir, pixels_per_c
         except ImportError:
             pass
 
-        for view_data in pipeline_result.get("views", []):
+        # Accept both process_document_views() (returns a list) and
+        # run_vop_pipeline() (returns {"views": [...]}).
+        if isinstance(pipeline_result, list):
+            views = pipeline_result
+        else:
+            views = pipeline_result.get("views", [])
+
+        for view_data in views:
             if not isinstance(view_data, dict):
                 continue
 
