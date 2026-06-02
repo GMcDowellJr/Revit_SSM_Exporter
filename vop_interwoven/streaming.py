@@ -390,11 +390,19 @@ class StreamingExporter:
 
         view_name = view_result.get("view_name", "unknown")
         view_id = view_result.get("view_id", 0)
-        width = int(view_result.get("width", 0) or 0)
-        height = int(view_result.get("height", 0) or 0)
+        W = int(view_result.get("grid_W", 0) or 0)
+        H = int(view_result.get("grid_H", 0) or 0)
+        cell_size_ft = float(
+            view_result.get("cell_size_ft_effective")
+            or view_result.get("cell_size_ft")
+            or 0
+        )
 
-        if width <= 0 or height <= 0:
+        if W <= 0 or H <= 0:
             return None
+
+        width_px = W * self.pixels_per_cell
+        height_px = H * self.pixels_per_cell
 
         safe_name = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in view_name)
         filename = f"{safe_name}_{view_id}.png"
@@ -409,10 +417,14 @@ class StreamingExporter:
         except Exception:
             pass
 
+        vop_grid = {"W": W, "H": H, "cell_size_ft": cell_size_ft} if cell_size_ft > 0 else None
+
         png_path = export_view_image(
             self.doc, eid, output_path,
-            width_px=width * self.pixels_per_cell,
-            height_px=height * self.pixels_per_cell,
+            width_px=width_px,
+            height_px=height_px,
+            vop_grid=vop_grid,
+            diag=self.diag,
         )
 
         if png_path:

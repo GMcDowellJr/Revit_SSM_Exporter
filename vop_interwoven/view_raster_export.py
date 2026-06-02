@@ -6,9 +6,16 @@ Unlike vop_raster PNGs (which visualize grid occupancy), these images capture
 what Revit would render at the same pixel dimensions — the raw view bitmap with
 no occupancy processing applied.
 
-Before exporting, the same categories VOP excludes (grids, levels, section marks,
-rooms, etc.) are temporarily hidden on the view via a rolled-back Transaction so
-the rendered content aligns with what VOP analyzes, not just pixel dimensions.
+Before exporting, two temporary view mutations are applied inside a single
+rolled-back Transaction so the document is never permanently modified:
+
+  1. VOP-excluded categories (grids, levels, section marks, rooms, etc.) are
+     hidden so the rendered content matches what VOP analyzes.
+
+  2. The view's crop box is expanded to cover exactly W * cell_size_ft ×
+     H * cell_size_ft — the same spatial extent as the VOP grid — eliminating
+     the sub-cell misalignment that arises from VOP's ceil() rounding.  Both
+     PNGs then cover identical ground, so elements align pixel-for-pixel.
 
 Output folder: view_raster/
 Counterpart:   vop_raster/
@@ -36,60 +43,115 @@ def _canonical_name(view_name, view_id):
     return "{0}_{1}.png".format(safe, view_id)
 
 
-def _hide_vop_excluded_categories(doc, view):
-    """Start a Transaction that hides VOP-excluded categories on ``view``.
+def _dot(a, b):
+    return a.X * b.X + a.Y * b.Y + a.Z * b.Z
 
-    The caller must call RollBack() on the returned transaction after export
-    to restore the view to its original visibility state. Returns None if the
-    Revit API is unavailable or the transaction cannot be started.
 
-    Categories hidden are exactly ``collection_policy.excluded_bic_names_global()``:
-    grids, levels, section marks, rooms, etc. — the same set VOP skips during
-    element collection so the rendered image matches VOP's analysis scope.
+def _prepare_view_for_export(doc, view, W, H, cell_size_ft):
+    """Start a Transaction that:
+      - Hides VOP-excluded categories on the view
+      - Expands the crop box to cover exactly W*cell_size_ft × H*cell_size_ft
+
+    The caller MUST call RollBack() on the returned transaction after
+    ExportImage so the view is fully restored.  Returns None if the Revit
+    API is unavailable or the transaction cannot be started.
     """
     try:
-        from Autodesk.Revit.DB import Transaction
+        from Autodesk.Revit.DB import Transaction, BoundingBoxXYZ, XYZ
         from vop_interwoven.revit.collection_policy import (
             excluded_bic_names_global,
             _try_import_bic,
         )
 
-        BuiltInCategory = _try_import_bic()
-
-        t = Transaction(doc, "vop_view_raster_tmp_visibility")
+        t = Transaction(doc, "vop_view_raster_tmp_state")
         t.Start()
 
-        hidden = 0
-        for bic_name in excluded_bic_names_global():
-            bic = getattr(BuiltInCategory, bic_name, None)
-            if bic is None:
-                continue
-            try:
-                cat = doc.Settings.Categories.get_Item(bic)
-                if cat is not None and view.CanCategoryBeHidden(cat.Id):
-                    view.SetCategoryHidden(cat.Id, True)
-                    hidden += 1
-            except Exception:
-                pass
+        # ── 1. Hide VOP-excluded categories ──────────────────────────────────
+        hidden_count = 0
+        try:
+            BuiltInCategory = _try_import_bic()
+            for bic_name in excluded_bic_names_global():
+                bic = getattr(BuiltInCategory, bic_name, None)
+                if bic is None:
+                    continue
+                try:
+                    cat = doc.Settings.Categories.get_Item(bic)
+                    if cat is not None and view.CanCategoryBeHidden(cat.Id):
+                        view.SetCategoryHidden(cat.Id, True)
+                        hidden_count += 1
+                except Exception:
+                    pass
+        except Exception as e:
+            print("[view_raster] WARNING: category hide failed: {}".format(e))
 
-        print("[view_raster] Hid {} VOP-excluded categories for export".format(hidden))
+        print("[view_raster] Hid {} VOP-excluded categories".format(hidden_count))
+
+        # ── 2. Expand crop box to exact VOP grid extent ───────────────────────
+        # VOP computes W = ceil(crop_w_uv / cell_size_ft), so
+        # W * cell_size_ft may exceed crop_w_uv by up to one cell.
+        # We expand the crop box max corner by that delta so both images cover
+        # the same spatial region.
+        try:
+            cb = view.CropBox
+            T = getattr(cb, "Transform", None)
+            U_vec = view.RightDirection   # world-space unit vector (U)
+            V_vec = view.UpDirection      # world-space unit vector (V)
+
+            # Project the 4 XY-plane corners of the crop box to view UV.
+            # We use differences so the origin cancels out.
+            u_vals, v_vals = [], []
+            for lx in [cb.Min.X, cb.Max.X]:
+                for ly in [cb.Min.Y, cb.Max.Y]:
+                    local_pt = XYZ(lx, ly, cb.Min.Z)
+                    world_pt = T.OfPoint(local_pt) if T is not None else local_pt
+                    u_vals.append(_dot(world_pt, U_vec))
+                    v_vals.append(_dot(world_pt, V_vec))
+
+            crop_w_uv = max(u_vals) - min(u_vals)
+            crop_h_uv = max(v_vals) - min(v_vals)
+
+            delta_u = W * cell_size_ft - crop_w_uv  # ≥ 0, ≤ cell_size_ft
+            delta_v = H * cell_size_ft - crop_h_uv
+
+            if abs(delta_u) > 1e-6 or abs(delta_v) > 1e-6:
+                # Move the max corner outward by (delta_u * U_vec + delta_v * V_vec)
+                max_world = T.OfPoint(cb.Max) if T is not None else cb.Max
+                new_max_world = XYZ(
+                    max_world.X + delta_u * U_vec.X + delta_v * V_vec.X,
+                    max_world.Y + delta_u * U_vec.Y + delta_v * V_vec.Y,
+                    max_world.Z + delta_u * U_vec.Z + delta_v * V_vec.Z,
+                )
+                T_inv = T.Inverse if T is not None else None
+                new_max_local = T_inv.OfPoint(new_max_world) if T_inv is not None else new_max_world
+
+                new_cb = BoundingBoxXYZ()
+                if T is not None:
+                    new_cb.Transform = T
+                new_cb.Min = cb.Min
+                new_cb.Max = XYZ(new_max_local.X, new_max_local.Y, cb.Max.Z)
+                view.CropBox = new_cb
+                view.CropBoxActive = True
+                print("[view_raster] Expanded crop box by ({:.4f}, {:.4f}) ft to match VOP grid".format(
+                    delta_u, delta_v))
+
+        except Exception as e:
+            print("[view_raster] WARNING: crop box adjustment failed: {}".format(e))
+
         return t
 
     except Exception as e:
-        print("[view_raster] WARNING: could not hide excluded categories: {}".format(e))
+        print("[view_raster] WARNING: could not prepare view for export: {}".format(e))
         return None
 
 
-def export_view_image(doc, view_id, output_path, width_px, height_px, diag=None):
+def export_view_image(doc, view_id, output_path, width_px, height_px,
+                      vop_grid=None, diag=None):
     """Export a single Revit view to PNG at the specified pixel dimensions.
 
-    Before exporting, temporarily hides VOP-excluded categories (grids, levels,
-    section marks, rooms, etc.) via a rolled-back Transaction so the rendered
-    content matches what VOP analyzes.
-
-    Uses a before/after directory snapshot to locate whatever file Revit creates,
-    then renames it to ``output_path`` so both vop_raster/ and view_raster/ share
-    the same canonical filename.
+    Temporarily hides VOP-excluded categories and adjusts the crop box to cover
+    exactly the VOP grid extent (W*cell_size_ft x H*cell_size_ft) via a
+    rolled-back Transaction so both vop_raster and view_raster cover the same
+    spatial region and elements align pixel-for-pixel.
 
     Args:
         doc:         Revit Document.
@@ -97,6 +159,10 @@ def export_view_image(doc, view_id, output_path, width_px, height_px, diag=None)
         output_path: Desired output path — canonical filename set by caller.
         width_px:    Target width in pixels  (= grid_W * pixels_per_cell).
         height_px:   Target height in pixels (= grid_H * pixels_per_cell).
+        vop_grid:    Optional dict with keys ``W``, ``H``, ``cell_size_ft``
+                     used to align the crop box to the VOP grid extent.
+                     If None, crop box is exported as-is (may have sub-cell
+                     misalignment at edges).
         diag:        Optional Diagnostics instance.
 
     Returns:
@@ -110,6 +176,7 @@ def export_view_image(doc, view_id, output_path, width_px, height_px, diag=None)
                 ZoomFitType,
                 FitDirectionType,
                 ImageFileType,
+                ElementId as _EId,
             )
             import System.Collections.Generic as SCG
             NetList = SCG.List
@@ -128,19 +195,22 @@ def export_view_image(doc, view_id, output_path, width_px, height_px, diag=None)
         if out_dir and not os.path.exists(out_dir):
             os.makedirs(out_dir)
 
-        # Resolve view object for category visibility manipulation.
         view = doc.GetElement(view_id)
 
-        # Temporarily hide VOP-excluded categories so the render matches VOP scope.
-        # Transaction is rolled back after export — view state is fully restored.
-        t = _hide_vop_excluded_categories(doc, view) if view is not None else None
+        # Extract VOP grid parameters for crop box alignment.
+        W = H = cell_size_ft = 0
+        if vop_grid is not None:
+            W = int(vop_grid.get("W", 0) or 0)
+            H = int(vop_grid.get("H", 0) or 0)
+            cell_size_ft = float(vop_grid.get("cell_size_ft", 0) or 0)
+
+        t = None
+        if view is not None:
+            t = _prepare_view_for_export(doc, view, W, H, cell_size_ft)
 
         try:
-            # Snapshot before export to locate whatever file Revit creates.
             before = _snapshot(out_dir)
 
-            # SetViewsAndSheets requires a .NET List[ElementId], not a Python list.
-            from Autodesk.Revit.DB import ElementId as _EId
             eid_list = NetList[_EId]()
             eid_list.Add(view_id)
 
@@ -150,7 +220,6 @@ def export_view_image(doc, view_id, output_path, width_px, height_px, diag=None)
             opts.ZoomType = ZoomFitType.FitToPage
             opts.FitDirection = FitDirectionType.Horizontal
             opts.PixelSize = width_px
-            # Temp base path — Revit appends view metadata to the name it creates.
             opts.FilePath = os.path.join(out_dir, "_vr_tmp")
             opts.HLRandWFViewsFileType = ImageFileType.PNG
             opts.ShadowViewsFileType = ImageFileType.PNG
@@ -158,14 +227,12 @@ def export_view_image(doc, view_id, output_path, width_px, height_px, diag=None)
             doc.ExportImage(opts)
 
         finally:
-            # Always roll back — restores original category visibility.
             if t is not None:
                 try:
                     t.RollBack()
                 except Exception as rb_e:
                     print("[view_raster] WARNING: transaction rollback failed: {}".format(rb_e))
 
-        # Find new PNG(s) created since the snapshot.
         after = _snapshot(out_dir)
         new_pngs = [f for f in (after - before) if f.lower().endswith(".png")]
 
@@ -180,11 +247,8 @@ def export_view_image(doc, view_id, output_path, width_px, height_px, diag=None)
             return None
 
         created = os.path.join(out_dir, new_pngs[0])
-
-        # Resize to exact target dimensions before final rename.
         _resize_to_exact(created, width_px, height_px, diag=diag)
 
-        # Rename to canonical path (overwrites any stale copy).
         if os.path.exists(output_path):
             os.remove(output_path)
         os.rename(created, output_path)
@@ -208,6 +272,10 @@ def export_view_image(doc, view_id, output_path, width_px, height_px, diag=None)
 
 def _resize_to_exact(path, width_px, height_px, diag=None):
     """Resize the image at ``path`` in-place to exactly ``width_px`` x ``height_px``.
+
+    After the crop box is aligned to the VOP grid, the Revit export should
+    already have the correct aspect ratio and this call is a no-op.  It guards
+    against any residual floating-point discrepancy.
 
     Tries Pillow first (CPython), then System.Drawing (IronPython/Revit).
     """
@@ -258,8 +326,11 @@ def export_pipeline_views_to_pngs(doc, pipeline_result, output_dir, pixels_per_c
     Produces one PNG per view using the same canonical filename as vop_raster/:
         {safe_view_name}_{view_id}.png
 
-    VOP-excluded categories are hidden per-view via a rolled-back Transaction
-    before each export so the rendered content matches VOP's analysis scope.
+    Per view, a rolled-back Transaction temporarily:
+      - Hides VOP-excluded categories
+      - Expands the crop box to the exact VOP grid extent
+
+    so the rendered image is spatially aligned with the vop_raster counterpart.
 
     Args:
         doc:             Revit Document.
@@ -283,7 +354,6 @@ def export_pipeline_views_to_pngs(doc, pipeline_result, output_dir, pixels_per_c
         except ImportError:
             pass
 
-        # Accept both process_document_views() (list) and run_vop_pipeline() (dict).
         views = pipeline_result if isinstance(pipeline_result, list) \
             else pipeline_result.get("views", [])
 
@@ -293,18 +363,22 @@ def export_pipeline_views_to_pngs(doc, pipeline_result, output_dir, pixels_per_c
 
             view_id_raw = view_data.get("view_id")
             view_name = view_data.get("view_name", "unknown")
-            width = int(view_data.get("width", 0) or 0)
-            height = int(view_data.get("height", 0) or 0)
+            W = int(view_data.get("grid_W", 0) or 0)
+            H = int(view_data.get("grid_H", 0) or 0)
+            cell_size_ft = float(
+                view_data.get("cell_size_ft_effective")
+                or view_data.get("cell_size_ft")
+                or 0
+            )
 
-            if not view_id_raw or width <= 0 or height <= 0:
-                print("[view_raster] Skipping view '{}' (id={}, w={}, h={})".format(
-                    view_name, view_id_raw, width, height))
+            if not view_id_raw or W <= 0 or H <= 0:
+                print("[view_raster] Skipping view '{}' (id={}, W={}, H={})".format(
+                    view_name, view_id_raw, W, H))
                 continue
 
-            width_px = width * pixels_per_cell
-            height_px = height * pixels_per_cell
+            width_px = W * pixels_per_cell
+            height_px = H * pixels_per_cell
 
-            # Canonical filename — identical to vop_raster counterpart.
             filename = _canonical_name(view_name, view_id_raw)
             output_path = os.path.join(output_dir, filename)
 
@@ -315,8 +389,14 @@ def export_pipeline_views_to_pngs(doc, pipeline_result, output_dir, pixels_per_c
                 except Exception:
                     eid = view_id_raw
 
+            vop_grid = {"W": W, "H": H, "cell_size_ft": cell_size_ft} \
+                if cell_size_ft > 0 else None
+
             t0 = time.perf_counter()
-            png_path = export_view_image(doc, eid, output_path, width_px, height_px, diag=diag)
+            png_path = export_view_image(
+                doc, eid, output_path, width_px, height_px,
+                vop_grid=vop_grid, diag=diag,
+            )
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
 
             if png_path:
