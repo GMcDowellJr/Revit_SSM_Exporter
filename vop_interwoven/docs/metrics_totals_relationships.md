@@ -31,6 +31,7 @@ These are not separate manifest invariants, but they are useful diagnostics:
 
 - **Model-present cells**
   - `Cells_ModelOnly + Cells_ModelAnno + Cells_ModelExt + Cells_All3`
+  - Model presence includes final occupancy (`model_mask` / `occ_*`) as well as edge/proxy ink.
 - **Annotation-present cells**
   - `Cells_AnnoOnly + Cells_ModelAnno + Cells_AnnoExt + Cells_All3`
 - **External-present-by-partition cells**

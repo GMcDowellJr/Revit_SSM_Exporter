@@ -341,7 +341,7 @@ def _compute_cell_metrics_np(raster, mode, np):
     ak = _pad_int(ak, -1)
 
     if mode == "ink":
-        has_model = (ek != -1) | (pk != -1) | pm
+        has_model = mm | (ek != -1) | (pk != -1) | pm
     elif mode == "edge":
         has_model = (ek != -1)
     elif mode == "proxy":
@@ -403,6 +403,8 @@ def _compute_cell_metrics_py(raster, mode, diag):
             return present
         if mode == "ink":
             present = False
+            if idx < len(model_mask):
+                present = present or bool(model_mask[idx])
             if idx < len(model_edge_key):
                 present = present or (model_edge_key[idx] != -1)
             if idx < len(model_proxy_key):

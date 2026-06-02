@@ -135,6 +135,9 @@ def scan_final_state_totals(
 
     for idx in range(total):
         has_model = bool(raster.has_model_present(idx, mode=model_presence_mode))
+        has_model = has_model or (idx < len(occ_host) and bool(occ_host[idx]))
+        has_model = has_model or (idx < len(occ_link) and bool(occ_link[idx]))
+        has_model = has_model or (idx < len(occ_dwg) and bool(occ_dwg[idx]))
         anno_idx = anno_keys[idx] if idx < len(anno_keys) else -1
         has_anno = anno_idx != -1
 
