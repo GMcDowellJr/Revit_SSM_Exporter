@@ -80,6 +80,15 @@ def process_with_streaming(doc, view_ids, cfg, on_view_complete, root_cache=None
             
             if results and len(results) > 0:
                 view_result = results[0]
+                try:
+                    if (not bool(view_result.get("from_cache"))) and "raster" in view_result:
+                        from vop_interwoven.root_cache import extract_metrics_from_view_result
+                        _metadata, metrics, _element_summary, _timings = extract_metrics_from_view_result(view_result, cfg)
+                        if isinstance(metrics, dict) and metrics:
+                            view_result["metrics"] = metrics
+                except Exception:
+                    # Do not block streaming export; downstream row builders keep legacy fallbacks.
+                    pass
                 on_view_complete(view_result)
                 
                 # Lightweight summary
@@ -497,6 +506,25 @@ class StreamingExporter:
             # Never block export due to cache rehydration issues; downstream will fill sentinels.
             pass
 
+        # On fresh raster-bearing views, compute and attach the cache/export metrics before
+        # any CSV row builder runs.  This avoids the legacy row path recomputing from
+        # partially rehydrated dict payloads and exporting zeroed partition counts.
+        try:
+            is_fresh_raster = (not bool(view_result.get("from_cache"))) and ("raster" in view_result)
+            if is_fresh_raster:
+                c = view_result.get("cache", {})
+                if isinstance(c, dict) and "HIT" in str(c.get("view_cache", "")).upper():
+                    is_fresh_raster = False
+                if isinstance(c, dict) and str(c.get("cache_type", "")).lower() == "root":
+                    is_fresh_raster = False
+            if is_fresh_raster:
+                from vop_interwoven.root_cache import extract_metrics_from_view_result
+                _metadata, metrics, _element_summary, _timings = extract_metrics_from_view_result(view_result, self.cfg)
+                if isinstance(metrics, dict) and metrics:
+                    view_result["metrics"] = metrics
+        except Exception:
+            pass
+
         from vop_interwoven.csv_export import (
             view_result_to_core_row,
             view_result_to_vop_row,
@@ -703,15 +731,29 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
             except Exception as e:
                 print("[Streaming] memory mark view_start failed: {}".format(e))
             # Process single view (cache miss)
-            results = process_document_views(
-                doc,
-                [view_id],
-                cfg,
-                root_cache=root_cache,
-                reset_family_caches=False,
-                geometry_cache=geometry_cache,
-                elem_cache=elem_cache,
-            )
+            try:
+                results = process_document_views(
+                    doc,
+                    [view_id],
+                    cfg,
+                    root_cache=root_cache,
+                    reset_family_caches=False,
+                    geometry_cache=geometry_cache,
+                    elem_cache=elem_cache,
+                )
+            except TypeError as e:
+                # Some tests/legacy shims monkeypatch process_document_views with the
+                # older signature.  Preserve streaming semantics while still passing
+                # reset_family_caches=False in that compatibility path.
+                if "unexpected keyword argument" not in str(e):
+                    raise
+                results = process_document_views(
+                    doc,
+                    [view_id],
+                    cfg,
+                    root_cache=root_cache,
+                    reset_family_caches=False,
+                )
 
             if results and len(results) > 0:
                 view_result = results[0]
@@ -776,6 +818,16 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                         "error": "Missing raster, metrics, and cache-hit marker"
                     })
                     continue
+
+                if has_raster and not is_cache_hit:
+                    try:
+                        from vop_interwoven.root_cache import extract_metrics_from_view_result
+                        _metadata, metrics, _element_summary, _timings = extract_metrics_from_view_result(view_result, cfg)
+                        if isinstance(metrics, dict) and metrics:
+                            view_result["metrics"] = metrics
+                            has_metrics = True
+                    except Exception:
+                        pass
                     
                 width = int(view_result.get("width", 0) or 0)
                 height = int(view_result.get("height", 0) or 0)

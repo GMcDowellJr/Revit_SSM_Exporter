@@ -98,6 +98,9 @@ def scan_final_state_totals(
     proxy_keys = _safe_seq(getattr(raster, "model_proxy_key", []))
     anno_keys = _safe_seq(getattr(raster, "anno_key", []))
     anno_meta = _safe_seq(getattr(raster, "anno_meta", []))
+    occ_host = _safe_seq(getattr(raster, "occ_host", []))
+    occ_link = _safe_seq(getattr(raster, "occ_link", []))
+    occ_dwg = _safe_seq(getattr(raster, "occ_dwg", []))
 
     classes = (
         manifest.get("families", {})
@@ -132,6 +135,9 @@ def scan_final_state_totals(
 
     for idx in range(total):
         has_model = bool(raster.has_model_present(idx, mode=model_presence_mode))
+        has_model = has_model or (idx < len(occ_host) and bool(occ_host[idx]))
+        has_model = has_model or (idx < len(occ_link) and bool(occ_link[idx]))
+        has_model = has_model or (idx < len(occ_dwg) and bool(occ_dwg[idx]))
         anno_idx = anno_keys[idx] if idx < len(anno_keys) else -1
         has_anno = anno_idx != -1
 
@@ -141,9 +147,9 @@ def scan_final_state_totals(
         src_edge = _get_source_type(raster, k_edge)
         src_proxy = _get_source_type(raster, k_proxy)
 
-        host = (src_edge == "HOST") or (src_proxy == "HOST")
-        dwg = (src_edge == "DWG") or (src_proxy == "DWG")
-        rvt = (src_edge == "LINK") or (src_proxy == "LINK")
+        host = (src_edge == "HOST") or (src_proxy == "HOST") or (idx < len(occ_host) and bool(occ_host[idx]))
+        dwg = (src_edge == "DWG") or (src_proxy == "DWG") or (idx < len(occ_dwg) and bool(occ_dwg[idx]))
+        rvt = (src_edge == "LINK") or (src_proxy == "LINK") or (idx < len(occ_link) and bool(occ_link[idx]))
         ext = dwg or rvt
 
         if has_model and has_anno and ext:

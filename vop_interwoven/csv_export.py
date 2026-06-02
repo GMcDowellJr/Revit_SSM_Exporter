@@ -37,14 +37,26 @@ def _normalize_locked_metrics_for_legacy_csv(locked_metrics):
     total = int(m.get("TotalCells", 0) or 0)
     empty = int(m.get("Cells_Empty", 0) or 0)
 
-    # Legacy ModelOnly means model-present && !anno (includes ext-partitioned model cells)
-    model_only = int(m.get("Cells_ModelOnly", 0) or 0) + int(m.get("Cells_ModelExt", 0) or 0)
+    # Legacy 4-way VOP buckets are presence buckets over model-vs-annotation.
+    # In the locked 8-way manifest, external content (E) is linked/DWG model
+    # content.  Therefore E-only belongs in legacy ModelOnly, and A+E belongs
+    # in legacy Overlap.  Ext_Cells_* columns remain the source overlay that lets
+    # consumers distinguish host vs linked/DWG contribution.
+    model_only = (
+        int(m.get("Cells_ModelOnly", 0) or 0)
+        + int(m.get("Cells_ModelExt", 0) or 0)
+        + int(m.get("Cells_ExtOnly", 0) or 0)
+    )
 
-    # Legacy AnnoOnly means anno-present && !model
-    anno_only = int(m.get("Cells_AnnoOnly", 0) or 0) + int(m.get("Cells_AnnoExt", 0) or 0)
+    # Legacy AnnoOnly means annotation-present and no model (host or external).
+    anno_only = int(m.get("Cells_AnnoOnly", 0) or 0)
 
-    # Legacy Overlap means model-present && anno-present
-    overlap = int(m.get("Cells_ModelAnno", 0) or 0) + int(m.get("Cells_All3", 0) or 0)
+    # Legacy Overlap means annotation-present and model-present (host or external).
+    overlap = (
+        int(m.get("Cells_ModelAnno", 0) or 0)
+        + int(m.get("Cells_AnnoExt", 0) or 0)
+        + int(m.get("Cells_All3", 0) or 0)
+    )
 
     out = {
         "TotalCells": total,
@@ -68,6 +80,17 @@ def _normalize_locked_metrics_for_legacy_csv(locked_metrics):
     }
 
     return out
+
+
+
+def _has_legacy_partition_metrics(metrics):
+    return isinstance(metrics, dict) and all(
+        key in metrics for key in ("TotalCells", "Empty", "ModelOnly", "AnnoOnly", "Overlap")
+    )
+
+
+def _has_locked_partition_metrics(metrics):
+    return isinstance(metrics, dict) and "TotalCells" in metrics and "Cells_Empty" in metrics
 
 def _raster_to_dict_like(raster_payload):
     """Return a dict-like raster view without forcing ViewRaster.to_dict() copies."""
@@ -99,6 +122,9 @@ def _raster_to_dict_like(raster_payload):
         "model_proxy_presence": _safe_seq(getattr(raster_payload, "model_proxy_presence", [])),
         "model_proxy_key": _safe_seq(getattr(raster_payload, "model_proxy_key", [])),
         "model_mask": _safe_seq(getattr(raster_payload, "model_mask", [])),
+        "occ_host": _safe_seq(getattr(raster_payload, "occ_host", [])),
+        "occ_link": _safe_seq(getattr(raster_payload, "occ_link", [])),
+        "occ_dwg": _safe_seq(getattr(raster_payload, "occ_dwg", [])),
         "anno_over_model": _safe_seq(getattr(raster_payload, "anno_over_model", [])),
         "anno_key": _safe_seq(getattr(raster_payload, "anno_key", [])),
         "anno_meta": _safe_seq(getattr(raster_payload, "anno_meta", [])),
@@ -133,7 +159,7 @@ def _get_metrics_triplet_from_view_result(view_result):
     # (Empty, ModelOnly, AnnoOnly, Overlap) before callers attempt .get("Empty").
     # Root cache already performs this normalization before storing, so cache-hit
     # view_results carry the correct keys — this only fires for fresh-processed views.
-    if metrics is not None and "Cells_Empty" in metrics and "Empty" not in metrics:
+    if _has_locked_partition_metrics(metrics) and "Empty" not in metrics:
         metrics = _normalize_locked_metrics_for_legacy_csv(metrics)
         # _normalize_locked_metrics_for_legacy_csv folds AnnoCells_* and Ext_Cells_*
         # into the returned dict.  Populate anno_metrics/ext_metrics from it when
@@ -141,6 +167,12 @@ def _get_metrics_triplet_from_view_result(view_result):
         if anno_metrics is None:
             anno_metrics = {k: metrics[k] for k in metrics if k.startswith("AnnoCells_")}
         if ext_metrics is None:
+            ext_metrics = {k: metrics[k] for k in metrics if k.startswith("Ext_Cells_")}
+
+    if isinstance(metrics, dict):
+        if anno_metrics is None and any(k.startswith("AnnoCells_") for k in metrics):
+            anno_metrics = {k: metrics[k] for k in metrics if k.startswith("AnnoCells_")}
+        if ext_metrics is None and any(k.startswith("Ext_Cells_") for k in metrics):
             ext_metrics = {k: metrics[k] for k in metrics if k.startswith("Ext_Cells_")}
 
     return metrics, anno_metrics, ext_metrics
@@ -180,7 +212,12 @@ def compute_external_cell_metrics(raster):
         - Tolerates missing element_meta or key arrays by returning zeros.
     """
     def _get_source_type(key_index):
-        if not key_index:
+        if key_index is None:
+            return None
+        try:
+            if int(key_index) < 0:
+                return None
+        except Exception:
             return None
         meta = None
         em = getattr(raster, "element_meta", None)
@@ -204,23 +241,32 @@ def compute_external_cell_metrics(raster):
 
     edge_keys = _safe_seq(getattr(raster, "model_edge_key", None))
     proxy_keys = _safe_seq(getattr(raster, "model_proxy_key", None))
+    occ_host = _safe_seq(getattr(raster, "occ_host", None))
+    occ_link = _safe_seq(getattr(raster, "occ_link", None))
+    occ_dwg = _safe_seq(getattr(raster, "occ_dwg", None))
 
-    n = max(len(edge_keys), len(proxy_keys))
+    n = max(len(edge_keys), len(proxy_keys), len(occ_host), len(occ_link), len(occ_dwg))
     if n == 0:
         return {"Ext_Cells_Any": 0, "Ext_Cells_Only": 0, "Ext_Cells_DWG": 0, "Ext_Cells_RVT": 0}
+
+    def _bool_at(seq, idx):
+        try:
+            return idx < len(seq) and bool(seq[idx])
+        except Exception:
+            return False
 
     ext_any = ext_only = ext_dwg = ext_rvt = 0
 
     for i in range(n):
-        k_edge = edge_keys[i] if i < len(edge_keys) else 0
-        k_proxy = proxy_keys[i] if i < len(proxy_keys) else 0
+        k_edge = edge_keys[i] if i < len(edge_keys) else -1
+        k_proxy = proxy_keys[i] if i < len(proxy_keys) else -1
 
         src_edge = _get_source_type(k_edge)
         src_proxy = _get_source_type(k_proxy)
 
-        host = (src_edge == "HOST") or (src_proxy == "HOST")
-        dwg = (src_edge == "DWG") or (src_proxy == "DWG")
-        rvt = (src_edge == "LINK") or (src_proxy == "LINK")
+        host = (src_edge == "HOST") or (src_proxy == "HOST") or _bool_at(occ_host, i)
+        dwg = (src_edge == "DWG") or (src_proxy == "DWG") or _bool_at(occ_dwg, i)
+        rvt = (src_edge == "LINK") or (src_proxy == "LINK") or _bool_at(occ_link, i)
 
         ext = dwg or rvt
         if ext:
@@ -295,7 +341,7 @@ def _compute_cell_metrics_np(raster, mode, np):
     ak = _pad_int(ak, -1)
 
     if mode == "ink":
-        has_model = (ek != -1) | (pk != -1) | pm
+        has_model = mm | (ek != -1) | (pk != -1) | pm
     elif mode == "edge":
         has_model = (ek != -1)
     elif mode == "proxy":
@@ -357,6 +403,8 @@ def _compute_cell_metrics_py(raster, mode, diag):
             return present
         if mode == "ink":
             present = False
+            if idx < len(model_mask):
+                present = present or bool(model_mask[idx])
             if idx < len(model_edge_key):
                 present = present or (model_edge_key[idx] != -1)
             if idx < len(model_proxy_key):
@@ -919,7 +967,17 @@ def compute_config_hash(config):
         # Return a deterministic sentinel rather than crashing.
         return "00000000"
 
-    # Build config payload string using actual Config attributes
+    # Keep CSV ConfigHash aligned with the root cache's config_hash.  That hash
+    # uses Config.to_dict() and excludes only cache-location wiring, so cache JSON
+    # and CSV rows can be compared directly for the same run.
+    try:
+        from .root_cache import compute_config_hash as _root_compute_config_hash
+        if hasattr(config, "to_dict"):
+            return _root_compute_config_hash(config)
+    except Exception:
+        pass
+
+    # Fallback for lightweight test/config shims that do not implement to_dict().
     config_str = f"{config.tiny_max}|{config.thin_max}|" \
                  f"{config.adaptive_tile_size}|{config.proxy_mask_mode}|" \
                  f"{config.over_model_includes_proxies}|{config.tile_size}|" \
@@ -927,7 +985,6 @@ def compute_config_hash(config):
                  f"{config.cell_size_paper_in}|{config.max_sheet_width_in}|{config.max_sheet_height_in}|" \
                  f"{config.bounds_buffer_in}"
 
-    # Compute hash
     hash_obj = hashlib.sha256(config_str.encode('utf-8'))
     return hash_obj.hexdigest()[:8]
 
@@ -1483,6 +1540,9 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
         raster.model_proxy_mask = raster_dict.get("model_proxy_mask", raster_dict.get("model_proxy_presence", []))
         raster.model_proxy_key = raster_dict.get("model_proxy_key", [])
         raster.model_mask = raster_dict.get("model_mask", [])
+        raster.occ_host = raster_dict.get("occ_host", [])
+        raster.occ_link = raster_dict.get("occ_link", [])
+        raster.occ_dwg = raster_dict.get("occ_dwg", [])
         raster.anno_over_model = raster_dict.get("anno_over_model", [])
         raster.anno_key = raster_dict.get("anno_key", [])
         raster.anno_meta = raster_dict.get("anno_meta", [])
@@ -2013,6 +2073,47 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
     if ext_metrics is None:
         ext_metrics = metrics
 
+    metrics_incomplete = bool(raster_dict) and (not _has_legacy_partition_metrics(metrics))
+    if metrics_incomplete:
+        # Reconstruct raster object for metrics computation when fresh-processed
+        # ViewRaster payloads did not carry precomputed metrics.  This keeps the
+        # direct CSV path in parity with streaming/root-cache write-through.
+        from .core.raster import ViewRaster
+        from .core.math_utils import Bounds2D
+
+        bounds_dict = raster_dict.get("bounds_xy", {})
+        bounds = Bounds2D(
+            bounds_dict.get("xmin", 0),
+            bounds_dict.get("ymin", 0),
+            bounds_dict.get("xmax", 100),
+            bounds_dict.get("ymax", 100)
+        )
+
+        raster = ViewRaster(
+            width=raster_dict.get("width", 0),
+            height=raster_dict.get("height", 0),
+            cell_size=raster_dict.get("cell_size_ft", 1.0),
+            bounds=bounds,
+            tile_size=16
+        )
+
+        raster.model_edge_key = raster_dict.get("model_edge_key", [])
+        raster.model_proxy_mask = raster_dict.get("model_proxy_mask", raster_dict.get("model_proxy_presence", []))
+        raster.model_proxy_key = raster_dict.get("model_proxy_key", [])
+        raster.model_mask = raster_dict.get("model_mask", [])
+        raster.occ_host = raster_dict.get("occ_host", [])
+        raster.occ_link = raster_dict.get("occ_link", [])
+        raster.occ_dwg = raster_dict.get("occ_dwg", [])
+        raster.anno_over_model = raster_dict.get("anno_over_model", [])
+        raster.anno_key = raster_dict.get("anno_key", [])
+        raster.anno_meta = raster_dict.get("anno_meta", [])
+        raster.element_meta = raster_dict.get("element_meta", raster_dict.get("elements_meta", []))
+
+        model_presence_mode = getattr(config, "model_presence_mode", "ink")
+        metrics = compute_cell_metrics(raster, model_presence_mode=model_presence_mode)
+        anno_metrics = compute_annotation_type_metrics(raster)
+        ext_metrics = compute_external_cell_metrics(raster)
+
     if not getattr(config, "csv_compat_mode", True):
         manifest_cols = get_vop_csv_header(config)
         raw_metrics = view_result.get("metrics") if isinstance(view_result.get("metrics"), dict) else {}
@@ -2059,6 +2160,9 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
         raster.model_proxy_mask = raster_dict.get("model_proxy_mask", raster_dict.get("model_proxy_presence", []))
         raster.model_proxy_key = raster_dict.get("model_proxy_key", [])
         raster.model_mask = raster_dict.get("model_mask", [])
+        raster.occ_host = raster_dict.get("occ_host", [])
+        raster.occ_link = raster_dict.get("occ_link", [])
+        raster.occ_dwg = raster_dict.get("occ_dwg", [])
         raster.anno_over_model = raster_dict.get("anno_over_model", [])
         raster.anno_key = raster_dict.get("anno_key", [])
         raster.anno_meta = raster_dict.get("anno_meta", [])

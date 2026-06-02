@@ -336,6 +336,8 @@ def extract_metrics_from_view_result(view_result, cfg):
         compute_external_cell_metrics,
         compute_annotation_type_metrics,
         _normalize_locked_metrics_for_legacy_csv,
+        _has_legacy_partition_metrics,
+        _has_locked_partition_metrics,
     )
     
     raster_payload = view_result.get("raster", None)
@@ -359,23 +361,33 @@ def extract_metrics_from_view_result(view_result, cfg):
             "model_proxy_mask": _safe_seq(getattr(raster_payload, "model_proxy_mask", [])),
             "model_proxy_key": _safe_seq(getattr(raster_payload, "model_proxy_key", [])),
             "model_mask": _safe_seq(getattr(raster_payload, "model_mask", [])),
+            "occ_host": _safe_seq(getattr(raster_payload, "occ_host", [])),
+            "occ_link": _safe_seq(getattr(raster_payload, "occ_link", [])),
+            "occ_dwg": _safe_seq(getattr(raster_payload, "occ_dwg", [])),
             "anno_over_model": _safe_seq(getattr(raster_payload, "anno_over_model", [])),
             "anno_key": _safe_seq(getattr(raster_payload, "anno_key", [])),
             "anno_meta": _safe_seq(getattr(raster_payload, "anno_meta", [])),
             "element_meta": _safe_seq(getattr(raster_payload, "element_meta", [])),
         }
 
-    # Prefer precomputed per-view metrics (scanner output) when present.
+    # Prefer precomputed per-view metrics only when they include the partition
+    # fields needed by the legacy CSV/cache schema.  Some pipeline payloads carry
+    # a metrics stub with only TotalCells; treating that as authoritative exports
+    # zeroes for Empty/ModelOnly/AnnoOnly/Overlap.
     precomputed_metrics = view_result.get("metrics")
-    if isinstance(precomputed_metrics, dict) and precomputed_metrics:
-        pre = _normalize_locked_metrics_for_legacy_csv(precomputed_metrics)
+    use_precomputed = _has_legacy_partition_metrics(precomputed_metrics) or _has_locked_partition_metrics(precomputed_metrics)
+    if use_precomputed:
+        if _has_locked_partition_metrics(precomputed_metrics) and "Empty" not in precomputed_metrics:
+            pre = _normalize_locked_metrics_for_legacy_csv(precomputed_metrics)
+        else:
+            pre = dict(precomputed_metrics)
         metrics = {
             **pre,
             "CellSize_ft": view_result.get("cell_size")
             or raster_dict.get("cell_size_ft", 0.0),
         }
     else:
-        # Reconstruct raster object for metric computation (fallback for legacy payloads)
+        # Reconstruct raster object for metric computation (fallback for legacy/incomplete payloads)
         from vop_interwoven.core.raster import ViewRaster
         from vop_interwoven.core.math_utils import Bounds2D
         bounds_dict = raster_dict.get("bounds_xy", {}) or {}
@@ -398,6 +410,9 @@ def extract_metrics_from_view_result(view_result, cfg):
         raster.model_proxy_mask = raster_dict.get("model_proxy_mask", raster_dict.get("model_proxy_presence", []))
         raster.model_proxy_key = raster_dict.get("model_proxy_key", [])
         raster.model_mask = raster_dict.get("model_mask", [])
+        raster.occ_host = raster_dict.get("occ_host", [])
+        raster.occ_link = raster_dict.get("occ_link", [])
+        raster.occ_dwg = raster_dict.get("occ_dwg", [])
         raster.anno_over_model = raster_dict.get("anno_over_model", [])
         raster.anno_key = raster_dict.get("anno_key", [])
         raster.anno_meta = raster_dict.get("anno_meta", [])

@@ -11,6 +11,18 @@ import time
 from collections import OrderedDict
 
 
+def _normalize_source_type(source_type, source_id=None):
+    st = str(source_type or "").upper()
+    if st in ("HOST", "LINK", "DWG"):
+        return st
+    sid = str(source_id or "").upper()
+    if sid.startswith("RVT_LINK") or "LINK" in sid:
+        return "LINK"
+    if sid.startswith("DWG") or "DWG" in sid:
+        return "DWG"
+    return "HOST"
+
+
 class ElementFingerprint:
     """Fingerprint of element geometry: centroid + size + metadata.
 
@@ -31,7 +43,7 @@ class ElementFingerprint:
         category: Category name
     """
 
-    def __init__(self, elem_id, bbox_model=None, params=None, category=None):
+    def __init__(self, elem_id, bbox_model=None, params=None, category=None, source_type="HOST"):
         """Initialize element fingerprint from bbox and metadata.
 
         Args:
@@ -42,6 +54,7 @@ class ElementFingerprint:
         """
         self.elem_id = int(elem_id) if elem_id is not None else None
         self.category = str(category) if category is not None else "Unknown"
+        self.source_type = _normalize_source_type(source_type)
         self.params = dict(params) if params is not None else {}
 
         # Extract centroid and size from bbox
@@ -74,7 +87,7 @@ class ElementFingerprint:
     def to_signature_string(self, precision=2):
         """Convert fingerprint to signature string for cache invalidation.
 
-        Format: "elem_id:cx=X,cy=Y,cz=Z:w=W,h=H,d=D:Category"
+        Format: "elem_id:source_type:cx=X,cy=Y,cz=Z:w=W,h=H,d=D:Category"
 
         Args:
             precision: Number of decimal places for floats (default: 2)
@@ -85,7 +98,7 @@ class ElementFingerprint:
         Example:
             >>> fp = ElementFingerprint(12345, bbox, category="Walls")
             >>> fp.to_signature_string(precision=2)
-            "12345:cx=10.50,cy=20.30,cz=5.00:w=10.00,h=8.00,d=3.50:Walls"
+            "12345:HOST:cx=10.50,cy=20.30,cz=5.00:w=10.00,h=8.00,d=3.50:Walls"
         """
         try:
             # Format floats with specified precision
@@ -97,7 +110,7 @@ class ElementFingerprint:
             centroid_str = f"cx={fmt.format(cx)},cy={fmt.format(cy)},cz={fmt.format(cz)}"
             size_str = f"w={fmt.format(w)},h={fmt.format(h)},d={fmt.format(d)}"
 
-            return f"{self.elem_id}:{centroid_str}:{size_str}:{self.category}"
+            return f"{self.elem_id}:{self.source_type}:{centroid_str}:{size_str}:{self.category}"
 
         except Exception as e:
             # Fallback: ID only
@@ -114,6 +127,7 @@ class ElementFingerprint:
             "centroid": list(self.centroid),
             "size": list(self.size),
             "category": self.category,
+            "source_type": self.source_type,
             "params": self.params,
         }
 
@@ -132,6 +146,7 @@ class ElementFingerprint:
         fp.centroid = tuple(d.get("centroid", [0.0, 0.0, 0.0]))
         fp.size = tuple(d.get("size", [0.0, 0.0, 0.0]))
         fp.category = d.get("category", "Unknown")
+        fp.source_type = _normalize_source_type(d.get("source_type"))
         fp.params = d.get("params", {})
         return fp
 
@@ -171,7 +186,7 @@ class ElementCache:
         self.misses = 0
         self.created_utc = time.time()
 
-    def get_or_create_fingerprint(self, elem, elem_id, source_id="HOST", view=None, extract_params=None):
+    def get_or_create_fingerprint(self, elem, elem_id, source_id="HOST", source_type="HOST", view=None, extract_params=None):
         """Get cached fingerprint or create new one.
 
         Args:
@@ -194,10 +209,17 @@ class ElementCache:
 
             # Check cache
             if cache_key in self.cache:
-                # Cache hit: move to end (LRU) and return
+                # Cache hit: move to end (LRU) and return.  Upgrade older
+                # persisted fingerprints that were missing or carrying unknown
+                # source_type before returning them.
                 self.cache.move_to_end(cache_key)
                 self.hits += 1
-                return self.cache[cache_key]
+                fp = self.cache[cache_key]
+                requested_source_type = _normalize_source_type(source_type, source_id)
+                current_source_type = getattr(fp, "source_type", None)
+                if current_source_type not in ("HOST", "LINK", "DWG") or current_source_type != requested_source_type:
+                    fp.source_type = requested_source_type
+                return fp
 
             # Cache miss: create fingerprint
             self.misses += 1
@@ -219,7 +241,8 @@ class ElementCache:
                 elem_id=elem_id,
                 bbox_model=bbox_model,
                 params=None,  # Phase 3 will add param extraction
-                category=category
+                category=category,
+                source_type=source_type
             )
 
             # Store in cache with LRU eviction
@@ -368,6 +391,8 @@ class ElementCache:
 
                 # Deserialize fingerprint
                 fingerprint = ElementFingerprint.from_dict(fp_dict)
+                if not fp_dict.get("source_type"):
+                    fingerprint.source_type = _normalize_source_type(None, source_id)
 
                 # Add to cache
                 cache.cache[cache_key] = fingerprint
@@ -434,6 +459,7 @@ class ElementCache:
                     "width",
                     "height",
                     "depth",
+                    "source_type",
                     "view_count",
                     "view_ids",
                 ])
@@ -459,6 +485,7 @@ class ElementCache:
                         f"{w:.3f}",
                         f"{h:.3f}",
                         f"{d:.3f}",
+                        getattr(fingerprint, "source_type", "HOST"),
                         view_count,
                         view_ids_str,
                     ])

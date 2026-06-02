@@ -318,6 +318,7 @@ def _view_signature(doc_obj, view_obj, view_mode_val, cfg_obj=None, elem_cache=N
                         elem=elem,
                         elem_id=elem_id,
                         source_id="HOST",
+                        source_type="HOST",
                         view=None,  # Use model bbox for cross-view reuse
                         extract_params=None,
                     )
@@ -2539,7 +2540,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 view_diag["strategy_matrix"][elem_class][strategy_key] = view_diag["strategy_matrix"][elem_class].get(strategy_key, 0) + 1
 
             conf_key = confidence if isinstance(confidence, str) else None
-            if conf_key in view_diag["confidence_counts"]:
+            if elem_class == "AREAL" and conf_key in view_diag["confidence_counts"]:
                 view_diag["confidence_counts"][conf_key] += 1
 
             if confidence == CONF_LOW and elem_class == "AREAL":

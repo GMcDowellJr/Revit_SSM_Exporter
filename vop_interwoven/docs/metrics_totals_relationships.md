@@ -14,6 +14,7 @@ This document defines which metric totals are exact equalities vs subset/superse
 ## 2) Subset/superset inequalities (must always hold)
 
 - `ExtFinalCells_Only <= ExtFinalCells_Any`
+  - `ExtFinalCells_Only` means external-present cells with no host-present ink or occupancy.
 - `ExtFinalCells_DWG <= ExtFinalCells_Any`
 - `ExtFinalCells_RVT <= ExtFinalCells_Any`
 - `ExtFinalCells_DWG_RVT <= ExtFinalCells_DWG`
@@ -30,12 +31,30 @@ These are not separate manifest invariants, but they are useful diagnostics:
 
 - **Model-present cells**
   - `Cells_ModelOnly + Cells_ModelAnno + Cells_ModelExt + Cells_All3`
+  - Model presence includes final occupancy (`model_mask` / `occ_*`) as well as edge/proxy ink.
 - **Annotation-present cells**
   - `Cells_AnnoOnly + Cells_ModelAnno + Cells_AnnoExt + Cells_All3`
 - **External-present-by-partition cells**
   - `Cells_ExtOnly + Cells_ModelExt + Cells_AnnoExt + Cells_All3`
 
-## 4) What is allowed to exceed what
+
+## 4) Legacy `views_vop` 4-way presence buckets
+
+`views_vop_*.csv` preserves the older four mutually-exclusive presence columns:
+
+- `Empty`: `Cells_Empty`
+- `ModelOnly`: `Cells_ModelOnly + Cells_ModelExt + Cells_ExtOnly`
+- `AnnoOnly`: `Cells_AnnoOnly`
+- `Overlap`: `Cells_ModelAnno + Cells_AnnoExt + Cells_All3`
+
+In the locked 8-state manifest, `E` means external model content (RVT link or
+DWG).  Therefore external-only cells are still model-present cells in the legacy
+CSV partition, while `Ext_Cells_*` columns provide the source overlay needed to
+distinguish host-vs-linked/DWG contribution.  For example, linked-only cells
+contribute to both `ModelOnly` and `Ext_Cells_RVT`; host-only cells contribute to
+`ModelOnly` but not `Ext_Cells_*`.
+
+## 5) What is allowed to exceed what
 
 ### Model classes are multihot (not disjoint)
 
@@ -46,7 +65,7 @@ These are not separate manifest invariants, but they are useful diagnostics:
   - `sum(ModelClassCells_*)` is **not required** to equal any single partition bucket.
   - `sum(ModelClassCells_*)` may exceed model-present cell counts when multi-class cells exist.
 
-## 5) Quick triage sequence when numbers look wrong
+## 6) Quick triage sequence when numbers look wrong
 
 1. Check partition identity first (`sum partition == TotalCells`).
 2. Check annotation identity (`sum AnnoFinalCells_* == AnnoPresentFinal`).

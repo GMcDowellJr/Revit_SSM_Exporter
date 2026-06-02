@@ -37,3 +37,17 @@ def test_csv_metrics_edge_counts_edges():
     m = compute_cell_metrics(r, model_presence_mode="edge")
     assert m["ModelOnly"] == 1
     assert m["Empty"] == 3
+
+
+def test_csv_metrics_ink_counts_occupancy_fill():
+    r = _mk_raster()
+    idx = r.get_cell_index(0, 0)
+
+    r.model_edge_key[idx] = -1
+    r.model_proxy_key[idx] = -1
+    r.model_proxy_mask[idx] = False
+    r.model_mask[idx] = True
+
+    m = compute_cell_metrics(r, model_presence_mode="ink")
+    assert m["ModelOnly"] == 1
+    assert m["Empty"] == 3

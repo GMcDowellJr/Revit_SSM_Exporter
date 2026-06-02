@@ -395,6 +395,7 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None, 
                     elem=e,
                     elem_id=elem_id,
                     source_id="HOST",
+                    source_type="HOST",
                     view=None,  # Use model bbox for reuse
                     extract_params=None
                 )
@@ -446,6 +447,23 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None, 
             else:
                 bbox_none += 1
 
+            fingerprint = None
+            proxy_elem_id = getattr(getattr(proxy, "Id", None), "IntegerValue", None)
+            proxy_source_type = getattr(proxy, "source_type", "LINK")
+            proxy_source_id = getattr(proxy, "source_id", getattr(proxy, "doc_key", proxy_source_type))
+            if elem_cache is not None and proxy_elem_id is not None:
+                try:
+                    fingerprint = elem_cache.get_or_create_fingerprint(
+                        elem=proxy,
+                        elem_id=proxy_elem_id,
+                        source_id=proxy_source_id,
+                        source_type=proxy_source_type,
+                        view=None,
+                        extract_params=None,
+                    )
+                except Exception:
+                    fingerprint = None
+
             result.append(
                 {
                     "element": proxy,
@@ -453,8 +471,9 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None, 
                     "bbox": bbox,
                     "bbox_source": bbox_source,
                     "bbox_link": getattr(proxy, "bbox_link", None),
-                    "source_type": getattr(proxy, "source_type", "HOST"),
-                    "source_id": getattr(proxy, "source_id", getattr(proxy, "doc_key", "HOST")),
+                    "fingerprint": fingerprint,
+                    "source_type": proxy_source_type,
+                    "source_id": proxy_source_id,
                     "source_label": getattr(proxy, "source_label", getattr(proxy, "doc_label", getattr(proxy, "doc_key", "HOST"))),
                     "doc_key": getattr(proxy, "doc_key", getattr(proxy, "source_id", "HOST")),
                     "doc_label": getattr(proxy, "doc_label", getattr(proxy, "source_label", getattr(proxy, "doc_key", "HOST"))),
