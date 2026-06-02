@@ -69,6 +69,17 @@ def _normalize_locked_metrics_for_legacy_csv(locked_metrics):
 
     return out
 
+
+
+def _has_legacy_partition_metrics(metrics):
+    return isinstance(metrics, dict) and all(
+        key in metrics for key in ("TotalCells", "Empty", "ModelOnly", "AnnoOnly", "Overlap")
+    )
+
+
+def _has_locked_partition_metrics(metrics):
+    return isinstance(metrics, dict) and "TotalCells" in metrics and "Cells_Empty" in metrics
+
 def _raster_to_dict_like(raster_payload):
     """Return a dict-like raster view without forcing ViewRaster.to_dict() copies."""
     if isinstance(raster_payload, dict):
@@ -133,7 +144,7 @@ def _get_metrics_triplet_from_view_result(view_result):
     # (Empty, ModelOnly, AnnoOnly, Overlap) before callers attempt .get("Empty").
     # Root cache already performs this normalization before storing, so cache-hit
     # view_results carry the correct keys — this only fires for fresh-processed views.
-    if metrics is not None and "Cells_Empty" in metrics and "Empty" not in metrics:
+    if _has_locked_partition_metrics(metrics) and "Empty" not in metrics:
         metrics = _normalize_locked_metrics_for_legacy_csv(metrics)
         # _normalize_locked_metrics_for_legacy_csv folds AnnoCells_* and Ext_Cells_*
         # into the returned dict.  Populate anno_metrics/ext_metrics from it when
@@ -2018,7 +2029,8 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
     if ext_metrics is None:
         ext_metrics = metrics
 
-    if not metrics and raster_dict:
+    metrics_incomplete = bool(raster_dict) and (not _has_legacy_partition_metrics(metrics))
+    if metrics_incomplete:
         # Reconstruct raster object for metrics computation when fresh-processed
         # ViewRaster payloads did not carry precomputed metrics.  This keeps the
         # direct CSV path in parity with streaming/root-cache write-through.

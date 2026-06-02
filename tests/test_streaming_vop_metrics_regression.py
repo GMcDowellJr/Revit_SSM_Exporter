@@ -85,3 +85,51 @@ def test_extract_metrics_from_view_result_preserves_link_source_at_key_zero():
     assert metrics["ModelOnly"] == 1
     assert metrics["Ext_Cells_Any"] == 1
     assert metrics["Ext_Cells_RVT"] == 1
+
+
+def test_view_result_to_vop_row_ignores_incomplete_precomputed_metrics_with_live_raster():
+    from vop_interwoven.csv_export import view_result_to_vop_row
+
+    row = view_result_to_vop_row(
+        {
+            "success": True,
+            "view_id": 1,
+            "view_name": "fresh",
+            "raster": _raster(),
+            # Regression shape: a metrics stub with TotalCells only must not be
+            # treated as authoritative for partition columns.
+            "metrics": {"TotalCells": 4},
+        },
+        _Cfg(),
+        doc=None,
+        run_id="RUN",
+    )
+
+    assert row["TotalCells"] == 4
+    assert row["ModelOnly"] == 1
+    assert row["AnnoOnly"] == 1
+    assert row["Overlap"] == 1
+    assert row["Empty"] == 1
+    assert row["Ext_Cells_Any"] == 1
+
+
+def test_extract_metrics_from_view_result_ignores_incomplete_precomputed_metrics_with_live_raster():
+    from vop_interwoven.root_cache import extract_metrics_from_view_result
+
+    _metadata, metrics, _element_summary, _timings = extract_metrics_from_view_result(
+        {
+            "success": True,
+            "view_id": 1,
+            "view_name": "fresh",
+            "raster": _raster(),
+            "metrics": {"TotalCells": 4},
+        },
+        _Cfg(),
+    )
+
+    assert metrics["TotalCells"] == 4
+    assert metrics["ModelOnly"] == 1
+    assert metrics["AnnoOnly"] == 1
+    assert metrics["Overlap"] == 1
+    assert metrics["Empty"] == 1
+    assert metrics["Ext_Cells_Any"] == 1

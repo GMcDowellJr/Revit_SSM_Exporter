@@ -336,6 +336,8 @@ def extract_metrics_from_view_result(view_result, cfg):
         compute_external_cell_metrics,
         compute_annotation_type_metrics,
         _normalize_locked_metrics_for_legacy_csv,
+        _has_legacy_partition_metrics,
+        _has_locked_partition_metrics,
     )
     
     raster_payload = view_result.get("raster", None)
@@ -365,17 +367,24 @@ def extract_metrics_from_view_result(view_result, cfg):
             "element_meta": _safe_seq(getattr(raster_payload, "element_meta", [])),
         }
 
-    # Prefer precomputed per-view metrics (scanner output) when present.
+    # Prefer precomputed per-view metrics only when they include the partition
+    # fields needed by the legacy CSV/cache schema.  Some pipeline payloads carry
+    # a metrics stub with only TotalCells; treating that as authoritative exports
+    # zeroes for Empty/ModelOnly/AnnoOnly/Overlap.
     precomputed_metrics = view_result.get("metrics")
-    if isinstance(precomputed_metrics, dict) and precomputed_metrics:
-        pre = _normalize_locked_metrics_for_legacy_csv(precomputed_metrics)
+    use_precomputed = _has_legacy_partition_metrics(precomputed_metrics) or _has_locked_partition_metrics(precomputed_metrics)
+    if use_precomputed:
+        if _has_locked_partition_metrics(precomputed_metrics) and "Empty" not in precomputed_metrics:
+            pre = _normalize_locked_metrics_for_legacy_csv(precomputed_metrics)
+        else:
+            pre = dict(precomputed_metrics)
         metrics = {
             **pre,
             "CellSize_ft": view_result.get("cell_size")
             or raster_dict.get("cell_size_ft", 0.0),
         }
     else:
-        # Reconstruct raster object for metric computation (fallback for legacy payloads)
+        # Reconstruct raster object for metric computation (fallback for legacy/incomplete payloads)
         from vop_interwoven.core.raster import ViewRaster
         from vop_interwoven.core.math_utils import Bounds2D
         bounds_dict = raster_dict.get("bounds_xy", {}) or {}
