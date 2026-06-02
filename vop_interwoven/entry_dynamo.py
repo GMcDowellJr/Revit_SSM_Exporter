@@ -351,7 +351,7 @@ def run_vop_pipeline(doc, view_ids, cfg=None):
         },
     }
 
-def run_vop_pipeline_with_png(doc, view_ids, cfg=None, output_dir=None, pixels_per_cell=4, export_json=True, export_view_raster=False):
+def run_vop_pipeline_with_png(doc, view_ids, cfg=None, output_dir=None, pixels_per_cell=4, export_json=True, export_view_raster=True):
     """Run VOP pipeline and export both JSON and PNG files.
 
     Args:
@@ -448,7 +448,7 @@ def run_vop_pipeline_with_png(doc, view_ids, cfg=None, output_dir=None, pixels_p
     }
 
 
-def run_vop_pipeline_with_csv(doc, view_ids, cfg=None, output_dir=None, pixels_per_cell=4, export_json=False, export_png=True, export_view_raster=False, export_perf_csv=True, date_override=None):
+def run_vop_pipeline_with_csv(doc, view_ids, cfg=None, output_dir=None, pixels_per_cell=4, export_json=False, export_png=True, export_view_raster=True, export_perf_csv=True, date_override=None):
     """Run VOP pipeline and export JSON + PNG + CSV files.
 
     Args:
