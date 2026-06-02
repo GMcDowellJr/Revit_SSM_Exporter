@@ -60,17 +60,24 @@ def _prepare_view_for_export(doc, view, W, H, cell_size_ft):
         from Autodesk.Revit.DB import Transaction, BoundingBoxXYZ, XYZ
         from vop_interwoven.revit.collection_policy import (
             excluded_bic_names_global,
+            annotation_included_bic_names,
             _try_import_bic,
         )
 
         t = Transaction(doc, "vop_view_raster_tmp_state")
         t.Start()
 
-        # ── 1. Hide VOP-excluded categories ──────────────────────────────────
+        # ── 1. Hide VOP-excluded categories (minus annotation includes) ───────
+        # Start with the model-layer exclude list then add back categories that
+        # the VOP annotation pass collects, so view_raster shows the same
+        # content as vop_raster (model + annotation, minus nav/analysis junk).
+        anno_includes = set(annotation_included_bic_names())
+        hide_bic_names = [n for n in excluded_bic_names_global() if n not in anno_includes]
+
         hidden_count = 0
         try:
             BuiltInCategory = _try_import_bic()
-            for bic_name in excluded_bic_names_global():
+            for bic_name in hide_bic_names:
                 bic = getattr(BuiltInCategory, bic_name, None)
                 if bic is None:
                     continue
