@@ -43,14 +43,38 @@ def _canonical_name(view_name, view_id):
     return "{0}_{1}.png".format(safe, view_id)
 
 
+def _is_annotation_only_view(view):
+    """Return True for DraftingView and Legend view types (no model geometry)."""
+    try:
+        from Autodesk.Revit.DB import ViewType
+        vt = getattr(view, "ViewType", None)
+        if vt is None:
+            return False
+        if hasattr(ViewType, "DraftingView") and vt == ViewType.DraftingView:
+            return True
+        if hasattr(ViewType, "Legend") and vt == ViewType.Legend:
+            return True
+        # Numeric fallback — Dynamo sometimes stringifies ViewType as an int
+        try:
+            return int(str(vt)) in (9, 10)  # 9=DraftingView, 10=Legend
+        except Exception:
+            return False
+    except Exception:
+        return False
+
+
 def _dot(a, b):
     return a.X * b.X + a.Y * b.Y + a.Z * b.Z
 
 
 def _prepare_view_for_export(doc, view, W, H, cell_size_ft):
     """Start a Transaction that:
-      - Hides VOP-excluded categories on the view
-      - Expands the crop box to cover exactly W*cell_size_ft × H*cell_size_ft
+      - Hides VOP-excluded categories on the view AND in visible linked models
+      - Adjusts the crop box to cover exactly W*cell_size_ft × H*cell_size_ft
+
+    For model views the crop box max corner is expanded by the sub-cell delta.
+    For annotation-only views (drafting/legend) the crop box is recomputed from
+    annotation element extents so it matches the VOP grid origin exactly.
 
     The caller MUST call RollBack() on the returned transaction after
     ExportImage so the view is fully restored.  Returns None if the Revit
@@ -89,62 +113,151 @@ def _prepare_view_for_export(doc, view, W, H, cell_size_ft):
                 except Exception:
                     pass
         except Exception as e:
-            print("[view_raster] WARNING: category hide failed: {}".format(e))
+            print("[view_raster] WARNING: host category hide failed: {}".format(e))
 
-        print("[view_raster] Hid {} VOP-excluded categories".format(hidden_count))
+        print("[view_raster] Hid {} VOP-excluded categories (host)".format(hidden_count))
 
-        # ── 2. Expand crop box to exact VOP grid extent ───────────────────────
-        # Only run when valid grid dimensions are provided; with W=H=0 or
-        # cell_size_ft=0 the deltas would be negative and would shrink the
-        # crop box to zero, producing a blank export.
-        # VOP computes W = ceil(crop_w_uv / cell_size_ft), so
-        # W * cell_size_ft may exceed crop_w_uv by up to one cell.
-        # We expand the crop box max corner by that delta so both images cover
-        # the same spatial region.
-        if W <= 0 or H <= 0 or cell_size_ft <= 0:
-            return t
+        # ── 1b. Hide same categories in linked model instances ────────────────
+        # view.SetCategoryHidden only applies to host model elements.
+        # Linked instances require GetLinkOverrides/SetLinkOverrides.
+        # This is best-effort: if the API is unavailable or a link has unsupported
+        # settings, the link element stays visible but the crop box still matches
+        # the VOP grid so coordinate space is correct.
+        link_hidden_count = 0
         try:
-            cb = view.CropBox
-            T = getattr(cb, "Transform", None)
-            U_vec = view.RightDirection   # world-space unit vector (U)
-            V_vec = view.UpDirection      # world-space unit vector (V)
+            from Autodesk.Revit.DB import FilteredElementCollector, RevitLinkInstance
+            BuiltInCategory = _try_import_bic()
+            link_insts = list(
+                FilteredElementCollector(doc).OfClass(RevitLinkInstance).ToElements()
+            )
+            for link_inst in link_insts:
+                try:
+                    link_settings = view.GetLinkOverrides(link_inst.Id)
+                    if link_settings is None:
+                        continue
+                    changed = False
+                    for bic_name in hide_bic_names:
+                        bic = getattr(BuiltInCategory, bic_name, None)
+                        if bic is None:
+                            continue
+                        try:
+                            cat = doc.Settings.Categories.get_Item(bic)
+                            if cat is None:
+                                continue
+                            # Try API variants across Revit versions
+                            if hasattr(link_settings, 'SetCategoryHidden'):
+                                link_settings.SetCategoryHidden(cat.Id, True)
+                                changed = True
+                            elif hasattr(link_settings, 'AddHiddenCategoryId'):
+                                link_settings.AddHiddenCategoryId(cat.Id)
+                                changed = True
+                        except Exception:
+                            pass
+                    if changed:
+                        view.SetLinkOverrides(link_inst.Id, link_settings)
+                        link_hidden_count += 1
+                except Exception:
+                    pass
+        except Exception as e:
+            print("[view_raster] WARNING: linked category hide failed: {}".format(e))
 
-            # Project the 4 XY-plane corners of the crop box to view UV.
-            # We use differences so the origin cancels out.
-            u_vals, v_vals = [], []
-            for lx in [cb.Min.X, cb.Max.X]:
-                for ly in [cb.Min.Y, cb.Max.Y]:
-                    local_pt = XYZ(lx, ly, cb.Min.Z)
-                    world_pt = T.OfPoint(local_pt) if T is not None else local_pt
-                    u_vals.append(_dot(world_pt, U_vec))
-                    v_vals.append(_dot(world_pt, V_vec))
+        if link_hidden_count:
+            print("[view_raster] Applied category hides to {} linked instance(s)".format(
+                link_hidden_count))
 
-            crop_w_uv = max(u_vals) - min(u_vals)
-            crop_h_uv = max(v_vals) - min(v_vals)
+        # ── 2. Align crop box to VOP grid extent ─────────────────────────────
+        if W <= 0 or H <= 0 or cell_size_ft <= 0:
+            return t  # No grid info; skip crop box adjustment
 
-            delta_u = W * cell_size_ft - crop_w_uv  # ≥ 0, ≤ cell_size_ft
-            delta_v = H * cell_size_ft - crop_h_uv
+        try:
+            if _is_annotation_only_view(view):
+                # Annotation-only view (drafting/legend): VOP grid origin comes
+                # from annotation element extents, not the existing crop box.
+                # Recompute those extents here so the crop box starts at the
+                # same origin VOP used (min_bbox - 1 cell pad on each side).
+                from Autodesk.Revit.DB import FilteredElementCollector as _FEC
+                min_x = min_y = float('inf')
+                max_x = max_y = float('-inf')
+                try:
+                    for elem in _FEC(doc, view.Id).WhereElementIsNotElementType():
+                        try:
+                            bb = elem.get_BoundingBox(view)
+                            if bb is None:
+                                continue
+                            min_x = min(min_x, bb.Min.X, bb.Max.X)
+                            min_y = min(min_y, bb.Min.Y, bb.Max.Y)
+                            max_x = max(max_x, bb.Min.X, bb.Max.X)
+                            max_y = max(max_y, bb.Min.Y, bb.Max.Y)
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
 
-            if abs(delta_u) > 1e-6 or abs(delta_v) > 1e-6:
-                # Move the max corner outward by (delta_u * U_vec + delta_v * V_vec)
-                max_world = T.OfPoint(cb.Max) if T is not None else cb.Max
-                new_max_world = XYZ(
-                    max_world.X + delta_u * U_vec.X + delta_v * V_vec.X,
-                    max_world.Y + delta_u * U_vec.Y + delta_v * V_vec.Y,
-                    max_world.Z + delta_u * U_vec.Z + delta_v * V_vec.Z,
-                )
-                T_inv = T.Inverse if T is not None else None
-                new_max_local = T_inv.OfPoint(new_max_world) if T_inv is not None else new_max_world
+                if min_x == float('inf'):
+                    return t  # No elements; leave crop box unchanged
 
+                # Match VOP's 1-cell padding on each side
+                pad = cell_size_ft
+                origin_x = min_x - pad
+                origin_y = min_y - pad
+
+                cb = view.CropBox
+                T = getattr(cb, "Transform", None)
                 new_cb = BoundingBoxXYZ()
                 if T is not None:
                     new_cb.Transform = T
-                new_cb.Min = cb.Min
-                new_cb.Max = XYZ(new_max_local.X, new_max_local.Y, cb.Max.Z)
+                new_cb.Min = XYZ(origin_x, origin_y, cb.Min.Z)
+                new_cb.Max = XYZ(origin_x + W * cell_size_ft,
+                                 origin_y + H * cell_size_ft, cb.Max.Z)
                 view.CropBox = new_cb
                 view.CropBoxActive = True
-                print("[view_raster] Expanded crop box by ({:.4f}, {:.4f}) ft to match VOP grid".format(
-                    delta_u, delta_v))
+                print("[view_raster] Annotation view crop set: origin=({:.3f},{:.3f}) "
+                      "size={:.3f}×{:.3f} ft".format(
+                          origin_x, origin_y, W * cell_size_ft, H * cell_size_ft))
+            else:
+                # Model view: expand the crop box max corner by the sub-cell
+                # delta so both images cover exactly W*cs × H*cs ft.
+                # VOP uses ceil() so the grid may exceed the crop box by up to
+                # one cell; we only ever expand, never shrink.
+                cb = view.CropBox
+                T = getattr(cb, "Transform", None)
+                U_vec = view.RightDirection
+                V_vec = view.UpDirection
+
+                u_vals, v_vals = [], []
+                for lx in [cb.Min.X, cb.Max.X]:
+                    for ly in [cb.Min.Y, cb.Max.Y]:
+                        local_pt = XYZ(lx, ly, cb.Min.Z)
+                        world_pt = T.OfPoint(local_pt) if T is not None else local_pt
+                        u_vals.append(_dot(world_pt, U_vec))
+                        v_vals.append(_dot(world_pt, V_vec))
+
+                crop_w_uv = max(u_vals) - min(u_vals)
+                crop_h_uv = max(v_vals) - min(v_vals)
+
+                # Clamp to ≥ 0: never shrink the crop box.
+                delta_u = max(0.0, W * cell_size_ft - crop_w_uv)
+                delta_v = max(0.0, H * cell_size_ft - crop_h_uv)
+
+                if delta_u > 1e-6 or delta_v > 1e-6:
+                    max_world = T.OfPoint(cb.Max) if T is not None else cb.Max
+                    new_max_world = XYZ(
+                        max_world.X + delta_u * U_vec.X + delta_v * V_vec.X,
+                        max_world.Y + delta_u * U_vec.Y + delta_v * V_vec.Y,
+                        max_world.Z + delta_u * U_vec.Z + delta_v * V_vec.Z,
+                    )
+                    T_inv = T.Inverse if T is not None else None
+                    new_max_local = T_inv.OfPoint(new_max_world) if T_inv is not None else new_max_world
+
+                    new_cb = BoundingBoxXYZ()
+                    if T is not None:
+                        new_cb.Transform = T
+                    new_cb.Min = cb.Min
+                    new_cb.Max = XYZ(new_max_local.X, new_max_local.Y, cb.Max.Z)
+                    view.CropBox = new_cb
+                    view.CropBoxActive = True
+                    print("[view_raster] Expanded crop box by ({:.4f}, {:.4f}) ft".format(
+                        delta_u, delta_v))
 
         except Exception as e:
             print("[view_raster] WARNING: crop box adjustment failed: {}".format(e))
@@ -154,6 +267,7 @@ def _prepare_view_for_export(doc, view, W, H, cell_size_ft):
     except Exception as e:
         print("[view_raster] WARNING: could not prepare view for export: {}".format(e))
         return None
+
 
 
 def export_view_image(doc, view_id, output_path, width_px, height_px,
