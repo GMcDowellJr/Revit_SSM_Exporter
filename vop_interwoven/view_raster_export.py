@@ -72,7 +72,7 @@ def export_view_image(doc, view_id, output_path, width_px, height_px, diag=None)
         opts.ExportRange = ExportRange.SetOfViews
         opts.SetViewsAndSheets([view_id])
         opts.ZoomType = ZoomFitType.FitPage
-        # Fit to width; height follows the view's natural aspect ratio.
+        # Fit to width first; we enforce exact height afterward via resize.
         opts.FitDirection = FitDirectionType.Horizontal
         opts.PixelSize = width_px
         opts.FilePath = out_base
@@ -81,7 +81,9 @@ def export_view_image(doc, view_id, output_path, width_px, height_px, diag=None)
         doc.ExportImage(opts)
 
         # Locate the file Revit created (name includes view metadata).
-        created = _find_exported_file(out_dir, base_name, ".png")
+        # Exclude the canonical target path so a stale pre-existing PNG is
+        # never mistaken for the freshly-exported file.
+        created = _find_exported_file(out_dir, base_name, ".png", exclude=output_path)
         if created is None:
             if diag is not None:
                 diag.error(
@@ -92,10 +94,13 @@ def export_view_image(doc, view_id, output_path, width_px, height_px, diag=None)
                 )
             return None
 
-        if created != output_path:
-            if os.path.exists(output_path):
-                os.remove(output_path)
-            os.rename(created, output_path)
+        # Resize to exact target dimensions so vop_raster and view_raster PNGs
+        # are always pixel-identical in size regardless of Revit's aspect ratio.
+        _resize_to_exact(created, width_px, height_px, diag=diag)
+
+        if os.path.exists(output_path):
+            os.remove(output_path)
+        os.rename(created, output_path)
 
         return output_path if os.path.exists(output_path) else None
 
@@ -114,16 +119,74 @@ def export_view_image(doc, view_id, output_path, width_px, height_px, diag=None)
         return None
 
 
-def _find_exported_file(out_dir, base_name, ext):
-    """Return the first file in out_dir whose name starts with base_name and ends with ext."""
+def _find_exported_file(out_dir, base_name, ext, exclude=None):
+    """Return the first file in out_dir whose name starts with base_name and ends with ext.
+
+    Files whose full path equals ``exclude`` are skipped so a pre-existing canonical
+    target is never confused with the freshly-exported Revit-generated file.
+    """
     try:
         ext_lower = ext.lower()
+        exclude_name = os.path.basename(exclude) if exclude else None
         for fname in os.listdir(out_dir):
+            if exclude_name and fname == exclude_name:
+                continue
             if fname.startswith(base_name) and fname.lower().endswith(ext_lower):
                 return os.path.join(out_dir, fname)
     except Exception:
         pass
     return None
+
+
+def _resize_to_exact(path, width_px, height_px, diag=None):
+    """Resize the image at ``path`` in-place to exactly ``width_px`` × ``height_px``.
+
+    Tries Pillow first (CPython), then System.Drawing (IronPython/Revit).
+    If neither is available the file is left unchanged and a warning is recorded.
+    """
+    try:
+        from vop_interwoven.np_backend import PILLOW_AVAILABLE
+        if PILLOW_AVAILABLE:
+            from vop_interwoven.np_backend import Image
+            img = Image.open(path)
+            if img.size != (width_px, height_px):
+                img = img.resize((width_px, height_px), Image.LANCZOS)
+                img.save(path)
+            return
+    except Exception:
+        pass
+
+    try:
+        import clr
+        clr.AddReference('System.Drawing')
+        from System.Drawing import Bitmap, Graphics, Size
+        from System.Drawing.Imaging import ImageFormat
+        bmp_src = Bitmap(path)
+        if bmp_src.Width != width_px or bmp_src.Height != height_px:
+            bmp_dst = Bitmap(width_px, height_px)
+            g = Graphics.FromImage(bmp_dst)
+            g.DrawImage(bmp_src, 0, 0, width_px, height_px)
+            g.Dispose()
+            bmp_src.Dispose()
+            bmp_dst.Save(path, ImageFormat.Png)
+            bmp_dst.Dispose()
+        else:
+            bmp_src.Dispose()
+        return
+    except Exception:
+        pass
+
+    if diag is not None:
+        diag.warn(
+            phase="export",
+            callsite="_resize_to_exact",
+            message="No image library available to enforce exact pixel dimensions; "
+                    "view_raster PNG may not match vop_raster dimensions",
+            extra={"path": path, "width_px": width_px, "height_px": height_px},
+        )
+    else:
+        print("[view_raster] WARNING: cannot resize {}; install Pillow for exact dimensions".format(
+            os.path.basename(path)))
 
 
 def export_pipeline_views_to_pngs(doc, pipeline_result, output_dir, pixels_per_cell=4, diag=None):

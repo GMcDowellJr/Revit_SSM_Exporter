@@ -309,8 +309,10 @@ class StreamingExporter:
             if png_path:
                 self.png_files.append(png_path)
 
-        # Export raw Revit view image for comparison (if enabled)
-        if self.export_view_raster and not is_cache_hit:
+        # Export raw Revit view image for comparison (if enabled).
+        # Not gated on is_cache_hit: only needs doc + view_id + dimensions,
+        # all of which are present on cache-hit payloads too.
+        if self.export_view_raster:
             t0 = time.perf_counter()
             vr_path = self._write_view_raster(view_result)
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
