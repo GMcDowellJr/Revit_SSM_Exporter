@@ -827,8 +827,8 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
 
 def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
                                 export_png=True, export_csv=True, export_json=False,
-                                export_view_raster=False,
-                                pixels_per_cell=4, date_override=None):
+                                pixels_per_cell=4, date_override=None,
+                                export_view_raster=False):
     """Run VOP pipeline with streaming export to minimize memory usage.
     
     This is the recommended entry point for large view sets where memory
