@@ -351,7 +351,7 @@ def run_vop_pipeline(doc, view_ids, cfg=None):
         },
     }
 
-def run_vop_pipeline_with_png(doc, view_ids, cfg=None, output_dir=None, pixels_per_cell=4, export_json=True):
+def run_vop_pipeline_with_png(doc, view_ids, cfg=None, output_dir=None, pixels_per_cell=4, export_json=True, export_view_raster=False):
     """Run VOP pipeline and export both JSON and PNG files.
 
     Args:
@@ -416,8 +416,8 @@ def run_vop_pipeline_with_png(doc, view_ids, cfg=None, output_dir=None, pixels_p
     else:
         json_path = None
 
-    # Export PNGs (with cut vs projection distinction) into a nested folder
-    png_dir = os.path.join(output_dir, "png")
+    # Export VOP raster PNGs (cut vs projection colours) into vop_raster/
+    png_dir = os.path.join(output_dir, "vop_raster")
     if not os.path.exists(png_dir):
         os.makedirs(png_dir)
 
@@ -431,14 +431,24 @@ def run_vop_pipeline_with_png(doc, view_ids, cfg=None, output_dir=None, pixels_p
     t1 = time.perf_counter()
     png_export_ms = (t1 - t0) * 1000.0
 
+    # Export raw Revit view images for comparison (optional) into view_raster/
+    view_raster_files = []
+    if export_view_raster:
+        from vop_interwoven.view_raster_export import export_pipeline_views_to_pngs as _vr_export
+        vr_dir = os.path.join(output_dir, "view_raster")
+        if not os.path.exists(vr_dir):
+            os.makedirs(vr_dir)
+        view_raster_files = _vr_export(doc, pipeline_result, vr_dir, pixels_per_cell=pixels_per_cell) or []
+
     return {
         'pipeline_result': pipeline_result,
         'json_path': json_path,
-        'png_files': png_files
+        'png_files': png_files,
+        'view_raster_files': view_raster_files,
     }
 
 
-def run_vop_pipeline_with_csv(doc, view_ids, cfg=None, output_dir=None, pixels_per_cell=4, export_json=False, export_png=True, export_perf_csv=True, date_override=None):
+def run_vop_pipeline_with_csv(doc, view_ids, cfg=None, output_dir=None, pixels_per_cell=4, export_json=False, export_png=True, export_view_raster=False, export_perf_csv=True, date_override=None):
     """Run VOP pipeline and export JSON + PNG + CSV files.
 
     Args:
@@ -521,9 +531,9 @@ def run_vop_pipeline_with_csv(doc, view_ids, cfg=None, output_dir=None, pixels_p
         print("[Warning] JSON export disabled in streaming mode to conserve memory")
     result['json_path'] = None
 
-    # Export PNGs (optional) into a nested folder
+    # Export VOP raster PNGs (optional) into vop_raster/
     if export_png:
-        png_dir = os.path.join(output_dir, "png")
+        png_dir = os.path.join(output_dir, "vop_raster")
         if not os.path.exists(png_dir):
             os.makedirs(png_dir)
 
@@ -534,6 +544,16 @@ def run_vop_pipeline_with_csv(doc, view_ids, cfg=None, output_dir=None, pixels_p
             cut_vs_projection=True
         )
         result['png_files'] = png_files
+
+    # Export raw Revit view images for comparison (optional) into view_raster/
+    if export_view_raster:
+        from vop_interwoven.view_raster_export import export_pipeline_views_to_pngs as _vr_export
+        vr_dir = os.path.join(output_dir, "view_raster")
+        if not os.path.exists(vr_dir):
+            os.makedirs(vr_dir)
+        result['view_raster_files'] = _vr_export(
+            doc, pipeline_result, vr_dir, pixels_per_cell=pixels_per_cell
+        ) or []
 
     # Export CSVs (always)
     t0 = time.perf_counter()

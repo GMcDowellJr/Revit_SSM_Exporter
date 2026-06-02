@@ -106,22 +106,24 @@ def process_with_streaming(doc, view_ids, cfg, on_view_complete, root_cache=None
 class StreamingExporter:
     """Manages incremental export of pipeline results."""
     
-    def __init__(self, output_dir, cfg, doc, 
-                 export_png=True, 
+    def __init__(self, output_dir, cfg, doc,
+                 export_png=True,
                  export_csv=True,
                  export_json=False,
+                 export_view_raster=False,
                  pixels_per_cell=4,
                  date_override=None,
                  root_cache=None):
         """Initialize streaming exporter.
-        
+
         Args:
             output_dir: Base output directory
             cfg: Config object
             doc: Revit Document
-            export_png: Write PNGs as views complete
+            export_png: Write VOP raster PNGs as views complete (output: vop_raster/)
             export_csv: Write CSV rows incrementally
             export_json: Write full JSON at end (memory-heavy, discouraged)
+            export_view_raster: Write raw Revit view PNGs for comparison (output: view_raster/)
             pixels_per_cell: PNG resolution
             date_override: Optional date for CSV export
         """
@@ -130,17 +132,20 @@ class StreamingExporter:
         self.output_dir = output_dir
         self.cfg = cfg
         self.doc = doc
+        self.diag = None
         self.export_png = export_png
         self.export_csv = export_csv
         self.export_json = export_json
+        self.export_view_raster = export_view_raster
         self.export_perf_csv = bool(getattr(cfg, "export_perf_csv", False))
         self.pixels_per_cell = pixels_per_cell
         self.date_override = date_override
-        
+
         # Stats
         self.views_processed = 0
         self.views_failed = 0
         self.png_files = []
+        self.view_raster_files = []
         self.csv_rows_written = 0
         
         # CSV state
@@ -181,8 +186,11 @@ class StreamingExporter:
         # Setup
         os.makedirs(output_dir, exist_ok=True)
         if export_png:
-            self.png_dir = os.path.join(output_dir, "png")
+            self.png_dir = os.path.join(output_dir, "vop_raster")
             os.makedirs(self.png_dir, exist_ok=True)
+        if export_view_raster:
+            self.view_raster_dir = os.path.join(output_dir, "view_raster")
+            os.makedirs(self.view_raster_dir, exist_ok=True)
         
         if export_csv:
             self._init_csv_writers()
@@ -302,6 +310,22 @@ class StreamingExporter:
             if png_path:
                 self.png_files.append(png_path)
 
+        # Export raw Revit view image for comparison (if enabled).
+        # Not gated on is_cache_hit: only needs doc + view_id + dimensions,
+        # all of which are present on cache-hit payloads too.
+        if self.export_view_raster:
+            print("[view_raster] exporting for view '{}' (id={})".format(
+                view_result.get("view_name"), view_result.get("view_id")))
+            t0 = time.perf_counter()
+            vr_path = self._write_view_raster(view_result)
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+
+            timings = view_result.setdefault("timings", {})
+            timings["view_raster_ms"] = elapsed_ms
+
+            if vr_path:
+                self.view_raster_files.append(vr_path)
+
         # Write CSV rows immediately (if enabled)
         if self.export_csv:
             self._write_csv_rows(view_result)
@@ -356,9 +380,75 @@ class StreamingExporter:
         
         if png_path:
             print(f"[Streaming] Wrote PNG: {os.path.basename(png_path)}")
-        
+
         return png_path
-    
+
+    def _write_view_raster(self, view_result):
+        """Export a raw Revit view image to view_raster/ for comparison.
+
+        Returns:
+            Path to written PNG, or None on error
+        """
+        from vop_interwoven.view_raster_export import export_view_image
+
+        view_name = view_result.get("view_name", "unknown")
+        view_id = view_result.get("view_id", 0)
+        # Accept both pipeline naming ("width"/"height"/"cell_size") and
+        # streaming naming ("grid_W"/"grid_H"/"cell_size_ft_effective").
+        W = int(view_result.get("grid_W") or view_result.get("width") or 0)
+        H = int(view_result.get("grid_H") or view_result.get("height") or 0)
+        cell_size_ft = float(
+            view_result.get("cell_size_ft_effective")
+            or view_result.get("cell_size_ft")
+            or view_result.get("cell_size")
+            or 0
+        )
+
+        print("[view_raster] view='{}' id={} W={} H={} cell_size_ft={:.4f}".format(
+            view_name, view_id, W, H, cell_size_ft))
+
+        if W <= 0 or H <= 0:
+            print("[view_raster] SKIP '{}': W={} H={} (dimensions missing from result dict; "
+                  "keys present: {})".format(view_name, W, H,
+                  [k for k in ("width", "height", "grid_W", "grid_H", "cell_size",
+                                "cell_size_ft", "cell_size_ft_effective")
+                   if view_result.get(k) is not None]))
+            return None
+
+        width_px = W * self.pixels_per_cell
+        height_px = H * self.pixels_per_cell
+
+        safe_name = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in view_name)
+        filename = f"{safe_name}_{view_id}.png"
+        output_path = os.path.join(self.view_raster_dir, filename)
+
+        # Coerce int view_id to ElementId when Revit API is available.
+        eid = view_id
+        try:
+            from Autodesk.Revit.DB import ElementId
+            if not hasattr(view_id, 'IntegerValue'):
+                eid = ElementId(int(view_id))
+        except Exception:
+            pass
+
+        vop_grid = {"W": W, "H": H, "cell_size_ft": cell_size_ft} if cell_size_ft > 0 else None
+
+        png_path = export_view_image(
+            self.doc, eid, output_path,
+            width_px=width_px,
+            height_px=height_px,
+            vop_grid=vop_grid,
+            diag=self.diag,
+        )
+
+        if png_path:
+            print("[view_raster] Saved: {}".format(os.path.basename(png_path)))
+        else:
+            print("[view_raster] FAILED: export_view_image returned None for '{}' "
+                  "(check [view_raster] messages above for detail)".format(view_name))
+
+        return png_path
+
     def _write_csv_rows(self, view_result):
         """Write CSV rows for a single view result."""
 
@@ -536,6 +626,7 @@ class StreamingExporter:
             "views_processed": self.views_processed,
             "views_failed": self.views_failed,
             "png_files": self.png_files,
+            "view_raster_files": self.view_raster_files,
             "core_csv_path": getattr(self, 'core_csv_path', None),
             "vop_csv_path": getattr(self, 'vop_csv_path', None),
             "occlusion_csv_path": getattr(self, 'occlusion_csv_path', None),
@@ -763,9 +854,10 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
     return summaries
 
 
-def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None, 
+def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
                                 export_png=True, export_csv=True, export_json=False,
-                                pixels_per_cell=4, date_override=None):
+                                pixels_per_cell=4, date_override=None,
+                                export_view_raster=False):
     """Run VOP pipeline with streaming export to minimize memory usage.
     
     This is the recommended entry point for large view sets where memory
@@ -776,18 +868,20 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
         view_ids: List of view IDs to process
         cfg: Config object (optional)
         output_dir: Output directory (default: C:\\temp\\vop_output)
-        export_png: Export PNGs as views complete (default: True)
+        export_png: Export VOP raster PNGs as views complete (output: vop_raster/)
         export_csv: Export CSV rows incrementally (default: True)
         export_json: Export full JSON at end (default: False - memory-heavy)
+        export_view_raster: Export raw Revit view PNGs for comparison (output: view_raster/)
         pixels_per_cell: PNG resolution (default: 4)
         date_override: Optional date for CSV export
-        
+
     Returns:
         Dict with export summary:
         {
             'views_processed': int,
             'views_failed': int,
-            'png_files': [paths],
+            'png_files': [paths],            # vop_raster/ files
+            'view_raster_files': [paths],    # view_raster/ files
             'core_csv_path': str,
             'vop_csv_path': str,
             'occlusion_csv_path': str,
@@ -850,6 +944,7 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
         export_png=export_png,
         export_csv=export_csv,
         export_json=export_json,
+        export_view_raster=export_view_raster,
         pixels_per_cell=pixels_per_cell,
         date_override=date_override,
         root_cache=root_cache
@@ -888,7 +983,8 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
     print(f"\n[Streaming] Complete:")
     print(f"  Processed: {result['views_processed']} views")
     print(f"  Failed: {result['views_failed']} views")
-    print(f"  PNGs: {len(result['png_files'])} files")
+    print(f"  VOP raster PNGs: {len(result['png_files'])} files")
+    print(f"  View raster PNGs: {len(result['view_raster_files'])} files")
     print(f"  CSVs: {result['csv_rows_written']} rows")
     print(f"  Time: {result['total_time_sec']:.1f}s")
     

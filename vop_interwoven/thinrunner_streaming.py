@@ -8,6 +8,8 @@ Usage:
     IN[0] = List of views (or None/empty for current view)
     IN[1] = Optional tag override (e.g., commit hash, "baseline")
     IN[2] = Optional output directory
+    IN[3] = Optional batch size (int)
+    IN[4] = Export view raster PNGs — raw Revit view images for comparison (bool, default True)
 
 Output:
     Summary string with view count, annotation count, CSV paths
@@ -350,6 +352,9 @@ try:
 
     # Optional batch size override
     batch_size = IN[3] if len(IN) > 3 and IN[3] else None
+
+    # Export raw Revit view PNGs alongside VOP raster PNGs (view_raster/ folder)
+    export_view_raster = bool(IN[4]) if len(IN) > 4 and IN[4] is not None else True
     if batch_size is not None:
         try:
             batch_size = int(batch_size)
@@ -395,6 +400,7 @@ try:
                 export_png=True,
                 export_csv=True,  # Always export CSV (tag override just affects Date/RunId columns)
                 export_json=False,
+                export_view_raster=export_view_raster,
                 pixels_per_cell=10,
                 date_override=tag_override,
             )
@@ -404,6 +410,7 @@ try:
                 "views_processed": 0,
                 "views_failed": 0,
                 "png_files": [],
+                "view_raster_files": [],
                 "csv_rows_written": 0,
                 "view_summaries": [],
                 "core_csv_path": None,
@@ -430,6 +437,7 @@ try:
                     export_png=True,
                     export_csv=True,
                     export_json=False,
+                    export_view_raster=export_view_raster,
                     pixels_per_cell=10,
                     date_override=tag_override,
                 )
@@ -439,6 +447,7 @@ try:
                 merged["csv_rows_written"] += batch_result.get("csv_rows_written", 0)
                 merged["view_summaries"].extend(batch_result.get("view_summaries", []))
                 merged["png_files"].extend(batch_result.get("png_files", []))
+                merged["view_raster_files"].extend(batch_result.get("view_raster_files", []))
 
                 for key in ["core_csv_path", "vop_csv_path", "occlusion_csv_path", "perf_csv_path"]:
                     chunk_csv = batch_result.get(key)

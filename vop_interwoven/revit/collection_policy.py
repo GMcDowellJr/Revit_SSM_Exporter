@@ -144,6 +144,37 @@ def included_bic_names_for_source(source_type: str) -> Tuple[str, ...]:
 def excluded_bic_names_global() -> Tuple[str, ...]:
     return _EXCLUDED_BIC_NAMES_GLOBAL
 
+
+# Annotation categories collected by the VOP annotation pass (collect_2d_annotations).
+# These must remain visible in view_raster even though some overlap with the model
+# exclude list (e.g. OST_DetailComponents).
+_ANNOTATION_INCLUDED_BIC_NAMES: Tuple[str, ...] = (
+    "OST_TextNotes",
+    "OST_Dimensions",
+    "OST_RoomTags",
+    "OST_SpaceTags",
+    "OST_AreaTags",
+    "OST_DoorTags",
+    "OST_WindowTags",
+    "OST_WallTags",
+    "OST_MEPSpaceTags",
+    "OST_GenericAnnotation",
+    "OST_FilledRegion",
+    "OST_Lines",
+    "OST_DetailComponents",
+    "OST_KeynoteTags",
+)
+
+
+def annotation_included_bic_names() -> Tuple[str, ...]:
+    """Category names collected by the VOP annotation pass.
+
+    Used by view_raster to ensure these categories are not hidden — the
+    effective hide set for view_raster is excluded_bic_names_global()
+    minus annotation_included_bic_names().
+    """
+    return _ANNOTATION_INCLUDED_BIC_NAMES
+
 def _try_import_bic():
     """Import BuiltInCategory lazily (Revit-only)."""
     from Autodesk.Revit.DB import BuiltInCategory  # type: ignore
