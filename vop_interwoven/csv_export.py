@@ -180,7 +180,12 @@ def compute_external_cell_metrics(raster):
         - Tolerates missing element_meta or key arrays by returning zeros.
     """
     def _get_source_type(key_index):
-        if not key_index:
+        if key_index is None:
+            return None
+        try:
+            if int(key_index) < 0:
+                return None
+        except Exception:
             return None
         meta = None
         em = getattr(raster, "element_meta", None)
@@ -2012,6 +2017,43 @@ def view_result_to_vop_row(view_result, config, doc, date_override=None, run_id=
         anno_metrics = {}
     if ext_metrics is None:
         ext_metrics = metrics
+
+    if not metrics and raster_dict:
+        # Reconstruct raster object for metrics computation when fresh-processed
+        # ViewRaster payloads did not carry precomputed metrics.  This keeps the
+        # direct CSV path in parity with streaming/root-cache write-through.
+        from .core.raster import ViewRaster
+        from .core.math_utils import Bounds2D
+
+        bounds_dict = raster_dict.get("bounds_xy", {})
+        bounds = Bounds2D(
+            bounds_dict.get("xmin", 0),
+            bounds_dict.get("ymin", 0),
+            bounds_dict.get("xmax", 100),
+            bounds_dict.get("ymax", 100)
+        )
+
+        raster = ViewRaster(
+            width=raster_dict.get("width", 0),
+            height=raster_dict.get("height", 0),
+            cell_size=raster_dict.get("cell_size_ft", 1.0),
+            bounds=bounds,
+            tile_size=16
+        )
+
+        raster.model_edge_key = raster_dict.get("model_edge_key", [])
+        raster.model_proxy_mask = raster_dict.get("model_proxy_mask", raster_dict.get("model_proxy_presence", []))
+        raster.model_proxy_key = raster_dict.get("model_proxy_key", [])
+        raster.model_mask = raster_dict.get("model_mask", [])
+        raster.anno_over_model = raster_dict.get("anno_over_model", [])
+        raster.anno_key = raster_dict.get("anno_key", [])
+        raster.anno_meta = raster_dict.get("anno_meta", [])
+        raster.element_meta = raster_dict.get("element_meta", raster_dict.get("elements_meta", []))
+
+        model_presence_mode = getattr(config, "model_presence_mode", "ink")
+        metrics = compute_cell_metrics(raster, model_presence_mode=model_presence_mode)
+        anno_metrics = compute_annotation_type_metrics(raster)
+        ext_metrics = compute_external_cell_metrics(raster)
 
     if not getattr(config, "csv_compat_mode", True):
         manifest_cols = get_vop_csv_header(config)
