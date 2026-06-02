@@ -6,6 +6,10 @@ Unlike vop_raster PNGs (which visualize grid occupancy), these images capture
 what Revit would render at the same pixel dimensions — the raw view bitmap with
 no occupancy processing applied.
 
+Before exporting, the same categories VOP excludes (grids, levels, section marks,
+rooms, etc.) are temporarily hidden on the view via a rolled-back Transaction so
+the rendered content aligns with what VOP analyzes, not just pixel dimensions.
+
 Output folder: view_raster/
 Counterpart:   vop_raster/
 
@@ -32,18 +36,65 @@ def _canonical_name(view_name, view_id):
     return "{0}_{1}.png".format(safe, view_id)
 
 
+def _hide_vop_excluded_categories(doc, view):
+    """Start a Transaction that hides VOP-excluded categories on ``view``.
+
+    The caller must call RollBack() on the returned transaction after export
+    to restore the view to its original visibility state. Returns None if the
+    Revit API is unavailable or the transaction cannot be started.
+
+    Categories hidden are exactly ``collection_policy.excluded_bic_names_global()``:
+    grids, levels, section marks, rooms, etc. — the same set VOP skips during
+    element collection so the rendered image matches VOP's analysis scope.
+    """
+    try:
+        from Autodesk.Revit.DB import Transaction
+        from vop_interwoven.revit.collection_policy import (
+            excluded_bic_names_global,
+            _try_import_bic,
+        )
+
+        BuiltInCategory = _try_import_bic()
+
+        t = Transaction(doc, "vop_view_raster_tmp_visibility")
+        t.Start()
+
+        hidden = 0
+        for bic_name in excluded_bic_names_global():
+            bic = getattr(BuiltInCategory, bic_name, None)
+            if bic is None:
+                continue
+            try:
+                cat = doc.Settings.Categories.get_Item(bic)
+                if cat is not None and view.CanCategoryBeHidden(cat.Id):
+                    view.SetCategoryHidden(cat.Id, True)
+                    hidden += 1
+            except Exception:
+                pass
+
+        print("[view_raster] Hid {} VOP-excluded categories for export".format(hidden))
+        return t
+
+    except Exception as e:
+        print("[view_raster] WARNING: could not hide excluded categories: {}".format(e))
+        return None
+
+
 def export_view_image(doc, view_id, output_path, width_px, height_px, diag=None):
     """Export a single Revit view to PNG at the specified pixel dimensions.
 
-    Uses Document.ExportImage() and a before/after directory snapshot to locate
-    whatever file Revit created, then renames it to ``output_path`` so both
-    vop_raster/ and view_raster/ always share the same canonical filename.
+    Before exporting, temporarily hides VOP-excluded categories (grids, levels,
+    section marks, rooms, etc.) via a rolled-back Transaction so the rendered
+    content matches what VOP analyzes.
+
+    Uses a before/after directory snapshot to locate whatever file Revit creates,
+    then renames it to ``output_path`` so both vop_raster/ and view_raster/ share
+    the same canonical filename.
 
     Args:
         doc:         Revit Document.
         view_id:     Autodesk.Revit.DB.ElementId for the view.
-        output_path: Desired output path — the canonical filename is derived
-                     by the caller via _canonical_name().
+        output_path: Desired output path — canonical filename set by caller.
         width_px:    Target width in pixels  (= grid_W * pixels_per_cell).
         height_px:   Target height in pixels (= grid_H * pixels_per_cell).
         diag:        Optional Diagnostics instance.
@@ -60,6 +111,8 @@ def export_view_image(doc, view_id, output_path, width_px, height_px, diag=None)
                 FitDirectionType,
                 ImageFileType,
             )
+            import System.Collections.Generic as SCG
+            NetList = SCG.List
         except ImportError:
             if diag is not None:
                 diag.error(
@@ -75,30 +128,49 @@ def export_view_image(doc, view_id, output_path, width_px, height_px, diag=None)
         if out_dir and not os.path.exists(out_dir):
             os.makedirs(out_dir)
 
-        # Snapshot directory contents before export so we can find exactly
-        # what Revit creates regardless of its internal naming convention.
-        before = _snapshot(out_dir)
+        # Resolve view object for category visibility manipulation.
+        view = doc.GetElement(view_id)
 
-        opts = ImageExportOptions()
-        opts.ExportRange = ExportRange.SetOfViews
-        opts.SetViewsAndSheets([view_id])
-        opts.ZoomType = ZoomFitType.FitToPage
-        opts.FitDirection = FitDirectionType.Horizontal
-        opts.PixelSize = width_px
-        # Use a temp base path so Revit's appended name doesn't collide with
-        # the canonical target filename.
-        opts.FilePath = os.path.join(out_dir, "_vr_tmp")
-        opts.HLRandWFViewsFileType = ImageFileType.PNG
-        opts.ShadowViewsFileType = ImageFileType.PNG
+        # Temporarily hide VOP-excluded categories so the render matches VOP scope.
+        # Transaction is rolled back after export — view state is fully restored.
+        t = _hide_vop_excluded_categories(doc, view) if view is not None else None
 
-        doc.ExportImage(opts)
+        try:
+            # Snapshot before export to locate whatever file Revit creates.
+            before = _snapshot(out_dir)
+
+            # SetViewsAndSheets requires a .NET List[ElementId], not a Python list.
+            from Autodesk.Revit.DB import ElementId as _EId
+            eid_list = NetList[_EId]()
+            eid_list.Add(view_id)
+
+            opts = ImageExportOptions()
+            opts.ExportRange = ExportRange.SetOfViews
+            opts.SetViewsAndSheets(eid_list)
+            opts.ZoomType = ZoomFitType.FitToPage
+            opts.FitDirection = FitDirectionType.Horizontal
+            opts.PixelSize = width_px
+            # Temp base path — Revit appends view metadata to the name it creates.
+            opts.FilePath = os.path.join(out_dir, "_vr_tmp")
+            opts.HLRandWFViewsFileType = ImageFileType.PNG
+            opts.ShadowViewsFileType = ImageFileType.PNG
+
+            doc.ExportImage(opts)
+
+        finally:
+            # Always roll back — restores original category visibility.
+            if t is not None:
+                try:
+                    t.RollBack()
+                except Exception as rb_e:
+                    print("[view_raster] WARNING: transaction rollback failed: {}".format(rb_e))
 
         # Find new PNG(s) created since the snapshot.
         after = _snapshot(out_dir)
         new_pngs = [f for f in (after - before) if f.lower().endswith(".png")]
 
         if not new_pngs:
-            msg = "ExportImage produced no new PNG in '{}'; dir had {} files after call".format(
+            msg = "ExportImage produced no new PNG in '{}'; {} files present after call".format(
                 out_dir, len(after))
             if diag is not None:
                 diag.error(phase="export", callsite="export_view_image", message=msg,
@@ -186,9 +258,8 @@ def export_pipeline_views_to_pngs(doc, pipeline_result, output_dir, pixels_per_c
     Produces one PNG per view using the same canonical filename as vop_raster/:
         {safe_view_name}_{view_id}.png
 
-    Each view is exported individually so its PixelSize can be set to the correct
-    width for that view. The before/after snapshot in export_view_image() handles
-    Revit's internal filename mangling regardless of Revit version.
+    VOP-excluded categories are hidden per-view via a rolled-back Transaction
+    before each export so the rendered content matches VOP's analysis scope.
 
     Args:
         doc:             Revit Document.
