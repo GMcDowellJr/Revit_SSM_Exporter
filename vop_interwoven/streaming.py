@@ -313,6 +313,8 @@ class StreamingExporter:
         # Not gated on is_cache_hit: only needs doc + view_id + dimensions,
         # all of which are present on cache-hit payloads too.
         if self.export_view_raster:
+            print("[view_raster] exporting for view '{}' (id={})".format(
+                view_result.get("view_name"), view_result.get("view_id")))
             t0 = time.perf_counter()
             vr_path = self._write_view_raster(view_result)
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
@@ -401,7 +403,15 @@ class StreamingExporter:
             or 0
         )
 
+        print("[view_raster] view='{}' id={} W={} H={} cell_size_ft={:.4f}".format(
+            view_name, view_id, W, H, cell_size_ft))
+
         if W <= 0 or H <= 0:
+            print("[view_raster] SKIP '{}': W={} H={} (dimensions missing from result dict; "
+                  "keys present: {})".format(view_name, W, H,
+                  [k for k in ("width", "height", "grid_W", "grid_H", "cell_size",
+                                "cell_size_ft", "cell_size_ft_effective")
+                   if view_result.get(k) is not None]))
             return None
 
         width_px = W * self.pixels_per_cell
@@ -431,7 +441,10 @@ class StreamingExporter:
         )
 
         if png_path:
-            print(f"[Streaming] Wrote view raster: {os.path.basename(png_path)}")
+            print("[view_raster] Saved: {}".format(os.path.basename(png_path)))
+        else:
+            print("[view_raster] FAILED: export_view_image returned None for '{}' "
+                  "(check [view_raster] messages above for detail)".format(view_name))
 
         return png_path
 
