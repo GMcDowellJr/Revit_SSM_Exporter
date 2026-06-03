@@ -174,19 +174,25 @@ def make_view_basis(view, diag=None):
 
         forward = vd
 
-        # Plan views: origin on cut plane
+        # Plan views: origin at cut plane so W=0 at the cut plane,
+        # W>0 for elements deeper into the view, W<0 for elements behind the plane.
+        # Uses PlanViewPlane.CutPlane (NOT integer 0, which is TopClipPlane).
         origin_z = origin.Z
+        origin_z_source = "view.Origin.Z"
         try:
             if view.ViewType in [ViewType.FloorPlan, ViewType.CeilingPlan, ViewType.EngineeringPlan]:
+                from Autodesk.Revit.DB import PlanViewPlane
                 vr = view.GetViewRange()
                 if vr is not None:
-                    cut_level_id = vr.GetLevelId(0)
-                    cut_offset = vr.GetOffset(0)
-                    cut_level = view.Document.GetElement(cut_level_id)
+                    cut_level_id = vr.GetLevelId(PlanViewPlane.CutPlane)
+                    cut_offset   = vr.GetOffset(PlanViewPlane.CutPlane)
+                    cut_level    = view.Document.GetElement(cut_level_id)
                     if cut_level is not None:
                         origin_z = cut_level.Elevation + cut_offset
+                        origin_z_source = "cut_plane"
         except Exception as e:
-            # This is a correctness degradation (depth origin changes). Record it once.
+            # Correctness degradation: depth values will be offset but ordering is preserved.
+            origin_z_source = "fallback(exception)"
             try:
                 if diag is not None:
                     diag.warn(
@@ -196,14 +202,17 @@ def make_view_basis(view, diag=None):
                         view_id=view_id,
                         extra={"exc_type": type(e).__name__, "exc": str(e)},
                     )
-            except Exception as e:
+            except Exception as inner:
                 if diag is not None:
                     diag.error(
                         phase="view_basis",
                         callsite="make_view_basis",
-                        message="Exception in make_view_basis: {}".format(e),
-                        exc=e,
+                        message="Exception in make_view_basis: {}".format(inner),
+                        exc=inner,
                     )
+
+        print("[view_basis] view={} origin_z={:.4f} (source={})".format(
+            view_id, float(origin_z), origin_z_source))
         return ViewBasis(
             origin=(origin.X, origin.Y, origin_z),
             right=(right.X, right.Y, right.Z),
