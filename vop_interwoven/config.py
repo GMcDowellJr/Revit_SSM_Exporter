@@ -92,7 +92,7 @@ class Config:
         tierb_area_thresh_max=2000,
 
         # PR11: Collector consolidation / broad-phase performance knobs
-        enable_multicategory_filter=True,
+        enable_multicategory_filter=False,
         coarse_spatial_filter_enabled=False,
         coarse_spatial_filter_pad_ft=0.0,
 
@@ -575,7 +575,7 @@ class Config:
             # Detail line rendering
             linear_band_thickness_cells=d.get("linear_band_thickness_cells", 1.0),
             # PR11 knobs
-            enable_multicategory_filter=d.get("enable_multicategory_filter", True),
+            enable_multicategory_filter=d.get("enable_multicategory_filter", False),
             coarse_spatial_filter_enabled=d.get("coarse_spatial_filter_enabled", False),
             coarse_spatial_filter_pad_ft=d.get("coarse_spatial_filter_pad_ft", 0.0),
             extents_scan_max_elements=d.get("extents_scan_max_elements", 50000),

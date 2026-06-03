@@ -5,20 +5,29 @@ Notes
 - Must be importable under pytest (outside Revit). Do not import Autodesk at module import time.
 - Revit-only resolution happens inside functions.
 
-This policy intentionally describes what we mean by "model geometry" for VOP.
-Collectors are expected to:
-  1) restrict candidates to CategoryType.Model (when available), and
-  2) apply this allowlist + global exclusions + per-source overrides.
+This policy implements exclude-by-default for model geometry: all CategoryType.Model categories
+are included unless explicitly excluded.  Annotation, Analytical, and Internal categories are
+excluded by virtue of not being CategoryType.Model.
+
+Decision order in should_include_element():
+  1. Exclude elements with no category.
+  2. Apply source-specific line rules:
+       HOST  – exclude view-specific lines (OST_Lines with ViewSpecific=True).
+       LINK/DWG – exclude all lines.
+  3. Apply explicit model exclusion list (_EXCLUDED_BIC_NAMES_GLOBAL).
+  4. Include if category.CategoryType == CategoryType.Model.
+  5. Exclude as non_model_category otherwise.
 
 Per-source behavior
 -------------------
 HOST:
-  - allowlist includes OST_Lines, but view-specific lines are excluded.
+  - OST_Lines are passed through unless they are view-specific.
 LINK/DWG:
-  - exclude lines entirely by default (historical behavior), to avoid counting graphics-only content.
+  - Lines are excluded entirely (historical behavior, avoids counting graphics-only content).
 """
 
 from typing import Dict, Iterable, Optional, Set, Tuple
+
 
 class PolicyStats(object):
     """Aggregated counters for policy filtering (runtime-safe)."""
@@ -42,37 +51,19 @@ class PolicyStats(object):
 
 
 # Cache: (id(doc), bic_names_tuple) -> set(category_ids).
-# This avoids repeated doc.Settings lookups when filtering many elements.
 _CATEGORY_ID_CACHE = {}
-
-# Allowlist: categories we intend to treat as "model geometry" for occupancy/edges.
-# Stored as BuiltInCategory names (strings) so this module can import outside Revit.
-_INCLUDED_BIC_NAMES_BASE: Tuple[str, ...] = (
-    "OST_Walls",
-    "OST_Floors",
-    "OST_Roofs",
-    "OST_Doors",
-    "OST_Windows",
-    "OST_Columns",
-    "OST_StructuralFraming",
-    "OST_StructuralColumns",
-    "OST_Stairs",
-    "OST_Railings",
-    "OST_Ceilings",
-    "OST_GenericModel",
-    "OST_Furniture",
-    "OST_Casework",
-    "OST_MechanicalEquipment",
-    "OST_ElectricalEquipment",
-    "OST_PlumbingFixtures",
-    "OST_DuctCurves",
-    "OST_PipeCurves",
-)
 
 # Lines are special-cased by source.
 _BIC_LINES = "OST_Lines"
 
-# Excludelist: categories to exclude even if a future caller attempts broad collection.
+# Integer value of CategoryType.Model in the Revit API enum.
+# Used for cross-env comparison (int mocks work in pytest without importing Revit).
+_CATEGORY_TYPE_MODEL_INT = 1
+
+# Explicit model exclusion list.  These categories are excluded from model occupancy
+# collection regardless of their CategoryType, to avoid bounds blowouts and semantic
+# contamination.  Some may be reintroduced in a later PR with TRACK_ONLY or
+# REFERENCE_OVERLAY roles.
 _EXCLUDED_BIC_NAMES_GLOBAL: Tuple[str, ...] = (
     # Navigation / view mechanics
     "OST_Grids",
@@ -99,50 +90,30 @@ _EXCLUDED_BIC_NAMES_GLOBAL: Tuple[str, ...] = (
     "OST_PointClouds",
 )
 
-# Fallback category NAME allowlist/excludelist used only when doc.Settings resolution
-# is unavailable (pytest fakes). Real Revit runs should resolve by CategoryId.
-_FALLBACK_INCLUDED_CATEGORY_NAMES = set([
-    "Walls",
-    "Floors",
-    "Roofs",
-    "Doors",
-    "Windows",
-    "Columns",
-    "Structural Framing",
-    "Structural Columns",
-    "Stairs",
-    "Railings",
-    "Ceilings",
-    "Generic Models",
-    "Furniture",
-    "Casework",
-    "Mechanical Equipment",
-    "Electrical Equipment",
-    "Plumbing Fixtures",
-    "Ducts",
-    "Pipes",
-    "Lines",
-])
-
-_FALLBACK_EXCLUDED_CATEGORY_NAMES = set([
+# Fallback excluded names used only when doc.Settings resolution is unavailable (pytest).
+# Must stay in sync with _EXCLUDED_BIC_NAMES_GLOBAL human-readable names.
+_FALLBACK_EXCLUDED_CATEGORY_NAMES = {
+    "Grids",
+    "Grid Heads",
+    "Levels",
+    "Level Heads",
+    "Section Heads",
+    "Section Marks",
+    "Elevation Marks",
+    "Callout Heads",
+    "Reference Viewers",
+    "Viewers",
+    "Cameras",
+    "Sun Path",
+    "Section Boxes",
+    "Adaptive Points",
+    "Reveals",
     "Rooms",
     "Areas",
-    "Grids",
-    "Levels",
-    "Point Clouds",
+    "MEP Spaces",
     "Detail Items",
-])
-
-def included_bic_names_for_source(source_type: str) -> Tuple[str, ...]:
-    """Return allowlist BuiltInCategory *names* for a given source."""
-    st = (source_type or "HOST").upper()
-    if st == "HOST":
-        return _INCLUDED_BIC_NAMES_BASE + (_BIC_LINES,)
-    # LINK / DWG: match historical behavior (exclude lines).
-    return _INCLUDED_BIC_NAMES_BASE
-
-def excluded_bic_names_global() -> Tuple[str, ...]:
-    return _EXCLUDED_BIC_NAMES_GLOBAL
+    "Point Clouds",
+}
 
 
 # Annotation categories collected by the VOP annotation pass (collect_2d_annotations).
@@ -175,10 +146,16 @@ def annotation_included_bic_names() -> Tuple[str, ...]:
     """
     return _ANNOTATION_INCLUDED_BIC_NAMES
 
+
+def excluded_bic_names_global() -> Tuple[str, ...]:
+    return _EXCLUDED_BIC_NAMES_GLOBAL
+
+
 def _try_import_bic():
     """Import BuiltInCategory lazily (Revit-only)."""
     from Autodesk.Revit.DB import BuiltInCategory  # type: ignore
     return BuiltInCategory
+
 
 def _try_get_category_id(doc, bic_name: str) -> Optional[int]:
     """Resolve a BuiltInCategory name to a Category integer id for a given doc."""
@@ -191,8 +168,9 @@ def _try_get_category_id(doc, bic_name: str) -> Optional[int]:
         if cat is None or cat.Id is None:
             return None
         return int(cat.Id.IntegerValue)
-    except Exception as e:
+    except Exception:
         return None
+
 
 def resolve_category_ids(doc, bic_names: Iterable[str]) -> Set[int]:
     """Resolve BuiltInCategory names to integer category ids for this doc (cached)."""
@@ -201,7 +179,7 @@ def resolve_category_ids(doc, bic_names: Iterable[str]) -> Set[int]:
         cached = _CATEGORY_ID_CACHE.get(key)
         if cached is not None:
             return set(cached)
-    except Exception as e:
+    except Exception:
         key = None
 
     out: Set[int] = set()
@@ -213,10 +191,19 @@ def resolve_category_ids(doc, bic_names: Iterable[str]) -> Set[int]:
     if key is not None:
         try:
             _CATEGORY_ID_CACHE[key] = set(out)
-        except Exception as e:
-            # Exception in resolve_category_ids - no diag in scope
-            pass  # TODO: Add diagnostics when diag becomes available
+        except Exception:
+            pass
     return out
+
+
+def _try_get_category_type_model():
+    """Return CategoryType.Model from the Revit API, or None if outside Revit."""
+    try:
+        from Autodesk.Revit.DB import CategoryType  # type: ignore
+        return CategoryType.Model
+    except (ImportError, AttributeError):
+        return None
+
 
 def should_include_element(
     *,
@@ -227,6 +214,13 @@ def should_include_element(
 ) -> Tuple[bool, str, str]:
     """Apply category policy to an element.
 
+    Decision order:
+      1. Exclude elements with no category.
+      2. Apply source-specific line rules.
+      3. Apply explicit model exclusion list.
+      4. Include if category.CategoryType == CategoryType.Model.
+      5. Exclude as non_model_category otherwise.
+
     Returns:
         (include, reason, category_name)
 
@@ -234,10 +228,9 @@ def should_include_element(
       - "included"
       - "no_category"
       - "excluded_global"
-      - "not_in_allowlist"
+      - "non_model_category"
       - "view_specific_line"
       - "lines_excluded_for_source"
-      - "category_id_unresolved"
     """
     if stats is not None:
         stats.seen_total += 1
@@ -250,52 +243,46 @@ def should_include_element(
 
     try:
         cname = getattr(cat, "Name", None) or "<UNKNOWN_CATEGORY>"
-    except Exception as e:
+    except Exception:
         cname = "<UNKNOWN_CATEGORY>"
 
-    # Resolve id via cat.Id if available.
     cat_id_val = None
     try:
         cat_id_val = int(cat.Id.IntegerValue)
-    except Exception as e:
+    except Exception:
         cat_id_val = None
 
     st = (source_type or "HOST").upper()
 
-    # Lines special case
+    # Step 2: Source-specific line rules
     if st == "HOST":
-        is_lines = False
-        if cname == "Lines":
-            is_lines = True
+        is_lines = (cname == "Lines")
         if cat_id_val is not None:
             lines_id = _try_get_category_id(doc, _BIC_LINES)
             if lines_id is not None:
-                is_lines = (is_lines or (cat_id_val == lines_id))
+                is_lines = is_lines or (cat_id_val == lines_id)
         if is_lines:
             try:
                 if bool(getattr(elem, "ViewSpecific", False)):
                     if stats is not None:
                         stats.mark_excluded("view_specific_line", cname)
                     return False, "view_specific_line", cname
-            except Exception as e:
+            except Exception:
                 # Preserve legacy behavior: if ViewSpecific probe fails, do not exclude.
                 pass
     else:
         # LINK/DWG: exclude lines altogether (explicit per-source override).
-        # pytest/fake-doc fallback: enforce by name if ids cannot be resolved.
-        if cname == "Lines":
+        is_lines = (cname == "Lines")
+        if cat_id_val is not None:
+            lines_id = _try_get_category_id(doc, _BIC_LINES)
+            if lines_id is not None:
+                is_lines = is_lines or (cat_id_val == lines_id)
+        if is_lines:
             if stats is not None:
                 stats.mark_excluded("lines_excluded_for_source", cname)
             return False, "lines_excluded_for_source", cname
 
-        if cat_id_val is not None:
-            lines_id = _try_get_category_id(doc, _BIC_LINES)
-            if lines_id is not None and cat_id_val == lines_id:
-                if stats is not None:
-                    stats.mark_excluded("lines_excluded_for_source", cname)
-                return False, "lines_excluded_for_source", cname
-
-    # Global exclusions
+    # Step 3: Explicit global exclusion list
     if cat_id_val is not None:
         excluded_ids = resolve_category_ids(doc, excluded_bic_names_global())
         if excluded_ids:
@@ -309,27 +296,53 @@ def should_include_element(
                 if stats is not None:
                     stats.mark_excluded("excluded_global", cname)
                 return False, "excluded_global", cname
-
-    # Allowlist
-    if cat_id_val is None:
-        if stats is not None:
-            stats.mark_excluded("category_id_unresolved", cname)
-        return False, "category_id_unresolved", cname
-
-    included_ids = resolve_category_ids(doc, included_bic_names_for_source(st))
-    if included_ids:
-        if cat_id_val not in included_ids:
-            if stats is not None:
-                stats.mark_excluded("not_in_allowlist", cname)
-            return False, "not_in_allowlist", cname
     else:
-        # pytest/fake-doc fallback
-        if cname not in _FALLBACK_INCLUDED_CATEGORY_NAMES:
+        # Cannot resolve category ID; apply name-based exclusion fallback
+        if cname in _FALLBACK_EXCLUDED_CATEGORY_NAMES:
             if stats is not None:
-                stats.mark_excluded("not_in_allowlist", cname)
-            return False, "not_in_allowlist", cname
+                stats.mark_excluded("excluded_global", cname)
+            return False, "excluded_global", cname
 
+    # Step 4: Include CategoryType.Model; exclude all other category types.
+    cat_type = getattr(cat, "CategoryType", None)
+    if cat_type is not None:
+        model_type = _try_get_category_type_model()
+        if model_type is not None:
+            # Full Revit runtime: exact enum comparison
+            if cat_type == model_type:
+                if stats is not None:
+                    stats.mark_included()
+                return True, "included", cname
+            else:
+                if stats is not None:
+                    stats.mark_excluded("non_model_category", cname)
+                return False, "non_model_category", cname
+
+        # Outside Revit: compare via integer value (CategoryType.Model == 1)
+        try:
+            if int(cat_type) == _CATEGORY_TYPE_MODEL_INT:
+                if stats is not None:
+                    stats.mark_included()
+                return True, "included", cname
+            else:
+                if stats is not None:
+                    stats.mark_excluded("non_model_category", cname)
+                return False, "non_model_category", cname
+        except (TypeError, ValueError):
+            pass
+
+        # Final fallback: string representation comparison
+        cat_type_str = str(cat_type)
+        if cat_type_str == "Model":
+            if stats is not None:
+                stats.mark_included()
+            return True, "included", cname
+        if cat_type_str in {"Annotation", "AnalyticalModel", "Internal"}:
+            if stats is not None:
+                stats.mark_excluded("non_model_category", cname)
+            return False, "non_model_category", cname
+
+    # Default: include when CategoryType is unavailable (safe; avoids silent omission).
     if stats is not None:
         stats.mark_included()
-
     return True, "included", cname
