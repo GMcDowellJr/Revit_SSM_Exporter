@@ -2,6 +2,16 @@
 Depth convention contract: w = dot(element - origin, forward) must increase
 with distance from the viewer so that smaller w = closer = wins the depth test.
 
+Revit's ViewDirection points FROM the model TOWARD the viewer (not into the
+scene). make_view_basis negates it to produce the into-scene forward vector
+used here. Tests construct ViewBasis directly with those negated values.
+
+  View type   Revit ViewDirection   forward = vd.Negate()
+  ----------  -------------------   ---------------------
+  Floor plan  (0, 0, +1) up        (0, 0, -1) down into scene
+  Section +Y  (0, -1,  0) -Y       (0, +1,  0) +Y into scene
+  RCP         (0, 0, -1) down      (0, 0, +1) up into scene
+
 This is view-type agnostic. Tests use representative forward vectors for each
 major view type to confirm the ordering holds.
 """
@@ -19,13 +29,16 @@ def _w(point, vb):
 
 def test_floor_plan_closer_element_has_smaller_w():
     """For floor plan view, element at cut plane (high Z) must have smaller w
-    than element far below (low Z)."""
-    # ViewDirection for floor plan = (0, 0, -1); forward = vd (NOT negated)
+    than element far below (low Z).
+
+    Revit ViewDirection for floor plan = (0, 0, +1) toward viewer above.
+    make_view_basis does vd.Negate(), so forward = (0, 0, -1) into scene.
+    """
     vb = ViewBasis(
         origin=(0.0, 0.0, 20.5),   # origin at cut plane
         right=(1.0, 0.0, 0.0),
         up=(0.0, 1.0, 0.0),
-        forward=(0.0, 0.0, -1.0),  # ViewDirection for floor plan
+        forward=(0.0, 0.0, -1.0),  # = vd.Negate() for floor plan
     )
 
     cut_plane_element  = (0.0, 0.0, 20.5)  # at cut plane — closest to viewer
@@ -41,12 +54,18 @@ def test_floor_plan_closer_element_has_smaller_w():
 
 
 def test_floor_plan_depth_test_floor_occludes_wall():
-    """Simulated depth test: floor slab (w_occ) must block Level-1 wall (w_depth)."""
+    """Simulated depth test: floor slab (w_occ) must block Level-1 wall (w_depth).
+
+    With forward = (0, 0, -1) and origin at cut plane:
+      floor slab Z=16.5 → w=4
+      Level-1 wall Z=6  → w=14.5
+    Depth test: w_wall < w_floor? → 14.5 < 4 → False → wall is correctly occluded.
+    """
     vb = ViewBasis(
-        origin=(0.0, 0.0, 0.0),
+        origin=(0.0, 0.0, 20.5),
         right=(1.0, 0.0, 0.0),
         up=(0.0, 1.0, 0.0),
-        forward=(0.0, 0.0, -1.0),
+        forward=(0.0, 0.0, -1.0),  # = vd.Negate() for floor plan
     )
     w_floor = _w((0.0, 0.0, 16.5), vb)
     w_wall  = _w((0.0, 0.0,  6.0), vb)
@@ -62,12 +81,16 @@ def test_floor_plan_depth_test_floor_occludes_wall():
 # ── Section (viewer in front, looking in +Y) ─────────────────────────────────
 
 def test_section_closer_element_has_smaller_w():
-    """For a section looking in +Y, element at Y=5 is closer than Y=20."""
+    """For a section looking in +Y, element at Y=5 is closer than Y=20.
+
+    Revit ViewDirection for this section = (0, -1, 0) toward viewer at -Y.
+    make_view_basis does vd.Negate(), so forward = (0, +1, 0) into scene.
+    """
     vb = ViewBasis(
         origin=(0.0, 0.0, 0.0),
         right=(1.0, 0.0, 0.0),
         up=(0.0, 0.0, 1.0),
-        forward=(0.0, 1.0, 0.0),  # ViewDirection for section looking in +Y
+        forward=(0.0, 1.0, 0.0),  # = vd.Negate() for section looking in +Y
     )
     near = (0.0,  5.0, 0.0)
     far  = (0.0, 20.0, 0.0)
@@ -78,16 +101,23 @@ def test_section_closer_element_has_smaller_w():
 # ── RCP (viewer below, looking up) ───────────────────────────────────────────
 
 def test_rcp_closer_element_has_smaller_w():
-    """For RCP (looking up), element at Z=9 (ceiling, close) must have smaller w
-    than element at Z=12 (farther above)."""
+    """For RCP (looking up), elements below the cut plane are closest to the viewer.
+
+    Revit ViewDirection for RCP = (0, 0, -1) toward viewer below.
+    make_view_basis does vd.Negate(), so forward = (0, 0, +1) into scene (up).
+
+    With forward=(0,0,+1) and origin at cut plane Z=9:
+      below cut Z=5: w = dot((0,0,-4),(0,0,1)) = -4  (closest, negative)
+      at cut    Z=9: w = 0
+      above cut Z=12: w = 3                           (farthest, positive)
+    Smaller w = closer to viewer looking up from below.
+    """
     vb = ViewBasis(
         origin=(0.0, 0.0, 9.0),    # cut plane for RCP
         right=(1.0, 0.0, 0.0),
         up=(0.0, 1.0, 0.0),
-        forward=(0.0, 0.0, 1.0),   # ViewDirection for RCP (looking up)
+        forward=(0.0, 0.0, 1.0),   # = vd.Negate() for RCP
     )
-    # Looking UP: lower Z (below cut) = farther from viewer; higher Z = farther up = farther
-    # At cut plane (Z=9): w=0; below cut (Z=5): w<0 (closer); above cut (Z=12): w>0 (farther)
     below_cut  = (0.0, 0.0, 5.0)   # closer to viewer looking up
     at_cut     = (0.0, 0.0, 9.0)   # at cut
     above_cut  = (0.0, 0.0, 12.0)  # farther
