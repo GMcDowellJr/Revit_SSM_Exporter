@@ -80,8 +80,8 @@ def collect_view_elements(doc, view, raster, diag=None, cfg=None, exclude_ids=No
     Returns:
         List[Element] (host elements only; link expansion happens downstream)
     """
-    from Autodesk.Revit.DB import FilteredElementCollector, BuiltInCategory
-    from .collection_policy import included_bic_names_for_source, should_include_element, PolicyStats
+    from Autodesk.Revit.DB import FilteredElementCollector
+    from .collection_policy import should_include_element, PolicyStats
     from .safe_api import safe_call
 
     view_id = None
@@ -96,13 +96,6 @@ def collect_view_elements(doc, view, raster, diag=None, cfg=None, exclude_ids=No
                 exc=e,
             )
         view_id = None
-
-    # Category allowlist (policy is still authoritative; this is only a coarse filter)
-    bic_names = included_bic_names_for_source("HOST")
-    model_categories = []
-    for bic_name in bic_names:
-        if hasattr(BuiltInCategory, bic_name):
-            model_categories.append(getattr(BuiltInCategory, bic_name))
 
     policy_stats = PolicyStats()
     elements = []
@@ -175,30 +168,19 @@ def collect_view_elements(doc, view, raster, diag=None, cfg=None, exclude_ids=No
                     },
                 )
 
-    # Best-effort: ElementMulticategoryFilter to avoid scanning categories we never include.
-    if enable_multicat_filter and model_categories:
-        try:
-            from Autodesk.Revit.DB import ElementMulticategoryFilter, ElementId
-            from System.Collections.Generic import List
-
-            # ElementMulticategoryFilter expects a .NET collection (typically ICollection<ElementId>)
-            # Construct List directly from Python list comprehension (cleaner, more Pythonic)
-            cat_ids = List[ElementId]([ElementId(int(bic)) for bic in model_categories])
-
-            collector = collector.WherePasses(ElementMulticategoryFilter(cat_ids))
-        except Exception as e:
-            if diag is not None:
-                diag.warn(
-                    phase="collection",
-                    callsite="collect_view_elements.multicat",
-                    message="Failed to apply multicategory filter; continuing without it",
-                    view_id=view_id,
-                    extra={
-                        "num_categories": len(model_categories),
-                        "exc_type": type(e).__name__,
-                        "exc": str(e),
-                    },
-                )
+    # Note: The allowlist-based ElementMulticategoryFilter is intentionally disabled.
+    # Collection now uses an exclude-list model (all CategoryType.Model categories
+    # are included unless explicitly excluded). Policy filtering in should_include_element()
+    # is the authoritative gate. enable_multicategory_filter is reserved for future use
+    # with an exclusion-filter approach.
+    if enable_multicat_filter:
+        if diag is not None:
+            diag.info(
+                phase="collection",
+                callsite="collect_view_elements.multicat",
+                message="enable_multicategory_filter=True but multicategory filter is not applied (exclude-list policy active); set to False to suppress this message",
+                view_id=view_id,
+            )
 
     # Best-effort: coarse spatial filter using view.CropBox (model-space AABB).
     if enable_coarse_spatial:
@@ -395,7 +377,6 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None, 
                     elem=e,
                     elem_id=elem_id,
                     source_id="HOST",
-                    source_type="HOST",
                     view=None,  # Use model bbox for reuse
                     extract_params=None
                 )
@@ -447,23 +428,6 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None, 
             else:
                 bbox_none += 1
 
-            fingerprint = None
-            proxy_elem_id = getattr(getattr(proxy, "Id", None), "IntegerValue", None)
-            proxy_source_type = getattr(proxy, "source_type", "LINK")
-            proxy_source_id = getattr(proxy, "source_id", getattr(proxy, "doc_key", proxy_source_type))
-            if elem_cache is not None and proxy_elem_id is not None:
-                try:
-                    fingerprint = elem_cache.get_or_create_fingerprint(
-                        elem=proxy,
-                        elem_id=proxy_elem_id,
-                        source_id=proxy_source_id,
-                        source_type=proxy_source_type,
-                        view=None,
-                        extract_params=None,
-                    )
-                except Exception:
-                    fingerprint = None
-
             result.append(
                 {
                     "element": proxy,
@@ -471,9 +435,8 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None, 
                     "bbox": bbox,
                     "bbox_source": bbox_source,
                     "bbox_link": getattr(proxy, "bbox_link", None),
-                    "fingerprint": fingerprint,
-                    "source_type": proxy_source_type,
-                    "source_id": proxy_source_id,
+                    "source_type": getattr(proxy, "source_type", "HOST"),
+                    "source_id": getattr(proxy, "source_id", getattr(proxy, "doc_key", "HOST")),
                     "source_label": getattr(proxy, "source_label", getattr(proxy, "doc_label", getattr(proxy, "doc_key", "HOST"))),
                     "doc_key": getattr(proxy, "doc_key", getattr(proxy, "source_id", "HOST")),
                     "doc_label": getattr(proxy, "doc_label", getattr(proxy, "source_label", getattr(proxy, "doc_key", "HOST"))),
