@@ -390,7 +390,9 @@ class ViewRaster:
         Commentary:
             - Used for DWG/DXF curves and other open paths
             - Stamps edges only, no interior fill
-            - Updates model_edge_key and contributes to w_occ occlusion
+            - Updates model_edge_key; also calls try_write_cell for non-text elements
+              (depth wins write w_occ). Only call from HIGH-confidence paths (AREAL+HIGH).
+              TINY/LINEAR must use rasterize_open_polylines_to_proxy_edges instead.
         """
         filled = 0
 
@@ -898,7 +900,11 @@ class ViewRaster:
         return False
 
     def rasterize_proxy_loops(self, loops, key_index, depth=0.0, source="HOST", write_proxy_edges=False):
-        """Rasterize proxy footprint loops: occlusion fill ALWAYS; proxy edges optionally.
+        """Rasterize proxy footprint loops: interior fill via _scanline_fill; proxy edges optionally.
+
+        NOTE: _scanline_fill calls try_write_cell which writes w_occ. This method is therefore
+        NOT policy-safe for TINY/LINEAR or MEDIUM/LOW AREAL elements. Use rasterize_polygon_to_proxy
+        (which explicitly skips the occlusion buffer) for non-occluding proxy fills.
 
         Critical PR8 rule:
           - never stamps model_edge_key
