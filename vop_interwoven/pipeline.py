@@ -65,15 +65,7 @@ Core principles:
 #
 #    The difference from model ink is *certainty*, not visibility.
 #
-# 4) FALLBACK RULE (critical)
-#    If an element is classified AREAL but must fall back to
-#    OBB or AABB:
-#      - It STILL occludes (writes w_occ).
-#      - It writes PROXY INK, not MODEL INK.
-#
-#    Strategy failure must NOT downgrade occlusion authority.
-#
-# 5) EARLY-OUT / SKIP LOGIC
+# 4) EARLY-OUT / SKIP LOGIC
 #    - Early-out tests consult ONLY existing occlusion (from AREAL).
 #    - Proxy ink alone never causes skipping.
 #
@@ -1886,8 +1878,8 @@ def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, con
                         closed_loops, key_index, depth=elem_depth, source=source_type, occlude_edges=True
                     )
                 except Exception as e:
-                    # Exception in rasterize_areal_loops - no diag in scope
-                    pass  # TODO: Add diagnostics when diag becomes available
+                    print("[WARN] rasterize_areal_loops: rasterize_silhouette_loops raised "
+                          "{}: {} for elem {} ({})".format(type(e).__name__, e, elem_id, category))
             # Rasterize open polylines (edges + occlusion, for HIGH confidence)
             if open_loops:
                 try:
@@ -1897,8 +1889,8 @@ def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, con
                     if len(open_loops) > 0:
                         open_polyline_success = True
                 except Exception as e:
-                    # Exception in rasterize_areal_loops - no diag in scope
-                    pass  # TODO: Add diagnostics when diag becomes available
+                    print("[WARN] rasterize_areal_loops: rasterize_open_polylines raised "
+                          "{}: {} for elem {} ({})".format(type(e).__name__, e, elem_id, category))
             # Supplemental perimeter proxy edges (visible boundary ink alongside occlusion fill)
             if closed_loops:
                 try:
@@ -1906,8 +1898,8 @@ def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, con
                         closed_loops, key_index, depth=elem_depth, source=source_type
                     )
                 except Exception as e:
-                    # Exception in rasterize_areal_loops - no diag in scope
-                    pass  # TODO: Add diagnostics when diag becomes available
+                    print("[WARN] rasterize_areal_loops: rasterize_closed_loops_to_proxy_edges raised "
+                          "{}: {} for elem {} ({})".format(type(e).__name__, e, elem_id, category))
             if open_loops:
                 try:
                     filled += raster.rasterize_open_polylines_to_proxy_edges(
@@ -1916,8 +1908,8 @@ def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, con
                     if len(open_loops) > 0:
                         open_polyline_success = True
                 except Exception as e:
-                    # Exception in rasterize_areal_loops - no diag in scope
-                    pass  # TODO: Add diagnostics when diag becomes available
+                    print("[WARN] rasterize_areal_loops: rasterize_open_polylines_to_proxy_edges raised "
+                          "{}: {} for elem {} ({})".format(type(e).__name__, e, elem_id, category))
 
         # MEDIUM/LOW confidence: proxy ink only, no occlusion writes.
         # Policy: only AREAL+HIGH may write w_occ; approximate geometry must not block
@@ -1929,13 +1921,15 @@ def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, con
                         closed_loops, key_index, depth=elem_depth, source=source_type
                     )
                 except Exception as e:
-                    pass  # TODO: Add diagnostics when diag becomes available
+                    print("[WARN] rasterize_areal_loops: rasterize_polygon_to_proxy raised "
+                          "{}: {} for elem {} ({})".format(type(e).__name__, e, elem_id, category))
                 try:
                     filled += raster.rasterize_closed_loops_to_proxy_edges(
                         closed_loops, key_index, depth=elem_depth, source=source_type
                     )
                 except Exception as e:
-                    pass  # TODO: Add diagnostics when diag becomes available
+                    print("[WARN] rasterize_areal_loops: rasterize_closed_loops_to_proxy_edges raised "
+                          "{}: {} for elem {} ({})".format(type(e).__name__, e, elem_id, category))
             if open_loops:
                 try:
                     filled += raster.rasterize_open_polylines_to_proxy_edges(
@@ -1944,7 +1938,8 @@ def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, con
                     if len(open_loops) > 0:
                         open_polyline_success = True
                 except Exception as e:
-                    pass  # TODO: Add diagnostics when diag becomes available
+                    print("[WARN] rasterize_areal_loops: rasterize_open_polylines_to_proxy_edges raised "
+                          "{}: {} for elem {} ({})".format(type(e).__name__, e, elem_id, category))
 
         # Mark open-polyline-only rendering in metadata
         if open_polyline_success and filled == 0:
