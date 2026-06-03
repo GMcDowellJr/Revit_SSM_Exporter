@@ -1114,7 +1114,10 @@ class ViewRaster:
         if not target_cells:
             return 0
 
-        # Write to model_proxy_key WITHOUT updating w_occ
+        # Write to model_proxy_key WITHOUT updating w_occ.
+        # Depth guard: same semantics as stamp_proxy_edge_idx — skip cells already occupied
+        # by a closer AREAL+HIGH occluder. An element behind a floor must not add proxy presence
+        # to the floor's cells, even though it doesn't write w_occ itself.
         for (i, j) in target_cells:
             # Apply model clip guard
             if source in ("HOST", "LINK", "DWG") and (not self._cell_in_model_clip(i, j)):
@@ -1124,7 +1127,12 @@ class ViewRaster:
             if idx is None:
                 continue
 
-            # Write to proxy layer (no occlusion check, no w_occ write)
+            # Skip if a closer occluder already owns this cell.
+            w_here = self.w_occ[idx]
+            if w_here != float("inf") and depth > w_here:
+                continue
+
+            # Write to proxy layer (no w_occ write)
             if 0 <= idx < len(self.model_proxy_key):
                 if self.model_proxy_key[idx] != key_index:
                     self.model_proxy_key[idx] = key_index
