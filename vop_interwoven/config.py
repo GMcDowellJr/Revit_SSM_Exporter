@@ -72,7 +72,7 @@ class Config:
         max_sheet_height_in=36.0,
         bounds_buffer_in=0.0,
         include_linked_rvt=True,
-        include_dwg_imports=True,
+        include_dwg_imports=False,
         # Detail line rendering (archive parity)
         linear_band_thickness_cells=1.0,
         # Debug and diagnostics
