@@ -1888,7 +1888,7 @@ def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, con
                 except Exception as e:
                     # Exception in rasterize_areal_loops - no diag in scope
                     pass  # TODO: Add diagnostics when diag becomes available
-            # Rasterize open polylines (edges)
+            # Rasterize open polylines (edges + occlusion, for HIGH confidence)
             if open_loops:
                 try:
                     filled += raster.rasterize_open_polylines(
@@ -1899,7 +1899,7 @@ def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, con
                 except Exception as e:
                     # Exception in rasterize_areal_loops - no diag in scope
                     pass  # TODO: Add diagnostics when diag becomes available
-            # For MEDIUM/LOW, show boundary ink via proxy edges ONLY, with NO occlusion.
+            # Supplemental perimeter proxy edges (visible boundary ink alongside occlusion fill)
             if closed_loops:
                 try:
                     filled += raster.rasterize_closed_loops_to_proxy_edges(
@@ -1918,6 +1918,34 @@ def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, con
                 except Exception as e:
                     # Exception in rasterize_areal_loops - no diag in scope
                     pass  # TODO: Add diagnostics when diag becomes available
+
+        # MEDIUM/LOW confidence: proxy ink only, no occlusion writes.
+        # Policy: only AREAL+HIGH may write w_occ; approximate geometry must not block
+        # later elements via the depth buffer.
+        elif confidence in ("MEDIUM", "LOW"):
+            if closed_loops:
+                try:
+                    filled += raster.rasterize_polygon_to_proxy(
+                        closed_loops, key_index, depth=elem_depth, source=source_type
+                    )
+                except Exception as e:
+                    pass  # TODO: Add diagnostics when diag becomes available
+                try:
+                    filled += raster.rasterize_closed_loops_to_proxy_edges(
+                        closed_loops, key_index, depth=elem_depth, source=source_type
+                    )
+                except Exception as e:
+                    pass  # TODO: Add diagnostics when diag becomes available
+            if open_loops:
+                try:
+                    filled += raster.rasterize_open_polylines_to_proxy_edges(
+                        open_loops, key_index, depth=elem_depth, source=source_type
+                    )
+                    if len(open_loops) > 0:
+                        open_polyline_success = True
+                except Exception as e:
+                    pass  # TODO: Add diagnostics when diag becomes available
+
         # Mark open-polyline-only rendering in metadata
         if open_polyline_success and filled == 0:
             if key_index < len(raster.element_meta):
@@ -2892,7 +2920,11 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                         print("[DEBUG] AREAL rasterization exception for element {} ({}): {}".format(elem_id, category, e))
                     pass
 
-            # TINY/LINEAR: Use traditional rasterization (no confidence-based occlusion)
+            # TINY/LINEAR: proxy ink only — must NOT write w_occ (no occlusion authority).
+            # Policy: only AREAL+HIGH may write to the depth buffer.
+            # These elements use rasterize_polygon_to_proxy (fills) and
+            # rasterize_closed_loops_to_proxy_edges / rasterize_open_polylines_to_proxy_edges
+            # (boundary edges) so they remain visible/countable without occluding later content.
             else:
                 try:
                     open_loops = []
@@ -2905,26 +2937,29 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
 
                     filled = 0
 
-                    # First: rasterize closed loops (fills/occlusion)
+                    # Proxy fill (no occlusion write)
                     if closed_loops:
                         try:
-                            filled += raster.rasterize_silhouette_loops(
+                            filled += raster.rasterize_polygon_to_proxy(
+                                closed_loops, key_index, depth=elem_depth, source=source_type
+                            )
+                            filled += raster.rasterize_closed_loops_to_proxy_edges(
                                 closed_loops, key_index, depth=elem_depth, source=source_type
                             )
 
                             if filled == 0 and processed < 10:
-                                print("[DEBUG RASTER FAIL] Element {} closed loops returned 0 filled (loops={}, source={})".format(
+                                print("[DEBUG RASTER FAIL] Element {} closed loops returned 0 proxy filled (loops={}, source={})".format(
                                     elem_id, len(closed_loops), source_type))
                         except Exception as e:
                             if processed < 10:
-                                print("[DEBUG RASTER EXCEPT] Element {} rasterization exception: {}".format(elem_id, e))
+                                print("[DEBUG RASTER EXCEPT] Element {} proxy rasterization exception: {}".format(elem_id, e))
                             pass
 
-                    # Second: rasterize open polylines (edges)
+                    # Proxy edges for open polylines (no occlusion write)
                     open_polyline_success = False
                     if open_loops:
                         try:
-                            filled += raster.rasterize_open_polylines(
+                            filled += raster.rasterize_open_polylines_to_proxy_edges(
                                 open_loops, key_index, depth=elem_depth, source=source_type
                             )
                             # CRITICAL: Open polylines succeed even if filled=0
@@ -2941,17 +2976,15 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                                 )
                     # Check for any successful rendering (filled cells OR open polylines drawn)
                     if filled > 0 or open_polyline_success:
-                        # Update confidence if needed (TINY/LINEAR use simple model)
-                        if confidence is None or confidence == CONF_LOW:
+                        # TINY/LINEAR always proxy — confidence tracks geometry quality but
+                        # occluder is always False regardless of fill count (policy: only AREAL+HIGH occludes).
+                        if confidence is None:
                             confidence = CONF_HIGH if filled > 0 else CONF_LOW
 
                         if key_index < len(raster.element_meta):
                             raster.element_meta[key_index]["strategy"] = strategy
                             raster.element_meta[key_index]["confidence"] = confidence
-                            raster.element_meta[key_index]["occluder"] = _occlusion_allowed(
-                                elem_class,
-                                confidence,
-                            )
+                            raster.element_meta[key_index]["occluder"] = False  # TINY/LINEAR never occlude
                             if open_polyline_success and filled == 0:
                                 raster.element_meta[key_index]["open_polyline_only"] = True
 

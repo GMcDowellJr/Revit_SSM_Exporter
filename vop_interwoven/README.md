@@ -85,19 +85,36 @@ Elements are processed differently based on their UV classification:
 - Conservative tile-based interior fill
 - Boundary refinement via triangle rasterization
 - Depth-tested edge stamping
-- **Writes to depth buffer** (occlusion authority)
+- **Only AREAL elements with HIGH-confidence geometry write to the depth buffer** (occlusion authority)
 
 ### TINY Elements (Lightweight Processing)
-- **UV_AABB** proxy (axis-aligned bounding box)
-- Proxy edges stamped to `model_proxy_key` layer
-- Optional center cell marked in `model_proxy_mask`
+- Proxy fill stamped to `model_proxy_key` layer via `rasterize_polygon_to_proxy`
+- Proxy edges stamped via `rasterize_closed_loops_to_proxy_edges`
 - **No depth buffer writes** (avoids false occlusion)
 
 ### LINEAR Elements (Medium Processing)
-- **OBB** proxy (oriented bounding box) or skinny AABB
+- Proxy fill stamped to `model_proxy_key` layer via `rasterize_polygon_to_proxy`
+- Proxy edges stamped via `rasterize_closed_loops_to_proxy_edges` / `rasterize_open_polylines_to_proxy_edges`
 - Captures orientation of doors, walls, beams
-- Thin band stamped along long axis for OverModel presence
 - **No depth buffer writes**
+
+### Confidence-Based Occlusion Authority (AREAL elements only)
+
+AREAL elements carry a confidence level from geometry extraction:
+
+| Confidence | Source | Writes `w_occ`? | Writes proxy ink? |
+|---|---|---|---|
+| **HIGH** | planar_face_loops, silhouette_edges | **Yes** | Yes (supplemental edges) |
+| **MEDIUM** | geometry_polygon extraction | No | Yes (proxy fill + edges) |
+| **LOW** | OBB / AABB fallback | No | Yes (proxy edges only) |
+
+Rationale: occlusion is high-impact — a wrong occlusion skips later elements permanently.
+Approximate geometry must err toward doing more work (staying visible) rather than hiding
+content based on "close enough" shapes. Proxy ink is acceptable as model presence, but not
+as occlusion truth.
+
+TINY and LINEAR elements **always** use the proxy path regardless of whether geometry
+extraction succeeds. They set `occluder=False` in element metadata unconditionally.
 
 > **Terminology Note**: "AREAL" refers to elements with both UV dimensions > threshold (large footprint elements like floors, roofs). The term is used consistently throughout the codebase.
 
