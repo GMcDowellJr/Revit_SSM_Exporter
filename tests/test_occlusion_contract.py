@@ -56,7 +56,7 @@ def test_areal_high_silhouette_sets_model_mask():
     r = _make_raster()
     r.rasterize_silhouette_loops(_SQUARE_LOOP, key_index=0, depth=1.0, source="HOST")
 
-    assert any(m is True for m in r.model_mask)
+    assert any(bool(m) for m in r.model_mask)
 
 
 # ---------------------------------------------------------------------------

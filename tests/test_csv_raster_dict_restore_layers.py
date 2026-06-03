@@ -47,4 +47,4 @@ def test_csv_restore_includes_edge_key_and_proxy_mask():
     rr.model_proxy_mask = raster_dict.get("model_proxy_mask", raster_dict.get("model_proxy_presence", []))
 
     assert rr.model_edge_key[idx] == 7
-    assert rr.model_proxy_mask[idx] is True
+    assert bool(rr.model_proxy_mask[idx])
