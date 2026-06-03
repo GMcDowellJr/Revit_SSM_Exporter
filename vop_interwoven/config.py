@@ -143,7 +143,7 @@ class Config:
         view_diagnostics_output_dir=None,  # None = use output_dir (same as CSVs)
 
         # Perf CSV export controls
-        export_perf_csv=False,  # Export views_perf_*.csv
+        export_perf_csv=True,  # Export views_perf_*.csv
         perf_csv_output_dir=None,  # None = use output_dir (same as CSVs)
 
         # Memory management: control raster retention behavior
