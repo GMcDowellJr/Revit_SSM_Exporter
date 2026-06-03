@@ -1004,12 +1004,13 @@ class ViewRaster:
     def rasterize_polygon_to_proxy(self, loops, key_index, depth=0.0, source="HOST"):
         """Rasterize polygon loops to proxy layer WITHOUT updating occlusion buffer.
 
-        This is for MEDIUM/LOW confidence AREAL elements that should be visible but NOT occlude.
+        This is for MEDIUM/LOW confidence AREAL elements that should be visible but NOT occlude,
+        and for TINY/LINEAR elements whose proxy fill represents approximate geometry location.
 
         Args:
             loops: List of loop dicts [{'points': [(u,v,w), ...], 'is_hole': bool}]
             key_index: Element metadata index
-            depth: W-depth value (not used for occlusion, only for proxy edge stamping)
+            depth: W-depth value used for the occlusion gate (see below)
             source: Source type - "HOST", "LINK", or "DWG" (default: "HOST")
 
         Returns:
@@ -1020,6 +1021,11 @@ class ViewRaster:
             - Does NOT write to w_occ (no occlusion)
             - Does NOT write to model_edge_key (not high-confidence model ink)
             - Respects model_clip_bounds
+
+        Depth gating:
+            Proxy fill respects w_occ: if a nearer AREAL+HIGH element has already
+            written to w_occ at a cell, proxy is skipped for that cell.
+            Proxy does NOT write w_occ — it has no occlusion authority.
         """
         if not loops:
             return 0
@@ -1127,12 +1133,17 @@ class ViewRaster:
             if idx is None:
                 continue
 
-            # Skip if a closer occluder already owns this cell.
+            # Depth gate: proxy can be hidden by AREAL+HIGH occluders.
+            # All elements (TINY/LINEAR/AREAL) can be occluded; only AREAL+HIGH
+            # can occlude others. This gate implements the "can be hidden" side.
+            # Mirrors stamp_proxy_edge_idx: write only if cell is empty or
+            # this element is at least as close as what's already there.
+            # Proxy still does NOT write w_occ — it has no occlusion authority.
             w_here = self.w_occ[idx]
             if w_here != float("inf") and depth > w_here:
-                continue
+                continue  # Nearer element already occupies cell; proxy is hidden
 
-            # Write to proxy layer (no w_occ write)
+            # Write to proxy layer (no w_occ write — proxy has no occlusion authority)
             if 0 <= idx < len(self.model_proxy_key):
                 if self.model_proxy_key[idx] != key_index:
                     self.model_proxy_key[idx] = key_index

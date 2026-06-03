@@ -72,6 +72,74 @@ def test_polygon_to_proxy_no_w_occ():
     assert all(v == float("inf") for v in r.w_occ), "proxy fill must not write w_occ"
 
 
+def test_polygon_to_proxy_respects_w_occ():
+    """rasterize_polygon_to_proxy must skip cells where w_occ has a nearer element.
+
+    Policy: all elements can be occluded; only AREAL+HIGH can occlude.
+    Proxy fill must not write to cells already owned by a nearer occluder.
+    """
+    r = _make_raster()
+
+    # Simulate AREAL+HIGH floor at depth=4 occupying a region
+    floor_loop = [
+        {"points": [(2.0, 2.0), (10.0, 2.0), (10.0, 10.0), (2.0, 10.0), (2.0, 2.0)],
+         "is_hole": False}
+    ]
+    r.rasterize_silhouette_loops(floor_loop, key_index=0, depth=4.0, source="HOST")
+    floor_cells = sum(1 for v in r.w_occ if v != float("inf"))
+    assert floor_cells > 0, "floor must write w_occ"
+
+    # Proxy element at depth=12.0 (farther from viewer) over same region
+    r2_key = r.get_or_create_element_meta_index(
+        elem_id=2, category="Walls", source_id="HOST", source_type="HOST"
+    )
+    wall_loop = [
+        {"points": [(2.0, 2.0), (10.0, 2.0), (10.0, 10.0), (2.0, 10.0), (2.0, 2.0)],
+         "is_hole": False}
+    ]
+    filled = r.rasterize_polygon_to_proxy(wall_loop, key_index=r2_key, depth=12.0, source="HOST")
+
+    # Proxy fill must be zero: all cells in the wall's region are owned by the nearer floor
+    assert filled == 0, (
+        "proxy fill must be blocked by nearer w_occ (wall depth=12 > floor depth=4); "
+        "got filled={}".format(filled)
+    )
+
+    # w_occ must be unchanged (proxy did not write to it)
+    assert all(v == float("inf") or v == 4.0 for v in r.w_occ), \
+        "proxy must not modify w_occ"
+
+
+def test_polygon_to_proxy_writes_when_no_occluder():
+    """rasterize_polygon_to_proxy must write normally when w_occ is empty."""
+    r = _make_raster()
+    # No prior w_occ writes
+    loop = [
+        {"points": [(2.0, 2.0), (8.0, 2.0), (8.0, 8.0), (2.0, 8.0), (2.0, 2.0)],
+         "is_hole": False}
+    ]
+    filled = r.rasterize_polygon_to_proxy(loop, key_index=0, depth=12.0, source="HOST")
+    assert filled > 0, "proxy fill must write when no occluder is present"
+
+
+def test_polygon_to_proxy_writes_when_element_is_closer():
+    """rasterize_polygon_to_proxy must write when this element is closer than w_occ."""
+    r = _make_raster()
+    # Farther element already in w_occ at depth=15
+    loop = [
+        {"points": [(2.0, 2.0), (8.0, 2.0), (8.0, 8.0), (2.0, 8.0), (2.0, 2.0)],
+         "is_hole": False}
+    ]
+    r.rasterize_silhouette_loops(loop, key_index=0, depth=15.0, source="HOST")
+
+    # Closer proxy element at depth=4 — should write (it is closer)
+    r2_key = r.get_or_create_element_meta_index(
+        elem_id=2, category="Walls", source_id="HOST", source_type="HOST"
+    )
+    filled = r.rasterize_polygon_to_proxy(loop, key_index=r2_key, depth=4.0, source="HOST")
+    assert filled > 0, "proxy fill must write when it is closer than existing w_occ"
+
+
 def test_polygon_to_proxy_writes_proxy_key():
     """rasterize_polygon_to_proxy must write model_proxy_key for interior cells."""
     r = _make_raster()
