@@ -289,23 +289,18 @@ def should_include_element(
                 stats.mark_excluded("lines_excluded_for_source", cname)
             return False, "lines_excluded_for_source", cname
 
-    # Step 3: Explicit global exclusion list
+    # Step 3: Explicit global exclusion list.
+    # Name check runs unconditionally first: it catches categories whose BIC name
+    # may not resolve in the current Revit version (e.g. OST_RVT_Links).
+    # ID check runs as supplemental coverage for categories not in the name set.
+    if cname in _FALLBACK_EXCLUDED_CATEGORY_NAMES:
+        if stats is not None:
+            stats.mark_excluded("excluded_global", cname)
+        return False, "excluded_global", cname
+
     if cat_id_val is not None:
         excluded_ids = resolve_category_ids(doc, excluded_bic_names_global())
-        if excluded_ids:
-            if cat_id_val in excluded_ids:
-                if stats is not None:
-                    stats.mark_excluded("excluded_global", cname)
-                return False, "excluded_global", cname
-        else:
-            # pytest/fake-doc fallback
-            if cname in _FALLBACK_EXCLUDED_CATEGORY_NAMES:
-                if stats is not None:
-                    stats.mark_excluded("excluded_global", cname)
-                return False, "excluded_global", cname
-    else:
-        # Cannot resolve category ID; apply name-based exclusion fallback
-        if cname in _FALLBACK_EXCLUDED_CATEGORY_NAMES:
+        if cat_id_val in excluded_ids:
             if stats is not None:
                 stats.mark_excluded("excluded_global", cname)
             return False, "excluded_global", cname
