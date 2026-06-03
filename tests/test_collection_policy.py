@@ -141,6 +141,9 @@ class TestExplicitExclusions:
         "Section Marks",
         "Reference Viewers",
         "Viewers",
+        # Document-envelope elements: bounds blowout risk
+        "RVT Links",
+        "Imports",
     ])
     def test_excluded_category(self, cat_name):
         # category_type=1 (Model) to prove exclusion happens before CategoryType check
@@ -153,6 +156,29 @@ class TestExplicitExclusions:
         """An explicitly excluded name must be rejected even if CategoryType=Model."""
         elem = _FakeElem("Rooms", cat_id=9999, category_type=_CATEGORY_TYPE_MODEL_INT)
         ok, reason, _ = _include(elem)
+        assert ok is False
+        assert reason == "excluded_global"
+
+    def test_rvt_links_excluded_prevents_bounds_blowout(self):
+        """RevitLinkInstance (category 'RVT Links') must be excluded from the HOST pass.
+
+        These are document-envelope elements whose bbox spans the entire linked
+        model.  Admitting them causes a full-grid proxy flood (all cells occupied).
+        Geometry from the linked document is already expanded by linked_documents.py.
+        """
+        elem = _FakeElem("RVT Links", cat_id=9998, category_type=_CATEGORY_TYPE_MODEL_INT)
+        ok, reason, _ = _include(elem, source_type="HOST")
+        assert ok is False
+        assert reason == "excluded_global"
+
+    def test_imports_excluded_prevents_double_processing(self):
+        """ImportInstance (category 'Imports') must be excluded from the HOST pass.
+
+        DWG imports are already collected by linked_documents.py; admitting them
+        from the HOST pass causes double-rasterization with an inflated bbox.
+        """
+        elem = _FakeElem("Imports", cat_id=9997, category_type=_CATEGORY_TYPE_MODEL_INT)
+        ok, reason, _ = _include(elem, source_type="HOST")
         assert ok is False
         assert reason == "excluded_global"
 

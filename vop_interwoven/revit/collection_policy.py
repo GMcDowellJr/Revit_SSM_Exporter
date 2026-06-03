@@ -88,6 +88,11 @@ _EXCLUDED_BIC_NAMES_GLOBAL: Tuple[str, ...] = (
     # Explicitly non-target
     "OST_DetailComponents",
     "OST_PointClouds",
+    # Document-envelope elements — bounds span entire linked/imported document.
+    # Actual geometry is already expanded by linked_documents.py; admitting these
+    # from the HOST pass causes full-grid bbox proxy floods.
+    "OST_RVT_Links",
+    "OST_ImportObjectStyles",
 )
 
 # Fallback excluded names used only when doc.Settings resolution is unavailable (pytest).
@@ -113,6 +118,8 @@ _FALLBACK_EXCLUDED_CATEGORY_NAMES = {
     "MEP Spaces",
     "Detail Items",
     "Point Clouds",
+    "RVT Links",
+    "Imports",
 }
 
 
