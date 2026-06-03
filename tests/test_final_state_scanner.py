@@ -230,8 +230,8 @@ def test_ext_cells_only_host_loses_depth_still_records_spatial_presence():
     # Verify raw raster state: LINK won depth but HOST spatial presence recorded
     for col in range(5):
         idx = r.get_cell_index(col, 0)
-        assert r.occ_link[idx] is True, f"col {col}: occ_link should be True"
-        assert r.occ_host[idx] is True, f"col {col}: occ_host should be True (spatial, even though HOST lost)"
+        assert bool(r.occ_link[idx]), f"col {col}: occ_link should be True"
+        assert bool(r.occ_host[idx]), f"col {col}: occ_host should be True (spatial, even though HOST lost)"
 
     manifest = {"families": {"model_classes_multihot": {"enabled": False, "classes": []}}}
     totals = scan_final_state_totals(r, manifest)

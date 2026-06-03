@@ -262,7 +262,7 @@ def _commit_polygon_mask(raster, mask, depth, source, key_index, np):
     if len(candidates) == 0:
         return 0
 
-    # model_clip_bounds guard
+    # Vectorized model_clip_bounds guard — eliminates out-of-crop candidates in bulk.
     clip = raster._model_clip_mask_np(np)
     if clip is not None:
         candidates = candidates[clip[candidates]]
@@ -270,31 +270,28 @@ def _commit_polygon_mask(raster, mask, depth, source, key_index, np):
     if len(candidates) == 0:
         return 0
 
-    # Depth test: write if this element is closer (or ties within eps)
-    eps = 1e-6
-    current = raster.w_occ[candidates]
-    wins = (depth < current) | (np.abs(depth - current.astype(np.float64)) <= eps)
-    write_idx = candidates[wins]
-
-    if len(write_idx) == 0:
-        return 0
-
-    raster.w_occ[write_idx]      = np.float32(depth)
-    raster.w_occ_key[write_idx]  = key_index
-    raster.model_mask[write_idx] = True
-
-    # HOST: record spatial presence for every polygon cell, not just depth winners.
-    # A host wall that loses depth to a closer linked panel still exists at that cell;
-    # occ_host must be True so ExtFinalCells_Only can exclude those cells correctly.
-    # LINK/DWG: only depth winners count as "visible external content".
-    if source == "HOST":
-        raster.occ_host[candidates] = True
-    elif source == "LINK":
-        raster.occ_link[write_idx] = True
-    elif source == "DWG":
-        raster.occ_dwg[write_idx]  = True
-
-    return int(len(write_idx))
+    # Per-cell commits via try_write_cell.
+    #
+    # try_write_cell handles all required side effects:
+    #   - depth test (w_occ update, model_mask)
+    #   - occ_host set BEFORE depth test (spatial presence survives depth loss)
+    #   - tile.update_w_min / tile.update_filled_count (was_empty guard)
+    #   - depth_test_attempted / depth_test_wins / depth_test_rejects counters
+    #   - element_meta[key_index]["occlusion_cells"] increment
+    #
+    # A2 vectorized path (future): would replicate all of the above in batch numpy
+    # ops — requiring vectorized tile updates, pre-depth-test occ_host for all
+    # candidates (not just winners), and vectorized element_meta attribution.
+    # Until A2 is implemented, this loop is the correct and complete path.
+    # Numpy benefit retained: mask generation (_np_scanline_interior), np.where,
+    # and the clip guard filter above all run vectorized before this loop.
+    written = 0
+    for idx_np in candidates:
+        i = int(idx_np) % raster.W
+        j = int(idx_np) // raster.W
+        if raster.try_write_cell(i, j, w_depth=float(depth), source=source, key_index=key_index):
+            written += 1
+    return written
 
 
 class ViewRaster:
@@ -499,28 +496,46 @@ class ViewRaster:
             # Bounds2D in view-local XY; model writes are clipped to this if present.
             self.model_clip_bounds = None
 
-            # NumPy flag retained for export consumers (png_export, csv_export) — never used for writes.
-            # Scalar indexed writes (try_write_cell, stamp_model_edge_idx, _scanline_fill, etc.)
-            # are 3-5x slower on numpy arrays due to Python->C boundary crossing and dtype
-            # coercion on every call. Export consumers convert to numpy in bulk (np.array(...))
-            # at read time, which is the correct place for vectorization.
+            # When NumPy is available, per-cell arrays are numpy arrays.
+            # _commit_polygon_mask uses numpy for fast clip-guard filtering and
+            # candidate identification (np.where), then calls try_write_cell per
+            # cell for correct side-effect handling: tile.update_w_min,
+            # tile.update_filled_count (was_empty guard), depth_test counters,
+            # element_meta["occlusion_cells"], and occ_host pre-depth-test
+            # spatial presence.
+            # Export consumers (png_export, csv_export) use bulk np.array() reads
+            # at export time; .tolist() on numpy arrays in to_dict() is the inverse.
             from vop_interwoven.np_backend import NUMPY_AVAILABLE as _NP_AVAIL
             self._numpy_backend = _NP_AVAIL
             self._clip_mask_cache = None
 
             N = self.W * self.H
 
-            self.w_occ            = [float("inf")] * N
-            self.w_occ_key        = [-1] * N
-            self.occ_host         = [False] * N
-            self.occ_link         = [False] * N
-            self.occ_dwg          = [False] * N
-            self.model_mask       = [False] * N
-            self.model_proxy_mask = [False] * N
-            self.anno_over_model  = [False] * N
-            self.model_edge_key   = [-1] * N
-            self.model_proxy_key  = [-1] * N
-            self.anno_key         = [-1] * N
+            if self._numpy_backend:
+                from vop_interwoven.np_backend import np as _np
+                self.w_occ            = _np.full(N, _np.inf,  dtype=_np.float32)
+                self.w_occ_key        = _np.full(N, -1,       dtype=_np.int32)
+                self.occ_host         = _np.zeros(N,          dtype=bool)
+                self.occ_link         = _np.zeros(N,          dtype=bool)
+                self.occ_dwg          = _np.zeros(N,          dtype=bool)
+                self.model_mask       = _np.zeros(N,          dtype=bool)
+                self.model_proxy_mask = _np.zeros(N,          dtype=bool)
+                self.anno_over_model  = _np.zeros(N,          dtype=bool)
+                self.model_edge_key   = _np.full(N, -1,       dtype=_np.int32)
+                self.model_proxy_key  = _np.full(N, -1,       dtype=_np.int32)
+                self.anno_key         = _np.full(N, -1,       dtype=_np.int32)
+            else:
+                self.w_occ            = [float("inf")] * N
+                self.w_occ_key        = [-1] * N
+                self.occ_host         = [False] * N
+                self.occ_link         = [False] * N
+                self.occ_dwg          = [False] * N
+                self.model_mask       = [False] * N
+                self.model_proxy_mask = [False] * N
+                self.anno_over_model  = [False] * N
+                self.model_edge_key   = [-1] * N
+                self.model_proxy_key  = [-1] * N
+                self.anno_key         = [-1] * N
 
             # Tile acceleration
             self.tile = TileMap(tile_size, self.W, self.H)
@@ -601,17 +616,17 @@ class ViewRaster:
 
     def has_model_occ(self, idx):
         """True if depth-tested interior occupancy is present at idx."""
-        return (0 <= idx < len(self.model_mask)) and bool(self.model_mask[idx])
+        return bool((0 <= idx < len(self.model_mask)) and self.model_mask[idx])
 
     def has_model_edge(self, idx):
         """True if a visible model edge label is present at idx."""
-        return (0 <= idx < len(self.model_edge_key)) and (self.model_edge_key[idx] != -1)
+        return bool((0 <= idx < len(self.model_edge_key)) and (self.model_edge_key[idx] != -1))
 
     def has_model_proxy(self, idx):
         """True if proxy presence is present at idx (mask OR key label)."""
         if not (0 <= idx < len(self.model_proxy_mask)):
             return False
-        return bool(self.model_proxy_mask[idx]) or (
+        return bool(self.model_proxy_mask[idx]) or bool(
             idx < len(self.model_proxy_key) and self.model_proxy_key[idx] != -1
         )
 
@@ -1974,39 +1989,44 @@ class ViewRaster:
         if w_occ_in:
             r.w_occ = [float("inf") if (w is None) else float(w) for w in w_occ_in]
 
-        # Dense layers
+        # Dense layers — restore as Python lists first; numpy conversion follows below.
+        # w_occ_key included here (was omitted in earlier versions of from_dict).
         for k in ("occ_host", "occ_link", "occ_dwg",
                   "model_mask", "model_edge_key", "model_proxy_key",
-                  "model_proxy_mask", "anno_key", "anno_over_model"):
+                  "model_proxy_mask", "anno_key", "anno_over_model",
+                  "w_occ_key"):
             v = d.get(k)
             if v is not None:
                 setattr(r, k, v)
 
-        # If NumPy backend is active, convert all per-cell lists to NumPy arrays
+        # If NumPy backend is active, convert all per-cell lists to NumPy arrays.
+        # This must match the dtype choices in __init__ exactly.
         if getattr(r, '_numpy_backend', False):
             from vop_interwoven.np_backend import np as _np
+
             def _to_np_bool(lst):
                 return _np.array(lst if lst is not None else [], dtype=bool)
+
             def _to_np_int(lst):
                 return _np.array(lst if lst is not None else [], dtype=_np.int32)
-            def _to_np_float(lst, fill_inf=True):
-                arr = _np.array(
-                    [(float("inf") if v is None else v) for v in (lst or [])],
-                    dtype=_np.float32
-                )
-                return arr
 
-            r.w_occ            = _to_np_float(r.w_occ)
-            r.w_occ_key        = _to_np_int(r.w_occ_key)
-            r.occ_host         = _to_np_bool(r.occ_host)
-            r.occ_link         = _to_np_bool(r.occ_link)
-            r.occ_dwg          = _to_np_bool(r.occ_dwg)
-            r.model_mask       = _to_np_bool(r.model_mask)
-            r.model_proxy_mask = _to_np_bool(r.model_proxy_mask)
-            r.anno_over_model  = _to_np_bool(r.anno_over_model)
-            r.model_edge_key   = _to_np_int(r.model_edge_key)
-            r.model_proxy_key  = _to_np_int(r.model_proxy_key)
-            r.anno_key         = _to_np_int(r.anno_key)
+            def _to_np_float_inf(lst):
+                return _np.array(
+                    [(float("inf") if v is None else float(v)) for v in (lst or [])],
+                    dtype=_np.float32,
+                )
+
+            r.w_occ            = _to_np_float_inf(getattr(r, 'w_occ', None))
+            r.w_occ_key        = _to_np_int(getattr(r, 'w_occ_key', None))
+            r.model_mask       = _to_np_bool(getattr(r, 'model_mask', None))
+            r.occ_host         = _to_np_bool(getattr(r, 'occ_host', None))
+            r.occ_link         = _to_np_bool(getattr(r, 'occ_link', None))
+            r.occ_dwg          = _to_np_bool(getattr(r, 'occ_dwg', None))
+            r.model_edge_key   = _to_np_int(getattr(r, 'model_edge_key', None))
+            r.model_proxy_key  = _to_np_int(getattr(r, 'model_proxy_key', None))
+            r.model_proxy_mask = _to_np_bool(getattr(r, 'model_proxy_mask', None))
+            r.anno_key         = _to_np_int(getattr(r, 'anno_key', None))
+            r.anno_over_model  = _to_np_bool(getattr(r, 'anno_over_model', None))
 
         # Meta lists
         r.element_meta = d.get("element_meta") or []

@@ -18,7 +18,7 @@ def test_proxy_fill_affects_occlusion_not_model_ink_by_default():
     filled = r.rasterize_proxy_loops(loops, ki, depth=0.0, source="HOST", write_proxy_edges=False)
 
     assert filled > 0
-    assert any(m is True for m in r.model_mask)  # occlusion/interior coverage
+    assert any(bool(m) for m in r.model_mask)  # occlusion/interior coverage
     assert all(k == -1 for k in r.model_edge_key)  # no model ink edges
     assert all(k == -1 for k in r.model_proxy_key)  # no proxy edges when disabled
 

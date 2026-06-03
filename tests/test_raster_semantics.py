@@ -96,7 +96,7 @@ def test_stamp_proxy_edge_sets_proxy_mask():
 
     assert result is True
     assert r.model_proxy_key[idx] == 0
-    assert r.model_proxy_mask[idx] is True     # must be set by stamp
+    assert bool(r.model_proxy_mask[idx])        # must be set by stamp
     assert r.has_model_proxy(idx) is True
     occ_val = r.w_occ[idx]
     assert occ_val == float("inf")              # no occlusion written
