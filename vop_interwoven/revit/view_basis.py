@@ -152,9 +152,14 @@ def make_view_basis(view, diag=None):
         right = view.RightDirection
         up = view.UpDirection
 
-        # Forward must point INTO the view.
-        # Revit's ViewDirection points from the view towards the model; for "depth into the view"
-        # and front-to-back sorting, we want the opposite sign.
+        # Forward = ViewDirection (from viewer toward model).
+        # This gives the standard depth convention: w increases with distance from the viewer,
+        # so smaller w = closer = wins the depth test (w_depth < w_occ).
+        # This is universal across all view types — floor plans, sections, elevations, RCPs —
+        # with no per-view-type conditions.
+        #
+        # DO NOT negate ViewDirection. Negating it would make w largest for elements
+        # closest to the viewer, inverting the depth test and breaking occlusion.
         try:
             vd = view.ViewDirection.Normalize()
         except Exception as e:
@@ -167,7 +172,7 @@ def make_view_basis(view, diag=None):
                 )
             vd = right.CrossProduct(up).Normalize()
 
-        forward = vd.Negate()
+        forward = vd
 
         # Plan views: origin on cut plane
         origin_z = origin.Z
