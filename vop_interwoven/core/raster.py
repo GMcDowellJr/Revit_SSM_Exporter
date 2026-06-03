@@ -696,10 +696,8 @@ class ViewRaster:
 
             self.model_mask[idx] = True
 
-            # Mark exactly one occupancy layer based on source
-            self.occ_host[idx] = False
-            self.occ_link[idx] = False
-            self.occ_dwg[idx] = False
+            # Mark occupancy layer for the winning source (accumulating — never reset).
+            # _commit_polygon_mask uses the same accumulating convention.
             if source == "HOST":
                 self.occ_host[idx] = True
             elif source == "LINK":

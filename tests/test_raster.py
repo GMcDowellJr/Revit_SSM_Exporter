@@ -187,8 +187,29 @@ class TestViewRaster(unittest.TestCase):
         result = self.raster.try_write_cell(10, 10, w_depth=3.0, source="LINK")
         self.assertTrue(result)
         self.assertEqual(self.raster.w_occ[idx], 3.0)
-        self.assertTrue(self.raster.occ_link[idx])  # LINK wins
+        self.assertTrue(self.raster.occ_link[idx])   # LINK wins
+        self.assertTrue(self.raster.occ_host[idx])   # HOST presence preserved (accumulating)
         self.assertEqual(self.raster.depth_test_wins, 2)
+
+    def test_try_write_cell_occ_layers_accumulate_across_sources(self):
+        """occ_host/link/dwg must accumulate — a later winner must not erase prior True flags."""
+        idx = self.raster.get_cell_index(5, 5)
+
+        # HOST writes first (far)
+        self.raster.try_write_cell(5, 5, w_depth=8.0, source="HOST")
+        self.assertTrue(self.raster.occ_host[idx])
+        self.assertFalse(self.raster.occ_link[idx])
+
+        # LINK wins (closer) — occ_host must stay True
+        self.raster.try_write_cell(5, 5, w_depth=2.0, source="LINK")
+        self.assertTrue(self.raster.occ_link[idx])
+        self.assertTrue(self.raster.occ_host[idx])   # not reset by LINK win
+
+        # DWG wins (even closer) — both prior flags must still be True
+        self.raster.try_write_cell(5, 5, w_depth=1.0, source="DWG")
+        self.assertTrue(self.raster.occ_dwg[idx])
+        self.assertTrue(self.raster.occ_link[idx])
+        self.assertTrue(self.raster.occ_host[idx])
 
     def test_element_metadata(self):
         """Test element metadata tracking."""

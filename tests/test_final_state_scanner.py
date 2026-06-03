@@ -141,3 +141,63 @@ def test_scan_final_state_totals_counts_host_occupancy_as_model_present():
     assert totals["ModelClassCells_OTHER"] == 0
     assert totals["Cells_ModelOnly"] == 1
     assert totals["Cells_Empty"] == 1
+
+
+def test_ext_cells_only_excludes_cells_with_host_and_link_overlap():
+    """ExtFinalCells_Only must be zero when every ext cell also has host content.
+
+    Mirrors the real-world scenario where an RVT-linked facade panel occupies
+    the same grid cells as host structure — the LINK element won the depth test
+    (it's closer) so occ_link=True and occ_host=True on every shared cell.
+    """
+    raster = SimpleNamespace(
+        W=3,
+        H=1,
+        model_edge_key=[-1, -1, -1],
+        model_proxy_key=[-1, -1, -1],
+        anno_key=[-1, -1, -1],
+        anno_meta=[],
+        element_meta=[],
+        # All three cells have both host and link presence (link won depth, host was prior write)
+        occ_host=[True, True, True],
+        occ_link=[True, True, True],
+        occ_dwg=[False, False, False],
+        has_model_present=lambda idx, mode="any": True,
+    )
+
+    totals = scan_final_state_totals(raster, _manifest())
+
+    assert totals["ExtFinalCells_RVT"] == 3
+    assert totals["ExtFinalCells_Only"] == 0   # host present in every ext cell
+    assert totals["ExtFinalCells_Any"] == 3
+
+
+def test_ext_cells_only_resets_do_not_falsely_elevate_count():
+    """ExtFinalCells_Only must NOT count a cell just because occ_host was beaten.
+
+    If try_write_cell reset occ_host when LINK won, the scanner would see
+    occ_host=False and count the cell as ext-only even though host content exists.
+    After removing the reset, occ_host stays True and the count is correct.
+    """
+    from vop_interwoven.core.raster import ViewRaster
+    from vop_interwoven.core.math_utils import Bounds2D
+
+    bounds = Bounds2D(0.0, 0.0, 5.0, 1.0)
+    r = ViewRaster(width=5, height=1, cell_size=1.0, bounds=bounds, tile_size=4)
+    r.get_or_create_element_meta_index(1, "Walls", "HOST", source_type="HOST")
+    r.get_or_create_element_meta_index(2, "Panels", "LINK:doc1", source_type="LINK")
+
+    # HOST writes all 5 cells at depth 5 (far)
+    for col in range(5):
+        r.try_write_cell(col, 0, w_depth=5.0, source="HOST")
+
+    # LINK wins 3 cells at depth 2 (closer) — occ_host must stay True
+    for col in range(3):
+        r.try_write_cell(col, 0, w_depth=2.0, source="LINK")
+
+    manifest = {"families": {"model_classes_multihot": {"enabled": False, "classes": []}}}
+    totals = scan_final_state_totals(r, manifest)
+
+    assert totals["ExtFinalCells_RVT"] == 3
+    # All 3 ext cells also have host content → OnlyCount must be 0
+    assert totals["ExtFinalCells_Only"] == 0
