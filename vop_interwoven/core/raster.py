@@ -283,8 +283,12 @@ def _commit_polygon_mask(raster, mask, depth, source, key_index, np):
     raster.w_occ_key[write_idx]  = key_index
     raster.model_mask[write_idx] = True
 
+    # HOST: record spatial presence for every polygon cell, not just depth winners.
+    # A host wall that loses depth to a closer linked panel still exists at that cell;
+    # occ_host must be True so ExtFinalCells_Only can exclude those cells correctly.
+    # LINK/DWG: only depth winners count as "visible external content".
     if source == "HOST":
-        raster.occ_host[write_idx] = True
+        raster.occ_host[candidates] = True
     elif source == "LINK":
         raster.occ_link[write_idx] = True
     elif source == "DWG":
@@ -674,6 +678,10 @@ class ViewRaster:
             if not self._cell_in_model_clip(i, j):
                 return False
 
+        # HOST spatial presence: record before depth test so it survives even if HOST loses.
+        if source == "HOST":
+            self.occ_host[idx] = True
+
         self.depth_test_attempted += 1
 
         occ = self.w_occ[idx]
@@ -696,11 +704,9 @@ class ViewRaster:
 
             self.model_mask[idx] = True
 
-            # Mark occupancy layer for the winning source (accumulating — never reset).
-            # _commit_polygon_mask uses the same accumulating convention.
-            if source == "HOST":
-                self.occ_host[idx] = True
-            elif source == "LINK":
+            # LINK/DWG: visible external — only mark on depth win (accumulating, never reset).
+            # HOST occ_host is already set above (spatial presence, before depth test).
+            if source == "LINK":
                 self.occ_link[idx] = True
             elif source == "DWG":
                 self.occ_dwg[idx] = True

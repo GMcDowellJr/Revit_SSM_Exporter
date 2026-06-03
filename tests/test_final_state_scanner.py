@@ -201,3 +201,40 @@ def test_ext_cells_only_resets_do_not_falsely_elevate_count():
     assert totals["ExtFinalCells_RVT"] == 3
     # All 3 ext cells also have host content → OnlyCount must be 0
     assert totals["ExtFinalCells_Only"] == 0
+
+
+def test_ext_cells_only_host_loses_depth_still_records_spatial_presence():
+    """occ_host must be True even when HOST loses the depth test to a closer LINK element.
+
+    This is the primary production failure mode: linked facade panels are closer
+    to the viewer than host walls, so LINK always wins depth. Before the fix,
+    HOST's polygon rasterization only wrote occ_host for depth-winning cells —
+    none — leaving every LINK cell incorrectly counted as ext-only.
+    """
+    from vop_interwoven.core.raster import ViewRaster
+    from vop_interwoven.core.math_utils import Bounds2D
+
+    bounds = Bounds2D(0.0, 0.0, 5.0, 1.0)
+    r = ViewRaster(width=5, height=1, cell_size=1.0, bounds=bounds, tile_size=4)
+    r.get_or_create_element_meta_index(1, "Walls", "HOST", source_type="HOST")
+    r.get_or_create_element_meta_index(2, "Panels", "LINK:doc1", source_type="LINK")
+
+    # LINK writes all 5 cells FIRST at depth 2 (closer)
+    for col in range(5):
+        r.try_write_cell(col, 0, w_depth=2.0, source="LINK")
+
+    # HOST writes all 5 cells at depth 5 (farther) — loses depth test on every cell
+    for col in range(5):
+        r.try_write_cell(col, 0, w_depth=5.0, source="HOST")
+
+    # Verify raw raster state: LINK won depth but HOST spatial presence recorded
+    for col in range(5):
+        idx = r.get_cell_index(col, 0)
+        assert r.occ_link[idx] is True, f"col {col}: occ_link should be True"
+        assert r.occ_host[idx] is True, f"col {col}: occ_host should be True (spatial, even though HOST lost)"
+
+    manifest = {"families": {"model_classes_multihot": {"enabled": False, "classes": []}}}
+    totals = scan_final_state_totals(r, manifest)
+
+    assert totals["ExtFinalCells_RVT"] == 5
+    assert totals["ExtFinalCells_Only"] == 0  # HOST present behind every LINK cell
