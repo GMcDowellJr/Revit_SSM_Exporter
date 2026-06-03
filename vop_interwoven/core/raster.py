@@ -283,8 +283,12 @@ def _commit_polygon_mask(raster, mask, depth, source, key_index, np):
     raster.w_occ_key[write_idx]  = key_index
     raster.model_mask[write_idx] = True
 
+    # HOST: record spatial presence for every polygon cell, not just depth winners.
+    # A host wall that loses depth to a closer linked panel still exists at that cell;
+    # occ_host must be True so ExtFinalCells_Only can exclude those cells correctly.
+    # LINK/DWG: only depth winners count as "visible external content".
     if source == "HOST":
-        raster.occ_host[write_idx] = True
+        raster.occ_host[candidates] = True
     elif source == "LINK":
         raster.occ_link[write_idx] = True
     elif source == "DWG":
@@ -602,8 +606,12 @@ class ViewRaster:
         return (0 <= idx < len(self.model_edge_key)) and (self.model_edge_key[idx] != -1)
 
     def has_model_proxy(self, idx):
-        """True if proxy presence is present at idx."""
-        return (0 <= idx < len(self.model_proxy_mask)) and bool(self.model_proxy_mask[idx])
+        """True if proxy presence is present at idx (mask OR key label)."""
+        if not (0 <= idx < len(self.model_proxy_mask)):
+            return False
+        return bool(self.model_proxy_mask[idx]) or (
+            idx < len(self.model_proxy_key) and self.model_proxy_key[idx] != -1
+        )
 
     def has_model_present(self, idx, mode="occ", include_proxy_if_any=True):
         """
@@ -670,6 +678,10 @@ class ViewRaster:
             if not self._cell_in_model_clip(i, j):
                 return False
 
+        # HOST spatial presence: record before depth test so it survives even if HOST loses.
+        if source == "HOST":
+            self.occ_host[idx] = True
+
         self.depth_test_attempted += 1
 
         occ = self.w_occ[idx]
@@ -692,13 +704,9 @@ class ViewRaster:
 
             self.model_mask[idx] = True
 
-            # Mark exactly one occupancy layer based on source
-            self.occ_host[idx] = False
-            self.occ_link[idx] = False
-            self.occ_dwg[idx] = False
-            if source == "HOST":
-                self.occ_host[idx] = True
-            elif source == "LINK":
+            # LINK/DWG: visible external — only mark on depth win (accumulating, never reset).
+            # HOST occ_host is already set above (spatial presence, before depth test).
+            if source == "LINK":
                 self.occ_link[idx] = True
             elif source == "DWG":
                 self.occ_dwg[idx] = True
@@ -872,6 +880,7 @@ class ViewRaster:
 
         w_here = self.w_occ[idx]
         if w_here == float("inf") or depth <= w_here:
+            self.model_proxy_mask[idx] = True
             if self.model_proxy_key[idx] != key_index:
                 self.model_proxy_key[idx] = key_index
                 try:
