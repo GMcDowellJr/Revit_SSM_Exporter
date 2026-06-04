@@ -2585,10 +2585,13 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                         except Exception:
                             pass
 
-                    # Cache LOW-conf result — bbox-derived, view-independent
+                    # Cache LOW-conf result — bbox-derived, view-independent.
+                    # Guard: bbox_source must be "model" (not "view") so the cached
+                    # extents are view-independent and safe to reuse across views.
                     elif (geometry_cache and _geom_ck_low
                             and confidence == CONF_LOW
-                            and strategy not in ('failed', None)):
+                            and strategy not in ('failed', None)
+                            and elem_wrapper.get("bbox_source") == "model"):
                         _bbox = elem_wrapper.get("bbox")
                         if _bbox is not None:
                             try:
