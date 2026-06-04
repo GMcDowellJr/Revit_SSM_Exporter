@@ -1846,6 +1846,7 @@ def get_perf_csv_header():
         "TinyCount", "LinearCount", "ArealCount",
         "ArealHighConf", "ArealMediumConf", "ArealLowConf",
         "FallbackCount", "FallbackRate", "AvgFallbackExtractMs", "ElemCacheHitRate",
+        "GeomCacheHits", "GeomCacheMisses",
         "MemStartPrivMb", "MemEndPrivMb", "MemDeltaPrivMb"
     ]
 
@@ -2480,6 +2481,8 @@ def view_result_to_perf_row(view_result, date_override=None, run_id=None):
         row["AvgFallbackExtractMs"] = round(sum(areal_times) / len(areal_times), 2) if areal_times else 0.0
 
         row["ElemCacheHitRate"] = round(float(view_result.get("elem_cache_hit_rate", 0.0) or 0.0), 3)
+        row["GeomCacheHits"] = int(view_result.get("geom_cache_hits", 0) or 0)
+        row["GeomCacheMisses"] = int(view_result.get("geom_cache_misses", 0) or 0)
 
     except Exception:
         row["TinyCount"] = 0
@@ -2492,5 +2495,7 @@ def view_result_to_perf_row(view_result, date_override=None, run_id=None):
         row["FallbackRate"] = 0.0
         row["AvgFallbackExtractMs"] = 0.0
         row["ElemCacheHitRate"] = 0.0
+        row["GeomCacheHits"] = 0
+        row["GeomCacheMisses"] = 0
 
     return row

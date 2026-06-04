@@ -102,6 +102,8 @@ class Config:
         
         # PR12: Geometry caching (bounded LRU)
         geometry_cache_max_items=2048,
+        # PR-GC3: Dedicated AREAL geometry cache (isolated from TINY/LINEAR to prevent eviction)
+        areal_geometry_cache_max_items=2048,
         
         # Perf: per-view timings (coarse always; optional sub-step)
         perf_collect_timings=True,
@@ -208,6 +210,8 @@ class Config:
 
         # PR12: geometry cache
         self.geometry_cache_max_items = int(geometry_cache_max_items) if geometry_cache_max_items is not None else 0
+        # PR-GC3: dedicated AREAL cache
+        self.areal_geometry_cache_max_items = int(areal_geometry_cache_max_items) if areal_geometry_cache_max_items is not None else 2048
 
         # Perf: timings
         self.perf_collect_timings = bool(perf_collect_timings)
@@ -518,6 +522,8 @@ class Config:
             "extents_scan_time_budget_s": self.extents_scan_time_budget_s,
             # PR12: geometry cache
             "geometry_cache_max_items": self.geometry_cache_max_items,
+            # PR-GC3: dedicated AREAL cache
+            "areal_geometry_cache_max_items": self.areal_geometry_cache_max_items,
             
             "perf_collect_timings": self.perf_collect_timings,
             "perf_subtimings": self.perf_subtimings,
@@ -582,6 +588,8 @@ class Config:
             extents_scan_time_budget_s=d.get("extents_scan_time_budget_s", 0.50),
             # PR12
             geometry_cache_max_items=d.get("geometry_cache_max_items", 2048),
+            # PR-GC3
+            areal_geometry_cache_max_items=d.get("areal_geometry_cache_max_items", 2048),
 
             perf_collect_timings=d.get("perf_collect_timings", True),
             perf_subtimings=d.get("perf_subtimings", False),
