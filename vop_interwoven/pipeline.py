@@ -1083,16 +1083,22 @@ def process_document_views(
 
             render_result = {}
 
+            # Snapshot areal_cache counters before the model pass (or before skipping it).
+            # Must be outside the view_mode branch so annotation-only views get a zero delta
+            # rather than inheriting the previous view's before/after counters via locals().
+            _gc_hits_before = areal_cache.hits if areal_cache is not None else 0
+            _gc_misses_before = areal_cache.misses if areal_cache is not None else 0
+            _gc_hits_after = _gc_hits_before
+            _gc_misses_after = _gc_misses_before
+
             if view_mode == VIEW_MODE_MODEL_AND_ANNOTATION:
                 # 2) Broad-phase visible elements
                 t0 = _perf_now()
                 elements = collect_view_elements(doc, view, raster, diag=diag, cfg=cfg)
                 t1 = _perf_now()
                 _tmark(TIMING_KEYS["COLLECT_MS"], t0, t1)
-                
+
                 # 3) MODEL PASS
-                _gc_hits_before = areal_cache.hits if areal_cache is not None else 0
-                _gc_misses_before = areal_cache.misses if areal_cache is not None else 0
                 t0 = _perf_now()
                 render_result = render_model_front_to_back(doc, view, raster, elements, cfg, diag=diag, geometry_cache=geometry_cache, areal_cache=areal_cache, elem_cache=elem_cache, strategy_diag=strategy_diag)
                 t1 = _perf_now()
@@ -1337,8 +1343,8 @@ def process_document_views(
                     delta_misses = max(0, elem_misses_after - elem_misses_before)
                     delta_total = delta_hits + delta_misses
                     out["elem_cache_hit_rate"] = (float(delta_hits) / float(delta_total)) if delta_total > 0 else 0.0
-                    out["geom_cache_hits"] = max(0, locals().get('_gc_hits_after', 0) - locals().get('_gc_hits_before', 0))
-                    out["geom_cache_misses"] = max(0, locals().get('_gc_misses_after', 0) - locals().get('_gc_misses_before', 0))
+                    out["geom_cache_hits"] = max(0, _gc_hits_after - _gc_hits_before)
+                    out["geom_cache_misses"] = max(0, _gc_misses_after - _gc_misses_before)
             except Exception as e:
                 if diag is not None:
                     diag.error(
