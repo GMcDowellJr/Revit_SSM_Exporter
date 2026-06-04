@@ -1872,14 +1872,17 @@ def _cad_curves_silhouette(elem, view, view_basis, raster, cfg=None):
                 )
             return None
 
-    # Attempt 1: NO view binding (preferred for ImportInstance curve primitives)
-    geom1 = _get_geom(bind_view=False)
+    # Attempt 1: WITH view binding — respects per-view layer visibility (preferred).
+    # This ensures only layers visible in the view contribute ink.
+    geom1 = _get_geom(bind_view=True)
     loops1 = _extract_from_geom(geom1)
     if loops1:
         return loops1
 
-    # Attempt 2: WITH view binding (fallback)
-    geom2 = _get_geom(bind_view=True)
+    # Attempt 2: NO view binding — fallback for cases where Revit suppresses
+    # curve primitives under view-bound options (returns display/tessellated
+    # geometry instead).  Accepts all-layer geometry rather than returning nothing.
+    geom2 = _get_geom(bind_view=False)
     loops2 = _extract_from_geom(geom2)
     return loops2
 

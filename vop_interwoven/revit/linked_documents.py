@@ -72,6 +72,11 @@ class LinkedElementProxy:
         self.doc_key = doc_key if doc_key is not None else source_id
         self.doc_label = doc_label if doc_label is not None else self.source_label
 
+    @property
+    def element(self):
+        """Expose wrapped Revit element so _unwrap_elem() can detect its type (e.g. ImportInstance)."""
+        return self._elem
+
     def get_BoundingBox(self, view):
         """Return host-space bounding box (view parameter ignored)."""
         return self._bb

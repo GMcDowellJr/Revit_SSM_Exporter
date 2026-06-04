@@ -298,12 +298,35 @@ def should_include_element(
             stats.mark_excluded("excluded_global", cname)
         return False, "excluded_global", cname
 
+    # Subcategories of excluded categories also inherit the exclusion.
+    # DWG layer elements (e.g. "A-WALL") appear as subcategories of
+    # OST_ImportObjectStyles ("Imports") and would otherwise pass step 4
+    # as CategoryType.Model elements.
+    try:
+        parent_cat = getattr(cat, "Parent", None)
+        if parent_cat is not None:
+            parent_name = getattr(parent_cat, "Name", None) or ""
+            if parent_name in _FALLBACK_EXCLUDED_CATEGORY_NAMES:
+                if stats is not None:
+                    stats.mark_excluded("excluded_global", cname)
+                return False, "excluded_global", cname
+    except Exception:
+        pass
+
     if cat_id_val is not None:
         excluded_ids = resolve_category_ids(doc, excluded_bic_names_global())
         if cat_id_val in excluded_ids:
             if stats is not None:
                 stats.mark_excluded("excluded_global", cname)
             return False, "excluded_global", cname
+
+    # Belt-and-suspenders: exclude ImportInstance by type name regardless of
+    # category name localization.  DWG/DXF imports are handled (when enabled)
+    # exclusively through _collect_from_dwg_imports, not the HOST pass.
+    if type(elem).__name__ == "ImportInstance":
+        if stats is not None:
+            stats.mark_excluded("excluded_global", cname)
+        return False, "excluded_global", cname
 
     # Step 4: Include CategoryType.Model; exclude all other category types.
     cat_type = getattr(cat, "CategoryType", None)
