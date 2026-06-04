@@ -2088,28 +2088,35 @@ def _round_view_fwd(vb):
         return None
 
 
-def _make_areal_high_conf_cache_key(elem_id, source_id, vb):
-    """Build a view-direction-exact cache key for AREAL HIGH-confidence geometry.
+def _make_areal_high_conf_cache_key(elem_id, source_id, vb, view_id=None):
+    """Build a view-scoped, direction-exact cache key for AREAL HIGH-confidence geometry.
 
-    The 4th element is the rounded actual forward vector, not a coarse half-axis
-    bucket. Two views with different vb.forward values (even within the same
-    dominant-axis quadrant) get distinct keys, preventing face-set mismatch on
-    rotated elevations or 3D views.
+    view_id is included because _front_face_loops_silhouette sets opts.View = view
+    for host elements, making the extracted geometry view-dependent (view range,
+    crop, detail filters, cut plane). Two views with the same vb.forward but
+    different view settings must not share a HIGH-conf cache entry.
+
+    The forward vector is included as a rounded tuple (not a coarse bucket) so
+    non-axis-aligned views get distinct keys even within the same dominant quadrant.
     """
     try:
         fwd = _round_view_fwd(vb)
         if fwd is None:
             return None
-        return (int(elem_id), str(source_id), 'areal_high_v1', fwd)
+        return (int(elem_id), str(source_id), 'areal_high_v1', int(view_id or 0), fwd)
     except Exception:
         return None
 
 
 def _reconstruct_areal_high_conf_loops(cached_entry, vb):
-    """Project cached world-space XYZ loops to current view UV.
+    """Project cached world-space XYZ loops to current view UVW.
 
     XYZ tuples are host-world coordinates captured at extraction time.
     Re-projection is O(n_points) pure Python — zero Revit API calls.
+
+    Points are returned as (u, v, w) triples so that estimate_depth_from_loops_or_bbox
+    can read loop depth from len(pt) >= 3, matching the live-extraction path and
+    avoiding the bbox-depth fallback that produces incorrect occlusion depth.
 
     Direction identity is guaranteed by the cache key (_make_areal_high_conf_cache_key
     embeds the rounded forward vector), so no secondary direction check is needed here.
@@ -2118,6 +2125,7 @@ def _reconstruct_areal_high_conf_loops(cached_entry, vb):
         ox, oy, oz = vb.origin
         rx, ry, rz = vb.right
         ux, uy, uz = vb.up
+        fx, fy, fz = vb.forward
 
         result_loops = []
         for loop_xyz in cached_entry.get('loops', []):
@@ -2126,7 +2134,8 @@ def _reconstruct_areal_high_conf_loops(cached_entry, vb):
                 dx, dy, dz = px - ox, py - oy, pz - oz
                 u = dx * rx + dy * ry + dz * rz
                 v = dx * ux + dy * uy + dz * uz
-                uv_points.append((u, v))
+                w = dx * fx + dy * fy + dz * fz
+                uv_points.append((u, v, w))
             if uv_points:
                 result_loops.append({
                     'points': uv_points,
@@ -2537,7 +2546,8 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 # HIGH-conf: world-space XYZ face loops, bucketed by view direction.
                 # LOW-conf:  world-space bbox corners for AABB/OBB reconstruction.
                 # HIGH checked first — covers 93.5% of AREAL elements.
-                _geom_ck_high = _make_areal_high_conf_cache_key(elem_id, source_id, vb)
+                _high_view_id = int(getattr(getattr(view, 'Id', None), 'IntegerValue', 0) or 0)
+                _geom_ck_high = _make_areal_high_conf_cache_key(elem_id, source_id, vb, view_id=_high_view_id)
                 _geom_ck_low = _make_areal_geom_cache_key(elem_id, source_id)
                 _geom_hit = None
 
