@@ -242,7 +242,6 @@ def sort_views_by_level(doc, views):
             key=lambda x: (
                 0 if x["has_elev"] else 1,
                 x["elev"],
-                x["view_name"].lower(),
                 x["index"],
             ),
         )

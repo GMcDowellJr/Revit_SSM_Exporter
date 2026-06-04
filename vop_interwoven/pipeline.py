@@ -1073,10 +1073,14 @@ def process_document_views(
                 _tmark(TIMING_KEYS["COLLECT_MS"], t0, t1)
                 
                 # 3) MODEL PASS
+                _gc_hits_before = geometry_cache.hits if geometry_cache is not None else 0
+                _gc_misses_before = geometry_cache.misses if geometry_cache is not None else 0
                 t0 = _perf_now()
                 render_result = render_model_front_to_back(doc, view, raster, elements, cfg, diag=diag, geometry_cache=geometry_cache, elem_cache=elem_cache, strategy_diag=strategy_diag)
                 t1 = _perf_now()
                 _tmark(TIMING_KEYS["RASTER_MODEL_MS"], t0, t1)
+                _gc_hits_after = geometry_cache.hits if geometry_cache is not None else 0
+                _gc_misses_after = geometry_cache.misses if geometry_cache is not None else 0
 
                 # Merge rasterization sub-timings into view timings
                 _raster_sub_timings = render_result.get("timings", {}) if isinstance(render_result, dict) else {}
@@ -1315,6 +1319,8 @@ def process_document_views(
                     delta_misses = max(0, elem_misses_after - elem_misses_before)
                     delta_total = delta_hits + delta_misses
                     out["elem_cache_hit_rate"] = (float(delta_hits) / float(delta_total)) if delta_total > 0 else 0.0
+                    out["geom_cache_hits"] = max(0, locals().get('_gc_hits_after', 0) - locals().get('_gc_hits_before', 0))
+                    out["geom_cache_misses"] = max(0, locals().get('_gc_misses_after', 0) - locals().get('_gc_misses_before', 0))
             except Exception as e:
                 if diag is not None:
                     diag.error(
