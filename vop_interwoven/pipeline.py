@@ -2072,35 +2072,35 @@ def _reconstruct_areal_low_conf_loops(cached_entry, vb):
 # PR-GC3: AREAL HIGH-confidence world-space geometry cache helpers
 # ---------------------------------------------------------------------------
 
-def _quantize_view_dir(vb):
-    """Snap view forward vector to one of six canonical half-axes.
+def _round_view_fwd(vb):
+    """Return vb.forward as a rounded tuple for use as a cache-key component.
 
-    Six buckets (not three) because front-face selection uses dot sign:
-    a plan view ('z-') and an RCP ('z+') select opposite faces of the
-    same element and must not share cache entries.
+    Rounded to 6 decimal places — enough to survive floating-point jitter in
+    ViewBasis construction while keeping genuinely distinct view directions distinct.
+    Using the actual forward vector (not a coarse half-axis bucket) ensures that
+    non-axis-aligned views (rotated elevations, 3D views) never share a cache entry
+    with views that would select a different front-face set.
     """
     try:
         fx, fy, fz = vb.forward
-        ax, ay, az = abs(fx), abs(fy), abs(fz)
-        if az >= ax and az >= ay:
-            return 'z+' if fz >= 0.0 else 'z-'
-        elif ax >= ay:
-            return 'x+' if fx >= 0.0 else 'x-'
-        else:
-            return 'y+' if fy >= 0.0 else 'y-'
+        return (round(float(fx), 6), round(float(fy), 6), round(float(fz), 6))
     except Exception:
-        return 'z-'
+        return None
 
 
 def _make_areal_high_conf_cache_key(elem_id, source_id, vb):
-    """Build a view-direction-bucketed cache key for AREAL HIGH-confidence geometry.
+    """Build a view-direction-exact cache key for AREAL HIGH-confidence geometry.
 
-    Includes quantized forward direction because _planar_face_loops_silhouette
-    selects front-facing faces via dot(face_normal, vb.forward) — plan view
-    and RCP select different faces of the same element.
+    The 4th element is the rounded actual forward vector, not a coarse half-axis
+    bucket. Two views with different vb.forward values (even within the same
+    dominant-axis quadrant) get distinct keys, preventing face-set mismatch on
+    rotated elevations or 3D views.
     """
     try:
-        return (int(elem_id), str(source_id), 'areal_high_v1', _quantize_view_dir(vb))
+        fwd = _round_view_fwd(vb)
+        if fwd is None:
+            return None
+        return (int(elem_id), str(source_id), 'areal_high_v1', fwd)
     except Exception:
         return None
 
@@ -2111,13 +2111,10 @@ def _reconstruct_areal_high_conf_loops(cached_entry, vb):
     XYZ tuples are host-world coordinates captured at extraction time.
     Re-projection is O(n_points) pure Python — zero Revit API calls.
 
-    Returns (loops, confidence, strategy) or (None, None, 'dir_mismatch')
-    when the cached direction bucket doesn't match the current view.
+    Direction identity is guaranteed by the cache key (_make_areal_high_conf_cache_key
+    embeds the rounded forward vector), so no secondary direction check is needed here.
     """
     try:
-        if cached_entry.get('view_dir') != _quantize_view_dir(vb):
-            return (None, None, 'dir_mismatch')
-
         ox, oy, oz = vb.origin
         rx, ry, rz = vb.right
         ux, uy, uz = vb.up
@@ -2544,7 +2541,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 _geom_ck_low = _make_areal_geom_cache_key(elem_id, source_id)
                 _geom_hit = None
 
-                if geometry_cache and _geom_ck_high:
+                if geometry_cache is not None and _geom_ck_high:
                     _cached_high = geometry_cache.get(_geom_ck_high)
                     if _cached_high is not None:
                         loops, confidence, strategy = _reconstruct_areal_high_conf_loops(
@@ -2553,7 +2550,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                         if loops is not None:
                             _geom_hit = 'high'
 
-                if _geom_hit is None and geometry_cache and _geom_ck_low:
+                if _geom_hit is None and geometry_cache is not None and _geom_ck_low:
                     _cached_low = geometry_cache.get(_geom_ck_low)
                     if _cached_low is not None:
                         loops, confidence, strategy = _reconstruct_areal_low_conf_loops(
@@ -2564,7 +2561,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 if _geom_hit is None:
                     # Both tiers missed — run full extraction.
                     # Provide xyz_sink only when HIGH-conf caching is active.
-                    _xyz_sink = [] if (geometry_cache and _geom_ck_high) else None
+                    _xyz_sink = [] if (geometry_cache is not None and _geom_ck_high) else None
                     loops, confidence, strategy = extract_areal_geometry(
                         elem=elem,
                         view=view,
@@ -2577,7 +2574,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     )
 
                     # Cache HIGH-conf result — planar_face_loops only; silhouette_edges deferred
-                    if (geometry_cache and _geom_ck_high
+                    if (geometry_cache is not None and _geom_ck_high
                             and confidence == CONF_HIGH
                             and strategy == 'planar_face_loops'
                             and _xyz_sink):
@@ -2586,7 +2583,6 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                                 'confidence': 'HIGH',
                                 'strategy': strategy,
                                 'loops': _xyz_sink,
-                                'view_dir': _quantize_view_dir(vb),
                             })
                         except Exception:
                             pass
@@ -2594,7 +2590,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     # Cache LOW-conf result — bbox-derived, view-independent.
                     # Guard: bbox_source must be "model" (not "view") so the cached
                     # extents are view-independent and safe to reuse across views.
-                    elif (geometry_cache and _geom_ck_low
+                    elif (geometry_cache is not None and _geom_ck_low
                             and confidence == CONF_LOW
                             and strategy not in ('failed', None)
                             and elem_wrapper.get("bbox_source") == "model"):
