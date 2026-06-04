@@ -1954,6 +1954,114 @@ def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, con
         return (False, 0)
 
 
+# ---------------------------------------------------------------------------
+# PR-GC1: Cross-view AREAL LOW-confidence geometry cache helpers
+# ---------------------------------------------------------------------------
+
+def _make_areal_geom_cache_key(elem_id, source_id):
+    """Build a view-independent cache key for AREAL LOW-confidence bbox geometry.
+
+    Contains no view-specific tokens. The same world-space bbox is valid for
+    any view of the same element in the same document/link instance.
+    """
+    try:
+        return (int(elem_id), str(source_id), 'areal_low_v1')
+    except Exception:
+        return None
+
+
+def _reconstruct_areal_low_conf_loops(cached_entry, vb):
+    """Reconstruct LOW-confidence AREAL loops from a cached world-space bbox.
+
+    Replaces extract_areal_geometry() on cache hit for LOW-confidence elements.
+    Projects cached world-space bbox corners into the current view's UV space
+    via pure Python math — zero Revit API calls.
+
+    Args:
+        cached_entry: dict with keys 'strategy', 'world_min', 'world_max'
+        vb: ViewBasis for the current view
+
+    Returns:
+        (loops, confidence, strategy) matching extract_areal_geometry() format,
+        or (None, None, 'failed') on any error.
+    """
+    import math
+    try:
+        strategy = cached_entry.get('strategy', 'uv_aabb')
+        mn = cached_entry['world_min']
+        mx = cached_entry['world_max']
+
+        # All 8 world-space corners of the bbox
+        corners = [
+            (mn[0], mn[1], mn[2]), (mx[0], mn[1], mn[2]),
+            (mx[0], mx[1], mn[2]), (mn[0], mx[1], mn[2]),
+            (mn[0], mn[1], mx[2]), (mx[0], mn[1], mx[2]),
+            (mx[0], mx[1], mx[2]), (mn[0], mx[1], mx[2]),
+        ]
+
+        # Project to view UVW using ViewBasis axes (no Revit API)
+        ox, oy, oz = vb.origin
+        rx, ry, rz = vb.right
+        ux, uy, uz = vb.up
+        fx, fy, fz = vb.forward
+
+        uvws = []
+        for (px, py, pz) in corners:
+            dx, dy, dz = px - ox, py - oy, pz - oz
+            u = dx * rx + dy * ry + dz * rz
+            v = dx * ux + dy * uy + dz * uz
+            w = dx * fx + dy * fy + dz * fz
+            uvws.append((u, v, w))
+
+        w_min = min(uvw[2] for uvw in uvws)
+        pts_uv = [(uvw[0], uvw[1]) for uvw in uvws]
+
+        # OBB: inline PCA fit on the 8 projected corners
+        if strategy in ('uv_obb', 'bbox_obb_used'):
+            try:
+                n = float(len(pts_uv))
+                cmx = sum(p[0] for p in pts_uv) / n
+                cmy = sum(p[1] for p in pts_uv) / n
+                cxx = sum((p[0] - cmx) ** 2 for p in pts_uv)
+                cxy = sum((p[0] - cmx) * (p[1] - cmy) for p in pts_uv)
+                cyy = sum((p[1] - cmy) ** 2 for p in pts_uv)
+                ang = 0.5 * math.atan2(2.0 * cxy, cxx - cyy)
+                ax_u, ax_v = math.cos(ang), math.sin(ang)
+                ax_r, ax_s = -ax_v, ax_u
+                pu = [(p[0] - cmx) * ax_u + (p[1] - cmy) * ax_v for p in pts_uv]
+                pv = [(p[0] - cmx) * ax_r + (p[1] - cmy) * ax_s for p in pts_uv]
+                pu_min, pu_max = min(pu), max(pu)
+                pv_min, pv_max = min(pv), max(pv)
+                if (pu_max - pu_min) > 1e-6 and (pv_max - pv_min) > 1e-6:
+                    def _c(a, b):
+                        return (cmx + a * ax_u + b * ax_r,
+                                cmy + a * ax_v + b * ax_s,
+                                w_min)
+                    points = [
+                        _c(pu_min, pv_min), _c(pu_max, pv_min),
+                        _c(pu_max, pv_max), _c(pu_min, pv_max),
+                        _c(pu_min, pv_min),  # closed
+                    ]
+                    return ([{'points': points, 'is_hole': False}], 'LOW', strategy)
+            except Exception:
+                pass  # fall through to AABB
+
+        # AABB fallback (also used when OBB reconstruction fails)
+        u_vals = [p[0] for p in pts_uv]
+        v_vals = [p[1] for p in pts_uv]
+        u_min, u_max = min(u_vals), max(u_vals)
+        v_min, v_max = min(v_vals), max(v_vals)
+        points = [
+            (u_min, v_min, w_min), (u_max, v_min, w_min),
+            (u_max, v_max, w_min), (u_min, v_max, w_min),
+            (u_min, v_min, w_min),
+        ]
+        return ([{'points': points, 'is_hole': False}], 'LOW', 'uv_aabb')
+
+    except Exception:
+        return (None, None, 'failed')
+
+
 def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geometry_cache=None, elem_cache=None, strategy_diag=None):
     """Render 3D model elements front-to-back with interwoven AreaL/Tiny/Linear handling.
 
@@ -2345,23 +2453,51 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
             # AREAL: Use unified extraction with confidence-based fallback
             t_geom_start = time.perf_counter()
             try:
-                loops, confidence, strategy = extract_areal_geometry(
-                    elem=elem,
-                    view=view,
-                    view_basis=vb,
-                    raster=raster,
-                    cfg=cfg,
-                    diag=diag,
-                    strategy_diag=strategy_diag
-                )
+                # PR-GC1: Cross-view cache for LOW-confidence (AABB/OBB) elements.
+                # World-space bbox is view-independent; UV loops reconstructed cheaply on hit.
+                _geom_ck = _make_areal_geom_cache_key(elem_id, source_id)
+                _geom_hit = geometry_cache.get(_geom_ck) if (geometry_cache is not None and _geom_ck) else None
+
+                if _geom_hit is not None:
+                    loops, confidence, strategy = _reconstruct_areal_low_conf_loops(_geom_hit, vb)
+                    # Cache hit: _extractor_recorded_confidence stays False so the
+                    # downstream record_confidence call fires on the reconstructed result.
+                else:
+                    loops, confidence, strategy = extract_areal_geometry(
+                        elem=elem,
+                        view=view,
+                        view_basis=vb,
+                        raster=raster,
+                        cfg=cfg,
+                        diag=diag,
+                        strategy_diag=strategy_diag
+                    )
+                    # Store LOW-confidence results only — bbox must be model-space (not view-clipped).
+                    # HIGH/MEDIUM confidence results have real geometry; do not cache here.
+                    if (geometry_cache is not None and _geom_ck
+                            and confidence == CONF_LOW
+                            and strategy not in ('failed', None)
+                            and elem_wrapper.get("bbox_source") == "model"):
+                        _bbox = elem_wrapper.get("bbox")
+                        if _bbox is not None:
+                            try:
+                                geometry_cache.set(_geom_ck, {
+                                    'confidence': 'LOW',
+                                    'strategy': strategy,
+                                    'world_min': (float(_bbox.Min.X), float(_bbox.Min.Y), float(_bbox.Min.Z)),
+                                    'world_max': (float(_bbox.Max.X), float(_bbox.Max.Y), float(_bbox.Max.Z)),
+                                })
+                            except Exception:
+                                pass
 
                 geom_extract_ms = (time.perf_counter() - t_geom_start) * 1000.0
 
-                # Normalize confidence to uppercase (extract_areal_geometry returns 'HIGH', 'MEDIUM', 'LOW')
+                # Normalize confidence; only mark record_confidence as handled when the
+                # live extractor ran (not on cache hits).
                 if confidence is None:
                     confidence = CONF_LOW  # Failed extraction
-                else:
-                    # Extractor set confidence AND called record_confidence; don't duplicate.
+                elif _geom_hit is None:
+                    # Extractor ran and returned confidence; it also called record_confidence.
                     _extractor_recorded_confidence = True
 
             except Exception as e:
