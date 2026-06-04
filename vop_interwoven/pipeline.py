@@ -538,6 +538,7 @@ def process_document_views(
     root_cache=None,
     reset_family_caches=True,
     geometry_cache=None,
+    areal_cache=None,
     elem_cache=None,
 ):
     """Process multiple views through the VOP interwoven pipeline.
@@ -718,7 +719,7 @@ def process_document_views(
     if isinstance(cfg, dict):
         raise TypeError("cfg must be vop_interwoven.config.Config (not dict)")
 
-    # PR12: bounded geometry cache shared across all views in this call.
+    # PR12: bounded geometry cache for TINY/LINEAR silhouettes, shared across all views.
     # Scoped to this run to avoid cross-run semantic drift.
     if geometry_cache is None:
         try:
@@ -733,6 +734,23 @@ def process_document_views(
                     exc=e,
                 )
             geometry_cache = None
+
+    # PR-GC3: dedicated AREAL geometry cache — isolated so TINY/LINEAR writes never evict
+    # AREAL HIGH/LOW entries.  Sized separately; default 2048 holds hundreds of AREAL
+    # elements across an entire session without eviction pressure from TINY/LINEAR.
+    if areal_cache is None:
+        try:
+            from .core.cache import LRUCache
+            areal_cache = LRUCache(max_items=getattr(cfg, "areal_geometry_cache_max_items", 2048))
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="pipeline",
+                    callsite="process_document_views",
+                    message="Failed to create areal_cache: {}".format(e),
+                    exc=e,
+                )
+            areal_cache = None
 
     # PR13: Document-scoped element cache for bbox reuse across views
     elem_cache_prev = None  # Previous run cache (for change detection)
@@ -1073,14 +1091,14 @@ def process_document_views(
                 _tmark(TIMING_KEYS["COLLECT_MS"], t0, t1)
                 
                 # 3) MODEL PASS
-                _gc_hits_before = geometry_cache.hits if geometry_cache is not None else 0
-                _gc_misses_before = geometry_cache.misses if geometry_cache is not None else 0
+                _gc_hits_before = areal_cache.hits if areal_cache is not None else 0
+                _gc_misses_before = areal_cache.misses if areal_cache is not None else 0
                 t0 = _perf_now()
-                render_result = render_model_front_to_back(doc, view, raster, elements, cfg, diag=diag, geometry_cache=geometry_cache, elem_cache=elem_cache, strategy_diag=strategy_diag)
+                render_result = render_model_front_to_back(doc, view, raster, elements, cfg, diag=diag, geometry_cache=geometry_cache, areal_cache=areal_cache, elem_cache=elem_cache, strategy_diag=strategy_diag)
                 t1 = _perf_now()
                 _tmark(TIMING_KEYS["RASTER_MODEL_MS"], t0, t1)
-                _gc_hits_after = geometry_cache.hits if geometry_cache is not None else 0
-                _gc_misses_after = geometry_cache.misses if geometry_cache is not None else 0
+                _gc_hits_after = areal_cache.hits if areal_cache is not None else 0
+                _gc_misses_after = areal_cache.misses if areal_cache is not None else 0
 
                 # Merge rasterization sub-timings into view timings
                 _raster_sub_timings = render_result.get("timings", {}) if isinstance(render_result, dict) else {}
@@ -2160,7 +2178,7 @@ def _reconstruct_areal_high_conf_loops(cached_entry, vb):
         return (None, None, 'failed')
 
 
-def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geometry_cache=None, elem_cache=None, strategy_diag=None):
+def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geometry_cache=None, areal_cache=None, elem_cache=None, strategy_diag=None):
     """Render 3D model elements front-to-back with interwoven AreaL/Tiny/Linear handling.
 
     Args:
@@ -2170,7 +2188,8 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
         elements: List of Revit elements (from collect_view_elements)
         cfg: Config
         diag: Optional diagnostics
-        geometry_cache: Optional geometry cache for silhouettes
+        geometry_cache: Optional LRU cache for TINY/LINEAR silhouettes (view-scoped keys)
+        areal_cache: Optional LRU cache for AREAL HIGH/LOW geometry (view-independent keys)
         elem_cache: Optional element cache for bbox fingerprints (Phase 2)
         strategy_diag: Optional StrategyDiagnostics instance
 
@@ -2551,16 +2570,18 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
             # AREAL: Use unified extraction with confidence-based fallback
             t_geom_start = time.perf_counter()
             try:
-                # PR-GC1 + PR-GC3: Cross-view geometry cache — two tiers.
+                # PR-GC1 + PR-GC3: Cross-view geometry cache — two tiers, dedicated cache.
                 # HIGH-conf: world-space XYZ face loops, bucketed by view direction.
                 # LOW-conf:  world-space bbox corners for AABB/OBB reconstruction.
+                # Both use areal_cache (isolated from TINY/LINEAR) so writes by 2699+
+                # TINY/LINEAR elements per view cannot evict the ~120 AREAL entries.
                 # HIGH checked first — covers 93.5% of AREAL elements.
                 _geom_ck_high = _make_areal_high_conf_cache_key(elem_id, source_id, vb)
                 _geom_ck_low = _make_areal_geom_cache_key(elem_id, source_id)
                 _geom_hit = None
 
-                if geometry_cache is not None and _geom_ck_high:
-                    _cached_high = geometry_cache.get(_geom_ck_high)
+                if areal_cache is not None and _geom_ck_high:
+                    _cached_high = areal_cache.get(_geom_ck_high)
                     if _cached_high is not None:
                         loops, confidence, strategy = _reconstruct_areal_high_conf_loops(
                             _cached_high, vb
@@ -2568,8 +2589,8 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                         if loops is not None:
                             _geom_hit = 'high'
 
-                if _geom_hit is None and geometry_cache is not None and _geom_ck_low:
-                    _cached_low = geometry_cache.get(_geom_ck_low)
+                if _geom_hit is None and areal_cache is not None and _geom_ck_low:
+                    _cached_low = areal_cache.get(_geom_ck_low)
                     if _cached_low is not None:
                         loops, confidence, strategy = _reconstruct_areal_low_conf_loops(
                             _cached_low, vb
@@ -2579,7 +2600,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 if _geom_hit is None:
                     # Both tiers missed — run full extraction.
                     # Provide xyz_sink only when HIGH-conf caching is active.
-                    _xyz_sink = [] if (geometry_cache is not None and _geom_ck_high) else None
+                    _xyz_sink = [] if (areal_cache is not None and _geom_ck_high) else None
                     loops, confidence, strategy = extract_areal_geometry(
                         elem=elem,
                         view=view,
@@ -2592,12 +2613,12 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     )
 
                     # Cache HIGH-conf result — planar_face_loops only; silhouette_edges deferred
-                    if (geometry_cache is not None and _geom_ck_high
+                    if (areal_cache is not None and _geom_ck_high
                             and confidence == CONF_HIGH
                             and strategy == 'planar_face_loops'
                             and _xyz_sink):
                         try:
-                            geometry_cache.set(_geom_ck_high, {
+                            areal_cache.set(_geom_ck_high, {
                                 'confidence': 'HIGH',
                                 'strategy': strategy,
                                 'loops': _xyz_sink,
@@ -2608,14 +2629,14 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     # Cache LOW-conf result — bbox-derived, view-independent.
                     # Guard: bbox_source must be "model" (not "view") so the cached
                     # extents are view-independent and safe to reuse across views.
-                    elif (geometry_cache is not None and _geom_ck_low
+                    elif (areal_cache is not None and _geom_ck_low
                             and confidence == CONF_LOW
                             and strategy not in ('failed', None)
                             and elem_wrapper.get("bbox_source") == "model"):
                         _bbox = elem_wrapper.get("bbox")
                         if _bbox is not None:
                             try:
-                                geometry_cache.set(_geom_ck_low, {
+                                areal_cache.set(_geom_ck_low, {
                                     'confidence': 'LOW',
                                     'strategy': strategy,
                                     'world_min': (float(_bbox.Min.X), float(_bbox.Min.Y), float(_bbox.Min.Z)),

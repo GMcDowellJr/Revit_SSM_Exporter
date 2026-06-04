@@ -707,6 +707,13 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
     except Exception:
         geometry_cache = None
 
+    areal_cache = None
+    try:
+        from vop_interwoven.core.cache import LRUCache
+        areal_cache = LRUCache(max_items=getattr(cfg, "areal_geometry_cache_max_items", 2048))
+    except Exception:
+        areal_cache = None
+
     elem_cache = None
     if getattr(cfg, "use_element_cache", True):
         try:
@@ -739,6 +746,7 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                     root_cache=root_cache,
                     reset_family_caches=False,
                     geometry_cache=geometry_cache,
+                    areal_cache=areal_cache,
                     elem_cache=elem_cache,
                 )
             except TypeError as e:
