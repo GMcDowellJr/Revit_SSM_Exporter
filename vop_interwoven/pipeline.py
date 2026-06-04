@@ -2573,6 +2573,10 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                         xyz_sink=_xyz_sink,
                     )
 
+                    if confidence == CONF_HIGH and strategy == 'planar_face_loops':
+                        print("[GC3-DEBUG] elem_id={} xyz_sink len={} cache_key={}".format(
+                            elem_id, len(_xyz_sink) if _xyz_sink is not None else 'None', _geom_ck_high))
+
                     # Cache HIGH-conf result — planar_face_loops only; silhouette_edges deferred
                     if (geometry_cache is not None and _geom_ck_high
                             and confidence == CONF_HIGH
