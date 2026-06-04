@@ -2476,7 +2476,7 @@ def _obb_silhouette(elem, view, view_basis):
     except Exception as e:
         return []
 
-def _front_face_loops_silhouette(elem, view, view_basis, cfg=None):
+def _front_face_loops_silhouette(elem, view, view_basis, cfg=None, xyz_sink=None):
     """
     Extract loops from the most relevant front-facing planar face(s).
     Unlike _silhouette_edges(), this preserves multiple loops + holes without point-cloud ordering.
@@ -2589,6 +2589,7 @@ def _front_face_loops_silhouette(elem, view, view_basis, cfg=None):
         while loops_it and loops_it.MoveNext():
             edge_loop = loops_it.Current
             pts = []
+            _xyz_pts = [] if xyz_sink is not None else None
 
             try:
                 edges_it = edge_loop.GetEnumerator()
@@ -2611,24 +2612,34 @@ def _front_face_loops_silhouette(elem, view, view_basis, cfg=None):
                         ph = _to_host_point(elem, p)
                         uvw = world_to_view((ph.X, ph.Y, ph.Z), view_basis)
                         pts.append(uvw)
+                        if _xyz_pts is not None:
+                            _xyz_pts.append((float(ph.X), float(ph.Y), float(ph.Z)))
                 except Exception as e:
                     continue
 
             if len(pts) >= 3:
                 cleaned = []
+                cleaned_xyz = [] if _xyz_pts is not None else None
                 last = None
-                for p in pts:
+                for idx, p in enumerate(pts):
                     key = (round(p[0], 6), round(p[1], 6))
                     if last is None or key != last:
                         cleaned.append(p)
+                        if cleaned_xyz is not None:
+                            cleaned_xyz.append(_xyz_pts[idx])
                         last = key
                 if cleaned and cleaned[0] != cleaned[-1]:
                     cleaned.append(cleaned[0])
+                    if cleaned_xyz is not None and cleaned_xyz:
+                        cleaned_xyz.append(cleaned_xyz[0])
 
+                is_hole = True if li > 0 else False
                 loops_out.append({
                     "points": cleaned,
-                    "is_hole": True if li > 0 else False,
+                    "is_hole": is_hole,
                 })
+                if xyz_sink is not None and cleaned_xyz:
+                    xyz_sink.append({'points': cleaned_xyz, 'is_hole': is_hole})
 
             li += 1
 
@@ -2823,6 +2834,7 @@ def _planar_face_loops_silhouette(
     diag=None,
     view_id=None,
     elem_id=None,
+    xyz_sink=None,
 ):
     """
     Planar front-face projection source:
@@ -2909,13 +2921,15 @@ def _planar_face_loops_silhouette(
                 )
             return xyz_tup
 
-    def _project_xyz_to_uv(points_xyz):
+    def _project_xyz_to_uv(points_xyz, xyz_out=None):
         out = []
         for p in points_xyz:
             try:
                 ph = _xyz_to_host(p)
                 u, v = view_basis.transform_to_view_uv(ph)
                 out.append((float(u), float(v)))
+                if xyz_out is not None:
+                    xyz_out.append((float(ph[0]), float(ph[1]), float(ph[2])))
             except Exception as e:
                 if diag is not None:
                     diag.error(
@@ -2998,15 +3012,19 @@ def _planar_face_loops_silhouette(
 
         # Convert each CurveLoop to UV polyline, compute signed area for hole labeling
         uv_loops = []
+        xyz_loop_list = []  # parallel to uv_loops; populated when xyz_sink is not None
         for cl in edge_loops:
             xyz_pts = _tessellated_xyz_points_from_curveloop(cl)
-            uv = _project_xyz_to_uv(xyz_pts)
+            _loop_xyz_out = [] if xyz_sink is not None else None
+            uv = _project_xyz_to_uv(xyz_pts, xyz_out=_loop_xyz_out)
             uv = _dedupe_consecutive(uv)
             uv = _ensure_closed(uv)
             if len(uv) < 4:
                 continue
             a_signed = float(fs.signed_polygon_area_2d(uv))
             uv_loops.append((uv, a_signed))
+            if xyz_sink is not None:
+                xyz_loop_list.append(_loop_xyz_out or [])
 
         if not uv_loops:
             continue
@@ -3015,13 +3033,16 @@ def _planar_face_loops_silhouette(
         outer_idx = max(range(len(uv_loops)), key=lambda i: abs(uv_loops[i][1]))
 
         for i, (uv, _a_signed) in enumerate(uv_loops):
+            is_hole = (i != outer_idx)
             loops_dicts.append(
                 {
                     "points": list(uv),
                     "open": False,
-                    "is_hole": (i != outer_idx),
+                    "is_hole": is_hole,
                 }
             )
+            if xyz_sink is not None and i < len(xyz_loop_list) and xyz_loop_list[i]:
+                xyz_sink.append({'points': xyz_loop_list[i], 'is_hole': is_hole})
 
     return loops_dicts
 

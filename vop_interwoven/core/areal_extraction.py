@@ -137,7 +137,7 @@ def _get_aabb_loops_from_bbox(bbox, view_basis):
         return None
 
 
-def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strategy_diag=None):
+def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strategy_diag=None, xyz_sink=None):
     """Extract AREAL element geometry with confidence-based fallback hierarchy.
 
     Implements a 3-tier fallback strategy:
@@ -193,7 +193,7 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
         # DEBUG: Log Tier 1A attempt
         print("[DEBUG] Element {} ({}): Tier 1A - Attempting planar_face extraction".format(elem_id, category))
 
-        loops = _front_face_loops_silhouette(elem, view, view_basis, cfg=cfg)
+        loops = _front_face_loops_silhouette(elem, view, view_basis, cfg=cfg, xyz_sink=xyz_sink)
 
         if loops and len(loops) > 0:
             # Success! Track with strategy_diag if available
