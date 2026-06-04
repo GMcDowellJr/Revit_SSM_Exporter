@@ -2094,13 +2094,15 @@ def _quantize_view_dir(vb):
         return None
 
 
-def _make_areal_high_conf_cache_key(elem_id, source_id, vb, view_id=None):
-    """Build a view-scoped cache key for AREAL HIGH-confidence geometry.
+def _make_areal_high_conf_cache_key(elem_id, source_id, vb):
+    """Build a view-independent cache key for AREAL HIGH-confidence geometry.
 
-    view_id is included because _front_face_loops_silhouette sets opts.View = view
-    for host elements, making the extracted geometry view-dependent (view range,
-    crop, detail filters, cut plane). Two views with the same direction but
-    different view settings must not share a HIGH-conf cache entry.
+    The key is stable across all views that share the same dominant view direction
+    (plan, elevation-X, elevation-Y, section, etc.), enabling cross-view cache reuse.
+
+    Stored geometry is world-space XYZ; _reconstruct_areal_high_conf_loops reprojects
+    it into each view's UVW on cache hit, so the same entry serves any view in the
+    same direction family without a Revit API call.
 
     The direction component is a quantized string token ('x+', 'z-', etc.) rather
     than a raw float tuple, eliminating floating-point ambiguity while still
@@ -2110,7 +2112,7 @@ def _make_areal_high_conf_cache_key(elem_id, source_id, vb, view_id=None):
         view_dir = _quantize_view_dir(vb)
         if view_dir is None:
             return None
-        return (int(elem_id), str(source_id), 'areal_high_v1', int(view_id or 0), view_dir)
+        return (int(elem_id), str(source_id), 'areal_high_v1', view_dir)
     except Exception:
         return None
 
@@ -2126,8 +2128,7 @@ def _reconstruct_areal_high_conf_loops(cached_entry, vb):
     avoiding the bbox-depth fallback that produces incorrect occlusion depth.
 
     Direction identity is guaranteed by the cache key (_make_areal_high_conf_cache_key
-    embeds the quantized view-dir token and view_id), so no secondary direction check
-    is needed here.
+    embeds the quantized view-dir token), so no secondary direction check is needed here.
     """
     try:
         ox, oy, oz = vb.origin
@@ -2554,8 +2555,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 # HIGH-conf: world-space XYZ face loops, bucketed by view direction.
                 # LOW-conf:  world-space bbox corners for AABB/OBB reconstruction.
                 # HIGH checked first — covers 93.5% of AREAL elements.
-                _high_view_id = int(getattr(getattr(view, 'Id', None), 'IntegerValue', 0) or 0)
-                _geom_ck_high = _make_areal_high_conf_cache_key(elem_id, source_id, vb, view_id=_high_view_id)
+                _geom_ck_high = _make_areal_high_conf_cache_key(elem_id, source_id, vb)
                 _geom_ck_low = _make_areal_geom_cache_key(elem_id, source_id)
                 _geom_hit = None
 
@@ -2590,10 +2590,6 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                         strategy_diag=strategy_diag,
                         xyz_sink=_xyz_sink,
                     )
-
-                    if confidence == CONF_HIGH and strategy == 'planar_face_loops':
-                        print("[GC3-DEBUG] elem_id={} xyz_sink len={} cache_key={}".format(
-                            elem_id, len(_xyz_sink) if _xyz_sink is not None else 'None', _geom_ck_high))
 
                     # Cache HIGH-conf result — planar_face_loops only; silhouette_edges deferred
                     if (geometry_cache is not None and _geom_ck_high
