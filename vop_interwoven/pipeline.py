@@ -2072,38 +2072,45 @@ def _reconstruct_areal_low_conf_loops(cached_entry, vb):
 # PR-GC3: AREAL HIGH-confidence world-space geometry cache helpers
 # ---------------------------------------------------------------------------
 
-def _round_view_fwd(vb):
-    """Return vb.forward as a rounded tuple for use as a cache-key component.
+def _quantize_view_dir(vb):
+    """Map vb.forward to one of six axis-aligned string tokens.
 
-    Rounded to 6 decimal places — enough to survive floating-point jitter in
-    ViewBasis construction while keeping genuinely distinct view directions distinct.
-    Using the actual forward vector (not a coarse half-axis bucket) ensures that
-    non-axis-aligned views (rotated elevations, 3D views) never share a cache entry
-    with views that would select a different front-face set.
+    Returns one of: 'x+', 'x-', 'y+', 'y-', 'z+', 'z-', or None on failure.
+    The dominant axis (largest absolute component) determines the token.
+    This eliminates floating-point ambiguity in cache keys while keeping
+    genuinely distinct view-direction families (plan / elevation / section)
+    in separate cache buckets.
     """
     try:
         fx, fy, fz = vb.forward
-        return (round(float(fx), 6), round(float(fy), 6), round(float(fz), 6))
+        fx, fy, fz = float(fx), float(fy), float(fz)
+        ax, ay, az = abs(fx), abs(fy), abs(fz)
+        if ax >= ay and ax >= az:
+            return 'x+' if fx >= 0 else 'x-'
+        if ay >= ax and ay >= az:
+            return 'y+' if fy >= 0 else 'y-'
+        return 'z+' if fz >= 0 else 'z-'
     except Exception:
         return None
 
 
 def _make_areal_high_conf_cache_key(elem_id, source_id, vb, view_id=None):
-    """Build a view-scoped, direction-exact cache key for AREAL HIGH-confidence geometry.
+    """Build a view-scoped cache key for AREAL HIGH-confidence geometry.
 
     view_id is included because _front_face_loops_silhouette sets opts.View = view
     for host elements, making the extracted geometry view-dependent (view range,
-    crop, detail filters, cut plane). Two views with the same vb.forward but
+    crop, detail filters, cut plane). Two views with the same direction but
     different view settings must not share a HIGH-conf cache entry.
 
-    The forward vector is included as a rounded tuple (not a coarse bucket) so
-    non-axis-aligned views get distinct keys even within the same dominant quadrant.
+    The direction component is a quantized string token ('x+', 'z-', etc.) rather
+    than a raw float tuple, eliminating floating-point ambiguity while still
+    separating plan, elevation, and section view families.
     """
     try:
-        fwd = _round_view_fwd(vb)
-        if fwd is None:
+        view_dir = _quantize_view_dir(vb)
+        if view_dir is None:
             return None
-        return (int(elem_id), str(source_id), 'areal_high_v1', int(view_id or 0), fwd)
+        return (int(elem_id), str(source_id), 'areal_high_v1', int(view_id or 0), view_dir)
     except Exception:
         return None
 
@@ -2119,7 +2126,8 @@ def _reconstruct_areal_high_conf_loops(cached_entry, vb):
     avoiding the bbox-depth fallback that produces incorrect occlusion depth.
 
     Direction identity is guaranteed by the cache key (_make_areal_high_conf_cache_key
-    embeds the rounded forward vector), so no secondary direction check is needed here.
+    embeds the quantized view-dir token and view_id), so no secondary direction check
+    is needed here.
     """
     try:
         ox, oy, oz = vb.origin
