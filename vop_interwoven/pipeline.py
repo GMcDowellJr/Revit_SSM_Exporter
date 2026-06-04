@@ -2456,7 +2456,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 # PR-GC1: Cross-view cache for LOW-confidence (AABB/OBB) elements.
                 # World-space bbox is view-independent; UV loops reconstructed cheaply on hit.
                 _geom_ck = _make_areal_geom_cache_key(elem_id, source_id)
-                _geom_hit = geometry_cache.get(_geom_ck) if (geometry_cache and _geom_ck) else None
+                _geom_hit = geometry_cache.get(_geom_ck) if (geometry_cache is not None and _geom_ck) else None
 
                 if _geom_hit is not None:
                     loops, confidence, strategy = _reconstruct_areal_low_conf_loops(_geom_hit, vb)
@@ -2472,11 +2472,12 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                         diag=diag,
                         strategy_diag=strategy_diag
                     )
-                    # Store LOW-confidence results only — bbox is view-independent, safe to reuse.
+                    # Store LOW-confidence results only — bbox must be model-space (not view-clipped).
                     # HIGH/MEDIUM confidence results have real geometry; do not cache here.
-                    if (geometry_cache and _geom_ck
+                    if (geometry_cache is not None and _geom_ck
                             and confidence == CONF_LOW
-                            and strategy not in ('failed', None)):
+                            and strategy not in ('failed', None)
+                            and elem_wrapper.get("bbox_source") == "model"):
                         _bbox = elem_wrapper.get("bbox")
                         if _bbox is not None:
                             try:
