@@ -79,6 +79,61 @@ def test_areal_path_extracts_geometry_once_before_raster_decompose():
     assert out_cells_keywords[0].value.id == "_elem_cells"
 
 
+def test_areal_path_probes_cache_once_before_extraction():
+    tree = ast.parse(PIPELINE.read_text(encoding="utf-8"))
+    render_fn = _find_function(tree, "render_model_front_to_back")
+    element_loop = _find_element_loop(render_fn)
+
+    areal_extract_if = [
+        node for node in ast.walk(element_loop)
+        if _is_elem_class_areal_if(node)
+        and _calls_named(ast.Module(body=node.body, type_ignores=[]), {"extract_areal_geometry"})
+    ][0]
+    extraction_call = _calls_named(areal_extract_if, {"extract_areal_geometry"})[0]
+
+    cache_gets_before_extraction = [
+        call for call in ast.walk(areal_extract_if)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "get"
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "areal_cache"
+        and call.lineno < extraction_call.lineno
+    ]
+
+    assert len(cache_gets_before_extraction) == 1
+    assert isinstance(cache_gets_before_extraction[0].args[0], ast.Name)
+    assert cache_gets_before_extraction[0].args[0].id == "_geom_ck_high"
+
+
+def test_areal_path_does_not_probe_low_cache_before_extraction():
+    tree = ast.parse(PIPELINE.read_text(encoding="utf-8"))
+    render_fn = _find_function(tree, "render_model_front_to_back")
+    element_loop = _find_element_loop(render_fn)
+
+    areal_extract_if = [
+        node for node in ast.walk(element_loop)
+        if _is_elem_class_areal_if(node)
+        and _calls_named(ast.Module(body=node.body, type_ignores=[]), {"extract_areal_geometry"})
+    ][0]
+    extraction_call = _calls_named(areal_extract_if, {"extract_areal_geometry"})[0]
+
+    low_cache_gets_before_extraction = [
+        call for call in ast.walk(areal_extract_if)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "get"
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "areal_cache"
+        and call.args
+        and isinstance(call.args[0], ast.Name)
+        and call.args[0].id == "_geom_ck_low"
+        and call.lineno < extraction_call.lineno
+    ]
+
+    assert low_cache_gets_before_extraction == []
+
+
 def test_rasterize_silhouette_loops_does_not_extract_geometry():
     tree = ast.parse(RASTER.read_text(encoding="utf-8"))
     rasterize_fn = _find_function(tree, "rasterize_silhouette_loops")

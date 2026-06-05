@@ -2616,35 +2616,37 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
             # AREAL: Use unified extraction with confidence-based fallback
             t_geom_start = time.perf_counter()
             try:
-                # PR-GC1 + PR-GC3: Cross-view geometry cache — two tiers, dedicated cache.
-                # HIGH-conf: world-space XYZ face loops, bucketed by view direction.
-                # LOW-conf:  world-space bbox corners for AABB/OBB reconstruction.
-                # Both use areal_cache (isolated from TINY/LINEAR) so writes by 2699+
-                # TINY/LINEAR elements per view cannot evict the ~120 AREAL entries.
-                # HIGH checked first — covers 93.5% of AREAL elements.
+                # PR-GC1 + PR-GC3: Cross-view geometry cache, isolated from
+                # TINY/LINEAR silhouettes so their writes cannot evict AREAL entries.
+                # Probe exactly one AREAL key per element iteration.  A previous two-tier
+                # probe checked HIGH and then LOW before extraction; for the overwhelmingly
+                # common HIGH path that counted two cache misses per element even though
+                # geometry was extracted only once.
                 _geom_ck_high = _make_areal_high_conf_cache_key(elem_id, source_id, vb)
-                _geom_ck_low = _make_areal_geom_cache_key(elem_id, source_id)
                 _geom_hit = None
 
                 if areal_cache is not None and _geom_ck_high:
-                    _cached_high = areal_cache.get(_geom_ck_high)
-                    if _cached_high is not None:
-                        loops, confidence, strategy = _reconstruct_areal_high_conf_loops(
-                            _cached_high, vb
-                        )
-                        if loops is not None:
-                            _geom_hit = 'high'
-
-                if _geom_hit is None and areal_cache is not None and _geom_ck_low:
-                    _cached_low = areal_cache.get(_geom_ck_low)
-                    if _cached_low is not None:
-                        loops, confidence, strategy = _reconstruct_areal_low_conf_loops(
-                            _cached_low, vb
-                        )
-                        _geom_hit = 'low'
+                    _cached_areal = areal_cache.get(_geom_ck_high)
+                    if _cached_areal is not None:
+                        _cached_conf = _cached_areal.get('confidence')
+                        if _cached_conf == CONF_LOW or 'world_min' in _cached_areal:
+                            loops, confidence, strategy = _reconstruct_areal_low_conf_loops(
+                                _cached_areal, vb
+                            )
+                            if loops is not None:
+                                _geom_hit = 'low'
+                        else:
+                            loops, confidence, strategy = _reconstruct_areal_high_conf_loops(
+                                _cached_areal, vb
+                            )
+                            if loops is not None:
+                                _geom_hit = 'high'
 
                 if _geom_hit is None:
-                    # Both tiers missed — run full extraction.
+                    # Cache miss — run full extraction.  Do not issue a second LOW-key
+                    # get here; that doubles GeomCacheMisses for every uncached HIGH
+                    # element.  LOW payloads are written under this same probed key,
+                    # so the model pass performs one cache query per AREAL element.
                     # Provide xyz_sink only when HIGH-conf caching is active.
                     _xyz_sink = [] if (areal_cache is not None and _geom_ck_high) else None
                     loops, confidence, strategy = extract_areal_geometry(
@@ -2687,17 +2689,19 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                         except Exception:
                             pass
 
-                    # Cache LOW-conf result — bbox-derived, view-independent.
+                    # Cache LOW-conf result under the single probed AREAL key.  The
+                    # payload remains view-independent world bbox data; storing it at the
+                    # probed key preserves LOW reuse without a second LOW-key get/miss.
                     # Guard: bbox_source must be "model" (not "view") so the cached
                     # extents are view-independent and safe to reuse across views.
-                    elif (areal_cache is not None and _geom_ck_low
+                    elif (areal_cache is not None and _geom_ck_high
                             and confidence == CONF_LOW
                             and strategy not in ('failed', None)
                             and elem_wrapper.get("bbox_source") == "model"):
                         _bbox = elem_wrapper.get("bbox")
                         if _bbox is not None:
                             try:
-                                areal_cache.set(_geom_ck_low, {
+                                areal_cache.set(_geom_ck_high, {
                                     'confidence': 'LOW',
                                     'strategy': strategy,
                                     'world_min': (float(_bbox.Min.X), float(_bbox.Min.Y), float(_bbox.Min.Z)),
