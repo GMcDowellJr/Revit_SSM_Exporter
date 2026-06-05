@@ -45,6 +45,28 @@ def test_decompose_to_rects_covers_l_shape_without_overlap():
     assert seen == cells
 
 
+def test_decompose_to_rects_has_no_silent_24_rect_cap():
+    nrows = 2
+    ncols = 49
+    cells = {
+        j * ncols + i
+        for i in range(0, ncols, 2)
+        for j in range(nrows)
+    }
+
+    rects = decompose_to_rects(cells, nrows=nrows, ncols=ncols)
+
+    assert len(rects) == 25
+
+    seen = set()
+    for rect in rects:
+        rect_cells = _cells_from_rect(rect, ncols)
+        assert seen.isdisjoint(rect_cells)
+        seen.update(rect_cells)
+
+    assert seen == cells
+
+
 def test_rasterize_silhouette_loops_populates_out_cells():
     bounds = Bounds2D(0.0, 0.0, 8.0, 8.0)
     raster = ViewRaster(width=8, height=8, cell_size=1.0, bounds=bounds, tile_size=4)
@@ -65,3 +87,41 @@ def test_rasterize_silhouette_loops_populates_out_cells():
     }
     assert out_cells == expected
     assert filled == len(expected)
+
+
+def test_rasterize_silhouette_loops_out_cells_includes_occluding_edges():
+    bounds = Bounds2D(0.0, 0.0, 8.0, 8.0)
+    raster = ViewRaster(width=8, height=8, cell_size=1.0, bounds=bounds, tile_size=4)
+    loop = {
+        "points": [(2.0, 2.0), (5.0, 2.0), (5.0, 5.0), (2.0, 5.0), (2.0, 2.0)],
+        "is_hole": False,
+    }
+
+    out_cells = set()
+    filled = raster.rasterize_silhouette_loops(
+        [loop],
+        key_index=0,
+        depth=1.0,
+        source="HOST",
+        occlude_edges=True,
+        _out_cells=out_cells,
+    )
+
+    fill_cells = {
+        j * raster.W + i
+        for j in range(3, 6)
+        for i in range(2, 6)
+    }
+    edge_cells = {
+        j * raster.W + i
+        for i in range(2, 6)
+        for j in (2, 5)
+    }
+    edge_cells.update(
+        j * raster.W + i
+        for i in (2, 5)
+        for j in range(2, 6)
+    )
+
+    assert filled == len(fill_cells)
+    assert out_cells == fill_cells | edge_cells

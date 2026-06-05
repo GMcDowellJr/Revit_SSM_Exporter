@@ -274,7 +274,7 @@ def decompose_to_rects(cell_indices, nrows, ncols, min_area=2):
             grid[k] = 1
 
     rects = []
-    for _pass in range(24):
+    while True:
         h = [0] * ncols
         best = None
         for j in range(nrows):
@@ -1650,6 +1650,8 @@ class ViewRaster:
 
                         # Optional: make the perimeter participate in occlusion too.
                         if occlude_edges:
+                            if _out_cells is not None:
+                                _out_cells.add(idx)
                             try:
                                 self.try_write_cell(i, j, w_depth=depth, source=source, key_index=key_index)
                             except Exception as e:
