@@ -2479,18 +2479,11 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                             uv_rect.j_min >= oj_min and uv_rect.j_max <= oj_max):
                         _rect_occluded = True
                         break
-            if _rect_occluded:
-                if source_type == "HOST":
-                    try:
-                        raster.mark_host_presence_rect(uv_rect)
-                    except Exception as e:
-                        if diag is not None:
-                            diag.error(
-                                phase="pipeline",
-                                callsite="render_model_front_to_back.rect_early_out",
-                                message="Exception preserving HOST occupancy for rect early-out: {}".format(e),
-                                exc=e,
-                            )
+            # HOST elements must fall through to the normal raster path.  Even when
+            # hidden, HOST rasterization marks occ_host only for cells touched by
+            # the true silhouette/fallback footprint before depth rejection; using
+            # the bbox here would over-mark holes/concavities/thin elements.
+            if _rect_occluded and source_type != "HOST":
                 skipped += 1
                 continue
 

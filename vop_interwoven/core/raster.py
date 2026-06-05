@@ -801,44 +801,6 @@ class ViewRaster:
         self.depth_test_rejects += 1
         return False
 
-    def mark_host_presence_rect(self, rect):
-        """Mark HOST spatial presence for an already-occluded rectangle.
-
-        Rect-based early-out can skip HOST elements before geometry rasterization.
-        Normal HOST raster writes set occ_host before the depth test, even when
-        the cell loses to a nearer occluder, so preserve that downstream
-        host-presence signal without changing w_occ, model masks, tile state, or
-        depth-test counters.
-
-        Args:
-            rect: CellRect-like object with inclusive i/j bounds.
-
-        Returns:
-            Number of cells newly marked as host-present.
-        """
-        if rect is None or getattr(rect, "empty", False):
-            return 0
-
-        i_min = max(0, int(getattr(rect, "i_min")))
-        j_min = max(0, int(getattr(rect, "j_min")))
-        i_max = min(self.W - 1, int(getattr(rect, "i_max")))
-        j_max = min(self.H - 1, int(getattr(rect, "j_max")))
-        if i_min > i_max or j_min > j_max:
-            return 0
-
-        marked = 0
-        for j in range(j_min, j_max + 1):
-            for i in range(i_min, i_max + 1):
-                if not self._cell_in_model_clip(i, j):
-                    continue
-                idx = self.get_cell_index(i, j)
-                if idx is None:
-                    continue
-                if not bool(self.occ_host[idx]):
-                    marked += 1
-                self.occ_host[idx] = True
-        return marked
-
     def get_or_create_element_meta_index(self, elem_id, category, source_id, source_type="HOST", source_label=None):
         """Get or create metadata index for element.
 

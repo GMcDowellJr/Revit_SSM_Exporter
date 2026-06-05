@@ -11,7 +11,7 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from vop_interwoven.core.raster import ViewRaster, TileMap
-from vop_interwoven.core.math_utils import Bounds2D, CellRect
+from vop_interwoven.core.math_utils import Bounds2D
 from vop_interwoven.config import Config
 
 
@@ -210,38 +210,6 @@ class TestViewRaster(unittest.TestCase):
         self.assertTrue(self.raster.occ_dwg[idx])
         self.assertTrue(self.raster.occ_link[idx])
         self.assertTrue(self.raster.occ_host[idx])
-
-    def test_mark_host_presence_rect_preserves_hidden_host_without_depth_writes(self):
-        """Rect early-out can preserve HOST presence without changing depth state."""
-        rect = CellRect(2, 3, 4, 5)
-        depth_attempts = self.raster.depth_test_attempted
-        depth_wins = self.raster.depth_test_wins
-
-        marked = self.raster.mark_host_presence_rect(rect)
-
-        self.assertEqual(marked, 9)
-        for j in range(3, 6):
-            for i in range(2, 5):
-                idx = self.raster.get_cell_index(i, j)
-                self.assertTrue(self.raster.occ_host[idx])
-                self.assertEqual(self.raster.w_occ[idx], float("inf"))
-                self.assertFalse(self.raster.model_mask[idx])
-
-        self.assertEqual(self.raster.depth_test_attempted, depth_attempts)
-        self.assertEqual(self.raster.depth_test_wins, depth_wins)
-
-    def test_mark_host_presence_rect_respects_model_clip(self):
-        """Host-presence preservation must obey the same model clip as writes."""
-        self.raster.model_clip_bounds = Bounds2D(2.0, 2.0, 5.0, 5.0)
-
-        marked = self.raster.mark_host_presence_rect(CellRect(0, 0, 6, 6))
-
-        self.assertEqual(marked, 9)
-        for j in range(64):
-            for i in range(64):
-                idx = self.raster.get_cell_index(i, j)
-                expected = i in (2, 3, 4) and j in (2, 3, 4)
-                self.assertEqual(bool(self.raster.occ_host[idx]), expected)
 
     def test_element_metadata(self):
         """Test element metadata tracking."""
