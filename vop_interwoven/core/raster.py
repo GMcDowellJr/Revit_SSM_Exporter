@@ -323,9 +323,6 @@ def _commit_polygon_mask(raster, mask, depth, source, key_index, np, _out_cells=
     if len(candidates) == 0:
         return 0
 
-    if _out_cells is not None:
-        _out_cells.update(int(idx_np) for idx_np in candidates)
-
     # Per-cell commits via try_write_cell.
     #
     # try_write_cell handles all required side effects:
@@ -346,6 +343,8 @@ def _commit_polygon_mask(raster, mask, depth, source, key_index, np, _out_cells=
         i = int(idx_np) % raster.W
         j = int(idx_np) // raster.W
         if raster.try_write_cell(i, j, w_depth=float(depth), source=source, key_index=key_index):
+            if _out_cells is not None:
+                _out_cells.add(int(idx_np))
             written += 1
     return written
 
@@ -1631,9 +1630,9 @@ class ViewRaster:
                 idx = self.get_cell_index(i, j)
                 if idx is None:
                     continue
-                if _out_cells is not None:
-                    _out_cells.add(idx)
                 if self.try_write_cell(i, j, w_depth=depth, source=source, key_index=key_index):
+                    if _out_cells is not None:
+                        _out_cells.add(idx)
                     filled += 1
 
         # Only stamp edges if any interior cells were actually written.
@@ -1650,10 +1649,10 @@ class ViewRaster:
 
                         # Optional: make the perimeter participate in occlusion too.
                         if occlude_edges:
-                            if _out_cells is not None:
-                                _out_cells.add(idx)
                             try:
-                                self.try_write_cell(i, j, w_depth=depth, source=source, key_index=key_index)
+                                if self.try_write_cell(i, j, w_depth=depth, source=source, key_index=key_index):
+                                    if _out_cells is not None:
+                                        _out_cells.add(idx)
                             except Exception as e:
                                 if diag is not None:
                                     diag.error(
