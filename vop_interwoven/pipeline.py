@@ -2624,10 +2624,25 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                             and strategy == 'planar_face_loops'
                             and _xyz_sink):
                         try:
+                            _bfp = None
+                            _bbox = elem_wrapper.get('bbox')
+                            if _bbox is not None:
+                                try:
+                                    _bfp = (
+                                        round(float(_bbox.Min.X), 4),
+                                        round(float(_bbox.Min.Y), 4),
+                                        round(float(_bbox.Min.Z), 4),
+                                        round(float(_bbox.Max.X), 4),
+                                        round(float(_bbox.Max.Y), 4),
+                                        round(float(_bbox.Max.Z), 4),
+                                    )
+                                except Exception:
+                                    pass
                             areal_cache.set(_geom_ck_high, {
                                 'confidence': 'HIGH',
                                 'strategy': strategy,
                                 'loops': _xyz_sink,
+                                'bbox_fingerprint': _bfp,
                             })
                         except Exception:
                             pass
