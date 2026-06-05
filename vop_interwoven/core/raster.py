@@ -250,7 +250,60 @@ def _polygon_mask_np(points_ij, W, H, np):
         return _np.zeros((H, W), dtype=bool) if _np is not None else None
 
 
-def _commit_polygon_mask(raster, mask, depth, source, key_index, np):
+def decompose_to_rects(cell_indices, nrows, ncols, min_area=2):
+    """Decompose flat raster cell indices into maximal covered rectangles.
+
+    Args:
+        cell_indices: Iterable of flat cell indices (j * ncols + i).
+        nrows: Grid height in rows.
+        ncols: Grid width in columns.
+        min_area: Minimum rectangle area to emit.
+
+    Returns:
+        List of (i_min, j_min, i_max, j_max) tuples sorted by descending area.
+    """
+    nrows = int(nrows)
+    ncols = int(ncols)
+    total = nrows * ncols
+    if nrows <= 0 or ncols <= 0:
+        return []
+
+    grid = [0] * total
+    for k in cell_indices:
+        if 0 <= k < total:
+            grid[k] = 1
+
+    rects = []
+    while True:
+        h = [0] * ncols
+        best = None
+        for j in range(nrows):
+            row_offset = j * ncols
+            for i in range(ncols):
+                h[i] = h[i] + 1 if grid[row_offset + i] else 0
+            stk = []
+            for i in range(ncols + 1):
+                hc = 0 if i == ncols else h[i]
+                while stk and h[stk[-1]] > hc:
+                    ht = h[stk.pop()]
+                    left = stk[-1] + 1 if stk else 0
+                    area = ht * (i - left)
+                    if best is None or area > best[0]:
+                        best = (area, left, j - ht + 1, i - 1, j)
+                stk.append(i)
+        if best is None or best[0] < min_area:
+            break
+        area, i_min, j_min, i_max, j_max = best
+        rects.append((i_min, j_min, i_max, j_max))
+        for j in range(j_min, j_max + 1):
+            row_offset = j * ncols
+            for i in range(i_min, i_max + 1):
+                grid[row_offset + i] = 0
+
+    return rects
+
+
+def _commit_polygon_mask(raster, mask, depth, source, key_index, np, _out_cells=None):
     """Write polygon mask to raster arrays with depth testing — vectorised.
 
     Applies model_clip_bounds guard, depth test, and all occupancy writes
@@ -269,6 +322,9 @@ def _commit_polygon_mask(raster, mask, depth, source, key_index, np):
 
     if len(candidates) == 0:
         return 0
+
+    if _out_cells is not None:
+        _out_cells.update(int(idx_np) for idx_np in candidates)
 
     # Per-cell commits via try_write_cell.
     #
@@ -1427,7 +1483,7 @@ class ViewRaster:
         )
         return self._clip_mask_cache
 
-    def rasterize_silhouette_loops(self, loops, key_index, depth=0.0, source="HOST", occlude_edges=False):
+    def rasterize_silhouette_loops(self, loops, key_index, depth=0.0, source="HOST", occlude_edges=False, _out_cells=None):
         """Rasterize element silhouette loops into model layers with depth testing.
 
         Transactional semantics:
@@ -1438,6 +1494,9 @@ class ViewRaster:
         If occlude_edges=True, edge cells also write to occlusion (w_occ/model_mask)
         via try_write_cell, so perimeters participate in occlusion.
         """
+
+        if _out_cells is not None and not isinstance(_out_cells, set):
+            raise TypeError("_out_cells must be a set when provided")
 
         if not loops:
             return 0
@@ -1558,7 +1617,7 @@ class ViewRaster:
             self._np_hole_mask  = None
 
             target_mask = outer_mask & ~hole_mask
-            filled = _commit_polygon_mask(self, target_mask, depth, source, key_index, _np)
+            filled = _commit_polygon_mask(self, target_mask, depth, source, key_index, _np, _out_cells=_out_cells)
         else:
             # Python-list path
             target_cells = outer_cells - hole_cells
@@ -1572,6 +1631,8 @@ class ViewRaster:
                 idx = self.get_cell_index(i, j)
                 if idx is None:
                     continue
+                if _out_cells is not None:
+                    _out_cells.add(idx)
                 if self.try_write_cell(i, j, w_depth=depth, source=source, key_index=key_index):
                     filled += 1
 
@@ -1589,6 +1650,8 @@ class ViewRaster:
 
                         # Optional: make the perimeter participate in occlusion too.
                         if occlude_edges:
+                            if _out_cells is not None:
+                                _out_cells.add(idx)
                             try:
                                 self.try_write_cell(i, j, w_depth=depth, source=source, key_index=key_index)
                             except Exception as e:
