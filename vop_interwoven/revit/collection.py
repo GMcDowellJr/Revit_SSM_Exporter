@@ -353,7 +353,7 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None, 
 
         bbox, bbox_source = resolve_element_bbox(
             e,
-            view=view,
+            view=None,
             diag=diag,
             context={
                 "view_id": getattr(getattr(view, "Id", None), "IntegerValue", None),
