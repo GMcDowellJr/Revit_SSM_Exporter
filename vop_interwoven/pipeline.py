@@ -3237,6 +3237,10 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
             # This handles confidence-based occlusion (HIGH occludes, MEDIUM/LOW don't)
             if elem_class == "AREAL":
                 try:
+                    # AREAL HIGH scene-occluder rects must be derived from the cells
+                    # committed by this same rasterization call.  Do not re-extract
+                    # geometry here; LOW/MEDIUM pass None to avoid per-cell set.add()
+                    # overhead on non-occluding elements.
                     _elem_cells = set() if confidence == CONF_HIGH else None
                     success, filled = rasterize_areal_loops(
                         loops=loops,
@@ -3251,7 +3255,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                         _out_cells=_elem_cells
                     )
 
-                    if elem_class == "AREAL" and confidence == CONF_HIGH and filled > 0 and _elem_cells:
+                    if confidence == CONF_HIGH and filled > 0 and _elem_cells:
                         # _out_cells is populated by the raster mask path; keep only cells
                         # this element actually owns in w_occ so scene rects describe the
                         # committed occluder footprint, not merely candidate mask cells.
