@@ -351,16 +351,24 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None, 
     for e in elements:
         elem_id = getattr(getattr(e, "Id", None), "IntegerValue", None)
 
+        bbox_context = {
+            "view_id": getattr(getattr(view, "Id", None), "IntegerValue", None),
+            "elem_id": elem_id,
+            "source_type": "HOST",
+        }
         bbox, bbox_source = resolve_element_bbox(
             e,
             view=None,
             diag=diag,
-            context={
-                "view_id": getattr(getattr(view, "Id", None), "IntegerValue", None),
-                "elem_id": elem_id,
-                "source_type": "HOST",
-            },
+            context=bbox_context,
         )
+        if bbox is None:
+            bbox, bbox_source = resolve_element_bbox(
+                e,
+                view=view,
+                diag=diag,
+                context=bbox_context,
+            )
 
         if bbox_source == "view":
             bbox_view += 1
