@@ -91,7 +91,7 @@ import time
 BOUNDARY_TOLERANCE = 1e-6  # feet
 
 from .config import Config
-from .core.raster import ViewRaster, TileMap
+from .core.raster import ViewRaster, TileMap, decompose_to_rects
 from .core.geometry import Mode, classify_by_uv, make_uv_aabb, make_obb_or_skinny_aabb
 from .core.math_utils import Bounds2D, CellRect
 from .core.silhouette import get_element_silhouette, reset_family_region_caches
@@ -1838,7 +1838,7 @@ def _extract_view_summary(view_result):
     }
 
 
-def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, confidence, strategy, elem_id=None, category=None):
+def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, confidence, strategy, elem_id=None, category=None, _out_cells=None):
     """Rasterize AREAL element loops with confidence-based occlusion handling.
 
     Args:
@@ -1851,6 +1851,7 @@ def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, con
         strategy: Strategy name used for extraction
         elem_id: Optional element ID for debugging
         category: Optional category name for debugging
+        _out_cells: Optional set populated with committed HIGH-confidence silhouette cells
 
     Returns:
         Tuple of (success, filled_cells):
@@ -1905,7 +1906,8 @@ def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, con
             if closed_loops:
                 try:
                     filled += raster.rasterize_silhouette_loops(
-                        closed_loops, key_index, depth=elem_depth, source=source_type, occlude_edges=True
+                        closed_loops, key_index, depth=elem_depth, source=source_type,
+                        occlude_edges=True, _out_cells=_out_cells
                     )
                 except Exception as e:
                     print("[WARN] rasterize_areal_loops: rasterize_silhouette_loops raised "
@@ -2349,6 +2351,10 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
     bbox_fallback = 0
     obb_fallback = 0
 
+    # Scene occluder rects: list of (i_min, j_min, i_max, j_max, w_max)
+    # populated as AREAL HIGH elements are processed front-to-back.
+    _scene_occ_rects = []
+
     def _classify_uv_rect(width_cells, height_cells):
         # Local, explicit classification to avoid dependency on classify_by_uv signature.
         # Semantics:
@@ -2457,6 +2463,29 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                         exc=e,
                     )
                 # Conservative: do not gate if we cannot determine depth range
+
+        # Rect-based scene occlusion gate.  This runs before any geometry extraction
+        # and only skips when the enriched UV bbox is known, fully contained in a
+        # committed AREAL HIGH occluder rect, and strictly behind that occluder.
+        uv_rect = elem_wrapper.get("uv_bbox_rect")
+        w_min_elem = elem_wrapper.get("depth_range", (None, None))[0]
+        if (uv_rect is not None and not uv_rect.empty and _scene_occ_rects
+                and isinstance(w_min_elem, (int, float)) and math.isfinite(w_min_elem)):
+            _rect_occluded = False
+            for (oi_min, oj_min, oi_max, oj_max, ow_max) in _scene_occ_rects:
+                if (isinstance(ow_max, (int, float)) and math.isfinite(ow_max)
+                        and w_min_elem > ow_max):
+                    if (uv_rect.i_min >= oi_min and uv_rect.i_max <= oi_max and
+                            uv_rect.j_min >= oj_min and uv_rect.j_max <= oj_max):
+                        _rect_occluded = True
+                        break
+            # HOST elements must fall through to the normal raster path.  Even when
+            # hidden, HOST rasterization marks occ_host only for cells touched by
+            # the true silhouette/fallback footprint before depth rejection; using
+            # the bbox here would over-mark holes/concavities/thin elements.
+            if _rect_occluded and source_type != "HOST":
+                skipped += 1
+                continue
 
         # Get element metadata
         try:
@@ -3208,6 +3237,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
             # This handles confidence-based occlusion (HIGH occludes, MEDIUM/LOW don't)
             if elem_class == "AREAL":
                 try:
+                    _elem_cells = set() if confidence == CONF_HIGH else None
                     success, filled = rasterize_areal_loops(
                         loops=loops,
                         raster=raster,
@@ -3217,8 +3247,26 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                         confidence=confidence,
                         strategy=strategy,
                         elem_id=elem_id,
-                        category=category
+                        category=category,
+                        _out_cells=_elem_cells
                     )
+
+                    if elem_class == "AREAL" and confidence == CONF_HIGH and filled > 0 and _elem_cells:
+                        # _out_cells is populated by the raster mask path; keep only cells
+                        # this element actually owns in w_occ so scene rects describe the
+                        # committed occluder footprint, not merely candidate mask cells.
+                        try:
+                            _elem_cells = {
+                                idx for idx in _elem_cells
+                                if 0 <= idx < len(raster.w_occ_key) and raster.w_occ_key[idx] == key_index
+                            }
+                        except Exception:
+                            _elem_cells = set()
+                        w_max_elem = elem_wrapper.get("depth_range", (0.0, 0.0))[1]
+                        if _elem_cells and isinstance(w_max_elem, (int, float)) and math.isfinite(w_max_elem):
+                            _new_rects = decompose_to_rects(_elem_cells, raster.H, raster.W)
+                            for (i_min, j_min, i_max, j_max) in _new_rects:
+                                _scene_occ_rects.append((i_min, j_min, i_max, j_max, w_max_elem))
 
                     if success:
                         silhouette_success += 1
