@@ -263,6 +263,45 @@ def test_entry_without_bbox_fingerprint_kept(tmp_path):
     assert c2.get(KEY_HIGH) is not None
 
 
+def test_record_shaped_nested_high_fingerprint_discarded_when_stale(tmp_path):
+    """Record-shaped AREAL entries validate nested HIGH fingerprints."""
+    path = str(tmp_path / "gc.json")
+    record = {
+        "schema": "areal_geom_record_v1",
+        "high_by_dir": {
+            "z-": _make_value(bfp=(0., 0., 0., 5., 5., 3.)),
+        },
+    }
+
+    c = GeometryCache()
+    c.set(KEY_LOW, record)
+    c.save(path)
+
+    c2 = GeometryCache()
+    c2.load(path, elem_cache=_AlwaysMismatch())
+    assert c2.get(KEY_LOW) is None
+    assert c2._discarded_stale == 1
+
+
+def test_record_shaped_nested_high_fingerprint_kept_when_matching(tmp_path):
+    path = str(tmp_path / "gc.json")
+    record = {
+        "schema": "areal_geom_record_v1",
+        "high_by_dir": {
+            "z-": _make_value(bfp=(0., 0., 0., 5., 5., 3.)),
+        },
+    }
+
+    c = GeometryCache()
+    c.set(KEY_LOW, record)
+    c.save(path)
+
+    c2 = GeometryCache()
+    c2.load(path, elem_cache=_AlwaysMatch())
+    assert c2.get(KEY_LOW) is not None
+    assert c2._discarded_stale == 0
+
+
 # ────────────────────────────────────────────────── disk_hits ──
 
 def test_disk_hits_counter(tmp_path):

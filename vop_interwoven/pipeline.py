@@ -1991,10 +1991,12 @@ def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, con
 # ---------------------------------------------------------------------------
 
 def _make_areal_geom_cache_key(elem_id, source_id):
-    """Build a view-independent cache key for AREAL LOW-confidence bbox geometry.
+    """Build the single view-independent AREAL geometry-cache record key.
 
-    Contains no view-specific tokens. The same world-space bbox is valid for
-    any view of the same element in the same document/link instance.
+    The historical ``areal_low_v1`` token is intentionally retained so existing
+    LOW bbox payloads remain reusable.  New values at this key are records that
+    may contain a view-independent LOW payload and HIGH payloads bucketed by
+    quantized view direction.
     """
     try:
         return (int(elem_id), str(source_id), 'areal_low_v1')
@@ -2616,37 +2618,56 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
             # AREAL: Use unified extraction with confidence-based fallback
             t_geom_start = time.perf_counter()
             try:
-                # PR-GC1 + PR-GC3: Cross-view geometry cache — two tiers, dedicated cache.
-                # HIGH-conf: world-space XYZ face loops, bucketed by view direction.
-                # LOW-conf:  world-space bbox corners for AABB/OBB reconstruction.
-                # Both use areal_cache (isolated from TINY/LINEAR) so writes by 2699+
-                # TINY/LINEAR elements per view cannot evict the ~120 AREAL entries.
-                # HIGH checked first — covers 93.5% of AREAL elements.
-                _geom_ck_high = _make_areal_high_conf_cache_key(elem_id, source_id, vb)
-                _geom_ck_low = _make_areal_geom_cache_key(elem_id, source_id)
+                # PR-GC1 + PR-GC3: Cross-view geometry cache, isolated from
+                # TINY/LINEAR silhouettes so their writes cannot evict AREAL entries.
+                # Probe exactly one view-independent AREAL key per element iteration.
+                # The cached record may contain a LOW bbox payload reusable from any
+                # view direction and/or HIGH face-loop payloads bucketed by view-dir.
+                _geom_ck_areal = _make_areal_geom_cache_key(elem_id, source_id)
+                _geom_view_dir = _quantize_view_dir(vb)
+                _cached_areal = None
                 _geom_hit = None
 
-                if areal_cache is not None and _geom_ck_high:
-                    _cached_high = areal_cache.get(_geom_ck_high)
-                    if _cached_high is not None:
-                        loops, confidence, strategy = _reconstruct_areal_high_conf_loops(
-                            _cached_high, vb
-                        )
-                        if loops is not None:
-                            _geom_hit = 'high'
+                if areal_cache is not None and _geom_ck_areal:
+                    _cached_areal = areal_cache.get(_geom_ck_areal)
+                    if _cached_areal is not None:
+                        # Current record shape: {'low': {...}, 'high_by_dir': {'z-': {...}}}
+                        # Prefer an exact HIGH payload for this direction when available,
+                        # then fall back to LOW bbox data that is reusable from any view.
+                        _high_payload = None
+                        try:
+                            _high_payload = (_cached_areal.get('high_by_dir') or {}).get(_geom_view_dir)
+                        except Exception:
+                            _high_payload = None
+                        # Legacy HIGH payloads are accepted only if they were stored
+                        # directly at this key; normal writes keep them in high_by_dir.
+                        if _high_payload is None and 'loops' in _cached_areal:
+                            _high_payload = _cached_areal
+                        if _high_payload is not None:
+                            loops, confidence, strategy = _reconstruct_areal_high_conf_loops(
+                                _high_payload, vb
+                            )
+                            if loops is not None:
+                                _geom_hit = 'high'
 
-                if _geom_hit is None and areal_cache is not None and _geom_ck_low:
-                    _cached_low = areal_cache.get(_geom_ck_low)
-                    if _cached_low is not None:
-                        loops, confidence, strategy = _reconstruct_areal_low_conf_loops(
-                            _cached_low, vb
-                        )
-                        _geom_hit = 'low'
+                        if _geom_hit is None:
+                            # Legacy LOW payloads stored directly under this view-independent key
+                            # are also accepted so existing cache entries remain reusable.
+                            _low_payload = _cached_areal.get('low')
+                            if _low_payload is None and 'world_min' in _cached_areal:
+                                _low_payload = _cached_areal
+                            if _low_payload is not None:
+                                loops, confidence, strategy = _reconstruct_areal_low_conf_loops(
+                                    _low_payload, vb
+                                )
+                                if loops is not None:
+                                    _geom_hit = 'low'
 
                 if _geom_hit is None:
-                    # Both tiers missed — run full extraction.
+                    # Cache miss — run full extraction.  Do not issue a second HIGH/LOW
+                    # get here; the model pass performs one cache query per AREAL element.
                     # Provide xyz_sink only when HIGH-conf caching is active.
-                    _xyz_sink = [] if (areal_cache is not None and _geom_ck_high) else None
+                    _xyz_sink = [] if (areal_cache is not None and _geom_ck_areal and _geom_view_dir) else None
                     loops, confidence, strategy = extract_areal_geometry(
                         elem=elem,
                         view=view,
@@ -2658,8 +2679,10 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                         xyz_sink=_xyz_sink,
                     )
 
-                    # Cache HIGH-conf result — planar_face_loops only; silhouette_edges deferred
-                    if (areal_cache is not None and _geom_ck_high
+                    # Cache HIGH-conf result — planar_face_loops only; silhouette_edges deferred.
+                    # Store beneath the view-independent AREAL key but bucket by dominant
+                    # view direction so LOW payloads remain cross-direction reusable.
+                    if (areal_cache is not None and _geom_ck_areal and _geom_view_dir
                             and confidence == CONF_HIGH
                             and strategy == 'planar_face_loops'
                             and _xyz_sink):
@@ -2678,31 +2701,55 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                                     )
                                 except Exception:
                                     pass
-                            areal_cache.set(_geom_ck_high, {
+                            _cache_record = dict(_cached_areal) if isinstance(_cached_areal, dict) else {}
+                            _high_by_dir = dict(_cache_record.get('high_by_dir') or {})
+                            _high_by_dir[_geom_view_dir] = {
                                 'confidence': 'HIGH',
                                 'strategy': strategy,
                                 'loops': _xyz_sink,
                                 'bbox_fingerprint': _bfp,
-                            })
+                            }
+                            _cache_record['high_by_dir'] = _high_by_dir
+                            if _bfp is not None:
+                                # Persistent GeometryCache.load validates stale entries via
+                                # top-level bbox_fingerprint; keep one at record level even
+                                # though HIGH payloads are bucketed under high_by_dir.
+                                _cache_record['bbox_fingerprint'] = _bfp
+                            _cache_record['schema'] = 'areal_geom_record_v1'
+                            areal_cache.set(_geom_ck_areal, _cache_record)
                         except Exception:
                             pass
 
-                    # Cache LOW-conf result — bbox-derived, view-independent.
+                    # Cache LOW-conf result under the single probed, view-independent
+                    # AREAL key.  The world bbox payload can be projected into any view.
                     # Guard: bbox_source must be "model" (not "view") so the cached
                     # extents are view-independent and safe to reuse across views.
-                    elif (areal_cache is not None and _geom_ck_low
+                    elif (areal_cache is not None and _geom_ck_areal
                             and confidence == CONF_LOW
                             and strategy not in ('failed', None)
                             and elem_wrapper.get("bbox_source") == "model"):
                         _bbox = elem_wrapper.get("bbox")
                         if _bbox is not None:
                             try:
-                                areal_cache.set(_geom_ck_low, {
+                                _bfp = (
+                                    round(float(_bbox.Min.X), 4),
+                                    round(float(_bbox.Min.Y), 4),
+                                    round(float(_bbox.Min.Z), 4),
+                                    round(float(_bbox.Max.X), 4),
+                                    round(float(_bbox.Max.Y), 4),
+                                    round(float(_bbox.Max.Z), 4),
+                                )
+                                _cache_record = dict(_cached_areal) if isinstance(_cached_areal, dict) else {}
+                                _cache_record['low'] = {
                                     'confidence': 'LOW',
                                     'strategy': strategy,
                                     'world_min': (float(_bbox.Min.X), float(_bbox.Min.Y), float(_bbox.Min.Z)),
                                     'world_max': (float(_bbox.Max.X), float(_bbox.Max.Y), float(_bbox.Max.Z)),
-                                })
+                                    'bbox_fingerprint': _bfp,
+                                }
+                                _cache_record['bbox_fingerprint'] = _bfp
+                                _cache_record['schema'] = 'areal_geom_record_v1'
+                                areal_cache.set(_geom_ck_areal, _cache_record)
                             except Exception:
                                 pass
 
@@ -3237,6 +3284,10 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
             # This handles confidence-based occlusion (HIGH occludes, MEDIUM/LOW don't)
             if elem_class == "AREAL":
                 try:
+                    # AREAL HIGH scene-occluder rects must be derived from the cells
+                    # committed by this same rasterization call.  Do not re-extract
+                    # geometry here; LOW/MEDIUM pass None to avoid per-cell set.add()
+                    # overhead on non-occluding elements.
                     _elem_cells = set() if confidence == CONF_HIGH else None
                     success, filled = rasterize_areal_loops(
                         loops=loops,
@@ -3251,7 +3302,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                         _out_cells=_elem_cells
                     )
 
-                    if elem_class == "AREAL" and confidence == CONF_HIGH and filled > 0 and _elem_cells:
+                    if confidence == CONF_HIGH and filled > 0 and _elem_cells:
                         # _out_cells is populated by the raster mask path; keep only cells
                         # this element actually owns in w_occ so scene rects describe the
                         # committed occluder footprint, not merely candidate mask cells.

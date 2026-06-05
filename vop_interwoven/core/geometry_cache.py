@@ -32,6 +32,39 @@ def _decode_key(key_str):
     return tuple([first] + parts[1:])
 
 
+def _entry_bbox_fingerprints(entry):
+    """Return all bbox fingerprints stored on a cache entry or AREAL record.
+
+    Legacy HIGH entries store ``bbox_fingerprint`` at the top level.  New
+    AREAL records also keep that top-level fingerprint for loader compatibility,
+    but this helper inspects nested payloads so record-shaped entries already on
+    disk are still validated.
+    """
+    fps = []
+    if not isinstance(entry, dict):
+        return fps
+
+    top = entry.get("bbox_fingerprint")
+    if top is not None:
+        fps.append(top)
+
+    high_by_dir = entry.get("high_by_dir")
+    if isinstance(high_by_dir, dict):
+        for payload in high_by_dir.values():
+            if isinstance(payload, dict):
+                fp = payload.get("bbox_fingerprint")
+                if fp is not None:
+                    fps.append(fp)
+
+    low = entry.get("low")
+    if isinstance(low, dict):
+        fp = low.get("bbox_fingerprint")
+        if fp is not None:
+            fps.append(fp)
+
+    return fps
+
+
 class GeometryCache:
     """Persistent geometry cache for AREAL HIGH/LOW-confidence face loops.
 
@@ -137,16 +170,19 @@ class GeometryCache:
                 if key is None:
                     continue
 
-                # Fingerprint validation — discard stale entries silently
-                stored_bfp = entry.get("bbox_fingerprint")
-                if stored_bfp is not None and elem_cache is not None:
+                # Fingerprint validation — discard stale entries silently.
+                # Record-shaped AREAL entries may store HIGH payload fingerprints
+                # inside high_by_dir, so inspect all known fingerprint locations.
+                stored_bfps = _entry_bbox_fingerprints(entry)
+                if stored_bfps and elem_cache is not None:
                     try:
                         elem_id, source_id = key[0], key[1]
                         current = elem_cache.get(elem_id, source_id)
                         if current is not None:
                             current_bfp = getattr(current, "bbox_fingerprint", None)
                             if current_bfp is not None:
-                                if tuple(stored_bfp) != tuple(current_bfp):
+                                current_tuple = tuple(current_bfp)
+                                if any(tuple(stored_bfp) != current_tuple for stored_bfp in stored_bfps):
                                     self._discarded_stale += 1
                                     continue
                     except Exception:
