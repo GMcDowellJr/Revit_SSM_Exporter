@@ -2710,6 +2710,11 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                                 'bbox_fingerprint': _bfp,
                             }
                             _cache_record['high_by_dir'] = _high_by_dir
+                            if _bfp is not None:
+                                # Persistent GeometryCache.load validates stale entries via
+                                # top-level bbox_fingerprint; keep one at record level even
+                                # though HIGH payloads are bucketed under high_by_dir.
+                                _cache_record['bbox_fingerprint'] = _bfp
                             _cache_record['schema'] = 'areal_geom_record_v1'
                             areal_cache.set(_geom_ck_areal, _cache_record)
                         except Exception:
@@ -2726,13 +2731,23 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                         _bbox = elem_wrapper.get("bbox")
                         if _bbox is not None:
                             try:
+                                _bfp = (
+                                    round(float(_bbox.Min.X), 4),
+                                    round(float(_bbox.Min.Y), 4),
+                                    round(float(_bbox.Min.Z), 4),
+                                    round(float(_bbox.Max.X), 4),
+                                    round(float(_bbox.Max.Y), 4),
+                                    round(float(_bbox.Max.Z), 4),
+                                )
                                 _cache_record = dict(_cached_areal) if isinstance(_cached_areal, dict) else {}
                                 _cache_record['low'] = {
                                     'confidence': 'LOW',
                                     'strategy': strategy,
                                     'world_min': (float(_bbox.Min.X), float(_bbox.Min.Y), float(_bbox.Min.Z)),
                                     'world_max': (float(_bbox.Max.X), float(_bbox.Max.Y), float(_bbox.Max.Z)),
+                                    'bbox_fingerprint': _bfp,
                                 }
+                                _cache_record['bbox_fingerprint'] = _bfp
                                 _cache_record['schema'] = 'areal_geom_record_v1'
                                 areal_cache.set(_geom_ck_areal, _cache_record)
                             except Exception:

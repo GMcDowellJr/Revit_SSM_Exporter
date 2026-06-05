@@ -165,6 +165,7 @@ def test_areal_path_stores_low_payload_under_view_independent_record_key():
     ]
     assert "low" in assigned_string_keys
     assert "high_by_dir" in assigned_string_keys
+    assert "bbox_fingerprint" in assigned_string_keys
 
 
 def test_rasterize_silhouette_loops_does_not_extract_geometry():
