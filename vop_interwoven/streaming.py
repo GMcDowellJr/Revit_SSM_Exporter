@@ -707,13 +707,6 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
     except Exception:
         geometry_cache = None
 
-    areal_cache = None
-    try:
-        from vop_interwoven.core.cache import LRUCache
-        areal_cache = LRUCache(max_items=getattr(cfg, "areal_geometry_cache_max_items", 2048))
-    except Exception:
-        areal_cache = None
-
     elem_cache = None
     if getattr(cfg, "use_element_cache", True):
         try:
@@ -723,6 +716,22 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
         except Exception:
             elem_cache = None
 
+    def _geometry_cache_path(out_dir):
+        return os.path.join(out_dir, "vop_geometry_cache.json")
+
+    areal_cache = None
+    try:
+        from vop_interwoven.core.geometry_cache import GeometryCache
+        _geom_out_dir = getattr(cfg, "output_dir", None)
+        areal_cache = GeometryCache()
+        if _geom_out_dir:
+            areal_cache.load(
+                cache_path=_geometry_cache_path(_geom_out_dir),
+                elem_cache=elem_cache,
+            )
+    except Exception:
+        areal_cache = None
+
     # Process views one at a time with callback
     summaries = []
     mem_tracker = MemoryTracker()
@@ -730,7 +739,7 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
         mem_tracker.mark("run_start")
     except Exception as e:
         print("[Streaming] memory mark run_start failed: {}".format(e))
-    
+
     for view_id in view_ids:
         try:
             try:
@@ -897,6 +906,14 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                 "error": str(e)
             })
     
+    # Persist geometry cache to disk (only writes if new entries were added)
+    try:
+        _geom_out_dir = getattr(cfg, "output_dir", None)
+        if areal_cache is not None and _geom_out_dir:
+            areal_cache.save(_geometry_cache_path(_geom_out_dir))
+    except Exception as e:
+        print("[Streaming] geometry cache save failed: {}".format(e))
+
     try:
         mem_tracker.mark("run_end")
         mem_tracker.mark_and_gc("after_run_gc")
