@@ -103,10 +103,10 @@ def test_areal_path_probes_cache_once_before_extraction():
 
     assert len(cache_gets_before_extraction) == 1
     assert isinstance(cache_gets_before_extraction[0].args[0], ast.Name)
-    assert cache_gets_before_extraction[0].args[0].id == "_geom_ck_high"
+    assert cache_gets_before_extraction[0].args[0].id == "_geom_ck_areal"
 
 
-def test_areal_path_does_not_probe_low_cache_before_extraction():
+def test_areal_path_does_not_probe_directional_high_or_low_keys_before_extraction():
     tree = ast.parse(PIPELINE.read_text(encoding="utf-8"))
     render_fn = _find_function(tree, "render_model_front_to_back")
     element_loop = _find_element_loop(render_fn)
@@ -118,7 +118,7 @@ def test_areal_path_does_not_probe_low_cache_before_extraction():
     ][0]
     extraction_call = _calls_named(areal_extract_if, {"extract_areal_geometry"})[0]
 
-    low_cache_gets_before_extraction = [
+    directional_or_low_key_gets_before_extraction = [
         call for call in ast.walk(areal_extract_if)
         if isinstance(call, ast.Call)
         and isinstance(call.func, ast.Attribute)
@@ -127,11 +127,44 @@ def test_areal_path_does_not_probe_low_cache_before_extraction():
         and call.func.value.id == "areal_cache"
         and call.args
         and isinstance(call.args[0], ast.Name)
-        and call.args[0].id == "_geom_ck_low"
+        and call.args[0].id in {"_geom_ck_high", "_geom_ck_low"}
         and call.lineno < extraction_call.lineno
     ]
 
-    assert low_cache_gets_before_extraction == []
+    assert directional_or_low_key_gets_before_extraction == []
+
+
+def test_areal_path_stores_low_payload_under_view_independent_record_key():
+    tree = ast.parse(PIPELINE.read_text(encoding="utf-8"))
+    render_fn = _find_function(tree, "render_model_front_to_back")
+    element_loop = _find_element_loop(render_fn)
+
+    areal_extract_if = [
+        node for node in ast.walk(element_loop)
+        if _is_elem_class_areal_if(node)
+        and _calls_named(ast.Module(body=node.body, type_ignores=[]), {"extract_areal_geometry"})
+    ][0]
+    cache_sets = [
+        call for call in ast.walk(areal_extract_if)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "set"
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "areal_cache"
+    ]
+
+    assert len(cache_sets) == 2
+    assert all(isinstance(call.args[0], ast.Name) and call.args[0].id == "_geom_ck_areal" for call in cache_sets)
+    assigned_string_keys = [
+        node.slice.value for node in ast.walk(areal_extract_if)
+        if isinstance(node, ast.Subscript)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "_cache_record"
+        and isinstance(node.slice, ast.Constant)
+        and isinstance(node.slice.value, str)
+    ]
+    assert "low" in assigned_string_keys
+    assert "high_by_dir" in assigned_string_keys
 
 
 def test_rasterize_silhouette_loops_does_not_extract_geometry():
