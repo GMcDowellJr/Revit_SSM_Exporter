@@ -2317,6 +2317,11 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 view=view,
             )
             wrapper["uv_bbox_rect"] = rect
+
+            # Mark wrappers with valid bbox that falls entirely outside raster bounds.
+            # Wrappers without a bbox have unknown geometry and must reach render.
+            if rect is None and bbox is not None:
+                wrapper["_bbox_outside_raster"] = True
         except Exception as e:
             if diag is not None:
                 diag.error(
@@ -2329,6 +2334,12 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
             wrapper["uv_bbox_rect"] = None
     _sub_t["raster_enrich_ms"] = _perf_ms(_t0_enrich, _perf_now())
     _sub_t["bbox_ms"] = _sub_t["raster_enrich_ms"]
+
+    # After enrich loop — remove wrappers with valid bbox that projects outside raster.
+    expanded_elements = [
+        w for w in expanded_elements
+        if not w.get("_bbox_outside_raster", False)
+    ]
 
     # Process each element (host + linked)
     processed = 0
