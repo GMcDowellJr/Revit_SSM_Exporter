@@ -17,6 +17,7 @@ They encode the contract so regressions are caught immediately.
 import pytest
 
 from vop_interwoven.core.raster import ViewRaster
+from vop_interwoven.pipeline import rasterize_areal_loops
 from vop_interwoven.core.math_utils import Bounds2D
 
 
@@ -375,3 +376,51 @@ def test_areal_high_then_tiny_behind_floor_integration():
     assert r.model_proxy_key[idx] == -1, "behind-floor TINY must not write proxy_key"
     assert not r.model_proxy_mask[idx], "behind-floor TINY must not set proxy_mask"
     assert not r.has_model_proxy(idx), "behind-floor TINY must not register proxy presence"
+
+
+def test_rasterize_areal_loops_high_threads_out_cells_for_rect_gate():
+    """AREAL+HIGH pipeline helper must expose the committed footprint cells."""
+    r = _make_raster()
+    out_cells = set()
+
+    success, filled = rasterize_areal_loops(
+        loops=_SQUARE_LOOP,
+        raster=r,
+        key_index=0,
+        elem_depth=1.0,
+        source_type="HOST",
+        confidence="HIGH",
+        strategy="planar_face_loops",
+        elem_id=1,
+        category="Test",
+        _out_cells=out_cells,
+    )
+
+    assert success is True
+    assert filled > 0
+    assert out_cells
+    assert out_cells == {idx for idx, value in enumerate(r.w_occ) if value == 1.0}
+
+
+def test_rasterize_areal_loops_low_does_not_populate_rect_gate_cells():
+    """Only AREAL+HIGH footprints may seed scene occluder rects."""
+    r = _make_raster()
+    out_cells = set()
+
+    success, filled = rasterize_areal_loops(
+        loops=_SQUARE_LOOP,
+        raster=r,
+        key_index=0,
+        elem_depth=1.0,
+        source_type="HOST",
+        confidence="LOW",
+        strategy="aabb_fallback",
+        elem_id=1,
+        category="Test",
+        _out_cells=out_cells,
+    )
+
+    assert success is True
+    assert filled > 0
+    assert out_cells == set()
+    assert all(value == float("inf") for value in r.w_occ)
