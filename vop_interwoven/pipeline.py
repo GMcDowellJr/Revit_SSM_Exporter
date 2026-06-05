@@ -2480,6 +2480,17 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                         _rect_occluded = True
                         break
             if _rect_occluded:
+                if source_type == "HOST":
+                    try:
+                        raster.mark_host_presence_rect(uv_rect)
+                    except Exception as e:
+                        if diag is not None:
+                            diag.error(
+                                phase="pipeline",
+                                callsite="render_model_front_to_back.rect_early_out",
+                                message="Exception preserving HOST occupancy for rect early-out: {}".format(e),
+                                exc=e,
+                            )
                 skipped += 1
                 continue
 
