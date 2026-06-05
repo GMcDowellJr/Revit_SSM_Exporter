@@ -358,17 +358,10 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None, 
         }
         bbox, bbox_source = resolve_element_bbox(
             e,
-            view=None,
+            view=view,
             diag=diag,
             context=bbox_context,
         )
-        if bbox is None:
-            bbox, bbox_source = resolve_element_bbox(
-                e,
-                view=view,
-                diag=diag,
-                context=bbox_context,
-            )
 
         if bbox_source == "view":
             bbox_view += 1
