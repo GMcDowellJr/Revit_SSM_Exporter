@@ -605,7 +605,7 @@
     "semantic_hash": "51ac3cbb6029e3e54067a29a950077d9"
   },
   "CLAUDE.md": {
-    "mtime": 1780714251.579979,
+    "mtime": 1780722885.9682364,
     "ast_hash": "07c03d08fc486ceaccecf711b06fe310",
     "semantic_hash": "07c03d08fc486ceaccecf711b06fe310"
   },
@@ -688,5 +688,190 @@
     "mtime": 1780714231.5931034,
     "ast_hash": "52149757238a30fd72a074af1d25fda9",
     "semantic_hash": "52149757238a30fd72a074af1d25fda9"
+  },
+  "archive/refactor1/core/__init__.py": {
+    "mtime": 1780714231.548058,
+    "ast_hash": "7fcac473bafe608a79c9f58ff66979b5",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/core/config.py": {
+    "mtime": 1780714231.549336,
+    "ast_hash": "8c1b87605dbba47c6ed83e24651de232",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/core/debug.py": {
+    "mtime": 1780714231.549336,
+    "ast_hash": "97c411ae1b05b12645e4fcaf7f41eadb",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/core/types.py": {
+    "mtime": 1780714231.549336,
+    "ast_hash": "03dbf696fd451f3f69ea67d53fd771d1",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/docs/config_used.json": {
+    "mtime": 1780714231.5502174,
+    "ast_hash": "0040b502e8d1120d5dec8c9bfed5a21f",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/dynamo_thinloader.py": {
+    "mtime": 1780714231.5502174,
+    "ast_hash": "53cc89cf02ae4089784aa18213d48458",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/geometry/__init__.py": {
+    "mtime": 1780714231.5502174,
+    "ast_hash": "35e995243c42282949a87aa7fbe3d4d2",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/geometry/grid.py": {
+    "mtime": 1780714231.5518425,
+    "ast_hash": "f027313ec20cfc812e430fdee6255eb0",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/geometry/silhouette.py": {
+    "mtime": 1780714231.5518425,
+    "ast_hash": "ed1fd264cac3107b5a4ed1db11190e93",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/geometry/transforms.py": {
+    "mtime": 1780714231.5518425,
+    "ast_hash": "813c2897501da5bd6d43cb5649f46a5a",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/processing/__init__.py": {
+    "mtime": 1780714231.5518425,
+    "ast_hash": "be3475259759f920d4b6ef130e3cdb2a",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/processing/projection.py": {
+    "mtime": 1780714231.5531616,
+    "ast_hash": "aa92a298473f10bbddd4895ca6c9df6c",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/revit/__init__.py": {
+    "mtime": 1780714231.5531616,
+    "ast_hash": "62adcfc3f3717761b8c6825cb3ca7830",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/revit/collection.py": {
+    "mtime": 1780714231.55422,
+    "ast_hash": "8dbcc81f86f5ee09b734cb6f95359091",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/ssm_exporter_main.py": {
+    "mtime": 1780714231.55422,
+    "ast_hash": "f9f201aae638566ab02816761212229e",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/verify_phase1_static.py": {
+    "mtime": 1780714231.55422,
+    "ast_hash": "8735e8461f9341e1a719f00bdb624d5a",
+    "semantic_hash": ""
+  },
+  "legacy/SSM_Exporter_v4_A21_baseline_f00af7d.py": {
+    "mtime": 1780714231.55422,
+    "ast_hash": "c6a8c44776b35f4c2f40fe7b537c255c",
+    "semantic_hash": ""
+  },
+  "legacy/SSM_Exporter_v4_A21_baseline_hotfix_build_output.py": {
+    "mtime": 1780714231.558688,
+    "ast_hash": "40945df7855987bcf2198d9f5e30ed87",
+    "semantic_hash": ""
+  },
+  "tests/fixtures/metrics_manifest_golden/anno_only_expected.json": {
+    "mtime": 1780714231.5656147,
+    "ast_hash": "406f0ac8e6e48eb88648ea73ba52631a",
+    "semantic_hash": ""
+  },
+  "tests/fixtures/metrics_manifest_golden/ext_overlap_expected.json": {
+    "mtime": 1780714231.5659957,
+    "ast_hash": "ec3ebb1321e094e7d487dbdfb9968bc4",
+    "semantic_hash": ""
+  },
+  "tests/fixtures/metrics_manifest_golden/model_anno_expected.json": {
+    "mtime": 1780714231.5659957,
+    "ast_hash": "ab03cea8a8cbd880759ebaf6733ae484",
+    "semantic_hash": ""
+  },
+  "vop_interwoven/metrics/manifest/metrics_manifest.v1.json": {
+    "mtime": 1780714231.587633,
+    "ast_hash": "0021571e6e14a59e444536b748ca1656",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/README.md": {
+    "mtime": 1780714231.5476136,
+    "ast_hash": "918c1d4de2e2ac165a76d0993412bb34",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/REFACTORING_PLAN.md": {
+    "mtime": 1780714231.548058,
+    "ast_hash": "c76db1961df44078789ebf6861debf7d",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/REFACTOR_NOTES.md": {
+    "mtime": 1780714231.548058,
+    "ast_hash": "bef7a3f38b6da221cd2df0e8455292a7",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/STRUCTURE.md": {
+    "mtime": 1780714231.548058,
+    "ast_hash": "f644af673d2099fa2d07798200236ba2",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/VERIFICATION_PHASE1.md": {
+    "mtime": 1780714231.548058,
+    "ast_hash": "2a1aa49b3a2123fd69d2228d591b9434",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/VIOLATION_CENSUS.md": {
+    "mtime": 1780714231.548058,
+    "ast_hash": "3ae839700eb6e88ef26d50af9f99cb71",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/docs/ARCHITECTURE.md": {
+    "mtime": 1780714231.549336,
+    "ast_hash": "6852250919ae18b606d5c6406ee875b1",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/docs/CONFIGURATION.md": {
+    "mtime": 1780714231.5502174,
+    "ast_hash": "ea47fdea08fd9950e97dc60db0a5c826",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/docs/GOLDEN_RUNS.md": {
+    "mtime": 1780714231.5502174,
+    "ast_hash": "217b4ea85bbda7f16c8cca64be501e59",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/docs/REFRACTOR_PLAN.md": {
+    "mtime": 1780714231.5502174,
+    "ast_hash": "041d1226406393b9a04b3f33c8b2e3aa",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/docs/USER_GUIDE.md": {
+    "mtime": 1780714231.5502174,
+    "ast_hash": "b5c36dbf5f35bc1c89fb2dd77d2cbb9a",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/docs/correctness_contract.md": {
+    "mtime": 1780714231.5502174,
+    "ast_hash": "1c2eebf08fdbbe68687f3cd6e953774f",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/docs/golden_artifacts_rules.md": {
+    "mtime": 1780714231.5502174,
+    "ast_hash": "6f6bd5f4eec6961941faf3c186a327d8",
+    "semantic_hash": ""
+  },
+  "archive/refactor1/docs/view_sets.md": {
+    "mtime": 1780714231.5502174,
+    "ast_hash": "c2550cc66684b2ddb088dae955c41af2",
+    "semantic_hash": ""
+  },
+  "tests/archive/ssm_vop_v1/README.md": {
+    "mtime": 1780714231.5615716,
+    "ast_hash": "da5ef57347e8c915570bdeb41accf2bf",
+    "semantic_hash": ""
   }
 }
