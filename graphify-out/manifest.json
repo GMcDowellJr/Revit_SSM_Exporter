@@ -873,5 +873,10 @@
     "mtime": 1780714231.5615716,
     "ast_hash": "da5ef57347e8c915570bdeb41accf2bf",
     "semantic_hash": ""
+  },
+  ".github/workflows/graphify.yml": {
+    "mtime": 1780722894.5522366,
+    "ast_hash": "06ca325248de0f6a343f44c52e5d4fff",
+    "semantic_hash": ""
   }
 }
