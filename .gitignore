@@ -25,3 +25,8 @@ htmlcov/
 .DS_Store
 Thumbs.db
 .claude/
+
+# graphify runtime artifacts (machine-specific, regenerated each run)
+graphify-out/.graphify_*
+graphify-out/cache/
+graphify-out/2*/
