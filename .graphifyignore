@@ -1,0 +1,28 @@
+# Legacy and archived code
+legacy/
+archive/
+
+# Golden test fixtures
+tests/golden/
+tests/ssm_vop_v1/
+
+# Large generated exports
+**/*.json
+**/*.csv
+
+# Binary files
+**/*.png
+**/*.pgm
+**/*.rvt
+**/*.dwg
+**/*.rfa
+**/*.rte
+**/*.dll
+**/*.exe
+**/*.pyc
+**/*.pyd
+**/*.so
+**/*.pdb
+
+# graphify output directory
+graphify-out/
