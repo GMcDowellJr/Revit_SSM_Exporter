@@ -1,0 +1,47 @@
+name: Rebuild Knowledge Graph
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  graphify:
+    runs-on: ubuntu-latest
+
+    env:
+      OLLAMA_BASE_URL: https://openrouter.ai/api/v1
+      OLLAMA_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      OLLAMA_MODEL: openai/gpt-4o-mini
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install graphify
+        run: |
+          pip install "git+https://github.com/safishamsi/graphify.git@v8" openai
+
+      - name: Rebuild knowledge graph
+        run: |
+          graphify . --no-viz --backend ollama
+
+      - name: Generate HTML visualization
+        run: |
+          graphify export html
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./graphify-out
+          destination_dir: graphify-out
+          keep_files: true
