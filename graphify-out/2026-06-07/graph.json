@@ -20659,9 +20659,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
+      "id": "skills_graphify_references_extraction_spec",
       "community": 19,
-      "norm_label": "extraction subagent prompt (compact)",
-      "id": "skills_graphify_references_extraction_spec"
+      "norm_label": "extraction subagent prompt (compact)"
     },
     {
       "label": "commit hook and native CLAUDE.md integration",
@@ -20672,9 +20672,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
+      "id": "skills_graphify_references_hooks",
       "community": 19,
-      "norm_label": "commit hook and native claude.md integration",
-      "id": "skills_graphify_references_hooks"
+      "norm_label": "commit hook and native claude.md integration"
     }
   ],
   "links": [
