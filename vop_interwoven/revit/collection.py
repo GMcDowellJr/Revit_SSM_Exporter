@@ -348,6 +348,7 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None, 
 
     # Add host elements with identity transform
     identity_trf = Transform.Identity
+    _bbox_call_count = 0  # Step 4 diagnostic: counts resolve_element_bbox calls in host loop
     for e in elements:
         elem_id = getattr(getattr(e, "Id", None), "IntegerValue", None)
 
@@ -356,12 +357,16 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None, 
             "elem_id": elem_id,
             "source_type": "HOST",
         }
+        # EX1: use model bbox (view=None) — get_BoundingBox(view) is ~10-15x slower on
+        # elevation views because Revit clips the bbox to the view's coordinate system.
+        # Model bbox is sufficient for spatial filtering and downstream rasterization.
         bbox, bbox_source = resolve_element_bbox(
             e,
-            view=view,
+            view=None,
             diag=diag,
             context=bbox_context,
         )
+        _bbox_call_count += 1
 
         if bbox_source == "view":
             bbox_view += 1
@@ -406,14 +411,25 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None, 
             }
         )
 
+    if diag is not None and _bbox_call_count != len(elements):
+        diag.warn(
+            phase="collection",
+            callsite="expand_host_link_import_model_elements.bbox_call_count",
+            message="resolve_element_bbox call count mismatch in host loop",
+            extra={"expected": len(elements), "actual": _bbox_call_count},
+        )
+
     # Collect and add linked/imported elements
     try:
         linked_proxies = collect_all_linked_elements(doc, view, cfg, diag=diag)
 
         for proxy in linked_proxies:
+            # LinkedElementProxy.get_BoundingBox() returns host-space bbox and ignores
+            # the view argument per the resolve_element_bbox docstring. Pass view=None
+            # to avoid the unnecessary view-dependent API call.
             bbox, bbox_source = resolve_element_bbox(
                 proxy,
-                view=view,
+                view=None,
                 diag=diag,
                 context={
                     "view_id": getattr(getattr(view, "Id", None), "IntegerValue", None),
