@@ -38,7 +38,15 @@ jobs:
 
       - name: Rebuild knowledge graph
         run: |
-          graphify . --no-viz --backend ollama --update
+          graphify . --no-viz --backend ollama --update 2>&1 | tee /tmp/graphify_run.log
+          log_line=$(grep 'tokens:.*in.*out' /tmp/graphify_run.log || true)
+          if [ -n "$log_line" ]; then
+            tokens_in=$(echo "$log_line" | sed 's/.*tokens: \([0-9,]*\) in.*/\1/' | tr -d ',')
+            tokens_out=$(echo "$log_line" | sed 's/.* \([0-9,]*\) out.*/\1/' | tr -d ',')
+            mkdir -p graphify-out
+            printf '{\n  "tokens_in": %s,\n  "tokens_out": %s,\n  "est_cost_usd": 0.0,\n  "backend": "%s"\n}\n' \
+              "$tokens_in" "$tokens_out" "$OLLAMA_MODEL" > graphify-out/cost.json
+          fi
 
       - name: Cluster and generate report
         run: |
@@ -56,6 +64,7 @@ jobs:
           git add -f graphify-out/cost.json 2>/dev/null || true
           git add -f graphify-out/manifest.json 2>/dev/null || true
           git add -f graphify-out/GRAPH_REPORT.md 2>/dev/null || true
+          git add -f graphify-out/cache/stat-index.json 2>/dev/null || true
           git diff --cached --quiet || git commit -m "chore: update knowledge graph [skip ci]"
           git push origin main
 
