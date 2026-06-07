@@ -1,16 +1,16 @@
 # Graph Report - Revit_SSM_Exporter  (2026-06-06)
 
 ## Corpus Check
-- 174 files · ~268,567 words
+- 157 files · ~180,081 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 3359 nodes · 5674 edges · 183 communities (173 shown, 10 thin omitted)
+- 3480 nodes · 5775 edges · 207 communities (189 shown, 18 thin omitted)
 - Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 95 edges (avg confidence: 0.56)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `308a25e6`
+- Built from commit: `523755dd`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -186,6 +186,30 @@
 - [[_COMMUNITY_Community 173|Community 173]]
 - [[_COMMUNITY_Community 174|Community 174]]
 - [[_COMMUNITY_Community 175|Community 175]]
+- [[_COMMUNITY_Community 183|Community 183]]
+- [[_COMMUNITY_Community 184|Community 184]]
+- [[_COMMUNITY_Community 185|Community 185]]
+- [[_COMMUNITY_Community 186|Community 186]]
+- [[_COMMUNITY_Community 187|Community 187]]
+- [[_COMMUNITY_Community 188|Community 188]]
+- [[_COMMUNITY_Community 189|Community 189]]
+- [[_COMMUNITY_Community 190|Community 190]]
+- [[_COMMUNITY_Community 191|Community 191]]
+- [[_COMMUNITY_Community 192|Community 192]]
+- [[_COMMUNITY_Community 193|Community 193]]
+- [[_COMMUNITY_Community 194|Community 194]]
+- [[_COMMUNITY_Community 195|Community 195]]
+- [[_COMMUNITY_Community 196|Community 196]]
+- [[_COMMUNITY_Community 197|Community 197]]
+- [[_COMMUNITY_Community 198|Community 198]]
+- [[_COMMUNITY_Community 199|Community 199]]
+- [[_COMMUNITY_Community 200|Community 200]]
+- [[_COMMUNITY_Community 201|Community 201]]
+- [[_COMMUNITY_Community 202|Community 202]]
+- [[_COMMUNITY_Community 203|Community 203]]
+- [[_COMMUNITY_Community 204|Community 204]]
+- [[_COMMUNITY_Community 205|Community 205]]
+- [[_COMMUNITY_Community 206|Community 206]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `Config` - 84 edges
@@ -202,14 +226,14 @@
 ## Surprising Connections (you probably didn't know these)
 - `Two-Tier Primitive Cache Contract (Proposed, Not Implemented)` --semantically_similar_to--> `RootStyleCache (View-level Metrics Cache)`  [INFERRED] [semantically similar]
   Pipeline_Approach_Comparison.md → CURRENT_ARCHITECTURE.md
-- `Settings` --uses--> `PolicyStats`  [INFERRED]
-  tests/test_collection_policy.py → vop_interwoven/revit/collection_policy.py
+- `_StubView` --uses--> `Diagnostics`  [INFERRED]
+  tests/test_bounds_budget.py → vop_interwoven/core/diagnostics.py
 - `_StubView` --uses--> `Bounds2D`  [INFERRED]
   tests/test_bounds_budget.py → vop_interwoven/core/math_utils.py
+- `_StubView` --uses--> `Diagnostics`  [INFERRED]
+  tests/test_bounds_resolution.py → vop_interwoven/core/diagnostics.py
 - `_StubView` --uses--> `Bounds2D`  [INFERRED]
   tests/test_bounds_resolution.py → vop_interwoven/core/math_utils.py
-- `MockXYZ` --uses--> `StrategyDiagnostics`  [INFERRED]
-  tests/test_collection_diagnostics.py → vop_interwoven/diagnostics/strategy_tracker.py
 
 ## Import Cycles
 - None detected.
@@ -219,11 +243,11 @@
 - **Pipeline Correctness Contract: No Silent Failure + Single Source of Truth + Diagnostics Always-On** — concept_no_silent_failure, concept_single_source_of_truth, concept_diagnostics_always_on, refactor_rules_doc, diagnostics_contract_doc [EXTRACTED 0.95]
 - **Regression Safety: Golden Baseline + CSV Invariant + Diagnostics** — concept_golden_baseline_testing, concept_8state_occupancy_partition, concept_diagnostics_always_on [INFERRED 0.75]
 
-## Communities (183 total, 10 thin omitted)
+## Communities (207 total, 18 thin omitted)
 
 ### Community 0 - "Community 0"
-Cohesion: 0.06
-Nodes (50): Test Linked Documents Collection - Debug Script  Paste this into a Dynamo Python, Minimal Single View Test - Step-by-step diagnostic  This will show exactly where, Phase 1 Test: View Basis & Coordinate System  Copy this code into a Dynamo Pytho, Phase 7: CSV Export Test  Test CSV export functionality with invariant validatio, Phase 8a: Annotation Collection & Rasterization Test  Test annotation collection, View Type Check - See why view is being skipped  This will show the exact view t, Zero Occupancy Debug Script  Comprehensive diagnostic for linked RVT/DWG zero oc, filter_supported_views() (+42 more)
+Cohesion: 0.07
+Nodes (42): Test Linked Documents Collection - Debug Script  Paste this into a Dynamo Python, Minimal Single View Test - Step-by-step diagnostic  This will show exactly where, Phase 1 Test: View Basis & Coordinate System  Copy this code into a Dynamo Pytho, Phase 2 Test: Element Collection & Bounding Boxes  Copy this code into a Dynamo, Phase 7: CSV Export Test  Test CSV export functionality with invariant validatio, Phase 8a: Annotation Collection & Rasterization Test  Test annotation collection, View Type Check - See why view is being skipped  This will show the exact view t, filter_supported_views() (+34 more)
 
 ### Community 1 - "Community 1"
 Cohesion: 0.06
@@ -231,19 +255,19 @@ Nodes (52): _decode_key(), _encode_key(), _entry_bbox_fingerprints(), GeometryCa
 
 ### Community 2 - "Community 2"
 Cohesion: 0.05
-Nodes (61): tier_a_is_ambiguous(), convex_hull_uv(), Compute convex hull of 2D points using monotonic chain.     Input: list of (u, v, Resolve view-space W volume [W0, Wmax] for the host view.      Unification rule:, resolve_view_w_volume(), Performance/memory diagnostics key constants., _bin_elements_to_tiles(), _cfg_hash() (+53 more)
+Nodes (43): tier_a_is_ambiguous(), Produce bounds from annotation extents ONLY (no union with model/crop).     This, resolve_annotation_only_bounds(), Performance/memory diagnostics key constants., _cfg_hash(), _cropbox_fingerprint(), _extract_view_identity_for_csv(), _extract_view_summary() (+35 more)
 
 ### Community 3 - "Community 3"
-Cohesion: 0.22
-Nodes (3): Axis-aligned bounding box proxy in UV (view XY) space.      Used for TINY elemen, Return 4 edge segments [(u0,v0), (u1,v1)] for stamping., UV_AABB
+Cohesion: 0.08
+Nodes (23): For /graphify add and --watch, For /graphify query, For the commit hook and native CLAUDE.md integration, For --update and --cluster-only, /graphify, Honesty Rules, Interpreter guard for subcommands, Part A - Structural extraction for code files (+15 more)
 
 ### Community 4 - "Community 4"
-Cohesion: 0.06
-Nodes (77): bytes, _default_model_class_resolver(), _get_element_meta(), _get_source_type(), _normalize_anno_type(), Final-state totals scanner for manifest-locked metrics., Scan finalized raster grids and emit locked aggregate totals., _safe_seq() (+69 more)
+Cohesion: 0.07
+Nodes (69): bytes, _default_model_class_resolver(), _get_element_meta(), _get_source_type(), _normalize_anno_type(), Final-state totals scanner for manifest-locked metrics., Scan finalized raster grids and emit locked aggregate totals., _safe_seq() (+61 more)
 
 ### Community 5 - "Community 5"
-Cohesion: 0.06
-Nodes (38): Diagnostics, _exc_to_str(), Structured diagnostics recorder (Dynamo-safe minimal stdlib).      - Bounded eve, Record at most one DEBUG event per dedupe_key, with a suppressed_count., _diag_fallback_stderr(), CRITICAL FALLBACK: If diagnostic recording fails, print to stderr.      This ens, Execute fn() and handle exceptions in a controlled, observable way.      policy:, Record an error with diagnostic fallback to stderr if recording fails.      Use (+30 more)
+Cohesion: 0.13
+Nodes (13): Diagnostics, _exc_to_str(), Structured diagnostics recorder (Dynamo-safe minimal stdlib).      - Bounded eve, Record at most one DEBUG event per dedupe_key, with a suppressed_count., test_debug_dedupe_records_once_and_updates_suppressed_count(), test_error_records_event_and_counts(), test_event_cap_drops_but_counts_continue(), test_to_dict_is_json_serializable() (+5 more)
 
 ### Community 6 - "Community 6"
 Cohesion: 0.21
@@ -262,8 +286,8 @@ Cohesion: 0.09
 Nodes (40): float, build_2d_regions(), classify_tier_by_rect(), compute_per_cell_depth_for_cells(), compute_per_cell_depth_for_curve(), Coverage, depth_sort_key(), DepthBuffer (+32 more)
 
 ### Community 10 - "Community 10"
-Cohesion: 0.07
-Nodes (23): CellRect, cellrect_dims(), clamp(), point_in_rect(), Mathematical utilities for VOP interwoven pipeline.  Provides bounds and rectang, Return (i, j) of center cell., Return (width_cells, height_cells) for any supported CellRect-like object., Check if rectangle [xmin, ymin, xmax, ymax] intersects Bounds2D.      Args: (+15 more)
+Cohesion: 0.18
+Nodes (12): cellrect_dims(), clamp(), point_in_rect(), Mathematical utilities for VOP interwoven pipeline.  Provides bounds and rectang, Return (width_cells, height_cells) for any supported CellRect-like object., Check if rectangle [xmin, ymin, xmax, ymax] intersects Bounds2D.      Args:, Clamp value to [min_val, max_val]., Check if point (x, y) is inside rectangle [xmin, ymin, xmax, ymax]. (+4 more)
 
 ### Community 11 - "Community 11"
 Cohesion: 0.11
@@ -271,7 +295,7 @@ Nodes (25): MockConfig, MockElement, MockRaster, MockView, MockViewBasis, Test _
 
 ### Community 12 - "Community 12"
 Cohesion: 0.09
-Nodes (35): _build_clip_volume(), _build_crop_prism_corners(), collect_all_linked_elements(), _collect_from_dwg_imports(), _collect_from_revit_links(), _collect_link_elements_with_clipping(), _collect_visible_link_elements_2024_plus(), _get_excluded_3d_category_ids() (+27 more)
+Nodes (33): _build_clip_volume(), _build_crop_prism_corners(), _collect_from_dwg_imports(), _collect_from_revit_links(), _collect_link_elements_with_clipping(), _collect_visible_link_elements_2024_plus(), _get_excluded_3d_category_ids(), _get_host_visible_model_categories() (+25 more)
 
 ### Community 13 - "Community 13"
 Cohesion: 0.07
@@ -279,26 +303,26 @@ Nodes (23): ElementCache, ElementFingerprint, _normalize_source_type(), Element 
 
 ### Community 14 - "Community 14"
 Cohesion: 0.08
-Nodes (42): _append_csv_rows(), _ensure_dir(), test_vop_header_includes_view_unique_id(), test_core_row_contains_cellsize_resolution_values(), test_get_core_csv_header_includes_cellsize_resolution_columns(), build_core_csv_row(), _build_manifest_vop_row_from_metrics(), build_occlusion_row() (+34 more)
+Nodes (40): _append_csv_rows(), _ensure_dir(), test_core_row_contains_cellsize_resolution_values(), test_get_core_csv_header_includes_cellsize_resolution_columns(), build_core_csv_row(), _build_manifest_vop_row_from_metrics(), build_occlusion_row(), _coerce_view_id_int() (+32 more)
 
 ### Community 15 - "Community 15"
-Cohesion: 0.11
-Nodes (20): MockBBox, MockElement, MockRaster, MockViewBasis, MockXYZ, Test diagnostic integration in collection.py functions., Test _get_element_category_name extracts category correctly., Test _get_element_category_name handles missing category. (+12 more)
+Cohesion: 0.10
+Nodes (22): MockBBox, MockElement, MockRaster, MockViewBasis, MockXYZ, Test diagnostic integration in collection.py functions., Test _get_element_category_name extracts category correctly., Test _get_element_category_name handles missing category. (+14 more)
 
 ### Community 16 - "Community 16"
-Cohesion: 0.10
-Nodes (19): _Cfg, test_core_row_uses_view_unique_id_without_view_object(), test_perf_row_includes_view_unique_id_from_result_or_view_object(), test_root_cache_metadata_carries_view_unique_id(), test_root_cache_row_payload_stores_uid_from_pascal_metadata(), test_vop_cache_row_uses_view_result_uid_when_cached_payload_missing_uid(), test_vop_row_uses_view_unique_id_without_view_object(), Convert a single view result to a performance CSV row dict.      Args:         v (+11 more)
+Cohesion: 0.13
+Nodes (11): test_root_cache_row_payload_stores_uid_from_pascal_metadata(), Get cached view if signature matches.                  Args:             view_id, Get cached view by ID only (no signature check).          Use ONLY when the call, Cache a view's metrics (not raster data).          Stores an additional 'row_pay, Save cache to disk atomically., Single-file cache storing metrics only (no raster data)., Get cache statistics., Initialize cache.                  Args:             output_dir: Base output dir (+3 more)
 
 ### Community 17 - "Community 17"
 Cohesion: 0.05
 Nodes (42): `bootstrap.py`, `config.py`, `core/areal_extraction.py`, `core/cache.py`, `core/diagnostics.py`, `core/element_cache.py`, `core/face_selection.py`, `core/footprint.py` (+34 more)
 
 ### Community 18 - "Community 18"
-Cohesion: 0.06
-Nodes (20): Dump w_occ and occupancy layers for debugging.          Args:             output, Full raster payload for downstream exporters (PNG/CSV/metrics).          IMPORTA, Smaller debug payload for JSON export only.          detail:           - "summar, Raster representation of a single view for VOP interwoven pipeline.      Stores, Initialize view raster.             Args:                 width: Raster width in, Raster width in cells (alias for W)., Raster height in cells (alias for H)., Cell size in model units (alias for cell_size_ft). (+12 more)
+Cohesion: 0.04
+Nodes (50): Bounds2D, Check if point (x, y) is inside bounds (inclusive)., Check if this bounds intersects another Bounds2D., Return new Bounds2D expanded by margin on all sides., 2D axis-aligned bounding box in view XY space.      Attributes:         xmin, ym, decompose_to_rects(), Full raster payload for downstream exporters (PNG/CSV/metrics).          IMPORTA, Reconstruct a ViewRaster from a dict payload (inverse of to_dict()).          In (+42 more)
 
 ### Community 19 - "Community 19"
-Cohesion: 0.11
+Cohesion: 0.12
 Nodes (15): _FakeElem, _include(), Walls were in the old allowlist -- verify they still work., An explicitly excluded name must be rejected even if CategoryType=Model., RevitLinkInstance (category 'RVT Links') must be excluded from the HOST pass., ImportInstance (category 'Imports') must be excluded from the HOST pass., String 'Annotation' is used in pytest string-comparison fallback path., String 'Model' is used in pytest string-comparison fallback path. (+7 more)
 
 ### Community 20 - "Community 20"
@@ -306,24 +330,24 @@ Cohesion: 0.07
 Nodes (33): build_clip_volume_for_view(), _build_link_proxies_from_collector(), _build_model_suppression_cat_ids(), _build_navigation_noise_cat_ids(), _build_occupancy_png(), _build_occupancy_preview_rects(), collect_3d_elements_for_view(), collect_link_3d_proxies() (+25 more)
 
 ### Community 21 - "Community 21"
-Cohesion: 0.18
-Nodes (11): Import Check - Verify all modules load correctly  This tests if the linked docum, Phase 2 Test: Element Collection & Bounding Boxes  Copy this code into a Dynamo, collect_view_elements(), is_element_visible_in_view(), Check if element is visible in view.      NOTE: Currently uses permissive/optimi, Collect all potentially visible elements in view (broad-phase).      Performance, Revit-specific integrations for VOP pipeline.  Modules: - view_basis: View coord, make_view_basis() (+3 more)
+Cohesion: 0.08
+Nodes (23): For /graphify add and --watch, For /graphify query, For the commit hook and native CLAUDE.md integration, For --update and --cluster-only, /graphify, Honesty Rules, Interpreter guard for subcommands, Part A - Structural extraction for code files (+15 more)
 
 ### Community 22 - "Community 22"
-Cohesion: 0.11
-Nodes (33): test_vop_cache_hit_backfills_view_unique_id_from_metadata_when_missing_in_payload(), test_vop_cache_hit_viewtype_is_human_readable_and_blanks_preserved(), test_extract_metrics_from_view_result_prefers_precomputed_metrics_without_raster_recompute(), test_patch7_regression_vop_row_prefers_precomputed_metrics_over_raster_recompute(), _Cfg, _raster(), test_external_metrics_uses_occupancy_layers_to_distinguish_only_from_rvt(), test_extract_metrics_from_view_result_ignores_incomplete_precomputed_metrics_with_live_raster() (+25 more)
+Cohesion: 0.12
+Nodes (29): test_vop_cache_hit_backfills_view_unique_id_from_metadata_when_missing_in_payload(), test_vop_cache_hit_viewtype_is_human_readable_and_blanks_preserved(), test_extract_metrics_from_view_result_prefers_precomputed_metrics_without_raster_recompute(), _Cfg, _raster(), test_external_metrics_uses_occupancy_layers_to_distinguish_only_from_rvt(), test_extract_metrics_from_view_result_ignores_incomplete_precomputed_metrics_with_live_raster(), test_extract_metrics_from_view_result_preserves_link_source_at_key_zero() (+21 more)
 
 ### Community 23 - "Community 23"
 Cohesion: 0.09
 Nodes (20): _compute_adaptive_thresholds(), _create_silhouette_extractor(), project_elements_to_view_xy(), Iterate all solids in geometry (recursively), Compute 2D convex hull using Andrew's monotone chain algorithm, Return strategy usage statistics, Compute adaptive thresholds based on element size distribution in the view., Hybrid silhouette extraction with pluggable strategies.     Inline version for D (+12 more)
 
 ### Community 24 - "Community 24"
-Cohesion: 0.09
-Nodes (35): classify_annotation(), classify_keynote(), collect_2d_annotations(), compute_annotation_extents(), get_annotation_bbox(), _is_excluded_from_extent_expansion(), is_extent_driver_annotation(), _point_in_quad() (+27 more)
+Cohesion: 0.12
+Nodes (25): classify_annotation(), classify_keynote(), get_annotation_bbox(), _point_in_quad(), _project_element_bbox_to_cell_rect_for_anno(), rasterize_annotations(), _rasterize_filled_region_shape(), Annotation collection and rasterization for VOP interwoven pipeline.  Provides f (+17 more)
 
 ### Community 25 - "Community 25"
-Cohesion: 0.10
-Nodes (12): Unit tests for VOP interwoven raster data structures.  Tests ViewRaster, TileMap, Test TileMap spatial acceleration structure., Create test tile map., Test tile map initialization., Run all raster tests., Test tile index calculation., Test tile collection for rectangle., Test tile fullness detection. (+4 more)
+Cohesion: 0.06
+Nodes (21): Check if tile is completely filled.          Args:             tile_idx: Tile in, Update filled count for tile containing cell.          Args:             cell_i,, Update minimum W-depth for tile containing cell.          Args:             cell, Tile-based spatial acceleration structure for early-out occlusion testing., Initialize view raster.             Args:                 width: Raster width in, Initialize tile map.          Args:             tile_size: Size of each tile in, Get tile index for cell (i, j).          Args:             cell_i: Cell column i, Get list of tile indices overlapping rectangle.          Args:             i_min (+13 more)
 
 ### Community 26 - "Community 26"
 Cohesion: 0.09
@@ -339,39 +363,35 @@ Nodes (36): AST, Module, _call_name(), _calls_named(), _find_element_loop(), _fi
 
 ### Community 29 - "Community 29"
 Cohesion: 0.05
-Nodes (31): Unit tests for VOP interwoven geometry classification and proxy generation.  Tes, Test complete classification workflows (realistic scenarios)., Test typical door classification (TINY)., Test typical window classification (TINY or LINEAR)., Test typical wall classification (LINEAR)., Test UV-based element classification., Test typical floor classification (AREAL)., Run all tests and print results. (+23 more)
+Nodes (38): Test strategy diagnostics integration in CSV export., Test that percentage columns are in valid 0-100 range., Test that build_vop_csv_row works without strategy_diag (backward compat)., Test that strategy counts sum to expected totals., Test that CSV export doesn't crash if diagnostic extraction fails., Test that build_vop_csv_row correctly extracts strategy statistics., TestCSVExportDiagnostics, test_export_pipeline_to_csv_manifest_header_exact_order_when_compat_off() (+30 more)
 
 ### Community 30 - "Community 30"
-Cohesion: 0.08
-Nodes (13): Test ViewRaster data structure., Create test view raster., Test view raster initialization., Test cell index calculation., Test cell filling with depth (deprecated method)., Test centralized cell write with depth testing., occ_host/link/dwg must accumulate — a later winner must not erase prior True fla, Test element metadata tracking. (+5 more)
+Cohesion: 0.09
+Nodes (12): Test ViewRaster data structure., Test view raster initialization., Test cell index calculation., Test cell filling with depth (deprecated method)., Test centralized cell write with depth testing., occ_host/link/dwg must accumulate — a later winner must not erase prior True fla, Test element metadata tracking., Test annotation metadata tracking. (+4 more)
 
 ### Community 31 - "Community 31"
-Cohesion: 0.06
-Nodes (36): LRUCache, Bounded LRU caches.  We use these caches to avoid repeated, expensive Revit geom, A simple, bounded LRU cache keyed by hashable keys.      Notes:         - max_it, _canonicalize_plane(), _dot(), group_faces_by_plane(), iter_front_facing_planar_faces(), _norm() (+28 more)
+Cohesion: 0.09
+Nodes (31): _canonicalize_plane(), _dot(), group_faces_by_plane(), iter_front_facing_planar_faces(), _norm(), _normalize(), _plane_eq_close(), _plane_from_planar_face() (+23 more)
 
 ### Community 32 - "Community 32"
-Cohesion: 0.10
-Nodes (21): _bresenham_line(), _clip_poly_to_rect_uv(), _fix_loop_points_uv(), Rasterize polygon loops to proxy layer WITHOUT updating occlusion buffer., Rasterize polygon loops into the annotation channel (anno_key) using scanline fi, Stamp CLOSED loop perimeters into proxy channel only (no fill, no occlusion)., Stamp OPEN polylines into proxy channel only (no fill, no occlusion)., Rasterize element silhouette loops into model layers with depth testing. (+13 more)
+Cohesion: 0.06
+Nodes (34): _bresenham_line(), _cell_in_model_clip(), _clip_poly_to_rect_uv(), _commit_polygon_mask(), _extract_source_type(), _fix_loop_points_uv(), _polygon_mask_np(), Raster data structures for VOP interwoven pipeline.  Provides ViewRaster and Til (+26 more)
 
 ### Community 33 - "Community 33"
 Cohesion: 0.13
 Nodes (10): _FakeBBox, _FakeCategory, _FakeCategoryType, _FakeCollector, _FakeElem, _FakeId, _FakeLinkDoc, _FakeLinkInst (+2 more)
 
 ### Community 34 - "Community 34"
-Cohesion: 0.16
-Nodes (12): int, _StubCfg, _StubId, _StubRaster, _StubTile, _StubView, test_export_defaults_skipped_outside_view_volume_to_zero_when_missing(), test_export_includes_skipped_outside_view_volume_metric() (+4 more)
-
-### Community 35 - "Community 35"
-Cohesion: 0.13
-Nodes (9): excluded_bic_names_global(), Categories, _FakeCategory, _FakeDoc, _FakeId, Minimal fake Category.      category_type:         1 (or _CATEGORY_TYPE_MODEL_IN, Minimal fake doc.  resolve_category_ids returns empty set (triggers name fallbac, Settings (+1 more)
+Cohesion: 0.15
+Nodes (14): int, _StubCfg, _StubId, _StubRaster, _StubTile, _StubView, test_export_defaults_skipped_outside_view_volume_to_zero_when_missing(), test_export_includes_skipped_outside_view_volume_metric() (+6 more)
 
 ### Community 36 - "Community 36"
-Cohesion: 0.14
-Nodes (17): Import BuiltInCategory lazily (Revit-only)., _try_import_bic(), Export a raw Revit view image to view_raster/ for comparison.          Returns:, _canonical_name(), _dot(), export_view_image(), _is_annotation_only_view(), _prepare_view_for_export() (+9 more)
+Cohesion: 0.15
+Nodes (18): Import BuiltInCategory lazily (Revit-only)., _try_import_bic(), _canonical_name(), _dot(), export_pipeline_views_to_pngs(), export_view_image(), _is_annotation_only_view(), _prepare_view_for_export() (+10 more)
 
 ### Community 37 - "Community 37"
-Cohesion: 0.13
-Nodes (26): View basis extraction for VOP interwoven pipeline.  Provides view coordinate sys, Best-effort, Revit-free view type name extraction for gating + tests.     Return, # IMPORTANT: In some Dynamo contexts, ViewType may stringify as an int (e.g. "11, Capability: view can reasonably be expected to host model geometry in this pipel, Capability: view supports crop-based bounds (not whether crop is active).     Dr, Capability: pipeline depth semantics are meaningful.     In this pipeline, depth, Decide how this view should be processed, and WHY.     Returns: (mode, reason_di, Compute XY bounds from view crop box (all 8 corners method).      Notes on API c (+18 more)
+Cohesion: 0.22
+Nodes (17): Best-effort, Revit-free view type name extraction for gating + tests.     Return, Capability: view can reasonably be expected to host model geometry in this pipel, Capability: view supports crop-based bounds (not whether crop is active).     Dr, Capability: pipeline depth semantics are meaningful.     In this pipeline, depth, Decide how this view should be processed, and WHY.     Returns: (mode, reason_di, resolve_view_mode(), supports_crop_bounds(), supports_depth() (+9 more)
 
 ### Community 38 - "Community 38"
 Cohesion: 0.05
@@ -386,12 +406,12 @@ Cohesion: 0.14
 Nodes (13): _build_views_from_input(), _coerce_view_id(), VOP Interwoven Pipeline - Thin Runner for Dynamo (STREAMING VERSION)  Quick test, Normalize IN[0] into a list of view-like objects., Best-effort coercion to an integer view id for pipeline compatibility., Best-effort elevation lookup for a view., Sort views by level elevation (ascending) with graceful fallback., Convert Dynamo/.NET collections to a flat Python list without exploding strings. (+5 more)
 
 ### Community 41 - "Community 41"
-Cohesion: 0.05
-Nodes (39): `adaptive_max_tiny` / `adaptive_max_medium` / `adaptive_max_large`, `adaptive_min_elements`, `adaptive_min_tiny` / `adaptive_min_medium` / `adaptive_min_large`, `adaptive_percentile_large`, `adaptive_percentile_medium`, `adaptive_percentile_tiny`, Adaptive Thresholds, `adaptive_winsorize` (+31 more)
+Cohesion: 0.12
+Nodes (16): Category Shortcuts, `coarse_tess_max_verts_per_face`, `coarse_tess_triangulate_param`, Core Settings, `enable_category_api_shortcuts`, `enable_coarse_tessellation`, `enable_obb`, `enable_silhouette_edges` (+8 more)
 
 ### Community 42 - "Community 42"
-Cohesion: 0.22
-Nodes (8): PolicyStats, Apply category policy to an element.      Decision order:       1. Exclude eleme, Aggregated counters for policy filtering (runtime-safe)., should_include_element(), The old 'not_in_allowlist' reason must never appear., TestNoCategoryElement, TestPolicyStats, bool
+Cohesion: 0.15
+Nodes (12): PolicyStats, Apply category policy to an element.      Decision order:       1. Exclude eleme, Aggregated counters for policy filtering (runtime-safe)., should_include_element(), Categories, _FakeDoc, The old 'not_in_allowlist' reason must never appear., Minimal fake doc.  resolve_category_ids returns empty set (triggers name fallbac (+4 more)
 
 ### Community 43 - "Community 43"
 Cohesion: 0.06
@@ -418,20 +438,20 @@ Cohesion: 0.14
 Nodes (8): Test exclusion filter functionality in collection.  Phase 2B: Verifies that the, Test that the exclusion filter parameter was added correctly., Test that collect_view_elements has exclude_ids parameter., Test that exclude_ids defaults to None for backward compatibility., Test that original parameters are preserved in correct order., Test that exclude_ids won't break existing positional callers., Test that the collection module imports without errors after changes., TestExclusionFilterSignature
 
 ### Community 49 - "Community 49"
-Cohesion: 0.05
-Nodes (36): classify_by_uv(), classify_by_uv_pca(), make_obb_or_skinny_aabb(), make_uv_aabb(), _mesh_vertex_count(), Mode, Geometry classification and proxy generation for VOP interwoven pipeline.  Provi, Element classification based on UV footprint size.      TINY: Both dimensions <= (+28 more)
+Cohesion: 0.03
+Nodes (55): classify_by_uv(), classify_by_uv_pca(), make_obb_or_skinny_aabb(), make_uv_aabb(), _mesh_vertex_count(), Mode, Geometry classification and proxy generation for VOP interwoven pipeline.  Provi, Axis-aligned bounding box proxy in UV (view XY) space.      Used for TINY elemen (+47 more)
 
 ### Community 50 - "Community 50"
-Cohesion: 0.11
-Nodes (14): Clear module-level family-region caches.      Revit add-ins can execute in a lon, reset_family_region_caches(), _force_clr_gc(), _get_memory_mb(), MemoryTracker, Memory telemetry helpers for Dynamo/Python.NET runtime., Run CLR GC triple-call pattern and report private-memory delta., Return current (working_set_mb, private_bytes_mb) or (None, None). (+6 more)
+Cohesion: 0.09
+Nodes (24): Clear module-level family-region caches.      Revit add-ins can execute in a lon, reset_family_region_caches(), test_csv_config_hash_matches_root_cache_config_hash_for_real_config(), compute_config_hash(), Compute stable hash of config for reproducibility tracking.      Args:         c, _force_clr_gc(), _get_memory_mb(), MemoryTracker (+16 more)
 
 ### Community 51 - "Community 51"
 Cohesion: 0.10
 Nodes (16): Classify element by size: tiny_linear, medium, large, very_large, Auto-detect appropriate thresholds based on view scale.         Handles any scal, Hybrid silhouette extraction with pluggable strategies.     Inline version for D, Track when an element falls back from first_strategy to actual_strategy., Axis-aligned bounding box rectangle, Compute oriented bounding rectangle from projected BBox corners, Tessellate with coarse settings - faster than full detail, Use category-specific Revit API methods for faster extraction. (+8 more)
 
 ### Community 52 - "Community 52"
-Cohesion: 0.06
-Nodes (28): object, View coordinate system with origin and basis vectors.      Attributes:         o, Back-compat helper: accept XYZ or tuple, return view-local (u, v, w)., Check if view is plan-like (looking down Z axis).          Returns:, Check if view is elevation-like (horizontal view direction).          Returns:, Transform model-space point to view-local UVW coordinates.          Args:, ViewBasis, MockCategory (+20 more)
+Cohesion: 0.10
+Nodes (22): object, View coordinate system with origin and basis vectors.      Attributes:         o, Check if view is plan-like (looking down Z axis).          Returns:, Check if view is elevation-like (horizontal view direction).          Returns:, ViewBasis, Depth convention contract: w = dot(element - origin, forward) must increase with, For RCP (looking up), elements below the cut plane are closest to the viewer., Return only the depth component w. (+14 more)
 
 ### Community 53 - "Community 53"
 Cohesion: 0.07
@@ -446,11 +466,11 @@ Cohesion: 0.18
 Nodes (6): OBB, Oriented bounding box proxy for LINEAR elements.      Captures orientation of lo, Length along the long axis (2 * max extent)., Length along the short axis (2 * min extent)., Return 4 corner points for stamping edges., Return 4 edge segments [(u0,v0), (u1,v1)] for stamping.
 
 ### Community 56 - "Community 56"
-Cohesion: 0.11
-Nodes (19): _cell_in_model_clip(), _commit_polygon_mask(), decompose_to_rects(), _extract_source_type(), _polygon_mask_np(), Raster data structures for VOP interwoven pipeline.  Provides ViewRaster and Til, # IMPORTANT: Inset model clip by half a cell so no raster cell, Return cached boolean flat array [W*H] for model_clip_bounds.          Returns N (+11 more)
+Cohesion: 0.13
+Nodes (18): collect_2d_annotations(), compute_annotation_extents(), _is_excluded_from_extent_expansion(), is_extent_driver_annotation(), Compute annotation extents for grid bounds expansion.      Collects extent-drive, Return True for annotation-like elements that must never drive extent expansion., Collect USER-ADDED 2D annotation elements by whitelist.      IMPORTANT: This col, Check if annotation is an extent driver (can exist outside crop).      Extent dr (+10 more)
 
 ### Community 57 - "Community 57"
-Cohesion: 0.15
+Cohesion: 0.17
 Nodes (3): OcclusionTracker, Lightweight per-view occlusion diagnostics tracking., Aggregates low-cost occlusion diagnostics for a single view render.
 
 ### Community 58 - "Community 58"
@@ -458,8 +478,8 @@ Cohesion: 0.23
 Nodes (11): annotation_included_bic_names(), Category policy (single source of truth).  Notes ----- - Must be importable unde, Category names collected by the VOP annotation pass.      Used by view_raster to, Resolve a BuiltInCategory name to a Category integer id for a given doc., Resolve BuiltInCategory names to integer category ids for this doc (cached)., Return CategoryType.Model from the Revit API, or None if outside Revit., resolve_category_ids(), _try_get_category_id() (+3 more)
 
 ### Community 59 - "Community 59"
-Cohesion: 0.18
-Nodes (9): Test strategy diagnostics integration in CSV export., Test that percentage columns are in valid 0-100 range., Test that build_vop_csv_row works without strategy_diag (backward compat)., Test that strategy counts sum to expected totals., Test that CSV export doesn't crash if diagnostic extraction fails., Test that build_vop_csv_row correctly extracts strategy statistics., TestCSVExportDiagnostics, build_vop_csv_row() (+1 more)
+Cohesion: 0.11
+Nodes (11): MockBBox, MockXYZ, Test _safe_elem_id handles None ID., Test _safe_category extracts category correctly., Test _safe_category handles exceptions., Test _get_aabb_loops_from_bbox creates valid AABB., Test _get_aabb_loops_from_bbox creates closed loop., Test helper functions. (+3 more)
 
 ### Community 60 - "Community 60"
 Cohesion: 0.07
@@ -474,20 +494,20 @@ Cohesion: 0.24
 Nodes (11): generate_manifest(), main(), normalize_csv_for_hashing(), Write manifest entries to file.      Format:         CSV  filename.csv  <hash>, Normalize CSV content for hashing by excluding volatile columns.      Args:, Compute SHA256 hash of a file., Compute SHA256 hash of content bytes., Generate manifest entries from output directory.      Args:         output_dir: (+3 more)
 
 ### Community 63 - "Community 63"
-Cohesion: 0.18
-Nodes (6): CellRectFootprint, HullFootprint, Footprint defined by a convex hull in UV space.     Rasterized conservatively vi, Footprint wrapper for a CellRect, future-proofing for hull footprints., _snapshot_occ(), test_early_out_is_pure_optimization_no_output_difference()
+Cohesion: 0.20
+Nodes (4): CellRectFootprint, HullFootprint, Footprint defined by a convex hull in UV space.     Rasterized conservatively vi, Footprint wrapper for a CellRect, future-proofing for hull footprints.
 
 ### Community 64 - "Community 64"
-Cohesion: 0.11
-Nodes (21): test_csv_config_hash_matches_root_cache_config_hash_for_real_config(), test_perf_header_uses_pascal_case_and_includes_view_unique_id(), test_streaming_vop_header_uses_cfg_and_includes_metadata_for_manifest_mode(), compute_config_hash(), get_occlusion_csv_header(), get_perf_csv_header(), Get header for occlusion diagnostics CSV file., Get header for performance CSV file. (+13 more)
+Cohesion: 0.12
+Nodes (13): test_streaming_vop_header_uses_cfg_and_includes_metadata_for_manifest_mode(), get_occlusion_csv_header(), Get header for occlusion diagnostics CSV file., Manages incremental export of pipeline results., Initialize streaming exporter.          Args:             output_dir: Base outpu, Initialize CSV writers for incremental writing., Callback when a view completes processing.                  Args:             vi, Write PNG for a single view result.                  Returns:             Path t (+5 more)
 
 ### Community 65 - "Community 65"
-Cohesion: 0.22
-Nodes (11): export_pipeline_results_to_pngs(), _export_png_dotnet(), _export_png_pillow(), export_raster_to_png(), PNG export for VOP interwoven pipeline rasters.  Generates visual representation, Export VOP raster to PNG image with color-coded occupancy.      Color Legend:, PNG export via NumPy + Pillow. Called only when both are available., Export VOP raster to PNG. Uses Pillow if available, System.Drawing otherwise. (+3 more)
+Cohesion: 0.27
+Nodes (10): export_pipeline_results_to_pngs(), _export_png_dotnet(), _export_png_pillow(), export_raster_to_png(), PNG export for VOP interwoven pipeline rasters.  Generates visual representation, Export VOP raster to PNG image with color-coded occupancy.      Color Legend:, PNG export via NumPy + Pillow. Called only when both are available., Export VOP raster to PNG. Uses Pillow if available, System.Drawing otherwise. (+2 more)
 
 ### Community 66 - "Community 66"
-Cohesion: 0.07
-Nodes (31): extract_areal_geometry(), _get_aabb_loops_from_bbox(), Extract AREAL element geometry with confidence-based fallback hierarchy.      Im, Safely extract element ID as integer.      Args:         elem: Revit Element, Safely extract category name from element.      Args:         elem: Revit Elemen, Create axis-aligned bounding box loops from bbox.      Args:         bbox: Revit, _safe_category(), _safe_elem_id() (+23 more)
+Cohesion: 0.11
+Nodes (22): extract_areal_geometry(), _get_aabb_loops_from_bbox(), Extract AREAL element geometry with confidence-based fallback hierarchy.      Im, Safely extract element ID as integer.      Args:         elem: Revit Element, Safely extract category name from element.      Args:         elem: Revit Elemen, Create axis-aligned bounding box loops from bbox.      Args:         bbox: Revit, _safe_category(), _safe_elem_id() (+14 more)
 
 ### Community 67 - "Community 67"
 Cohesion: 0.31
@@ -550,12 +570,12 @@ Cohesion: 0.07
 Nodes (28): AnnoFinalCells_DETAIL, AnnoFinalCells_DIM, AnnoFinalCells_LINES, AnnoFinalCells_OTHER, AnnoFinalCells_REGION, AnnoFinalCells_TAG, AnnoFinalCells_TEXT, AnnoPresentFinal (+20 more)
 
 ### Community 91 - "Community 91"
-Cohesion: 0.10
-Nodes (29): _diagnose_coordinate_spaces(), estimate_depth_from_loops_or_bbox(), estimate_depth_range_from_bbox(), estimate_nearest_depth_from_bbox(), expand_host_link_import_model_elements(), _extract_geometry_footprint_uv(), _get_element_category_name(), get_element_obb_loops() (+21 more)
+Cohesion: 0.07
+Nodes (50): Import Check - Verify all modules load correctly  This tests if the linked docum, Zero Occupancy Debug Script  Comprehensive diagnostic for linked RVT/DWG zero oc, collect_view_elements(), _diagnose_coordinate_spaces(), estimate_depth_from_loops_or_bbox(), estimate_depth_range_from_bbox(), estimate_nearest_depth_from_bbox(), expand_host_link_import_model_elements() (+42 more)
 
 ### Community 92 - "Community 92"
-Cohesion: 0.10
-Nodes (18): Bounds2D, Check if point (x, y) is inside bounds (inclusive)., Check if this bounds intersects another Bounds2D., Return new Bounds2D expanded by margin on all sides., 2D axis-aligned bounding box in view XY space.      Attributes:         xmin, ym, Reconstruct a ViewRaster from a dict payload (inverse of to_dict()).          In, _make_raster(), test_proxy_edges_enabled_perimeter_only_to_proxy_channel() (+10 more)
+Cohesion: 0.18
+Nodes (15): _Cfg, test_core_row_uses_view_unique_id_without_view_object(), test_perf_header_uses_pascal_case_and_includes_view_unique_id(), test_perf_row_includes_view_unique_id_from_result_or_view_object(), test_root_cache_metadata_carries_view_unique_id(), test_vop_cache_row_uses_view_result_uid_when_cached_payload_missing_uid(), test_vop_header_includes_view_unique_id(), test_vop_row_uses_view_unique_id_without_view_object() (+7 more)
 
 ### Community 93 - "Community 93"
 Cohesion: 0.10
@@ -662,8 +682,8 @@ Cohesion: 0.17
 Nodes (11): 1) Gate or implement proxy `edges` mode, 2) Contract contradiction requiring code decision: AREAL fallback occlusion semantics, 3) Complete diagnostics wiring debt in exception handlers, 4) Remove or finalize dormant per-view disk cache path, 5) Implement explicit visibility-gating pass or narrow the contract, 6) Streaming signature-first TODO cleanup, 7) Align historical documentation footprint with current architecture doc, P0 (+3 more)
 
 ### Community 119 - "Community 119"
-Cohesion: 0.18
-Nodes (10): `cell_size_paper_in`, Configuration Hashing, Configuration Structure, Configuration Validation, Grid Configuration, `max_cells`, `max_views`, Run Configuration (+2 more)
+Cohesion: 0.10
+Nodes (20): Cache Configuration, `cell_size_paper_in`, Clip Volume Configuration, `code_2d_only`, `code_2d_over_3d`, `code_3d_only`, Configuration Hashing, Configuration Structure (+12 more)
 
 ### Community 120 - "Community 120"
 Cohesion: 0.18
@@ -678,8 +698,8 @@ Cohesion: 0.29
 Nodes (10): Annotation Non-Occlusion Layering Principle, AREAL Fallback Occlusion Semantics Contradiction (P0 Debt), Confidence-Based Occlusion Semantics, Multi-Strategy Silhouette Extraction with Fallbacks, 3D Model Geometry as Sole Occlusion Authority, over_model_includes_proxies Config Flag, Proxy Edge Mask Mode Stub (_stamp_proxy_edges), Proxy Ink Semantics (model_proxy_key) (+2 more)
 
 ### Community 123 - "Community 123"
-Cohesion: 0.20
-Nodes (10): Debug Configuration, `enable_preview_polys`, `enable_region_previews`, `include_run_log_in_out`, `max_preview_projected_2d`, `max_preview_projected_3d`, `max_region_areal_cells`, Preview Geometry Options (+2 more)
+Cohesion: 0.13
+Nodes (15): Debug Configuration, `enable_preview_polys`, `enable_region_previews`, `filled_region_loops`, `filled_region_loops_max`, `floor_loops`, `floor_loops_max`, `include_run_log_in_out` (+7 more)
 
 ### Community 124 - "Community 124"
 Cohesion: 0.22
@@ -734,8 +754,8 @@ Cohesion: 0.40
 Nodes (5): `driver2d_log_once_per_signature`, `enable_driver2d_debug`, `large_region_fraction`, `log_large_3d_regions`, Specialized Debug Options
 
 ### Community 137 - "Community 137"
-Cohesion: 0.40
-Nodes (5): `filled_region_loops`, `filled_region_loops_max`, `floor_loops`, `floor_loops_max`, Loop Debug Options
+Cohesion: 0.18
+Nodes (13): _diag_fallback_stderr(), CRITICAL FALLBACK: If diagnostic recording fails, print to stderr.      This ens, Execute fn() and handle exceptions in a controlled, observable way.      policy:, Record an error with diagnostic fallback to stderr if recording fails.      Use, Record a warning with diagnostic fallback to stderr if recording fails., record_error(), record_warning(), safe_call() (+5 more)
 
 ### Community 138 - "Community 138"
 Cohesion: 0.40
@@ -774,8 +794,8 @@ Cohesion: 0.40
 Nodes (5): Implementation Tasks, Phase 8b: Revit Link Support (RVT Links), Success Criteria, Testing, Why This Phase?
 
 ### Community 147 - "Community 147"
-Cohesion: 0.50
-Nodes (4): `code_2d_only`, `code_2d_over_3d`, `code_3d_only`, Occupancy Codes
+Cohesion: 0.27
+Nodes (11): Resolve view bounds in view-local UV and return auditable metadata.      Contrac, resolve_view_bounds(), _as_tuple(), _StubView, test_bounds_budget_absent_keeps_med_confidence_for_extents(), test_bounds_budget_trigger_downgrades_confidence_to_low_and_reports_budget(), _as_tuple(), _StubView (+3 more)
 
 ### Community 148 - "Community 148"
 Cohesion: 0.50
@@ -846,12 +866,12 @@ Cohesion: 0.67
 Nodes (3): VOP Interwoven Code Map (Authoritative), VOP Interwoven Symbol Index, VOP Interwoven Trace Map (Approximate Call Tree)
 
 ### Community 165 - "Community 165"
-Cohesion: 0.67
-Nodes (3): Cache Configuration, `enabled`, `file_name`
+Cohesion: 0.18
+Nodes (5): LRUCache, Bounded LRU caches.  We use these caches to avoid repeated, expensive Revit geom, A simple, bounded LRU cache keyed by hashable keys.      Notes:         - max_it, test_geometry_cache_disabled_when_max_items_zero(), test_geometry_cache_lru_eviction_order()
 
 ### Community 166 - "Community 166"
-Cohesion: 0.67
-Nodes (3): Clip Volume Configuration, `enable_far_clip`, `use_cut_slab`
+Cohesion: 0.16
+Nodes (4): MockCategory, MockGeometry, MockId, Mock Geometry collection.
 
 ### Community 167 - "Community 167"
 Cohesion: 0.67
@@ -865,20 +885,88 @@ Nodes (3): `enabled`, Occupancy PNG Output, `pixels_per_cell`
 Cohesion: 0.67
 Nodes (3): Key Features, Overview, Supported View Types
 
+### Community 183 - "Community 183"
+Cohesion: 0.20
+Nodes (10): `adaptive_max_tiny` / `adaptive_max_medium` / `adaptive_max_large`, `adaptive_min_elements`, `adaptive_min_tiny` / `adaptive_min_medium` / `adaptive_min_large`, `adaptive_percentile_large`, `adaptive_percentile_medium`, `adaptive_percentile_tiny`, Adaptive Thresholds, `adaptive_winsorize` (+2 more)
+
+### Community 184 - "Community 184"
+Cohesion: 0.25
+Nodes (7): graphify reference: extra exports and benchmark, Step 6b - Wiki (only if --wiki flag), Step 7 - Neo4j export (only if --neo4j or --neo4j-push flag), Step 7b - SVG export (only if --svg flag), Step 7c - GraphML export (only if --graphml flag), Step 7d - MCP server (only if --mcp flag), Step 8 - Token reduction benchmark (only if total_words > 5000)
+
+### Community 185 - "Community 185"
+Cohesion: 0.25
+Nodes (7): graphify reference: extra exports and benchmark, Step 6b - Wiki (only if --wiki flag), Step 7 - Neo4j export (only if --neo4j or --neo4j-push flag), Step 7b - SVG export (only if --svg flag), Step 7c - GraphML export (only if --graphml flag), Step 7d - MCP server (only if --mcp flag), Step 8 - Token reduction benchmark (only if total_words > 5000)
+
+### Community 186 - "Community 186"
+Cohesion: 0.29
+Nodes (7): `category_first`, `tier_large`, `tier_medium`, Tier Strategies, `tier_tiny_linear`, `tier_very_large`, `track_strategy_usage`
+
+### Community 187 - "Community 187"
+Cohesion: 0.33
+Nodes (6): `auto_adjust_for_scale`, `large_threshold_ft`, `medium_threshold_ft`, Scale-Aware Thresholds (Experimental), `tiny_linear_threshold_ft`, `use_absolute_thresholds`
+
+### Community 188 - "Community 188"
+Cohesion: 0.33
+Nodes (4): Back-compat helper: accept XYZ or tuple, return view-local (u, v, w)., Resolve view-space W volume [W0, Wmax] for the host view.      Unification rule:, Transform model-space point to view-local UVW coordinates.          Args:, resolve_view_w_volume()
+
+### Community 189 - "Community 189"
+Cohesion: 0.33
+Nodes (3): _FakeCategory, _FakeId, Minimal fake Category.      category_type:         1 (or _CATEGORY_TYPE_MODEL_IN
+
+### Community 190 - "Community 190"
+Cohesion: 0.40
+Nodes (4): AGENTS.md — Revit SSM Exporter, Core architecture constraints, graphify — Query the knowledge graph before browsing source, graphify skill (Codex / tool-use agents)
+
+### Community 191 - "Community 191"
+Cohesion: 0.50
+Nodes (3): For /graphify add, For --watch, graphify reference: add a URL and watch a folder
+
+### Community 192 - "Community 192"
+Cohesion: 0.50
+Nodes (3): For git commit hook, For native CLAUDE.md integration, graphify reference: commit hook and native CLAUDE.md integration
+
+### Community 193 - "Community 193"
+Cohesion: 0.50
+Nodes (3): For /graphify explain, For /graphify path, graphify reference: query, path, explain
+
+### Community 194 - "Community 194"
+Cohesion: 0.50
+Nodes (3): For --cluster-only, For --update (incremental re-extraction), graphify reference: incremental update and cluster-only
+
+### Community 195 - "Community 195"
+Cohesion: 0.50
+Nodes (3): For /graphify add, For --watch, graphify reference: add a URL and watch a folder
+
+### Community 196 - "Community 196"
+Cohesion: 0.50
+Nodes (3): For git commit hook, For native CLAUDE.md integration, graphify reference: commit hook and native CLAUDE.md integration
+
+### Community 197 - "Community 197"
+Cohesion: 0.50
+Nodes (3): For /graphify explain, For /graphify path, graphify reference: query, path, explain
+
+### Community 198 - "Community 198"
+Cohesion: 0.50
+Nodes (3): For --cluster-only, For --update (incremental re-extraction), graphify reference: incremental update and cluster-only
+
+### Community 199 - "Community 199"
+Cohesion: 0.50
+Nodes (3): Core architecture constraints, GitHub Copilot Instructions — Revit SSM Exporter, graphify — Query the knowledge graph before browsing source
+
 ## Knowledge Gaps
-- **686 isolated node(s):** `Path`, `TotalCells`, `Cells_Empty`, `Cells_ModelOnly`, `Cells_AnnoOnly` (+681 more)
+- **765 isolated node(s):** `Usage`, `What graphify is for`, `Step 0 - GitHub repos and multi-path merge (only if a URL or several paths)`, `Step 1 - Ensure graphify is installed`, `Step 2 - Detect files` (+760 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **10 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **18 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `Config` connect `Community 29` to `Community 0`, `Community 64`, `Community 2`, `Community 4`, `Community 27`, `Community 40`, `Community 10`, `Community 44`, `Community 14`, `Community 49`, `Community 21`, `Community 22`, `Community 25`, `Community 59`, `Community 30`?**
-  _High betweenness centrality (0.050) - this node is a cross-community bridge._
-- **Why does `GeometryCache` connect `Community 1` to `Community 64`, `Community 50`?**
-  _High betweenness centrality (0.043) - this node is a cross-community bridge._
-- **Why does `StrategyDiagnostics` connect `Community 27` to `Community 66`, `Community 2`, `Community 39`, `Community 59`, `Community 11`, `Community 15`, `Community 52`, `Community 57`, `Community 91`?**
-  _High betweenness centrality (0.042) - this node is a cross-community bridge._
+- **Why does `Bounds2D` connect `Community 18` to `Community 32`, `Community 2`, `Community 4`, `Community 7`, `Community 10`, `Community 14`, `Community 16`, `Community 49`, `Community 147`, `Community 52`, `Community 54`, `Community 22`, `Community 24`, `Community 25`, `Community 56`, `Community 30`?**
+  _High betweenness centrality (0.061) - this node is a cross-community bridge._
+- **Why does `Config` connect `Community 29` to `Community 0`, `Community 64`, `Community 2`, `Community 4`, `Community 27`, `Community 40`, `Community 44`, `Community 14`, `Community 49`, `Community 50`, `Community 22`, `Community 25`, `Community 91`, `Community 30`?**
+  _High betweenness centrality (0.047) - this node is a cross-community bridge._
+- **Why does `StrategyDiagnostics` connect `Community 27` to `Community 66`, `Community 2`, `Community 166`, `Community 39`, `Community 11`, `Community 15`, `Community 50`, `Community 52`, `Community 29`?**
+  _High betweenness centrality (0.037) - this node is a cross-community bridge._
 - **Are the 9 inferred relationships involving `Config` (e.g. with `TestCSVExportDiagnostics` and `test_config_areal_prefers_front_face_loops()`) actually correct?**
   _`Config` has 9 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 5 inferred relationships involving `ViewRaster` (e.g. with `Bounds2D` and `TestTileMap`) actually correct?**
