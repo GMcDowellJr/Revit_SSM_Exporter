@@ -30,3 +30,4 @@ Thumbs.db
 graphify-out/.graphify_*
 graphify-out/cache/
 graphify-out/2*/
+.agents/
