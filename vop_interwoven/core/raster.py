@@ -1056,11 +1056,12 @@ class ViewRaster:
 
         return filled_count
 
-    def rasterize_polygon_to_proxy(self, loops, key_index, depth=0.0, source="HOST", _out_cells=None):
-        """Rasterize polygon loops to proxy layer WITHOUT updating occlusion buffer.
+    def rasterize_polygon_to_proxy(self, loops, key_index, depth=0.0, source="HOST", _out_cells=None, write_occ=False):
+        """Rasterize polygon loops to proxy layer; optionally update w_occ for occlusion.
 
-        This is for MEDIUM/LOW confidence AREAL elements that should be visible but NOT occlude,
-        and for TINY/LINEAR elements whose proxy fill represents approximate geometry location.
+        This is for MEDIUM/LOW confidence AREAL elements that should be visible but NOT occlude
+        via model_mask/model_edge, and for TINY/LINEAR elements whose proxy fill represents
+        approximate geometry location.
 
         Args:
             loops: List of loop dicts [{'points': [(u,v,w), ...], 'is_hole': bool}]
@@ -1068,6 +1069,8 @@ class ViewRaster:
             depth: W-depth value used for the occlusion gate (see below)
             source: Source type - "HOST", "LINK", or "DWG" (default: "HOST")
             _out_cells: Optional set; populated with flat cell indices that were written
+            write_occ: When True, write depth to w_occ for written cells so later elements
+                       are depth-gated (used by MEDIUM/LOW AREAL to occlude HOST and non-HOST)
 
         Returns:
             Number of cells written to proxy layer
@@ -1199,7 +1202,7 @@ class ViewRaster:
             if w_here != float("inf") and depth > w_here:
                 continue  # Nearer element already occupies cell; proxy is hidden
 
-            # Write to proxy layer (no w_occ write — proxy has no occlusion authority)
+            # Write to proxy layer; optionally gate later elements via w_occ.
             if 0 <= idx < len(self.model_proxy_key):
                 if self.model_proxy_key[idx] != key_index:
                     self.model_proxy_key[idx] = key_index
@@ -1209,6 +1212,11 @@ class ViewRaster:
 
                 # Mark proxy presence
                 self.model_proxy_mask[idx] = True
+
+                # write_occ: make this cell opaque to later elements (per-cell depth gate).
+                # Depth gate above already ensures depth <= w_occ[idx] at this point.
+                if write_occ and depth < self.w_occ[idx]:
+                    self.w_occ[idx] = depth
 
         return filled_count
 
