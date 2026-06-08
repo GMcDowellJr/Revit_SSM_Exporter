@@ -2218,9 +2218,6 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
         ✔ Handles linked/imported elements with transforms
     """
     from .revit.collection import _project_element_bbox_to_cell_rect, expand_host_link_import_model_elements
-    from .revit.view_basis import _view_type_name
-
-    _is_ceiling_plan = (_view_type_name(view) == "CeilingPlan")
 
     # ── Sub-timing accumulators (milliseconds) ──
     _sub_t = {
@@ -2293,8 +2290,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
 
     # Enrich elements with view-space depth range and bbox for ambiguity detection before sorting.
     # sort_front_to_back honors a wrapper-provided depth_sort key, so keep depth_range
-    # in view-space W for volume checks and apply CeilingPlan sign correction only
-    # to depth_sort.
+    # in view-space W and use nearest-W order for every view type.
     _t0_enrich = _perf_now()
     from .revit.collection import estimate_depth_range_from_bbox
     for wrapper in expanded_elements:
@@ -2314,12 +2310,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
 
             wrapper["depth_range"] = depth_range
             if all(isinstance(w, (int, float)) and math.isfinite(w) for w in depth_range):
-                if _is_ceiling_plan:
-                    # Negate W only for sorting so ceiling surface (W=0) sorts first and
-                    # above-cut MEP sorts after, while depth_range remains view-space W.
-                    wrapper["depth_sort"] = -depth_range[1]
-                else:
-                    wrapper["depth_sort"] = depth_range[0]
+                wrapper["depth_sort"] = depth_range[0]
             else:
                 wrapper.pop("depth_sort", None)
 
