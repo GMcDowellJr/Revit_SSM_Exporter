@@ -1946,14 +1946,14 @@ def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, con
         # MEDIUM/LOW confidence: proxy ink only, no occlusion writes.
         # Policy: only AREAL+HIGH may write w_occ; approximate geometry must not block
         # later elements via the depth buffer.
-        # MEDIUM threads _out_cells so the caller can build scene occluder rects from
-        # the exact rasterized cells; LOW passes None (uv_bbox_rect used instead).
+        # MEDIUM/LOW both thread _out_cells so the caller derives occluder rects from
+        # the exact rasterized proxy cells, not the coarser uv_bbox_rect.
         elif confidence in ("MEDIUM", "LOW"):
             if closed_loops:
                 try:
                     filled += raster.rasterize_polygon_to_proxy(
                         closed_loops, key_index, depth=elem_depth, source=source_type,
-                        _out_cells=(_out_cells if confidence == "MEDIUM" else None)
+                        _out_cells=_out_cells
                     )
                 except Exception as e:
                     print("[WARN] rasterize_areal_loops: rasterize_polygon_to_proxy raised "
@@ -3287,9 +3287,8 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
             # All AREAL confidence levels (HIGH/MED/LOW) act as occluders.
             if elem_class == "AREAL":
                 try:
-                    # HIGH/MEDIUM: collect written cells for occluder rect derivation.
-                    # LOW: uv_bbox_rect used instead (OBB rasterized; AABB is close enough).
-                    _elem_cells = set() if confidence in (CONF_HIGH, CONF_MEDIUM) else None
+                    # All AREAL levels collect written cells for occluder rect derivation.
+                    _elem_cells = set()
                     success, filled = rasterize_areal_loops(
                         loops=loops,
                         raster=raster,
@@ -3318,26 +3317,16 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                             _new_rects = decompose_to_rects(_elem_cells, raster.H, raster.W)
                             for (i_min, j_min, i_max, j_max) in _new_rects:
                                 _scene_occ_rects.append((i_min, j_min, i_max, j_max, w_max_elem))
-                    elif confidence == CONF_MEDIUM and filled > 0 and _elem_cells:
-                        # MEDIUM cells come directly from rasterize_polygon_to_proxy —
-                        # they are the exact written proxy cells, so no ownership filter needed.
+                    elif confidence in (CONF_MEDIUM, CONF_LOW) and filled > 0 and _elem_cells:
+                        # Proxy cells are the exact footprint rasterized — no ownership
+                        # filter needed (proxy doesn't write w_occ_key).  Using the actual
+                        # cells rather than uv_bbox_rect avoids false occlusion in the
+                        # empty corners of a rotated or concave proxy footprint.
                         w_max_elem = elem_wrapper.get("depth_range", (0.0, 0.0))[1]
                         if isinstance(w_max_elem, (int, float)) and math.isfinite(w_max_elem):
                             _new_rects = decompose_to_rects(_elem_cells, raster.H, raster.W)
                             for (i_min, j_min, i_max, j_max) in _new_rects:
                                 _scene_occ_rects.append((i_min, j_min, i_max, j_max, w_max_elem))
-                    elif confidence == CONF_LOW and filled > 0:
-                        # LOW loops are OBB or AABB — uv_bbox_rect (their AABB) is a
-                        # conservative single-rect approximation.
-                        _bbox_rect = elem_wrapper.get("uv_bbox_rect")
-                        w_max_elem = elem_wrapper.get("depth_range", (0.0, 0.0))[1]
-                        if (_bbox_rect is not None and not _bbox_rect.empty
-                                and isinstance(w_max_elem, (int, float)) and math.isfinite(w_max_elem)):
-                            _scene_occ_rects.append((
-                                _bbox_rect.i_min, _bbox_rect.j_min,
-                                _bbox_rect.i_max, _bbox_rect.j_max,
-                                w_max_elem,
-                            ))
 
                     if success:
                         silhouette_success += 1
