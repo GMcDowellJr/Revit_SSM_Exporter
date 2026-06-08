@@ -492,6 +492,31 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None, 
     return result
 
 
+
+
+def _point_to_xyz_tuple(point):
+    """Return a plain ``(x, y, z)`` tuple from Revit XYZ-like or tuple points."""
+    try:
+        return (float(point.X), float(point.Y), float(point.Z))
+    except Exception:
+        return (float(point[0]), float(point[1]), float(point[2]))
+
+
+def _transform_xyz_tuple(transform, corner):
+    """Apply a Revit Transform-like object to a tuple corner without importing Revit."""
+    if transform is None:
+        return corner
+
+    try:
+        return _point_to_xyz_tuple(transform.OfPoint(corner))
+    except Exception:
+        origin = getattr(transform, "Origin", None)
+        if origin is None:
+            raise
+        point_type = origin.__class__
+        return _point_to_xyz_tuple(transform.OfPoint(point_type(corner[0], corner[1], corner[2])))
+
+
 def sort_front_to_back(model_elems, view, raster):
     """Sort elements front-to-back by approximate depth."""
     sorted_elems = sorted(
@@ -614,10 +639,12 @@ def estimate_depth_from_loops_or_bbox(elem, loops, transform, view, raster, bbox
         bbox_is_link_space=bbox_is_link_space,
     )
 
-def estimate_depth_range_from_bbox(elem, transform, view, raster, bbox=None, diag=None):
+def estimate_depth_range_from_bbox(elem, transform, view, raster, bbox=None, diag=None, bbox_is_link_space=False):
     """Estimate depth range (min, max) of element from its bounding box.
 
     Uses wrapper-provided bbox when available; otherwise resolves bbox via resolve_element_bbox().
+    Applies any BoundingBoxXYZ transform before optional link-space transformation so
+    the result is in the same host view-space W convention as view-volume bounds.
     Never raises; returns (inf, inf) when bbox is unavailable.
     """
     from .view_basis import world_to_view
@@ -682,6 +709,35 @@ def estimate_depth_range_from_bbox(elem, transform, view, raster, bbox=None, dia
         (max_x, max_y, min_z),
         (max_x, max_y, max_z),
     ]
+
+    bbox_transform = getattr(bbox, "Transform", None)
+    if bbox_transform is not None:
+        try:
+            corners = [_transform_xyz_tuple(bbox_transform, corner) for corner in corners]
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="collection",
+                    callsite="estimate_depth_range_from_bbox",
+                    message="Exception in estimate_depth_range_from_bbox: {}".format(e),
+                    exc=e,
+                )
+            return (float("inf"), float("inf"))
+
+    if bbox_is_link_space:
+        if transform is None:
+            return (float("inf"), float("inf"))
+        try:
+            corners = [_transform_xyz_tuple(transform, corner) for corner in corners]
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="collection",
+                    callsite="estimate_depth_range_from_bbox",
+                    message="Exception in estimate_depth_range_from_bbox: {}".format(e),
+                    exc=e,
+                )
+            return (float("inf"), float("inf"))
 
     min_depth = float("inf")
     max_depth = float("-inf")

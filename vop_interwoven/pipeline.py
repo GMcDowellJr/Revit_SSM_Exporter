@@ -2298,14 +2298,18 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
             elem = wrapper["element"]
             world_transform = wrapper["world_transform"]
             bbox = wrapper.get("bbox")
+            bbox_link = wrapper.get("bbox_link")
+            bbox_for_depth = bbox_link if bbox_link is not None else bbox
+            bbox_is_link_space = bbox_link is not None
 
             depth_range = estimate_depth_range_from_bbox(
                 elem,
                 world_transform,
                 view,
                 raster,
-                bbox=bbox,
+                bbox=bbox_for_depth,
                 diag=diag,
+                bbox_is_link_space=bbox_is_link_space,
             )
 
             wrapper["depth_range"] = depth_range
@@ -2318,15 +2322,17 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 elem,
                 vb,
                 raster,
-                bbox=bbox,
+                bbox=bbox_for_depth,
                 diag=diag,
                 view=view,
+                transform=world_transform,
+                bbox_is_link_space=bbox_is_link_space,
             )
             wrapper["uv_bbox_rect"] = rect
 
             # Mark wrappers with valid bbox that falls entirely outside raster bounds.
             # Wrappers without a bbox have unknown geometry and must reach render.
-            if rect is None and bbox is not None:
+            if rect is None and bbox_for_depth is not None:
                 wrapper["_bbox_outside_raster"] = True
         except Exception as e:
             if diag is not None:
