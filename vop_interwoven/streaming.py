@@ -916,9 +916,32 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
 
     try:
         mem_tracker.mark("run_end")
-        mem_tracker.mark_and_gc("after_run_gc")
     except Exception as e:
-        print("[Streaming] run-end memory marks failed: {}".format(e))
+        print("[Streaming] run-end memory mark failed: {}".format(e))
+
+    # Run-end CLR GC: Collect() only — deliberately omits WaitForPendingFinalizers().
+    #
+    # WaitForPendingFinalizers() blocks the calling thread until every CLR finalizer
+    # drains.  Revit geometry object finalizers (Solid/Face/Mesh) must execute via
+    # the Revit main thread.  After all views complete, Revit's main thread is in the
+    # process of exiting the Dynamo evaluation context; it cannot process finalizer
+    # notifications until the script returns — but the script cannot return until
+    # WaitForPendingFinalizers() unblocks.  This deadlock produces the observed
+    # 36+ hour post-run Revit hang.
+    #
+    # Per-view GC (lines 891-899 above) already drains geometry objects between views.
+    # The run-end Collect() here is a non-blocking nudge only; finalizers will drain
+    # normally once Revit's main thread re-enters its idle loop after script return.
+    try:
+        import System
+        System.GC.Collect()
+        System.GC.Collect()
+    except Exception as _gc_err:
+        print("[Streaming] run-end CLR GC failed: {}".format(_gc_err))
+    try:
+        mem_tracker.mark("after_run_gc")
+    except Exception as e:
+        print("[Streaming] run-end post-GC mark failed: {}".format(e))
 
     # Restore original setting (though caller usually doesn't reuse cfg)
     cfg.retain_rasters_in_memory = original_retain
