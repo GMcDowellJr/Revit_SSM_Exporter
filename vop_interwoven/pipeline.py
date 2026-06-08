@@ -2291,9 +2291,10 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
         raster_tile_est_ms=getattr(cfg, "occlusion_raster_tile_est_ms", 0.1),
     )
 
-    # Enrich elements with depth range and bbox for ambiguity detection before sorting.
-    # sort_front_to_back honors a wrapper-provided depth_sort key, so this keeps
-    # CeilingPlan sign correction identical for both the sort key and stored range.
+    # Enrich elements with view-space depth range and bbox for ambiguity detection before sorting.
+    # sort_front_to_back honors a wrapper-provided depth_sort key, so keep depth_range
+    # in view-space W for volume checks and apply CeilingPlan sign correction only
+    # to depth_sort.
     _t0_enrich = _perf_now()
     from .revit.collection import estimate_depth_range_from_bbox
     for wrapper in expanded_elements:
@@ -2309,16 +2310,18 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 raster,
                 bbox=bbox,
                 diag=diag,
-                bbox_is_link_space=bool(wrapper.get("bbox_is_link_space", False)),
             )
 
             wrapper["depth_range"] = depth_range
-            if _is_ceiling_plan:
-                dr = wrapper["depth_range"]
-                # Negate W so ceiling surface (W=0) sorts first, above-cut MEP sorts after.
-                # Swap min/max because negating reverses the interval.
-                wrapper["depth_range"] = (-dr[1], -dr[0])
-            wrapper["depth_sort"] = wrapper["depth_range"][0]
+            if all(isinstance(w, (int, float)) and math.isfinite(w) for w in depth_range):
+                if _is_ceiling_plan:
+                    # Negate W only for sorting so ceiling surface (W=0) sorts first and
+                    # above-cut MEP sorts after, while depth_range remains view-space W.
+                    wrapper["depth_sort"] = -depth_range[1]
+                else:
+                    wrapper["depth_sort"] = depth_range[0]
+            else:
+                wrapper.pop("depth_sort", None)
 
             rect = _project_element_bbox_to_cell_rect(
                 elem,
@@ -2343,7 +2346,7 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     exc=e,
                 )
             wrapper["depth_range"] = (0.0, 0.0)
-            wrapper["depth_sort"] = wrapper["depth_range"][0]
+            wrapper.pop("depth_sort", None)
             wrapper["uv_bbox_rect"] = None
     _sub_t["raster_enrich_ms"] = _perf_ms(_t0_enrich, _perf_now())
     _sub_t["bbox_ms"] = _sub_t["raster_enrich_ms"]
