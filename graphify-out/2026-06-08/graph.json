@@ -647,7 +647,7 @@
       "file_type": "code",
       "source_file": "tests/dynamo/test_all_phases.py",
       "source_location": "L1",
-      "community": 19,
+      "community": 2,
       "norm_label": "test_all_phases.py",
       "id": "dynamo_test_all_phases"
     },
@@ -656,7 +656,7 @@
       "file_type": "rationale",
       "source_file": "tests/dynamo/test_all_phases.py",
       "source_location": "L1",
-      "community": 19,
+      "community": 2,
       "norm_label": "all phases test: quick validation of all implemented phases  copy this code into",
       "id": "dynamo_test_all_phases_rationale_1"
     },
@@ -755,7 +755,7 @@
       "file_type": "code",
       "source_file": "tests/dynamo/test_phase2_collection.py",
       "source_location": "L1",
-      "community": 19,
+      "community": 2,
       "norm_label": "test_phase2_collection.py",
       "id": "dynamo_test_phase2_collection"
     },
@@ -764,7 +764,7 @@
       "file_type": "rationale",
       "source_file": "tests/dynamo/test_phase2_collection.py",
       "source_location": "L1",
-      "community": 19,
+      "community": 2,
       "norm_label": "phase 2 test: element collection & bounding boxes  copy this code into a dynamo",
       "id": "dynamo_test_phase2_collection_rationale_1"
     },
@@ -773,7 +773,7 @@
       "file_type": "code",
       "source_file": "tests/dynamo/test_phase3_classification.py",
       "source_location": "L1",
-      "community": 19,
+      "community": 2,
       "norm_label": "test_phase3_classification.py",
       "id": "dynamo_test_phase3_classification"
     },
@@ -782,7 +782,7 @@
       "file_type": "rationale",
       "source_file": "tests/dynamo/test_phase3_classification.py",
       "source_location": "L1",
-      "community": 19,
+      "community": 2,
       "norm_label": "phase 3 test: uv classification & proxy generation  copy this code into a dynamo",
       "id": "dynamo_test_phase3_classification_rationale_1"
     },
@@ -863,7 +863,7 @@
       "file_type": "code",
       "source_file": "tests/dynamo/test_zero_occupancy_debug.py",
       "source_location": "L1",
-      "community": 19,
+      "community": 2,
       "norm_label": "test_zero_occupancy_debug.py",
       "id": "dynamo_test_zero_occupancy_debug"
     },
@@ -872,7 +872,7 @@
       "file_type": "rationale",
       "source_file": "tests/dynamo/test_zero_occupancy_debug.py",
       "source_location": "L1",
-      "community": 19,
+      "community": 2,
       "norm_label": "zero occupancy debug script  comprehensive diagnostic for linked rvt/dwg zero oc",
       "id": "dynamo_test_zero_occupancy_debug_rationale_1"
     },
@@ -4175,7 +4175,7 @@
       "file_type": "code",
       "source_file": "tests/test_geometry.py",
       "source_location": "L167",
-      "community": 23,
+      "community": 5,
       "norm_label": "testclassificationworkflows",
       "id": "tests_test_geometry_testclassificationworkflows"
     },
@@ -4184,7 +4184,7 @@
       "file_type": "code",
       "source_file": "tests/test_geometry.py",
       "source_location": "L170",
-      "community": 23,
+      "community": 5,
       "norm_label": ".test_door_classification()",
       "id": "tests_test_geometry_testclassificationworkflows_test_door_classification"
     },
@@ -4193,7 +4193,7 @@
       "file_type": "code",
       "source_file": "tests/test_geometry.py",
       "source_location": "L182",
-      "community": 23,
+      "community": 5,
       "norm_label": ".test_window_classification()",
       "id": "tests_test_geometry_testclassificationworkflows_test_window_classification"
     },
@@ -4202,7 +4202,7 @@
       "file_type": "code",
       "source_file": "tests/test_geometry.py",
       "source_location": "L196",
-      "community": 23,
+      "community": 5,
       "norm_label": ".test_wall_classification()",
       "id": "tests_test_geometry_testclassificationworkflows_test_wall_classification"
     },
@@ -4346,7 +4346,7 @@
       "file_type": "rationale",
       "source_file": "tests/test_geometry.py",
       "source_location": "L168",
-      "community": 23,
+      "community": 5,
       "norm_label": "test complete classification workflows (realistic scenarios).",
       "id": "tests_test_geometry_rationale_168"
     },
@@ -4355,7 +4355,7 @@
       "file_type": "rationale",
       "source_file": "tests/test_geometry.py",
       "source_location": "L171",
-      "community": 23,
+      "community": 5,
       "norm_label": "test typical door classification (tiny).",
       "id": "tests_test_geometry_rationale_171"
     },
@@ -4364,7 +4364,7 @@
       "file_type": "rationale",
       "source_file": "tests/test_geometry.py",
       "source_location": "L183",
-      "community": 23,
+      "community": 5,
       "norm_label": "test typical window classification (tiny or linear).",
       "id": "tests_test_geometry_rationale_183"
     },
@@ -4373,7 +4373,7 @@
       "file_type": "rationale",
       "source_file": "tests/test_geometry.py",
       "source_location": "L197",
-      "community": 23,
+      "community": 5,
       "norm_label": "test typical wall classification (linear).",
       "id": "tests_test_geometry_rationale_197"
     },
@@ -4382,7 +4382,7 @@
       "file_type": "rationale",
       "source_file": "tests/test_geometry.py",
       "source_location": "L208",
-      "community": 23,
+      "community": 5,
       "norm_label": "test typical floor classification (areal).",
       "id": "tests_test_geometry_rationale_208"
     },
@@ -7955,7 +7955,7 @@
       "file_type": "code",
       "source_file": "vop_interwoven/config.py",
       "source_location": "L1",
-      "community": 19,
+      "community": 2,
       "norm_label": "config.py",
       "id": "vop_interwoven_config"
     },
@@ -8081,7 +8081,7 @@
       "file_type": "rationale",
       "source_file": "vop_interwoven/config.py",
       "source_location": "L1",
-      "community": 19,
+      "community": 2,
       "norm_label": "configuration for vop interwoven pipeline.  defines the config class with all pa",
       "id": "vop_interwoven_config_rationale_1"
     },
@@ -8198,7 +8198,7 @@
       "file_type": "rationale",
       "source_file": "vop_interwoven/config.py",
       "source_location": "L120",
-      "community": 19,
+      "community": 2,
       "norm_label": "# note: signature is conservative but not omniscient; it primarily",
       "id": "vop_interwoven_config_rationale_120"
     },
@@ -8207,7 +8207,7 @@
       "file_type": "rationale",
       "source_file": "vop_interwoven/core/__init__.py",
       "source_location": "L1",
-      "community": 5,
+      "community": 19,
       "norm_label": "core data structures and algorithms for vop interwoven pipeline.  modules: - ras",
       "id": "core_init_rationale_1"
     },
@@ -9080,7 +9080,7 @@
       "file_type": "code",
       "source_file": "vop_interwoven/core/geometry.py",
       "source_location": "L1",
-      "community": 5,
+      "community": 19,
       "norm_label": "geometry.py",
       "id": "core_geometry"
     },
@@ -9089,7 +9089,7 @@
       "file_type": "code",
       "source_file": "vop_interwoven/core/geometry.py",
       "source_location": "L11",
-      "community": 5,
+      "community": 19,
       "norm_label": "mode",
       "id": "core_geometry_mode"
     },
@@ -9098,7 +9098,7 @@
       "file_type": "code",
       "source_file": "",
       "source_location": "",
-      "community": 5,
+      "community": 19,
       "norm_label": "enum",
       "id": "enum"
     },
@@ -9107,7 +9107,7 @@
       "file_type": "code",
       "source_file": "vop_interwoven/core/geometry.py",
       "source_location": "L23",
-      "community": 5,
+      "community": 19,
       "norm_label": "_mesh_vertex_count()",
       "id": "core_geometry_mesh_vertex_count"
     },
@@ -9116,7 +9116,7 @@
       "file_type": "code",
       "source_file": "vop_interwoven/core/geometry.py",
       "source_location": "L52",
-      "community": 5,
+      "community": 19,
       "norm_label": "tier_a_is_ambiguous()",
       "id": "core_geometry_tier_a_is_ambiguous"
     },
@@ -9125,7 +9125,7 @@
       "file_type": "code",
       "source_file": "vop_interwoven/core/geometry.py",
       "source_location": "L67",
-      "community": 5,
+      "community": 19,
       "norm_label": "classify_by_uv_pca()",
       "id": "core_geometry_classify_by_uv_pca"
     },
@@ -9251,7 +9251,7 @@
       "file_type": "code",
       "source_file": "vop_interwoven/core/geometry.py",
       "source_location": "L267",
-      "community": 5,
+      "community": 19,
       "norm_label": "make_obb_or_skinny_aabb()",
       "id": "core_geometry_make_obb_or_skinny_aabb"
     },
@@ -9260,7 +9260,7 @@
       "file_type": "rationale",
       "source_file": "vop_interwoven/core/geometry.py",
       "source_location": "L1",
-      "community": 5,
+      "community": 19,
       "norm_label": "geometry classification and proxy generation for vop interwoven pipeline.  provi",
       "id": "core_geometry_rationale_1"
     },
@@ -9269,7 +9269,7 @@
       "file_type": "rationale",
       "source_file": "vop_interwoven/core/geometry.py",
       "source_location": "L12",
-      "community": 5,
+      "community": 19,
       "norm_label": "element classification based on uv footprint size.      tiny: both dimensions <=",
       "id": "core_geometry_rationale_12"
     },
@@ -9278,7 +9278,7 @@
       "file_type": "rationale",
       "source_file": "vop_interwoven/core/geometry.py",
       "source_location": "L24",
-      "community": 5,
+      "community": 19,
       "norm_label": "best-effort vertex count for revit mesh-like objects.      must not throw. early",
       "id": "core_geometry_rationale_24"
     },
@@ -9359,7 +9359,7 @@
       "file_type": "rationale",
       "source_file": "vop_interwoven/core/geometry.py",
       "source_location": "L268",
-      "community": 5,
+      "community": 19,
       "norm_label": "create obb proxy for linear elements using precomputed obb from collection.",
       "id": "core_geometry_rationale_268"
     },
@@ -9620,7 +9620,7 @@
       "file_type": "code",
       "source_file": "vop_interwoven/core/math_utils.py",
       "source_location": "L22",
-      "community": 0,
+      "community": 5,
       "norm_label": ".__init__()",
       "id": "core_math_utils_bounds2d_init"
     },
@@ -9683,7 +9683,7 @@
       "file_type": "code",
       "source_file": "vop_interwoven/core/math_utils.py",
       "source_location": "L58",
-      "community": 0,
+      "community": 5,
       "norm_label": ".__repr__()",
       "id": "core_math_utils_bounds2d_repr"
     },
@@ -9692,7 +9692,7 @@
       "file_type": "code",
       "source_file": "vop_interwoven/core/math_utils.py",
       "source_location": "L62",
-      "community": 0,
+      "community": 5,
       "norm_label": "cellrect",
       "id": "core_math_utils_cellrect"
     },
@@ -9701,7 +9701,7 @@
       "file_type": "code",
       "source_file": "vop_interwoven/core/math_utils.py",
       "source_location": "L90",
-      "community": 0,
+      "community": 5,
       "norm_label": ".cells()",
       "id": "core_math_utils_cellrect_cells"
     },
@@ -9710,7 +9710,7 @@
       "file_type": "code",
       "source_file": "vop_interwoven/core/math_utils.py",
       "source_location": "L96",
-      "community": 0,
+      "community": 5,
       "norm_label": ".cell_count()",
       "id": "core_math_utils_cellrect_cell_count"
     },
@@ -9719,7 +9719,7 @@
       "file_type": "code",
       "source_file": "vop_interwoven/core/math_utils.py",
       "source_location": "L108",
-      "community": 0,
+      "community": 5,
       "norm_label": ".center_cell()",
       "id": "core_math_utils_cellrect_center_cell"
     },
@@ -9809,7 +9809,7 @@
       "file_type": "rationale",
       "source_file": "vop_interwoven/core/math_utils.py",
       "source_location": "L63",
-      "community": 0,
+      "community": 5,
       "norm_label": "rectangle in grid cell coordinates.      attributes:         i_min, j_min, i_max",
       "id": "core_math_utils_rationale_63"
     },
@@ -9818,7 +9818,7 @@
       "file_type": "rationale",
       "source_file": "vop_interwoven/core/math_utils.py",
       "source_location": "L91",
-      "community": 0,
+      "community": 5,
       "norm_label": "generator yielding all (i, j) cell indices in this rectangle.",
       "id": "core_math_utils_rationale_91"
     },
@@ -9827,7 +9827,7 @@
       "file_type": "rationale",
       "source_file": "vop_interwoven/core/math_utils.py",
       "source_location": "L97",
-      "community": 0,
+      "community": 5,
       "norm_label": "total number of cells in rectangle.",
       "id": "core_math_utils_rationale_97"
     },
@@ -9836,7 +9836,7 @@
       "file_type": "rationale",
       "source_file": "vop_interwoven/core/math_utils.py",
       "source_location": "L109",
-      "community": 0,
+      "community": 5,
       "norm_label": "return (i, j) of center cell.",
       "id": "core_math_utils_rationale_109"
     },
@@ -9881,7 +9881,7 @@
       "file_type": "code",
       "source_file": "vop_interwoven/core/pca2d.py",
       "source_location": "L1",
-      "community": 5,
+      "community": 19,
       "norm_label": "pca2d.py",
       "id": "core_pca2d"
     },
@@ -9890,7 +9890,7 @@
       "file_type": "code",
       "source_file": "vop_interwoven/core/pca2d.py",
       "source_location": "L3",
-      "community": 5,
+      "community": 19,
       "norm_label": "pca_oriented_extents_uv()",
       "id": "core_pca2d_pca_oriented_extents_uv"
     },
@@ -9899,7 +9899,7 @@
       "file_type": "rationale",
       "source_file": "vop_interwoven/core/pca2d.py",
       "source_location": "L4",
-      "community": 5,
+      "community": 19,
       "norm_label": "return (major_extent, minor_extent) in uv units using 2d pca.",
       "id": "core_pca2d_rationale_4"
     },
@@ -9908,7 +9908,7 @@
       "file_type": "code",
       "source_file": "vop_interwoven/core/raster.py",
       "source_location": "L1",
-      "community": 12,
+      "community": 0,
       "norm_label": "raster.py",
       "id": "core_raster"
     },
@@ -9917,7 +9917,7 @@
       "file_type": "code",
       "source_file": "vop_interwoven/core/raster.py",
       "source_location": "L8",
-      "community": 12,
+      "community": 0,
       "norm_label": "_extract_source_type()",
       "id": "core_raster_extract_source_type"
     },
@@ -10331,7 +10331,7 @@
       "file_type": "rationale",
       "source_file": "vop_interwoven/core/raster.py",
       "source_location": "L1",
-      "community": 12,
+      "community": 0,
       "norm_label": "raster data structures for vop interwoven pipeline.  provides viewraster and til",
       "id": "core_raster_rationale_1"
     },
@@ -10340,7 +10340,7 @@
       "file_type": "rationale",
       "source_file": "vop_interwoven/core/raster.py",
       "source_location": "L9",
-      "community": 12,
+      "community": 0,
       "norm_label": "extract simple source type from doc_key.      args:         doc_key: source key",
       "id": "core_raster_rationale_9"
     },
@@ -10790,7 +10790,7 @@
       "file_type": "rationale",
       "source_file": "vop_interwoven/core/raster.py",
       "source_location": "L1002",
-      "community": 12,
+      "community": 0,
       "norm_label": "# important: inset model clip by half a cell so no raster cell",
       "id": "core_raster_rationale_1002"
     },
@@ -10799,7 +10799,7 @@
       "file_type": "rationale",
       "source_file": "vop_interwoven/core/raster.py",
       "source_location": "L1529",
-      "community": 12,
+      "community": 0,
       "norm_label": "# important: match _cell_in_model_clip semantics by insetting model clip by half",
       "id": "core_raster_rationale_1529"
     },
@@ -13400,7 +13400,7 @@
       "file_type": "code",
       "source_file": "vop_interwoven/pipeline.py",
       "source_location": "L1651",
-      "community": 19,
+      "community": 2,
       "norm_label": "init_view_raster()",
       "id": "vop_interwoven_pipeline_init_view_raster"
     },
@@ -13634,7 +13634,7 @@
       "file_type": "rationale",
       "source_file": "vop_interwoven/pipeline.py",
       "source_location": "L1652",
-      "community": 19,
+      "community": 2,
       "norm_label": "initialize viewraster for a view.      centralizes bounds resolution through res",
       "id": "vop_interwoven_pipeline_rationale_1652"
     },
@@ -14264,7 +14264,7 @@
       "file_type": "rationale",
       "source_file": "vop_interwoven/revit/annotation.py",
       "source_location": "L1726",
-      "community": 19,
+      "community": 2,
       "norm_label": "project element bounding box to cell rectangle (annotation-specific).      this",
       "id": "revit_annotation_rationale_1726"
     },
@@ -14345,7 +14345,7 @@
       "file_type": "code",
       "source_file": "vop_interwoven/revit/collection.py",
       "source_location": "L702",
-      "community": 19,
+      "community": 2,
       "norm_label": "_project_element_bbox_to_cell_rect()",
       "id": "revit_collection_project_element_bbox_to_cell_rect"
     },
@@ -14480,7 +14480,7 @@
       "file_type": "rationale",
       "source_file": "vop_interwoven/revit/collection.py",
       "source_location": "L703",
-      "community": 19,
+      "community": 2,
       "norm_label": "project element bounding box to cell rectangle using obb (oriented bounds).",
       "id": "revit_collection_rationale_703"
     },
@@ -15308,7 +15308,7 @@
       "file_type": "code",
       "source_file": "vop_interwoven/revit/view_basis.py",
       "source_location": "L133",
-      "community": 19,
+      "community": 2,
       "norm_label": "make_view_basis()",
       "id": "revit_view_basis_make_view_basis"
     },
@@ -15488,7 +15488,7 @@
       "file_type": "rationale",
       "source_file": "vop_interwoven/revit/view_basis.py",
       "source_location": "L134",
-      "community": 19,
+      "community": 2,
       "norm_label": "extract view basis from revit view.",
       "id": "revit_view_basis_rationale_134"
     },
@@ -19339,7 +19339,7 @@
       "file_type": "code",
       "source_file": "vop_interwoven/core/__init__.py",
       "source_location": "L1",
-      "community": 5,
+      "community": 19,
       "norm_label": "__init__.py",
       "id": "core_init"
     },
@@ -20073,9 +20073,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
+      "id": "copilot_skills_graphify",
       "community": 27,
-      "norm_label": "graphify",
-      "id": "copilot_skills_graphify"
+      "norm_label": "graphify"
     },
     {
       "label": "query",
@@ -20086,9 +20086,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
+      "id": "copilot_skills_graphify_references_query",
       "community": 27,
-      "norm_label": "query",
-      "id": "copilot_skills_graphify_references_query"
+      "norm_label": "query"
     },
     {
       "label": "update",
@@ -20099,9 +20099,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
+      "id": "copilot_skills_graphify_references_update",
       "community": 27,
-      "norm_label": "update",
-      "id": "copilot_skills_graphify_references_update"
+      "norm_label": "update"
     }
   ],
   "links": [
