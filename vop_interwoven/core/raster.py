@@ -1210,12 +1210,15 @@ class ViewRaster:
                 # Mark proxy presence
                 self.model_proxy_mask[idx] = True
 
-                # write_occ: write depth to w_occ and sync TileMap so tile-based
-                # early-out (is_tile_full / w_max_tile) sees these occluder cells.
+                # write_occ: write depth to w_occ, set model_mask, and sync TileMap so
+                # tile-based early-out (is_tile_full / w_max_tile) sees these occluder
+                # cells. model_mask=True keeps finalize_anno_over_model consistent with
+                # the depth buffer when over_model_includes_proxies=False.
                 # was_empty evaluated before the write so update_filled_count is accurate.
                 if write_occ and depth < self.w_occ[idx]:
                     was_empty = self.w_occ[idx] == float("inf")
                     self.w_occ[idx] = depth
+                    self.model_mask[idx] = True
                     self.tile.update_w_min(i, j, depth)
                     if was_empty:
                         self.tile.update_filled_count(i, j, increment=1)
