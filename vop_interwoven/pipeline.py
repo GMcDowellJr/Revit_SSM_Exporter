@@ -1865,14 +1865,14 @@ def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, con
           - Uses actual extracted geometry (planar_face_loops, silhouette_edges)
 
         MEDIUM confidence:
-          - Rasterizes to proxy layer ONLY (no occlusion)
+          - Rasterizes to proxy layer; writes w_occ to gate later elements
           - Uses geometry_polygon extraction (actual footprint, not bbox)
-          - Visible in output but doesn't block later elements
+          - Visible in output; blocks HOST and non-HOST via per-cell depth gate
 
         LOW confidence:
-          - Rasterizes to proxy layer ONLY (no occlusion)
+          - Rasterizes to proxy layer; writes w_occ to gate later elements
           - Uses OBB/AABB fallback (approximate shape)
-          - Visible in output but doesn't block later elements
+          - Visible in output; blocks HOST and non-HOST via per-cell depth gate
     """
     if not loops or len(loops) == 0:
         return (False, 0)
@@ -1946,11 +1946,15 @@ def rasterize_areal_loops(loops, raster, key_index, elem_depth, source_type, con
         # MEDIUM/LOW confidence: proxy ink only, no occlusion writes.
         # Policy: only AREAL+HIGH may write w_occ; approximate geometry must not block
         # later elements via the depth buffer.
+        # MEDIUM/LOW: proxy ink with w_occ depth writes so later elements (including HOST)
+        # are blocked at the per-cell depth gate.  _out_cells collects written cells so
+        # the caller can build tight scene occluder rects via decompose_to_rects.
         elif confidence in ("MEDIUM", "LOW"):
             if closed_loops:
                 try:
                     filled += raster.rasterize_polygon_to_proxy(
-                        closed_loops, key_index, depth=elem_depth, source=source_type
+                        closed_loops, key_index, depth=elem_depth, source=source_type,
+                        _out_cells=_out_cells, write_occ=True
                     )
                 except Exception as e:
                     print("[WARN] rasterize_areal_loops: rasterize_polygon_to_proxy raised "
@@ -2481,10 +2485,11 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                             uv_rect.j_min >= oj_min and uv_rect.j_max <= oj_max):
                         _rect_occluded = True
                         break
-            # HOST elements must fall through to the normal raster path.  Even when
-            # hidden, HOST rasterization marks occ_host only for cells touched by
-            # the true silhouette/fallback footprint before depth rejection; using
-            # the bbox here would over-mark holes/concavities/thin elements.
+            # HOST elements fall through to the raster path so occ_host is marked via
+            # try_write_cell (pre-depth-test spatial presence).  The per-cell w_occ depth
+            # gate then prevents hidden HOST cells from writing model_mask/model_edge.
+            # MEDIUM/LOW AREAL occluders write w_occ (write_occ=True), so they gate HOST
+            # correctly at the cell level without this scene gate needing to touch HOST.
             if _rect_occluded and source_type != "HOST":
                 skipped += 1
                 continue
@@ -3281,14 +3286,11 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                 strategy = loops[0].get('strategy', 'unknown')
 
             # PHASE 2.2: Use rasterize_areal_loops() for AREAL elements
-            # This handles confidence-based occlusion (HIGH occludes, MEDIUM/LOW don't)
+            # All AREAL confidence levels (HIGH/MED/LOW) act as occluders.
             if elem_class == "AREAL":
                 try:
-                    # AREAL HIGH scene-occluder rects must be derived from the cells
-                    # committed by this same rasterization call.  Do not re-extract
-                    # geometry here; LOW/MEDIUM pass None to avoid per-cell set.add()
-                    # overhead on non-occluding elements.
-                    _elem_cells = set() if confidence == CONF_HIGH else None
+                    # All AREAL levels collect written cells for occluder rect derivation.
+                    _elem_cells = set()
                     success, filled = rasterize_areal_loops(
                         loops=loops,
                         raster=raster,
@@ -3303,9 +3305,8 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     )
 
                     if confidence == CONF_HIGH and filled > 0 and _elem_cells:
-                        # _out_cells is populated by the raster mask path; keep only cells
-                        # this element actually owns in w_occ so scene rects describe the
-                        # committed occluder footprint, not merely candidate mask cells.
+                        # Keep only cells this element owns in w_occ so scene rects describe
+                        # the committed occluder footprint, not merely candidate mask cells.
                         try:
                             _elem_cells = {
                                 idx for idx in _elem_cells
@@ -3315,6 +3316,16 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                             _elem_cells = set()
                         w_max_elem = elem_wrapper.get("depth_range", (0.0, 0.0))[1]
                         if _elem_cells and isinstance(w_max_elem, (int, float)) and math.isfinite(w_max_elem):
+                            _new_rects = decompose_to_rects(_elem_cells, raster.H, raster.W)
+                            for (i_min, j_min, i_max, j_max) in _new_rects:
+                                _scene_occ_rects.append((i_min, j_min, i_max, j_max, w_max_elem))
+                    elif confidence in (CONF_MEDIUM, CONF_LOW) and filled > 0 and _elem_cells:
+                        # Proxy cells are the exact footprint rasterized — no ownership
+                        # filter needed (proxy doesn't write w_occ_key).  Using the actual
+                        # cells rather than uv_bbox_rect avoids false occlusion in the
+                        # empty corners of a rotated or concave proxy footprint.
+                        w_max_elem = elem_wrapper.get("depth_range", (0.0, 0.0))[1]
+                        if isinstance(w_max_elem, (int, float)) and math.isfinite(w_max_elem):
                             _new_rects = decompose_to_rects(_elem_cells, raster.H, raster.W)
                             for (i_min, j_min, i_max, j_max) in _new_rects:
                                 _scene_occ_rects.append((i_min, j_min, i_max, j_max, w_max_elem))
