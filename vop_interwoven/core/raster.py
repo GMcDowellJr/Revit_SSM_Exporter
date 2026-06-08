@@ -1192,12 +1192,9 @@ class ViewRaster:
             if idx is None:
                 continue
 
-            # Depth gate: proxy can be hidden by AREAL+HIGH occluders.
-            # All elements (TINY/LINEAR/AREAL) can be occluded; only AREAL+HIGH
-            # can occlude others. This gate implements the "can be hidden" side.
-            # Mirrors stamp_proxy_edge_idx: write only if cell is empty or
-            # this element is at least as close as what's already there.
-            # Proxy still does NOT write w_occ — it has no occlusion authority.
+            # Depth gate: proxy can be hidden by a nearer occluder.
+            # Proxy writes w_occ when write_occ=True; depth gate here and the
+            # update below keep w_occ and the TileMap in sync.
             w_here = self.w_occ[idx]
             if w_here != float("inf") and depth > w_here:
                 continue  # Nearer element already occupies cell; proxy is hidden
@@ -1213,10 +1210,21 @@ class ViewRaster:
                 # Mark proxy presence
                 self.model_proxy_mask[idx] = True
 
-                # write_occ: make this cell opaque to later elements (per-cell depth gate).
-                # Depth gate above already ensures depth <= w_occ[idx] at this point.
+                # write_occ: write depth to w_occ and sync TileMap so tile-based
+                # early-out (is_tile_full / w_max_tile) sees these occluder cells.
+                # was_empty evaluated before the write so update_filled_count is accurate.
                 if write_occ and depth < self.w_occ[idx]:
+                    was_empty = self.w_occ[idx] == float("inf")
                     self.w_occ[idx] = depth
+                    self.tile.update_w_min(i, j, depth)
+                    if was_empty:
+                        self.tile.update_filled_count(i, j, increment=1)
+                    if key_index is not None:
+                        try:
+                            if 0 <= key_index < len(self.element_meta):
+                                self.element_meta[key_index]["occlusion_cells"] += 1
+                        except Exception:
+                            pass
 
         return filled_count
 
