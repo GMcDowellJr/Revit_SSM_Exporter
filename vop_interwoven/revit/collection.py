@@ -357,12 +357,16 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None, 
             "elem_id": elem_id,
             "source_type": "HOST",
         }
-        # EX1: use model bbox (view=None) — get_BoundingBox(view) is ~10-15x slower on
-        # elevation views because Revit clips the bbox to the view's coordinate system.
-        # Model bbox is sufficient for spatial filtering and downstream rasterization.
+        # Use view-clipped bbox for host elements: get_BoundingBox(view) returns the
+        # element's extent clipped to the view's crop region.  The wrapper bbox is
+        # consumed by uv_bbox_rect, classification (TINY/LINEAR/AREAL), depth ranges,
+        # and bbox-fallback rendering — all of which must not extend beyond the view.
+        # ⚠ get_BoundingBox(view) is ~10-15x slower on elevation/section views than on
+        #   floor plans; if this becomes a bottleneck, the fix must come from caching or
+        #   lazy evaluation — NOT from substituting the model bbox here.
         bbox, bbox_source = resolve_element_bbox(
             e,
-            view=None,
+            view=view,
             diag=diag,
             context=bbox_context,
         )
