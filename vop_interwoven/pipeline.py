@@ -2288,14 +2288,9 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
         raster_tile_est_ms=getattr(cfg, "occlusion_raster_tile_est_ms", 0.1),
     )
 
-    # Sort elements front-to-back by depth for proper occlusion
-    _t0_sort = _perf_now()
-    expanded_elements = sort_front_to_back(expanded_elements, view, raster)
-    _t1_sort = _perf_now()
-    _sub_t["raster_sorting_ms"] = _perf_ms(_t0_sort, _t1_sort)
-    occlusion_tracker.time_sorting_ms = _perf_ms(_t0_sort, _t1_sort)
-
-    # Enrich elements with depth range and bbox for ambiguity detection
+    # Enrich elements with view-space depth range and bbox for ambiguity detection before sorting.
+    # sort_front_to_back honors a wrapper-provided depth_sort key, so keep depth_range
+    # in view-space W and use nearest-W order for every view type.
     _t0_enrich = _perf_now()
     from .revit.collection import estimate_depth_range_from_bbox
     for wrapper in expanded_elements:
@@ -2303,32 +2298,41 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
             elem = wrapper["element"]
             world_transform = wrapper["world_transform"]
             bbox = wrapper.get("bbox")
+            bbox_link = wrapper.get("bbox_link")
+            bbox_for_depth = bbox_link if bbox_link is not None else bbox
+            bbox_is_link_space = bbox_link is not None
 
             depth_range = estimate_depth_range_from_bbox(
                 elem,
                 world_transform,
                 view,
                 raster,
-                bbox=bbox,
+                bbox=bbox_for_depth,
                 diag=diag,
-                bbox_is_link_space=bool(wrapper.get("bbox_is_link_space", False)),
+                bbox_is_link_space=bbox_is_link_space,
             )
 
             wrapper["depth_range"] = depth_range
+            if all(isinstance(w, (int, float)) and math.isfinite(w) for w in depth_range):
+                wrapper["depth_sort"] = depth_range[0]
+            else:
+                wrapper.pop("depth_sort", None)
 
             rect = _project_element_bbox_to_cell_rect(
                 elem,
                 vb,
                 raster,
-                bbox=bbox,
+                bbox=bbox_for_depth,
                 diag=diag,
                 view=view,
+                transform=world_transform,
+                bbox_is_link_space=bbox_is_link_space,
             )
             wrapper["uv_bbox_rect"] = rect
 
             # Mark wrappers with valid bbox that falls entirely outside raster bounds.
             # Wrappers without a bbox have unknown geometry and must reach render.
-            if rect is None and bbox is not None:
+            if rect is None and bbox_for_depth is not None:
                 wrapper["_bbox_outside_raster"] = True
         except Exception as e:
             if diag is not None:
@@ -2339,9 +2343,17 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     exc=e,
                 )
             wrapper["depth_range"] = (0.0, 0.0)
+            wrapper.pop("depth_sort", None)
             wrapper["uv_bbox_rect"] = None
     _sub_t["raster_enrich_ms"] = _perf_ms(_t0_enrich, _perf_now())
     _sub_t["bbox_ms"] = _sub_t["raster_enrich_ms"]
+
+    # Sort elements front-to-back by depth for proper occlusion.
+    _t0_sort = _perf_now()
+    expanded_elements = sort_front_to_back(expanded_elements, view, raster)
+    _t1_sort = _perf_now()
+    _sub_t["raster_sorting_ms"] = _perf_ms(_t0_sort, _t1_sort)
+    occlusion_tracker.time_sorting_ms = _perf_ms(_t0_sort, _t1_sort)
 
     # After enrich loop — remove wrappers with valid bbox that projects outside raster.
     expanded_elements = [
