@@ -1056,7 +1056,7 @@ class ViewRaster:
 
         return filled_count
 
-    def rasterize_polygon_to_proxy(self, loops, key_index, depth=0.0, source="HOST"):
+    def rasterize_polygon_to_proxy(self, loops, key_index, depth=0.0, source="HOST", _out_cells=None):
         """Rasterize polygon loops to proxy layer WITHOUT updating occlusion buffer.
 
         This is for MEDIUM/LOW confidence AREAL elements that should be visible but NOT occlude,
@@ -1067,6 +1067,7 @@ class ViewRaster:
             key_index: Element metadata index
             depth: W-depth value used for the occlusion gate (see below)
             source: Source type - "HOST", "LINK", or "DWG" (default: "HOST")
+            _out_cells: Optional set; populated with flat cell indices that were written
 
         Returns:
             Number of cells written to proxy layer
@@ -1203,6 +1204,8 @@ class ViewRaster:
                 if self.model_proxy_key[idx] != key_index:
                     self.model_proxy_key[idx] = key_index
                     filled_count += 1
+                    if _out_cells is not None:
+                        _out_cells.add(idx)
 
                 # Mark proxy presence
                 self.model_proxy_mask[idx] = True
