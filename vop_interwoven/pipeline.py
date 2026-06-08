@@ -2218,6 +2218,9 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
         ✔ Handles linked/imported elements with transforms
     """
     from .revit.collection import _project_element_bbox_to_cell_rect, expand_host_link_import_model_elements
+    from .revit.view_basis import _view_type_name
+
+    _is_ceiling_plan = (_view_type_name(view) == "CeilingPlan")
 
     # ── Sub-timing accumulators (milliseconds) ──
     _sub_t = {
@@ -2288,14 +2291,9 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
         raster_tile_est_ms=getattr(cfg, "occlusion_raster_tile_est_ms", 0.1),
     )
 
-    # Sort elements front-to-back by depth for proper occlusion
-    _t0_sort = _perf_now()
-    expanded_elements = sort_front_to_back(expanded_elements, view, raster)
-    _t1_sort = _perf_now()
-    _sub_t["raster_sorting_ms"] = _perf_ms(_t0_sort, _t1_sort)
-    occlusion_tracker.time_sorting_ms = _perf_ms(_t0_sort, _t1_sort)
-
-    # Enrich elements with depth range and bbox for ambiguity detection
+    # Enrich elements with depth range and bbox for ambiguity detection before sorting.
+    # sort_front_to_back honors a wrapper-provided depth_sort key, so this keeps
+    # CeilingPlan sign correction identical for both the sort key and stored range.
     _t0_enrich = _perf_now()
     from .revit.collection import estimate_depth_range_from_bbox
     for wrapper in expanded_elements:
@@ -2315,6 +2313,12 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
             )
 
             wrapper["depth_range"] = depth_range
+            if _is_ceiling_plan:
+                dr = wrapper["depth_range"]
+                # Negate W so ceiling surface (W=0) sorts first, above-cut MEP sorts after.
+                # Swap min/max because negating reverses the interval.
+                wrapper["depth_range"] = (-dr[1], -dr[0])
+            wrapper["depth_sort"] = wrapper["depth_range"][0]
 
             rect = _project_element_bbox_to_cell_rect(
                 elem,
@@ -2339,9 +2343,17 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                     exc=e,
                 )
             wrapper["depth_range"] = (0.0, 0.0)
+            wrapper["depth_sort"] = wrapper["depth_range"][0]
             wrapper["uv_bbox_rect"] = None
     _sub_t["raster_enrich_ms"] = _perf_ms(_t0_enrich, _perf_now())
     _sub_t["bbox_ms"] = _sub_t["raster_enrich_ms"]
+
+    # Sort elements front-to-back by depth for proper occlusion.
+    _t0_sort = _perf_now()
+    expanded_elements = sort_front_to_back(expanded_elements, view, raster)
+    _t1_sort = _perf_now()
+    _sub_t["raster_sorting_ms"] = _perf_ms(_t0_sort, _t1_sort)
+    occlusion_tracker.time_sorting_ms = _perf_ms(_t0_sort, _t1_sort)
 
     # After enrich loop — remove wrappers with valid bbox that projects outside raster.
     expanded_elements = [
