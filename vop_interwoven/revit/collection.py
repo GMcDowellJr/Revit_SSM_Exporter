@@ -357,16 +357,9 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None, 
             "elem_id": elem_id,
             "source_type": "HOST",
         }
-        # Use view-clipped bbox for host elements: get_BoundingBox(view) returns the
-        # element's extent clipped to the view's crop region.  The wrapper bbox is
-        # consumed by uv_bbox_rect, classification (TINY/LINEAR/AREAL), depth ranges,
-        # and bbox-fallback rendering — all of which must not extend beyond the view.
-        # ⚠ get_BoundingBox(view) is ~10-15x slower on elevation/section views than on
-        #   floor plans; if this becomes a bottleneck, the fix must come from caching or
-        #   lazy evaluation — NOT from substituting the model bbox here.
         bbox, bbox_source = resolve_element_bbox(
             e,
-            view=view,
+            view=None,
             diag=diag,
             context=bbox_context,
         )
@@ -428,9 +421,6 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None, 
         linked_proxies = collect_all_linked_elements(doc, view, cfg, diag=diag)
 
         for proxy in linked_proxies:
-            # LinkedElementProxy.get_BoundingBox() returns host-space bbox and ignores
-            # the view argument per the resolve_element_bbox docstring. Pass view=None
-            # to avoid the unnecessary view-dependent API call.
             bbox, bbox_source = resolve_element_bbox(
                 proxy,
                 view=None,
