@@ -3284,10 +3284,9 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
             # All AREAL confidence levels (HIGH/MED/LOW) act as occluders.
             if elem_class == "AREAL":
                 try:
-                    # Scene-occluder rects are derived from the cells committed by this
-                    # rasterization call.  All AREAL confidence levels now contribute;
-                    # LOW/MED bbox/OBB footprints are conservative occluders.
-                    _elem_cells = set()
+                    # HIGH: collect cells committed to w_occ to derive exact occluder rects.
+                    # LOW/MEDIUM: proxy branch never writes w_occ; uv_bbox_rect is used instead.
+                    _elem_cells = set() if confidence == CONF_HIGH else None
                     success, filled = rasterize_areal_loops(
                         loops=loops,
                         raster=raster,
@@ -3301,10 +3300,9 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                         _out_cells=_elem_cells
                     )
 
-                    if filled > 0 and _elem_cells:
-                        # _out_cells is populated by the raster mask path; keep only cells
-                        # this element actually owns in w_occ so scene rects describe the
-                        # committed occluder footprint, not merely candidate mask cells.
+                    if confidence == CONF_HIGH and filled > 0 and _elem_cells:
+                        # Keep only cells this element owns in w_occ so scene rects describe
+                        # the committed occluder footprint, not merely candidate mask cells.
                         try:
                             _elem_cells = {
                                 idx for idx in _elem_cells
@@ -3317,6 +3315,20 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
                             _new_rects = decompose_to_rects(_elem_cells, raster.H, raster.W)
                             for (i_min, j_min, i_max, j_max) in _new_rects:
                                 _scene_occ_rects.append((i_min, j_min, i_max, j_max, w_max_elem))
+                    elif confidence in (CONF_MEDIUM, CONF_LOW) and filled > 0:
+                        # Proxy rasterizer never writes w_occ_key, so cell ownership cannot be
+                        # tested.  Use the pre-computed UV bbox as a conservative occluder rect —
+                        # it covers at least the rasterized proxy area and cannot false-skip a
+                        # visible element (only one fully behind the bbox approximation).
+                        _bbox_rect = elem_wrapper.get("uv_bbox_rect")
+                        w_max_elem = elem_wrapper.get("depth_range", (0.0, 0.0))[1]
+                        if (_bbox_rect is not None and not _bbox_rect.empty
+                                and isinstance(w_max_elem, (int, float)) and math.isfinite(w_max_elem)):
+                            _scene_occ_rects.append((
+                                _bbox_rect.i_min, _bbox_rect.j_min,
+                                _bbox_rect.i_max, _bbox_rect.j_max,
+                                w_max_elem,
+                            ))
 
                     if success:
                         silhouette_success += 1
