@@ -683,6 +683,23 @@ def estimate_depth_range_from_bbox(elem, transform, view, raster, bbox=None, dia
         (max_x, max_y, max_z),
     ]
 
+    # BoundingBoxXYZ.Min/Max are in bbox-local space; Transform maps local→world.
+    # Apply this before any link-space transform, mirroring _project_element_bbox_to_cell_rect.
+    bbox_trf = getattr(bbox, "Transform", None)
+    if bbox_trf is not None:
+        try:
+            from Autodesk.Revit.DB import XYZ
+            xyzs = [XYZ(c[0], c[1], c[2]) for c in corners]
+            corners = [(p.X, p.Y, p.Z) for p in [bbox_trf.OfPoint(p) for p in xyzs]]
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="collection",
+                    callsite="estimate_depth_range_from_bbox",
+                    message="Exception applying bbox.Transform in estimate_depth_range_from_bbox: {}".format(e),
+                    exc=e,
+                )
+
     if bbox_is_link_space:
         if transform is None:
             return (float("inf"), float("inf"))
