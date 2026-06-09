@@ -614,7 +614,7 @@ def estimate_depth_from_loops_or_bbox(elem, loops, transform, view, raster, bbox
         bbox_is_link_space=bbox_is_link_space,
     )
 
-def estimate_depth_range_from_bbox(elem, transform, view, raster, bbox=None, diag=None):
+def estimate_depth_range_from_bbox(elem, transform, view, raster, bbox=None, diag=None, bbox_is_link_space=False):
     """Estimate depth range (min, max) of element from its bounding box.
 
     Uses wrapper-provided bbox when available; otherwise resolves bbox via resolve_element_bbox().
@@ -682,6 +682,27 @@ def estimate_depth_range_from_bbox(elem, transform, view, raster, bbox=None, dia
         (max_x, max_y, min_z),
         (max_x, max_y, max_z),
     ]
+
+    if bbox_is_link_space:
+        if transform is None:
+            return (float("inf"), float("inf"))
+        try:
+            corners = [transform.OfPoint(c) for c in corners]
+        except Exception as e:
+            if diag is not None:
+                diag.error(
+                    phase="collection",
+                    callsite="estimate_depth_range_from_bbox",
+                    message="Exception in estimate_depth_range_from_bbox: {}".format(e),
+                    exc=e,
+                )
+            try:
+                from Autodesk.Revit.DB import XYZ
+                xyzs = [XYZ(c[0], c[1], c[2]) for c in corners]
+                corners_xyz = [transform.OfPoint(p) for p in xyzs]
+                corners = [(p.X, p.Y, p.Z) for p in corners_xyz]
+            except Exception as e:
+                return (float("inf"), float("inf"))
 
     min_depth = float("inf")
     max_depth = float("-inf")
