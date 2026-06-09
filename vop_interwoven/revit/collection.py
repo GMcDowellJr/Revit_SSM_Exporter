@@ -704,22 +704,18 @@ def estimate_depth_range_from_bbox(elem, transform, view, raster, bbox=None, dia
         if transform is None:
             return (float("inf"), float("inf"))
         try:
-            corners = [transform.OfPoint(c) for c in corners]
+            from Autodesk.Revit.DB import XYZ
+            xyzs = [XYZ(c[0], c[1], c[2]) for c in corners]
+            corners = [(p.X, p.Y, p.Z) for p in [transform.OfPoint(p) for p in xyzs]]
         except Exception as e:
             if diag is not None:
                 diag.error(
                     phase="collection",
                     callsite="estimate_depth_range_from_bbox",
-                    message="Exception in estimate_depth_range_from_bbox: {}".format(e),
+                    message="Exception applying link transform in estimate_depth_range_from_bbox: {}".format(e),
                     exc=e,
                 )
-            try:
-                from Autodesk.Revit.DB import XYZ
-                xyzs = [XYZ(c[0], c[1], c[2]) for c in corners]
-                corners_xyz = [transform.OfPoint(p) for p in xyzs]
-                corners = [(p.X, p.Y, p.Z) for p in corners_xyz]
-            except Exception as e:
-                return (float("inf"), float("inf"))
+            return (float("inf"), float("inf"))
 
     min_depth = float("inf")
     max_depth = float("-inf")
