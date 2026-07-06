@@ -351,11 +351,21 @@ try:
         bool(IN[5]) if len(IN) > 5 and IN[5] is not None else False
     )
     cfg.enable_color_id_buffer_stage_a = enable_color_id_buffer_stage_a
+    if enable_color_id_buffer_stage_a:
+        # Stage A mode should only emit color_id_buffer TIFF/JSON plus its
+        # minimal diagnostics; suppress legacy cache/map side outputs that make
+        # it look like the silhouette pipeline ran.
+        cfg.use_element_cache = False
+        cfg.element_cache_persist = False
+        cfg.element_cache_export_csv = False
+        cfg.element_cache_detect_changes = False
+        cfg.view_cache_enabled = False
 
     print("="*60)
     print("DEBUG: About to call streaming")
     print("  cfg.view_cache_enabled = {}".format(cfg.view_cache_enabled))
     print("  cfg.view_cache_dir = {}".format(cfg.view_cache_dir))
+    print("  cfg.use_element_cache = {}".format(cfg.use_element_cache))
     print("  cfg.enable_color_id_buffer_stage_a = {}".format(
         cfg.enable_color_id_buffer_stage_a
     ))
@@ -481,6 +491,7 @@ try:
     print("DEBUG: After streaming call")
     print("  cfg.view_cache_enabled = {}".format(cfg.view_cache_enabled))
     print("  cfg.view_cache_dir = {}".format(cfg.view_cache_dir))
+    print("  cfg.use_element_cache = {}".format(cfg.use_element_cache))
     print("  cfg.enable_color_id_buffer_stage_a = {}".format(
         cfg.enable_color_id_buffer_stage_a
     ))

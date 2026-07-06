@@ -1028,20 +1028,25 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
     # This ensures PNGs and CSVs can be exported before memory is discarded
     cfg.retain_rasters_in_memory = True
     
-    # Initialize root-style cache (works with streaming!)
+    # Initialize root-style cache (works with streaming!) unless Stage A is
+    # enabled. Stage A must always create fresh TIFF/sidecar outputs and must
+    # not be satisfied by metrics-only legacy cache hits.
+    stage_a_color_id_mode = bool(getattr(cfg, "enable_color_id_buffer_stage_a", False))
     project_guid = doc.ProjectInformation.UniqueId if doc.ProjectInformation else "unknown"
     exporter_version = "VOP_v2.0"
     config_hash = compute_config_hash(cfg)
-    
-    root_cache = RootStyleCache(
-        output_dir=output_dir,
-        project_guid=project_guid,
-        exporter_version=exporter_version,
-        config_hash=config_hash
-    )
-    
-    # Load existing cache
-    root_cache.load()
+
+    root_cache = None
+    if not stage_a_color_id_mode:
+        root_cache = RootStyleCache(
+            output_dir=output_dir,
+            project_guid=project_guid,
+            exporter_version=exporter_version,
+            config_hash=config_hash
+        )
+
+        # Load existing cache
+        root_cache.load()
     
     # Initialize streaming exporter
     exporter = StreamingExporter(
@@ -1074,18 +1079,20 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
     result = exporter.finalize()
     result["total_time_sec"] = t1 - t0
     
-    # Persist root cache
-    try:
-        ok = root_cache.save()
+    # Persist root cache only in legacy mode. Stage A is an image extraction
+    # mode and intentionally avoids metrics-only cache files.
+    if root_cache is not None:
         try:
-            print(f"[Streaming] Root cache stats: {root_cache.stats()}")
+            ok = root_cache.save()
+            try:
+                print(f"[Streaming] Root cache stats: {root_cache.stats()}")
+            except Exception as e:
+                # Exception in run_vop_pipeline_streaming - no diag in scope
+                pass  # TODO: Add diagnostics when diag becomes available
+            if not ok:
+                print("[Streaming] Root cache save returned False")
         except Exception as e:
-            # Exception in run_vop_pipeline_streaming - no diag in scope
-            pass  # TODO: Add diagnostics when diag becomes available
-        if not ok:
-            print("[Streaming] Root cache save returned False")
-    except Exception as e:
-        print(f"[Streaming] Root cache save failed: {e}")
+            print(f"[Streaming] Root cache save failed: {e}")
     
     print(f"\n[Streaming] Complete:")
     print(f"  Processed: {result['views_processed']} views")
