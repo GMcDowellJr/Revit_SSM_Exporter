@@ -574,6 +574,15 @@ class Config:
             "metrics_manifest_path": self.metrics_manifest_path,
             "metrics_validation_mode": self.metrics_validation_mode,
             "csv_compat_mode": self.csv_compat_mode,
+            # VOP Stage A color ID-buffer extraction
+            "enable_color_id_buffer_stage_a": self.enable_color_id_buffer_stage_a,
+            "color_id_buffer_min_pixels_across_threshold": (
+                self.color_id_buffer_min_pixels_across_threshold
+            ),
+            "color_id_buffer_threshold_source_mm": self.color_id_buffer_threshold_source_mm,
+            "color_id_buffer_global_assignment_threshold": (
+                self.color_id_buffer_global_assignment_threshold
+            ),
         }
 
     @classmethod
@@ -643,5 +652,16 @@ class Config:
             metrics_manifest_path=d.get("metrics_manifest_path", None),
             metrics_validation_mode=d.get("metrics_validation_mode", "warn"),
             csv_compat_mode=d.get("csv_compat_mode", True),
+            # VOP Stage A color ID-buffer extraction
+            enable_color_id_buffer_stage_a=d.get("enable_color_id_buffer_stage_a", False),
+            color_id_buffer_min_pixels_across_threshold=d.get(
+                "color_id_buffer_min_pixels_across_threshold", 2
+            ),
+            color_id_buffer_threshold_source_mm=d.get(
+                "color_id_buffer_threshold_source_mm", 0.7
+            ),
+            color_id_buffer_global_assignment_threshold=d.get(
+                "color_id_buffer_global_assignment_threshold", 32767
+            ),
 
         )

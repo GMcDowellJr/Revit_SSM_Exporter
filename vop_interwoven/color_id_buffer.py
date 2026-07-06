@@ -220,6 +220,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None):
     orig_phase_filter_id = pf_param.AsElementId().IntegerValue if pf_param is not None else None
     phase_filter_state = {"orig_phase_filter_id": orig_phase_filter_id, "neutral_phase_filter_id": None}
     category_halftone_state = {}
+    element_override_state = {}
     category_hidden_state = _hidden_category_state(doc, view)
     solid_pattern_id = _get_solid_pattern_id(doc)
     if solid_pattern_id is None:
@@ -259,6 +260,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None):
                         view_id=view_id,
                     )
         for eid in resolved_ids:
+            element_override_state[eid.IntegerValue] = view.GetElementOverrides(eid)
             rgb = color_map[eid.IntegerValue]
             color = Color(int(rgb[0]), int(rgb[1]), int(rgb[2]))
             ogs = OverrideGraphicSettings()
@@ -304,9 +306,12 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None):
                         )
             for cat_id_int, hstate in category_hidden_state.items():
                 view.SetCategoryHidden(ElementId(int(cat_id_int)), bool(hstate["was_hidden"]))
-            default_ogs = OverrideGraphicSettings()
             for eid in resolved_ids:
-                view.SetElementOverrides(ElementId(int(eid.IntegerValue)), default_ogs)
+                eid_int = int(eid.IntegerValue)
+                prior_ogs = element_override_state.get(eid_int)
+                if prior_ogs is None:
+                    prior_ogs = OverrideGraphicSettings()
+                view.SetElementOverrides(ElementId(eid_int), prior_ogs)
             restore_tx.Commit()
         except Exception:
             restore_tx.RollBack()
