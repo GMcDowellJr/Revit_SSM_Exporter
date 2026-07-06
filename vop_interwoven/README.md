@@ -443,7 +443,17 @@ boundary. On Revit hosts without `FlatColors`, it falls back to plain
 `Shading` and logs a diagnostic, since that fallback doesn't guarantee
 shadow-free output. The original display style is restored before the next
 view, and the style actually used is recorded in the sidecar's
-`applied_display_style`. The color palette also reserves the near-white
-corner of the RGB cube (any channel ≥ `224`) as invalid/background, so a
-decoder has a clean boundary against anti-aliasing halos at the page
-background instead of risking a real element color being mistaken for it.
+`applied_display_style`.
+
+Stage A also disables the per-view Graphic Display Options "Smooth lines with
+anti-aliasing" checkbox (`View.GetViewDisplayModel().SmoothEdges`, distinct
+from `DisplayStyle`) for the export and restores it afterward. This is the
+specific setting the original empirical Stage A testing validated as
+"AA-off is clean" — with it on, Revit blends colors across an element's
+silhouette edge, producing off-lattice pixel colors right at boundaries that
+a decoder can't tell apart from a genuine third color. The applied value is
+recorded in the sidecar's `applied_smooth_edges`. The color palette also
+reserves the near-white corner of the RGB cube (any channel ≥ `224`) as
+invalid/background, so a decoder has a clean boundary against any residual
+anti-aliasing halo at the page background instead of risking a real element
+color being mistaken for it.

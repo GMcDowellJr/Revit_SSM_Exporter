@@ -391,6 +391,29 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     if solid_pattern_id is None:
         raise RuntimeError("No solid drafting fill pattern found in project")
     orig_display_style = getattr(view, "DisplayStyle", None)
+    # Capture only the plain bool, not the ViewDisplayModel object itself — the
+    # curtain-panel restore bug earlier in this module was caused by exactly
+    # this pattern (holding a live Revit API object across the suppress/export/
+    # restore transaction boundary). Fetch a fresh ViewDisplayModel whenever we
+    # actually need to read or write it.
+    orig_smooth_edges = None
+    try:
+        _dm = view.GetViewDisplayModel()
+        try:
+            orig_smooth_edges = bool(getattr(_dm, "SmoothEdges", None))
+        finally:
+            try:
+                _dm.Dispose()
+            except Exception:
+                pass
+    except Exception as ex:
+        if diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="smooth_edges_capture",
+                message=str(ex),
+                view_id=view_id,
+            )
 
     state_out = None
     suppress_tx = Transaction(doc, "VOP Stage A SUPPRESS color ID buffer")
@@ -439,6 +462,35 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                     diag.warn(
                         phase="color_id_buffer",
                         callsite="display_style",
+                        message=str(ex),
+                        view_id=view_id,
+                    )
+
+        # Disable "Smooth lines with anti-aliasing" (the per-view Graphic
+        # Display Options checkbox, distinct from DisplayStyle above). AA blends
+        # colors across an element's silhouette edge, producing off-lattice
+        # pixel colors right at element boundaries that a decoder can't tell
+        # apart from a genuine third color — this is the specific setting the
+        # original empirical Stage A testing confirmed as "AA-off is clean".
+        applied_smooth_edges = "unchanged"
+        if orig_smooth_edges is not None:
+            try:
+                dm = view.GetViewDisplayModel()
+                try:
+                    dm.SmoothEdges = False
+                    view.SetViewDisplayModel(dm)
+                    applied_smooth_edges = False
+                finally:
+                    try:
+                        dm.Dispose()
+                    except Exception:
+                        pass
+            except Exception as ex:
+                applied_smooth_edges = "unchanged (failed)"
+                if diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite="smooth_edges",
                         message=str(ex),
                         view_id=view_id,
                     )
@@ -654,6 +706,19 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 view.DisplayStyle = orig_display_style
             _restore_step("restore_display_style", _restore_display_style)
 
+        if orig_smooth_edges is not None:
+            def _restore_smooth_edges():
+                dm = view.GetViewDisplayModel()
+                try:
+                    dm.SmoothEdges = orig_smooth_edges
+                    view.SetViewDisplayModel(dm)
+                finally:
+                    try:
+                        dm.Dispose()
+                    except Exception:
+                        pass
+            _restore_step("restore_smooth_edges", _restore_smooth_edges)
+
         for cat_id_int, was_halftone in category_halftone_state.items():
             def _restore_halftone(cat_id_int=cat_id_int, was_halftone=was_halftone):
                 cat_id = ElementId(int(cat_id_int))
@@ -733,6 +798,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         },
         "unresolved_link_instance_hidden_ids": list(hidden_link_instance_ids),
         "applied_display_style": applied_display_style,
+        "applied_smooth_edges": applied_smooth_edges,
         "categories_hidden": category_hidden_state,
         "filter_state": filter_state,
         "phase_filter_state": phase_filter_state,
