@@ -400,6 +400,27 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                     view_id=view_id,
                 )
 
+    # Capture crop box state as plain numbers (never a live BoundingBoxXYZ
+    # object) so restore can rebuild a fresh box against a freshly-fetched
+    # Transform, matching the rest of this module's "never carry a live Revit
+    # API object across a Transaction.Commit()/export boundary" rule.
+    orig_crop_active = None
+    orig_crop_min = None
+    orig_crop_max = None
+    try:
+        orig_crop_active = bool(view.CropBoxActive)
+        _cb0 = view.CropBox
+        orig_crop_min = (_cb0.Min.X, _cb0.Min.Y, _cb0.Min.Z)
+        orig_crop_max = (_cb0.Max.X, _cb0.Max.Y, _cb0.Max.Z)
+    except Exception as ex:
+        if diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="capture_crop_box",
+                message=str(ex),
+                view_id=view_id,
+            )
+
     filter_state = {}
     for fid in view.GetFilters():
         filter_state[fid.IntegerValue] = {
@@ -494,6 +515,61 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         phase_filter_state["swapped"] = phase_filter_swapped
         for cat_id_int, hstate in category_hidden_state.items():
             view.SetCategoryHidden(ElementId(int(cat_id_int)), True)
+
+        # Align the crop box to raster's UV bounds so the exported TIFF covers
+        # exactly the same spatial extent as the annotation raster this view's
+        # 2D content will be extracted into. Without this, ExportImage's
+        # ZoomFitType.FitToPage fits to whatever is actually visible -- which
+        # just got smaller now that every annotation category above is
+        # hidden -- so the TIFF's pixel-to-model-space mapping would silently
+        # drift from raster's and corrupt the later edge/annotation join.
+        crop_box_aligned = False
+        if (
+            orig_crop_active is not None
+            and raster is not None
+            and getattr(raster, "W", 0)
+            and getattr(raster, "H", 0)
+            and getattr(raster, "cell_size_ft", 0)
+        ):
+            try:
+                from .revit.view_basis import make_view_basis, crop_box_from_uv_bounds
+                basis = make_view_basis(view, diag=diag)
+                min_u = raster.bounds_xy.xmin
+                min_v = raster.bounds_xy.ymin
+                max_u = min_u + raster.W * raster.cell_size_ft
+                max_v = min_v + raster.H * raster.cell_size_ft
+                new_cb = crop_box_from_uv_bounds(view, basis, min_u, min_v, max_u, max_v)
+                if new_cb is not None:
+                    view.CropBox = new_cb
+                    view.CropBoxActive = True
+                    crop_box_aligned = True
+                elif diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite="align_crop_box",
+                        message="View has no CropBox; cannot align export extent to "
+                                "raster bounds for this view",
+                        view_id=view_id,
+                    )
+            except Exception as ex:
+                if diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite="align_crop_box",
+                        message="Could not align crop box to raster bounds; exported "
+                                "TIFF's extent may not match the annotation raster's "
+                                "coordinate frame for this view: {0}".format(ex),
+                        view_id=view_id,
+                    )
+        elif diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="align_crop_box",
+                message="raster not provided or missing grid dimensions; skipping crop "
+                        "box alignment (exported TIFF's extent may drift from the "
+                        "annotation raster's coordinate frame for this view)",
+                view_id=view_id,
+            )
 
         # Force a flat, unlit display style so painted colors export exactly as
         # set — shading/shadows/ambient occlusion would tint a single flat-color
@@ -844,6 +920,20 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 lambda: doc.Delete(ElementId(int(phase_filter_state["neutral_phase_filter_id"]))),
             )
 
+        if crop_box_aligned and orig_crop_min is not None and orig_crop_max is not None:
+            def _restore_crop_box():
+                from Autodesk.Revit.DB import XYZ, BoundingBoxXYZ
+                fresh_cb = view.CropBox
+                new_cb = BoundingBoxXYZ()
+                T = getattr(fresh_cb, "Transform", None)
+                if T is not None:
+                    new_cb.Transform = T
+                new_cb.Min = XYZ(*orig_crop_min)
+                new_cb.Max = XYZ(*orig_crop_max)
+                view.CropBox = new_cb
+                view.CropBoxActive = bool(orig_crop_active)
+            _restore_step("restore_crop_box", _restore_crop_box)
+
         # Reattach the view template last of all -- every other restore step
         # above needs the template still detached to succeed (same reasoning
         # as the detach at the top of this function), and once reattached
@@ -884,6 +974,17 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "view_template_detached": view_template_detached,
         "orig_view_template_id": (
             orig_view_template_id.IntegerValue if orig_view_template_id is not None else None
+        ),
+        "crop_box_aligned": crop_box_aligned,
+        "raster_bounds_uv": (
+            {
+                "min_u": raster.bounds_xy.xmin,
+                "min_v": raster.bounds_xy.ymin,
+                "max_u": raster.bounds_xy.xmin + raster.W * raster.cell_size_ft,
+                "max_v": raster.bounds_xy.ymin + raster.H * raster.cell_size_ft,
+            }
+            if crop_box_aligned
+            else None
         ),
     }
     if not os.path.exists(out_dir):

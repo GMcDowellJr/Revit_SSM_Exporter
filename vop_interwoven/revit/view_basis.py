@@ -405,6 +405,57 @@ def xy_bounds_from_crop_box_all_corners(view, basis, buffer=0.0):
         # Fallback for views without crop box
         return Bounds2D(-100.0 - buffer, -100.0 - buffer, 100.0 + buffer, 100.0 + buffer)
 
+
+def crop_box_from_uv_bounds(view, basis, min_u, min_v, max_u, max_v):
+    """Build a BoundingBoxXYZ, in the view's own CropBox local frame, covering
+    exactly the given view-local UV rectangle.
+
+    Inverse of xy_bounds_from_crop_box_all_corners(): projects the UV
+    rectangle's corners into model space via basis.origin/right/up, then into
+    the crop box's local coordinates via its Transform. Depth (Z, in
+    crop-local space) is copied unchanged from the view's current CropBox --
+    callers that need a different depth range must set Min.Z/Max.Z on the
+    returned box themselves.
+
+    Returns None if the view has no CropBox (some non-croppable view types).
+    """
+    from Autodesk.Revit.DB import XYZ, BoundingBoxXYZ
+
+    try:
+        cb = view.CropBox
+        if cb is None:
+            return None
+    except Exception:
+        return None
+
+    ox, oy, oz = basis.origin
+    rx, ry, rz = basis.right
+    ux, uy, uz = basis.up
+
+    def _uv_to_world(u, v):
+        return XYZ(ox + u * rx + v * ux, oy + u * ry + v * uy, oz + u * rz + v * uz)
+
+    world_corners = [
+        _uv_to_world(min_u, min_v),
+        _uv_to_world(max_u, min_v),
+        _uv_to_world(min_u, max_v),
+        _uv_to_world(max_u, max_v),
+    ]
+
+    T = getattr(cb, "Transform", None)
+    local_corners = [T.Inverse.OfPoint(p) for p in world_corners] if T is not None else world_corners
+
+    xs = [p.X for p in local_corners]
+    ys = [p.Y for p in local_corners]
+
+    new_cb = BoundingBoxXYZ()
+    if T is not None:
+        new_cb.Transform = T
+    new_cb.Min = XYZ(min(xs), min(ys), cb.Min.Z)
+    new_cb.Max = XYZ(max(xs), max(ys), cb.Max.Z)
+    return new_cb
+
+
 def xy_bounds_effective(doc, view, basis, buffer=0.0, diag=None):
     """Compute EFFECTIVE view bounds in view-local UV.
 
