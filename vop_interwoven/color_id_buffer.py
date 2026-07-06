@@ -184,19 +184,21 @@ def _build_flat_color_ogs(solid_pattern_id, color):
 def _try_color_link_element(view, link_inst_id, link_elem_id, ogs):
     """Attempt a Revit 2022+ LinkElementId-based override for a linked element.
 
-    Returns (success, prior_overrides_or_None). LinkElementId/overload support
-    varies by Revit version, so failure is expected on older hosts and must not
-    be treated as fatal — the caller falls back to hiding the owning link
-    instance so uncolored linked geometry never contaminates the ID buffer.
+    Returns True on success. LinkElementId/overload support varies by Revit
+    version, so failure is expected on older hosts and must not be treated as
+    fatal — the caller falls back to hiding the owning link instance so
+    uncolored linked geometry never contaminates the ID buffer. Restore always
+    resets to a freshly-constructed blank override rather than a captured
+    "prior" object — see export_color_id_buffer_view's painted_link_entries
+    note for why.
     """
     try:
         from Autodesk.Revit.DB import LinkElementId
         lek = LinkElementId(link_inst_id, link_elem_id)
-        prior = view.GetElementOverrides(lek)
         view.SetElementOverrides(lek, ogs)
-        return True, prior
+        return True
     except Exception:
-        return False, None
+        return False
 
 
 def _hidden_category_state(doc, view):
@@ -356,8 +358,22 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "neutral_phase_filter_created": False,
     }
     category_halftone_state = {}
-    element_override_state = {}
-    link_override_state = {}
+    # Deliberately NOT capturing/reusing prior OverrideGraphicSettings objects
+    # here (a "restore to what it was" behavior this module used to have).
+    # Reference SUPPRESS/RESTORE testing always resets element overrides to a
+    # freshly-constructed blank OverrideGraphicSettings() rather than reapplying
+    # a live object captured in an earlier transaction, and never carries a
+    # live API object across a Transaction.Commit()/export boundary. Observed
+    # bug: curtain wall panels silently kept their paint color after restore
+    # (no exception) while their parent Wall correctly cleared — consistent
+    # with a captured-then-reapplied-later OverrideGraphicSettings object not
+    # reliably taking full effect once reused across that boundary. Painted-id
+    # bookkeeping below exists only to know what to reset, not to remember
+    # what it looked like before. Host elements are always reset via
+    # resolved_ids directly (the full painted set, matching the reference
+    # script); only link entries need their own success-tracking set since
+    # LinkElementId overrides may not be supported on this Revit version.
+    painted_link_entries = set()
     hidden_link_instance_ids = []
     unresolved_link_instance_ids = set()
     category_hidden_state = _hidden_category_state(doc, view)
@@ -467,7 +483,6 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         paint_failures = 0
         for eid in resolved_ids:
             try:
-                element_override_state[eid.IntegerValue] = view.GetElementOverrides(eid)
                 rgb = color_map[eid.IntegerValue]
                 color = Color(int(rgb[0]), int(rgb[1]), int(rgb[2]))
                 ogs = _build_flat_color_ogs(solid_pattern_id, color)
@@ -500,9 +515,9 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 rgb = link_color_map[(link_inst_id.IntegerValue, link_elem_id.IntegerValue)]
                 color = Color(int(rgb[0]), int(rgb[1]), int(rgb[2]))
                 ogs = _build_flat_color_ogs(solid_pattern_id, color)
-                ok, prior = _try_color_link_element(view, link_inst_id, link_elem_id, ogs)
+                ok = _try_color_link_element(view, link_inst_id, link_elem_id, ogs)
                 if ok:
-                    link_override_state[(link_inst_id.IntegerValue, link_elem_id.IntegerValue)] = prior
+                    painted_link_entries.add((link_inst_id.IntegerValue, link_elem_id.IntegerValue))
                 else:
                     unresolved_link_instance_ids.add(link_inst_id.IntegerValue)
             except Exception as ex:
@@ -599,52 +614,21 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 view.SetCategoryHidden(ElementId(int(cat_id_int)), bool(hstate["was_hidden"]))
             _restore_step("restore_category_hidden", _restore_cat_hidden)
 
+        # Always reset to a freshly-constructed blank OverrideGraphicSettings(),
+        # matching the reference SUPPRESS/RESTORE script exactly — never reapply
+        # an object captured earlier (see note above painted_ids).
         for eid in resolved_ids:
             def _restore_element_override(eid=eid):
                 from Autodesk.Revit.DB import OverrideGraphicSettings
-                eid_int = int(eid.IntegerValue)
-                prior_ogs = element_override_state.get(eid_int)
-                if prior_ogs is None:
-                    prior_ogs = OverrideGraphicSettings()
-                try:
-                    view.SetElementOverrides(ElementId(eid_int), prior_ogs)
-                except Exception as ex:
-                    # Reapplying the exact captured prior state failed (e.g. it
-                    # referenced a pattern/style that's no longer valid in this
-                    # context). Fall back to a blank override — matching the
-                    # reference SUPPRESS/RESTORE script's always-reset-to-blank
-                    # behavior — so the element is at least un-colored rather
-                    # than left painted.
-                    if diag is not None:
-                        diag.warn(
-                            phase="color_id_buffer",
-                            callsite="restore_element_overrides_fallback",
-                            message="Reapplying captured prior override failed ({0}); "
-                                    "falling back to a blank override".format(ex),
-                            view_id=view_id,
-                            elem_id=eid_int,
-                        )
-                    view.SetElementOverrides(ElementId(eid_int), OverrideGraphicSettings())
+                view.SetElementOverrides(ElementId(int(eid.IntegerValue)), OverrideGraphicSettings())
             _restore_step("restore_element_overrides", _restore_element_override)
 
-        if link_override_state:
+        if painted_link_entries:
             from Autodesk.Revit.DB import LinkElementId, OverrideGraphicSettings
-            for (link_inst_int, link_elem_int), prior_ogs in link_override_state.items():
-                def _restore_link_override(link_inst_int=link_inst_int, link_elem_int=link_elem_int, prior_ogs=prior_ogs):
+            for (link_inst_int, link_elem_int) in painted_link_entries:
+                def _restore_link_override(link_inst_int=link_inst_int, link_elem_int=link_elem_int):
                     lek = LinkElementId(ElementId(int(link_inst_int)), ElementId(int(link_elem_int)))
-                    target_ogs = prior_ogs if prior_ogs is not None else OverrideGraphicSettings()
-                    try:
-                        view.SetElementOverrides(lek, target_ogs)
-                    except Exception as ex:
-                        if diag is not None:
-                            diag.warn(
-                                phase="color_id_buffer",
-                                callsite="restore_link_element_overrides_fallback",
-                                message="Reapplying captured prior link override failed "
-                                        "({0}); falling back to a blank override".format(ex),
-                                view_id=view_id,
-                            )
-                        view.SetElementOverrides(lek, OverrideGraphicSettings())
+                    view.SetElementOverrides(lek, OverrideGraphicSettings())
                 _restore_step("restore_link_element_overrides", _restore_link_override)
 
         if hidden_link_instance_ids:
