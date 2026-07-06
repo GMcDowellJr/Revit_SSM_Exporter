@@ -12,7 +12,7 @@ import os
 import time
 
 NEUTRAL_PHASE_FILTER_NAME = "VOP_NeutralPhaseFilter"
-MAX_STAGE_A_PIXEL_SIZE = 20000
+MAX_STAGE_A_PIXEL_SIZE = 15000
 
 # Mirrors the annotation category set collected by revit.annotation.collect_2d_annotations
 # plus view-only categories (grids/levels/section/elevation/callout marks) that are never
@@ -218,7 +218,41 @@ def _hidden_category_state(doc, view):
     return state
 
 
-def _export_tiff(doc, view, output_path, pixel_size):
+def _set_pixel_size_with_backoff(opts, pixel_size, diag=None, view_id=None):
+    """Set ImageExportOptions.PixelSize, backing off if Revit rejects the value.
+
+    Revit enforces an internal PixelSize ceiling that isn't documented as a
+    fixed constant and can vary by version/install, so rather than guess a
+    "safe" cap, halve the request on ArgumentException until Revit accepts
+    it. Logs a warning when it has to back off so degraded resolution is
+    visible instead of silent.
+    """
+    candidate = max(1, int(pixel_size))
+    requested = candidate
+    floor = 16
+    while True:
+        try:
+            opts.PixelSize = candidate
+            if candidate != requested and diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="pixel_size_backoff",
+                    message="Requested PixelSize {0} exceeded Revit's accepted range; "
+                            "used {1} instead (resolution degraded for this "
+                            "view)".format(requested, candidate),
+                    view_id=view_id,
+                )
+            return candidate
+        except Exception as ex:
+            if candidate <= floor:
+                raise RuntimeError(
+                    "Revit rejected PixelSize down to the floor of {0} "
+                    "(last error: {1})".format(floor, ex)
+                )
+            candidate = max(floor, candidate // 2)
+
+
+def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None):
     from Autodesk.Revit.DB import (
         ImageExportOptions, ExportRange, ZoomFitType, FitDirectionType, ElementId,
         ImageFileType,
@@ -235,7 +269,7 @@ def _export_tiff(doc, view, output_path, pixel_size):
     opts.SetViewsAndSheets(ids)
     opts.ZoomType = ZoomFitType.FitToPage
     opts.FitDirection = FitDirectionType.Horizontal
-    opts.PixelSize = int(pixel_size)
+    actual_pixel_size = _set_pixel_size_with_backoff(opts, pixel_size, diag=diag, view_id=view_id)
     opts.FilePath = os.path.join(out_dir, "_vop_color_id_tmp")
 
     tiff_type = getattr(ImageFileType, "TIFF", getattr(ImageFileType, "TIF", None))
@@ -256,7 +290,7 @@ def _export_tiff(doc, view, output_path, pixel_size):
     if os.path.exists(output_path):
         os.remove(output_path)
     os.rename(created, output_path)
-    return output_path
+    return output_path, actual_pixel_size
 
 
 def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None, elem_cache=None):
@@ -482,8 +516,11 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         suppress_tx.RollBack()
         raise
 
+    actual_pixel_size = pixel_size
     try:
-        _export_tiff(doc, view, tiff_path, pixel_size)
+        _tiff_path, actual_pixel_size = _export_tiff(
+            doc, view, tiff_path, pixel_size, diag=diag, view_id=view_id
+        )
     finally:
         restore_tx = Transaction(doc, "VOP Stage A RESTORE color ID buffer")
         restore_tx.Start()
@@ -571,7 +608,12 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
 
     state_out = {
         "view_id": view_id,
-        "resolution": {"pixel_size": pixel_size, "min_pixels_across_threshold": min_px, "view_scale": scale},
+        "resolution": {
+            "pixel_size": actual_pixel_size,
+            "requested_pixel_size": pixel_size,
+            "min_pixels_across_threshold": min_px,
+            "view_scale": scale,
+        },
         "color_assignment_map": {str(k): list(v) for k, v in color_map.items()},
         "link_color_assignment_map": {
             "{0}:{1}".format(li, le): list(rgb) for (li, le), rgb in link_color_map.items()
