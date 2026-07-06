@@ -318,9 +318,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     json_path = os.path.join(out_dir, "{0}_{1}.json".format(safe_name, view_id))
 
     scale = float(getattr(view, "Scale", 1) or 1)
-    threshold_mm = float(getattr(cfg, "color_id_buffer_threshold_source_mm", 0.7))
-    min_px = int(getattr(cfg, "color_id_buffer_min_pixels_across_threshold", 2))
-    ppi_density = (25.4 / max(threshold_mm / max(scale, 1.0e-6), 1.0e-6)) * min_px
+    export_dpi = float(getattr(cfg, "color_id_buffer_export_dpi", 150))
     if raster is not None and getattr(raster, "W", 0) and getattr(raster, "cell_size_ft", 0):
         paper_width_in = (float(raster.W) * float(raster.cell_size_ft) * 12.0) / max(scale, 1.0e-6)
     else:
@@ -330,16 +328,16 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 phase="color_id_buffer",
                 callsite="pixel_size",
                 message="raster not provided; falling back to 1 paper-inch width for pixel "
-                        "sizing (export resolution may not meet the requested threshold)",
+                        "sizing (export resolution will be far below the requested DPI)",
                 view_id=view_id,
             )
-    pixel_size = int(round(ppi_density * paper_width_in))
+    pixel_size = int(round(export_dpi * paper_width_in))
     pixel_size = max(64, min(pixel_size, MAX_STAGE_A_PIXEL_SIZE))
     if pixel_size >= MAX_STAGE_A_PIXEL_SIZE and diag is not None:
         diag.warn(
             phase="color_id_buffer",
             callsite="pixel_size",
-            message="Requested Stage A pixel size clamped to {0}; source threshold may "
+            message="Requested Stage A pixel size clamped to {0}; export DPI may "
                     "not be met for this view".format(MAX_STAGE_A_PIXEL_SIZE),
             view_id=view_id,
         )
@@ -611,7 +609,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "resolution": {
             "pixel_size": actual_pixel_size,
             "requested_pixel_size": pixel_size,
-            "min_pixels_across_threshold": min_px,
+            "export_dpi": export_dpi,
             "view_scale": scale,
         },
         "color_assignment_map": {str(k): list(v) for k, v in color_map.items()},
@@ -619,7 +617,6 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             "{0}:{1}".format(li, le): list(rgb) for (li, le), rgb in link_color_map.items()
         },
         "unresolved_link_instance_hidden_ids": list(hidden_link_instance_ids),
-        "threshold_source_mm": threshold_mm,
         "categories_hidden": category_hidden_state,
         "filter_state": filter_state,
         "phase_filter_state": phase_filter_state,

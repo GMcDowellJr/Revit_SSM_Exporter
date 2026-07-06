@@ -404,9 +404,9 @@ original phase filter hid but the neutral filter reveals still get a color),
 expands the result to include linked RVT and DWG/DXF import geometry, resolves
 groups and shared nested family subcomponents, applies a deterministic flat RGB
 override per resolved element, clears category halftone, hides annotation/tag/
-grid/level categories, exports a per-view TIFF sized to resolve the configured
-source threshold across the view's actual paper width, writes a JSON sidecar,
-and restores the view state (including deleting `VOP_NeutralPhaseFilter` if
+grid/level categories, exports a per-view TIFF at a fixed print DPI across the
+view's actual paper width, writes a JSON sidecar, and restores the view state
+(including deleting `VOP_NeutralPhaseFilter` if
 Stage A created it) before the next view is processed.  In the streaming thin
 runner, pass `True` in `IN[5]`; these files are written under the `IN[2]`
 output tree in `color_id_buffer/` (including in batched runs — Stage A moves
@@ -426,7 +426,11 @@ colored as a single flat-color `ImportInstance` (no per-layer decomposition).
 
 Stage A intentionally stops at extraction.  It does not decode colors back into
 vectors, trace contours, simplify geometry, join annotations to model elements,
-perform bbox pre-filtering, run multi-pass color batching, or derive thresholds
-from lineweight.  The only Stage A geometry threshold is the fixed
-`color_id_buffer_threshold_source_mm` default of `0.7` mm combined with
-`color_id_buffer_min_pixels_across_threshold` default of `2` pixels.
+perform bbox pre-filtering, run multi-pass color batching, or derive resolution
+from a source-geometry lineweight/threshold. Export resolution is a fixed print
+DPI (`Config.color_id_buffer_export_dpi`, default `150`) multiplied by the
+view's actual paper width to get the horizontal `ImageExportOptions.PixelSize`.
+Revit enforces an undocumented (and version-dependent) ceiling on that value;
+if the computed size is rejected, Stage A halves it and retries until Revit
+accepts it, logging a warning and recording the actual accepted pixel size
+(not just the requested one) in the sidecar's `resolution.pixel_size`.

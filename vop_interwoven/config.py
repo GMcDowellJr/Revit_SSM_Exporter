@@ -159,8 +159,7 @@ class Config:
         csv_compat_mode=True,
         # VOP Stage A: Revit color ID-buffer extraction
         enable_color_id_buffer_stage_a=False,
-        color_id_buffer_min_pixels_across_threshold=2,
-        color_id_buffer_threshold_source_mm=0.7,
+        color_id_buffer_export_dpi=150,
         color_id_buffer_global_assignment_threshold=32767,
         
     ):
@@ -344,13 +343,10 @@ class Config:
 
         # VOP Stage A color ID-buffer configuration (single source of truth).
         self.enable_color_id_buffer_stage_a = bool(enable_color_id_buffer_stage_a)
-        self.color_id_buffer_min_pixels_across_threshold = int(color_id_buffer_min_pixels_across_threshold)
-        self.color_id_buffer_threshold_source_mm = float(color_id_buffer_threshold_source_mm)
+        self.color_id_buffer_export_dpi = float(color_id_buffer_export_dpi)
         self.color_id_buffer_global_assignment_threshold = int(color_id_buffer_global_assignment_threshold)
-        if self.color_id_buffer_min_pixels_across_threshold <= 0:
-            raise ValueError("color_id_buffer_min_pixels_across_threshold must be positive")
-        if self.color_id_buffer_threshold_source_mm <= 0:
-            raise ValueError("color_id_buffer_threshold_source_mm must be positive")
+        if self.color_id_buffer_export_dpi <= 0:
+            raise ValueError("color_id_buffer_export_dpi must be positive")
         if self.color_id_buffer_global_assignment_threshold <= 0:
             raise ValueError("color_id_buffer_global_assignment_threshold must be positive")
         
@@ -576,10 +572,7 @@ class Config:
             "csv_compat_mode": self.csv_compat_mode,
             # VOP Stage A color ID-buffer extraction
             "enable_color_id_buffer_stage_a": self.enable_color_id_buffer_stage_a,
-            "color_id_buffer_min_pixels_across_threshold": (
-                self.color_id_buffer_min_pixels_across_threshold
-            ),
-            "color_id_buffer_threshold_source_mm": self.color_id_buffer_threshold_source_mm,
+            "color_id_buffer_export_dpi": self.color_id_buffer_export_dpi,
             "color_id_buffer_global_assignment_threshold": (
                 self.color_id_buffer_global_assignment_threshold
             ),
@@ -654,12 +647,7 @@ class Config:
             csv_compat_mode=d.get("csv_compat_mode", True),
             # VOP Stage A color ID-buffer extraction
             enable_color_id_buffer_stage_a=d.get("enable_color_id_buffer_stage_a", False),
-            color_id_buffer_min_pixels_across_threshold=d.get(
-                "color_id_buffer_min_pixels_across_threshold", 2
-            ),
-            color_id_buffer_threshold_source_mm=d.get(
-                "color_id_buffer_threshold_source_mm", 0.7
-            ),
+            color_id_buffer_export_dpi=d.get("color_id_buffer_export_dpi", 150),
             color_id_buffer_global_assignment_threshold=d.get(
                 "color_id_buffer_global_assignment_threshold", 32767
             ),
