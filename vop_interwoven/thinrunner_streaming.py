@@ -408,10 +408,10 @@ try:
                 view_ids=view_ids,
                 cfg=cfg,
                 output_dir=output_dir,
-                export_png=True,
-                export_csv=True,  # Always export CSV (tag override just affects Date/RunId columns)
+                export_png=not enable_color_id_buffer_stage_a,
+                export_csv=not enable_color_id_buffer_stage_a,
                 export_json=False,
-                export_view_raster=export_view_raster,
+                export_view_raster=(export_view_raster and not enable_color_id_buffer_stage_a),
                 pixels_per_cell=10,
                 date_override=tag_override,
             )
@@ -445,10 +445,10 @@ try:
                     view_ids=batch_view_ids,
                     cfg=cfg,
                     output_dir=batch_output_dir,
-                    export_png=True,
-                    export_csv=True,
+                    export_png=not enable_color_id_buffer_stage_a,
+                    export_csv=not enable_color_id_buffer_stage_a,
                     export_json=False,
-                    export_view_raster=export_view_raster,
+                    export_view_raster=(export_view_raster and not enable_color_id_buffer_stage_a),
                     pixels_per_cell=10,
                     date_override=tag_override,
                 )

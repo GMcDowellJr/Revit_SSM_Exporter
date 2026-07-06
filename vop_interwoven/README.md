@@ -406,7 +406,9 @@ sidecar, and restores the view state before the next view is processed.  In the
 streaming thin runner, pass `True` in `IN[5]`; these files are written under
 the `IN[2]` output tree in `color_id_buffer/`. Direct pipeline calls use
 `Config(enable_color_id_buffer_stage_a=True)` and write to
-`cfg.output_dir/color_id_buffer/`.
+`cfg.output_dir/color_id_buffer/`. In thin-runner Stage A mode, legacy VOP PNG,
+CSV, and raw view-raster exports are skipped so `IN[5]` acts as the temporary
+mode toggle between legacy raster extraction and color ID-buffer extraction.
 
 Stage A intentionally stops at extraction.  It does not decode colors back into
 vectors, trace contours, simplify geometry, join annotations to model elements,

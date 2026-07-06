@@ -607,7 +607,10 @@ class StreamingExporter:
             "total_elements": view_result.get("total_elements"),
             "filled_cells": view_result.get("filled_cells"),
             "success": True,
-            "timings": view_result.get("timings")
+            "timings": view_result.get("timings"),
+            "stage": view_result.get("stage"),
+            "tiff_path": view_result.get("tiff_path"),
+            "sidecar_path": view_result.get("sidecar_path"),
         }
     
     def finalize(self):
@@ -817,6 +820,7 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                 #   3) cache-hit without metrics (rehydrated later from root cache in _write_csv_rows).
                 has_raster = ("raster" in view_result) and (view_result.get("raster") is not None)
                 has_metrics = isinstance(view_result.get("metrics"), dict) and bool(view_result.get("metrics"))
+                has_stage_a_payload = view_result.get("stage") == "color_id_buffer_stage_a"
                 is_cache_hit = bool(view_result.get("from_cache"))
                 try:
                     c = view_result.get("cache", {})
@@ -827,12 +831,12 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                 except Exception:
                     pass
 
-                if (not has_raster) and (not has_metrics) and (not is_cache_hit):
+                if (not has_raster) and (not has_metrics) and (not is_cache_hit) and (not has_stage_a_payload):
                     print(f"[Streaming] WARNING: No raster/metrics/cache-hit in view_result for view {view_id}")
                     summaries.append({
                         "view_id": view_id,
                         "success": False,
-                        "error": "Missing raster, metrics, and cache-hit marker"
+                        "error": "Missing raster, metrics, cache-hit marker, and Stage A payload"
                     })
                     continue
 
@@ -883,7 +887,10 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                     "width": view_result.get("width"),
                     "height": view_result.get("height"),
                     "success": view_result.get("success", True),
-                    "timings": view_result.get("timings")
+                    "timings": view_result.get("timings"),
+                    "stage": view_result.get("stage"),
+                    "tiff_path": view_result.get("tiff_path"),
+                    "sidecar_path": view_result.get("sidecar_path"),
                 }
                 summaries.append(summary)
 
