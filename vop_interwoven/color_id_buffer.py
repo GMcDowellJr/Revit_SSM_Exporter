@@ -12,7 +12,6 @@ import os
 import time
 
 NEUTRAL_PHASE_FILTER_NAME = "VOP_NeutralPhaseFilter"
-STATE_FILE_NAME = "vop_color_id_buffer_state.json"
 ANNOTATION_HIDE_BIC_NAMES = (
     "OST_Grids",
     "OST_Levels",
@@ -91,9 +90,6 @@ def resolve_all(doc, top_elements):
         resolve(e)
     return resolved_ids
 
-
-def _state_file_path():
-    return os.path.join(os.environ.get("TEMP", "/tmp"), STATE_FILE_NAME)
 
 
 def get_or_create_neutral_phase_filter(doc):
@@ -333,11 +329,6 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None):
         os.makedirs(out_dir)
     with open(json_path, "w") as f:
         json.dump(state_out, f, indent=2, sort_keys=True)
-    try:
-        with open(_state_file_path(), "w") as f:
-            json.dump(state_out, f)
-    except Exception:
-        pass
 
     return {
         "view_id": view_id,
@@ -346,6 +337,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None):
         "stage": "color_id_buffer_stage_a",
         "tiff_path": tiff_path,
         "sidecar_path": json_path,
+        "output_dir": out_dir,
         "resolution": state_out["resolution"],
         "color_assignment_count": count,
         "timings": {"color_id_buffer_ms": round((time.time() - t0) * 1000.0, 3)},

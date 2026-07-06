@@ -402,7 +402,9 @@ model elements, resolves groups and shared nested family subcomponents, applies
 a deterministic flat RGB override per resolved element, suppresses active view
 filters, swaps to the neutral `VOP_NeutralPhaseFilter`, clears category halftone,
 hides annotation/grid/level categories, exports a per-view TIFF, writes a JSON
-sidecar, and restores the view state before the next view is processed.
+sidecar, and restores the view state before the next view is processed.  In the
+streaming thin runner, these files are written under the `IN[2]` output tree in
+`color_id_buffer/`; direct pipeline calls use `cfg.output_dir/color_id_buffer/`.
 
 Stage A intentionally stops at extraction.  It does not decode colors back into
 vectors, trace contours, simplify geometry, join annotations to model elements,
