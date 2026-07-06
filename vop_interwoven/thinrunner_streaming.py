@@ -10,6 +10,7 @@ Usage:
     IN[2] = Optional output directory
     IN[3] = Optional batch size (int)
     IN[4] = Export view raster PNGs — raw Revit view images for comparison (bool, default True)
+    IN[5] = Enable Stage A color ID-buffer extraction (bool, default False)
 
 Output:
     Summary string with view count, annotation count, CSV paths
@@ -343,10 +344,21 @@ try:
     cfg = Config()
     cfg.debug_json_detail = "summary"
 
+    # Optional Stage A color ID-buffer path. This must be set on the same
+    # Config instance passed into run_vop_pipeline_streaming(); otherwise the
+    # pipeline falls through to the legacy occlusion/silhouette path.
+    enable_color_id_buffer_stage_a = (
+        bool(IN[5]) if len(IN) > 5 and IN[5] is not None else False
+    )
+    cfg.enable_color_id_buffer_stage_a = enable_color_id_buffer_stage_a
+
     print("="*60)
     print("DEBUG: About to call streaming")
     print("  cfg.view_cache_enabled = {}".format(cfg.view_cache_enabled))
     print("  cfg.view_cache_dir = {}".format(cfg.view_cache_dir))
+    print("  cfg.enable_color_id_buffer_stage_a = {}".format(
+        cfg.enable_color_id_buffer_stage_a
+    ))
     print("="*60)
 
     # Optional batch size override
@@ -469,6 +481,9 @@ try:
     print("DEBUG: After streaming call")
     print("  cfg.view_cache_enabled = {}".format(cfg.view_cache_enabled))
     print("  cfg.view_cache_dir = {}".format(cfg.view_cache_dir))
+    print("  cfg.enable_color_id_buffer_stage_a = {}".format(
+        cfg.enable_color_id_buffer_stage_a
+    ))
     print("="*60)
 
     # Extract results
@@ -542,6 +557,10 @@ try:
             lines.append("Perf CSV: {}".format(perf_path))
     except Exception as e:
         lines.append("Perf CSV export failed: {}".format(e))
+
+    lines.append("Stage A color ID-buffer: {}".format(
+        "enabled" if getattr(cfg, "enable_color_id_buffer_stage_a", False) else "disabled"
+    ))
 
     # File outputs
     png_files = result.get('png_files', [])
