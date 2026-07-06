@@ -18,30 +18,16 @@ MAX_STAGE_A_PIXEL_SIZE = 15000
 # (validity rule: any channel < NEAR_WHITE_RESERVED_THRESHOLD).
 NEAR_WHITE_RESERVED_THRESHOLD = 224
 
-# Mirrors the annotation category set collected by revit.annotation.collect_2d_annotations
-# plus view-only categories (grids/levels/section/elevation/callout marks) that are never
-# occlusion truth. Kept as an explicit list (rather than importing collect_2d_annotations'
-# locals) since that function does not expose its category set as a module constant.
-ANNOTATION_HIDE_BIC_NAMES = (
-    "OST_Grids",
-    "OST_Levels",
-    "OST_TextNotes",
-    "OST_Dimensions",
-    "OST_GenericAnnotation",
-    "OST_SectionLine",
-    "OST_ElevationMarks",
-    "OST_CalloutHeads",
-    "OST_DetailComponents",
-    "OST_RoomTags",
-    "OST_SpaceTags",
-    "OST_AreaTags",
-    "OST_DoorTags",
-    "OST_WindowTags",
-    "OST_WallTags",
-    "OST_MEPSpaceTags",
-    "OST_KeynoteTags",
-    "OST_FilledRegion",
-    "OST_Lines",
+# Categories that are CategoryType.Model in the Revit API but are still
+# view-specific 2D drafting content with no real 3D presence -- Revit buckets
+# them as "Model" for historical reasons, not because they're actual model
+# geometry. Stage A's whole point is letting Revit's renderer resolve
+# occlusion for real 3D model geometry only; this content is collected by the
+# existing 2D annotation pipeline (revit/annotation.py) and combined with the
+# color buffer's decoded edges in a later post-process step instead.
+VIEW_ONLY_MODEL_BIC_NAMES = (
+    "OST_DetailComponents",  # Detail Items: 2D symbols placed per-view, no 3D form
+    "OST_Lines",             # Model Lines & Detail Lines share this category; neither has fill/area
 )
 
 
@@ -212,18 +198,37 @@ def _try_color_link_element(view, link_inst_id, link_elem_id, ogs):
 
 
 def _hidden_category_state(doc, view):
-    from Autodesk.Revit.DB import BuiltInCategory
-    state = {}
-    for bic_name in ANNOTATION_HIDE_BIC_NAMES:
+    """Categories to hide before the Stage A paint/export pass.
+
+    Hides every top-level category Revit itself classifies as
+    CategoryType.Annotation (tags, text, dimensions, datums, callouts, filled
+    regions, etc. -- whatever that set is on this document, not a
+    hand-maintained list that can drift out of sync with it), plus the
+    Model-categorytype exceptions in VIEW_ONLY_MODEL_BIC_NAMES that have no
+    real 3D presence despite the category-type label.
+    """
+    from Autodesk.Revit.DB import BuiltInCategory, CategoryType
+    view_only_model_bic_ids = set()
+    for bic_name in VIEW_ONLY_MODEL_BIC_NAMES:
         bic = getattr(BuiltInCategory, bic_name, None)
-        if bic is None:
+        if bic is not None:
+            view_only_model_bic_ids.add(int(bic))
+
+    state = {}
+    for cat in doc.Settings.Categories:
+        try:
+            cat_id = cat.Id
+            is_annotation = cat.CategoryType == CategoryType.Annotation
+            is_view_only_model = cat_id.IntegerValue in view_only_model_bic_ids
+        except Exception:
+            continue
+        if not (is_annotation or is_view_only_model):
             continue
         try:
-            cat = doc.Settings.Categories.get_Item(bic)
-            if cat is not None and view.CanCategoryBeHidden(cat.Id):
-                state[cat.Id.IntegerValue] = {
-                    "bic_name": bic_name,
-                    "was_hidden": bool(view.GetCategoryHidden(cat.Id)),
+            if view.CanCategoryBeHidden(cat_id):
+                state[cat_id.IntegerValue] = {
+                    "name": getattr(cat, "Name", None),
+                    "was_hidden": bool(view.GetCategoryHidden(cat_id)),
                 }
         except Exception:
             continue
@@ -354,6 +359,47 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             view_id=view_id,
         )
 
+    orig_view_template_id = None
+    try:
+        orig_view_template_id = view.ViewTemplateId
+    except Exception as ex:
+        if diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="capture_view_template",
+                message=str(ex),
+                view_id=view_id,
+            )
+
+    # Detach the view template (if any) before reading any V/G-controlled state
+    # below. A template that controls Phase Filter, category visibility,
+    # filters, or display style locks those read-only/non-overridable on the
+    # instance -- CanCategoryBeHidden() and Parameter.IsReadOnly would both
+    # report "can't touch this" even though Stage A is about to suppress and
+    # restore everything on this view anyway. Detaching first, and reattaching
+    # as the very last restore step, means every capture below reads (and
+    # every restore step writes back) the view's real instance-level state.
+    view_template_detached = False
+    if orig_view_template_id is not None and orig_view_template_id != ElementId.InvalidElementId:
+        detach_tx = Transaction(doc, "VOP Stage A DETACH view template")
+        detach_tx.Start()
+        try:
+            view.ViewTemplateId = ElementId.InvalidElementId
+            detach_tx.Commit()
+            view_template_detached = True
+        except Exception as ex:
+            detach_tx.RollBack()
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="detach_view_template",
+                    message="Could not detach view template before Stage A capture; "
+                            "template-controlled settings (phase filter, category "
+                            "visibility, filters, display style) may remain locked "
+                            "for this view: {0}".format(ex),
+                    view_id=view_id,
+                )
+
     filter_state = {}
     for fid in view.GetFilters():
         filter_state[fid.IntegerValue] = {
@@ -425,9 +471,44 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         neutral_pf, pf_created = get_or_create_neutral_phase_filter(doc)
         phase_filter_state["neutral_phase_filter_id"] = neutral_pf.Id.IntegerValue
         phase_filter_state["neutral_phase_filter_created"] = bool(pf_created)
-        pf_param.Set(neutral_pf.Id)
+        # VIEW_PHASE_FILTER is commonly locked read-only by a View Template that
+        # controls Phase Filter -- Parameter.Set() raises InvalidOperationException
+        # in that case. That must not abort the whole view: fall back to the
+        # view's existing phase filter (phase-hidden elements like New/Demolished/
+        # Temporary will be absent from this view's ID buffer, which is a
+        # completeness gap, not an occlusion-truth violation).
+        phase_filter_swapped = bool(pf_param is not None and not pf_param.IsReadOnly)
+        if phase_filter_swapped:
+            pf_param.Set(neutral_pf.Id)
+        elif diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="phase_filter_swap",
+                message="VIEW_PHASE_FILTER is read-only (likely a View Template "
+                        "controlling Phase Filter); continuing with the view's "
+                        "existing phase filter. Elements the original phase filter "
+                        "hides (e.g. New/Demolished/Temporary) will be missing "
+                        "from this view's color ID buffer.",
+                view_id=view_id,
+            )
+        phase_filter_state["swapped"] = phase_filter_swapped
         for cat_id_int, hstate in category_hidden_state.items():
             view.SetCategoryHidden(ElementId(int(cat_id_int)), True)
+
+        # NOTE: Stage A deliberately does NOT force the crop box to raster's UV
+        # bounds here. raster.bounds_xy is the model+annotation-inclusive
+        # extent computed earlier in the pipeline (before this view's
+        # annotation categories get hidden above); forcing the Revit crop to
+        # that larger box makes Revit's renderer consider whatever real model
+        # geometry physically sits in the extra (annotation-only) margin as
+        # "in view", polluting the color ID buffer with elements that were
+        # never meant to be there. Until the pipeline can hand Stage A a
+        # model-only bounds distinct from the annotation-expanded raster
+        # bounds, Stage A's export extent is whatever ExportImage's
+        # ZoomFitType.FitToPage naturally fits to the visible (model-only,
+        # post category-hide) geometry -- correct content, but not
+        # necessarily aligned to the annotation raster's canvas. Reconciling
+        # the two into one canvas is deferred to the post-process join step.
 
         # Force a flat, unlit display style so painted colors export exactly as
         # set — shading/shadows/ambient occlusion would tint a single flat-color
@@ -768,7 +849,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         _restore_step("restore_filters", _restore_filters)
 
         def _restore_phase_filter():
-            if orig_phase_filter_id is not None:
+            if orig_phase_filter_id is not None and phase_filter_state.get("swapped"):
                 pf_param.Set(ElementId(int(orig_phase_filter_id)))
         _restore_step("restore_phase_filter", _restore_phase_filter)
 
@@ -777,6 +858,16 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 "restore_neutral_phase_filter",
                 lambda: doc.Delete(ElementId(int(phase_filter_state["neutral_phase_filter_id"]))),
             )
+
+        # Reattach the view template last of all -- every other restore step
+        # above needs the template still detached to succeed (same reasoning
+        # as the detach at the top of this function), and once reattached
+        # Revit reasserts whatever the template dictates for the settings it
+        # controls anyway.
+        if view_template_detached and orig_view_template_id is not None:
+            def _restore_view_template():
+                view.ViewTemplateId = orig_view_template_id
+            _restore_step("restore_view_template", _restore_view_template)
 
         try:
             restore_tx.Commit()
@@ -805,6 +896,10 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "category_halftone_state": category_halftone_state,
         "palette_step": step,
         "tiff_path": tiff_path,
+        "view_template_detached": view_template_detached,
+        "orig_view_template_id": (
+            orig_view_template_id.IntegerValue if orig_view_template_id is not None else None
+        ),
     }
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
