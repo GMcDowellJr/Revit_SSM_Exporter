@@ -264,6 +264,58 @@ def _set_pixel_size_with_backoff(opts, pixel_size, diag=None, view_id=None):
             candidate = max(floor, candidate // 2)
 
 
+def _capture_active_view_state(doc, target_view, diag=None, view_id=None, callsite="pre_export_image"):
+    """Record whether doc.ActiveView matches the view about to be exported.
+
+    Debugging aid for the "only the last view comes out right" / "colors look
+    the same across views" Stage A reports (July 2026): doc.ExportImage()
+    renders through the same viewport pipeline the UI uses, which is a
+    different code path than SetElementOverrides/SetCategoryHidden (those are
+    plain view-scoped data writes, already confirmed to work on non-active
+    views). This project has already hit one Revit API surface that silently
+    no-ops on a non-active view and renders whatever the actual active view is
+    instead (CropBox/IsolateElementTemporary in the DSE symbol-raster work,
+    Apr 2026) -- this instrumentation tests whether ExportImage has the same
+    requirement, without yet forcing an active-view switch.
+    """
+    target_id = getattr(getattr(target_view, "Id", None), "IntegerValue", None)
+    target_name = getattr(target_view, "Name", None)
+    active_id = None
+    active_name = None
+    active_type = None
+    read_error = None
+    try:
+        active_view = getattr(doc, "ActiveView", None)
+        if active_view is not None:
+            active_id = getattr(getattr(active_view, "Id", None), "IntegerValue", None)
+            active_name = getattr(active_view, "Name", None)
+            active_type = str(getattr(active_view, "ViewType", None))
+    except Exception as ex:
+        read_error = str(ex)
+
+    matches = (active_id == target_id) if (active_id is not None and target_id is not None) else None
+    info = {
+        "target_view_id": target_id,
+        "target_view_name": target_name,
+        "active_view_id": active_id,
+        "active_view_name": active_name,
+        "active_view_type": active_type,
+        "matches_target": matches,
+        "read_error": read_error,
+    }
+    if diag is not None:
+        level_fn = diag.info if matches in (True, None) else diag.warn
+        level_fn(
+            phase="color_id_buffer",
+            callsite=callsite,
+            message="doc.ActiveView={0} ({1!r}) vs export target view={2} ({3!r}); "
+                    "matches_target={4}".format(active_id, active_name, target_id, target_name, matches),
+            view_id=view_id,
+            extra=info,
+        )
+    return info
+
+
 def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None):
     from Autodesk.Revit.DB import (
         ImageExportOptions, ExportRange, ZoomFitType, FitDirectionType, ElementId,
@@ -290,6 +342,10 @@ def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None):
     opts.HLRandWFViewsFileType = tiff_type
     opts.ShadowViewsFileType = tiff_type
 
+    active_view_check = _capture_active_view_state(
+        doc, view, diag=diag, view_id=view_id, callsite="pre_export_image"
+    )
+
     doc.ExportImage(opts)
     after = set(os.listdir(out_dir))
     candidates = [f for f in (after - before) if f.lower().endswith((".tif", ".tiff"))]
@@ -302,7 +358,7 @@ def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None):
     if os.path.exists(output_path):
         os.remove(output_path)
     os.rename(created, output_path)
-    return output_path, actual_pixel_size
+    return output_path, actual_pixel_size, active_view_check
 
 
 def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None, elem_cache=None):
@@ -664,8 +720,9 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         raise
 
     actual_pixel_size = pixel_size
+    active_view_check = None
     try:
-        _tiff_path, actual_pixel_size = _export_tiff(
+        _tiff_path, actual_pixel_size, active_view_check = _export_tiff(
             doc, view, tiff_path, pixel_size, diag=diag, view_id=view_id
         )
     finally:
@@ -805,6 +862,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "category_halftone_state": category_halftone_state,
         "palette_step": step,
         "tiff_path": tiff_path,
+        "active_view_check": active_view_check,
     }
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
@@ -822,5 +880,6 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "resolution": state_out["resolution"],
         "color_assignment_count": count_host + count_link,
         "timings": {"color_id_buffer_ms": round((time.time() - t0) * 1000.0, 3)},
+        "active_view_check": active_view_check,
         "metadata": state_out,
     }
