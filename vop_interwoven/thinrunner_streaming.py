@@ -468,6 +468,21 @@ try:
                     _append_csv(chunk_csv, target_csv)
                     merged[key] = target_csv
 
+                # Stage A writes TIFF/sidecar files directly under
+                # batch_output_dir/color_id_buffer/ (there is no CSV row to merge them
+                # through); move them into the requested output tree so batched runs
+                # don't strand the only copies under a temp batch folder.
+                if getattr(cfg, "enable_color_id_buffer_stage_a", False):
+                    batch_stage_a_dir = os.path.join(batch_output_dir, "color_id_buffer")
+                    if os.path.isdir(batch_stage_a_dir):
+                        final_stage_a_dir = os.path.join(output_dir, "color_id_buffer")
+                        os.makedirs(final_stage_a_dir, exist_ok=True)
+                        for fname in os.listdir(batch_stage_a_dir):
+                            shutil.move(
+                                os.path.join(batch_stage_a_dir, fname),
+                                os.path.join(final_stage_a_dir, fname),
+                            )
+
                 _run_gc_between_chunks()
 
             result = merged

@@ -1109,7 +1109,8 @@ def process_document_views(
                     from .color_id_buffer import export_color_id_buffer_view
                     t0 = _perf_now()
                     out = export_color_id_buffer_view(
-                        doc, view, elements, cfg, diag=diag
+                        doc, view, elements, cfg, diag=diag,
+                        raster=raster, elem_cache=elem_cache,
                     )
                     t1 = _perf_now()
                     _tmark(TIMING_KEYS["RASTER_MODEL_MS"], t0, t1)

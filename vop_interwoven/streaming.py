@@ -280,14 +280,15 @@ class StreamingExporter:
             view_result: Full view result dict with raster data
         """
         self.views_processed += 1
-        
+
         # Check success
         is_success = view_result.get("success", True)
         has_raster = "raster" in view_result
         is_cache_hit = bool(view_result.get("from_cache"))
         has_metrics = isinstance(view_result.get("metrics"), dict) and bool(view_result.get("metrics"))
+        is_stage_a = view_result.get("stage") == "color_id_buffer_stage_a"
 
-        # Accept raster-bearing, metrics-only, or cache-hit payloads.
+        # Accept raster-bearing, metrics-only, cache-hit, or Stage-A payloads.
         # Cache-hit payloads may be rehydrated in _write_csv_rows.
         if not is_success:
             self.views_failed += 1
@@ -297,7 +298,26 @@ class StreamingExporter:
                 "success": False
             })
             return
-                
+
+        if is_stage_a:
+            # Stage A already wrote its own TIFF + JSON sidecar directly to disk in
+            # export_color_id_buffer_view(); it has no raster/CSV-row data for the
+            # legacy PNG/CSV writers below, so record it as a processed success and stop.
+            self.view_summaries.append({
+                "view_id": view_result.get("view_id"),
+                "view_name": view_result.get("view_name"),
+                "success": True,
+                "stage": "color_id_buffer_stage_a",
+                "tiff_path": view_result.get("tiff_path"),
+                "sidecar_path": view_result.get("sidecar_path"),
+            })
+            if self.full_results is not None:
+                self.full_results.append({
+                    k: v for k, v in view_result.items()
+                    if k not in ("raster", "diag")
+                })
+            return
+
         # Export PNG immediately (if enabled) — skip on cache hits (root or legacy)
         try:
             c = view_result.get("cache", {})
@@ -811,13 +831,15 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                     })
                     continue
                 
-                # Allow three valid payload shapes:
+                # Allow four valid payload shapes:
                 #   1) raster-bearing (normal miss path),
                 #   2) metrics-only (lightweight/cache materialized metrics),
                 #   3) cache-hit without metrics (rehydrated later from root cache in _write_csv_rows).
+                #   4) Stage-A color ID-buffer success (TIFF/sidecar written directly to disk).
                 has_raster = ("raster" in view_result) and (view_result.get("raster") is not None)
                 has_metrics = isinstance(view_result.get("metrics"), dict) and bool(view_result.get("metrics"))
                 is_cache_hit = bool(view_result.get("from_cache"))
+                is_stage_a = view_result.get("stage") == "color_id_buffer_stage_a"
                 try:
                     c = view_result.get("cache", {})
                     if isinstance(c, dict) and "HIT" in str(c.get("view_cache", "")).upper():
@@ -827,7 +849,7 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                 except Exception:
                     pass
 
-                if (not has_raster) and (not has_metrics) and (not is_cache_hit):
+                if (not has_raster) and (not has_metrics) and (not is_cache_hit) and (not is_stage_a):
                     print(f"[Streaming] WARNING: No raster/metrics/cache-hit in view_result for view {view_id}")
                     summaries.append({
                         "view_id": view_id,

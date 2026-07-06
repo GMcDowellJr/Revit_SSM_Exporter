@@ -397,18 +397,32 @@ If NumPy and Pillow are not installed, VOP automatically uses pure Python implem
 
 Set `Config(enable_color_id_buffer_stage_a=True)` to bypass the legacy in-memory
 occlusion/silhouette model pass for model-capable views and export a Revit
-rendered color ID buffer instead.  The Stage A path collects the same visible
-model elements, resolves groups and shared nested family subcomponents, applies
-a deterministic flat RGB override per resolved element, suppresses active view
-filters, swaps to the neutral `VOP_NeutralPhaseFilter`, clears category halftone,
-hides annotation/grid/level categories, exports a per-view TIFF, writes a JSON
-sidecar, and restores the view state before the next view is processed.  In the
-streaming thin runner, pass `True` in `IN[5]`; these files are written under
-the `IN[2]` output tree in `color_id_buffer/`. Direct pipeline calls use
-`Config(enable_color_id_buffer_stage_a=True)` and write to
-`cfg.output_dir/color_id_buffer/`. Stage A bypasses metrics-only root-cache hits
-so enabling it always attempts a fresh TIFF/sidecar export for each processed
-model-capable view.
+rendered color ID buffer instead.  The Stage A path suppresses active view
+filters, swaps to the neutral `VOP_NeutralPhaseFilter`, then re-collects the
+view's visible model elements under that neutral phase state (so elements the
+original phase filter hid but the neutral filter reveals still get a color),
+expands the result to include linked RVT and DWG/DXF import geometry, resolves
+groups and shared nested family subcomponents, applies a deterministic flat RGB
+override per resolved element, clears category halftone, hides annotation/tag/
+grid/level categories, exports a per-view TIFF sized to resolve the configured
+source threshold across the view's actual paper width, writes a JSON sidecar,
+and restores the view state (including deleting `VOP_NeutralPhaseFilter` if
+Stage A created it) before the next view is processed.  In the streaming thin
+runner, pass `True` in `IN[5]`; these files are written under the `IN[2]`
+output tree in `color_id_buffer/` (including in batched runs — Stage A moves
+per-batch artifacts into the requested output directory after each batch).
+Direct pipeline calls use `Config(enable_color_id_buffer_stage_a=True)` and
+write to `cfg.output_dir/color_id_buffer/`. Stage A bypasses metrics-only
+root-cache hits so enabling it always attempts a fresh TIFF/sidecar export for
+each processed model-capable view.
+
+Linked RVT elements are colored via a per-element `LinkElementId` override
+(Revit 2022+). On Revit versions or link configurations where that override
+isn't available, the owning link instance is hidden for the export instead of
+left uncolored, so it never contaminates the ID buffer with unassigned pixels;
+which link instances were hidden is recorded in the sidecar's
+`unresolved_link_instance_hidden_ids` and in diagnostics. DWG/DXF imports are
+colored as a single flat-color `ImportInstance` (no per-layer decomposition).
 
 Stage A intentionally stops at extraction.  It does not decode colors back into
 vectors, trace contours, simplify geometry, join annotations to model elements,
