@@ -359,6 +359,47 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             view_id=view_id,
         )
 
+    orig_view_template_id = None
+    try:
+        orig_view_template_id = view.ViewTemplateId
+    except Exception as ex:
+        if diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="capture_view_template",
+                message=str(ex),
+                view_id=view_id,
+            )
+
+    # Detach the view template (if any) before reading any V/G-controlled state
+    # below. A template that controls Phase Filter, category visibility,
+    # filters, or display style locks those read-only/non-overridable on the
+    # instance -- CanCategoryBeHidden() and Parameter.IsReadOnly would both
+    # report "can't touch this" even though Stage A is about to suppress and
+    # restore everything on this view anyway. Detaching first, and reattaching
+    # as the very last restore step, means every capture below reads (and
+    # every restore step writes back) the view's real instance-level state.
+    view_template_detached = False
+    if orig_view_template_id is not None and orig_view_template_id != ElementId.InvalidElementId:
+        detach_tx = Transaction(doc, "VOP Stage A DETACH view template")
+        detach_tx.Start()
+        try:
+            view.ViewTemplateId = ElementId.InvalidElementId
+            detach_tx.Commit()
+            view_template_detached = True
+        except Exception as ex:
+            detach_tx.RollBack()
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="detach_view_template",
+                    message="Could not detach view template before Stage A capture; "
+                            "template-controlled settings (phase filter, category "
+                            "visibility, filters, display style) may remain locked "
+                            "for this view: {0}".format(ex),
+                    view_id=view_id,
+                )
+
     filter_state = {}
     for fid in view.GetFilters():
         filter_state[fid.IntegerValue] = {
@@ -803,6 +844,16 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 lambda: doc.Delete(ElementId(int(phase_filter_state["neutral_phase_filter_id"]))),
             )
 
+        # Reattach the view template last of all -- every other restore step
+        # above needs the template still detached to succeed (same reasoning
+        # as the detach at the top of this function), and once reattached
+        # Revit reasserts whatever the template dictates for the settings it
+        # controls anyway.
+        if view_template_detached and orig_view_template_id is not None:
+            def _restore_view_template():
+                view.ViewTemplateId = orig_view_template_id
+            _restore_step("restore_view_template", _restore_view_template)
+
         try:
             restore_tx.Commit()
         except Exception:
@@ -830,6 +881,10 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "category_halftone_state": category_halftone_state,
         "palette_step": step,
         "tiff_path": tiff_path,
+        "view_template_detached": view_template_detached,
+        "orig_view_template_id": (
+            orig_view_template_id.IntegerValue if orig_view_template_id is not None else None
+        ),
     }
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
