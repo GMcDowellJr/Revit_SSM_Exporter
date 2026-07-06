@@ -576,22 +576,16 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                         exc=ex,
                     )
 
-        def _restore_filters():
-            for fid_int, fstate in filter_state.items():
-                view.SetIsFilterEnabled(ElementId(int(fid_int)), fstate["was_enabled"])
-        _restore_step("restore_filters", _restore_filters)
-
-        def _restore_phase_filter():
-            if orig_phase_filter_id is not None:
-                pf_param.Set(ElementId(int(orig_phase_filter_id)))
-        _restore_step("restore_phase_filter", _restore_phase_filter)
-
-        if phase_filter_state.get("neutral_phase_filter_created") and phase_filter_state.get("neutral_phase_filter_id") is not None:
-            _restore_step(
-                "restore_neutral_phase_filter",
-                lambda: doc.Delete(ElementId(int(phase_filter_state["neutral_phase_filter_id"]))),
-            )
-
+        # Element-level state (halftone, hidden categories, element/link overrides)
+        # is restored FIRST, while the document is still under the same neutral
+        # phase filter that was active when everything was painted. Reverting the
+        # phase filter appears to trigger Revit to regenerate curtain-grid-hosted
+        # sub-elements (mullions/panels get new ElementIds on regen; the host Wall
+        # does not), which orphans any element-level restore attempted afterward —
+        # observed as the parent curtain wall correctly losing its override while
+        # its mullions/panels silently keep theirs. Filters and the phase filter
+        # itself are restored last, once no more element-level Set/GetOverrides
+        # calls depend on the current element identities.
         for cat_id_int, was_halftone in category_halftone_state.items():
             def _restore_halftone(cat_id_int=cat_id_int, was_halftone=was_halftone):
                 cat_id = ElementId(int(cat_id_int))
@@ -661,6 +655,26 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                     unhide_list.Add(ElementId(int(iid)))
                 view.UnhideElements(unhide_list)
             _restore_step("restore_unhide_link_instances", _restore_unhide)
+
+        # Filters and the phase filter are restored last (see note above) —
+        # reverting the phase filter can trigger regeneration of curtain-grid
+        # sub-elements, so nothing element-level should still depend on the
+        # current identities of those elements by this point.
+        def _restore_filters():
+            for fid_int, fstate in filter_state.items():
+                view.SetIsFilterEnabled(ElementId(int(fid_int)), fstate["was_enabled"])
+        _restore_step("restore_filters", _restore_filters)
+
+        def _restore_phase_filter():
+            if orig_phase_filter_id is not None:
+                pf_param.Set(ElementId(int(orig_phase_filter_id)))
+        _restore_step("restore_phase_filter", _restore_phase_filter)
+
+        if phase_filter_state.get("neutral_phase_filter_created") and phase_filter_state.get("neutral_phase_filter_id") is not None:
+            _restore_step(
+                "restore_neutral_phase_filter",
+                lambda: doc.Delete(ElementId(int(phase_filter_state["neutral_phase_filter_id"]))),
+            )
 
         try:
             restore_tx.Commit()
