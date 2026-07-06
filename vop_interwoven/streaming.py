@@ -607,10 +607,7 @@ class StreamingExporter:
             "total_elements": view_result.get("total_elements"),
             "filled_cells": view_result.get("filled_cells"),
             "success": True,
-            "timings": view_result.get("timings"),
-            "stage": view_result.get("stage"),
-            "tiff_path": view_result.get("tiff_path"),
-            "sidecar_path": view_result.get("sidecar_path"),
+            "timings": view_result.get("timings")
         }
     
     def finalize(self):
@@ -820,7 +817,6 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                 #   3) cache-hit without metrics (rehydrated later from root cache in _write_csv_rows).
                 has_raster = ("raster" in view_result) and (view_result.get("raster") is not None)
                 has_metrics = isinstance(view_result.get("metrics"), dict) and bool(view_result.get("metrics"))
-                has_stage_a_payload = view_result.get("stage") == "color_id_buffer_stage_a"
                 is_cache_hit = bool(view_result.get("from_cache"))
                 try:
                     c = view_result.get("cache", {})
@@ -831,12 +827,12 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                 except Exception:
                     pass
 
-                if (not has_raster) and (not has_metrics) and (not is_cache_hit) and (not has_stage_a_payload):
+                if (not has_raster) and (not has_metrics) and (not is_cache_hit):
                     print(f"[Streaming] WARNING: No raster/metrics/cache-hit in view_result for view {view_id}")
                     summaries.append({
                         "view_id": view_id,
                         "success": False,
-                        "error": "Missing raster, metrics, cache-hit marker, and Stage A payload"
+                        "error": "Missing raster, metrics, and cache-hit marker"
                     })
                     continue
 
@@ -887,10 +883,7 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                     "width": view_result.get("width"),
                     "height": view_result.get("height"),
                     "success": view_result.get("success", True),
-                    "timings": view_result.get("timings"),
-                    "stage": view_result.get("stage"),
-                    "tiff_path": view_result.get("tiff_path"),
-                    "sidecar_path": view_result.get("sidecar_path"),
+                    "timings": view_result.get("timings")
                 }
                 summaries.append(summary)
 
@@ -1028,25 +1021,20 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
     # This ensures PNGs and CSVs can be exported before memory is discarded
     cfg.retain_rasters_in_memory = True
     
-    # Initialize root-style cache (works with streaming!) unless Stage A is
-    # enabled. Stage A must always create fresh TIFF/sidecar outputs and must
-    # not be satisfied by metrics-only legacy cache hits.
-    stage_a_color_id_mode = bool(getattr(cfg, "enable_color_id_buffer_stage_a", False))
+    # Initialize root-style cache (works with streaming!)
     project_guid = doc.ProjectInformation.UniqueId if doc.ProjectInformation else "unknown"
     exporter_version = "VOP_v2.0"
     config_hash = compute_config_hash(cfg)
-
-    root_cache = None
-    if not stage_a_color_id_mode:
-        root_cache = RootStyleCache(
-            output_dir=output_dir,
-            project_guid=project_guid,
-            exporter_version=exporter_version,
-            config_hash=config_hash
-        )
-
-        # Load existing cache
-        root_cache.load()
+    
+    root_cache = RootStyleCache(
+        output_dir=output_dir,
+        project_guid=project_guid,
+        exporter_version=exporter_version,
+        config_hash=config_hash
+    )
+    
+    # Load existing cache
+    root_cache.load()
     
     # Initialize streaming exporter
     exporter = StreamingExporter(
@@ -1079,20 +1067,18 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
     result = exporter.finalize()
     result["total_time_sec"] = t1 - t0
     
-    # Persist root cache only in legacy mode. Stage A is an image extraction
-    # mode and intentionally avoids metrics-only cache files.
-    if root_cache is not None:
+    # Persist root cache
+    try:
+        ok = root_cache.save()
         try:
-            ok = root_cache.save()
-            try:
-                print(f"[Streaming] Root cache stats: {root_cache.stats()}")
-            except Exception as e:
-                # Exception in run_vop_pipeline_streaming - no diag in scope
-                pass  # TODO: Add diagnostics when diag becomes available
-            if not ok:
-                print("[Streaming] Root cache save returned False")
+            print(f"[Streaming] Root cache stats: {root_cache.stats()}")
         except Exception as e:
-            print(f"[Streaming] Root cache save failed: {e}")
+            # Exception in run_vop_pipeline_streaming - no diag in scope
+            pass  # TODO: Add diagnostics when diag becomes available
+        if not ok:
+            print("[Streaming] Root cache save returned False")
+    except Exception as e:
+        print(f"[Streaming] Root cache save failed: {e}")
     
     print(f"\n[Streaming] Complete:")
     print(f"  Processed: {result['views_processed']} views")

@@ -330,23 +330,11 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None):
     with open(json_path, "w") as f:
         json.dump(state_out, f, indent=2, sort_keys=True)
 
-    stage_diag = {
-        "view_id": view_id,
-        "view_name": getattr(view, "Name", None),
-        "stage": "color_id_buffer_stage_a",
-        "color_assignment_count": count,
-        "palette_step": step,
-        "tiff_path": tiff_path,
-        "sidecar_path": json_path,
-        "legacy_silhouette_pipeline_ran": False,
-    }
-
     return {
         "view_id": view_id,
         "view_name": getattr(view, "Name", None),
         "success": True,
         "stage": "color_id_buffer_stage_a",
-        "diagnostics": stage_diag,
         "tiff_path": tiff_path,
         "sidecar_path": json_path,
         "output_dir": out_dir,

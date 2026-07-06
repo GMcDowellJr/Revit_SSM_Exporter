@@ -617,8 +617,6 @@ def process_document_views(
     import time
     import tempfile
 
-    stage_a_color_id_mode = bool(getattr(cfg, "enable_color_id_buffer_stage_a", False))
-
     # Output directory (used for element cache persistence/export). Must be defined here.
     output_dir = getattr(cfg, "output_dir", None)
 
@@ -972,10 +970,8 @@ def process_document_views(
             # Compute identity fields once for CSV slicing and cache row_payload completeness
             ident = _extract_view_identity_for_csv(doc, view)
 
-            # Check root cache first (metrics-only hit; valid in streaming too).
-            # Stage A is an image extraction mode, not a metrics rehydration mode;
-            # always reach the color ID-buffer export branch when it is enabled.
-            if root_cache and not stage_a_color_id_mode:
+            # Check root cache first (metrics-only hit; valid in streaming too)
+            if root_cache:
                 t_cache0 = _perf_now()
                 cached = root_cache.get_view(view_id_int, sig_hex)
                 t_cache1 = _perf_now()

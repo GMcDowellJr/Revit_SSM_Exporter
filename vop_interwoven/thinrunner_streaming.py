@@ -351,21 +351,11 @@ try:
         bool(IN[5]) if len(IN) > 5 and IN[5] is not None else False
     )
     cfg.enable_color_id_buffer_stage_a = enable_color_id_buffer_stage_a
-    if enable_color_id_buffer_stage_a:
-        # Stage A mode should only emit color_id_buffer TIFF/JSON plus its
-        # minimal diagnostics; suppress legacy cache/map side outputs that make
-        # it look like the silhouette pipeline ran.
-        cfg.use_element_cache = False
-        cfg.element_cache_persist = False
-        cfg.element_cache_export_csv = False
-        cfg.element_cache_detect_changes = False
-        cfg.view_cache_enabled = False
 
     print("="*60)
     print("DEBUG: About to call streaming")
     print("  cfg.view_cache_enabled = {}".format(cfg.view_cache_enabled))
     print("  cfg.view_cache_dir = {}".format(cfg.view_cache_dir))
-    print("  cfg.use_element_cache = {}".format(cfg.use_element_cache))
     print("  cfg.enable_color_id_buffer_stage_a = {}".format(
         cfg.enable_color_id_buffer_stage_a
     ))
@@ -418,10 +408,10 @@ try:
                 view_ids=view_ids,
                 cfg=cfg,
                 output_dir=output_dir,
-                export_png=not enable_color_id_buffer_stage_a,
-                export_csv=not enable_color_id_buffer_stage_a,
+                export_png=True,
+                export_csv=True,  # Always export CSV (tag override just affects Date/RunId columns)
                 export_json=False,
-                export_view_raster=(export_view_raster and not enable_color_id_buffer_stage_a),
+                export_view_raster=export_view_raster,
                 pixels_per_cell=10,
                 date_override=tag_override,
             )
@@ -455,10 +445,10 @@ try:
                     view_ids=batch_view_ids,
                     cfg=cfg,
                     output_dir=batch_output_dir,
-                    export_png=not enable_color_id_buffer_stage_a,
-                    export_csv=not enable_color_id_buffer_stage_a,
+                    export_png=True,
+                    export_csv=True,
                     export_json=False,
-                    export_view_raster=(export_view_raster and not enable_color_id_buffer_stage_a),
+                    export_view_raster=export_view_raster,
                     pixels_per_cell=10,
                     date_override=tag_override,
                 )
@@ -491,7 +481,6 @@ try:
     print("DEBUG: After streaming call")
     print("  cfg.view_cache_enabled = {}".format(cfg.view_cache_enabled))
     print("  cfg.view_cache_dir = {}".format(cfg.view_cache_dir))
-    print("  cfg.use_element_cache = {}".format(cfg.use_element_cache))
     print("  cfg.enable_color_id_buffer_stage_a = {}".format(
         cfg.enable_color_id_buffer_stage_a
     ))
