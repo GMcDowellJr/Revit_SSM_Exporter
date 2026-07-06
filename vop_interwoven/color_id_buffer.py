@@ -13,6 +13,10 @@ import time
 
 NEUTRAL_PHASE_FILTER_NAME = "VOP_NeutralPhaseFilter"
 MAX_STAGE_A_PIXEL_SIZE = 15000
+# Near-white corner of the RGB cube reserved as invalid/background so a decoder
+# can draw a clean boundary against anti-aliasing halos at the page background
+# (validity rule: any channel < NEAR_WHITE_RESERVED_THRESHOLD).
+NEAR_WHITE_RESERVED_THRESHOLD = 224
 
 # Mirrors the annotation category set collected by revit.annotation.collect_2d_annotations
 # plus view-only categories (grids/levels/section/elevation/callout marks) that are never
@@ -58,13 +62,19 @@ def choose_step(element_count):
 
 
 def build_palette(element_count, step=None):
-    """Build deterministic non-background RGB colors on the chosen lattice."""
+    """Build deterministic non-background, non-near-white RGB colors on the chosen lattice."""
     step = int(step if step is not None else choose_step(element_count))
     colors = []
     for r in range(0, 256, step):
         for g in range(0, 256, step):
             for b in range(0, 256, step):
                 if r == 0 and g == 0 and b == 0:
+                    continue
+                if (
+                    r >= NEAR_WHITE_RESERVED_THRESHOLD
+                    and g >= NEAR_WHITE_RESERVED_THRESHOLD
+                    and b >= NEAR_WHITE_RESERVED_THRESHOLD
+                ):
                     continue
                 colors.append((min(r, 255), min(g, 255), min(b, 255)))
                 if len(colors) >= int(element_count or 0):
@@ -380,6 +390,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     solid_pattern_id = _get_solid_pattern_id(doc)
     if solid_pattern_id is None:
         raise RuntimeError("No solid drafting fill pattern found in project")
+    orig_display_style = getattr(view, "DisplayStyle", None)
 
     state_out = None
     suppress_tx = Transaction(doc, "VOP Stage A SUPPRESS color ID buffer")
@@ -394,6 +405,43 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         pf_param.Set(neutral_pf.Id)
         for cat_id_int, hstate in category_hidden_state.items():
             view.SetCategoryHidden(ElementId(int(cat_id_int)), True)
+
+        # Force a flat, unlit display style so painted colors export exactly as
+        # set — shading/shadows/ambient occlusion would tint a single flat-color
+        # surface with a lighting gradient, which is exactly the kind of
+        # per-pixel color drift a decoder can't tell apart from a real boundary.
+        # DisplayStyle.FlatColors (Revit 2021+) is purpose-built for this; older
+        # hosts fall back to plain Shading (no realistic materials/lighting, but
+        # not guaranteed shadow-free) with a diagnostic noting the gap.
+        applied_display_style = "unchanged"
+        if orig_display_style is not None:
+            try:
+                from Autodesk.Revit.DB import DisplayStyle
+                flat_style = getattr(DisplayStyle, "FlatColors", None)
+                if flat_style is not None:
+                    view.DisplayStyle = flat_style
+                    applied_display_style = "FlatColors"
+                else:
+                    view.DisplayStyle = DisplayStyle.Shading
+                    applied_display_style = "Shading"
+                    if diag is not None:
+                        diag.warn(
+                            phase="color_id_buffer",
+                            callsite="display_style",
+                            message="DisplayStyle.FlatColors not available on this Revit "
+                                    "version; falling back to Shading, which does not "
+                                    "guarantee shadow/lighting-free flat colors",
+                            view_id=view_id,
+                        )
+            except Exception as ex:
+                applied_display_style = "unchanged (failed)"
+                if diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite="display_style",
+                        message=str(ex),
+                        view_id=view_id,
+                    )
 
         # Re-collect under the neutral phase state: elements the view's original
         # phase filter hid (e.g. demolished/temporary) but the neutral filter shows
@@ -601,6 +649,11 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # its mullions/panels silently keep theirs. Filters and the phase filter
         # itself are restored last, once no more element-level Set/GetOverrides
         # calls depend on the current element identities.
+        if orig_display_style is not None:
+            def _restore_display_style():
+                view.DisplayStyle = orig_display_style
+            _restore_step("restore_display_style", _restore_display_style)
+
         for cat_id_int, was_halftone in category_halftone_state.items():
             def _restore_halftone(cat_id_int=cat_id_int, was_halftone=was_halftone):
                 cat_id = ElementId(int(cat_id_int))
@@ -679,6 +732,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             "{0}:{1}".format(li, le): list(rgb) for (li, le), rgb in link_color_map.items()
         },
         "unresolved_link_instance_hidden_ids": list(hidden_link_instance_ids),
+        "applied_display_style": applied_display_style,
         "categories_hidden": category_hidden_state,
         "filter_state": filter_state,
         "phase_filter_state": phase_filter_state,

@@ -434,3 +434,16 @@ Revit enforces an undocumented (and version-dependent) ceiling on that value;
 if the computed size is rejected, Stage A halves it and retries until Revit
 accepts it, logging a warning and recording the actual accepted pixel size
 (not just the requested one) in the sidecar's `resolution.pixel_size`.
+
+To keep painted colors exact, Stage A also forces the view to
+`DisplayStyle.FlatColors` (Revit 2021+) for the export — shading, shadows, and
+ambient occlusion would otherwise tint a flat color-override surface with a
+lighting gradient, which a decoder can't distinguish from a real element
+boundary. On Revit hosts without `FlatColors`, it falls back to plain
+`Shading` and logs a diagnostic, since that fallback doesn't guarantee
+shadow-free output. The original display style is restored before the next
+view, and the style actually used is recorded in the sidecar's
+`applied_display_style`. The color palette also reserves the near-white
+corner of the RGB cube (any channel ≥ `224`) as invalid/background, so a
+decoder has a clean boundary against anti-aliasing halos at the page
+background instead of risking a real element color being mistaken for it.
