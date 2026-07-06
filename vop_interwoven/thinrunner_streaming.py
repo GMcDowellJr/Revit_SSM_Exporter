@@ -579,8 +579,10 @@ except Exception as e:
     try:
         error_lines.append("Traceback:")
         error_lines.append(traceback.format_exc())
-    except:
-        error_lines.append("(Traceback not available)")
+    except Exception as traceback_error:
+        error_lines.append("(Traceback not available: {}: {})".format(
+            type(traceback_error).__name__, traceback_error
+        ))
     
     error_lines.append("")
     error_lines.append("=" * 60)

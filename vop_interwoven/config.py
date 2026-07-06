@@ -157,6 +157,11 @@ class Config:
         metrics_manifest_path=None,
         metrics_validation_mode="warn",
         csv_compat_mode=True,
+        # VOP Stage A: Revit color ID-buffer extraction
+        enable_color_id_buffer_stage_a=False,
+        color_id_buffer_min_pixels_across_threshold=2,
+        color_id_buffer_threshold_source_mm=0.7,
+        color_id_buffer_global_assignment_threshold=32767,
         
     ):
         """Initialize VOP configuration.
@@ -336,6 +341,18 @@ class Config:
         if self.metrics_validation_mode not in ("warn", "strict"):
             raise ValueError("metrics_validation_mode must be 'warn' or 'strict'")
         self.csv_compat_mode = bool(csv_compat_mode)
+
+        # VOP Stage A color ID-buffer configuration (single source of truth).
+        self.enable_color_id_buffer_stage_a = bool(enable_color_id_buffer_stage_a)
+        self.color_id_buffer_min_pixels_across_threshold = int(color_id_buffer_min_pixels_across_threshold)
+        self.color_id_buffer_threshold_source_mm = float(color_id_buffer_threshold_source_mm)
+        self.color_id_buffer_global_assignment_threshold = int(color_id_buffer_global_assignment_threshold)
+        if self.color_id_buffer_min_pixels_across_threshold <= 0:
+            raise ValueError("color_id_buffer_min_pixels_across_threshold must be positive")
+        if self.color_id_buffer_threshold_source_mm <= 0:
+            raise ValueError("color_id_buffer_threshold_source_mm must be positive")
+        if self.color_id_buffer_global_assignment_threshold <= 0:
+            raise ValueError("color_id_buffer_global_assignment_threshold must be positive")
         
     def compute_adaptive_tile_size(self, grid_width, grid_height):
         """Compute optimal tile size based on grid dimensions.

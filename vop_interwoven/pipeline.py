@@ -1099,6 +1099,24 @@ def process_document_views(
                 _tmark(TIMING_KEYS["COLLECT_MS"], t0, t1)
 
                 # 3) MODEL PASS
+                if getattr(cfg, "enable_color_id_buffer_stage_a", False):
+                    # Stage A replaces the occlusion/silhouette in-memory model pass
+                    # with a Revit-rendered color ID buffer. Decode/vectorization is
+                    # intentionally deferred to Stage B.
+                    from .color_id_buffer import export_color_id_buffer_view
+                    t0 = _perf_now()
+                    out = export_color_id_buffer_view(
+                        doc, view, elements, cfg, diag=diag
+                    )
+                    t1 = _perf_now()
+                    _tmark(TIMING_KEYS["RASTER_MODEL_MS"], t0, t1)
+                    if isinstance(out, dict):
+                        out.setdefault("view_mode", view_mode)
+                        out.setdefault("view_mode_reason", mode_reason)
+                        out.setdefault("timings", {}).update(dict(timings))
+                    results.append(out)
+                    continue
+
                 t0 = _perf_now()
                 render_result = render_model_front_to_back(doc, view, raster, elements, cfg, diag=diag, geometry_cache=geometry_cache, areal_cache=areal_cache, elem_cache=elem_cache, strategy_diag=strategy_diag)
                 t1 = _perf_now()

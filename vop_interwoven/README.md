@@ -392,3 +392,21 @@ print("pillow:", PILLOW_AVAILABLE)  # True = fast PNG export active
 ### Without installation
 
 If NumPy and Pillow are not installed, VOP automatically uses pure Python implementations. No configuration change is required.
+
+## VOP Stage A color ID-buffer extraction
+
+Set `Config(enable_color_id_buffer_stage_a=True)` to bypass the legacy in-memory
+occlusion/silhouette model pass for model-capable views and export a Revit
+rendered color ID buffer instead.  The Stage A path collects the same visible
+model elements, resolves groups and shared nested family subcomponents, applies
+a deterministic flat RGB override per resolved element, suppresses active view
+filters, swaps to the neutral `VOP_NeutralPhaseFilter`, clears category halftone,
+hides annotation/grid/level categories, exports a per-view TIFF, writes a JSON
+sidecar, and restores the view state before the next view is processed.
+
+Stage A intentionally stops at extraction.  It does not decode colors back into
+vectors, trace contours, simplify geometry, join annotations to model elements,
+perform bbox pre-filtering, run multi-pass color batching, or derive thresholds
+from lineweight.  The only Stage A geometry threshold is the fixed
+`color_id_buffer_threshold_source_mm` default of `0.7` mm combined with
+`color_id_buffer_min_pixels_across_threshold` default of `2` pixels.
