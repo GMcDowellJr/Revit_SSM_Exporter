@@ -460,26 +460,60 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                         view_id=view_id,
                     )
 
+        # Paint per-element, but never let one element's failure (some categories/
+        # nested sub-components legitimately reject graphic overrides) roll back
+        # every other element already painted in this view — mirrors the reference
+        # SUPPRESS script's per-element try/except-and-continue behavior.
+        paint_failures = 0
         for eid in resolved_ids:
-            element_override_state[eid.IntegerValue] = view.GetElementOverrides(eid)
-            rgb = color_map[eid.IntegerValue]
-            color = Color(int(rgb[0]), int(rgb[1]), int(rgb[2]))
-            ogs = _build_flat_color_ogs(solid_pattern_id, color)
-            view.SetElementOverrides(eid, ogs)
+            try:
+                element_override_state[eid.IntegerValue] = view.GetElementOverrides(eid)
+                rgb = color_map[eid.IntegerValue]
+                color = Color(int(rgb[0]), int(rgb[1]), int(rgb[2]))
+                ogs = _build_flat_color_ogs(solid_pattern_id, color)
+                view.SetElementOverrides(eid, ogs)
+            except Exception as ex:
+                paint_failures += 1
+                if diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite="paint_element_override",
+                        message=str(ex),
+                        view_id=view_id,
+                        elem_id=eid.IntegerValue,
+                    )
+        if paint_failures and diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="paint_element_override",
+                message="{0} of {1} resolved element(s) could not be painted; those "
+                        "pixels will be unassigned in the ID buffer".format(paint_failures, count_host),
+                view_id=view_id,
+            )
 
         # Linked RVT elements: attempt a per-element LinkElementId override (Revit
         # 2022+). Elements whose link instance can't be colored this way are hidden
         # for the export instead of left uncolored, so they never contaminate the
         # ID buffer with unassigned pixels.
         for (link_inst_id, link_elem_id, _proxy) in link_entries:
-            rgb = link_color_map[(link_inst_id.IntegerValue, link_elem_id.IntegerValue)]
-            color = Color(int(rgb[0]), int(rgb[1]), int(rgb[2]))
-            ogs = _build_flat_color_ogs(solid_pattern_id, color)
-            ok, prior = _try_color_link_element(view, link_inst_id, link_elem_id, ogs)
-            if ok:
-                link_override_state[(link_inst_id.IntegerValue, link_elem_id.IntegerValue)] = prior
-            else:
+            try:
+                rgb = link_color_map[(link_inst_id.IntegerValue, link_elem_id.IntegerValue)]
+                color = Color(int(rgb[0]), int(rgb[1]), int(rgb[2]))
+                ogs = _build_flat_color_ogs(solid_pattern_id, color)
+                ok, prior = _try_color_link_element(view, link_inst_id, link_elem_id, ogs)
+                if ok:
+                    link_override_state[(link_inst_id.IntegerValue, link_elem_id.IntegerValue)] = prior
+                else:
+                    unresolved_link_instance_ids.add(link_inst_id.IntegerValue)
+            except Exception as ex:
                 unresolved_link_instance_ids.add(link_inst_id.IntegerValue)
+                if diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite="paint_link_element_override",
+                        message=str(ex),
+                        view_id=view_id,
+                    )
 
         if unresolved_link_instance_ids:
             import System.Collections.Generic as SCG
@@ -573,12 +607,30 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
 
         for eid in resolved_ids:
             def _restore_element_override(eid=eid):
+                from Autodesk.Revit.DB import OverrideGraphicSettings
                 eid_int = int(eid.IntegerValue)
                 prior_ogs = element_override_state.get(eid_int)
                 if prior_ogs is None:
-                    from Autodesk.Revit.DB import OverrideGraphicSettings
                     prior_ogs = OverrideGraphicSettings()
-                view.SetElementOverrides(ElementId(eid_int), prior_ogs)
+                try:
+                    view.SetElementOverrides(ElementId(eid_int), prior_ogs)
+                except Exception as ex:
+                    # Reapplying the exact captured prior state failed (e.g. it
+                    # referenced a pattern/style that's no longer valid in this
+                    # context). Fall back to a blank override — matching the
+                    # reference SUPPRESS/RESTORE script's always-reset-to-blank
+                    # behavior — so the element is at least un-colored rather
+                    # than left painted.
+                    if diag is not None:
+                        diag.warn(
+                            phase="color_id_buffer",
+                            callsite="restore_element_overrides_fallback",
+                            message="Reapplying captured prior override failed ({0}); "
+                                    "falling back to a blank override".format(ex),
+                            view_id=view_id,
+                            elem_id=eid_int,
+                        )
+                    view.SetElementOverrides(ElementId(eid_int), OverrideGraphicSettings())
             _restore_step("restore_element_overrides", _restore_element_override)
 
         if link_override_state:
@@ -586,7 +638,19 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             for (link_inst_int, link_elem_int), prior_ogs in link_override_state.items():
                 def _restore_link_override(link_inst_int=link_inst_int, link_elem_int=link_elem_int, prior_ogs=prior_ogs):
                     lek = LinkElementId(ElementId(int(link_inst_int)), ElementId(int(link_elem_int)))
-                    view.SetElementOverrides(lek, prior_ogs if prior_ogs is not None else OverrideGraphicSettings())
+                    target_ogs = prior_ogs if prior_ogs is not None else OverrideGraphicSettings()
+                    try:
+                        view.SetElementOverrides(lek, target_ogs)
+                    except Exception as ex:
+                        if diag is not None:
+                            diag.warn(
+                                phase="color_id_buffer",
+                                callsite="restore_link_element_overrides_fallback",
+                                message="Reapplying captured prior link override failed "
+                                        "({0}); falling back to a blank override".format(ex),
+                                view_id=view_id,
+                            )
+                        view.SetElementOverrides(lek, OverrideGraphicSettings())
                 _restore_step("restore_link_element_overrides", _restore_link_override)
 
         if hidden_link_instance_ids:
