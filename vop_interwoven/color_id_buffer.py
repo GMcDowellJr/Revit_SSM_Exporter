@@ -18,30 +18,16 @@ MAX_STAGE_A_PIXEL_SIZE = 15000
 # (validity rule: any channel < NEAR_WHITE_RESERVED_THRESHOLD).
 NEAR_WHITE_RESERVED_THRESHOLD = 224
 
-# Mirrors the annotation category set collected by revit.annotation.collect_2d_annotations
-# plus view-only categories (grids/levels/section/elevation/callout marks) that are never
-# occlusion truth. Kept as an explicit list (rather than importing collect_2d_annotations'
-# locals) since that function does not expose its category set as a module constant.
-ANNOTATION_HIDE_BIC_NAMES = (
-    "OST_Grids",
-    "OST_Levels",
-    "OST_TextNotes",
-    "OST_Dimensions",
-    "OST_GenericAnnotation",
-    "OST_SectionLine",
-    "OST_ElevationMarks",
-    "OST_CalloutHeads",
-    "OST_DetailComponents",
-    "OST_RoomTags",
-    "OST_SpaceTags",
-    "OST_AreaTags",
-    "OST_DoorTags",
-    "OST_WindowTags",
-    "OST_WallTags",
-    "OST_MEPSpaceTags",
-    "OST_KeynoteTags",
-    "OST_FilledRegion",
-    "OST_Lines",
+# Categories that are CategoryType.Model in the Revit API but are still
+# view-specific 2D drafting content with no real 3D presence -- Revit buckets
+# them as "Model" for historical reasons, not because they're actual model
+# geometry. Stage A's whole point is letting Revit's renderer resolve
+# occlusion for real 3D model geometry only; this content is collected by the
+# existing 2D annotation pipeline (revit/annotation.py) and combined with the
+# color buffer's decoded edges in a later post-process step instead.
+VIEW_ONLY_MODEL_BIC_NAMES = (
+    "OST_DetailComponents",  # Detail Items: 2D symbols placed per-view, no 3D form
+    "OST_Lines",             # Model Lines & Detail Lines share this category; neither has fill/area
 )
 
 
@@ -212,18 +198,37 @@ def _try_color_link_element(view, link_inst_id, link_elem_id, ogs):
 
 
 def _hidden_category_state(doc, view):
-    from Autodesk.Revit.DB import BuiltInCategory
-    state = {}
-    for bic_name in ANNOTATION_HIDE_BIC_NAMES:
+    """Categories to hide before the Stage A paint/export pass.
+
+    Hides every top-level category Revit itself classifies as
+    CategoryType.Annotation (tags, text, dimensions, datums, callouts, filled
+    regions, etc. -- whatever that set is on this document, not a
+    hand-maintained list that can drift out of sync with it), plus the
+    Model-categorytype exceptions in VIEW_ONLY_MODEL_BIC_NAMES that have no
+    real 3D presence despite the category-type label.
+    """
+    from Autodesk.Revit.DB import BuiltInCategory, CategoryType
+    view_only_model_bic_ids = set()
+    for bic_name in VIEW_ONLY_MODEL_BIC_NAMES:
         bic = getattr(BuiltInCategory, bic_name, None)
-        if bic is None:
+        if bic is not None:
+            view_only_model_bic_ids.add(int(bic))
+
+    state = {}
+    for cat in doc.Settings.Categories:
+        try:
+            cat_id = cat.Id
+            is_annotation = cat.CategoryType == CategoryType.Annotation
+            is_view_only_model = cat_id.IntegerValue in view_only_model_bic_ids
+        except Exception:
+            continue
+        if not (is_annotation or is_view_only_model):
             continue
         try:
-            cat = doc.Settings.Categories.get_Item(bic)
-            if cat is not None and view.CanCategoryBeHidden(cat.Id):
-                state[cat.Id.IntegerValue] = {
-                    "bic_name": bic_name,
-                    "was_hidden": bool(view.GetCategoryHidden(cat.Id)),
+            if view.CanCategoryBeHidden(cat_id):
+                state[cat_id.IntegerValue] = {
+                    "name": getattr(cat, "Name", None),
+                    "was_hidden": bool(view.GetCategoryHidden(cat_id)),
                 }
         except Exception:
             continue
@@ -264,58 +269,6 @@ def _set_pixel_size_with_backoff(opts, pixel_size, diag=None, view_id=None):
             candidate = max(floor, candidate // 2)
 
 
-def _capture_active_view_state(doc, target_view, diag=None, view_id=None, callsite="pre_export_image"):
-    """Record whether doc.ActiveView matches the view about to be exported.
-
-    Debugging aid for the "only the last view comes out right" / "colors look
-    the same across views" Stage A reports (July 2026): doc.ExportImage()
-    renders through the same viewport pipeline the UI uses, which is a
-    different code path than SetElementOverrides/SetCategoryHidden (those are
-    plain view-scoped data writes, already confirmed to work on non-active
-    views). This project has already hit one Revit API surface that silently
-    no-ops on a non-active view and renders whatever the actual active view is
-    instead (CropBox/IsolateElementTemporary in the DSE symbol-raster work,
-    Apr 2026) -- this instrumentation tests whether ExportImage has the same
-    requirement, without yet forcing an active-view switch.
-    """
-    target_id = getattr(getattr(target_view, "Id", None), "IntegerValue", None)
-    target_name = getattr(target_view, "Name", None)
-    active_id = None
-    active_name = None
-    active_type = None
-    read_error = None
-    try:
-        active_view = getattr(doc, "ActiveView", None)
-        if active_view is not None:
-            active_id = getattr(getattr(active_view, "Id", None), "IntegerValue", None)
-            active_name = getattr(active_view, "Name", None)
-            active_type = str(getattr(active_view, "ViewType", None))
-    except Exception as ex:
-        read_error = str(ex)
-
-    matches = (active_id == target_id) if (active_id is not None and target_id is not None) else None
-    info = {
-        "target_view_id": target_id,
-        "target_view_name": target_name,
-        "active_view_id": active_id,
-        "active_view_name": active_name,
-        "active_view_type": active_type,
-        "matches_target": matches,
-        "read_error": read_error,
-    }
-    if diag is not None:
-        level_fn = diag.info if matches in (True, None) else diag.warn
-        level_fn(
-            phase="color_id_buffer",
-            callsite=callsite,
-            message="doc.ActiveView={0} ({1!r}) vs export target view={2} ({3!r}); "
-                    "matches_target={4}".format(active_id, active_name, target_id, target_name, matches),
-            view_id=view_id,
-            extra=info,
-        )
-    return info
-
-
 def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None):
     from Autodesk.Revit.DB import (
         ImageExportOptions, ExportRange, ZoomFitType, FitDirectionType, ElementId,
@@ -342,10 +295,6 @@ def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None):
     opts.HLRandWFViewsFileType = tiff_type
     opts.ShadowViewsFileType = tiff_type
 
-    active_view_check = _capture_active_view_state(
-        doc, view, diag=diag, view_id=view_id, callsite="pre_export_image"
-    )
-
     doc.ExportImage(opts)
     after = set(os.listdir(out_dir))
     candidates = [f for f in (after - before) if f.lower().endswith((".tif", ".tiff"))]
@@ -358,7 +307,7 @@ def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None):
     if os.path.exists(output_path):
         os.remove(output_path)
     os.rename(created, output_path)
-    return output_path, actual_pixel_size, active_view_check
+    return output_path, actual_pixel_size
 
 
 def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None, elem_cache=None):
@@ -740,9 +689,8 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         raise
 
     actual_pixel_size = pixel_size
-    active_view_check = None
     try:
-        _tiff_path, actual_pixel_size, active_view_check = _export_tiff(
+        _tiff_path, actual_pixel_size = _export_tiff(
             doc, view, tiff_path, pixel_size, diag=diag, view_id=view_id
         )
     finally:
@@ -882,7 +830,6 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "category_halftone_state": category_halftone_state,
         "palette_step": step,
         "tiff_path": tiff_path,
-        "active_view_check": active_view_check,
     }
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
@@ -900,6 +847,5 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "resolution": state_out["resolution"],
         "color_assignment_count": count_host + count_link,
         "timings": {"color_id_buffer_ms": round((time.time() - t0) * 1000.0, 3)},
-        "active_view_check": active_view_check,
         "metadata": state_out,
     }
