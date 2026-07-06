@@ -481,7 +481,27 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         neutral_pf, pf_created = get_or_create_neutral_phase_filter(doc)
         phase_filter_state["neutral_phase_filter_id"] = neutral_pf.Id.IntegerValue
         phase_filter_state["neutral_phase_filter_created"] = bool(pf_created)
-        pf_param.Set(neutral_pf.Id)
+        # VIEW_PHASE_FILTER is commonly locked read-only by a View Template that
+        # controls Phase Filter -- Parameter.Set() raises InvalidOperationException
+        # in that case. That must not abort the whole view: fall back to the
+        # view's existing phase filter (phase-hidden elements like New/Demolished/
+        # Temporary will be absent from this view's ID buffer, which is a
+        # completeness gap, not an occlusion-truth violation).
+        phase_filter_swapped = bool(pf_param is not None and not pf_param.IsReadOnly)
+        if phase_filter_swapped:
+            pf_param.Set(neutral_pf.Id)
+        elif diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="phase_filter_swap",
+                message="VIEW_PHASE_FILTER is read-only (likely a View Template "
+                        "controlling Phase Filter); continuing with the view's "
+                        "existing phase filter. Elements the original phase filter "
+                        "hides (e.g. New/Demolished/Temporary) will be missing "
+                        "from this view's color ID buffer.",
+                view_id=view_id,
+            )
+        phase_filter_state["swapped"] = phase_filter_swapped
         for cat_id_int, hstate in category_hidden_state.items():
             view.SetCategoryHidden(ElementId(int(cat_id_int)), True)
 
@@ -825,7 +845,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         _restore_step("restore_filters", _restore_filters)
 
         def _restore_phase_filter():
-            if orig_phase_filter_id is not None:
+            if orig_phase_filter_id is not None and phase_filter_state.get("swapped"):
                 pf_param.Set(ElementId(int(orig_phase_filter_id)))
         _restore_step("restore_phase_filter", _restore_phase_filter)
 
