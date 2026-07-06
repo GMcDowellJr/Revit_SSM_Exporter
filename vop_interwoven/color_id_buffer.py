@@ -487,65 +487,83 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     finally:
         restore_tx = Transaction(doc, "VOP Stage A RESTORE color ID buffer")
         restore_tx.Start()
-        try:
+
+        # Best-effort restore: every step below is independently guarded. Revit
+        # transactions are all-or-nothing on RollBack, so a single failing step
+        # (a stale ElementId, an UnhideElements refusal, ...) must never be able
+        # to roll back every other restore step that already succeeded — that
+        # would leave the document sitting in the suppressed/colored Stage A
+        # state permanently instead of just missing the one failed piece.
+        def _restore_step(callsite, fn):
+            try:
+                fn()
+            except Exception as ex:
+                if diag is not None:
+                    diag.error(
+                        phase="color_id_buffer",
+                        callsite=callsite,
+                        message=str(ex),
+                        view_id=view_id,
+                        exc=ex,
+                    )
+
+        def _restore_filters():
             for fid_int, fstate in filter_state.items():
                 view.SetIsFilterEnabled(ElementId(int(fid_int)), fstate["was_enabled"])
+        _restore_step("restore_filters", _restore_filters)
+
+        def _restore_phase_filter():
             if orig_phase_filter_id is not None:
                 pf_param.Set(ElementId(int(orig_phase_filter_id)))
-            if phase_filter_state.get("neutral_phase_filter_created") and phase_filter_state.get("neutral_phase_filter_id") is not None:
-                try:
-                    doc.Delete(ElementId(int(phase_filter_state["neutral_phase_filter_id"])))
-                except Exception as ex:
-                    if diag is not None:
-                        diag.warn(
-                            phase="color_id_buffer",
-                            callsite="restore_neutral_phase_filter",
-                            message=str(ex),
-                            view_id=view_id,
-                        )
-            for cat_id_int, was_halftone in category_halftone_state.items():
-                try:
-                    cat_id = ElementId(int(cat_id_int))
-                    cat_ogs = view.GetCategoryOverrides(cat_id)
-                    cat_ogs.SetHalftone(was_halftone)
-                    view.SetCategoryOverrides(cat_id, cat_ogs)
-                except Exception as ex:
-                    if diag is not None:
-                        diag.warn(
-                            phase="color_id_buffer",
-                            callsite="restore_category_halftone",
-                            message=str(ex),
-                            view_id=view_id,
-                        )
-            for cat_id_int, hstate in category_hidden_state.items():
+        _restore_step("restore_phase_filter", _restore_phase_filter)
+
+        if phase_filter_state.get("neutral_phase_filter_created") and phase_filter_state.get("neutral_phase_filter_id") is not None:
+            _restore_step(
+                "restore_neutral_phase_filter",
+                lambda: doc.Delete(ElementId(int(phase_filter_state["neutral_phase_filter_id"]))),
+            )
+
+        for cat_id_int, was_halftone in category_halftone_state.items():
+            def _restore_halftone(cat_id_int=cat_id_int, was_halftone=was_halftone):
+                cat_id = ElementId(int(cat_id_int))
+                cat_ogs = view.GetCategoryOverrides(cat_id)
+                cat_ogs.SetHalftone(was_halftone)
+                view.SetCategoryOverrides(cat_id, cat_ogs)
+            _restore_step("restore_category_halftone", _restore_halftone)
+
+        for cat_id_int, hstate in category_hidden_state.items():
+            def _restore_cat_hidden(cat_id_int=cat_id_int, hstate=hstate):
                 view.SetCategoryHidden(ElementId(int(cat_id_int)), bool(hstate["was_hidden"]))
-            for eid in resolved_ids:
+            _restore_step("restore_category_hidden", _restore_cat_hidden)
+
+        for eid in resolved_ids:
+            def _restore_element_override(eid=eid):
                 eid_int = int(eid.IntegerValue)
                 prior_ogs = element_override_state.get(eid_int)
                 if prior_ogs is None:
                     from Autodesk.Revit.DB import OverrideGraphicSettings
                     prior_ogs = OverrideGraphicSettings()
                 view.SetElementOverrides(ElementId(eid_int), prior_ogs)
-            if link_override_state:
-                from Autodesk.Revit.DB import LinkElementId, OverrideGraphicSettings
-                for (link_inst_int, link_elem_int), prior_ogs in link_override_state.items():
-                    try:
-                        lek = LinkElementId(ElementId(int(link_inst_int)), ElementId(int(link_elem_int)))
-                        view.SetElementOverrides(lek, prior_ogs if prior_ogs is not None else OverrideGraphicSettings())
-                    except Exception as ex:
-                        if diag is not None:
-                            diag.warn(
-                                phase="color_id_buffer",
-                                callsite="restore_link_element_overrides",
-                                message=str(ex),
-                                view_id=view_id,
-                            )
-            if hidden_link_instance_ids:
+            _restore_step("restore_element_overrides", _restore_element_override)
+
+        if link_override_state:
+            from Autodesk.Revit.DB import LinkElementId, OverrideGraphicSettings
+            for (link_inst_int, link_elem_int), prior_ogs in link_override_state.items():
+                def _restore_link_override(link_inst_int=link_inst_int, link_elem_int=link_elem_int, prior_ogs=prior_ogs):
+                    lek = LinkElementId(ElementId(int(link_inst_int)), ElementId(int(link_elem_int)))
+                    view.SetElementOverrides(lek, prior_ogs if prior_ogs is not None else OverrideGraphicSettings())
+                _restore_step("restore_link_element_overrides", _restore_link_override)
+
+        if hidden_link_instance_ids:
+            def _restore_unhide():
                 import System.Collections.Generic as SCG
                 unhide_list = SCG.List[ElementId]()
                 for iid in hidden_link_instance_ids:
                     unhide_list.Add(ElementId(int(iid)))
                 view.UnhideElements(unhide_list)
+            _restore_step("restore_unhide_link_instances", _restore_unhide)
+
+        try:
             restore_tx.Commit()
         except Exception:
             restore_tx.RollBack()
