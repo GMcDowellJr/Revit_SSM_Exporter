@@ -619,6 +619,7 @@ def process_document_views(
 
     # Output directory (used for element cache persistence/export). Must be defined here.
     output_dir = getattr(cfg, "output_dir", None)
+    stage_a_color_id_mode = bool(getattr(cfg, "enable_color_id_buffer_stage_a", False))
 
     view_cache_enabled = bool(getattr(cfg, "view_cache_enabled", False))
     view_cache_dir = getattr(cfg, "view_cache_dir", None)
@@ -970,8 +971,10 @@ def process_document_views(
             # Compute identity fields once for CSV slicing and cache row_payload completeness
             ident = _extract_view_identity_for_csv(doc, view)
 
-            # Check root cache first (metrics-only hit; valid in streaming too)
-            if root_cache:
+            # Check root cache first (metrics-only hit; valid in streaming too).
+            # Stage A must always reach the color ID-buffer export branch so it
+            # can create the TIFF/sidecar; do not satisfy it from legacy metrics.
+            if root_cache and not stage_a_color_id_mode:
                 t_cache0 = _perf_now()
                 cached = root_cache.get_view(view_id_int, sig_hex)
                 t_cache1 = _perf_now()
@@ -1099,6 +1102,25 @@ def process_document_views(
                 _tmark(TIMING_KEYS["COLLECT_MS"], t0, t1)
 
                 # 3) MODEL PASS
+                if getattr(cfg, "enable_color_id_buffer_stage_a", False):
+                    # Stage A replaces the occlusion/silhouette in-memory model pass
+                    # with a Revit-rendered color ID buffer. Decode/vectorization is
+                    # intentionally deferred to Stage B.
+                    from .color_id_buffer import export_color_id_buffer_view
+                    t0 = _perf_now()
+                    out = export_color_id_buffer_view(
+                        doc, view, elements, cfg, diag=diag,
+                        raster=raster, elem_cache=elem_cache,
+                    )
+                    t1 = _perf_now()
+                    _tmark(TIMING_KEYS["RASTER_MODEL_MS"], t0, t1)
+                    if isinstance(out, dict):
+                        out.setdefault("view_mode", view_mode)
+                        out.setdefault("view_mode_reason", mode_reason)
+                        out.setdefault("timings", {}).update(dict(timings))
+                    results.append(out)
+                    continue
+
                 t0 = _perf_now()
                 render_result = render_model_front_to_back(doc, view, raster, elements, cfg, diag=diag, geometry_cache=geometry_cache, areal_cache=areal_cache, elem_cache=elem_cache, strategy_diag=strategy_diag)
                 t1 = _perf_now()

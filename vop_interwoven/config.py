@@ -157,6 +157,10 @@ class Config:
         metrics_manifest_path=None,
         metrics_validation_mode="warn",
         csv_compat_mode=True,
+        # VOP Stage A: Revit color ID-buffer extraction
+        enable_color_id_buffer_stage_a=False,
+        color_id_buffer_export_dpi=150,
+        color_id_buffer_global_assignment_threshold=32767,
         
     ):
         """Initialize VOP configuration.
@@ -336,6 +340,15 @@ class Config:
         if self.metrics_validation_mode not in ("warn", "strict"):
             raise ValueError("metrics_validation_mode must be 'warn' or 'strict'")
         self.csv_compat_mode = bool(csv_compat_mode)
+
+        # VOP Stage A color ID-buffer configuration (single source of truth).
+        self.enable_color_id_buffer_stage_a = bool(enable_color_id_buffer_stage_a)
+        self.color_id_buffer_export_dpi = float(color_id_buffer_export_dpi)
+        self.color_id_buffer_global_assignment_threshold = int(color_id_buffer_global_assignment_threshold)
+        if self.color_id_buffer_export_dpi <= 0:
+            raise ValueError("color_id_buffer_export_dpi must be positive")
+        if self.color_id_buffer_global_assignment_threshold <= 0:
+            raise ValueError("color_id_buffer_global_assignment_threshold must be positive")
         
     def compute_adaptive_tile_size(self, grid_width, grid_height):
         """Compute optimal tile size based on grid dimensions.
@@ -557,6 +570,12 @@ class Config:
             "metrics_manifest_path": self.metrics_manifest_path,
             "metrics_validation_mode": self.metrics_validation_mode,
             "csv_compat_mode": self.csv_compat_mode,
+            # VOP Stage A color ID-buffer extraction
+            "enable_color_id_buffer_stage_a": self.enable_color_id_buffer_stage_a,
+            "color_id_buffer_export_dpi": self.color_id_buffer_export_dpi,
+            "color_id_buffer_global_assignment_threshold": (
+                self.color_id_buffer_global_assignment_threshold
+            ),
         }
 
     @classmethod
@@ -626,5 +645,11 @@ class Config:
             metrics_manifest_path=d.get("metrics_manifest_path", None),
             metrics_validation_mode=d.get("metrics_validation_mode", "warn"),
             csv_compat_mode=d.get("csv_compat_mode", True),
+            # VOP Stage A color ID-buffer extraction
+            enable_color_id_buffer_stage_a=d.get("enable_color_id_buffer_stage_a", False),
+            color_id_buffer_export_dpi=d.get("color_id_buffer_export_dpi", 150),
+            color_id_buffer_global_assignment_threshold=d.get(
+                "color_id_buffer_global_assignment_threshold", 32767
+            ),
 
         )

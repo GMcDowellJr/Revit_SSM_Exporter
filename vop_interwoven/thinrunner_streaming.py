@@ -10,6 +10,7 @@ Usage:
     IN[2] = Optional output directory
     IN[3] = Optional batch size (int)
     IN[4] = Export view raster PNGs — raw Revit view images for comparison (bool, default True)
+    IN[5] = Enable Stage A color ID-buffer extraction (bool, default False)
 
 Output:
     Summary string with view count, annotation count, CSV paths
@@ -343,10 +344,21 @@ try:
     cfg = Config()
     cfg.debug_json_detail = "summary"
 
+    # Optional Stage A color ID-buffer path. This must be set on the same
+    # Config instance passed into run_vop_pipeline_streaming(); otherwise the
+    # pipeline falls through to the legacy occlusion/silhouette path.
+    enable_color_id_buffer_stage_a = (
+        bool(IN[5]) if len(IN) > 5 and IN[5] is not None else False
+    )
+    cfg.enable_color_id_buffer_stage_a = enable_color_id_buffer_stage_a
+
     print("="*60)
     print("DEBUG: About to call streaming")
     print("  cfg.view_cache_enabled = {}".format(cfg.view_cache_enabled))
     print("  cfg.view_cache_dir = {}".format(cfg.view_cache_dir))
+    print("  cfg.enable_color_id_buffer_stage_a = {}".format(
+        cfg.enable_color_id_buffer_stage_a
+    ))
     print("="*60)
 
     # Optional batch size override
@@ -456,6 +468,21 @@ try:
                     _append_csv(chunk_csv, target_csv)
                     merged[key] = target_csv
 
+                # Stage A writes TIFF/sidecar files directly under
+                # batch_output_dir/color_id_buffer/ (there is no CSV row to merge them
+                # through); move them into the requested output tree so batched runs
+                # don't strand the only copies under a temp batch folder.
+                if getattr(cfg, "enable_color_id_buffer_stage_a", False):
+                    batch_stage_a_dir = os.path.join(batch_output_dir, "color_id_buffer")
+                    if os.path.isdir(batch_stage_a_dir):
+                        final_stage_a_dir = os.path.join(output_dir, "color_id_buffer")
+                        os.makedirs(final_stage_a_dir, exist_ok=True)
+                        for fname in os.listdir(batch_stage_a_dir):
+                            shutil.move(
+                                os.path.join(batch_stage_a_dir, fname),
+                                os.path.join(final_stage_a_dir, fname),
+                            )
+
                 _run_gc_between_chunks()
 
             result = merged
@@ -469,6 +496,9 @@ try:
     print("DEBUG: After streaming call")
     print("  cfg.view_cache_enabled = {}".format(cfg.view_cache_enabled))
     print("  cfg.view_cache_dir = {}".format(cfg.view_cache_dir))
+    print("  cfg.enable_color_id_buffer_stage_a = {}".format(
+        cfg.enable_color_id_buffer_stage_a
+    ))
     print("="*60)
 
     # Extract results
@@ -543,6 +573,10 @@ try:
     except Exception as e:
         lines.append("Perf CSV export failed: {}".format(e))
 
+    lines.append("Stage A color ID-buffer: {}".format(
+        "enabled" if getattr(cfg, "enable_color_id_buffer_stage_a", False) else "disabled"
+    ))
+
     # File outputs
     png_files = result.get('png_files', [])
     lines.append("PNGs written: {}".format(len(png_files)))
@@ -579,8 +613,10 @@ except Exception as e:
     try:
         error_lines.append("Traceback:")
         error_lines.append(traceback.format_exc())
-    except:
-        error_lines.append("(Traceback not available)")
+    except Exception as traceback_error:
+        error_lines.append("(Traceback not available: {}: {})".format(
+            type(traceback_error).__name__, traceback_error
+        ))
     
     error_lines.append("")
     error_lines.append("=" * 60)

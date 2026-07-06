@@ -392,3 +392,68 @@ print("pillow:", PILLOW_AVAILABLE)  # True = fast PNG export active
 ### Without installation
 
 If NumPy and Pillow are not installed, VOP automatically uses pure Python implementations. No configuration change is required.
+
+## VOP Stage A color ID-buffer extraction
+
+Set `Config(enable_color_id_buffer_stage_a=True)` to bypass the legacy in-memory
+occlusion/silhouette model pass for model-capable views and export a Revit
+rendered color ID buffer instead.  The Stage A path suppresses active view
+filters, swaps to the neutral `VOP_NeutralPhaseFilter`, then re-collects the
+view's visible model elements under that neutral phase state (so elements the
+original phase filter hid but the neutral filter reveals still get a color),
+expands the result to include linked RVT and DWG/DXF import geometry, resolves
+groups and shared nested family subcomponents, applies a deterministic flat RGB
+override per resolved element, clears category halftone, hides annotation/tag/
+grid/level categories, exports a per-view TIFF at a fixed print DPI across the
+view's actual paper width, writes a JSON sidecar, and restores the view state
+(including deleting `VOP_NeutralPhaseFilter` if
+Stage A created it) before the next view is processed.  In the streaming thin
+runner, pass `True` in `IN[5]`; these files are written under the `IN[2]`
+output tree in `color_id_buffer/` (including in batched runs — Stage A moves
+per-batch artifacts into the requested output directory after each batch).
+Direct pipeline calls use `Config(enable_color_id_buffer_stage_a=True)` and
+write to `cfg.output_dir/color_id_buffer/`. Stage A bypasses metrics-only
+root-cache hits so enabling it always attempts a fresh TIFF/sidecar export for
+each processed model-capable view.
+
+Linked RVT elements are colored via a per-element `LinkElementId` override
+(Revit 2022+). On Revit versions or link configurations where that override
+isn't available, the owning link instance is hidden for the export instead of
+left uncolored, so it never contaminates the ID buffer with unassigned pixels;
+which link instances were hidden is recorded in the sidecar's
+`unresolved_link_instance_hidden_ids` and in diagnostics. DWG/DXF imports are
+colored as a single flat-color `ImportInstance` (no per-layer decomposition).
+
+Stage A intentionally stops at extraction.  It does not decode colors back into
+vectors, trace contours, simplify geometry, join annotations to model elements,
+perform bbox pre-filtering, run multi-pass color batching, or derive resolution
+from a source-geometry lineweight/threshold. Export resolution is a fixed print
+DPI (`Config.color_id_buffer_export_dpi`, default `150`) multiplied by the
+view's actual paper width to get the horizontal `ImageExportOptions.PixelSize`.
+Revit enforces an undocumented (and version-dependent) ceiling on that value;
+if the computed size is rejected, Stage A halves it and retries until Revit
+accepts it, logging a warning and recording the actual accepted pixel size
+(not just the requested one) in the sidecar's `resolution.pixel_size`.
+
+To keep painted colors exact, Stage A also forces the view to
+`DisplayStyle.FlatColors` (Revit 2021+) for the export — shading, shadows, and
+ambient occlusion would otherwise tint a flat color-override surface with a
+lighting gradient, which a decoder can't distinguish from a real element
+boundary. On Revit hosts without `FlatColors`, it falls back to plain
+`Shading` and logs a diagnostic, since that fallback doesn't guarantee
+shadow-free output. The original display style is restored before the next
+view, and the style actually used is recorded in the sidecar's
+`applied_display_style`.
+
+Stage A also disables the per-view Graphic Display Options "Smooth lines with
+anti-aliasing" checkbox (`View.GetViewDisplayModel().SmoothEdges`, distinct
+from `DisplayStyle`) for the export and restores it afterward. This is the
+specific setting the original empirical Stage A testing validated as
+"AA-off is clean" — with it on, Revit blends colors across an element's
+silhouette edge, producing off-lattice pixel colors right at boundaries that
+a decoder can't tell apart from a genuine third color. The applied value is
+recorded in the sidecar's `applied_smooth_edges`. The color palette also
+reserves the near-white corner of the RGB cube (any channel ≥ `224`) as
+invalid/background, so a decoder has a clean boundary against any residual
+anti-aliasing halo at the page background instead of risking a real element
+color being mistaken for it.
