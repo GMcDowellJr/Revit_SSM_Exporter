@@ -2008,41 +2008,8 @@
       "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities"
     }
   ],
-  "questions": [
-    {
-      "type": "bridge_node",
-      "question": "Why does `Config` connect `Configuration Tests` to `UV Classification Tests`, `Metrics Manifest Tests`, `Final State Scanner Tests`, `Face Selection Strategy Tests`, `View Unique ID Tests`, `ViewRaster Tests`, `UV Proxy Generation Tests`, `Phase Validation Tests`, `AREAL Geometry Extraction`, `Streaming Pipeline Processing`, `Import Check Tests`, `CSV Export Diagnostics Tests`, `Pipeline Diagnostics Tests`, `Phase Test Scripts`, `Geometry Classification Tests`, `Thin Runner for Streaming`?",
-      "why": "High betweenness centrality (0.179) - this node is a cross-community bridge."
-    },
-    {
-      "type": "bridge_node",
-      "question": "Why does `Test Scripts` connect `Phase Test Scripts` to `Dynamo Test Scripts`, `Phase Validation Tests`?",
-      "why": "High betweenness centrality (0.170) - this node is a cross-community bridge."
-    },
-    {
-      "type": "bridge_node",
-      "question": "Why does `Dynamo Test Scripts` connect `Dynamo Test Scripts` to `Phase Test Scripts`, `Occupancy Metrics`?",
-      "why": "High betweenness centrality (0.170) - this node is a cross-community bridge."
-    },
-    {
-      "type": "verify_inferred",
-      "question": "Are the 9 inferred relationships involving `Config` (e.g. with `test_csv_export_diagnostics.py` and `test_config_areal_prefers_front_face_loops()`) actually correct?",
-      "why": "`Config` has 9 INFERRED edges - model-reasoned connections that need verification."
-    },
-    {
-      "type": "isolated_nodes",
-      "question": "What connects `graphify — Query the knowledge graph before browsing source`, `Core architecture constraints`, `Path` to the rest of the system?",
-      "why": "292 weakly-connected nodes found - possible documentation gaps or missing edges."
-    },
-    {
-      "type": "low_cohesion",
-      "question": "Should `Geometry Cache Tests` be split into smaller, more focused modules?",
-      "why": "Cohesion score 0.0701484895033282 - nodes in this community are weakly interconnected."
-    },
-    {
-      "type": "low_cohesion",
-      "question": "Should `Depth Buffer Management` be split into smaller, more focused modules?",
-      "why": "Cohesion score 0.06779661016949153 - nodes in this community are weakly interconnected."
-    }
-  ]
+  "tokens": {
+    "input": 30273,
+    "output": 3519
+  }
 }
