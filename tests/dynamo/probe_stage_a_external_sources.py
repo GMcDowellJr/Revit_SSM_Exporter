@@ -478,6 +478,43 @@ def _classify_variant(variant, applied, analysis):
     }
 
 
+
+def _source_evidence_status(variant, assignments, analysis, hidden_link_fallback):
+    if not assignments:
+        return {"has_required_evidence": False, "reason": "no assignments"}
+    if not analysis.get("pillow_available"):
+        return {"has_required_evidence": False, "reason": "Pillow unavailable; exact source-color evidence missing"}
+    counts = analysis.get("expected_color_pixel_counts", {}) or {}
+    by_source = {"HOST": [], "LINK": [], "DWG": []}
+    for assignment in assignments:
+        by_source.get(assignment.get("source_type"), []).append(assignment)
+
+    def rendered_count(items):
+        return sum(1 for item in items if counts.get(str(item.get("assignment_key")), 0) > 0)
+
+    if variant == "forced_linked_override_failure_hide_instance_fallback":
+        return {
+            "has_required_evidence": bool(by_source["LINK"] and hidden_link_fallback),
+            "reason": "hidden owning link fallback exercised" if hidden_link_fallback else "forced linked failure did not hide any owning link instance",
+            "rendered_counts_by_source": {src: rendered_count(vals) for src, vals in by_source.items()},
+        }
+
+    required_sources = [src for src, vals in by_source.items() if vals]
+    rendered = {src: rendered_count(by_source[src]) for src in required_sources}
+    missing_sources = [src for src in required_sources if rendered.get(src, 0) <= 0]
+    paint_success = {src: sum(1 for item in by_source[src] if item.get("paint_success")) for src in required_sources}
+    no_success_sources = [src for src in required_sources if paint_success.get(src, 0) <= 0]
+    ok = bool(required_sources) and not missing_sources and not no_success_sources
+    reason = "source colors rendered" if ok else "missing rendered source-color evidence for: {0}; no paint success for: {1}".format(missing_sources, no_success_sources)
+    return {
+        "has_required_evidence": ok,
+        "reason": reason,
+        "required_sources": required_sources,
+        "paint_success_by_source": paint_success,
+        "rendered_counts_by_source": rendered,
+        "missing_sources": missing_sources,
+    }
+
 def _run_variant(doc, view, out_dir, base, variant, items):
     from Autodesk.Revit.DB import Transaction, TransactionGroup, TransactionStatus
     report = {"variant": variant, "transaction_group": {}, "state": {}, "assignments": [], "paint_diagnostics": [], "hidden_link_fallback": [], "export": {}, "image_analysis": {}, "classification": {}, "exceptions": [], "conclusion": "INCONCLUSIVE"}
@@ -530,9 +567,10 @@ def _run_variant(doc, view, out_dir, base, variant, items):
                 report["transaction_group"]["rollback_succeeded"] = False
         report["state"]["after"] = _snapshot(doc, view, items)
         report["state"]["differences_after_rollback"] = _diff(report["state"].get("before", {}), report["state"].get("after", {}))
+        report["evidence_status"] = _source_evidence_status(variant, report.get("assignments", []), report.get("image_analysis", {}), report.get("hidden_link_fallback", []))
         if report["exceptions"] or not report["transaction_group"].get("rollback_succeeded") or report["state"].get("differences_after_rollback"):
             report["conclusion"] = "FAIL"
-        elif report.get("image_analysis", {}).get("pillow_available"):
+        elif report["evidence_status"].get("has_required_evidence"):
             report["conclusion"] = "PASS"
         else:
             report["conclusion"] = "INCONCLUSIVE"

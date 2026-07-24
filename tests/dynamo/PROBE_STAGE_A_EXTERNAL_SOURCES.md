@@ -113,7 +113,10 @@ For every TIFF, the probe records:
 
 Exact linked colors in TIFF indicate that `LinkElementId` overrides rendered for
 that sample. Missing linked colors are interpreted together with paint failures,
-hidden-link fallback records, and rollback snapshots.
+hidden-link fallback records, and rollback snapshots. A variant cannot return
+`PASS` solely because rollback succeeded and Pillow ran: required source colors
+must render for HOST/LINK/DWG coloring variants, while the forced linked-failure
+variant requires hidden-owning-link fallback evidence.
 
 ## Output artifacts
 
