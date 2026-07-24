@@ -540,7 +540,7 @@ def _collect_reference_elements(doc, view, diagnostics):
         from vop_interwoven.pipeline import init_view_raster
         from vop_interwoven.revit.collection import collect_view_elements, expand_host_link_import_model_elements
         from vop_interwoven.color_id_buffer import _split_expanded_elements, resolve_all
-        cfg = Config(output_dir="", debug_dump_path="", enable_color_id_buffer_stage_a=True)
+        cfg = Config(debug_dump_path="", enable_color_id_buffer_stage_a=True)
         diag = Diagnostics()
         raster = init_view_raster(doc, view, cfg, diag=diag)
         top = collect_view_elements(doc, view, raster, diag=diag, cfg=cfg)
