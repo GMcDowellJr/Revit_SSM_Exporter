@@ -128,6 +128,11 @@ def _as_list(value):
     return [value]
 
 
+def _ensure_revit_api_reference():
+    import clr
+    clr.AddReference("RevitAPI")
+
+
 def _get_current_document():
     import clr
     clr.AddReference("RevitServices")
@@ -142,15 +147,53 @@ def _force_close_dynamo_transaction():
     TransactionManager.Instance.ForceCloseTransaction()
 
 
+
+def _document_label(doc):
+    if doc is None:
+        return "<none>"
+    parts = []
+    for attr in ("Title", "PathName"):
+        try:
+            value = getattr(doc, attr, None)
+            if value:
+                parts.append("{0}={1}".format(attr, value))
+        except Exception:
+            pass
+    try:
+        parts.append("hash={0}".format(doc.GetHashCode()))
+    except Exception:
+        pass
+    return ", ".join(parts) if parts else "<unavailable document label>"
+
+
+def _same_document(left, right):
+    if left is None or right is None:
+        return False
+    if left is right:
+        return True
+    for a, b in ((left, right), (right, left)):
+        try:
+            if bool(a.Equals(b)):
+                return True
+        except Exception:
+            pass
+    try:
+        return int(left.GetHashCode()) == int(right.GetHashCode())
+    except Exception:
+        return False
+
+
 def _validate_inputs(doc, raw_view, raw_elements, output_dir):
+    _ensure_revit_api_reference()
     from Autodesk.Revit.DB import Element, ElementId, ElementType, View
     view = _unwrap_dynamo(raw_view)
     if view is None or not isinstance(view, View):
         raise ValueError("IN[0] must be a Revit DB View or Dynamo-wrapped Revit view; active view is not substituted")
     if bool(getattr(view, "IsTemplate", False)):
         raise ValueError("Target view is a view template and cannot be exported")
-    if getattr(view, "Document", None) is not doc:
-        raise ValueError("Target view belongs to a different document")
+    view_doc = getattr(view, "Document", None)
+    if not _same_document(view_doc, doc):
+        raise ValueError("Target view belongs to a different document. Current document: {0}; target view document: {1}".format(_document_label(doc), _document_label(view_doc)))
     try:
         if not view.CanBePrinted:
             raise ValueError("Target view reports CanBePrinted=False and is treated as non-exportable")
@@ -165,8 +208,9 @@ def _validate_inputs(doc, raw_view, raw_elements, output_dir):
             raise ValueError("IN[1] contains a missing or non-Revit element")
         if isinstance(elem, ElementType):
             raise ValueError("IN[1] contains an element type; provide model element instances")
-        if getattr(elem, "Document", None) is not doc:
-            raise ValueError("IN[1] contains an element from a different document")
+        elem_doc = getattr(elem, "Document", None)
+        if not _same_document(elem_doc, doc):
+            raise ValueError("IN[1] contains an element from a different document. Current document: {0}; element {1} document: {2}".format(_document_label(doc), _safe_int_id(getattr(elem, "Id", None)), _document_label(elem_doc)))
         eid = _safe_int_id(elem.Id)
         invalid_eid = _safe_int_id(ElementId.InvalidElementId)
         if eid is None or eid == invalid_eid:
@@ -182,6 +226,7 @@ def _validate_inputs(doc, raw_view, raw_elements, output_dir):
 
 
 def _solid_drafting_fill_pattern_id(doc):
+    _ensure_revit_api_reference()
     from Autodesk.Revit.DB import FilteredElementCollector, FillPatternElement, FillPatternTarget
     for fp in FilteredElementCollector(doc).OfClass(FillPatternElement):
         try:
@@ -194,6 +239,7 @@ def _solid_drafting_fill_pattern_id(doc):
 
 
 def _build_flat_color_ogs(solid_pattern_id, color):
+    _ensure_revit_api_reference()
     from Autodesk.Revit.DB import OverrideGraphicSettings
     ogs = OverrideGraphicSettings()
     calls = [
@@ -417,6 +463,7 @@ def _discover_and_rename_tiff(out_dir, before, final_path):
 
 
 def _export_tiff(doc, view, output_path, requested_pixel_size):
+    _ensure_revit_api_reference()
     from Autodesk.Revit.DB import ImageExportOptions, ExportRange, ZoomFitType, FitDirectionType, ElementId, ImageFileType
     import System.Collections.Generic as SCG
     out_dir = os.path.dirname(output_path)
@@ -473,6 +520,7 @@ def _try_image_inspection(path, expected_colors):
 
 
 def _apply_temporary_changes(doc, view, elements):
+    _ensure_revit_api_reference()
     from Autodesk.Revit.DB import Color, DisplayStyle
     diagnostics = []
     expected = {}
@@ -510,6 +558,7 @@ def _apply_temporary_changes(doc, view, elements):
 
 
 def run_probe(raw_view, raw_elements, output_dir, inject_failure=False):
+    _ensure_revit_api_reference()
     from Autodesk.Revit.DB import Transaction, TransactionGroup, TransactionStatus
     report = {
         "probe": {"name": PROBE_NAME, "version": PROBE_VERSION, "target": "Revit 2025 / Dynamo 3.3 CPython3"},
@@ -627,7 +676,7 @@ def run_probe(raw_view, raw_elements, output_dir, inject_failure=False):
             reasons.append("Child transaction did not commit")
         if not report["export"]["succeeded"]:
             reasons.append("TIFF export did not succeed")
-        if report["transaction_group"].get("no_child_transaction_open_at_export") is not True:
+        if report["transaction_group"].get("export_attempted") and report["transaction_group"].get("no_child_transaction_open_at_export") is not True:
             reasons.append("Document was still modifiable or an open transaction was detected at export")
         if not report["transaction_group"]["rollback_succeeded"]:
             reasons.append("TransactionGroup rollback did not succeed")

@@ -12,6 +12,7 @@ The probe does **not** change production Stage A code, duplicate the view, manua
 * Dynamo 3.3.
 * A CPython3 Python Script node.
 * The repository path available to Python if you load the script from disk.
+* The script loads `RevitAPI` before importing `Autodesk.Revit.DB` types, so a clean CPython3 node does not need preloaded Revit API references.
 * A non-production model or safe model copy.
 * A model-capable orthographic view that can be printed/exported.
 * One or more visible model elements from the same document as the target view.
@@ -28,7 +29,7 @@ IN[2] = output directory
 IN[3] = inject failure after TIFF export: bool, default False
 ```
 
-The script accepts raw Revit API objects and common Dynamo-wrapped Revit objects. It rejects invalid inputs instead of substituting the active view or arbitrary elements. For Revit 2025 compatibility, ElementId snapshots and validation read `ElementId.Value` first and only fall back to `IntegerValue` for older APIs.
+The script accepts raw Revit API objects and common Dynamo-wrapped Revit objects. It rejects invalid inputs instead of substituting the active view or arbitrary elements. Document ownership validation uses Revit API equality/hash checks instead of Python wrapper identity so equivalent document proxies from Dynamo/Revit do not cause false cross-document errors. For Revit 2025 compatibility, ElementId snapshots and validation read `ElementId.Value` first and only fall back to `IntegerValue` for older APIs.
 
 ## Recommended test element
 
@@ -107,7 +108,7 @@ A passing run means:
 
 ### FAIL
 
-A failing run means one or more required structural checks failed, `Transaction.Commit()` returned a non-committed status, rollback failed, export failed, the document was still modifiable/open at export, captured state differs, Pillow inspection found zero pixels for every expected temporary color, or an unexpected exception occurred. If rollback fails, inspect the reported target view immediately.
+A failing run means one or more required structural checks failed, `Transaction.Commit()` returned a non-committed status, rollback failed, export failed, the document was still modifiable/open when export was attempted, captured state differs, Pillow inspection found zero pixels for every expected temporary color, or an unexpected exception occurred. If rollback fails, inspect the reported target view immediately.
 
 ### INCONCLUSIVE
 
