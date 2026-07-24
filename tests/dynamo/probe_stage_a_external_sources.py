@@ -225,7 +225,7 @@ def _collect_expanded(doc, view):
     from vop_interwoven.core.diagnostics import Diagnostics
     from vop_interwoven.pipeline import init_view_raster
     from vop_interwoven.revit.collection import collect_view_elements, expand_host_link_import_model_elements
-    cfg = Config(debug_dump_path="", enable_color_id_buffer_stage_a=True)
+    cfg = Config(debug_dump_path="", enable_color_id_buffer_stage_a=True, include_dwg_imports=True)
     diag = Diagnostics()
     raster = init_view_raster(doc, view, cfg, diag=diag)
     host_top = collect_view_elements(doc, view, raster, diag=diag, cfg=cfg)

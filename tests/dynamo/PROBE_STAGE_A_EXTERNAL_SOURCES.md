@@ -26,7 +26,7 @@ The probe reuses the same external-source surfaces used by Stage A without
 editing them:
 
 - `collect_view_elements()` for host visible-model collection.
-- `expand_host_link_import_model_elements()` for HOST/LINK/DWG expansion.
+- `expand_host_link_import_model_elements()` for HOST/LINK/DWG expansion with the probe config explicitly setting `include_dwg_imports=True` so visible DWG imports can be discovered when present.
 - `LinkedElementProxy` identity fields: `source_type`, `source_id`,
   `source_label`, `LinkInstanceId`, and linked/import element `Id`.
 - `_build_flat_color_ogs()` for Stage A-style solid color overrides.
