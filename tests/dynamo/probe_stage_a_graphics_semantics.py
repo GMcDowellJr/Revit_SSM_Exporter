@@ -522,10 +522,12 @@ def _run_variant(doc, view, out_dir, base, name, max_count):
                 elif step == "neutral_phase": result["mutations"][step] = _neutral_phase(view, diagnostics)
                 elif step == "category_halftone": result["mutations"][step] = _neutralize_category_halftone(doc, view, identities, diagnostics)
                 elif step == "hide_annotation_categories": result["mutations"][step] = _hide_annotation_categories(doc, view, diagnostics)
-            if "neutral_phase" in result["definition_steps"]:
+            recollect_reasons = [step for step in ("disable_visible_filters", "disable_all_filters", "neutral_phase") if step in result["definition_steps"]]
+            if recollect_reasons:
                 _cfg2, _diag2, _raster2, identities, top_count2 = _collect_elements(doc, view, max_count)
-                result["element_counts"]["after_phase_collect_view_elements"] = int(top_count2)
-                result["element_counts"]["after_phase_expanded_or_resolved"] = int(len(identities))
+                result["element_counts"]["after_visibility_mutation_collect_view_elements"] = int(top_count2)
+                result["element_counts"]["after_visibility_mutation_expanded_or_resolved"] = int(len(identities))
+                result["element_counts"]["recollection_reasons"] = recollect_reasons
             assigned, failures, step = _paint(doc, view, identities, diagnostics)
             result["assigned_elements"] = assigned
             result["paint_failures"] = failures

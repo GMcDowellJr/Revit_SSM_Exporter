@@ -530,7 +530,7 @@ def _run():
     out_dir = IN[1] if len(IN) > 1 and IN[1] else os.path.join(os.path.expanduser("~"), "Desktop")  # noqa: F821
     _ensure_repo_on_path(output_dir=out_dir)
     _ensure_revit_api_reference()
-    from Autodesk.Revit.DB import TransactionGroup
+    from Autodesk.Revit.DB import TransactionGroup, TransactionStatus
     doc = _document_manager_doc()
     view = _unwrap(IN[0])  # noqa: F821
     mode = (IN[2] if len(IN) > 2 and IN[2] else "all").strip().lower()  # noqa: F821
@@ -548,10 +548,23 @@ def _run():
     basis, cell_req, resolved, original_crop, model_bounds, model_bounds_source, annotation_bounds, canvas_bounds = _compute_bounds(doc, view, cfg)
     base = "{0}_{1}".format(_sanitize_filename(getattr(view, "Name", "view")), _safe_int_id(view.Id))
     modes = ["original", "model_bounds", "canvas_bounds"] if mode == "all" else [mode]
-    result = {"paths": [], "view": {"name": getattr(view, "Name", None), "id": _safe_int_id(view.Id), "type": str(getattr(view, "ViewType", None))}, "requested_pixel_size": REQUESTED_PIXEL_SIZE, "basis": {"origin": list(basis.origin), "right": list(basis.right), "up": list(basis.up), "forward": list(basis.forward)}, "bounds": {"original_crop_uv": _bounds_dict(original_crop), "original_crop_active": before_state.get("CropBoxActive"), "original_crop_visible": before_state.get("CropBoxVisible"), "pre_annotation_model_uv": _bounds_dict(model_bounds), "pre_annotation_model_bounds_source": model_bounds_source, "annotation_uv": _bounds_dict(annotation_bounds), "canvas_uv": _bounds_dict(canvas_bounds), "resolve_view_bounds_result": {k: (_bounds_dict(v) if k.endswith("bounds_uv") or k == "bounds_uv" else v) for k, v in resolved.items() if k != "bounds_uv"}, "resolve_view_bounds_uv": _bounds_dict(resolved.get("bounds_uv"))}, "grid": {"W": int(resolved.get("grid_W", 0) or 0), "H": int(resolved.get("grid_H", 0) or 0), "cell_size_ft_requested": cell_req, "cell_size_ft_effective": float(resolved.get("cell_size_ft_effective", cell_req))}, "state_before": before_state, "document_is_modified_before": before_doc_modified, "exports": {}, "diagnostics": []}
+    result = {"paths": [], "view": {"name": getattr(view, "Name", None), "id": _safe_int_id(view.Id), "type": str(getattr(view, "ViewType", None))}, "requested_pixel_size": REQUESTED_PIXEL_SIZE, "basis": {"origin": list(basis.origin), "right": list(basis.right), "up": list(basis.up), "forward": list(basis.forward)}, "bounds": {"original_crop_uv": _bounds_dict(original_crop), "original_crop_active": before_state.get("CropBoxActive"), "original_crop_visible": before_state.get("CropBoxVisible"), "pre_annotation_model_uv": _bounds_dict(model_bounds), "pre_annotation_model_bounds_source": model_bounds_source, "annotation_uv": _bounds_dict(annotation_bounds), "canvas_uv": _bounds_dict(canvas_bounds), "resolve_view_bounds_result": {k: (_bounds_dict(v) if k.endswith("bounds_uv") or k == "bounds_uv" else v) for k, v in resolved.items() if k != "bounds_uv"}, "resolve_view_bounds_uv": _bounds_dict(resolved.get("bounds_uv"))}, "grid": {"W": int(resolved.get("grid_W", 0) or 0), "H": int(resolved.get("grid_H", 0) or 0), "cell_size_ft_requested": cell_req, "cell_size_ft_effective": float(resolved.get("cell_size_ft_effective", cell_req))}, "state_before": before_state, "document_is_modified_before": before_doc_modified, "exports": {}, "diagnostics": [], "transaction_group": {}}
     _force_close_dynamo_transaction()
     group = TransactionGroup(doc, "VOP Stage A image alignment probe")
-    group.Start()
+    group_status = group.Start()
+    group_started = group_status == TransactionStatus.Started
+    result["transaction_group"]["start_status"] = str(group_status)
+    if not group_started:
+        result["rollback_result"] = "not_started"
+        result["state_after"] = _capture_crop_state(view)
+        result["state_differences"] = [] if result["state_after"] == before_state else [{"before": before_state, "after": result["state_after"]}]
+        result["conclusion"] = "FAIL"
+        result["diagnostics"].append({"stage": "transaction_group_start", "message": "TransactionGroup.Start returned {0}; no calibration markers, crop changes, or exports were attempted".format(group_status)})
+        json_path = os.path.join(out_dir, "{0}.setup_failed.alignment.json".format(base))
+        with open(json_path, "w") as f:
+            json.dump(result, f, indent=2, sort_keys=True)
+        result["paths"].append(json_path)
+        return result
     rollback_status = "not_attempted"
     marker_ids = []
     try:
@@ -600,11 +613,12 @@ def _run():
         model_img = analyzed_by_mode.get("model_bounds") or analyzed_by_mode.get("original")
         result["model_to_canvas_placement"] = _placement(model_bounds, canvas_bounds, model_img)
     finally:
-        try:
-            group.RollBack()
-            rollback_status = "rolled_back"
-        except Exception as ex:
-            rollback_status = "rollback_failed: {0}".format(ex)
+        if group_started:
+            try:
+                group.RollBack()
+                rollback_status = "rolled_back"
+            except Exception as ex:
+                rollback_status = "rollback_failed: {0}".format(ex)
     result["rollback_result"] = rollback_status
     result["state_after"] = _capture_crop_state(view)
     result["document_is_modified_after"] = bool(getattr(doc, "IsModified", False))

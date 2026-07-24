@@ -16,7 +16,7 @@ Run this probe to answer these research questions:
 
 ## Code inspected and reused
 
-The probe follows the transaction-group safety pattern proven by `probe_stage_a_transaction_group_export.py`: it force-closes Dynamo's ambient `TransactionManager` transaction before starting the `TransactionGroup`, temporary work is committed in child transactions, exports occur with no child transaction open, and the enclosing `TransactionGroup` is rolled back in `finally`.
+The probe follows the transaction-group safety pattern proven by `probe_stage_a_transaction_group_export.py`: it force-closes Dynamo's ambient `TransactionManager` transaction before starting the `TransactionGroup`, verifies the group actually started before creating markers or mutating crops, commits temporary work in child transactions, exports with no child transaction open, and rolls the enclosing `TransactionGroup` back in `finally`.
 
 The probe mirrors the current Stage A and VOP geometry calculation without changing it:
 

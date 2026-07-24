@@ -41,7 +41,9 @@ used as the reference for mutation order and helper behavior:
   colors, zero transparency, and `SetHalftone(False)` for each element.
 - Filter handling captures all view filters but disables only filters that are
   both enabled and visible. Visibility-off filters are not changed by the normal
-  Stage A path, because they express semantic hiddenness.
+  Stage A path, because they express semantic hiddenness. Variants that change
+  filter or phase visibility recollect elements before painting so newly exposed
+  model elements are assigned colors instead of becoming off-palette contamination.
 - The neutral phase filter is created/reused as `VOP_NeutralPhaseFilter`, and
   Stage A re-collects elements after the phase swap so newly visible elements
   receive colors.
