@@ -569,12 +569,14 @@ def _run():
             elif m == "model_bounds":
                 target_bounds = model_bounds
                 if target_bounds is None:
+                    json_path = os.path.join(out_dir, "{0}.{1}.alignment.json".format(base, m))
                     result["exports"][m] = {
                         "skipped": True,
                         "reason": "model-only bounds unavailable; not substituting annotation-expanded canvas bounds",
                         "target_bounds_uv": None,
                         "images": [],
                         "sequential_export_equality": None,
+                        "json_path": json_path,
                     }
                     continue
                 crop_change = _set_crop_to_bounds(doc, view, basis, target_bounds, m)

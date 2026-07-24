@@ -71,7 +71,7 @@ Return all TIFFs and JSON files for analysis.
 ## Export modes
 
 - `original`: exports with the view's existing crop behavior and does not force new bounds. If the crop is inactive, analysis uses `resolve_view_bounds().bounds_uv` rather than the stored inactive `CropBox`, because Revit is not exporting against that stale crop.
-- `model_bounds`: temporarily forces the crop to verified model-only bounds when available. For inactive crops where `resolve_view_bounds()` has no `model_bounds_uv`, this mode is skipped instead of relabeling the annotation-expanded canvas as model bounds.
+- `model_bounds`: temporarily forces the crop to verified model-only bounds when available. For inactive crops where `resolve_view_bounds()` has no `model_bounds_uv`, this mode is skipped instead of relabeling the annotation-expanded canvas as model bounds; the skipped entry still writes its per-mode JSON so the `all` run preserves original/canvas evidence.
 - `canvas_bounds`: temporarily forces the crop to the annotation-expanded canvas. This is diagnostic only; it intentionally shows whether expanding the Revit crop would admit additional model geometry and must not be treated as the proposed production solution.
 - `all`: runs all three modes.
 
