@@ -48,7 +48,10 @@ def _safe_int_id(eid):
     try:
         return int(eid.IntegerValue)
     except Exception:
-        return None
+        try:
+            return int(eid.Value)
+        except Exception:
+            return None
 
 
 def _safe_enum(value):
@@ -223,10 +226,13 @@ def _collect_elements(doc, view, max_count):
     for eid in resolved_ids:
         elem = doc.GetElement(eid)
         cat = getattr(elem, "Category", None) if elem is not None else None
-        identities.append({"key": str(eid.IntegerValue), "element_id": eid.IntegerValue, "source_type": "HOST", "category": getattr(cat, "Name", None), "unique_id": getattr(elem, "UniqueId", None), "api_id": eid})
+        int_id = _safe_int_id(eid)
+        identities.append({"key": str(int_id), "element_id": int_id, "source_type": "HOST", "category": getattr(cat, "Name", None), "unique_id": getattr(elem, "UniqueId", None), "api_id": eid})
     for li, le, proxy in links:
         cat = getattr(proxy, "Category", None)
-        identities.append({"key": "{0}:{1}".format(li.IntegerValue, le.IntegerValue), "link_instance_id": li.IntegerValue, "linked_element_id": le.IntegerValue, "source_type": "LINK", "category": getattr(cat, "Name", None), "api_id": None, "link_tuple": (li, le)})
+        link_instance_id = _safe_int_id(li)
+        linked_element_id = _safe_int_id(le)
+        identities.append({"key": "{0}:{1}".format(link_instance_id, linked_element_id), "link_instance_id": link_instance_id, "linked_element_id": linked_element_id, "source_type": "LINK", "category": getattr(cat, "Name", None), "api_id": None, "link_tuple": (li, le)})
     if max_count and int(max_count) > 0:
         identities = identities[:int(max_count)]
     return cfg, diag, raster, identities, len(top)
