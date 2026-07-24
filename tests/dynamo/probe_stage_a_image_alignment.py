@@ -1,0 +1,527 @@
+# -*- coding: utf-8 -*-
+"""Standalone Dynamo/Revit 2025 probe for Stage A image geometry alignment.
+
+Dynamo inputs:
+    IN[0] target view
+    IN[1] output directory
+    IN[2] export mode: "original", "model_bounds", "canvas_bounds", or "all"
+    IN[3] create temporary calibration markers (bool, default True)
+
+This file is intentionally self-contained and does not modify production Stage A
+code.  It reuses the proven safety shape from
+probe_stage_a_transaction_group_export.py: commit temporary child transactions,
+export while no child transaction is open, and roll back the enclosing
+TransactionGroup in finally.
+"""
+from __future__ import print_function
+
+import hashlib
+import importlib.util
+import json
+import math
+import os
+import re
+import sys
+import time
+
+REQUESTED_PIXEL_SIZE = 1600
+SUPPORTED_MODES = ("original", "model_bounds", "canvas_bounds", "all")
+MARKER_SPECS = [
+    ("lower_left",  (255, 0, 0)),
+    ("lower_right", (0, 255, 0)),
+    ("upper_left",  (0, 0, 255)),
+    ("upper_right", (255, 0, 255)),
+    ("center",      (0, 255, 255)),
+]
+
+
+def _repo_root():
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.abspath(os.path.join(here, "..", ".."))
+
+
+def _ensure_repo_on_path():
+    root = _repo_root()
+    if root not in sys.path:
+        sys.path.insert(0, root)
+
+
+def _ensure_revit_api_reference():
+    try:
+        import clr
+        clr.AddReference("RevitAPI")
+        clr.AddReference("RevitServices")
+    except Exception:
+        pass
+
+
+def _unwrap(value):
+    try:
+        import Revit
+        return Revit.Elements.ElementWrapper.ToDSType(value, False)
+    except Exception:
+        pass
+    try:
+        return value.InternalElement
+    except Exception:
+        return value
+
+
+def _safe_int_id(elem_id):
+    if elem_id is None:
+        return None
+    for attr in ("IntegerValue", "Value"):
+        try:
+            return int(getattr(elem_id, attr))
+        except Exception:
+            pass
+    try:
+        return int(str(elem_id))
+    except Exception:
+        return None
+
+
+def _xyz(xyz):
+    if xyz is None:
+        return None
+    return [float(xyz.X), float(xyz.Y), float(xyz.Z)]
+
+
+def _transform_dict(t):
+    if t is None:
+        return None
+    return {"origin": _xyz(t.Origin), "basis_x": _xyz(t.BasisX), "basis_y": _xyz(t.BasisY), "basis_z": _xyz(t.BasisZ)}
+
+
+def _bounds_tuple(b):
+    if b is None:
+        return None
+    if isinstance(b, (list, tuple)):
+        return [float(x) for x in b]
+    return [float(b.xmin), float(b.ymin), float(b.xmax), float(b.ymax)]
+
+
+def _bounds_dict(b):
+    t = _bounds_tuple(b)
+    if t is None:
+        return None
+    return {"u_min": t[0], "v_min": t[1], "u_max": t[2], "v_max": t[3], "width": t[2] - t[0], "height": t[3] - t[1]}
+
+
+def _make_bounds(t):
+    from vop_interwoven.core.math_utils import Bounds2D
+    return Bounds2D(float(t[0]), float(t[1]), float(t[2]), float(t[3]))
+
+
+def _union_bounds(a, b):
+    if a is None:
+        return b
+    if b is None:
+        return a
+    aa, bb = _bounds_tuple(a), _bounds_tuple(b)
+    return _make_bounds((min(aa[0], bb[0]), min(aa[1], bb[1]), max(aa[2], bb[2]), max(aa[3], bb[3])))
+
+
+def _sanitize_filename(name):
+    safe = re.sub(r"[^A-Za-z0-9_. -]+", "_", name or "view").strip(" .")
+    return safe or "view"
+
+
+def _capture_crop_state(view):
+    state = {}
+    for attr in ("CropBoxActive", "CropBoxVisible", "AnnotationCropActive", "DisplayStyle", "DetailLevel", "ViewTemplateId"):
+        try:
+            v = getattr(view, attr)
+            if attr == "ViewTemplateId":
+                v = _safe_int_id(v)
+            else:
+                v = str(v) if attr in ("DisplayStyle", "DetailLevel") else bool(v)
+            state[attr] = v
+        except Exception as ex:
+            state[attr] = {"error": str(ex)}
+    try:
+        cb = view.CropBox
+        state["CropBox"] = {"min": _xyz(cb.Min), "max": _xyz(cb.Max), "transform": _transform_dict(getattr(cb, "Transform", None))}
+    except Exception as ex:
+        state["CropBox"] = {"error": str(ex)}
+    return state
+
+
+def _document_manager_doc():
+    _ensure_revit_api_reference()
+    from RevitServices.Persistence import DocumentManager
+    return DocumentManager.Instance.CurrentDBDocument
+
+
+def _reject_reason(view):
+    try:
+        from Autodesk.Revit.DB import ViewType
+        if view is None:
+            return "IN[0] target view is required"
+        if bool(getattr(view, "IsTemplate", False)):
+            return "View templates are unsupported"
+        vt = getattr(view, "ViewType", None)
+        if vt in (getattr(ViewType, "ThreeD", None), getattr(ViewType, "Schedule", None), getattr(ViewType, "DrawingSheet", None)):
+            return "Unsupported view type: {0}".format(vt)
+        if hasattr(view, "IsPerspective") and bool(view.IsPerspective):
+            return "Perspective views are unsupported"
+        from vop_interwoven.revit.view_basis import resolve_view_mode, VIEW_MODE_MODEL_AND_ANNOTATION
+        mode, reason = resolve_view_mode(view)
+        if mode != VIEW_MODE_MODEL_AND_ANNOTATION:
+            return "Annotation-only or rejected views are unsupported for this Stage A model-geometry probe: {0}".format(reason.get("why"))
+    except Exception as ex:
+        return "Could not validate view capability: {0}".format(ex)
+    return None
+
+
+def _config_for_view(view):
+    from vop_interwoven.config import Config
+    cfg = Config()
+    if not hasattr(cfg, "cell_size_paper_in") or cfg.cell_size_paper_in is None:
+        cfg.cell_size_paper_in = 0.125
+    return cfg
+
+
+def _compute_bounds(doc, view, cfg):
+    from vop_interwoven.revit.view_basis import make_view_basis, resolve_view_bounds, xy_bounds_from_crop_box_all_corners
+    from vop_interwoven.revit.annotation import compute_annotation_extents
+    basis = make_view_basis(view)
+    scale = int(getattr(view, "Scale", 1) or 1)
+    requested_cell = (float(cfg.cell_size_paper_in) * float(scale)) / 12.0
+    policy = {"doc": doc, "basis": basis, "cfg": cfg, "buffer_ft": float(getattr(cfg, "bounds_buffer_ft", 0.0) or 0.0), "cell_size_ft": requested_cell, "max_W": getattr(cfg, "max_grid_cells_width", None), "max_H": getattr(cfg, "max_grid_cells_height", None)}
+    resolved = resolve_view_bounds(view, policy=policy)
+    original_crop_bounds = None
+    try:
+        original_crop_bounds = xy_bounds_from_crop_box_all_corners(view, basis, buffer=0.0)
+    except Exception:
+        original_crop_bounds = None
+    model_bounds = resolved.get("model_bounds_uv")
+    if model_bounds is None:
+        if bool(getattr(view, "CropBoxActive", False)):
+            model_bounds = original_crop_bounds
+        else:
+            # Inactive crops use synthetic extents; do not assume raster.model_clip_bounds exists.
+            model_bounds = resolved.get("bounds_uv")
+    annotation_bounds = None
+    try:
+        if model_bounds is not None:
+            annotation_bounds = compute_annotation_extents(doc, view, basis, model_bounds, requested_cell, cfg=cfg)
+    except Exception:
+        annotation_bounds = None
+    canvas_bounds = _union_bounds(model_bounds, annotation_bounds) or resolved.get("bounds_uv")
+    return basis, requested_cell, resolved, original_crop_bounds, model_bounds, annotation_bounds, canvas_bounds
+
+
+def _uv_to_world_xyz(basis, u, v):
+    from Autodesk.Revit.DB import XYZ
+    ox, oy, oz = basis.origin
+    rx, ry, rz = basis.right
+    ux, uy, uz = basis.up
+    return XYZ(ox + u * rx + v * ux, oy + u * ry + v * uy, oz + u * rz + v * uz)
+
+
+def _build_marker_ogs(color):
+    from Autodesk.Revit.DB import OverrideGraphicSettings, Color
+    ogs = OverrideGraphicSettings()
+    c = Color(int(color[0]), int(color[1]), int(color[2]))
+    ogs.SetProjectionLineColor(c)
+    try:
+        ogs.SetCutLineColor(c)
+    except Exception:
+        pass
+    return ogs
+
+
+def _create_calibration_markers(doc, view, bounds, basis, marker_size_ft):
+    from Autodesk.Revit.DB import Line, Transaction, DetailCurve
+    bt = _bounds_tuple(bounds)
+    if bt is None:
+        return [], [{"message": "No bounds available for markers"}]
+    u0, v0, u1, v1 = bt
+    du, dv = u1 - u0, v1 - v0
+    inset_u = max(du * 0.05, marker_size_ft * 2.0)
+    inset_v = max(dv * 0.05, marker_size_ft * 2.0)
+    positions = {
+        "lower_left": (u0 + inset_u, v0 + inset_v),
+        "lower_right": (u1 - inset_u, v0 + inset_v),
+        "upper_left": (u0 + inset_u, v1 - inset_v),
+        "upper_right": (u1 - inset_u, v1 - inset_v),
+        "center": ((u0 + u1) * 0.5, (v0 + v1) * 0.5),
+    }
+    tx = Transaction(doc, "VOP probe create calibration markers")
+    tx.Start()
+    markers = []
+    diagnostics = []
+    try:
+        for name, rgb in MARKER_SPECS:
+            u, v = positions[name]
+            p1 = _uv_to_world_xyz(basis, u - marker_size_ft * 0.5, v, )
+            p2 = _uv_to_world_xyz(basis, u + marker_size_ft * 0.5, v, )
+            p3 = _uv_to_world_xyz(basis, u, v - marker_size_ft * 0.5, )
+            p4 = _uv_to_world_xyz(basis, u, v + marker_size_ft * 0.5, )
+            created = []
+            for a, b in ((p1, p2), (p3, p4)):
+                dc = doc.Create.NewDetailCurve(view, Line.CreateBound(a, b))
+                view.SetElementOverrides(dc.Id, _build_marker_ogs(rgb))
+                created.append(_safe_int_id(dc.Id))
+            markers.append({"name": name, "uv": [float(u), float(v)], "rgb": list(rgb), "element_ids": created, "mechanism": "DetailCurve cross"})
+        tx.Commit()
+    except Exception as ex:
+        diagnostics.append({"message": "DetailCurve marker creation failed; falling back to geometry/content measurement", "error": str(ex)})
+        try:
+            tx.RollBack()
+        except Exception:
+            pass
+        return [], diagnostics
+    return markers, diagnostics
+
+
+def _set_crop_to_bounds(doc, view, basis, bounds, label):
+    from Autodesk.Revit.DB import Transaction
+    from vop_interwoven.revit.view_basis import crop_box_from_uv_bounds
+    if bounds is None:
+        return {"changed": False, "reason": "bounds unavailable"}
+    cb = crop_box_from_uv_bounds(view, basis, *_bounds_tuple(bounds))
+    if cb is None:
+        return {"changed": False, "reason": "crop_box_from_uv_bounds returned None"}
+    tx = Transaction(doc, "VOP probe crop {0}".format(label))
+    tx.Start()
+    try:
+        view.CropBox = cb
+        view.CropBoxActive = True
+        try:
+            view.CropBoxVisible = True
+        except Exception:
+            pass
+        tx.Commit()
+        return {"changed": True, "reason": "committed child transaction"}
+    except Exception as ex:
+        try:
+            tx.RollBack()
+        except Exception:
+            pass
+        return {"changed": False, "reason": str(ex)}
+
+
+def _set_pixel_size_with_backoff(opts, requested):
+    candidate = max(1, int(requested))
+    while True:
+        try:
+            opts.PixelSize = candidate
+            return candidate
+        except Exception:
+            if candidate <= 16:
+                raise
+            candidate = max(16, candidate // 2)
+
+
+def _discover_and_rename_tiff(out_dir, before, final_path):
+    after = set(os.listdir(out_dir))
+    candidates = [f for f in (after - before) if f.lower().endswith((".tif", ".tiff"))]
+    if not candidates:
+        raise RuntimeError("ExportImage produced no new TIFF in {0}".format(out_dir))
+    candidates.sort(key=lambda n: os.path.getmtime(os.path.join(out_dir, n)), reverse=True)
+    created = os.path.join(out_dir, candidates[0])
+    if os.path.exists(final_path):
+        os.remove(final_path)
+    os.rename(created, final_path)
+    return final_path
+
+
+def _export_tiff(doc, view, output_path, requested_pixel_size):
+    _ensure_revit_api_reference()
+    from Autodesk.Revit.DB import ImageExportOptions, ExportRange, ZoomFitType, FitDirectionType, ElementId, ImageFileType
+    import System.Collections.Generic as SCG
+    out_dir = os.path.dirname(output_path)
+    if out_dir and not os.path.isdir(out_dir):
+        os.makedirs(out_dir)
+    before = set(os.listdir(out_dir))
+    ids = SCG.List[ElementId]()
+    ids.Add(view.Id)
+    opts = ImageExportOptions()
+    opts.ExportRange = ExportRange.SetOfViews
+    opts.SetViewsAndSheets(ids)
+    opts.ZoomType = ZoomFitType.FitToPage
+    opts.FitDirection = FitDirectionType.Horizontal
+    accepted = _set_pixel_size_with_backoff(opts, requested_pixel_size)
+    opts.FilePath = os.path.join(out_dir, "_vop_stage_a_alignment_tmp")
+    tiff_type = getattr(ImageFileType, "TIFF", getattr(ImageFileType, "TIF", None))
+    if tiff_type is None:
+        raise RuntimeError("Revit ImageFileType does not expose TIFF/TIF")
+    opts.HLRandWFViewsFileType = tiff_type
+    opts.ShadowViewsFileType = tiff_type
+    doc.ExportImage(opts)
+    return _discover_and_rename_tiff(out_dir, before, output_path), accepted
+
+
+def _sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _analyze_image(path, markers, bounds):
+    res = {"path": path, "file_size": os.path.getsize(path), "sha256": _sha256(path), "pillow_available": False}
+    if importlib.util.find_spec("PIL") is None:
+        res["diagnostic"] = "Pillow unavailable; image dimensions/orientation require manual review"
+        return res
+    from PIL import Image
+    img = Image.open(path).convert("RGB")
+    w, h = img.size
+    res.update({"pillow_available": True, "actual_width": int(w), "actual_height": int(h)})
+    colors = img.getcolors(maxcolors=w * h + 1)
+    res["distinct_colors"] = None if colors is None else len(colors)
+    bg = max(colors, key=lambda c: c[0])[1] if colors else img.getpixel((0, 0))
+    pix = img.load()
+    xs, ys = [], []
+    for y in range(h):
+        for x in range(w):
+            if pix[x, y] != bg:
+                xs.append(x); ys.append(y)
+    content = [min(xs), min(ys), max(xs), max(ys)] if xs else None
+    res["background_rgb"] = list(bg)
+    res["content_rect_px"] = content
+    cw = (content[2] - content[0] + 1) if content else w
+    ch = (content[3] - content[1] + 1) if content else h
+    cx0 = content[0] if content else 0
+    cy0 = content[1] if content else 0
+    bt = _bounds_tuple(bounds)
+    detections = []
+    for m in markers or []:
+        target = tuple(int(v) for v in m["rgb"])
+        pts = []
+        best = None
+        best_d = 10 ** 9
+        for y in range(h):
+            for x in range(w):
+                p = pix[x, y]
+                d = sum((int(p[i]) - target[i]) ** 2 for i in range(3))
+                if d == 0:
+                    pts.append((x, y))
+                if d < best_d:
+                    best_d, best = d, (x, y, p)
+        found = bool(pts)
+        use = pts if found else [(best[0], best[1])] if best else []
+        centroid = [sum(p[0] for p in use) / float(len(use)), sum(p[1] for p in use) / float(len(use))] if use else None
+        residual = None
+        predicted = None
+        if centroid and bt:
+            u0, v0, u1, v1 = bt
+            predicted = [cx0 + ((m["uv"][0] - u0) / (u1 - u0)) * cw - 0.5, cy0 + ((v1 - m["uv"][1]) / (v1 - v0)) * ch - 0.5]
+            residual = [centroid[0] - predicted[0], centroid[1] - predicted[1]]
+        detections.append({"name": m["name"], "expected_uv": m["uv"], "rgb": m["rgb"], "found_exact": found, "centroid_px": centroid, "nearest_rgb": (list(best[2]) if best else None), "nearest_distance_sq": int(best_d) if best else None, "predicted_px_center_equation": predicted, "residual_px": residual})
+    res["markers"] = detections
+    res["missing_markers"] = [d["name"] for d in detections if not d["found_exact"]]
+    res["padding_px"] = {"left": cx0, "top": cy0, "right": (w - content[2] - 1) if content else 0, "bottom": (h - content[3] - 1) if content else 0}
+    if bt:
+        res["tested_mapping"] = "u = u_min + (x + 0.5 - content_x0) * UV_width / content_width; v = v_max - (y + 0.5 - content_y0) * UV_height / content_height"
+        res["x_axis_direction"] = "+U to the right" if bt[2] > bt[0] else "unknown"
+        res["y_axis_direction"] = "-V downward / +V upward" if bt[3] > bt[1] else "unknown"
+        if detections and all(d["residual_px"] for d in detections):
+            res["max_marker_residual_px"] = max(math.sqrt(d["residual_px"][0] ** 2 + d["residual_px"][1] ** 2) for d in detections)
+    return res
+
+
+def _placement(model_bounds, canvas_bounds, model_img):
+    if not model_bounds or not canvas_bounds or not model_img or not model_img.get("actual_width"):
+        return {"available": False, "reason": "missing model/canvas bounds or image dimensions"}
+    mb, cb = _bounds_tuple(model_bounds), _bounds_tuple(canvas_bounds)
+    density = float(model_img["actual_width"]) / max(1e-9, mb[2] - mb[0])
+    canvas_w = (cb[2] - cb[0]) * density
+    canvas_h = (cb[3] - cb[1]) * density
+    off_x = (mb[0] - cb[0]) * density
+    off_y = (cb[3] - mb[3]) * density
+    vals = [canvas_w, canvas_h, off_x, off_y]
+    rounding = [abs(v - round(v)) for v in vals]
+    return {"available": True, "observed_px_per_model_unit": density, "canvas_pixel_dimensions_float": [canvas_w, canvas_h], "model_image_offset_float": [off_x, off_y], "offset_integral": [rounding[2] < 1e-6, rounding[3] < 1e-6], "max_rounding_error_px": max(rounding), "max_rounding_error_model_units": max(rounding) / density, "lossless_padding_sufficient": max(rounding) < 1e-6, "resampling_required_if_exact_canvas_needed": max(rounding) >= 1e-6}
+
+
+def _run():
+    _ensure_repo_on_path()
+    _ensure_revit_api_reference()
+    from Autodesk.Revit.DB import TransactionGroup
+    doc = _document_manager_doc()
+    view = _unwrap(IN[0])  # noqa: F821
+    out_dir = IN[1] if len(IN) > 1 and IN[1] else os.path.join(os.path.expanduser("~"), "Desktop")  # noqa: F821
+    mode = (IN[2] if len(IN) > 2 and IN[2] else "all").strip().lower()  # noqa: F821
+    create_markers = bool(IN[3]) if len(IN) > 3 and IN[3] is not None else True  # noqa: F821
+    if mode not in SUPPORTED_MODES:
+        raise ValueError("Unsupported export mode '{0}'. Expected one of {1}".format(mode, SUPPORTED_MODES))
+    reject = _reject_reason(view)
+    if reject:
+        return {"conclusion": "FAIL", "reason": reject}
+    if not os.path.isdir(out_dir):
+        os.makedirs(out_dir)
+    cfg = _config_for_view(view)
+    before_doc_modified = bool(getattr(doc, "IsModified", False))
+    before_state = _capture_crop_state(view)
+    basis, cell_req, resolved, original_crop, model_bounds, annotation_bounds, canvas_bounds = _compute_bounds(doc, view, cfg)
+    base = "{0}_{1}".format(_sanitize_filename(getattr(view, "Name", "view")), _safe_int_id(view.Id))
+    modes = ["original", "model_bounds", "canvas_bounds"] if mode == "all" else [mode]
+    result = {"paths": [], "view": {"name": getattr(view, "Name", None), "id": _safe_int_id(view.Id), "type": str(getattr(view, "ViewType", None))}, "requested_pixel_size": REQUESTED_PIXEL_SIZE, "basis": {"origin": list(basis.origin), "right": list(basis.right), "up": list(basis.up), "forward": list(basis.forward)}, "bounds": {"original_crop_uv": _bounds_dict(original_crop), "original_crop_active": before_state.get("CropBoxActive"), "original_crop_visible": before_state.get("CropBoxVisible"), "pre_annotation_model_uv": _bounds_dict(model_bounds), "annotation_uv": _bounds_dict(annotation_bounds), "canvas_uv": _bounds_dict(canvas_bounds), "resolve_view_bounds_result": {k: (_bounds_dict(v) if k.endswith("bounds_uv") or k == "bounds_uv" else v) for k, v in resolved.items() if k != "bounds_uv"}, "resolve_view_bounds_uv": _bounds_dict(resolved.get("bounds_uv"))}, "grid": {"W": int(resolved.get("grid_W", 0) or 0), "H": int(resolved.get("grid_H", 0) or 0), "cell_size_ft_requested": cell_req, "cell_size_ft_effective": float(resolved.get("cell_size_ft_effective", cell_req))}, "state_before": before_state, "document_is_modified_before": before_doc_modified, "exports": {}, "diagnostics": []}
+    group = TransactionGroup(doc, "VOP Stage A image alignment probe")
+    group.Start()
+    rollback_status = "not_attempted"
+    marker_ids = []
+    try:
+        marker_bounds = canvas_bounds or model_bounds or original_crop
+        marker_size = max(cell_req * 2.0, ((_bounds_tuple(marker_bounds)[2] - _bounds_tuple(marker_bounds)[0]) if marker_bounds else 1.0) * 0.01)
+        markers, marker_diags = _create_calibration_markers(doc, view, marker_bounds, basis, marker_size) if create_markers else ([], [])
+        result["calibration_markers"] = markers
+        result["diagnostics"].extend(marker_diags)
+        marker_ids = [eid for m in markers for eid in m.get("element_ids", [])]
+        analyzed_by_mode = {}
+        for m in modes:
+            target_bounds = original_crop if m == "original" else model_bounds if m == "model_bounds" else canvas_bounds
+            crop_change = {"changed": False, "reason": "original mode uses existing crop behavior"}
+            if m != "original":
+                crop_change = _set_crop_to_bounds(doc, view, basis, target_bounds, m)
+            images = []
+            for seq in (1, 2):
+                path = os.path.join(out_dir, "{0}.{1}.alignment_{2}.tiff".format(base, m, seq))
+                exported, accepted = _export_tiff(doc, view, path, REQUESTED_PIXEL_SIZE)
+                result["paths"].append(exported)
+                analysis = _analyze_image(exported, markers, target_bounds)
+                analysis["effective_pixel_size"] = accepted
+                analysis["pixel_size_equals_actual_width"] = (analysis.get("actual_width") == accepted)
+                images.append(analysis)
+            sequential_equal = images[0].get("sha256") == images[1].get("sha256") and images[0].get("actual_width") == images[1].get("actual_width") and images[0].get("actual_height") == images[1].get("actual_height")
+            analyzed_by_mode[m] = images[0]
+            result["exports"][m] = {"crop_change": crop_change, "target_bounds_uv": _bounds_dict(target_bounds), "images": images, "sequential_export_equality": bool(sequential_equal)}
+            json_path = os.path.join(out_dir, "{0}.{1}.alignment.json".format(base, m))
+            result["exports"][m]["json_path"] = json_path
+        model_img = analyzed_by_mode.get("model_bounds") or analyzed_by_mode.get("original")
+        result["model_to_canvas_placement"] = _placement(model_bounds, canvas_bounds, model_img)
+    finally:
+        try:
+            group.RollBack()
+            rollback_status = "rolled_back"
+        except Exception as ex:
+            rollback_status = "rollback_failed: {0}".format(ex)
+    result["rollback_result"] = rollback_status
+    result["state_after"] = _capture_crop_state(view)
+    result["document_is_modified_after"] = bool(getattr(doc, "IsModified", False))
+    result["state_differences"] = [] if result["state_after"] == before_state else [{"before": before_state, "after": result["state_after"]}]
+    result["calibration_elements_exist_after"] = []
+    for eid in marker_ids:
+        try:
+            from Autodesk.Revit.DB import ElementId
+            result["calibration_elements_exist_after"].append({"id": eid, "exists": doc.GetElement(ElementId(int(eid))) is not None})
+        except Exception as ex:
+            result["calibration_elements_exist_after"].append({"id": eid, "error": str(ex)})
+    any_missing = any(img.get("missing_markers") for exp in result["exports"].values() for img in exp["images"])
+    ok = rollback_status == "rolled_back" and not result["state_differences"] and not any(x.get("exists") for x in result["calibration_elements_exist_after"])
+    result["conclusion"] = "PASS" if ok and not any_missing else ("FAIL" if not ok else "INCONCLUSIVE")
+    for exp in result["exports"].values():
+        with open(exp["json_path"], "w") as f:
+            json.dump(result, f, indent=2, sort_keys=True)
+        result["paths"].append(exp["json_path"])
+    return result
+
+
+try:
+    OUT = _run()  # noqa: F821
+except Exception as ex:
+    OUT = {"conclusion": "FAIL", "error": str(ex), "error_type": type(ex).__name__}  # noqa: F821
