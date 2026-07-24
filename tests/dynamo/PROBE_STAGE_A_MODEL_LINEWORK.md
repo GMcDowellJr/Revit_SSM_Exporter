@@ -130,6 +130,7 @@ For every exported TIFF, the probe records:
 - file size
 - dark-line pixel count
 - grayscale non-background pixel count
+- non-dark gray foreground pixel count, used as fill/shading/hatch contamination evidence
 - unexpected-color pixel count
 - near-white/white background pixel count
 - non-background content rectangle
@@ -149,7 +150,7 @@ For each mode the combined JSON includes fields for:
 
 - internal edges: `present` / `absent` / `uncertain`
 - hidden/back edges: `present` / `absent` / `uncertain`
-- fill contamination: `acceptable` / `unacceptable`
+- fill contamination: `acceptable` / `unacceptable`; non-dark gray foreground above tolerance rejects candidate status even when pixels are grayscale
 - link behavior: `supported` / `unresolved`
 - DWG behavior: `supported` / `unresolved`
 - dimension alignment: `pass` / `fail`

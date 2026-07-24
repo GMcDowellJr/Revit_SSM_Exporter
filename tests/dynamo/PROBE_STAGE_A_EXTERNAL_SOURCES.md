@@ -50,7 +50,10 @@ Each variant runs in a separate transaction group from the same original state:
 5. `mixed_host_link_dwg_export`
 
 If a required source type is not discovered in the view, that variant is marked
-skipped with a clear reason instead of substituting unrelated elements.
+skipped with a clear reason instead of substituting unrelated elements. The
+aggregate report remains `INCONCLUSIVE` unless the required HOST, LINK, and DWG
+source-family variants actually run and pass; a host-only view cannot make the
+external-source probe look complete.
 
 ## Transaction safety
 

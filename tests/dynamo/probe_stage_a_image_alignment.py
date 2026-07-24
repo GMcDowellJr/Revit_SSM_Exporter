@@ -502,7 +502,7 @@ def _analyze_image(path, markers, bounds):
         predicted = None
         if centroid and bt:
             u0, v0, u1, v1 = bt
-            predicted = [cx0 + ((m["uv"][0] - u0) / (u1 - u0)) * cw - 0.5, cy0 + ((v1 - m["uv"][1]) / (v1 - v0)) * ch - 0.5]
+            predicted = [((m["uv"][0] - u0) / (u1 - u0)) * float(w) - 0.5, ((v1 - m["uv"][1]) / (v1 - v0)) * float(h) - 0.5]
             residual = [centroid[0] - predicted[0], centroid[1] - predicted[1]]
         detections.append({"name": m["name"], "expected_uv": m["uv"], "rgb": m["rgb"], "found_exact": found, "centroid_px": centroid, "nearest_rgb": (list(best[2]) if best else None), "nearest_distance_sq": int(best_d) if best else None, "predicted_px_center_equation": predicted, "residual_px": residual})
     res["markers"] = detections
@@ -510,7 +510,8 @@ def _analyze_image(path, markers, bounds):
     res["missing_markers"] = [d["name"] for d in detections if not d["found_exact"]]
     res["padding_px"] = {"left": cx0, "top": cy0, "right": (w - content[2] - 1) if content else 0, "bottom": (h - content[3] - 1) if content else 0}
     if bt:
-        res["tested_mapping"] = "u = u_min + (x + 0.5 - content_x0) * UV_width / content_width; v = v_max - (y + 0.5 - content_y0) * UV_height / content_height"
+        res["tested_mapping"] = "u = u_min + (x + 0.5) * UV_width / image_width; v = v_max - (y + 0.5) * UV_height / image_height"
+        res["mapping_frame"] = "full_exported_image_frame_not_content_rect"
         res["x_axis_direction"] = "+U to the right" if bt[2] > bt[0] else "unknown"
         res["y_axis_direction"] = "-V downward / +V upward" if bt[3] > bt[1] else "unknown"
         if detections and all(d["residual_px"] for d in detections):

@@ -480,9 +480,13 @@ def _analyze_image(path, reference_dims=None):
                 gray += 1
             else:
                 unexpected += 1
+    foreground = max(0, len(pixels) - bg)
+    non_dark_gray = max(0, int(gray) - int(dark))
     result.update({
         "dark_line_pixel_count": int(dark),
         "grayscale_non_background_pixel_count": int(gray),
+        "non_dark_gray_foreground_pixel_count": int(non_dark_gray),
+        "foreground_pixel_count": int(foreground),
         "unexpected_color_pixel_count": int(unexpected),
         "background_pixel_count": int(bg),
         "non_background_content_rect": ([minx, miny, maxx, maxy] if minx is not None else None),
@@ -635,7 +639,10 @@ def _classify_mode(mode_result, reference_dims):
     dims_match = bool(ia.get("dimensions") and reference_dims and ia.get("dimensions") == reference_dims)
     dark = int(ia.get("dark_line_pixel_count") or 0)
     unexpected = int(ia.get("unexpected_color_pixel_count") or 0)
-    fill_ok = "acceptable" if unexpected == 0 else "unacceptable"
+    non_dark_gray = int(ia.get("non_dark_gray_foreground_pixel_count") or 0)
+    foreground = int(ia.get("foreground_pixel_count") or 0)
+    gray_tolerance = max(10, int(round(0.001 * max(1, foreground))))
+    fill_ok = "acceptable" if unexpected == 0 and non_dark_gray <= gray_tolerance else "unacceptable"
     if mode_result.get("exceptions"):
         candidate = "rejected"
     elif dark <= 0:
@@ -648,6 +655,7 @@ def _classify_mode(mode_result, reference_dims):
         "internal_edges": "uncertain",
         "hidden_back_edges": "uncertain",
         "fill_contamination": fill_ok,
+        "fill_contamination_evidence": {"unexpected_color_pixel_count": unexpected, "non_dark_gray_foreground_pixel_count": non_dark_gray, "non_dark_gray_tolerance": gray_tolerance},
         "link_behavior": "requires_manual_review",
         "dwg_behavior": "requires_manual_review",
         "dimension_alignment": "pass" if dims_match else "fail",
@@ -732,8 +740,8 @@ def _rank(results):
     rows = []
     for r in results:
         ia = r.get("images", [{}])[0].get("analysis", {}) if r.get("images") else {}
-        rows.append({"mode": r.get("mode"), "candidate_status": r.get("classification", {}).get("candidate_status"), "dark_line_pixel_count": ia.get("dark_line_pixel_count"), "unexpected_color_pixel_count": ia.get("unexpected_color_pixel_count"), "dimension_alignment": r.get("classification", {}).get("dimension_alignment")})
-    return sorted(rows, key=lambda x: (x.get("candidate_status") != "recommended", -(x.get("dark_line_pixel_count") or 0), x.get("unexpected_color_pixel_count") or 10 ** 12))
+        rows.append({"mode": r.get("mode"), "candidate_status": r.get("classification", {}).get("candidate_status"), "dark_line_pixel_count": ia.get("dark_line_pixel_count"), "unexpected_color_pixel_count": ia.get("unexpected_color_pixel_count"), "non_dark_gray_foreground_pixel_count": ia.get("non_dark_gray_foreground_pixel_count"), "dimension_alignment": r.get("classification", {}).get("dimension_alignment")})
+    return sorted(rows, key=lambda x: (x.get("candidate_status") != "recommended", -(x.get("dark_line_pixel_count") or 0), (x.get("unexpected_color_pixel_count") or 0) + (x.get("non_dark_gray_foreground_pixel_count") or 0)))
 
 
 def run(raw_view, output_dir, raw_focused, selection):

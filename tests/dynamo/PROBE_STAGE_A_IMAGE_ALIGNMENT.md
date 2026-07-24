@@ -107,12 +107,14 @@ When Pillow is available in the Dynamo CPython environment, each TIFF records:
 - padding rectangle
 - marker residuals against the tested mapping
 
-The tested mapping is:
+The tested marker mapping is against the full exported image frame, not the shrunken non-background content rectangle:
 
 ```text
-u = u_min + (x + 0.5 - content_x0) * UV_width / content_width
-v = v_max - (y + 0.5 - content_y0) * UV_height / content_height
+u = u_min + (x + 0.5) * UV_width / image_width
+v = v_max - (y + 0.5) * UV_height / image_height
 ```
+
+`content_rect_px` is still reported separately as foreground evidence/padding diagnostics, but it is not used as the crop frame for marker residual predictions.
 
 The probe reports observations and residuals; it does not assume the equation is correct. If Pillow is unavailable, markers are disabled, marker creation fails, or marker detections are absent, rollback may still pass but the overall alignment conclusion is `INCONCLUSIVE` rather than `PASS` because there is insufficient image/marker evidence.
 

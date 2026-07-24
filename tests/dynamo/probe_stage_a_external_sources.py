@@ -565,10 +565,26 @@ def run(raw_view, output_dir, raw_links, raw_dwgs):
     report["recommended_linked_fallback"] = "When LinkElementId painting fails, hiding the owning link instance prevents unassigned linked contamination for the diagnostic export; do not treat this as final production policy without more samples."
     report["required_sidecar_schema_changes"] = ["source_type", "source_id", "source_label", "host_element_id", "link_instance_id", "linked_element_id", "import_instance_id", "paint_success", "hidden_link_fallback"]
     report["remaining_limitations"] = ["Dynamo/Revit runtime required for API behavior", "Pillow required for exact-color counts", "DWG fine attribution is limited to what repository import proxies expose; ImportInstance coloring is instance-level"]
+    required_family_variants = {
+        "HOST": ["host_reference_coloring"],
+        "LINK": ["linked_per_element_linkelementid_coloring", "forced_linked_override_failure_hide_instance_fallback"],
+        "DWG": ["dwg_importinstance_coloring"],
+    }
+    family_status = {}
+    for family, names in required_family_variants.items():
+        matching = [v for v in report["variants"] if v.get("variant") in names]
+        family_status[family] = {
+            "required_variants": names,
+            "ran": bool(matching) and all(not v.get("skipped") for v in matching),
+            "passed": bool(matching) and all(v.get("conclusion") == "PASS" for v in matching),
+        }
+    report["required_source_family_status"] = family_status
     if any(v.get("conclusion") == "FAIL" for v in report["variants"]):
         report["conclusion"] = "FAIL"
-    elif any(v.get("conclusion") == "PASS" for v in report["variants"]):
+    elif all(status["ran"] and status["passed"] for status in family_status.values()):
         report["conclusion"] = "PASS"
+    else:
+        report["conclusion"] = "INCONCLUSIVE"
     json_path = os.path.join(probe_dir, base + ".external_sources.json")
     with open(json_path, "w") as f:
         json.dump(report, f, indent=2, sort_keys=True)
