@@ -87,7 +87,7 @@ When `IN[3]` is `true`, the probe creates temporary view-specific detail-curve c
 - upper-right
 - center
 
-Each marker uses a distinct exact RGB color and records expected UV coordinates, RGB, and created element IDs. If the active model view cannot create detail curves, the JSON reports that failure and falls back to weaker content-rectangle measurements instead of claiming exact marker alignment.
+Each marker uses a distinct exact RGB color and records expected UV coordinates, RGB, and created element IDs. Marker bounds are chosen from the intersection common to the requested export bounds where possible, so active-crop `all` runs do not place canvas-corner markers outside the original/model-bounds exports. If no common intersection is available, the JSON records the fallback marker-bounds source. If the active model view cannot create detail curves, the JSON reports that failure and falls back to weaker content-rectangle measurements instead of claiming exact marker alignment.
 
 All marker creation occurs inside the enclosing transaction group and must disappear after rollback.
 
@@ -114,7 +114,7 @@ u = u_min + (x + 0.5 - content_x0) * UV_width / content_width
 v = v_max - (y + 0.5 - content_y0) * UV_height / content_height
 ```
 
-The probe reports observations and residuals; it does not assume the equation is correct.
+The probe reports observations and residuals; it does not assume the equation is correct. If Pillow is unavailable, markers are disabled, marker creation fails, or marker detections are absent, rollback may still pass but the overall alignment conclusion is `INCONCLUSIVE` rather than `PASS` because there is insufficient image/marker evidence.
 
 ## Model-to-canvas placement calculation
 

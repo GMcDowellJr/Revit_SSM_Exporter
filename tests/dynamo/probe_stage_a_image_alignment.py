@@ -192,6 +192,19 @@ def _union_bounds(a, b):
     return _make_bounds((min(aa[0], bb[0]), min(aa[1], bb[1]), max(aa[2], bb[2]), max(aa[3], bb[3])))
 
 
+def _intersect_bounds(bounds_list):
+    usable = [_bounds_tuple(b) for b in bounds_list if b is not None]
+    if not usable:
+        return None
+    u0 = max(b[0] for b in usable)
+    v0 = max(b[1] for b in usable)
+    u1 = min(b[2] for b in usable)
+    v1 = min(b[3] for b in usable)
+    if u1 <= u0 or v1 <= v0:
+        return None
+    return _make_bounds((u0, v0, u1, v1))
+
+
 def _sanitize_filename(name):
     safe = re.sub(r"[^A-Za-z0-9_. -]+", "_", name or "view").strip(" .")
     return safe or "view"
@@ -493,6 +506,7 @@ def _analyze_image(path, markers, bounds):
             residual = [centroid[0] - predicted[0], centroid[1] - predicted[1]]
         detections.append({"name": m["name"], "expected_uv": m["uv"], "rgb": m["rgb"], "found_exact": found, "centroid_px": centroid, "nearest_rgb": (list(best[2]) if best else None), "nearest_distance_sq": int(best_d) if best else None, "predicted_px_center_equation": predicted, "residual_px": residual})
     res["markers"] = detections
+    res["marker_analysis_available"] = bool(detections)
     res["missing_markers"] = [d["name"] for d in detections if not d["found_exact"]]
     res["padding_px"] = {"left": cx0, "top": cy0, "right": (w - content[2] - 1) if content else 0, "bottom": (h - content[3] - 1) if content else 0}
     if bt:
@@ -568,7 +582,17 @@ def _run():
     rollback_status = "not_attempted"
     marker_ids = []
     try:
-        marker_bounds = canvas_bounds or model_bounds or resolved.get("bounds_uv") or original_crop
+        requested_analysis_bounds = []
+        for requested_mode in modes:
+            if requested_mode == "original":
+                requested_analysis_bounds.append(original_crop if bool(getattr(view, "CropBoxActive", False)) else resolved.get("bounds_uv"))
+            elif requested_mode == "model_bounds" and model_bounds is not None:
+                requested_analysis_bounds.append(model_bounds)
+            elif requested_mode == "canvas_bounds":
+                requested_analysis_bounds.append(canvas_bounds)
+        marker_bounds = _intersect_bounds(requested_analysis_bounds) or model_bounds or original_crop or resolved.get("bounds_uv") or canvas_bounds
+        result["bounds"]["calibration_marker_uv"] = _bounds_dict(marker_bounds)
+        result["bounds"]["calibration_marker_bounds_source"] = "intersection_of_requested_export_bounds" if _intersect_bounds(requested_analysis_bounds) is not None else "fallback_bounds_not_common_to_all_requested_exports"
         marker_size = max(cell_req * 2.0, ((_bounds_tuple(marker_bounds)[2] - _bounds_tuple(marker_bounds)[0]) if marker_bounds else 1.0) * 0.01)
         markers, marker_diags = _create_calibration_markers(doc, view, marker_bounds, basis, marker_size) if create_markers else ([], [])
         result["calibration_markers"] = markers
@@ -630,9 +654,13 @@ def _run():
             result["calibration_elements_exist_after"].append({"id": eid, "exists": doc.GetElement(ElementId(int(eid))) is not None})
         except Exception as ex:
             result["calibration_elements_exist_after"].append({"id": eid, "error": str(ex)})
-    any_missing = any(img.get("missing_markers") for exp in result["exports"].values() for img in exp["images"])
+    exported_images = [img for exp in result["exports"].values() for img in exp["images"]]
+    any_missing = any(img.get("missing_markers") for img in exported_images)
+    all_have_image_analysis = bool(exported_images) and all(img.get("pillow_available") for img in exported_images)
+    all_have_marker_analysis = bool(create_markers) and bool(result.get("calibration_markers")) and all(img.get("marker_analysis_available") for img in exported_images)
     ok = rollback_status == "rolled_back" and not result["state_differences"] and not any(x.get("exists") for x in result["calibration_elements_exist_after"])
-    result["conclusion"] = "PASS" if ok and not any_missing else ("FAIL" if not ok else "INCONCLUSIVE")
+    result["evidence_status"] = {"all_have_image_analysis": all_have_image_analysis, "all_have_marker_analysis": all_have_marker_analysis, "markers_requested": bool(create_markers), "marker_count": len(result.get("calibration_markers", [])), "any_missing_markers": bool(any_missing)}
+    result["conclusion"] = "PASS" if ok and all_have_image_analysis and all_have_marker_analysis and not any_missing else ("FAIL" if not ok else "INCONCLUSIVE")
     for exp in result["exports"].values():
         with open(exp["json_path"], "w") as f:
             json.dump(result, f, indent=2, sort_keys=True)

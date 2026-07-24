@@ -447,12 +447,15 @@ def _analyze_image(path, assigned):
     for p in pixels:
         if p in expected:
             expected_counts[expected[p]] += 1
-        elif p == (255, 255, 255) or (p[0] >= 224 and p[1] >= 224 and p[2] >= 224):
+        elif p == (255, 255, 255):
             bg += 1
+        elif p[0] >= 224 and p[1] >= 224 and p[2] >= 224:
+            near_white_bad += 1
+            off += 1
+            unexpected[str(p)] = unexpected.get(str(p), 0) + 1
         else:
             off += 1
             if p == (0, 0, 0): black_bad += 1
-            if p[0] >= 224 and p[1] >= 224 and p[2] >= 224: near_white_bad += 1
             unexpected[str(p)] = unexpected.get(str(p), 0) + 1
     foreground = max(1, len(pixels) - bg)
     result.update({

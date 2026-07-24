@@ -126,8 +126,8 @@ When Pillow is available in Dynamo CPython, the probe records:
 - file size and SHA-256
 - exact expected-palette pixel count
 - off-palette foreground pixel count and percent
-- background pixel count using Stage A's near-white background rule
-- black and near-white violation counts
+- exact white background pixel count
+- black and near-white reserved-range violation counts; near-white non-white pixels are counted as off-palette violations instead of being swallowed as background
 - number of expected colors detected
 - missing assigned colors
 - unexpected colors, capped to the top 50

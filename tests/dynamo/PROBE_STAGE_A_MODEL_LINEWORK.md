@@ -139,7 +139,9 @@ For every exported TIFF, the probe records:
 - dimensional agreement with the generated element-ID reference TIFF
 
 If Pillow is unavailable, the probe still records file size and SHA-256 but marks
-pixel analysis inconclusive.
+pixel analysis inconclusive. If the element-ID reference export fails or produces
+no dimensions, the overall report is `FAIL` or `INCONCLUSIVE` even if individual
+linework mode exports succeed, because dimension alignment cannot be validated.
 
 ## Required conclusions
 

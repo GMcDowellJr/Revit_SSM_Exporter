@@ -765,8 +765,13 @@ def run(raw_view, output_dir, raw_focused, selection):
                 diff_path = os.path.join(probe_dir, "{0}.{1}_minus_{2}.diff.tiff".format(base, result["mode"], report["modes"][0]["mode"]))
                 report["difference_images"].append({"mode": result["mode"], "against": report["modes"][0]["mode"], "diff": _write_diff(ref_path, path, diff_path)})
     report["ranked_modes"] = _rank(report["modes"])
-    if any(r.get("conclusion") == "FAIL" for r in report["modes"]):
+    reference_failed = reference.get("conclusion") == "FAIL"
+    reference_missing_dimensions = not bool(reference_dims)
+    report["reference_status"] = {"failed": bool(reference_failed), "missing_dimensions": bool(reference_missing_dimensions)}
+    if reference_failed or any(r.get("conclusion") == "FAIL" for r in report["modes"]):
         report["conclusion"] = "FAIL"
+    elif reference_missing_dimensions:
+        report["conclusion"] = "INCONCLUSIVE"
     elif all(r.get("conclusion") == "PASS" for r in report["modes"]):
         report["conclusion"] = "PASS"
     json_path = os.path.join(probe_dir, base + ".json")
