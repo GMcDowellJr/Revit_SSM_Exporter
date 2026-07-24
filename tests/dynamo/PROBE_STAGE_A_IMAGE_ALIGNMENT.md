@@ -28,6 +28,10 @@ The probe mirrors the current Stage A and VOP geometry calculation without chang
 - `pipeline.py::init_view_raster()` establishes the VOP grid dimensions and records `model_clip_bounds` only best-effort; this probe does not assume that field exists for inactive crops.
 - `color_id_buffer.py::_export_tiff()` and `view_raster_export.py` informed the exact `ExportImage` settings: `ZoomFitType.FitToPage`, horizontal `PixelSize`, and lossless TIFF.
 
+## Repo import path in Dynamo
+
+Dynamo CPython pasted-node execution may not define `__file__`. The probe therefore does not require `__file__` to find the repository. It first tries existing imports, then checks `REVIT_SSM_EXPORTER_ROOT` / `VOP_REPO_ROOT`, the output-directory ancestors, the current working directory ancestors, and common checkout locations. If imports still fail, set `REVIT_SSM_EXPORTER_ROOT` to the local `Revit_SSM_Exporter` checkout before running Dynamo.
+
 ## Dynamo wiring
 
 Create a Dynamo Python node set to CPython3 and wire:

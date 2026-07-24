@@ -35,15 +35,86 @@ MARKER_SPECS = [
 ]
 
 
-def _repo_root():
-    here = os.path.dirname(os.path.abspath(__file__))
-    return os.path.abspath(os.path.join(here, "..", ".."))
+def _candidate_repo_roots(output_dir=None):
+    """Yield possible repo roots without relying on ``__file__``.
+
+    Dynamo CPython executes pasted node code without defining ``__file__``.
+    Prefer already-working imports, then search stable runtime anchors.
+    """
+    seen = set()
+
+    def emit(path):
+        if not path:
+            return
+        try:
+            path = os.path.abspath(os.path.expanduser(str(path)))
+        except Exception:
+            return
+        if path in seen:
+            return
+        seen.add(path)
+        yield path
+
+    anchors = []
+    for env_name in ("REVIT_SSM_EXPORTER_ROOT", "VOP_REPO_ROOT"):
+        try:
+            anchors.append(os.environ.get(env_name))
+        except Exception:
+            pass
+    anchors.extend([output_dir, os.getcwd()])
+    try:
+        anchors.append(os.path.dirname(os.path.abspath(__file__)))
+    except Exception:
+        # Expected in Dynamo CPython pasted-node execution.
+        pass
+    for anchor in anchors:
+        if not anchor:
+            continue
+        cur = os.path.abspath(os.path.expanduser(str(anchor)))
+        if os.path.isfile(cur):
+            cur = os.path.dirname(cur)
+        for _ in range(8):
+            for out in emit(cur):
+                yield out
+            parent = os.path.dirname(cur)
+            if parent == cur:
+                break
+            cur = parent
+    home = os.path.expanduser("~")
+    common = [
+        os.path.join(home, "Documents", "GitHub", "Revit_SSM_Exporter"),
+        os.path.join(home, "source", "repos", "Revit_SSM_Exporter"),
+        os.path.join(home, "Revit_SSM_Exporter"),
+        "/workspace/Revit_SSM_Exporter",
+    ]
+    for path in common:
+        for out in emit(path):
+            yield out
 
 
-def _ensure_repo_on_path():
-    root = _repo_root()
-    if root not in sys.path:
-        sys.path.insert(0, root)
+def _ensure_repo_on_path(output_dir=None):
+    """Put the repo root on sys.path in Dynamo, where __file__ may not exist."""
+    try:
+        import vop_interwoven  # noqa: F401
+        return None
+    except Exception:
+        pass
+    checked = []
+    for root in _candidate_repo_roots(output_dir=output_dir):
+        checked.append(root)
+        if os.path.isdir(os.path.join(root, "vop_interwoven")):
+            if root not in sys.path:
+                sys.path.insert(0, root)
+            try:
+                import vop_interwoven  # noqa: F401
+                return root
+            except Exception:
+                continue
+    raise RuntimeError(
+        "Could not locate Revit_SSM_Exporter repo root for vop_interwoven imports. "
+        "Set environment variable REVIT_SSM_EXPORTER_ROOT to the repo folder, "
+        "or run Dynamo with IN[1] inside the repo/output tree. Checked: {0}".format(checked)
+    )
 
 
 def _ensure_revit_api_reference():
@@ -439,12 +510,12 @@ def _placement(model_bounds, canvas_bounds, model_img):
 
 
 def _run():
-    _ensure_repo_on_path()
+    out_dir = IN[1] if len(IN) > 1 and IN[1] else os.path.join(os.path.expanduser("~"), "Desktop")  # noqa: F821
+    _ensure_repo_on_path(output_dir=out_dir)
     _ensure_revit_api_reference()
     from Autodesk.Revit.DB import TransactionGroup
     doc = _document_manager_doc()
     view = _unwrap(IN[0])  # noqa: F821
-    out_dir = IN[1] if len(IN) > 1 and IN[1] else os.path.join(os.path.expanduser("~"), "Desktop")  # noqa: F821
     mode = (IN[2] if len(IN) > 2 and IN[2] else "all").strip().lower()  # noqa: F821
     create_markers = bool(IN[3]) if len(IN) > 3 and IN[3] is not None else True  # noqa: F821
     if mode not in SUPPORTED_MODES:
