@@ -16,7 +16,7 @@ Run this probe to answer these research questions:
 
 ## Code inspected and reused
 
-The probe follows the transaction-group safety pattern proven by `probe_stage_a_transaction_group_export.py`: temporary work is committed in child transactions, exports occur with no child transaction open, and the enclosing `TransactionGroup` is rolled back in `finally`.
+The probe follows the transaction-group safety pattern proven by `probe_stage_a_transaction_group_export.py`: it force-closes Dynamo's ambient `TransactionManager` transaction before starting the `TransactionGroup`, temporary work is committed in child transactions, exports occur with no child transaction open, and the enclosing `TransactionGroup` is rolled back in `finally`.
 
 The probe mirrors the current Stage A and VOP geometry calculation without changing it:
 
@@ -70,8 +70,8 @@ Return all TIFFs and JSON files for analysis.
 
 ## Export modes
 
-- `original`: exports with the view's existing crop behavior and does not force new bounds.
-- `model_bounds`: temporarily forces the crop to verified model-only bounds when available. For inactive crops, the model bounds may come from synthetic visible extents instead of an existing crop.
+- `original`: exports with the view's existing crop behavior and does not force new bounds. If the crop is inactive, analysis uses `resolve_view_bounds().bounds_uv` rather than the stored inactive `CropBox`, because Revit is not exporting against that stale crop.
+- `model_bounds`: temporarily forces the crop to verified model-only bounds when available. For inactive crops where `resolve_view_bounds()` has no `model_bounds_uv`, this mode is skipped instead of relabeling the annotation-expanded canvas as model bounds.
 - `canvas_bounds`: temporarily forces the crop to the annotation-expanded canvas. This is diagnostic only; it intentionally shows whether expanding the Revit crop would admit additional model geometry and must not be treated as the proposed production solution.
 - `all`: runs all three modes.
 
@@ -120,7 +120,7 @@ The probe reports observations and residuals; it does not assume the equation is
 
 The JSON computes the proposed placement of the model-crop image inside the larger annotation-expanded canvas:
 
-- observed pixels per model unit
+- observed pixels per model unit, calculated from the non-background content rectangle width when available so TIFF left/right padding does not inflate density
 - canvas pixel dimensions at that density
 - model-image pixel offset
 - whether offsets are integral
@@ -137,7 +137,7 @@ A pass requires:
 - calibration elements no longer exist
 - no captured state differences are reported
 
-The JSON also captures document `IsModified` before and after. Revit may already have a modified document before the probe; evaluate this field in context.
+The JSON also captures document `IsModified` before and after. Revit may already have a modified document before the probe; evaluate this field in context. Dynamo inputs are unwrapped to DB elements by reading `InternalElement` when present; DB views are passed through unchanged.
 
 ## Required runtime matrix
 

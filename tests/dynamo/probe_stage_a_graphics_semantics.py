@@ -496,11 +496,12 @@ def _run_variant(doc, view, out_dir, base, name, max_count):
     from Autodesk.Revit.DB import Transaction, TransactionGroup, TransactionStatus
     result = {"variant": name, "definition_steps": _variant_steps(name), "transaction_group": {}, "state": {}, "element_counts": {}, "assigned_elements": {}, "paint_failures": [], "mutations": {}, "image_analysis": {}, "exceptions": [], "conclusion": "INCONCLUSIVE"}
     tiff_path = os.path.join(out_dir, base + "." + name + ".tiff")
-    group = TransactionGroup(doc, "VOP Stage A graphics semantics: " + name)
+    group = None
     started = False
     try:
         _force_close_dynamo_transaction()
         result["state"]["before"] = _snapshot(doc, view)
+        group = TransactionGroup(doc, "VOP Stage A graphics semantics: " + name)
         st = group.Start(); started = st == TransactionStatus.Started
         result["transaction_group"]["start_status"] = _safe_enum(st)
         if not started:
@@ -544,7 +545,7 @@ def _run_variant(doc, view, out_dir, base, name, max_count):
     except Exception as ex:
         result["exceptions"].append(_exception_record("variant", ex))
     finally:
-        if started:
+        if started and group is not None:
             result["transaction_group"]["rollback_attempted"] = True
             try:
                 rb = group.RollBack(); result["transaction_group"]["rollback_status"] = _safe_enum(rb); result["transaction_group"]["rollback_succeeded"] = rb == TransactionStatus.RolledBack

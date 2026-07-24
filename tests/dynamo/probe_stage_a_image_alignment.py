@@ -128,11 +128,9 @@ def _ensure_revit_api_reference():
 
 
 def _unwrap(value):
-    try:
-        import Revit
-        return Revit.Elements.ElementWrapper.ToDSType(value, False)
-    except Exception:
-        pass
+    # Dynamo may pass either a Dynamo wrapper or an Autodesk.Revit.DB element.
+    # Return the DB element; do not call ToDSType here because that wraps DB
+    # elements for Dynamo output and hides DB-only members needed by the probe.
     try:
         return value.InternalElement
     except Exception:
@@ -225,6 +223,12 @@ def _document_manager_doc():
     return DocumentManager.Instance.CurrentDBDocument
 
 
+def _force_close_dynamo_transaction():
+    _ensure_revit_api_reference()
+    from RevitServices.Transactions import TransactionManager
+    TransactionManager.Instance.ForceCloseTransaction()
+
+
 def _reject_reason(view):
     try:
         from Autodesk.Revit.DB import ViewType
@@ -267,21 +271,25 @@ def _compute_bounds(doc, view, cfg):
         original_crop_bounds = xy_bounds_from_crop_box_all_corners(view, basis, buffer=0.0)
     except Exception:
         original_crop_bounds = None
+    resolved_bounds = resolved.get("bounds_uv")
     model_bounds = resolved.get("model_bounds_uv")
-    if model_bounds is None:
-        if bool(getattr(view, "CropBoxActive", False)):
-            model_bounds = original_crop_bounds
-        else:
-            # Inactive crops use synthetic extents; do not assume raster.model_clip_bounds exists.
-            model_bounds = resolved.get("bounds_uv")
+    model_bounds_source = "resolve_view_bounds.model_bounds_uv" if model_bounds is not None else None
+    if model_bounds is None and bool(getattr(view, "CropBoxActive", False)):
+        model_bounds = original_crop_bounds
+        model_bounds_source = "active_original_crop_fallback" if model_bounds is not None else None
+    # For inactive crops, keep model_bounds as None when resolve_view_bounds() did
+    # not produce model_bounds_uv. resolved bounds may already include annotation
+    # expansion, so labeling them as model bounds makes model/canvas placement a
+    # tautology and hides the case this probe must measure.
     annotation_bounds = None
     try:
-        if model_bounds is not None:
-            annotation_bounds = compute_annotation_extents(doc, view, basis, model_bounds, requested_cell, cfg=cfg)
+        annotation_seed = model_bounds if model_bounds is not None else resolved_bounds
+        if annotation_seed is not None:
+            annotation_bounds = compute_annotation_extents(doc, view, basis, annotation_seed, requested_cell, cfg=cfg)
     except Exception:
         annotation_bounds = None
-    canvas_bounds = _union_bounds(model_bounds, annotation_bounds) or resolved.get("bounds_uv")
-    return basis, requested_cell, resolved, original_crop_bounds, model_bounds, annotation_bounds, canvas_bounds
+    canvas_bounds = _union_bounds(model_bounds, annotation_bounds) or resolved_bounds
+    return basis, requested_cell, resolved, original_crop_bounds, model_bounds, model_bounds_source, annotation_bounds, canvas_bounds
 
 
 def _uv_to_world_xyz(basis, u, v):
@@ -496,18 +504,26 @@ def _analyze_image(path, markers, bounds):
     return res
 
 
+def _content_width_px(model_img):
+    content = model_img.get("content_rect_px") if model_img else None
+    if content and len(content) == 4:
+        return max(1, int(content[2]) - int(content[0]) + 1)
+    return int(model_img.get("actual_width") or 0) if model_img else 0
+
+
 def _placement(model_bounds, canvas_bounds, model_img):
-    if not model_bounds or not canvas_bounds or not model_img or not model_img.get("actual_width"):
-        return {"available": False, "reason": "missing model/canvas bounds or image dimensions"}
+    content_width = _content_width_px(model_img)
+    if not model_bounds or not canvas_bounds or not model_img or not content_width:
+        return {"available": False, "reason": "missing model/canvas bounds or content image dimensions"}
     mb, cb = _bounds_tuple(model_bounds), _bounds_tuple(canvas_bounds)
-    density = float(model_img["actual_width"]) / max(1e-9, mb[2] - mb[0])
+    density = float(content_width) / max(1e-9, mb[2] - mb[0])
     canvas_w = (cb[2] - cb[0]) * density
     canvas_h = (cb[3] - cb[1]) * density
     off_x = (mb[0] - cb[0]) * density
     off_y = (cb[3] - mb[3]) * density
     vals = [canvas_w, canvas_h, off_x, off_y]
     rounding = [abs(v - round(v)) for v in vals]
-    return {"available": True, "observed_px_per_model_unit": density, "canvas_pixel_dimensions_float": [canvas_w, canvas_h], "model_image_offset_float": [off_x, off_y], "offset_integral": [rounding[2] < 1e-6, rounding[3] < 1e-6], "max_rounding_error_px": max(rounding), "max_rounding_error_model_units": max(rounding) / density, "lossless_padding_sufficient": max(rounding) < 1e-6, "resampling_required_if_exact_canvas_needed": max(rounding) >= 1e-6}
+    return {"available": True, "observed_px_per_model_unit": density, "density_source_content_width_px": int(content_width), "tiff_actual_width_px": int(model_img.get("actual_width") or 0), "canvas_pixel_dimensions_float": [canvas_w, canvas_h], "model_image_offset_float": [off_x, off_y], "offset_integral": [rounding[2] < 1e-6, rounding[3] < 1e-6], "max_rounding_error_px": max(rounding), "max_rounding_error_model_units": max(rounding) / density, "lossless_padding_sufficient": max(rounding) < 1e-6, "resampling_required_if_exact_canvas_needed": max(rounding) >= 1e-6}
 
 
 def _run():
@@ -529,16 +545,17 @@ def _run():
     cfg = _config_for_view(view)
     before_doc_modified = bool(getattr(doc, "IsModified", False))
     before_state = _capture_crop_state(view)
-    basis, cell_req, resolved, original_crop, model_bounds, annotation_bounds, canvas_bounds = _compute_bounds(doc, view, cfg)
+    basis, cell_req, resolved, original_crop, model_bounds, model_bounds_source, annotation_bounds, canvas_bounds = _compute_bounds(doc, view, cfg)
     base = "{0}_{1}".format(_sanitize_filename(getattr(view, "Name", "view")), _safe_int_id(view.Id))
     modes = ["original", "model_bounds", "canvas_bounds"] if mode == "all" else [mode]
-    result = {"paths": [], "view": {"name": getattr(view, "Name", None), "id": _safe_int_id(view.Id), "type": str(getattr(view, "ViewType", None))}, "requested_pixel_size": REQUESTED_PIXEL_SIZE, "basis": {"origin": list(basis.origin), "right": list(basis.right), "up": list(basis.up), "forward": list(basis.forward)}, "bounds": {"original_crop_uv": _bounds_dict(original_crop), "original_crop_active": before_state.get("CropBoxActive"), "original_crop_visible": before_state.get("CropBoxVisible"), "pre_annotation_model_uv": _bounds_dict(model_bounds), "annotation_uv": _bounds_dict(annotation_bounds), "canvas_uv": _bounds_dict(canvas_bounds), "resolve_view_bounds_result": {k: (_bounds_dict(v) if k.endswith("bounds_uv") or k == "bounds_uv" else v) for k, v in resolved.items() if k != "bounds_uv"}, "resolve_view_bounds_uv": _bounds_dict(resolved.get("bounds_uv"))}, "grid": {"W": int(resolved.get("grid_W", 0) or 0), "H": int(resolved.get("grid_H", 0) or 0), "cell_size_ft_requested": cell_req, "cell_size_ft_effective": float(resolved.get("cell_size_ft_effective", cell_req))}, "state_before": before_state, "document_is_modified_before": before_doc_modified, "exports": {}, "diagnostics": []}
+    result = {"paths": [], "view": {"name": getattr(view, "Name", None), "id": _safe_int_id(view.Id), "type": str(getattr(view, "ViewType", None))}, "requested_pixel_size": REQUESTED_PIXEL_SIZE, "basis": {"origin": list(basis.origin), "right": list(basis.right), "up": list(basis.up), "forward": list(basis.forward)}, "bounds": {"original_crop_uv": _bounds_dict(original_crop), "original_crop_active": before_state.get("CropBoxActive"), "original_crop_visible": before_state.get("CropBoxVisible"), "pre_annotation_model_uv": _bounds_dict(model_bounds), "pre_annotation_model_bounds_source": model_bounds_source, "annotation_uv": _bounds_dict(annotation_bounds), "canvas_uv": _bounds_dict(canvas_bounds), "resolve_view_bounds_result": {k: (_bounds_dict(v) if k.endswith("bounds_uv") or k == "bounds_uv" else v) for k, v in resolved.items() if k != "bounds_uv"}, "resolve_view_bounds_uv": _bounds_dict(resolved.get("bounds_uv"))}, "grid": {"W": int(resolved.get("grid_W", 0) or 0), "H": int(resolved.get("grid_H", 0) or 0), "cell_size_ft_requested": cell_req, "cell_size_ft_effective": float(resolved.get("cell_size_ft_effective", cell_req))}, "state_before": before_state, "document_is_modified_before": before_doc_modified, "exports": {}, "diagnostics": []}
+    _force_close_dynamo_transaction()
     group = TransactionGroup(doc, "VOP Stage A image alignment probe")
     group.Start()
     rollback_status = "not_attempted"
     marker_ids = []
     try:
-        marker_bounds = canvas_bounds or model_bounds or original_crop
+        marker_bounds = canvas_bounds or model_bounds or resolved.get("bounds_uv") or original_crop
         marker_size = max(cell_req * 2.0, ((_bounds_tuple(marker_bounds)[2] - _bounds_tuple(marker_bounds)[0]) if marker_bounds else 1.0) * 0.01)
         markers, marker_diags = _create_calibration_markers(doc, view, marker_bounds, basis, marker_size) if create_markers else ([], [])
         result["calibration_markers"] = markers
@@ -546,9 +563,23 @@ def _run():
         marker_ids = [eid for m in markers for eid in m.get("element_ids", [])]
         analyzed_by_mode = {}
         for m in modes:
-            target_bounds = original_crop if m == "original" else model_bounds if m == "model_bounds" else canvas_bounds
-            crop_change = {"changed": False, "reason": "original mode uses existing crop behavior"}
-            if m != "original":
+            if m == "original":
+                target_bounds = original_crop if bool(getattr(view, "CropBoxActive", False)) else resolved.get("bounds_uv")
+                crop_change = {"changed": False, "reason": "original mode uses existing crop behavior", "analysis_bounds_source": "original_crop" if bool(getattr(view, "CropBoxActive", False)) else "resolve_view_bounds.bounds_uv_inactive_crop"}
+            elif m == "model_bounds":
+                target_bounds = model_bounds
+                if target_bounds is None:
+                    result["exports"][m] = {
+                        "skipped": True,
+                        "reason": "model-only bounds unavailable; not substituting annotation-expanded canvas bounds",
+                        "target_bounds_uv": None,
+                        "images": [],
+                        "sequential_export_equality": None,
+                    }
+                    continue
+                crop_change = _set_crop_to_bounds(doc, view, basis, target_bounds, m)
+            else:
+                target_bounds = canvas_bounds
                 crop_change = _set_crop_to_bounds(doc, view, basis, target_bounds, m)
             images = []
             for seq in (1, 2):
