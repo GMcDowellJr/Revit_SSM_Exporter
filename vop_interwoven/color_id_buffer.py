@@ -13,9 +13,19 @@ import time
 
 NEUTRAL_PHASE_FILTER_NAME = "VOP_NeutralPhaseFilter"
 MAX_STAGE_A_PIXEL_SIZE = 15000
-# Near-white corner of the RGB cube reserved as invalid/background so a decoder
-# can draw a clean boundary against anti-aliasing halos at the page background
-# (validity rule: any channel < NEAR_WHITE_RESERVED_THRESHOLD).
+# Near-white and near-black corners of the RGB cube are reserved as invalid so
+# a decoder can draw a clean boundary against two distinct noise sources:
+# (a) AA/export halos at the page background, which is white outside the
+# view's geometry (validity rule: any channel >= NEAR_WHITE_RESERVED_THRESHOLD
+# on every channel is invalid); (b) black (0,0,0) is the "no element painted"
+# sentinel, and a palette walking the lattice from the origin outward would
+# otherwise hand the very first elements colors like (0,0,8) that sit only a
+# few units from that sentinel -- indistinguishable from background after a
+# couple of RGB units of TIFF-export/rendering noise. Field data
+# (graphics_semantics_probe, 2026-07-24) showed near-black pixels were 99% of
+# the residual off-palette contamination in the fully-suppressed production
+# config, concentrated exactly here.
+NEAR_BLACK_RESERVED_THRESHOLD = 32
 NEAR_WHITE_RESERVED_THRESHOLD = 224
 
 # Categories that are CategoryType.Model in the Revit API but are still
@@ -31,30 +41,45 @@ VIEW_ONLY_MODEL_BIC_NAMES = (
 )
 
 
+def _reserved_corner_count(step):
+    """Count lattice points excluded by the near-black and near-white corner reservations.
+
+    Shared by choose_step() and build_palette() so capacity estimation can
+    never drift out of sync with what build_palette() actually excludes --
+    that mismatch would let choose_step() pick a step build_palette() can't
+    fill, silently truncating the palette below element_count.
+    """
+    values = range(0, 256, step)
+    near_black = sum(1 for v in values if v < NEAR_BLACK_RESERVED_THRESHOLD)
+    near_white = sum(1 for v in values if v >= NEAR_WHITE_RESERVED_THRESHOLD)
+    return (near_black ** 3) + (near_white ** 3)
+
+
 def choose_step(element_count):
     """Choose an RGB lattice step with capacity for ``element_count`` IDs.
 
-    Capacity excludes black and white by reserving the all-zero color for
-    background.  The default Stage-A global threshold is conservative enough to
-    use a global 8-step palette (32^3 - 1 = 32,767 usable colors) for current
-    model sizes, while permitting denser per-view palettes when needed.
+    Capacity excludes the near-black and near-white corners reserved by
+    build_palette(). The default Stage-A global threshold is conservative
+    enough to use a global 8-step palette for current model sizes, while
+    permitting denser per-view palettes when needed.
     """
     n = max(1, int(element_count or 1))
     for step in (8, 6, 5, 4, 3, 2, 1):
         levels = (255 // step) + 1
-        if (levels ** 3) - 1 >= n:
+        capacity = (levels ** 3) - _reserved_corner_count(step)
+        if capacity >= n:
             return step
     return 1
 
 
 def build_palette(element_count, step=None):
-    """Build deterministic non-background, non-near-white RGB colors on the chosen lattice."""
+    """Build deterministic non-near-black, non-near-white RGB colors on the chosen lattice."""
     step = int(step if step is not None else choose_step(element_count))
     colors = []
     for r in range(0, 256, step):
         for g in range(0, 256, step):
             for b in range(0, 256, step):
-                if r == 0 and g == 0 and b == 0:
+                if r < NEAR_BLACK_RESERVED_THRESHOLD and g < NEAR_BLACK_RESERVED_THRESHOLD and b < NEAR_BLACK_RESERVED_THRESHOLD:
                     continue
                 if (
                     r >= NEAR_WHITE_RESERVED_THRESHOLD
@@ -662,6 +687,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # every other element already painted in this view — mirrors the reference
         # SUPPRESS script's per-element try/except-and-continue behavior.
         paint_failures = 0
+        paint_failed_element_ids = []
         for eid in resolved_ids:
             try:
                 rgb = color_map[eid.IntegerValue]
@@ -670,6 +696,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 view.SetElementOverrides(eid, ogs)
             except Exception as ex:
                 paint_failures += 1
+                paint_failed_element_ids.append(eid.IntegerValue)
                 if diag is not None:
                     diag.warn(
                         phase="color_id_buffer",
@@ -884,6 +911,8 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             "view_scale": scale,
         },
         "color_assignment_map": {str(k): list(v) for k, v in color_map.items()},
+        "paint_failures": paint_failures,
+        "paint_failed_element_ids": list(paint_failed_element_ids),
         "link_color_assignment_map": {
             "{0}:{1}".format(li, le): list(rgb) for (li, le), rgb in link_color_map.items()
         },
