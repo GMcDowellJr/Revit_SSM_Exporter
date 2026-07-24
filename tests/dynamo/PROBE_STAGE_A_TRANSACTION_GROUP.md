@@ -28,7 +28,7 @@ IN[2] = output directory
 IN[3] = inject failure after TIFF export: bool, default False
 ```
 
-The script accepts raw Revit API objects and common Dynamo-wrapped Revit objects. It rejects invalid inputs instead of substituting the active view or arbitrary elements.
+The script accepts raw Revit API objects and common Dynamo-wrapped Revit objects. It rejects invalid inputs instead of substituting the active view or arbitrary elements. For Revit 2025 compatibility, ElementId snapshots and validation read `ElementId.Value` first and only fall back to `IntegerValue` for older APIs.
 
 ## Recommended test element
 
@@ -46,7 +46,7 @@ For the strongest restoration evidence:
 1. Through Revit's UI, apply an obvious manual per-element view override to one selected element before running the probe.
 2. Run the probe.
 3. Confirm the original manual override remains after rollback.
-4. Compare the JSON before/after `OverrideGraphicSettings` snapshots.
+4. Compare the JSON before/after `OverrideGraphicSettings` snapshots, including the Revit 2025 `Transparency` property captured as `surface_transparency`.
 
 Do not have the script create a persistent baseline override.
 

@@ -32,9 +32,12 @@ def _safe_int_id(value):
     if value is None:
         return None
     try:
-        return int(value.IntegerValue)
+        return int(value.Value)
     except Exception:
-        return None
+        try:
+            return int(value.IntegerValue)
+        except Exception:
+            return None
 
 
 def _safe_enum(value):
@@ -165,7 +168,8 @@ def _validate_inputs(doc, raw_view, raw_elements, output_dir):
         if getattr(elem, "Document", None) is not doc:
             raise ValueError("IN[1] contains an element from a different document")
         eid = _safe_int_id(elem.Id)
-        if eid is None or eid == int(ElementId.InvalidElementId.IntegerValue):
+        invalid_eid = _safe_int_id(ElementId.InvalidElementId)
+        if eid is None or eid == invalid_eid:
             raise ValueError("IN[1] contains an element with an invalid ElementId")
         if eid not in seen:
             elements.append(elem)
@@ -241,22 +245,33 @@ def _snapshot_ogs(ogs):
         "cut_foreground_pattern_color": ("CutForegroundPatternColor", _safe_color),
         "cut_background_pattern_id": ("CutBackgroundPatternId", _safe_int_id),
         "cut_background_pattern_color": ("CutBackgroundPatternColor", _safe_color),
-        "surface_transparency": ("SurfaceTransparency", lambda v: int(v) if v is not None else None),
+        "surface_transparency": (("Transparency", "SurfaceTransparency"), lambda v: int(v) if v is not None else None),
         "halftone": ("Halftone", lambda v: bool(v) if v is not None else None),
         "detail_level": ("DetailLevel", _safe_enum),
     }
     snap = {}
     diagnostics = []
-    for key, (prop, norm) in spec.items():
+    for key, (props, norm) in spec.items():
         # Revit exposes OGS values as properties in modern APIs; older shims may expose getters.
-        try:
-            value = getattr(ogs, prop)
-            snap[key] = norm(value)
-        except Exception:
-            got = _read_ogs_property(ogs, "Get" + prop, norm)
-            snap[key] = got["value"]
-            if got["diagnostic"]:
-                diagnostics.append({"property": key, "diagnostic": got["diagnostic"]})
+        prop_names = props if isinstance(props, tuple) else (props,)
+        prop_diagnostics = []
+        found = False
+        for prop in prop_names:
+            try:
+                value = getattr(ogs, prop)
+                snap[key] = norm(value)
+                found = True
+                break
+            except Exception:
+                got = _read_ogs_property(ogs, "Get" + prop, norm)
+                if got["diagnostic"] is None:
+                    snap[key] = got["value"]
+                    found = True
+                    break
+                prop_diagnostics.append("{0}: {1}".format(prop, got["diagnostic"]))
+        if not found:
+            snap[key] = "unavailable"
+            diagnostics.append({"property": key, "diagnostic": "; ".join(prop_diagnostics)})
     if diagnostics:
         snap["diagnostics"] = diagnostics
     return snap
