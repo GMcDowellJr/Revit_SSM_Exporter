@@ -76,7 +76,7 @@ Expected files per run include the run mode so the normal and failure-injection 
 <safe_view>_<view_id>.failure_injection.transaction_group_probe.json
 ```
 
-The Dynamo `OUT` dictionary includes the conclusion, TIFF path, JSON report path, rollback status, captured-state equality, state differences, expected temporary colors, expected color pixel counts, missing expected colors, child transaction commit status, optional image-inspection results, exceptions, and the required second-run instruction.
+The Dynamo `OUT` dictionary includes the conclusion, TIFF path, JSON report path, rollback status, the no-open-transaction-at-export check, captured-state equality, state differences, expected temporary colors, expected color pixel counts, missing expected colors, child transaction commit status, optional image-inspection results, exceptions, and the required second-run instruction.
 
 ## Manual verification checklist
 
@@ -98,7 +98,7 @@ A passing run means:
 
 * The transaction group started.
 * `Transaction.Commit()` returned `TransactionStatus.Committed`; any other status skips export and prevents PASS.
-* TIFF export succeeded with no child transaction open.
+* TIFF export succeeded and `no_child_transaction_open_at_export` is `true`; a modifiable document/open transaction at export prevents PASS.
 * Transaction-group rollback succeeded.
 * The captured before/after state is equal.
 * No unexpected exception occurred.
@@ -107,7 +107,7 @@ A passing run means:
 
 ### FAIL
 
-A failing run means one or more required structural checks failed, `Transaction.Commit()` returned a non-committed status, rollback failed, export failed, captured state differs, Pillow inspection found zero pixels for every expected temporary color, or an unexpected exception occurred. If rollback fails, inspect the reported target view immediately.
+A failing run means one or more required structural checks failed, `Transaction.Commit()` returned a non-committed status, rollback failed, export failed, the document was still modifiable/open at export, captured state differs, Pillow inspection found zero pixels for every expected temporary color, or an unexpected exception occurred. If rollback fails, inspect the reported target view immediately.
 
 ### INCONCLUSIVE
 

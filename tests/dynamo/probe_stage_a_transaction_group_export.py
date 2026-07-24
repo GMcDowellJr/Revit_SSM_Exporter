@@ -627,6 +627,8 @@ def run_probe(raw_view, raw_elements, output_dir, inject_failure=False):
             reasons.append("Child transaction did not commit")
         if not report["export"]["succeeded"]:
             reasons.append("TIFF export did not succeed")
+        if report["transaction_group"].get("no_child_transaction_open_at_export") is not True:
+            reasons.append("Document was still modifiable or an open transaction was detected at export")
         if not report["transaction_group"]["rollback_succeeded"]:
             reasons.append("TransactionGroup rollback did not succeed")
         if not report["state"]["captured_state_equal_after_rollback"]:
@@ -678,6 +680,7 @@ try:
         "tiff_path": _report.get("export", {}).get("path"),
         "json_report_path": _report.get("json_report_path"),
         "rollback_succeeded": _report.get("transaction_group", {}).get("rollback_succeeded"),
+        "no_child_transaction_open_at_export": _report.get("transaction_group", {}).get("no_child_transaction_open_at_export"),
         "captured_state_equal_after_rollback": _report.get("state", {}).get("captured_state_equal_after_rollback"),
         "state_differences": _report.get("state", {}).get("state_differences"),
         "expected_temporary_colors": _report.get("export", {}).get("expected_element_colors"),
