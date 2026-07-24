@@ -67,11 +67,13 @@ Reports are written under:
 <output directory>/transaction_group_probe/
 ```
 
-Expected files per run:
+Expected files per run include the run mode so the normal and failure-injection artifacts are preserved side by side:
 
 ```text
-<safe_view>_<view_id>.transaction_group_probe.tiff
-<safe_view>_<view_id>.transaction_group_probe.json
+<safe_view>_<view_id>.normal.transaction_group_probe.tiff
+<safe_view>_<view_id>.normal.transaction_group_probe.json
+<safe_view>_<view_id>.failure_injection.transaction_group_probe.tiff
+<safe_view>_<view_id>.failure_injection.transaction_group_probe.json
 ```
 
 The Dynamo `OUT` dictionary includes the conclusion, TIFF path, JSON report path, rollback status, captured-state equality, state differences, expected temporary colors, expected color pixel counts, missing expected colors, child transaction commit status, optional image-inspection results, exceptions, and the required second-run instruction.

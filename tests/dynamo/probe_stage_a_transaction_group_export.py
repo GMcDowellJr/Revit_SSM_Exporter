@@ -533,7 +533,8 @@ def run_probe(raw_view, raw_elements, output_dir, inject_failure=False):
         probe_dir = os.path.join(out_base, "transaction_group_probe")
         if not os.path.isdir(probe_dir):
             os.makedirs(probe_dir)
-        base = "{0}_{1}.transaction_group_probe".format(_safe_name(view.Name), _safe_int_id(view.Id))
+        run_mode = "failure_injection" if bool(inject_failure) else "normal"
+        base = "{0}_{1}.{2}.transaction_group_probe".format(_safe_name(view.Name), _safe_int_id(view.Id), run_mode)
         tiff_path = os.path.join(probe_dir, base + ".tiff")
         json_path = os.path.join(probe_dir, base + ".json")
         report["inputs"] = {
@@ -542,6 +543,7 @@ def run_probe(raw_view, raw_elements, output_dir, inject_failure=False):
             "element_ids": [_safe_int_id(e.Id) for e in elements],
             "output_directory": out_base,
             "inject_failure_after_tiff_export": bool(inject_failure),
+            "run_mode": run_mode,
         }
         _force_close_dynamo_transaction()
         report["state"]["before"] = _snapshot_state(doc, view, elements)
