@@ -312,6 +312,19 @@ def _apply_category_linework(doc, view, use_fill, diagnostics):
     return touched
 
 
+def _detach_template(view, diagnostics):
+    try:
+        from Autodesk.Revit.DB import ElementId
+        orig = view.ViewTemplateId
+        if orig is not None and orig != ElementId.InvalidElementId:
+            view.ViewTemplateId = ElementId.InvalidElementId
+            return True
+        return False
+    except Exception as ex:
+        diagnostics.append({"setting": "view_template_detach", "message": str(ex)})
+        return False
+
+
 def _set_display_style(view, style_name, diagnostics):
     try:
         from Autodesk.Revit.DB import DisplayStyle
@@ -523,6 +536,7 @@ def _apply_mode(doc, view, mode):
     definition = _mode_definition(mode)
     applied = {"mode_definition": definition, "annotation_categories_hidden": _hide_annotation_categories(doc, view, diagnostics)}
     if definition.get("display_style"):
+        applied["view_template_detached"] = _detach_template(view, diagnostics)
         applied["display_style_set"] = _set_display_style(view, definition["display_style"], diagnostics)
     if definition.get("disable_effects"):
         applied["display_effects_disabled"] = _disable_effects(view, diagnostics)
@@ -555,6 +569,7 @@ def _collect_reference_elements(doc, view, diagnostics):
 def _apply_element_id_reference(doc, view):
     diagnostics = []
     applied = {"annotation_categories_hidden": _hide_annotation_categories(doc, view, diagnostics)}
+    applied["view_template_detached"] = _detach_template(view, diagnostics)
     _set_display_style(view, "FlatColors", diagnostics)
     applied["display_effects_disabled"] = _disable_effects(view, diagnostics)
     ids, top_count = _collect_reference_elements(doc, view, diagnostics)
