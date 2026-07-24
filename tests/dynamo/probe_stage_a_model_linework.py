@@ -295,6 +295,29 @@ def _collect_model_category_ids(doc, view, diagnostics):
                 continue
     except Exception as ex:
         diagnostics.append({"setting": "collect_model_categories", "message": str(ex)})
+    # FilteredElementCollector(doc, view.Id) only sees HOST-document elements; a view that
+    # also shows linked-RVT geometry needs those categories painted too, or link-only
+    # categories are left uncolored and show up as fill/line contamination in the isolation
+    # modes below.
+    try:
+        from vop_interwoven.config import Config
+        from vop_interwoven.core.diagnostics import Diagnostics
+        from vop_interwoven.pipeline import init_view_raster
+        from vop_interwoven.revit.collection import collect_view_elements, expand_host_link_import_model_elements
+        cfg = Config(debug_dump_path="", enable_color_id_buffer_stage_a=True)
+        diag = Diagnostics()
+        raster = init_view_raster(doc, view, cfg, diag=diag)
+        top = collect_view_elements(doc, view, raster, diag=diag, cfg=cfg)
+        expanded = expand_host_link_import_model_elements(doc, view, top, cfg, diag=diag, elem_cache=None)
+        for entry in expanded:
+            if entry.get("source_type") != "LINK":
+                continue
+            proxy = entry.get("element")
+            cat = getattr(proxy, "Category", None) if proxy is not None else None
+            if cat is not None and cat.CategoryType == CategoryType.Model and view.CanCategoryBeHidden(cat.Id):
+                ids.add(cat.Id.IntegerValue)
+    except Exception as ex:
+        diagnostics.append({"setting": "collect_link_model_categories", "message": str(ex)})
     return sorted(ids)
 
 
