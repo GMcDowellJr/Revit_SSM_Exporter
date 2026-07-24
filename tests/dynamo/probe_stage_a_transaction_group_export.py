@@ -430,6 +430,7 @@ def _try_image_inspection(path, expected_colors):
     result = {
         "actual_dimensions_px": None,
         "expected_color_pixel_counts": {},
+        "missing_expected_colors": [],
         "temporary_colors_visible_in_export": "requires_manual_review",
         "diagnostic": None,
     }
@@ -447,6 +448,8 @@ def _try_image_inspection(path, expected_colors):
             tup = tuple(int(v) for v in rgb)
             count = pixels.count(tup)
             result["expected_color_pixel_counts"][str(elem_id)] = int(count)
+            if count <= 0:
+                result["missing_expected_colors"].append(str(elem_id))
             any_visible = any_visible or count > 0
         result["temporary_colors_visible_in_export"] = "confirmed" if any_visible else "not_detected"
     except Exception as ex:
@@ -496,8 +499,8 @@ def run_probe(raw_view, raw_elements, output_dir, inject_failure=False):
     report = {
         "probe": {"name": PROBE_NAME, "version": PROBE_VERSION, "target": "Revit 2025 / Dynamo 3.3 CPython3"},
         "inputs": {},
-        "transaction_group": {"started": False, "child_transaction_committed": False, "export_attempted": False, "rollback_attempted": False, "rollback_succeeded": False, "no_child_transaction_open_at_export": None},
-        "export": {"succeeded": False, "path": None, "requested_pixel_size": REQUESTED_PIXEL_SIZE, "accepted_pixel_size": None, "actual_dimensions_px": None, "file_size_bytes": None, "expected_element_colors": {}, "expected_color_pixel_counts": {}, "temporary_colors_visible_in_export": "requires_manual_review"},
+        "transaction_group": {"started": False, "child_transaction_committed": False, "child_transaction_commit_status": None, "export_attempted": False, "rollback_attempted": False, "rollback_succeeded": False, "no_child_transaction_open_at_export": None},
+        "export": {"succeeded": False, "path": None, "requested_pixel_size": REQUESTED_PIXEL_SIZE, "accepted_pixel_size": None, "actual_dimensions_px": None, "file_size_bytes": None, "expected_element_colors": {}, "expected_color_pixel_counts": {}, "missing_expected_colors": [], "temporary_colors_visible_in_export": "requires_manual_review"},
         "failure_injection": {"requested": bool(inject_failure), "triggered": False},
         "state": {"before": {}, "after": {}, "captured_state_equal_after_rollback": False, "state_differences": []},
         "result": {"success": False, "conclusion": "FAIL", "reasons": []},
@@ -545,8 +548,11 @@ def run_probe(raw_view, raw_elements, output_dir, inject_failure=False):
                 report["export"]["expected_element_colors"] = expected_colors
                 if setter_diags:
                     report["temporary_change_diagnostics"] = setter_diags
-                tx.Commit()
-                report["transaction_group"]["child_transaction_committed"] = True
+                commit_status = tx.Commit()
+                report["transaction_group"]["child_transaction_commit_status"] = _safe_enum(commit_status)
+                report["transaction_group"]["child_transaction_committed"] = commit_status == TransactionStatus.Committed
+                if commit_status != TransactionStatus.Committed:
+                    raise RuntimeError("Child Transaction.Commit returned {0}; export skipped".format(commit_status))
             except Exception:
                 try:
                     tx.RollBack()
@@ -610,6 +616,8 @@ def run_probe(raw_view, raw_elements, output_dir, inject_failure=False):
             reasons.append("Captured before/after state differs after rollback")
         if unexpected:
             reasons.append("Unexpected exception(s) occurred")
+        if report["export"].get("temporary_colors_visible_in_export") == "not_detected":
+            reasons.append("Pillow inspection found zero pixels for every expected temporary color")
         if bool(inject_failure) and not report["failure_injection"]["triggered"]:
             reasons.append("Failure injection was requested but did not trigger")
         report["result"]["reasons"] = reasons
@@ -657,6 +665,9 @@ try:
         "state_differences": _report.get("state", {}).get("state_differences"),
         "expected_temporary_colors": _report.get("export", {}).get("expected_element_colors"),
         "temporary_colors_visible_in_export": _report.get("export", {}).get("temporary_colors_visible_in_export"),
+        "expected_color_pixel_counts": _report.get("export", {}).get("expected_color_pixel_counts"),
+        "missing_expected_colors": _report.get("export", {}).get("missing_expected_colors"),
+        "child_transaction_commit_status": _report.get("transaction_group", {}).get("child_transaction_commit_status"),
         "exceptions": _report.get("exceptions"),
         "required_second_run": "Run again with IN[3] set to {0}. Both normal and injected-failure runs are required.".format(not inject),
     }

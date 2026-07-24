@@ -74,7 +74,7 @@ Expected files per run:
 <safe_view>_<view_id>.transaction_group_probe.json
 ```
 
-The Dynamo `OUT` dictionary includes the conclusion, TIFF path, JSON report path, rollback status, captured-state equality, state differences, expected temporary colors, optional image-inspection results, exceptions, and the required second-run instruction.
+The Dynamo `OUT` dictionary includes the conclusion, TIFF path, JSON report path, rollback status, captured-state equality, state differences, expected temporary colors, expected color pixel counts, missing expected colors, child transaction commit status, optional image-inspection results, exceptions, and the required second-run instruction.
 
 ## Manual verification checklist
 
@@ -95,16 +95,17 @@ After each run:
 A passing run means:
 
 * The transaction group started.
-* The child transaction committed.
+* `Transaction.Commit()` returned `TransactionStatus.Committed`; any other status skips export and prevents PASS.
 * TIFF export succeeded with no child transaction open.
 * Transaction-group rollback succeeded.
 * The captured before/after state is equal.
 * No unexpected exception occurred.
+* If Pillow image inspection runs, at least one expected temporary color is detected; `not_detected` prevents PASS.
 * For the failure-injection run, the controlled failure triggered and rollback still succeeded.
 
 ### FAIL
 
-A failing run means one or more required structural checks failed, rollback failed, export failed, captured state differs, or an unexpected exception occurred. If rollback fails, inspect the reported target view immediately.
+A failing run means one or more required structural checks failed, `Transaction.Commit()` returned a non-committed status, rollback failed, export failed, captured state differs, Pillow inspection found zero pixels for every expected temporary color, or an unexpected exception occurred. If rollback fails, inspect the reported target view immediately.
 
 ### INCONCLUSIVE
 
@@ -114,4 +115,4 @@ An inconclusive run means the probe produced partial useful evidence but not eno
 
 A passing result supports replacing explicit Stage A manual restoration with transaction-group rollback. It does not establish crop alignment, filter semantics, linework-mode behavior, linked-element behavior, annotation behavior, undo-stack preservation, image decoding, or Stage B integration.
 
-The optional image inspection depends on Pillow being available in the Dynamo CPython3 environment. If unavailable, the JSON records `temporary_colors_visible_in_export = "requires_manual_review"`; manual TIFF review is still required.
+The optional image inspection depends on Pillow being available in the Dynamo CPython3 environment. If unavailable, the JSON records `temporary_colors_visible_in_export = "requires_manual_review"`; manual TIFF review is still required. If Pillow is available and records `temporary_colors_visible_in_export = "not_detected"`, the probe does not PASS because the export did not demonstrate that the temporary graphics rendered.
