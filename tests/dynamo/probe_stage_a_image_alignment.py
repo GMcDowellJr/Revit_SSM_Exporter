@@ -82,6 +82,7 @@ def _candidate_repo_roots(output_dir=None):
             cur = parent
     home = os.path.expanduser("~")
     common = [
+        os.path.join(home, "Documents", "Revit_SSM_Exporter"),
         os.path.join(home, "Documents", "GitHub", "Revit_SSM_Exporter"),
         os.path.join(home, "source", "repos", "Revit_SSM_Exporter"),
         os.path.join(home, "Revit_SSM_Exporter"),

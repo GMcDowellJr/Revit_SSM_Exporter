@@ -30,7 +30,7 @@ The probe mirrors the current Stage A and VOP geometry calculation without chang
 
 ## Repo import path in Dynamo
 
-Dynamo CPython pasted-node execution may not define `__file__`. The probe therefore does not require `__file__` to find the repository. It first tries existing imports, then checks `REVIT_SSM_EXPORTER_ROOT` / `VOP_REPO_ROOT`, the output-directory ancestors, the current working directory ancestors, and common checkout locations. If imports still fail, set `REVIT_SSM_EXPORTER_ROOT` to the local `Revit_SSM_Exporter` checkout before running Dynamo.
+Dynamo CPython pasted-node execution may not define `__file__`. The probe therefore does not require `__file__` to find the repository. It first tries existing imports, then checks `REVIT_SSM_EXPORTER_ROOT` / `VOP_REPO_ROOT`, the output-directory ancestors, the current working directory ancestors, and common checkout locations including `Documents\Revit_SSM_Exporter`. If imports still fail, set `REVIT_SSM_EXPORTER_ROOT` to the local `Revit_SSM_Exporter` checkout before running Dynamo.
 
 ## Dynamo wiring
 
