@@ -813,7 +813,6 @@
     "16": [
       "tests_dynamo_probe_stage_a_external_sources",
       "tests_dynamo_probe_stage_a_external_sources_analyze",
-      "tests_dynamo_probe_stage_a_external_sources_apply_assignments",
       "tests_dynamo_probe_stage_a_external_sources_candidate_repo_roots",
       "tests_dynamo_probe_stage_a_external_sources_classify_variant",
       "tests_dynamo_probe_stage_a_external_sources_collect_expanded",
@@ -826,10 +825,8 @@
       "tests_dynamo_probe_stage_a_external_sources_exception_record",
       "tests_dynamo_probe_stage_a_external_sources_export_tiff",
       "tests_dynamo_probe_stage_a_external_sources_force_close_dynamo_transaction",
-      "tests_dynamo_probe_stage_a_external_sources_hide_element_ids",
       "tests_dynamo_probe_stage_a_external_sources_identity_from_entry",
       "tests_dynamo_probe_stage_a_external_sources_items_for_variant",
-      "tests_dynamo_probe_stage_a_external_sources_palette",
       "tests_dynamo_probe_stage_a_external_sources_rationale_1",
       "tests_dynamo_probe_stage_a_external_sources_reject_reason",
       "tests_dynamo_probe_stage_a_external_sources_run",
@@ -843,7 +840,9 @@
       "tests_dynamo_probe_stage_a_external_sources_snapshot_ogs",
       "tests_dynamo_probe_stage_a_external_sources_source_evidence_status",
       "tests_dynamo_probe_stage_a_external_sources_unwrap",
-      "tests_dynamo_probe_stage_a_external_sources_unwrap_many"
+      "tests_dynamo_probe_stage_a_external_sources_unwrap_many",
+      "tests_dynamo_probe_stage_a_transaction_group",
+      "vop_interwoven_readme"
     ],
     "17": [
       "tests_dynamo_probe_stage_a_graphics_semantics",
@@ -876,9 +875,7 @@
       "tests_dynamo_probe_stage_a_graphics_semantics_unwrap",
       "tests_dynamo_probe_stage_a_graphics_semantics_validate_view",
       "tests_dynamo_probe_stage_a_graphics_semantics_variant_steps",
-      "tests_dynamo_probe_stage_a_transaction_group",
-      "vop_interwoven_color_id_buffer_get_or_create_neutral_phase_filter",
-      "vop_interwoven_readme"
+      "vop_interwoven_color_id_buffer_get_or_create_neutral_phase_filter"
     ],
     "18": [
       "tests_dynamo_probe_stage_a_transaction_group_export",
@@ -1077,10 +1074,8 @@
       "tests_test_color_id_buffer_testpalettereservations_test_pure_black_and_white_excluded",
       "vop_interwoven_color_id_buffer_build_palette",
       "vop_interwoven_color_id_buffer_choose_step",
-      "vop_interwoven_color_id_buffer_rationale_45",
       "vop_interwoven_color_id_buffer_rationale_59",
-      "vop_interwoven_color_id_buffer_rationale_76",
-      "vop_interwoven_color_id_buffer_reserved_corner_count"
+      "vop_interwoven_color_id_buffer_rationale_76"
     ],
     "25": [
       "tests_dynamo_probe_stage_a_external_sources_ogs",
@@ -1096,15 +1091,15 @@
       "vop_interwoven_color_id_buffer_hidden_category_state",
       "vop_interwoven_color_id_buffer_rationale_1",
       "vop_interwoven_color_id_buffer_rationale_132",
-      "vop_interwoven_color_id_buffer_rationale_206",
       "vop_interwoven_color_id_buffer_rationale_226",
       "vop_interwoven_color_id_buffer_rationale_264",
       "vop_interwoven_color_id_buffer_rationale_339",
+      "vop_interwoven_color_id_buffer_rationale_45",
       "vop_interwoven_color_id_buffer_rationale_523",
+      "vop_interwoven_color_id_buffer_reserved_corner_count",
       "vop_interwoven_color_id_buffer_resolve_all",
       "vop_interwoven_color_id_buffer_set_pixel_size_with_backoff",
-      "vop_interwoven_color_id_buffer_split_expanded_elements",
-      "vop_interwoven_color_id_buffer_try_color_link_element"
+      "vop_interwoven_color_id_buffer_split_expanded_elements"
     ],
     "26": [
       "vop_interwoven_revit_view_basis_rationale_10",
@@ -1526,19 +1521,19 @@
       "tests_test_face_selection_xyz_init"
     ],
     "49": [
-      "vop_interwoven_phase7_csv_export_plan_current_output_format_vop_interwoven",
-      "vop_interwoven_phase7_csv_export_plan_current_outputs_generated",
+      "vop_interwoven_phase7_csv_export_plan_core_csv_headers_18_columns",
+      "vop_interwoven_phase7_csv_export_plan_csv_headers_reference",
       "vop_interwoven_phase7_csv_export_plan_dependencies",
       "vop_interwoven_phase7_csv_export_plan_future_enhancements_post_phase_7",
-      "vop_interwoven_phase7_csv_export_plan_gap_analysis_current_vs_target",
-      "vop_interwoven_phase7_csv_export_plan_json_structure_per_view",
+      "vop_interwoven_phase7_csv_export_plan_integration_test_dynamo",
       "vop_interwoven_phase7_csv_export_plan_notes",
       "vop_interwoven_phase7_csv_export_plan_overview",
       "vop_interwoven_phase7_csv_export_plan_phase_7_csv_export_implementation_plan",
       "vop_interwoven_phase7_csv_export_plan_success_criteria",
+      "vop_interwoven_phase7_csv_export_plan_testing_strategy",
       "vop_interwoven_phase7_csv_export_plan_timeline_estimate",
-      "vop_interwoven_phase7_csv_export_plan_what_we_have_vop_interwoven",
-      "vop_interwoven_phase7_csv_export_plan_what_we_need_to_add"
+      "vop_interwoven_phase7_csv_export_plan_unit_tests_vop_interwoven_tests_test_csv_export_py",
+      "vop_interwoven_phase7_csv_export_plan_vop_csv_headers_27_columns"
     ],
     "50": [
       "tests_dynamo_readme_0_views_processed",
@@ -1609,8 +1604,6 @@
       "tools_generate_manifest_write_manifest"
     ],
     "55": [
-      "concept_golden_baseline_testing",
-      "tools_readme",
       "tools_readme_compare_golden_py_golden_baseline_comparison",
       "tools_readme_establishing_initial_golden_baseline",
       "tools_readme_generate_manifest_py_generate_golden_baseline",
@@ -1712,14 +1705,11 @@
       "vop_interwoven_pipeline_stamp_proxy_edges"
     ],
     "64": [
-      "concept_8state_occupancy_partition",
       "concept_annotation_type_classification",
-      "concept_external_cell_metrics",
-      "concept_multihot_model_class_cells",
-      "concept_occupancy_partition_legacy",
+      "concept_golden_baseline_testing",
       "concept_ssm_csv_format",
       "dynamo_tests_readme",
-      "vop_interwoven_docs_metrics_totals_relationships_doc",
+      "tools_readme",
       "vop_interwoven_phase7_csv_export_plan_doc",
       "vop_interwoven_phase7_csv_export_plan_historical_superseded"
     ],
@@ -1797,14 +1787,18 @@
       "claude_modifying_element_collection"
     ],
     "74": [
-      "vop_interwoven_phase7_csv_export_plan_core_csv_headers_18_columns",
-      "vop_interwoven_phase7_csv_export_plan_csv_headers_reference",
-      "vop_interwoven_phase7_csv_export_plan_vop_csv_headers_27_columns"
+      "concept_8state_occupancy_partition",
+      "concept_external_cell_metrics",
+      "concept_multihot_model_class_cells",
+      "concept_occupancy_partition_legacy",
+      "vop_interwoven_docs_metrics_totals_relationships_doc"
     ],
     "75": [
-      "vop_interwoven_phase7_csv_export_plan_integration_test_dynamo",
-      "vop_interwoven_phase7_csv_export_plan_testing_strategy",
-      "vop_interwoven_phase7_csv_export_plan_unit_tests_vop_interwoven_tests_test_csv_export_py"
+      "tests_dynamo_probe_stage_a_external_sources_apply_assignments",
+      "tests_dynamo_probe_stage_a_external_sources_hide_element_ids",
+      "tests_dynamo_probe_stage_a_external_sources_palette",
+      "vop_interwoven_color_id_buffer_rationale_206",
+      "vop_interwoven_color_id_buffer_try_color_link_element"
     ],
     "76": [
       "tests_test_fault_injection_csv_export",
@@ -1909,6 +1903,16 @@
       "tests_test_patch5_metrics_passthrough_test_export_pipeline_to_csv_prefers_precomputed_metrics",
       "tests_test_patch5_metrics_passthrough_test_view_result_to_vop_row_prefers_precomputed_metrics"
     ],
+    "93": [
+      "vop_interwoven_phase7_csv_export_plan_current_output_format_vop_interwoven",
+      "vop_interwoven_phase7_csv_export_plan_current_outputs_generated",
+      "vop_interwoven_phase7_csv_export_plan_json_structure_per_view"
+    ],
+    "94": [
+      "vop_interwoven_phase7_csv_export_plan_gap_analysis_current_vs_target",
+      "vop_interwoven_phase7_csv_export_plan_what_we_have_vop_interwoven",
+      "vop_interwoven_phase7_csv_export_plan_what_we_need_to_add"
+    ],
     "95": [
       "tests_test_csv_raster_dict_restore_layers",
       "tests_test_csv_raster_dict_restore_layers_test_csv_restore_includes_edge_key_and_proxy_mask"
@@ -1984,16 +1988,16 @@
     "13": 0.058823529411764705,
     "14": 0.13725490196078433,
     "15": 0.0873440285204991,
-    "16": 0.13257575757575757,
-    "17": 0.12310606060606061,
+    "16": 0.1350806451612903,
+    "17": 0.13333333333333333,
     "18": 0.15483870967741936,
     "19": 0.09425287356321839,
     "20": 0.07407407407407407,
     "21": 0.20615384615384616,
     "22": 0.17333333333333334,
     "23": 0.08333333333333333,
-    "24": 0.12666666666666668,
-    "25": 0.13852813852813853,
+    "24": 0.1422924901185771,
+    "25": 0.1341991341991342,
     "26": 0.10952380952380952,
     "27": 0.1,
     "28": 0.11052631578947368,
@@ -2023,7 +2027,7 @@
     "52": 0.4696969696969697,
     "53": 0.18181818181818182,
     "54": 0.2,
-    "55": 0.15384615384615385,
+    "55": 0.18181818181818182,
     "56": 0.2,
     "57": 0.4444444444444444,
     "58": 0.2222222222222222,
@@ -2032,7 +2036,7 @@
     "61": 0.2222222222222222,
     "62": 0.25,
     "63": 0.25,
-    "64": 0.2222222222222222,
+    "64": 0.2857142857142857,
     "65": 0.2857142857142857,
     "66": 0.2857142857142857,
     "67": 0.3333333333333333,
@@ -2042,8 +2046,8 @@
     "71": 0.3333333333333333,
     "72": 0.3333333333333333,
     "73": 0.4,
-    "74": 0.6666666666666666,
-    "75": 0.6666666666666666,
+    "74": 0.5,
+    "75": 0.4,
     "76": 0.5,
     "77": 0.7,
     "78": 0.4,
@@ -2061,6 +2065,8 @@
     "90": 0.6666666666666666,
     "91": 0.6666666666666666,
     "92": 0.6666666666666666,
+    "93": 0.6666666666666666,
+    "94": 0.6666666666666666,
     "95": 1.0,
     "96": 1.0,
     "97": 1.0,
@@ -2187,41 +2193,8 @@
       "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities"
     }
   ],
-  "questions": [
-    {
-      "type": "bridge_node",
-      "question": "Why does `Config` connect `Configuration Hash Testing` to `Geometry Classification Testing`, `Thin Runner for Streaming`, `UV Classification Testing`, `Final State Scanner Tests`, `Metrics Manifest Testing`, `Export Identity Consistency`, `Front Face Selection Testing`, `ViewRaster Testing`, `Phase Validation Tests`, `Proxy Generation Testing`, `Streaming Pipeline Processing`, `AREAL Geometry Extraction`, `Pipeline Diagnostics Testing`, `Import Check Testing`, `CSV Export Testing`?",
-      "why": "High betweenness centrality (0.178) - this node is a cross-community bridge."
-    },
-    {
-      "type": "bridge_node",
-      "question": "Why does `Test Scripts` connect `Phase Validation Tests` to `Dynamo Test Scripts`, `CSV Export Testing`?",
-      "why": "High betweenness centrality (0.132) - this node is a cross-community bridge."
-    },
-    {
-      "type": "bridge_node",
-      "question": "Why does `Dynamo Test Scripts` connect `Dynamo Test Scripts` to `Golden Baseline Testing`, `Phase Validation Tests`?",
-      "why": "High betweenness centrality (0.131) - this node is a cross-community bridge."
-    },
-    {
-      "type": "verify_inferred",
-      "question": "Are the 9 inferred relationships involving `Config` (e.g. with `test_csv_export_diagnostics.py` and `test_config_areal_prefers_front_face_loops()`) actually correct?",
-      "why": "`Config` has 9 INFERRED edges - model-reasoned connections that need verification."
-    },
-    {
-      "type": "isolated_nodes",
-      "question": "What connects `graphify — Query the knowledge graph before browsing source`, `Core architecture constraints`, `Path` to the rest of the system?",
-      "why": "271 weakly-connected nodes found - possible documentation gaps or missing edges."
-    },
-    {
-      "type": "low_cohesion",
-      "question": "Should `Mock Objects for Testing` be split into smaller, more focused modules?",
-      "why": "Cohesion score 0.051839464882943144 - nodes in this community are weakly interconnected."
-    },
-    {
-      "type": "low_cohesion",
-      "question": "Should `Geometry Cache Testing` be split into smaller, more focused modules?",
-      "why": "Cohesion score 0.0701484895033282 - nodes in this community are weakly interconnected."
-    }
-  ]
+  "tokens": {
+    "input": 38340,
+    "output": 1341
+  }
 }
