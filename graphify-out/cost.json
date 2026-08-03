@@ -1,6 +1,6 @@
 {
-  "tokens_in": 38340,
-  "tokens_out": 1341,
+  "tokens_in": 25857,
+  "tokens_out": 1300,
   "est_cost_usd": 0.0,
   "backend": "openai/gpt-4o-mini"
 }
