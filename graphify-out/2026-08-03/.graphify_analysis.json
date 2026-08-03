@@ -813,9 +813,6 @@
       "tests_dynamo_probe_stage_a_image_alignment_xyz"
     ],
     "16": [
-      "tests_dynamo_readme_test_all_phases_py_quick_validation",
-      "tests_dynamo_readme_test_scripts",
-      "tests_dynamo_readme_thinrunner_py_quick_iteration_runner",
       "tests_dynamo_test_all_phases",
       "tests_dynamo_test_all_phases_rationale_1",
       "tests_dynamo_test_import_check",
@@ -1141,6 +1138,9 @@
       "vop_interwoven_color_id_buffer_split_expanded_elements"
     ],
     "27": [
+      "tests_dynamo_readme_test_all_phases_py_quick_validation",
+      "tests_dynamo_readme_test_scripts",
+      "tests_dynamo_readme_thinrunner_py_quick_iteration_runner",
       "tests_dynamo_test_phase7_csv_export",
       "tests_dynamo_test_phase7_csv_export_rationale_1",
       "tests_dynamo_test_phase8a_annotations",
@@ -1232,13 +1232,9 @@
       "current_architecture_c_pipeline_stages_and_ownership_boundaries",
       "current_architecture_d_geometry_extraction_authority_model",
       "current_architecture_doc",
-      "current_architecture_e_caching_architecture",
-      "current_architecture_explicitly_not_cached",
       "current_architecture_f_diagnostics_export_contracts",
       "current_architecture_g_tests_regression_discipline",
       "current_architecture_h_known_gaps_explicitly_unsupported_modes",
-      "current_architecture_implemented_caches",
-      "current_architecture_keying_guarantees",
       "current_architecture_non_goals_as_implemented",
       "current_architecture_primary_callable_surface",
       "current_architecture_purpose",
@@ -1856,6 +1852,12 @@
       "claude_test_coverage_areas",
       "claude_testing"
     ],
+    "82": [
+      "current_architecture_e_caching_architecture",
+      "current_architecture_explicitly_not_cached",
+      "current_architecture_implemented_caches",
+      "current_architecture_keying_guarantees"
+    ],
     "83": [
       "github_copilot_instructions",
       "github_copilot_instructions_core_architecture_constraints",
@@ -1974,7 +1976,7 @@
     "13": 0.06507936507936508,
     "14": 0.058823529411764705,
     "15": 0.13725490196078433,
-    "16": 0.08095238095238096,
+    "16": 0.08712121212121213,
     "17": 0.1350806451612903,
     "18": 0.13333333333333333,
     "19": 0.15483870967741936,
@@ -1985,11 +1987,11 @@
     "24": 0.08333333333333333,
     "25": 0.1422924901185771,
     "26": 0.1341991341991342,
-    "27": 0.1437908496732026,
+    "27": 0.12380952380952381,
     "28": 0.14035087719298245,
     "29": 0.2222222222222222,
     "30": 0.1111111111111111,
-    "31": 0.1,
+    "31": 0.125,
     "32": 0.11764705882352941,
     "33": 0.16911764705882354,
     "34": 0.14166666666666666,
@@ -2040,6 +2042,7 @@
     "79": 0.6,
     "80": 0.5,
     "81": 0.5,
+    "82": 0.5,
     "83": 0.5,
     "84": 0.5,
     "85": 0.5,
@@ -2172,41 +2175,8 @@
       "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities"
     }
   ],
-  "questions": [
-    {
-      "type": "bridge_node",
-      "question": "Why does `Config` connect `Configuration Testing` to `Geometry Classification Testing`, `UV Classification Testing`, `Final State Scanner Tests`, `View Metadata Consistency Tests`, `Streaming Pipeline Processing`, `Front Face Strategy Testing`, `Pipeline Metrics Testing`, `ViewRaster Testing`, `Phase Validation Tests`, `UV AABB Proxy Testing`, `Areal Geometry Extraction`, `CSV Export Diagnostics Testing`, `Pipeline Diagnostics Testing`, `CSV Export Testing`?",
-      "why": "High betweenness centrality (0.177) - this node is a cross-community bridge."
-    },
-    {
-      "type": "bridge_node",
-      "question": "Why does `export_color_id_buffer_view()` connect `Color ID Buffer Extraction` to `Element ID Override Testing`, `Graphics Semantics Probing`, `Areal Geometry Extraction`, `Color ID Buffer Testing`, `Early Out Optimization Testing`?",
-      "why": "High betweenness centrality (0.142) - this node is a cross-community bridge."
-    },
-    {
-      "type": "bridge_node",
-      "question": "Why does `Test Scripts` connect `Phase Validation Tests` to `Testing Workflow Overview`, `CSV Export Testing`?",
-      "why": "High betweenness centrality (0.134) - this node is a cross-community bridge."
-    },
-    {
-      "type": "verify_inferred",
-      "question": "Are the 9 inferred relationships involving `Config` (e.g. with `test_csv_export_diagnostics.py` and `test_config_areal_prefers_front_face_loops()`) actually correct?",
-      "why": "`Config` has 9 INFERRED edges - model-reasoned connections that need verification."
-    },
-    {
-      "type": "isolated_nodes",
-      "question": "What connects `graphify — Query the knowledge graph before browsing source`, `Core architecture constraints`, `Path` to the rest of the system?",
-      "why": "270 weakly-connected nodes found - possible documentation gaps or missing edges."
-    },
-    {
-      "type": "low_cohesion",
-      "question": "Should `Mock Objects for Testing` be split into smaller, more focused modules?",
-      "why": "Cohesion score 0.051839464882943144 - nodes in this community are weakly interconnected."
-    },
-    {
-      "type": "low_cohesion",
-      "question": "Should `Geometry Cache Testing` be split into smaller, more focused modules?",
-      "why": "Cohesion score 0.0701484895033282 - nodes in this community are weakly interconnected."
-    }
-  ]
+  "tokens": {
+    "input": 25857,
+    "output": 1300
+  }
 }
