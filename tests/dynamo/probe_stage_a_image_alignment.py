@@ -16,7 +16,6 @@ TransactionGroup in finally.
 from __future__ import print_function
 
 import hashlib
-import importlib.util
 import json
 import math
 import os
@@ -455,166 +454,14 @@ def _sha256(path):
     return h.hexdigest()
 
 
-def _solve_3x3(matrix, vector):
-    """Gaussian elimination with partial pivoting for a 3x3 linear system.
-
-    Returns None if the matrix is singular (e.g. markers are collinear in UV
-    space, which cannot happen with the standard 5-marker layout but is
-    checked rather than assumed).
-    """
-    m = [row[:] for row in matrix]
-    v = vector[:]
-    n = 3
-    for col in range(n):
-        pivot = max(range(col, n), key=lambda r: abs(m[r][col]))
-        if abs(m[pivot][col]) < 1e-12:
-            return None
-        m[col], m[pivot] = m[pivot], m[col]
-        v[col], v[pivot] = v[pivot], v[col]
-        for r in range(col + 1, n):
-            factor = m[r][col] / m[col][col]
-            for c in range(col, n):
-                m[r][c] -= factor * m[col][c]
-            v[r] -= factor * v[col]
-    x = [0.0] * n
-    for r in range(n - 1, -1, -1):
-        s = v[r] - sum(m[r][c] * x[c] for c in range(r + 1, n))
-        x[r] = s / m[r][r]
-    return x
-
-
-def _affine_fit(detections):
-    """Independent least-squares affine (6-DOF) fit from expected_uv -> centroid_px.
-
-    px_x = a*u + b*v + c
-    px_y = d*u + e*v + f
-
-    This is a second, independently-computed residual alongside the existing
-    naive-equation ``predicted_px_center_equation`` / ``residual_px`` fields --
-    it does not replace them. Uses only markers with an exact color match
-    (``found_exact``). ``centroid_px`` is populated even on a miss, from the
-    single nearest-colored pixel found anywhere in the image (see
-    ``_analyze_image``'s ``best`` fallback) -- on a blank or markerless export
-    that fallback centroid is essentially an arbitrary background pixel, and
-    fitting against it would let the affine fit report a plausible-looking
-    near-zero residual that contradicts the sibling ``missing_markers``
-    evidence. Requires at least 4 exact-match correspondences for a
-    well-posed fit (6 unknowns, 2 equations per marker).
-    """
-    usable = [d for d in detections if d.get("found_exact") and d.get("centroid_px") is not None]
-    if len(usable) < 4:
-        return {
-            "available": False,
-            "reason": "fewer than 4 markers with an exact color-match centroid ({0} available, "
-                      "{1} total detections including nearest-color fallbacks); an affine fit "
-                      "needs >=4 correspondences for 6 unknowns and fallback centroids are excluded "
-                      "because they are not reliable marker positions".format(len(usable), len(detections)),
-            "markers_used": len(usable),
-        }
-    rows = [[d["expected_uv"][0], d["expected_uv"][1], 1.0] for d in usable]
-    bx = [d["centroid_px"][0] for d in usable]
-    by = [d["centroid_px"][1] for d in usable]
-    ata = [[0.0] * 3 for _ in range(3)]
-    atbx = [0.0] * 3
-    atby = [0.0] * 3
-    for row, tx, ty in zip(rows, bx, by):
-        for r in range(3):
-            for c in range(3):
-                ata[r][c] += row[r] * row[c]
-            atbx[r] += row[r] * tx
-            atby[r] += row[r] * ty
-    coeffs_x = _solve_3x3(ata, atbx)
-    coeffs_y = _solve_3x3(ata, atby)
-    if coeffs_x is None or coeffs_y is None:
-        return {"available": False, "reason": "normal-equation matrix is singular (markers collinear in UV space)", "markers_used": len(usable)}
-    a, b, c = coeffs_x
-    d_, e, f = coeffs_y
-    per_marker = []
-    magnitudes = []
-    for det in usable:
-        u, v = det["expected_uv"]
-        px = a * u + b * v + c
-        py = d_ * u + e * v + f
-        cx, cy = det["centroid_px"]
-        rx, ry = cx - px, cy - py
-        mag = math.sqrt(rx * rx + ry * ry)
-        magnitudes.append(mag)
-        per_marker.append({"name": det["name"], "predicted_px_affine_fit": [px, py], "residual_px": [rx, ry], "residual_magnitude_px": mag})
-    return {
-        "available": True,
-        "method": "least_squares_affine_6dof",
-        "form": "px_x = a*u + b*v + c; px_y = d*u + e*v + f",
-        "markers_used": len(usable),
-        "matrix": {"a": a, "b": b, "c": c, "d": d_, "e": e, "f": f},
-        "per_marker_residual_px": per_marker,
-        "max_residual_px": max(magnitudes) if magnitudes else None,
-    }
-
-
 def _analyze_image(path, markers, bounds):
-    res = {"path": path, "file_size": os.path.getsize(path), "sha256": _sha256(path), "pillow_available": False}
-    if importlib.util.find_spec("PIL") is None:
-        res["diagnostic"] = "Pillow unavailable; image dimensions/orientation require manual review"
-        return res
-    from PIL import Image
-    img = Image.open(path).convert("RGB")
-    w, h = img.size
-    res.update({"pillow_available": True, "actual_width": int(w), "actual_height": int(h)})
-    colors = img.getcolors(maxcolors=w * h + 1)
-    res["distinct_colors"] = None if colors is None else len(colors)
-    bg = max(colors, key=lambda c: c[0])[1] if colors else img.getpixel((0, 0))
-    pix = img.load()
-    xs, ys = [], []
-    for y in range(h):
-        for x in range(w):
-            if pix[x, y] != bg:
-                xs.append(x); ys.append(y)
-    content = [min(xs), min(ys), max(xs), max(ys)] if xs else None
-    res["background_rgb"] = list(bg)
-    res["content_rect_px"] = content
-    cw = (content[2] - content[0] + 1) if content else w
-    ch = (content[3] - content[1] + 1) if content else h
-    cx0 = content[0] if content else 0
-    cy0 = content[1] if content else 0
-    bt = _bounds_tuple(bounds)
-    detections = []
-    for m in markers or []:
-        target = tuple(int(v) for v in m["rgb"])
-        pts = []
-        best = None
-        best_d = 10 ** 9
-        for y in range(h):
-            for x in range(w):
-                p = pix[x, y]
-                d = sum((int(p[i]) - target[i]) ** 2 for i in range(3))
-                if d == 0:
-                    pts.append((x, y))
-                if d < best_d:
-                    best_d, best = d, (x, y, p)
-        found = bool(pts)
-        use = pts if found else [(best[0], best[1])] if best else []
-        centroid = [sum(p[0] for p in use) / float(len(use)), sum(p[1] for p in use) / float(len(use))] if use else None
-        residual = None
-        predicted = None
-        if centroid and bt:
-            u0, v0, u1, v1 = bt
-            predicted = [((m["uv"][0] - u0) / (u1 - u0)) * float(w) - 0.5, ((v1 - m["uv"][1]) / (v1 - v0)) * float(h) - 0.5]
-            residual = [centroid[0] - predicted[0], centroid[1] - predicted[1]]
-        detections.append({"name": m["name"], "expected_uv": m["uv"], "rgb": m["rgb"], "found_exact": found, "centroid_px": centroid, "nearest_rgb": (list(best[2]) if best else None), "nearest_distance_sq": int(best_d) if best else None, "predicted_px_center_equation": predicted, "residual_px": residual})
-    res["markers"] = detections
-    res["affine_fit_residual"] = _affine_fit(detections)
-    res["marker_analysis_available"] = bool(detections)
-    res["missing_markers"] = [d["name"] for d in detections if not d["found_exact"]]
-    res["padding_px"] = {"left": cx0, "top": cy0, "right": (w - content[2] - 1) if content else 0, "bottom": (h - content[3] - 1) if content else 0}
-    if bt:
-        res["tested_mapping"] = "u = u_min + (x + 0.5) * UV_width / image_width; v = v_max - (y + 0.5) * UV_height / image_height"
-        res["mapping_frame"] = "full_exported_image_frame_not_content_rect"
-        res["x_axis_direction"] = "+U to the right" if bt[2] > bt[0] else "unknown"
-        res["y_axis_direction"] = "-V downward / +V upward" if bt[3] > bt[1] else "unknown"
-        if detections and all(d["residual_px"] for d in detections):
-            res["max_marker_residual_px"] = max(math.sqrt(d["residual_px"][0] ** 2 + d["residual_px"][1] ** 2) for d in detections)
+    res = {"path": path, "file_size": None, "sha256": None, "status": "pending_external_analysis"}
+    if os.path.exists(path):
+        res["file_size"] = os.path.getsize(path)
+        res["sha256"] = _sha256(path)
+    res["marker_analysis_available"] = False
+    res["diagnostic"] = "Pixel marker detection and residual analysis moved to tools/analyze_stage_a_probe.py"
     return res
-
 
 def _content_width_px(model_img):
     content = model_img.get("content_rect_px") if model_img else None
@@ -660,7 +507,7 @@ def _run():
     basis, cell_req, resolved, original_crop, model_bounds, model_bounds_source, annotation_bounds, canvas_bounds = _compute_bounds(doc, view, cfg)
     base = "{0}_{1}".format(_sanitize_filename(getattr(view, "Name", "view")), _safe_int_id(view.Id))
     modes = ["original", "model_bounds", "canvas_bounds"] if mode == "all" else [mode]
-    result = {"paths": [], "view": {"name": getattr(view, "Name", None), "id": _safe_int_id(view.Id), "type": str(getattr(view, "ViewType", None))}, "requested_pixel_size": REQUESTED_PIXEL_SIZE, "basis": {"origin": list(basis.origin), "right": list(basis.right), "up": list(basis.up), "forward": list(basis.forward)}, "bounds": {"original_crop_uv": _bounds_dict(original_crop), "original_crop_active": before_state.get("CropBoxActive"), "original_crop_visible": before_state.get("CropBoxVisible"), "pre_annotation_model_uv": _bounds_dict(model_bounds), "pre_annotation_model_bounds_source": model_bounds_source, "annotation_uv": _bounds_dict(annotation_bounds), "canvas_uv": _bounds_dict(canvas_bounds), "resolve_view_bounds_result": {k: (_bounds_dict(v) if k.endswith("bounds_uv") or k == "bounds_uv" else v) for k, v in resolved.items() if k != "bounds_uv"}, "resolve_view_bounds_uv": _bounds_dict(resolved.get("bounds_uv"))}, "grid": {"W": int(resolved.get("grid_W", 0) or 0), "H": int(resolved.get("grid_H", 0) or 0), "cell_size_ft_requested": cell_req, "cell_size_ft_effective": float(resolved.get("cell_size_ft_effective", cell_req))}, "state_before": before_state, "document_is_modified_before": before_doc_modified, "exports": {}, "diagnostics": [], "transaction_group": {}}
+    result = {"paths": [], "view": {"name": getattr(view, "Name", None), "id": _safe_int_id(view.Id), "type": str(getattr(view, "ViewType", None))}, "requested_pixel_size": REQUESTED_PIXEL_SIZE, "basis": {"origin": list(basis.origin), "right": list(basis.right), "up": list(basis.up), "forward": list(basis.forward)}, "bounds": {"original_crop_uv": _bounds_dict(original_crop), "original_crop_active": before_state.get("CropBoxActive"), "original_crop_visible": before_state.get("CropBoxVisible"), "pre_annotation_model_uv": _bounds_dict(model_bounds), "pre_annotation_model_bounds_source": model_bounds_source, "annotation_uv": _bounds_dict(annotation_bounds), "canvas_uv": _bounds_dict(canvas_bounds), "resolve_view_bounds_result": {k: (_bounds_dict(v) if k.endswith("bounds_uv") or k == "bounds_uv" else v) for k, v in resolved.items() if k != "bounds_uv"}, "resolve_view_bounds_uv": _bounds_dict(resolved.get("bounds_uv"))}, "grid": {"W": int(resolved.get("grid_W", 0) or 0), "H": int(resolved.get("grid_H", 0) or 0), "cell_size_ft_requested": cell_req, "cell_size_ft_effective": float(resolved.get("cell_size_ft_effective", cell_req))}, "state_before": before_state, "document_is_modified_before": before_doc_modified, "exports": {}, "diagnostics": [], "transaction_group": {}, "requires_external_analysis": True}
     _force_close_dynamo_transaction()
     group = TransactionGroup(doc, "VOP Stage A image alignment probe")
     group_status = group.Start()
@@ -725,7 +572,7 @@ def _run():
                 result["paths"].append(exported)
                 analysis = _analyze_image(exported, markers, target_bounds)
                 analysis["effective_pixel_size"] = accepted
-                analysis["pixel_size_equals_actual_width"] = (analysis.get("actual_width") == accepted)
+                analysis["pixel_size_equals_actual_width"] = None
                 images.append(analysis)
             sequential_equal = images[0].get("sha256") == images[1].get("sha256") and images[0].get("actual_width") == images[1].get("actual_width") and images[0].get("actual_height") == images[1].get("actual_height")
             analyzed_by_mode[m] = images[0]
@@ -753,12 +600,10 @@ def _run():
         except Exception as ex:
             result["calibration_elements_exist_after"].append({"id": eid, "error": str(ex)})
     exported_images = [img for exp in result["exports"].values() for img in exp["images"]]
-    any_missing = any(img.get("missing_markers") for img in exported_images)
-    all_have_image_analysis = bool(exported_images) and all(img.get("pillow_available") for img in exported_images)
-    all_have_marker_analysis = bool(create_markers) and bool(result.get("calibration_markers")) and all(img.get("marker_analysis_available") for img in exported_images)
     ok = rollback_status == "rolled_back" and not result["state_differences"] and not any(x.get("exists") for x in result["calibration_elements_exist_after"])
-    result["evidence_status"] = {"all_have_image_analysis": all_have_image_analysis, "all_have_marker_analysis": all_have_marker_analysis, "markers_requested": bool(create_markers), "marker_count": len(result.get("calibration_markers", [])), "any_missing_markers": bool(any_missing)}
-    result["conclusion"] = "PASS" if ok and all_have_image_analysis and all_have_marker_analysis and not any_missing else ("FAIL" if not ok else "INCONCLUSIVE")
+    result["requires_external_analysis"] = True
+    result["evidence_status"] = {"all_have_image_analysis": False, "all_have_marker_analysis": False, "markers_requested": bool(create_markers), "marker_count": len(result.get("calibration_markers", [])), "any_missing_markers": None, "status": "pending_external_analysis"}
+    result["conclusion"] = "PASS_PARTIAL" if ok else "FAIL"
     for exp in result["exports"].values():
         with open(exp["json_path"], "w") as f:
             json.dump(result, f, indent=2, sort_keys=True)

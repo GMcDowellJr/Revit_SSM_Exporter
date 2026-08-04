@@ -19,6 +19,23 @@ IN[3] = rendering modes, default "all"
 isolate those elements, because isolation would change view semantics and is not
 part of this feasibility test.
 
+## External pixel-analysis pass
+
+The Dynamo script is now extraction-only and has no PIL/Pillow dependency. It
+writes TIFF paths, file metadata, rendering-mode settings, transaction state,
+rollback evidence, focused-element metadata, and `requires_external_analysis:
+true`. Pixel-derived analysis, fill-contamination classification, difference
+TIFFs, dimension matching, and mode ranking are computed by:
+
+```bash
+python tools/analyze_stage_a_probe.py <probe-output-directory-or-json>
+```
+
+The analyzer writes `<original>.analyzed.json` and restores the same
+`images[].analysis`, `classification`, `difference_images`, and `ranked_modes`
+shape that the Dynamo probe used to populate inline. A Dynamo-side
+`PASS_PARTIAL` only means extraction/export/rollback succeeded.
+
 ## Rendering modes
 
 The probe runs these modes independently from the same original view state:

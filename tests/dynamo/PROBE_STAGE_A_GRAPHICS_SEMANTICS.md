@@ -26,6 +26,23 @@ Supported variant names are:
 8. `current_stage_a_full_suppression`
 9. `visibility_off_filters_disabled_diagnostic`
 
+## External pixel-analysis pass
+
+The Dynamo script is now extraction-only. It writes export paths, file size,
+SHA-256, assignment metadata, transaction state, rollback evidence, and
+`requires_external_analysis: true`; pixel-derived fields are populated by the
+standalone analyzer instead of by Dynamo CPython. Run:
+
+```bash
+python tools/analyze_stage_a_probe.py <probe-output-directory-or-json>
+```
+
+The analyzer writes `<original>.analyzed.json` with the same image-analysis keys
+formerly produced inline, including off-palette foreground percentages, black and
+near-white violation counts, expected-color detection, and missing assigned
+colors. A Dynamo-side `PASS_PARTIAL` means only the transaction/export/rollback
+harness passed; color-fidelity conclusions require the analyzed JSON.
+
 ## Code inspected and reused
 
 The probe follows the transaction-group export harness proven by
