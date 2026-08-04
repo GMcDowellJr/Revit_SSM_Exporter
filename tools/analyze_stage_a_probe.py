@@ -232,6 +232,25 @@ def analyze_alignment_image(path: Path, markers, bounds):
 
 
 
+
+def alignment_evidence_status(data):
+    exports = data.get('exports', {})
+    exported_images = [img for exp in exports.values() for img in exp.get('images', [])]
+    marker_count = len(data.get('calibration_markers', []))
+    previous = data.get('evidence_status', {}) if isinstance(data.get('evidence_status'), dict) else {}
+    markers_requested = bool(previous.get('markers_requested', marker_count > 0))
+    all_have_image_analysis = bool(exported_images) and all(img.get('status') == 'analyzed_external' for img in exported_images)
+    all_have_marker_analysis = bool(markers_requested) and bool(marker_count) and bool(exported_images) and all(img.get('marker_analysis_available') for img in exported_images)
+    any_missing = any(bool(img.get('missing_markers')) for img in exported_images)
+    return {
+        'all_have_image_analysis': all_have_image_analysis,
+        'all_have_marker_analysis': all_have_marker_analysis,
+        'markers_requested': markers_requested,
+        'marker_count': marker_count,
+        'any_missing_markers': any_missing,
+        'status': 'analyzed_external' if all_have_image_analysis else 'incomplete_external_analysis',
+    }
+
 def content_width_px(model_img):
     content = model_img.get('content_rect_px') if model_img else None
     if content and len(content) == 4:
@@ -309,6 +328,7 @@ def analyze_json(json_path: Path) -> tuple[Path, str]:
                 model_img = images[0]
                 break
         data['model_to_canvas_placement'] = placement(data.get('bounds', {}).get('pre_annotation_model_uv'), data.get('bounds', {}).get('canvas_uv'), model_img)
+        data['evidence_status'] = alignment_evidence_status(data)
     else:
         return json_path, f"SKIP unrecognized {json_path}"
     out=json_path.with_name(json_path.stem + '.analyzed.json')
