@@ -2,6 +2,23 @@
 
 `probe_stage_a_image_alignment.py` is a standalone Revit 2025 / Dynamo 3.3 CPython3 probe for Stage A image geometry and pixel-to-view alignment. It does **not** modify production Stage A code.
 
+## External pixel-analysis pass
+
+The Dynamo script is now extraction-only and has no PIL/Pillow dependency. It
+creates calibration markers through the Revit API, exports TIFFs, records marker
+RGB/UV/element IDs, file hashes, crop/bounds metadata, transaction state, and
+rollback evidence, then marks image evidence as pending external analysis. Run:
+
+```bash
+python tools/analyze_stage_a_probe.py <probe-output-directory-or-json>
+```
+
+The analyzer writes `<original>.analyzed.json` and fills the pixel-derived fields
+formerly produced in Dynamo: actual dimensions, distinct colors, content rect,
+exact-RGB marker centroids, naive center-equation residuals, and the
+`least_squares_affine_6dof` residual. A Dynamo-side `PASS_PARTIAL` means only
+the extraction/export/rollback harness passed.
+
 ## Purpose
 
 Run this probe to answer these research questions:

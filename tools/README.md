@@ -4,6 +4,27 @@ Quality assurance and testing utilities for the SSM/VOP exporter.
 
 ## Scripts
 
+
+### `analyze_stage_a_probe.py` - External Stage A Probe Analysis
+
+Analyzes extraction-only Stage A Dynamo probe outputs using standalone Python,
+Pillow, and NumPy. It recognizes graphics-semantics, model-linework, and
+image-alignment probe JSON files, loads the referenced TIFFs, and writes
+`<original>.analyzed.json` companion files with the pixel-analysis schema that
+used to be produced inside Dynamo, including rebuilt graphics recommendations,
+linework classifications/rankings, sequential export repeatability, guarded diff images, and image-alignment
+model-to-canvas placement, and alignment evidence status after pixel dimensions are known.
+
+**Usage:**
+```bash
+python tools/analyze_stage_a_probe.py path/to/probe_output_dir
+python tools/analyze_stage_a_probe.py path/to/probe.json another/probe.json
+```
+
+**Output:** a short terminal summary plus analyzed JSON sidecars.
+
+---
+
 ### `compare_golden.py` - Golden Baseline Comparison
 
 Compares current exporter outputs against golden baseline to detect regressions.

@@ -15,7 +15,6 @@ with no child transaction open, and rolls back the group in finally.
 from __future__ import print_function
 
 import hashlib
-import importlib.util
 import json
 import os
 import re
@@ -470,7 +469,7 @@ def _export_tiff(doc, view, path):
 
 
 def _analyze_image(path, assigned):
-    result = {"path": path, "actual_dimensions": None, "file_size_bytes": None, "sha256": None, "pillow_available": False}
+    result = {"path": path, "actual_dimensions": None, "file_size_bytes": None, "sha256": None, "status": "pending_external_analysis"}
     if os.path.exists(path):
         result["file_size_bytes"] = int(os.path.getsize(path))
         h = hashlib.sha256()
@@ -478,48 +477,8 @@ def _analyze_image(path, assigned):
             for chunk in iter(lambda: f.read(65536), b""):
                 h.update(chunk)
         result["sha256"] = h.hexdigest()
-    if importlib.util.find_spec("PIL") is None:
-        result["diagnostic"] = "Pillow unavailable; pixel analysis skipped"
-        return result
-    from PIL import Image
-    img = Image.open(path).convert("RGB")
-    result["pillow_available"] = True
-    w, h = img.size
-    result["actual_dimensions"] = [int(w), int(h)]
-    pixels = list(img.getdata())
-    expected = {tuple(v["rgb"]): k for k, v in assigned.items()}
-    expected_counts = dict((k, 0) for k in assigned.keys())
-    bg = off = near_white_bad = black_bad = 0
-    unexpected = {}
-    for p in pixels:
-        if p in expected:
-            expected_counts[expected[p]] += 1
-        elif p == (255, 255, 255):
-            bg += 1
-        elif p[0] >= 224 and p[1] >= 224 and p[2] >= 224:
-            near_white_bad += 1
-            off += 1
-            unexpected[str(p)] = unexpected.get(str(p), 0) + 1
-        else:
-            off += 1
-            if p == (0, 0, 0): black_bad += 1
-            unexpected[str(p)] = unexpected.get(str(p), 0) + 1
-    foreground = max(1, len(pixels) - bg)
-    result.update({
-        "expected_palette_pixel_count": int(sum(expected_counts.values())),
-        "expected_color_pixel_counts": expected_counts,
-        "off_palette_foreground_pixel_count": int(off),
-        "off_palette_foreground_percent": round(100.0 * off / foreground, 6),
-        "background_pixel_count": int(bg),
-        "black_violation_pixel_count": int(black_bad),
-        "near_white_violation_pixel_count": int(near_white_bad),
-        "expected_colors_detected": int(sum(1 for c in expected_counts.values() if c > 0)),
-        "missing_assigned_colors": sorted([k for k, c in expected_counts.items() if c <= 0]),
-        "unexpected_colors_top_50": sorted(unexpected.items(), key=lambda kv: kv[1], reverse=True)[:50],
-        "visible_pixel_area_by_element": expected_counts,
-    })
+    result["diagnostic"] = "Pixel analysis moved to tools/analyze_stage_a_probe.py"
     return result
-
 
 def _variant_steps(name):
     steps = ["paint"]
@@ -544,7 +503,7 @@ def _variant_steps(name):
 
 def _run_variant(doc, view, out_dir, base, name, max_count):
     from Autodesk.Revit.DB import Transaction, TransactionGroup, TransactionStatus
-    result = {"variant": name, "definition_steps": _variant_steps(name), "transaction_group": {}, "state": {}, "element_counts": {}, "assigned_elements": {}, "paint_failures": [], "mutations": {}, "image_analysis": {}, "exceptions": [], "conclusion": "INCONCLUSIVE"}
+    result = {"variant": name, "definition_steps": _variant_steps(name), "transaction_group": {}, "state": {}, "element_counts": {}, "assigned_elements": {}, "paint_failures": [], "mutations": {}, "image_analysis": {}, "exceptions": [], "conclusion": "INCONCLUSIVE", "requires_external_analysis": True}
     tiff_path = os.path.join(out_dir, base + "." + name + ".tiff")
     group = None
     started = False
@@ -629,10 +588,8 @@ def _run_variant(doc, view, out_dir, base, name, max_count):
         result["state"]["differences_after_rollback"] = _diff(result["state"].get("before", {}), result["state"].get("after", {}))
         if result["exceptions"] or not result["transaction_group"].get("rollback_succeeded") or result["state"].get("differences_after_rollback"):
             result["conclusion"] = "FAIL"
-        elif result.get("image_analysis", {}).get("pillow_available"):
-            result["conclusion"] = "PASS"
         else:
-            result["conclusion"] = "INCONCLUSIVE"
+            result["conclusion"] = "PASS_PARTIAL"
     return result
 
 
@@ -641,7 +598,7 @@ def _recommend(results):
     metrics = {}
     for r in results:
         ia = r.get("image_analysis", {})
-        if ia.get("pillow_available"):
+        if ia.get("off_palette_foreground_percent") is not None:
             metrics[r["variant"]] = ia.get("off_palette_foreground_percent")
     if metrics:
         best = min(metrics, key=lambda k: metrics[k])
@@ -669,12 +626,12 @@ def run(raw_view, output_dir, max_elements, selection):
     probe_dir = os.path.join(out_dir, "graphics_semantics_probe")
     if not os.path.isdir(probe_dir): os.makedirs(probe_dir)
     base = "{0}_{1}.graphics_semantics".format(_safe_name(view.Name), _safe_int_id(view.Id))
-    report = {"probe": {"name": PROBE_NAME, "version": PROBE_VERSION, "target": "Revit 2025 / Dynamo 3.3 CPython3"}, "inputs": {"view_id": _safe_int_id(view.Id), "view_name": getattr(view, "Name", None), "output_directory": out_dir, "maximum_elements_to_color": max_elements, "variant_selection": selected}, "variants": [], "recommendation": {}, "conclusion": "INCONCLUSIVE"}
+    report = {"probe": {"name": PROBE_NAME, "version": PROBE_VERSION, "target": "Revit 2025 / Dynamo 3.3 CPython3"}, "inputs": {"view_id": _safe_int_id(view.Id), "view_name": getattr(view, "Name", None), "output_directory": out_dir, "maximum_elements_to_color": max_elements, "variant_selection": selected}, "variants": [], "recommendation": {}, "conclusion": "INCONCLUSIVE", "requires_external_analysis": True}
     for variant in variants:
         report["variants"].append(_run_variant(doc, view, probe_dir, base, variant, max_elements))
     report["recommendation"] = _recommend(report["variants"])
     if any(v.get("conclusion") == "FAIL" for v in report["variants"]): report["conclusion"] = "FAIL"
-    elif all(v.get("conclusion") == "PASS" for v in report["variants"]): report["conclusion"] = "PASS"
+    elif all(v.get("conclusion") in ("PASS", "PASS_PARTIAL") for v in report["variants"]): report["conclusion"] = "PASS_PARTIAL"
     json_path = os.path.join(probe_dir, base + ".json")
     with open(json_path, "w") as f: json.dump(report, f, indent=2, sort_keys=True)
     report["paths"] = {"combined_json": json_path, "tiffs": [v.get("export", {}).get("path") for v in report["variants"] if v.get("export", {}).get("path")]}

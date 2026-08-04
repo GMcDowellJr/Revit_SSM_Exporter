@@ -16,7 +16,6 @@ finally.
 from __future__ import print_function
 
 import hashlib
-import importlib.util
 import json
 import os
 import re
@@ -495,96 +494,15 @@ def _image_sha(path):
     return h.hexdigest()
 
 
-def _connected_components(mask, w, h):
-    seen = set()
-    sizes = []
-    for y in range(h):
-        for x in range(w):
-            if not mask[y][x] or (x, y) in seen:
-                continue
-            stack = [(x, y)]
-            seen.add((x, y))
-            count = 0
-            while stack:
-                px, py = stack.pop()
-                count += 1
-                for nx, ny in ((px + 1, py), (px - 1, py), (px, py + 1), (px, py - 1)):
-                    if 0 <= nx < w and 0 <= ny < h and mask[ny][nx] and (nx, ny) not in seen:
-                        seen.add((nx, ny))
-                        stack.append((nx, ny))
-            sizes.append(count)
-    sizes.sort(reverse=True)
-    return {"count": len(sizes), "largest": sizes[:20], "total_dark_component_pixels": sum(sizes)}
-
-
 def _analyze_image(path, reference_dims=None):
-    result = {"path": path, "file_size_bytes": None, "sha256": None, "dimensions": None, "pillow_available": False}
+    result = {"path": path, "file_size_bytes": None, "sha256": None, "dimensions": None, "status": "pending_external_analysis"}
     if os.path.exists(path):
         result["file_size_bytes"] = int(os.path.getsize(path))
         result["sha256"] = _image_sha(path)
-    if importlib.util.find_spec("PIL") is None:
-        result["diagnostic"] = "Pillow unavailable; pixel analysis skipped"
-        return result
-    from PIL import Image
-    img = Image.open(path).convert("RGB")
-    w, h = img.size
-    result["pillow_available"] = True
-    result["dimensions"] = [int(w), int(h)]
-    pixels = list(img.getdata())
-    dark = gray = unexpected = bg = 0
-    minx = miny = None
-    maxx = maxy = None
-    mask = [[False for _ in range(w)] for _ in range(h)] if w * h <= 4000000 else None
-    for y in range(h):
-        for x in range(w):
-            r, g, b = pixels[y * w + x]
-            is_bg = r >= WHITE_THRESHOLD and g >= WHITE_THRESHOLD and b >= WHITE_THRESHOLD
-            is_dark = r <= DARK_THRESHOLD and g <= DARK_THRESHOLD and b <= DARK_THRESHOLD
-            is_gray = abs(r - g) <= 2 and abs(g - b) <= 2
-            if is_bg:
-                bg += 1
-                continue
-            minx = x if minx is None else min(minx, x)
-            miny = y if miny is None else min(miny, y)
-            maxx = x if maxx is None else max(maxx, x)
-            maxy = y if maxy is None else max(maxy, y)
-            if is_dark:
-                dark += 1
-                if mask is not None:
-                    mask[y][x] = True
-            if is_gray:
-                gray += 1
-            else:
-                unexpected += 1
-    foreground = max(0, len(pixels) - bg)
-    non_dark_gray = max(0, int(gray) - int(dark))
-    result.update({
-        "dark_line_pixel_count": int(dark),
-        "grayscale_non_background_pixel_count": int(gray),
-        "non_dark_gray_foreground_pixel_count": int(non_dark_gray),
-        "foreground_pixel_count": int(foreground),
-        "unexpected_color_pixel_count": int(unexpected),
-        "background_pixel_count": int(bg),
-        "non_background_content_rect": ([minx, miny, maxx, maxy] if minx is not None else None),
-        "connected_components": (_connected_components(mask, w, h) if mask is not None else {"skipped": True, "reason": "image exceeds inexpensive component threshold"}),
-    })
     if reference_dims:
-        result["reference_dimension_agreement"] = {"reference_dimensions": reference_dims, "matches": list(reference_dims) == [int(w), int(h)]}
+        result["reference_dimension_agreement"] = {"reference_dimensions": reference_dims, "matches": None, "status": "pending_external_analysis"}
+    result["diagnostic"] = "Pixel analysis moved to tools/analyze_stage_a_probe.py"
     return result
-
-
-def _write_diff(path_a, path_b, out_path):
-    if importlib.util.find_spec("PIL") is None:
-        return {"created": False, "reason": "Pillow unavailable"}
-    from PIL import Image, ImageChops
-    a = Image.open(path_a).convert("RGB")
-    b = Image.open(path_b).convert("RGB")
-    if a.size != b.size:
-        return {"created": False, "reason": "dimension mismatch", "a_size": list(a.size), "b_size": list(b.size)}
-    diff = ImageChops.difference(a, b)
-    diff.save(out_path)
-    return {"created": True, "path": out_path, "sha256": _image_sha(out_path)}
-
 
 def _focused_metadata(elements):
     out = []
@@ -668,7 +586,7 @@ def _apply_element_id_reference(doc, view, template_detached):
 
 def _run_reference_element_id(doc, view, out_dir, base):
     from Autodesk.Revit.DB import Transaction, TransactionGroup, TransactionStatus
-    result = {"transaction_group": {}, "state": {}, "settings_applied": {}, "images": [], "exceptions": [], "conclusion": "INCONCLUSIVE"}
+    result = {"transaction_group": {}, "state": {}, "settings_applied": {}, "images": [], "exceptions": [], "conclusion": "INCONCLUSIVE", "requires_external_analysis": True}
     group = None
     started = False
     try:
@@ -736,46 +654,16 @@ def _run_reference_element_id(doc, view, out_dir, base):
         result["state"]["differences_after_rollback"] = _diff(result["state"].get("before", {}), result["state"].get("after", {}))
         if result["exceptions"] or not result["transaction_group"].get("rollback_succeeded") or result["state"].get("differences_after_rollback"):
             result["conclusion"] = "FAIL"
-        elif result.get("images") and result["images"][0]["analysis"].get("dimensions"):
-            result["conclusion"] = "PASS"
+        elif result.get("images"):
+            result["conclusion"] = "PASS_PARTIAL"
         else:
             result["conclusion"] = "INCONCLUSIVE"
     return result
 
 
-def _classify_mode(mode_result, reference_dims):
-    ia = mode_result.get("images", [{}])[0].get("analysis", {}) if mode_result.get("images") else {}
-    dims_match = bool(ia.get("dimensions") and reference_dims and ia.get("dimensions") == reference_dims)
-    dark = int(ia.get("dark_line_pixel_count") or 0)
-    unexpected = int(ia.get("unexpected_color_pixel_count") or 0)
-    non_dark_gray = int(ia.get("non_dark_gray_foreground_pixel_count") or 0)
-    foreground = int(ia.get("foreground_pixel_count") or 0)
-    gray_tolerance = max(10, int(round(0.001 * max(1, foreground))))
-    fill_ok = "acceptable" if unexpected == 0 and non_dark_gray <= gray_tolerance else "unacceptable"
-    if mode_result.get("exceptions"):
-        candidate = "rejected"
-    elif dark <= 0:
-        candidate = "rejected"
-    elif fill_ok == "acceptable" and dims_match:
-        candidate = "recommended"
-    else:
-        candidate = "inconclusive"
-    return {
-        "internal_edges": "uncertain",
-        "hidden_back_edges": "uncertain",
-        "fill_contamination": fill_ok,
-        "fill_contamination_evidence": {"unexpected_color_pixel_count": unexpected, "non_dark_gray_foreground_pixel_count": non_dark_gray, "non_dark_gray_tolerance": gray_tolerance},
-        "link_behavior": "requires_manual_review",
-        "dwg_behavior": "requires_manual_review",
-        "dimension_alignment": "pass" if dims_match else "fail",
-        "candidate_status": candidate,
-        "manual_review_required": True,
-    }
-
-
 def _run_mode(doc, view, out_dir, base, mode, focused_elements, reference_dims):
     from Autodesk.Revit.DB import Transaction, TransactionGroup, TransactionStatus
-    result = {"mode": mode, "focused_elements": _focused_metadata(focused_elements), "transaction_group": {}, "state": {}, "settings_applied": {}, "images": [], "exceptions": [], "conclusion": "INCONCLUSIVE"}
+    result = {"mode": mode, "focused_elements": _focused_metadata(focused_elements), "transaction_group": {}, "state": {}, "settings_applied": {}, "images": [], "exceptions": [], "conclusion": "INCONCLUSIVE", "requires_external_analysis": True}
     group = None
     started = False
     try:
@@ -848,11 +736,11 @@ def _run_mode(doc, view, out_dir, base, mode, focused_elements, reference_dims):
                 result["transaction_group"]["rollback_succeeded"] = False
         result["state"]["after"] = _snapshot(doc, view)
         result["state"]["differences_after_rollback"] = _diff(result["state"].get("before", {}), result["state"].get("after", {}))
-        result["classification"] = _classify_mode(result, reference_dims)
+        result["classification"] = {"status": "pending_external_analysis", "manual_review_required": True}
         if result["exceptions"] or not result["transaction_group"].get("rollback_succeeded") or result["state"].get("differences_after_rollback"):
             result["conclusion"] = "FAIL"
-        elif result.get("images") and result["images"][0]["analysis"].get("pillow_available"):
-            result["conclusion"] = "PASS"
+        elif result.get("images"):
+            result["conclusion"] = "PASS_PARTIAL"
         else:
             result["conclusion"] = "INCONCLUSIVE"
     return result
@@ -867,14 +755,6 @@ def _select_modes(selection):
     if bad:
         raise ValueError("Unsupported rendering mode(s): {0}. Supported: {1}".format(bad, MODES))
     return requested
-
-
-def _rank(results):
-    rows = []
-    for r in results:
-        ia = r.get("images", [{}])[0].get("analysis", {}) if r.get("images") else {}
-        rows.append({"mode": r.get("mode"), "candidate_status": r.get("classification", {}).get("candidate_status"), "dark_line_pixel_count": ia.get("dark_line_pixel_count"), "unexpected_color_pixel_count": ia.get("unexpected_color_pixel_count"), "non_dark_gray_foreground_pixel_count": ia.get("non_dark_gray_foreground_pixel_count"), "dimension_alignment": r.get("classification", {}).get("dimension_alignment")})
-    return sorted(rows, key=lambda x: (x.get("candidate_status") != "recommended", -(x.get("dark_line_pixel_count") or 0), (x.get("unexpected_color_pixel_count") or 0) + (x.get("non_dark_gray_foreground_pixel_count") or 0)))
 
 
 def run(raw_view, output_dir, raw_focused, selection):
@@ -892,29 +772,23 @@ def run(raw_view, output_dir, raw_focused, selection):
         os.makedirs(probe_dir)
     base = "{0}_{1}.model_linework".format(_safe_name(getattr(view, "Name", "view")), _safe_int_id(view.Id))
     modes = _select_modes(selection)
-    report = {"probe": {"name": PROBE_NAME, "version": PROBE_VERSION, "target": "Revit 2025 / Dynamo 3.3 CPython3", "production_linework_flag_default": "disabled"}, "inputs": {"view_id": _safe_int_id(view.Id), "view_name": getattr(view, "Name", None), "output_directory": out_dir, "rendering_modes": modes, "focused_elements": _focused_metadata(focused)}, "reference_element_id_tiff": None, "modes": [], "difference_images": [], "ranked_modes": [], "conclusion": "INCONCLUSIVE"}
+    report = {"probe": {"name": PROBE_NAME, "version": PROBE_VERSION, "target": "Revit 2025 / Dynamo 3.3 CPython3", "production_linework_flag_default": "disabled"}, "inputs": {"view_id": _safe_int_id(view.Id), "view_name": getattr(view, "Name", None), "output_directory": out_dir, "rendering_modes": modes, "focused_elements": _focused_metadata(focused)}, "reference_element_id_tiff": None, "modes": [], "difference_images": [], "ranked_modes": [], "conclusion": "INCONCLUSIVE", "requires_external_analysis": True}
     reference = _run_reference_element_id(doc, view, probe_dir, base)
-    reference_dims = reference.get("images", [{}])[0].get("analysis", {}).get("dimensions") if reference.get("images") else None
+    reference_dims = None
     report["reference_element_id_tiff"] = reference
     for mode in modes:
         report["modes"].append(_run_mode(doc, view, probe_dir, base, mode, focused, reference_dims))
-    if len(report["modes"]) > 1 and importlib.util.find_spec("PIL") is not None:
-        ref_path = report["modes"][0].get("images", [{}])[0].get("path")
-        for result in report["modes"][1:]:
-            path = result.get("images", [{}])[0].get("path")
-            if ref_path and path:
-                diff_path = os.path.join(probe_dir, "{0}.{1}_minus_{2}.diff.tiff".format(base, result["mode"], report["modes"][0]["mode"]))
-                report["difference_images"].append({"mode": result["mode"], "against": report["modes"][0]["mode"], "diff": _write_diff(ref_path, path, diff_path)})
-    report["ranked_modes"] = _rank(report["modes"])
+    report["difference_images"] = [{"status": "pending_external_analysis", "reason": "Diff images are generated by tools/analyze_stage_a_probe.py"}] if len(report["modes"]) > 1 else []
+    report["ranked_modes"] = [{"status": "pending_external_analysis", "reason": "Mode ranking is computed by tools/analyze_stage_a_probe.py"}]
     reference_failed = reference.get("conclusion") == "FAIL"
-    reference_missing_dimensions = not bool(reference_dims)
+    reference_missing_dimensions = False
     report["reference_status"] = {"failed": bool(reference_failed), "missing_dimensions": bool(reference_missing_dimensions)}
     if reference_failed or any(r.get("conclusion") == "FAIL" for r in report["modes"]):
         report["conclusion"] = "FAIL"
     elif reference_missing_dimensions:
         report["conclusion"] = "INCONCLUSIVE"
-    elif all(r.get("conclusion") == "PASS" for r in report["modes"]):
-        report["conclusion"] = "PASS"
+    elif all(r.get("conclusion") in ("PASS", "PASS_PARTIAL") for r in report["modes"]):
+        report["conclusion"] = "PASS_PARTIAL"
     json_path = os.path.join(probe_dir, base + ".json")
     with open(json_path, "w") as f:
         json.dump(report, f, indent=2, sort_keys=True)
