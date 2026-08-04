@@ -164,6 +164,22 @@ def write_diff(a: Path, b: Path, out: Path):
     return {'created':True,'path':str(out),'sha256':sha256_file(out)}
 
 
+
+def repeatability(images):
+    if len(images) < 2:
+        return {'available': False, 'reason': 'fewer than two sequential exports'}
+    a0 = (images[0].get('analysis') or {})
+    a1 = (images[1].get('analysis') or {})
+    return {
+        'available': True,
+        'same_sha256': a0.get('sha256') == a1.get('sha256'),
+        'same_dimensions': a0.get('dimensions') == a1.get('dimensions'),
+        'first_dimensions': a0.get('dimensions'),
+        'second_dimensions': a1.get('dimensions'),
+        'first_sha256': a0.get('sha256'),
+        'second_sha256': a1.get('sha256'),
+    }
+
 def rank_modes(results):
     rows=[]
     for r in results:
@@ -256,11 +272,15 @@ def analyze_json(json_path: Path) -> tuple[Path, str]:
             p=resolve_path(json_path, img.get('path'))
             if p and p.exists(): img['analysis']=analyze_linework_image(p); ref_dims=img['analysis'].get('dimensions') or ref_dims
             else: img['analysis']={'path': str(p) if p else None, 'status':'error', 'error':'referenced TIFF missing or path not provided'}
+        if ref.get('images'):
+            ref['sequential_export_repeatability'] = repeatability(ref.get('images', []))
         for m in data.get('modes',[]):
             for img in m.get('images',[]):
                 p=resolve_path(json_path, img.get('path'))
                 if p and p.exists(): img['analysis']=analyze_linework_image(p, ref_dims)
                 else: img['analysis']={'path': str(p) if p else None, 'status':'error', 'error':'referenced TIFF missing or path not provided'}
+            if m.get('images'):
+                m['sequential_export_repeatability'] = repeatability(m.get('images', []))
             m['classification']=classify_mode(m, ref_dims); summary.append(f"linework {m.get('mode')}: non_dark_gray={m['images'][0]['analysis'].get('non_dark_gray_foreground_pixel_count') if m.get('images') else None} unexpected={m['images'][0]['analysis'].get('unexpected_color_pixel_count') if m.get('images') else None}")
         data['difference_images']=[]
         if len(data.get('modes',[]))>1:
