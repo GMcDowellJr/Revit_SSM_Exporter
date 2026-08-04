@@ -79,6 +79,27 @@ def analyze_graphics_image(path: Path, assigned: dict[str, Any]) -> dict[str, An
     return out
 
 
+
+def recommend_graphics(results):
+    rec = {'minimum_settings_required_for_exact_color_fidelity': [], 'settings_that_only_change_visibility_semantics': [], 'settings_unnecessary_in_tested_view': [], 'settings_blocked_by_view_template': [], 'questions_still_requiring_more_view_samples': []}
+    metrics = {}
+    for r in results:
+        ia = r.get('image_analysis', {})
+        if ia.get('off_palette_foreground_percent') is not None:
+            metrics[r.get('variant')] = ia.get('off_palette_foreground_percent')
+    if metrics:
+        best = min(metrics, key=lambda k: metrics[k])
+        rec['minimum_settings_required_for_exact_color_fidelity'].append('Lowest off-palette percentage in this run: {0} ({1}%). Compare cumulatively, not as a production recommendation.'.format(best, metrics[best]))
+    for name in ('visible_filters_disabled', 'visibility_off_filters_disabled_diagnostic', 'neutral_phase_filter', 'current_stage_a_full_suppression'):
+        if any(r.get('variant') == name for r in results):
+            rec['settings_that_only_change_visibility_semantics'].append(name)
+    for r in results:
+        for d in r.get('mutation_diagnostics', []):
+            if 'read-only' in d.get('message', '').lower() or 'template' in d.get('setting', ''):
+                rec['settings_blocked_by_view_template'].append({'variant': r.get('variant'), 'diagnostic': d})
+    rec['questions_still_requiring_more_view_samples'].append('Repeat the documented matrix; do not generalize from one view because filters, templates, phase filters, and halftone differ by view.')
+    return rec
+
 def connected_components(mask: np.ndarray) -> dict[str, Any]:
     h, w = mask.shape
     if h * w > 4_000_000:
@@ -122,10 +143,12 @@ def analyze_linework_image(path: Path, reference_dims=None) -> dict[str, Any]:
 
 def classify_mode(mode_result, reference_dims):
     ia = mode_result.get('images',[{}])[0].get('analysis',{}) if mode_result.get('images') else {}
+    if not ia:
+        return {'candidate_status':'rejected','analysis_error':'mode produced no TIFF images to analyze','manual_review_required':True,'dimension_alignment':'fail','fill_contamination':'unknown','fill_contamination_evidence':{'reason':'missing image analysis'}}
     if ia.get('status') == 'error':
-        return {'candidate_status':'rejected','analysis_error':ia.get('error'),'manual_review_required':True}
+        return {'candidate_status':'rejected','analysis_error':ia.get('error'),'manual_review_required':True,'dimension_alignment':'fail','fill_contamination':'unknown','fill_contamination_evidence':{'reason':ia.get('error')}}
     dims_match = bool(ia.get('dimensions') and reference_dims and ia.get('dimensions') == reference_dims)
-    dark = int(ia['dark_line_pixel_count']); unexpected = int(ia['unexpected_color_pixel_count']); non_dark_gray = int(ia['non_dark_gray_foreground_pixel_count']); foreground = int(ia['foreground_pixel_count'])
+    dark = int(ia.get('dark_line_pixel_count') or 0); unexpected = int(ia.get('unexpected_color_pixel_count') or 0); non_dark_gray = int(ia.get('non_dark_gray_foreground_pixel_count') or 0); foreground = int(ia.get('foreground_pixel_count') or 0)
     tol = max(10, int(round(0.001 * max(1, foreground))))
     fill_ok = 'acceptable' if unexpected == 0 and non_dark_gray <= tol else 'unacceptable'
     candidate = 'rejected' if mode_result.get('exceptions') or dark <= 0 else ('recommended' if fill_ok == 'acceptable' and dims_match else 'inconclusive')
@@ -192,6 +215,28 @@ def analyze_alignment_image(path: Path, markers, bounds):
     return res
 
 
+
+def content_width_px(model_img):
+    content = model_img.get('content_rect_px') if model_img else None
+    if content and len(content) == 4:
+        return max(1, int(content[2]) - int(content[0]) + 1)
+    return int(model_img.get('actual_width') or 0) if model_img else 0
+
+
+def placement(model_bounds, canvas_bounds, model_img):
+    content_width = content_width_px(model_img)
+    if not model_bounds or not canvas_bounds or not model_img or not content_width:
+        return {'available': False, 'reason': 'missing model/canvas bounds or content image dimensions'}
+    mb, cb = bounds_tuple(model_bounds), bounds_tuple(canvas_bounds)
+    density = float(content_width) / max(1e-9, mb[2] - mb[0])
+    canvas_w = (cb[2] - cb[0]) * density
+    canvas_h = (cb[3] - cb[1]) * density
+    off_x = (mb[0] - cb[0]) * density
+    off_y = (cb[3] - mb[3]) * density
+    vals = [canvas_w, canvas_h, off_x, off_y]
+    rounding = [abs(v - round(v)) for v in vals]
+    return {'available': True, 'observed_px_per_model_unit': density, 'density_source_content_width_px': int(content_width), 'tiff_actual_width_px': int(model_img.get('actual_width') or 0), 'canvas_pixel_dimensions_float': [canvas_w, canvas_h], 'model_image_offset_float': [off_x, off_y], 'offset_integral': [rounding[2] < 1e-6, rounding[3] < 1e-6], 'max_rounding_error_px': max(rounding), 'max_rounding_error_model_units': max(rounding) / density, 'lossless_padding_sufficient': max(rounding) < 1e-6, 'resampling_required_if_exact_canvas_needed': max(rounding) >= 1e-6}
+
 def analyze_json(json_path: Path) -> tuple[Path, str]:
     data=json.loads(json_path.read_text())
     name=(data.get('probe',{}).get('name') or json_path.name).lower()
@@ -203,6 +248,7 @@ def analyze_json(json_path: Path) -> tuple[Path, str]:
                 v['image_analysis']=analyze_graphics_image(p, v.get('assigned_elements',{})); summary.append(f"graphics {v.get('variant')}: off_palette={v['image_analysis'].get('off_palette_foreground_percent')} black={v['image_analysis'].get('black_violation_pixel_count')}")
             else:
                 v['image_analysis']={'path': str(p) if p else None, 'status':'error', 'error':'referenced TIFF missing or path not provided'}
+        data['recommendation']=recommend_graphics(data.get('variants',[]))
 
     elif 'model_linework' in name:
         ref=data.get('reference_element_id_tiff') or {}; ref_dims=None
@@ -236,6 +282,13 @@ def analyze_json(json_path: Path) -> tuple[Path, str]:
                     img.clear(); img.update({'path': str(p) if p else None, 'status':'error', 'error':'referenced TIFF missing or path not provided'})
             vals=[im.get('affine_fit_residual',{}).get('max_residual_px') for im in exp.get('images',[]) if im.get('affine_fit_residual',{}).get('available')]
             if vals: summary.append(f"alignment {mode}: affine_max={vals[0]:.6f}")
+        model_img = None
+        for preferred in ('model_bounds', 'original'):
+            images = data.get('exports', {}).get(preferred, {}).get('images', [])
+            if images and images[0].get('status') == 'analyzed_external':
+                model_img = images[0]
+                break
+        data['model_to_canvas_placement'] = placement(data.get('bounds', {}).get('pre_annotation_model_uv'), data.get('bounds', {}).get('canvas_uv'), model_img)
     else:
         return json_path, f"SKIP unrecognized {json_path}"
     out=json_path.with_name(json_path.stem + '.analyzed.json')

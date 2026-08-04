@@ -11,7 +11,9 @@ Analyzes extraction-only Stage A Dynamo probe outputs using standalone Python,
 Pillow, and NumPy. It recognizes graphics-semantics, model-linework, and
 image-alignment probe JSON files, loads the referenced TIFFs, and writes
 `<original>.analyzed.json` companion files with the pixel-analysis schema that
-used to be produced inside Dynamo.
+used to be produced inside Dynamo, including rebuilt graphics recommendations,
+linework classifications/rankings, diff images, and image-alignment
+model-to-canvas placement after pixel dimensions are known.
 
 **Usage:**
 ```bash
