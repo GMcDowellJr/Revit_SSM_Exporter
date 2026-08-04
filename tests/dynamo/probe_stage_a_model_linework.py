@@ -265,20 +265,60 @@ def _linework_ogs(doc, line_rgb=(0, 0, 0), fill_rgb=(255, 255, 255), use_fill=Tr
 
 
 def _hide_annotation_categories(doc, view, diagnostics):
+    """Hide annotation + view-only-model categories, mirroring color_id_buffer._hidden_category_state().
+
+    Every candidate category is traced (name, CategoryType, CanCategoryBeHidden,
+    GetCategoryHidden-before) regardless of whether the hide is attempted or
+    succeeds, so an empty ``hidden`` result is diagnosable from the JSON alone
+    without a second Revit session. Callers must run this only after any view
+    template detach has already been committed in its own transaction --
+    CanCategoryBeHidden() reports categories as locked while a controlling view
+    template is still attached, same as color_id_buffer._hidden_category_state().
+    """
     from Autodesk.Revit.DB import BuiltInCategory, CategoryType
     view_only = set(int(getattr(BuiltInCategory, n)) for n in ("OST_DetailComponents", "OST_Lines") if getattr(BuiltInCategory, n, None) is not None)
     hidden = []
+    trace = []
     for cat in doc.Settings.Categories:
         try:
+            cat_id = cat.Id
             is_annotation = cat.CategoryType == CategoryType.Annotation
-            is_view_only = cat.Id.IntegerValue in view_only
-            if (is_annotation or is_view_only) and view.CanCategoryBeHidden(cat.Id):
-                was = bool(view.GetCategoryHidden(cat.Id))
-                view.SetCategoryHidden(cat.Id, True)
-                hidden.append({"category_id": cat.Id.IntegerValue, "name": cat.Name, "was_hidden": was})
+            is_view_only = cat_id.IntegerValue in view_only
+            if not (is_annotation or is_view_only):
+                continue
+            record = {
+                "category_id": cat_id.IntegerValue,
+                "name": cat.Name,
+                "category_type": _safe_enum(getattr(cat, "CategoryType", None)),
+                "is_view_only_model_bic": bool(is_view_only),
+            }
+            try:
+                can_hide = bool(view.CanCategoryBeHidden(cat_id))
+            except Exception as ex:
+                record["can_category_be_hidden_error"] = str(ex)
+                can_hide = False
+            record["can_category_be_hidden"] = can_hide
+            try:
+                was_hidden = bool(view.GetCategoryHidden(cat_id))
+            except Exception as ex:
+                record["get_category_hidden_error"] = str(ex)
+                was_hidden = None
+            record["was_hidden_before"] = was_hidden
+            if can_hide:
+                try:
+                    view.SetCategoryHidden(cat_id, True)
+                    record["hide_applied"] = True
+                    hidden.append({"category_id": cat_id.IntegerValue, "name": cat.Name, "was_hidden": was_hidden})
+                except Exception as ex:
+                    record["hide_applied"] = False
+                    record["hide_exception"] = str(ex)
+                    diagnostics.append({"setting": "hide_annotation_category", "category_id": cat_id.IntegerValue, "message": str(ex)})
+            else:
+                record["hide_applied"] = False
+            trace.append(record)
         except Exception as ex:
             diagnostics.append({"setting": "hide_annotation_category", "message": str(ex)})
-    return hidden
+    return hidden, trace
 
 
 def _collect_model_category_ids(doc, view, diagnostics):
@@ -554,12 +594,17 @@ def _focused_metadata(elements):
     return out
 
 
-def _apply_mode(doc, view, mode):
+def _apply_mode(doc, view, mode, template_detached):
     diagnostics = []
     definition = _mode_definition(mode)
-    applied = {"mode_definition": definition, "annotation_categories_hidden": _hide_annotation_categories(doc, view, diagnostics)}
+    hidden, trace = _hide_annotation_categories(doc, view, diagnostics)
+    applied = {
+        "mode_definition": definition,
+        "view_template_detached": template_detached,
+        "annotation_categories_hidden": hidden,
+        "annotation_category_hide_trace": trace,
+    }
     if definition.get("display_style"):
-        applied["view_template_detached"] = _detach_template(view, diagnostics)
         applied["display_style_set"] = _set_display_style(view, definition["display_style"], diagnostics)
     if definition.get("disable_effects"):
         applied["display_effects_disabled"] = _disable_effects(view, diagnostics)
@@ -589,10 +634,14 @@ def _collect_reference_elements(doc, view, diagnostics):
         return [], 0
 
 
-def _apply_element_id_reference(doc, view):
+def _apply_element_id_reference(doc, view, template_detached):
     diagnostics = []
-    applied = {"annotation_categories_hidden": _hide_annotation_categories(doc, view, diagnostics)}
-    applied["view_template_detached"] = _detach_template(view, diagnostics)
+    hidden, trace = _hide_annotation_categories(doc, view, diagnostics)
+    applied = {
+        "annotation_categories_hidden": hidden,
+        "annotation_category_hide_trace": trace,
+        "view_template_detached": template_detached,
+    }
     _set_display_style(view, "FlatColors", diagnostics)
     applied["display_effects_disabled"] = _disable_effects(view, diagnostics)
     ids, top_count = _collect_reference_elements(doc, view, diagnostics)
@@ -630,10 +679,32 @@ def _run_reference_element_id(doc, view, out_dir, base):
         result["transaction_group"]["start_status"] = _safe_enum(st)
         if not started:
             raise RuntimeError("TransactionGroup.Start returned {0}".format(st))
+        # Detach and commit before anything else in its own transaction, same as
+        # color_id_buffer.py's detach_tx: CanCategoryBeHidden()/GetCategoryHidden()
+        # inside _hide_annotation_categories() report against committed document
+        # state, so a detach still pending in the same transaction as the hide
+        # attempt is not guaranteed to unlock template-controlled categories.
+        detach_diagnostics = []
+        detach_tx = Transaction(doc, "VOP Stage A linework element-ID reference DETACH template")
+        detach_tx.Start()
+        try:
+            template_detached = _detach_template(view, detach_diagnostics)
+            detach_commit = detach_tx.Commit()
+            result["transaction_group"]["detach_commit_status"] = _safe_enum(detach_commit)
+            if detach_commit != TransactionStatus.Committed:
+                raise RuntimeError("Detach Transaction.Commit returned {0}".format(detach_commit))
+        except Exception:
+            try:
+                detach_tx.RollBack()
+            except Exception as ex:
+                result["exceptions"].append(_exception_record("reference_detach_rollback", ex))
+            raise
         tx = Transaction(doc, "VOP Stage A linework element-ID reference settings")
         tx.Start()
         try:
-            result["settings_applied"] = _apply_element_id_reference(doc, view)
+            result["settings_applied"] = _apply_element_id_reference(doc, view, template_detached)
+            if detach_diagnostics:
+                result["settings_applied"].setdefault("diagnostics", []).extend(detach_diagnostics)
             commit = tx.Commit()
             result["transaction_group"]["child_commit_status"] = _safe_enum(commit)
             if commit != TransactionStatus.Committed:
@@ -715,10 +786,34 @@ def _run_mode(doc, view, out_dir, base, mode, focused_elements, reference_dims):
         result["transaction_group"]["start_status"] = _safe_enum(st)
         if not started:
             raise RuntimeError("TransactionGroup.Start returned {0}".format(st))
+        # Detach and commit before anything else in its own transaction, same as
+        # color_id_buffer.py's detach_tx: CanCategoryBeHidden()/GetCategoryHidden()
+        # inside _hide_annotation_categories() report against committed document
+        # state, so a detach still pending in the same transaction as the hide
+        # attempt is not guaranteed to unlock template-controlled categories.
+        # Unconditional (not gated on this mode's display_style) because every
+        # mode calls _hide_annotation_categories().
+        detach_diagnostics = []
+        detach_tx = Transaction(doc, "VOP Stage A linework DETACH template: " + mode)
+        detach_tx.Start()
+        try:
+            template_detached = _detach_template(view, detach_diagnostics)
+            detach_commit = detach_tx.Commit()
+            result["transaction_group"]["detach_commit_status"] = _safe_enum(detach_commit)
+            if detach_commit != TransactionStatus.Committed:
+                raise RuntimeError("Detach Transaction.Commit returned {0}".format(detach_commit))
+        except Exception:
+            try:
+                detach_tx.RollBack()
+            except Exception as ex:
+                result["exceptions"].append(_exception_record("detach_rollback", ex))
+            raise
         tx = Transaction(doc, "VOP Stage A linework settings: " + mode)
         tx.Start()
         try:
-            result["settings_applied"] = _apply_mode(doc, view, mode)
+            result["settings_applied"] = _apply_mode(doc, view, mode, template_detached)
+            if detach_diagnostics:
+                result["settings_applied"].setdefault("diagnostics", []).extend(detach_diagnostics)
             commit = tx.Commit()
             result["transaction_group"]["child_commit_status"] = _safe_enum(commit)
             if commit != TransactionStatus.Committed:

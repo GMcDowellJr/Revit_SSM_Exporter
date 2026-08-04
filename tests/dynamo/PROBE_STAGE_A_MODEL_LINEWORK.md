@@ -54,6 +54,22 @@ The probe follows the proven transaction-group rollback harness:
 This is diagnostic only. The production linework flag must remain disabled by
 default regardless of a successful sample.
 
+## Annotation-category hiding
+
+`_hide_annotation_categories()` mirrors `color_id_buffer.py`'s
+`_hidden_category_state()` category-selection logic (every top-level
+`CategoryType.Annotation` category plus the `OST_DetailComponents` /
+`OST_Lines` view-only-model exceptions), but a per-view template locks
+`CanCategoryBeHidden()`/`GetCategoryHidden()` to report against committed
+document state. Every mode therefore commits the view-template detach in its
+own transaction, before the main settings transaction runs
+`_hide_annotation_categories()` — the same two-step ordering
+`color_id_buffer.py` uses (`detach_tx` committed, then `suppress_tx`). Each
+candidate category is traced regardless of outcome (`name`, `category_type`,
+`can_category_be_hidden`, `was_hidden_before`, `hide_applied`) under
+`settings_applied.annotation_category_hide_trace`, so an empty
+`annotation_categories_hidden` list is diagnosable from the JSON alone.
+
 ## Graphic policy under test
 
 The intended analytical linework image has:

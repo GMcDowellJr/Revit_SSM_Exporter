@@ -74,6 +74,24 @@ This probe tests the same concepts independently. Every variant starts from the
 same original view state because each one uses a separate rolled-back
 TransactionGroup.
 
+## Annotation-category hiding
+
+`_hide_annotation_categories()` mirrors `color_id_buffer.py`'s
+`_hidden_category_state()` category-selection logic (every top-level
+`CategoryType.Annotation` category plus the `OST_DetailComponents` /
+`OST_Lines` view-only-model exceptions). A per-view template locks
+`CanCategoryBeHidden()`/`GetCategoryHidden()` to report against committed
+document state, so `current_stage_a_full_suppression` (the only variant that
+hides annotation categories) commits the view-template detach in its own
+transaction before the main settings transaction runs
+`_hide_annotation_categories()` — the same two-step ordering
+`color_id_buffer.py` uses (`detach_tx` committed, then `suppress_tx`). Every
+candidate category is traced regardless of outcome (`name`, `category_type`,
+`can_category_be_hidden`, `was_hidden_before`, `hide_applied`) under
+`category_hide_trace` in that variant's result, so an empty
+`mutations.hide_annotation_categories` list is diagnosable from the JSON
+alone.
+
 ## Color fidelity vs semantic visibility
 
 Treat these as color-fidelity candidates:
