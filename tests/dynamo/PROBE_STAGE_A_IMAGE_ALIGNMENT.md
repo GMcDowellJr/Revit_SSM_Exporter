@@ -118,6 +118,20 @@ v = v_max - (y + 0.5) * UV_height / image_height
 
 The probe reports observations and residuals; it does not assume the equation is correct. If Pillow is unavailable, markers are disabled, marker creation fails, or marker detections are absent, rollback may still pass but the overall alignment conclusion is `INCONCLUSIVE` rather than `PASS` because there is insufficient image/marker evidence.
 
+## Affine-fit residual
+
+Alongside the naive-equation residual above, each image's analysis also
+reports `affine_fit_residual`: a second, independently-computed marker
+residual from a pure-Python least-squares affine fit (translation + rotation
++ non-uniform scale, 6 degrees of freedom: `px_x = a*u + b*v + c`, `px_y =
+d*u + e*v + f`) over every marker with a detected centroid (`expected_uv` ->
+`centroid_px`). It does not replace or modify the naive-equation fields. When
+fewer than 4 markers have a detected centroid, `available` is `false` with a
+reason instead of attempting an underdetermined fit. When available, it
+reports the fitted matrix, `per_marker_residual_px`, and `max_residual_px` in
+the same pixel units as the naive equation's `residual_px` so the two are
+directly comparable.
+
 ## Model-to-canvas placement calculation
 
 The JSON computes the proposed placement of the model-crop image inside the larger annotation-expanded canvas:

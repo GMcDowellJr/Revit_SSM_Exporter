@@ -455,6 +455,95 @@ def _sha256(path):
     return h.hexdigest()
 
 
+def _solve_3x3(matrix, vector):
+    """Gaussian elimination with partial pivoting for a 3x3 linear system.
+
+    Returns None if the matrix is singular (e.g. markers are collinear in UV
+    space, which cannot happen with the standard 5-marker layout but is
+    checked rather than assumed).
+    """
+    m = [row[:] for row in matrix]
+    v = vector[:]
+    n = 3
+    for col in range(n):
+        pivot = max(range(col, n), key=lambda r: abs(m[r][col]))
+        if abs(m[pivot][col]) < 1e-12:
+            return None
+        m[col], m[pivot] = m[pivot], m[col]
+        v[col], v[pivot] = v[pivot], v[col]
+        for r in range(col + 1, n):
+            factor = m[r][col] / m[col][col]
+            for c in range(col, n):
+                m[r][c] -= factor * m[col][c]
+            v[r] -= factor * v[col]
+    x = [0.0] * n
+    for r in range(n - 1, -1, -1):
+        s = v[r] - sum(m[r][c] * x[c] for c in range(r + 1, n))
+        x[r] = s / m[r][r]
+    return x
+
+
+def _affine_fit(detections):
+    """Independent least-squares affine (6-DOF) fit from expected_uv -> centroid_px.
+
+    px_x = a*u + b*v + c
+    px_y = d*u + e*v + f
+
+    This is a second, independently-computed residual alongside the existing
+    naive-equation ``predicted_px_center_equation`` / ``residual_px`` fields --
+    it does not replace them. Uses every marker with a detected centroid
+    (exact color match or nearest-color fallback), same population the naive
+    equation already scores. Requires at least 4 correspondences for a
+    well-posed fit (6 unknowns, 2 equations per marker).
+    """
+    usable = [d for d in detections if d.get("centroid_px") is not None]
+    if len(usable) < 4:
+        return {
+            "available": False,
+            "reason": "fewer than 4 markers with a detected centroid ({0} available); "
+                      "an affine fit needs >=4 correspondences for 6 unknowns".format(len(usable)),
+            "markers_used": len(usable),
+        }
+    rows = [[d["expected_uv"][0], d["expected_uv"][1], 1.0] for d in usable]
+    bx = [d["centroid_px"][0] for d in usable]
+    by = [d["centroid_px"][1] for d in usable]
+    ata = [[0.0] * 3 for _ in range(3)]
+    atbx = [0.0] * 3
+    atby = [0.0] * 3
+    for row, tx, ty in zip(rows, bx, by):
+        for r in range(3):
+            for c in range(3):
+                ata[r][c] += row[r] * row[c]
+            atbx[r] += row[r] * tx
+            atby[r] += row[r] * ty
+    coeffs_x = _solve_3x3(ata, atbx)
+    coeffs_y = _solve_3x3(ata, atby)
+    if coeffs_x is None or coeffs_y is None:
+        return {"available": False, "reason": "normal-equation matrix is singular (markers collinear in UV space)", "markers_used": len(usable)}
+    a, b, c = coeffs_x
+    d_, e, f = coeffs_y
+    per_marker = []
+    magnitudes = []
+    for det in usable:
+        u, v = det["expected_uv"]
+        px = a * u + b * v + c
+        py = d_ * u + e * v + f
+        cx, cy = det["centroid_px"]
+        rx, ry = cx - px, cy - py
+        mag = math.sqrt(rx * rx + ry * ry)
+        magnitudes.append(mag)
+        per_marker.append({"name": det["name"], "predicted_px_affine_fit": [px, py], "residual_px": [rx, ry], "residual_magnitude_px": mag})
+    return {
+        "available": True,
+        "method": "least_squares_affine_6dof",
+        "form": "px_x = a*u + b*v + c; px_y = d*u + e*v + f",
+        "markers_used": len(usable),
+        "matrix": {"a": a, "b": b, "c": c, "d": d_, "e": e, "f": f},
+        "per_marker_residual_px": per_marker,
+        "max_residual_px": max(magnitudes) if magnitudes else None,
+    }
+
+
 def _analyze_image(path, markers, bounds):
     res = {"path": path, "file_size": os.path.getsize(path), "sha256": _sha256(path), "pillow_available": False}
     if importlib.util.find_spec("PIL") is None:
@@ -506,6 +595,7 @@ def _analyze_image(path, markers, bounds):
             residual = [centroid[0] - predicted[0], centroid[1] - predicted[1]]
         detections.append({"name": m["name"], "expected_uv": m["uv"], "rgb": m["rgb"], "found_exact": found, "centroid_px": centroid, "nearest_rgb": (list(best[2]) if best else None), "nearest_distance_sq": int(best_d) if best else None, "predicted_px_center_equation": predicted, "residual_px": residual})
     res["markers"] = detections
+    res["affine_fit_residual"] = _affine_fit(detections)
     res["marker_analysis_available"] = bool(detections)
     res["missing_markers"] = [d["name"] for d in detections if not d["found_exact"]]
     res["padding_px"] = {"left": cx0, "top": cy0, "right": (w - content[2] - 1) if content else 0, "bottom": (h - content[3] - 1) if content else 0}
