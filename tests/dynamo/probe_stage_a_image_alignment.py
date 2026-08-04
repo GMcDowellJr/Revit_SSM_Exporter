@@ -491,17 +491,24 @@ def _affine_fit(detections):
 
     This is a second, independently-computed residual alongside the existing
     naive-equation ``predicted_px_center_equation`` / ``residual_px`` fields --
-    it does not replace them. Uses every marker with a detected centroid
-    (exact color match or nearest-color fallback), same population the naive
-    equation already scores. Requires at least 4 correspondences for a
+    it does not replace them. Uses only markers with an exact color match
+    (``found_exact``). ``centroid_px`` is populated even on a miss, from the
+    single nearest-colored pixel found anywhere in the image (see
+    ``_analyze_image``'s ``best`` fallback) -- on a blank or markerless export
+    that fallback centroid is essentially an arbitrary background pixel, and
+    fitting against it would let the affine fit report a plausible-looking
+    near-zero residual that contradicts the sibling ``missing_markers``
+    evidence. Requires at least 4 exact-match correspondences for a
     well-posed fit (6 unknowns, 2 equations per marker).
     """
-    usable = [d for d in detections if d.get("centroid_px") is not None]
+    usable = [d for d in detections if d.get("found_exact") and d.get("centroid_px") is not None]
     if len(usable) < 4:
         return {
             "available": False,
-            "reason": "fewer than 4 markers with a detected centroid ({0} available); "
-                      "an affine fit needs >=4 correspondences for 6 unknowns".format(len(usable)),
+            "reason": "fewer than 4 markers with an exact color-match centroid ({0} available, "
+                      "{1} total detections including nearest-color fallbacks); an affine fit "
+                      "needs >=4 correspondences for 6 unknowns and fallback centroids are excluded "
+                      "because they are not reliable marker positions".format(len(usable), len(detections)),
             "markers_used": len(usable),
         }
     rows = [[d["expected_uv"][0], d["expected_uv"][1], 1.0] for d in usable]

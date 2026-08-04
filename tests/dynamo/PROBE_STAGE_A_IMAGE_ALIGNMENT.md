@@ -124,10 +124,16 @@ Alongside the naive-equation residual above, each image's analysis also
 reports `affine_fit_residual`: a second, independently-computed marker
 residual from a pure-Python least-squares affine fit (translation + rotation
 + non-uniform scale, 6 degrees of freedom: `px_x = a*u + b*v + c`, `px_y =
-d*u + e*v + f`) over every marker with a detected centroid (`expected_uv` ->
-`centroid_px`). It does not replace or modify the naive-equation fields. When
-fewer than 4 markers have a detected centroid, `available` is `false` with a
-reason instead of attempting an underdetermined fit. When available, it
+d*u + e*v + f`) over every marker with an *exact* color-match centroid
+(`found_exact`, `expected_uv` -> `centroid_px`). Nearest-color fallback
+centroids (`found_exact: false`) are excluded even though they carry a
+`centroid_px` value, because on a blank or markerless export that value is
+just the closest-matching background pixel, not a real marker position — a
+fit against it would produce a misleadingly plausible residual that
+contradicts the sibling `missing_markers` evidence. It does not replace or
+modify the naive-equation fields. When fewer than 4 markers have an
+exact-match centroid, `available` is `false` with a reason instead of
+attempting an underdetermined or unreliable fit. When available, it
 reports the fitted matrix, `per_marker_residual_px`, and `max_residual_px` in
 the same pixel units as the naive equation's `residual_px` so the two are
 directly comparable.
