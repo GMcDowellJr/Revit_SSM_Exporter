@@ -165,6 +165,13 @@ def write_diff(a: Path, b: Path, out: Path):
 
 
 
+
+def first_image_path(json_path, mode_result):
+    images = mode_result.get('images') or []
+    if not images:
+        return None
+    return resolve_path(json_path, images[0].get('path'))
+
 def repeatability(images):
     if len(images) < 2:
         return {'available': False, 'reason': 'fewer than two sequential exports'}
@@ -302,12 +309,12 @@ def analyze_json(json_path: Path) -> tuple[Path, str]:
                 m['sequential_export_repeatability'] = repeatability(m.get('images', []))
             m['classification']=classify_mode(m, ref_dims); summary.append(f"linework {m.get('mode')}: non_dark_gray={m['images'][0]['analysis'].get('non_dark_gray_foreground_pixel_count') if m.get('images') else None} unexpected={m['images'][0]['analysis'].get('unexpected_color_pixel_count') if m.get('images') else None}")
         data['difference_images']=[]
-        if len(data.get('modes',[]))>1:
-            refp=resolve_path(json_path, data['modes'][0].get('images',[{}])[0].get('path'))
-            for m in data['modes'][1:]:
-                p=resolve_path(json_path, m.get('images',[{}])[0].get('path'))
-                if refp and p and refp.exists() and p.exists():
-                    out=json_path.parent / f"{json_path.stem}.{m.get('mode')}_minus_{data['modes'][0].get('mode')}.diff.tiff"; data['difference_images'].append({'mode':m.get('mode'),'against':data['modes'][0].get('mode'),'diff':write_diff(refp,p,out)})
+        modes_with_images = [(m, first_image_path(json_path, m)) for m in data.get('modes', [])]
+        modes_with_images = [(m, p) for m, p in modes_with_images if p and p.exists()]
+        if len(modes_with_images)>1:
+            ref_mode, refp = modes_with_images[0]
+            for m, p in modes_with_images[1:]:
+                out=json_path.parent / f"{json_path.stem}.{m.get('mode')}_minus_{ref_mode.get('mode')}.diff.tiff"; data['difference_images'].append({'mode':m.get('mode'),'against':ref_mode.get('mode'),'diff':write_diff(refp,p,out)})
         data['ranked_modes']=rank_modes(data.get('modes',[]))
     elif 'alignment' in name or any(k in data for k in ('exports','calibration_markers')):
         markers=data.get('calibration_markers',[])
