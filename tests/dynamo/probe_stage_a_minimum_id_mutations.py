@@ -10,6 +10,7 @@ Dynamo inputs:
     IN[5] = target DPI for paper_space_dpi (default 150)
     IN[6] = fixed pixel width diagnostic control (default 1600)
     IN[7] = optional maximum pixel dimension cap
+    IN[8] = optional repository root containing vop_interwoven and tests/dynamo
 
 This probe intentionally does not modify production Stage A code.  It reuses the
 same paper-space resolution contract as the revised Stage A probes and runs each
@@ -27,77 +28,119 @@ import time
 import traceback
 import re
 
-try:
-    from tests.dynamo.resolution_contract import (
-        apply_resolution_cap,
-        calculate_paper_space_resolution,
-        choose_resolution_bounds,
-        resolution_report_for_accepted_width,
-        round_half_up_positive,
-    )
-except Exception:
-    # Dynamo CPython can execute pasted node code without defining __file__.
-    # Search stable anchors before falling back to the adjacent-module import
-    # path used during normal repository test execution.
-    _seen_resolution_paths = set()
-    _anchors = []
-    for _env_name in ("REVIT_SSM_EXPORTER_ROOT", "VOP_REPO_ROOT"):
+_RESOLUTION_CONTRACT = None
+
+
+def _candidate_roots(explicit_repo_root=None, output_dir=None):
+    """Yield possible repository roots, preferring explicit Dynamo IN[8]."""
+    seen = set()
+
+    def emit(path):
+        if not path:
+            return
         try:
-            _anchors.append(os.environ.get(_env_name))
+            path = os.path.abspath(os.path.expanduser(str(path)))
+        except Exception:
+            return
+        if os.path.isfile(path):
+            path = os.path.dirname(path)
+        if path in seen:
+            return
+        seen.add(path)
+        yield path
+
+    anchors = [explicit_repo_root]
+    for env_name in ("REVIT_SSM_EXPORTER_ROOT", "VOP_REPO_ROOT"):
+        try:
+            anchors.append(os.environ.get(env_name))
         except Exception:
             pass
+    anchors.append(output_dir)
     try:
-        _anchors.append(os.getcwd())
+        anchors.append(os.getcwd())
     except Exception:
         pass
     try:
-        _anchors.append(os.path.dirname(os.path.abspath(__file__)))
+        anchors.append(os.path.dirname(os.path.abspath(__file__)))
     except Exception:
         # Expected in Dynamo pasted-node execution.
         pass
-    _home = os.path.expanduser("~")
-    _anchors.extend([
-        os.path.join(_home, "Documents", "Revit_SSM_Exporter"),
-        os.path.join(_home, "Documents", "GitHub", "Revit_SSM_Exporter"),
-        os.path.join(_home, "source", "repos", "Revit_SSM_Exporter"),
-        os.path.join(_home, "Revit_SSM_Exporter"),
+    home = os.path.expanduser("~")
+    anchors.extend([
+        os.path.join(home, "Documents", "Revit_SSM_Exporter"),
+        os.path.join(home, "Documents", "GitHub", "Revit_SSM_Exporter"),
+        os.path.join(home, "source", "repos", "Revit_SSM_Exporter"),
+        os.path.join(home, "Revit_SSM_Exporter"),
         "/workspace/Revit_SSM_Exporter",
     ])
-    for _anchor in _anchors:
-        if not _anchor:
-            continue
-        try:
-            _cur = os.path.abspath(os.path.expanduser(str(_anchor)))
-        except Exception:
-            continue
-        if os.path.isfile(_cur):
-            _cur = os.path.dirname(_cur)
-        for _ in range(8):
-            for _candidate in (_cur, os.path.join(_cur, "tests", "dynamo")):
-                if _candidate and _candidate not in _seen_resolution_paths:
-                    _seen_resolution_paths.add(_candidate)
-                    if os.path.isdir(_candidate) and _candidate not in sys.path:
-                        sys.path.insert(0, _candidate)
-            _parent = os.path.dirname(_cur)
-            if _parent == _cur:
-                break
-            _cur = _parent
+    for anchor in anchors:
+        for root in emit(anchor):
+            yield root
+            cur = root
+            for _ in range(8):
+                parent = os.path.dirname(cur)
+                if parent == cur:
+                    break
+                cur = parent
+                for out in emit(cur):
+                    yield out
+
+
+def _add_repo_root_to_path(repo_root=None, output_dir=None):
+    if repo_root:
+        explicit = os.path.abspath(os.path.expanduser(str(repo_root)))
+        has_pkg = os.path.isdir(os.path.join(explicit, "vop_interwoven"))
+        has_contract = os.path.isfile(os.path.join(explicit, "tests", "dynamo", "resolution_contract.py"))
+        if not (has_pkg or has_contract):
+            raise RuntimeError("IN[8] repository root does not contain vop_interwoven or tests/dynamo/resolution_contract.py: {0}".format(repo_root))
+        for candidate in (explicit, os.path.join(explicit, "tests", "dynamo")):
+            if os.path.isdir(candidate) and candidate not in sys.path:
+                sys.path.insert(0, candidate)
+        return explicit
+    checked = []
+    for root in _candidate_roots(None, output_dir):
+        checked.append(root)
+        has_pkg = os.path.isdir(os.path.join(root, "vop_interwoven"))
+        has_contract = os.path.isfile(os.path.join(root, "tests", "dynamo", "resolution_contract.py"))
+        if has_pkg or has_contract:
+            for candidate in (root, os.path.join(root, "tests", "dynamo")):
+                if os.path.isdir(candidate) and candidate not in sys.path:
+                    sys.path.insert(0, candidate)
+            return root
+    return None
+
+
+def _load_resolution_contract(repo_root=None, output_dir=None):
+    global _RESOLUTION_CONTRACT
+    if _RESOLUTION_CONTRACT is not None:
+        return _RESOLUTION_CONTRACT
+    _add_repo_root_to_path(repo_root, output_dir)
     try:
-        from tests.dynamo.resolution_contract import (
-            apply_resolution_cap,
-            calculate_paper_space_resolution,
-            choose_resolution_bounds,
-            resolution_report_for_accepted_width,
-            round_half_up_positive,
-        )
+        import tests.dynamo.resolution_contract as contract
     except Exception:
-        from resolution_contract import (  # type: ignore
-            apply_resolution_cap,
-            calculate_paper_space_resolution,
-            choose_resolution_bounds,
-            resolution_report_for_accepted_width,
-            round_half_up_positive,
-        )
+        import resolution_contract as contract  # type: ignore
+    _RESOLUTION_CONTRACT = contract
+    return contract
+
+
+def round_half_up_positive(value):
+    return _load_resolution_contract().round_half_up_positive(value)
+
+
+def calculate_paper_space_resolution(*args, **kwargs):
+    return _load_resolution_contract().calculate_paper_space_resolution(*args, **kwargs)
+
+
+def apply_resolution_cap(*args, **kwargs):
+    return _load_resolution_contract().apply_resolution_cap(*args, **kwargs)
+
+
+def choose_resolution_bounds(*args, **kwargs):
+    return _load_resolution_contract().choose_resolution_bounds(*args, **kwargs)
+
+
+def resolution_report_for_accepted_width(*args, **kwargs):
+    return _load_resolution_contract().resolution_report_for_accepted_width(*args, **kwargs)
 
 PROBE_NAME = "stage_a_minimum_id_mutations"
 PROBE_VERSION = "2026-08-05.1"
@@ -222,49 +265,24 @@ def _safe_name(value):
     return re.sub(r"[^A-Za-z0-9_. -]+", "_", text).strip().replace(" ", "_") or "view"
 
 
-def _candidate_repo_roots(output_dir):
-    roots = []
-    for mod_name in ("vop_interwoven",):
-        mod = sys.modules.get(mod_name)
-        path = getattr(mod, "__file__", None)
-        if path:
-            roots.append(os.path.dirname(os.path.dirname(os.path.abspath(path))))
-    for env in ("REVIT_SSM_EXPORTER_ROOT", "VOP_REPO_ROOT"):
-        if os.environ.get(env):
-            roots.append(os.environ[env])
-    for seed in (output_dir, os.getcwd()):
-        if not seed:
-            continue
-        cur = os.path.abspath(seed)
-        while cur and cur != os.path.dirname(cur):
-            roots.append(cur); cur = os.path.dirname(cur)
-        roots.append(cur)
-    roots.extend(["/workspace/Revit_SSM_Exporter", os.path.expanduser("~/Revit_SSM_Exporter")])
-    seen = []
-    for root in roots:
-        if root and root not in seen:
-            seen.append(root)
-    return seen
+def _candidate_repo_roots(output_dir=None, repo_root=None):
+    return list(_candidate_roots(repo_root, output_dir))
 
 
-def _ensure_repo_import_path(output_dir):
+def _ensure_repo_import_path(output_dir=None, repo_root=None):
     try:
         import vop_interwoven  # noqa: F401
         return None
     except Exception:
         pass
-    checked = []
-    for root in _candidate_repo_roots(output_dir):
-        checked.append(root)
-        if os.path.isdir(os.path.join(root, "vop_interwoven")):
-            if root not in sys.path:
-                sys.path.insert(0, root)
-            try:
-                import vop_interwoven  # noqa: F401
-                return root
-            except Exception:
-                continue
-    raise RuntimeError("Could not locate Revit_SSM_Exporter repo root for vop_interwoven imports. Set REVIT_SSM_EXPORTER_ROOT. Checked: {0}".format(checked))
+    root = _add_repo_root_to_path(repo_root, output_dir)
+    try:
+        import vop_interwoven  # noqa: F401
+        return root
+    except Exception:
+        if repo_root:
+            raise RuntimeError("IN[8] repository root was added to sys.path but vop_interwoven could not be imported: {0}".format(repo_root))
+        raise RuntimeError("Could not locate Revit_SSM_Exporter repo root for vop_interwoven imports. Provide IN[8] as the repository root containing vop_interwoven.")
 
 
 def _current_resolution_bounds(view):
@@ -502,11 +520,11 @@ def _active_crop_bounds(view):
 
 
 def _collect_assignment_set(doc, view, max_count):
-    from vop_interwoven.config import get_config
+    from vop_interwoven.config import Config
     from vop_interwoven.core.raster import ViewRaster
     from vop_interwoven.revit.collection import collect_view_elements, expand_host_link_import_model_elements
     from vop_interwoven.color_id_buffer import resolve_all
-    cfg = get_config()
+    cfg = Config()
     raster = ViewRaster(10, 10, 1.0, (0.0, 0.0, 1.0, 1.0), cfg)
     elements = collect_view_elements(doc, view, raster, diag=None, cfg=cfg)
     expanded = expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None, elem_cache=None)
@@ -1009,14 +1027,15 @@ def _select_variants(selection, stage1, stage2):
     return [v for v in stage1 + stage2 if v["name"] in wanted]
 
 
-def run(raw_view, output_dir, max_elements=None, selection="all", resolution_policy=DEFAULT_RESOLUTION_POLICY, target_dpi=DEFAULT_TARGET_DPI, fixed_pixel_width=DEFAULT_FIXED_PIXEL_WIDTH, max_pixel_dimension=DEFAULT_MAX_PIXEL_DIMENSION):
+def run(raw_view, output_dir, max_elements=None, selection="all", resolution_policy=DEFAULT_RESOLUTION_POLICY, target_dpi=DEFAULT_TARGET_DPI, fixed_pixel_width=DEFAULT_FIXED_PIXEL_WIDTH, max_pixel_dimension=DEFAULT_MAX_PIXEL_DIMENSION, repo_root=None):
     view = getattr(raw_view, "InternalElement", raw_view)
     doc = getattr(view, "Document", None)
     if doc is None:
         raise RuntimeError("IN[0] must be a Revit view")
     out_dir = str(output_dir)
     if not os.path.isdir(out_dir): os.makedirs(out_dir)
-    _ensure_repo_import_path(out_dir)
+    _ensure_repo_import_path(out_dir, repo_root)
+    _load_resolution_contract(repo_root, out_dir)
     base = "{0}_{1}".format(_safe_name(getattr(view, "Name", "view")), _safe_int_id(view.Id))
     assigned_ids, counts = _collect_assignment_set(doc, view, max_elements)
     palette, step = _palette(len(assigned_ids))
@@ -1025,7 +1044,7 @@ def run(raw_view, output_dir, max_elements=None, selection="all", resolution_pol
     if chosen_bounds is None:
         raise ValueError("paper-space/fixed resolution requires original model crop or resolved model-only bounds; inactive crop without resolved bounds is INCONCLUSIVE")
     bd = _bounds_dict(chosen_bounds)
-    report = {"probe": {"name": PROBE_NAME, "version": PROBE_VERSION, "target": "Revit 2025 / Dynamo 3.3 CPython3"}, "inputs": {"view_id": _safe_int_id(view.Id), "view_name": getattr(view, "Name", None), "output_directory": out_dir, "maximum_host_elements_to_color": max_elements, "variant_selection": selection, "resolution_policy": resolution_policy, "target_dpi": target_dpi, "fixed_pixel_width": fixed_pixel_width, "max_pixel_dimension": max_pixel_dimension}, "mutation_inventory": MUTATION_CATALOG, "assignment_set": {"frozen": True, "palette_step": step, "counts": counts, "assigned": frozen_assignment}, "bounds": {"bounds_source": bounds_source, "bounds_uv": bd}, "variants": [], "comparison_contract": {"assignment_set_frozen": True, "recollect_primary_experiment": False, "same_bounds_required": True, "same_resolution_required": True}, "recommendation": {"recommended_minimum": {"mutations": [], "fidelity_status": "INCONCLUSIVE", "semantic_preservation_status": "INCONCLUSIVE", "resolution_status": "INCONCLUSIVE", "rollback_status": "FAIL"}, "required_for_color_fidelity": [], "required_for_model_only_scope": [], "prerequisite_only": [], "unnecessary_in_tested_view": [], "semantic_diagnostics_not_for_default": list(SEMANTIC_DIAGNOSTICS), "blocked_or_unsupported": [], "view_types_still_required": ["floor_plan_active_crop", "floor_plan_inactive_crop", "rcp", "section", "elevation", "detail_view"]}}
+    report = {"probe": {"name": PROBE_NAME, "version": PROBE_VERSION, "target": "Revit 2025 / Dynamo 3.3 CPython3"}, "inputs": {"view_id": _safe_int_id(view.Id), "view_name": getattr(view, "Name", None), "output_directory": out_dir, "maximum_host_elements_to_color": max_elements, "variant_selection": selection, "resolution_policy": resolution_policy, "target_dpi": target_dpi, "fixed_pixel_width": fixed_pixel_width, "max_pixel_dimension": max_pixel_dimension, "repository_root": repo_root}, "mutation_inventory": MUTATION_CATALOG, "assignment_set": {"frozen": True, "palette_step": step, "counts": counts, "assigned": frozen_assignment}, "bounds": {"bounds_source": bounds_source, "bounds_uv": bd}, "variants": [], "comparison_contract": {"assignment_set_frozen": True, "recollect_primary_experiment": False, "same_bounds_required": True, "same_resolution_required": True}, "recommendation": {"recommended_minimum": {"mutations": [], "fidelity_status": "INCONCLUSIVE", "semantic_preservation_status": "INCONCLUSIVE", "resolution_status": "INCONCLUSIVE", "rollback_status": "FAIL"}, "required_for_color_fidelity": [], "required_for_model_only_scope": [], "prerequisite_only": [], "unnecessary_in_tested_view": [], "semantic_diagnostics_not_for_default": list(SEMANTIC_DIAGNOSTICS), "blocked_or_unsupported": [], "view_types_still_required": ["floor_plan_active_crop", "floor_plan_inactive_crop", "rcp", "section", "elevation", "detail_view"]}}
     stage1 = generate_stage1_variants(flat_colors_supported=True)
     baseline_mutations = ("detach_template", "hide_annotation_categories", "smooth_edges_off", "display_style_flat_colors")
     stage2 = generate_stage2_variants(baseline_mutations)
@@ -1052,4 +1071,5 @@ if "IN" in globals():
     target_dpi = IN[5] if len(IN) > 5 else DEFAULT_TARGET_DPI
     fixed_pixel_width = IN[6] if len(IN) > 6 else DEFAULT_FIXED_PIXEL_WIDTH
     max_pixel_dimension = IN[7] if len(IN) > 7 else DEFAULT_MAX_PIXEL_DIMENSION
-    OUT = run(raw_view, output_dir, max_elements, selection, resolution_policy, target_dpi, fixed_pixel_width, max_pixel_dimension)
+    repo_root = IN[8] if len(IN) > 8 else None
+    OUT = run(raw_view, output_dir, max_elements, selection, resolution_policy, target_dpi, fixed_pixel_width, max_pixel_dimension, repo_root)

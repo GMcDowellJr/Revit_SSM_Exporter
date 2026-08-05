@@ -19,16 +19,19 @@ IN[4] = resolution policy: "paper_space_dpi" (default), "fixed_pixel_width", or 
 IN[5] = target DPI for paper_space_dpi; default 150
 IN[6] = fixed pixel width diagnostic control; default 1600
 IN[7] = optional maximum pixel dimension cap
+IN[8] = optional repository root containing `vop_interwoven` and `tests/dynamo`
 ```
 
 Use `paper_space_dpi` at 150 DPI as the authoritative production comparison.
 Use `both` only when you also want the fixed 1600 px diagnostic control. The
 probe is safe to paste directly into a Dynamo Python node: its import bootstrap
-does not require Dynamo to define `__file__`.
+does not require Dynamo to define `__file__`. If Dynamo cannot import the repo
+from its current search paths, wire `IN[8]` to the repository root folder rather
+than relying on implicit path discovery.
 
 ## Resolution contract reused
 
-The probe imports `tests.dynamo.resolution_contract` and uses the same
+After the optional `IN[8]` repository root is placed on `sys.path`, the probe imports `tests.dynamo.resolution_contract` and uses the same
 `calculate_paper_space_resolution()`, `apply_resolution_cap()`,
 `resolution_report_for_accepted_width()`, and `choose_resolution_bounds()` helper
 contract used by the revised Stage A probe tests.  It does not implement a

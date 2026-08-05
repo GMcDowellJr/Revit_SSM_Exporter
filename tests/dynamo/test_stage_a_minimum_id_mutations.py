@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from tests.dynamo.probe_stage_a_minimum_id_mutations import (
+    _add_repo_root_to_path,
     MUTATION_CATALOG,
     STATUS_APPLIED,
     STATUS_FAILED,
@@ -95,14 +96,19 @@ def test_json_and_csv_serialization(tmp_path):
 def test_resolution_contract_fallback_does_not_require_dunder_file(monkeypatch):
     source = Path("tests/dynamo/probe_stage_a_minimum_id_mutations.py").read_text(encoding="utf-8")
     prefix = source.split("PROBE_NAME", 1)[0]
-    real_import = builtins.__import__
-
-    def blocked_tests_import(name, *args, **kwargs):
-        if name == "tests.dynamo.resolution_contract":
-            raise ImportError("simulate Dynamo without package import")
-        return real_import(name, *args, **kwargs)
-
     namespace = {"__builtins__": builtins.__dict__, "__name__": "dynamo_string_probe"}
-    monkeypatch.setattr(builtins, "__import__", blocked_tests_import)
     exec(compile(prefix, "<string>", "exec"), namespace)
+    assert "__file__" not in namespace
+    assert namespace["_add_repo_root_to_path"](str(Path.cwd()), None) == str(Path.cwd())
     assert namespace["round_half_up_positive"](1.5) == 2
+
+
+def test_explicit_bad_repo_root_is_rejected(tmp_path):
+    bad_root = tmp_path / "not_repo"
+    bad_root.mkdir()
+    try:
+        _add_repo_root_to_path(str(bad_root), None)
+    except RuntimeError as ex:
+        assert "IN[8] repository root" in str(ex)
+    else:
+        raise AssertionError("bad explicit repo root should fail")
