@@ -18,6 +18,7 @@ from __future__ import print_function
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import re
 import sys
@@ -26,7 +27,165 @@ import traceback
 
 PROBE_NAME = "stage_a_external_sources"
 PROBE_VERSION = "2026-07-24.1"
-REQUESTED_PIXEL_SIZE = 1600
+DEFAULT_FIXED_PIXEL_WIDTH = 1600
+DEFAULT_RESOLUTION_POLICY = "paper_space_dpi"
+DEFAULT_TARGET_DPI = 150
+DEFAULT_FIXED_PIXEL_WIDTH = 1600
+DEFAULT_MAX_PIXEL_DIMENSION = None
+
+def round_half_up_positive(value):
+    value = float(value)
+    if value < 0:
+        raise ValueError("round_half_up_positive requires a nonnegative value")
+    return int(math.floor(value + 0.5))
+
+
+def _positive_float(value, name, allow_none=False):
+    if value is None:
+        if allow_none:
+            return None
+        raise ValueError("{0} is required".format(name))
+    number = float(value)
+    if number <= 0:
+        raise ValueError("{0} must be positive".format(name))
+    return number
+
+
+def _parse_resolution_policy(value):
+    text = str(value or "paper_space_dpi").strip().lower()
+    if text not in ("fixed_pixel_width", "paper_space_dpi", "both"):
+        raise ValueError("Unsupported resolution_policy '{0}'".format(value))
+    return text
+
+
+def _parse_dpi_values(value):
+    if value is None or value == "":
+        return [150.0]
+    if isinstance(value, (list, tuple)):
+        raw = value
+    else:
+        raw = str(value).replace(";", ",").split(",")
+    values = []
+    for item in raw:
+        if item is None or str(item).strip() == "":
+            continue
+        values.append(_positive_float(item, "target_dpi"))
+    return values or [150.0]
+
+
+def _parse_optional_cap(value):
+    if value is None or value == "":
+        return None
+    return int(round_half_up_positive(_positive_float(value, "max_pixel_dimension")))
+
+
+def _resolution_runs(policy, dpi_value, fixed_width, max_dimension):
+    policy = _parse_resolution_policy(policy)
+    fixed = int(round_half_up_positive(_positive_float(fixed_width if fixed_width is not None else 1600, "fixed_pixel_width")))
+    cap = _parse_optional_cap(max_dimension)
+    runs = []
+    if policy in ("paper_space_dpi", "both"):
+        for dpi in _parse_dpi_values(dpi_value):
+            runs.append({"policy": "paper_space_dpi", "target_dpi": float(dpi), "fixed_pixel_width": fixed, "max_pixel_dimension": cap})
+    if policy in ("fixed_pixel_width", "both"):
+        runs.append({"policy": "fixed_pixel_width", "target_dpi": None, "fixed_pixel_width": fixed, "max_pixel_dimension": cap})
+    return runs
+
+
+def _resolution_suffix(run):
+    if run.get("policy") == "fixed_pixel_width":
+        return "fixed_{0}".format(int(run.get("fixed_pixel_width")))
+    dpi = run.get("target_dpi")
+    return "dpi_{0}".format(int(dpi) if abs(float(dpi) - int(float(dpi))) < 1e-9 else str(dpi).replace(".", "p"))
+
+
+def calculate_paper_space_resolution(model_width_ft, model_height_ft, view_scale, target_dpi, bounds_source):
+    model_width_ft = _positive_float(model_width_ft, "model_width_ft")
+    model_height_ft = _positive_float(model_height_ft, "model_height_ft")
+    view_scale = int(round_half_up_positive(_positive_float(view_scale, "view_scale")))
+    target_dpi = _positive_float(target_dpi, "target_dpi")
+    paper_width_in = model_width_ft * 12.0 / float(view_scale)
+    requested_width_px = round_half_up_positive(paper_width_in * target_dpi)
+    pixels_per_model_foot = 12.0 * target_dpi / float(view_scale)
+    predicted_height_px = round_half_up_positive(model_height_ft * pixels_per_model_foot)
+    return {"policy": "paper_space_dpi", "target_dpi": float(target_dpi), "view_scale": view_scale, "bounds_source": str(bounds_source), "model_width_ft": float(model_width_ft), "model_height_ft": float(model_height_ft), "paper_width_in": paper_width_in, "requested_width_px": int(requested_width_px), "accepted_width_px": int(requested_width_px), "predicted_height_px": int(predicted_height_px), "target_pixels_per_model_foot": pixels_per_model_foot, "accepted_pixels_per_model_foot": pixels_per_model_foot, "effective_dpi": float(target_dpi), "target_model_inches_per_pixel": 12.0 / pixels_per_model_foot, "actual_model_inches_per_pixel": 12.0 / pixels_per_model_foot, "max_pixel_dimension": None, "capped": False}
+
+
+def apply_resolution_cap(report, max_pixel_dimension):
+    cap = _parse_optional_cap(max_pixel_dimension)
+    report = dict(report)
+    report["max_pixel_dimension"] = cap
+    if cap is None:
+        return report
+    width = int(report["requested_width_px"])
+    height = int(report["predicted_height_px"])
+    factor = min(1.0, float(cap) / float(width), float(cap) / float(height))
+    if factor < 1.0:
+        accepted = max(1, round_half_up_positive(width * factor))
+        report["accepted_width_px"] = int(accepted)
+        report["predicted_height_px"] = max(1, round_half_up_positive(height * factor))
+        report["accepted_pixels_per_model_foot"] = float(accepted) / float(report["model_width_ft"])
+        report["effective_dpi"] = report["accepted_pixels_per_model_foot"] * float(report["view_scale"]) / 12.0
+        report["actual_model_inches_per_pixel"] = 12.0 / report["accepted_pixels_per_model_foot"]
+        report["capped"] = True
+    return report
+
+
+def build_resolution_report(policy, model_width_ft, model_height_ft, view_scale, target_dpi, bounds_source, fixed_pixel_width, max_pixel_dimension=None):
+    if policy == "fixed_pixel_width":
+        model_width_ft = _positive_float(model_width_ft, "model_width_ft")
+        model_height_ft = _positive_float(model_height_ft, "model_height_ft")
+        fixed = int(round_half_up_positive(_positive_float(fixed_pixel_width, "fixed_pixel_width")))
+        ppf = float(fixed) / model_width_ft
+        return {"policy": "fixed_pixel_width", "target_dpi": None, "view_scale": int(view_scale) if view_scale else None, "bounds_source": str(bounds_source), "model_width_ft": float(model_width_ft), "model_height_ft": float(model_height_ft), "paper_width_in": None, "requested_width_px": fixed, "accepted_width_px": fixed, "predicted_height_px": round_half_up_positive(model_height_ft * ppf), "target_pixels_per_model_foot": ppf, "accepted_pixels_per_model_foot": ppf, "effective_dpi": (ppf * float(view_scale) / 12.0) if view_scale else None, "target_model_inches_per_pixel": 12.0 / ppf, "actual_model_inches_per_pixel": 12.0 / ppf, "max_pixel_dimension": None, "capped": False}
+    return apply_resolution_cap(calculate_paper_space_resolution(model_width_ft, model_height_ft, view_scale, target_dpi, bounds_source), max_pixel_dimension)
+
+
+def _actual_tiff_dimensions(path):
+    try:
+        from PIL import Image
+        with Image.open(path) as img:
+            return int(img.size[0]), int(img.size[1])
+    except Exception:
+        return None, None
+
+
+def _finalize_resolution_report(report, actual_width, actual_height):
+    report = dict(report)
+    report["actual_width_px"] = int(actual_width) if actual_width else None
+    report["actual_height_px"] = int(actual_height) if actual_height else None
+    report["dimension_discrepancy"] = {"width_px": (int(actual_width) - int(report["accepted_width_px"])) if actual_width else None, "height_px": (int(actual_height) - int(report["predicted_height_px"])) if actual_height else None}
+    return report
+
+
+def _resolution_report_for_accepted_width(report, accepted_width):
+    report = dict(report)
+    accepted_width = int(round_half_up_positive(_positive_float(accepted_width, "accepted_width_px")))
+    model_width = _positive_float(report.get("model_width_ft"), "model_width_ft")
+    model_height = _positive_float(report.get("model_height_ft"), "model_height_ft")
+    report["accepted_width_px"] = accepted_width
+    report["accepted_pixels_per_model_foot"] = float(accepted_width) / model_width
+    report["predicted_height_px"] = round_half_up_positive(model_height * report["accepted_pixels_per_model_foot"])
+    view_scale = report.get("view_scale")
+    report["effective_dpi"] = (report["accepted_pixels_per_model_foot"] * float(view_scale) / 12.0) if view_scale else None
+    report["actual_model_inches_per_pixel"] = 12.0 / report["accepted_pixels_per_model_foot"]
+    if accepted_width != int(report.get("requested_width_px", accepted_width)):
+        report["pixel_size_backoff"] = True
+    return report
+
+
+def calculate_canvas_placement(model_bounds, canvas_bounds, accepted_pixels_per_model_foot):
+    if not model_bounds or not canvas_bounds:
+        return {"available": False, "reason": "missing model or canvas bounds"}
+    mb = _bounds_tuple(model_bounds); cb = _bounds_tuple(canvas_bounds)
+    density = _positive_float(accepted_pixels_per_model_foot, "accepted_pixels_per_model_foot")
+    canvas_w = (cb[2] - cb[0]) * density; canvas_h = (cb[3] - cb[1]) * density
+    off_x = (mb[0] - cb[0]) * density; off_y = (cb[3] - mb[3]) * density
+    vals = [canvas_w, canvas_h, off_x, off_y]
+    rounded = [round_half_up_positive(v) for v in vals]
+    errors = [abs(vals[i] - rounded[i]) for i in range(len(vals))]
+    return {"available": True, "canvas_width_px": rounded[0], "canvas_height_px": rounded[1], "model_offset_px": [rounded[2], rounded[3]], "model_offset_float_px": [off_x, off_y], "model_offset_fractional_px": [off_x - math.floor(off_x), off_y - math.floor(off_y)], "rounding_error_px": {"canvas_width": errors[0], "canvas_height": errors[1], "offset_x": errors[2], "offset_y": errors[3], "max": max(errors)}, "rounding_error_model_units": max(errors) / density, "lossless_padding_possible": max(errors) < 1e-9, "resampling_required": max(errors) >= 1e-9}
+
 VARIANTS = [
     "host_reference_coloring",
     "linked_per_element_linkelementid_coloring",
@@ -35,6 +194,62 @@ VARIANTS = [
     "mixed_host_link_dwg_export",
 ]
 
+
+
+
+def _bounds_tuple(b):
+    if b is None:
+        return None
+    if isinstance(b, dict):
+        return (float(b["min_u"]), float(b["min_v"]), float(b["max_u"]), float(b["max_v"]))
+    try:
+        return (float(b[0]), float(b[1]), float(b[2]), float(b[3]))
+    except Exception:
+        try:
+            return (float(b.xmin), float(b.ymin), float(b.xmax), float(b.ymax))
+        except Exception:
+            return (float(b.Min.X), float(b.Min.Y), float(b.Max.X), float(b.Max.Y))
+
+
+def _active_crop_bounds(view):
+    try:
+        if bool(getattr(view, "CropBoxActive", False)) and getattr(view, "CropBox", None) is not None:
+            b = view.CropBox
+            return (float(b.Min.X), float(b.Min.Y), float(b.Max.X), float(b.Max.Y)), "active_model_crop"
+    except Exception:
+        pass
+    return None, "INCONCLUSIVE"
+
+
+def _current_resolution_bounds(view):
+    bounds, source = _active_crop_bounds(view)
+    if bounds is not None:
+        return bounds, source
+    try:
+        doc = _doc()
+        from vop_interwoven.config import Config
+        from vop_interwoven.revit.view_basis import make_view_basis, resolve_view_bounds
+        cfg = Config()
+        if not hasattr(cfg, "cell_size_paper_in") or cfg.cell_size_paper_in is None:
+            cfg.cell_size_paper_in = 0.125
+        scale = _positive_float(getattr(view, "Scale", None), "view_scale")
+        basis = make_view_basis(view)
+        cell_size_ft = (float(cfg.cell_size_paper_in) * scale) / 12.0
+        resolved = resolve_view_bounds(view, policy={"doc": doc, "basis": basis, "cfg": cfg, "buffer_ft": float(getattr(cfg, "bounds_buffer_ft", 0.0) or 0.0), "cell_size_ft": cell_size_ft, "max_W": getattr(cfg, "max_grid_cells_width", None), "max_H": getattr(cfg, "max_grid_cells_height", None)})
+        model_bounds = resolved.get("model_bounds_uv") or resolved.get("bounds_uv")
+        if model_bounds is not None:
+            return _bounds_tuple(model_bounds), "resolved_model_bounds" if resolved.get("model_bounds_uv") is not None else "canvas_bounds"
+    except Exception:
+        pass
+    return None, "INCONCLUSIVE"
+
+
+def _resolution_from_view(view, run):
+    bounds, source = _current_resolution_bounds(view)
+    if bounds is None:
+        raise ValueError("paper-space/fixed resolution requires defensible model bounds; inactive crop without resolved model-only bounds is INCONCLUSIVE")
+    w = bounds[2] - bounds[0]; h = bounds[3] - bounds[1]
+    return build_resolution_report(run.get("policy"), w, h, getattr(view, "Scale", None), run.get("target_dpi"), source, run.get("fixed_pixel_width"), run.get("max_pixel_dimension"))
 
 def _safe_name(value):
     text = str(value or "view")
@@ -400,7 +615,7 @@ def _set_pixel_size(opts, requested):
             candidate = max(16, candidate // 2)
 
 
-def _export_tiff(doc, view, path):
+def _export_tiff(doc, view, path, requested_pixel_size):
     from Autodesk.Revit.DB import ImageExportOptions, ExportRange, ZoomFitType, FitDirectionType, ElementId, ImageFileType
     import System.Collections.Generic as SCG
     out_dir = os.path.dirname(path)
@@ -413,7 +628,7 @@ def _export_tiff(doc, view, path):
     opts.SetViewsAndSheets(ids)
     opts.ZoomType = ZoomFitType.FitToPage
     opts.FitDirection = FitDirectionType.Horizontal
-    accepted = _set_pixel_size(opts, REQUESTED_PIXEL_SIZE)
+    accepted = _set_pixel_size(opts, requested_pixel_size)
     opts.FilePath = os.path.join(out_dir, "_vop_external_sources_tmp")
     tiff = getattr(ImageFileType, "TIFF", getattr(ImageFileType, "TIF", None))
     if tiff is None:
@@ -515,7 +730,7 @@ def _source_evidence_status(variant, assignments, analysis, hidden_link_fallback
         "missing_sources": missing_sources,
     }
 
-def _run_variant(doc, view, out_dir, base, variant, items):
+def _run_variant(doc, view, out_dir, base, variant, items, resolution_report, resolution_suffix):
     from Autodesk.Revit.DB import Transaction, TransactionGroup, TransactionStatus
     report = {"variant": variant, "transaction_group": {}, "state": {}, "assignments": [], "paint_diagnostics": [], "hidden_link_fallback": [], "export": {}, "image_analysis": {}, "classification": {}, "exceptions": [], "conclusion": "INCONCLUSIVE"}
     group = None
@@ -547,10 +762,12 @@ def _run_variant(doc, view, out_dir, base, variant, items):
                 report["exceptions"].append(_exception_record("child_rollback", ex))
             raise
         report["transaction_group"]["no_child_transaction_open_at_export"] = not bool(doc.IsModifiable)
-        path = os.path.join(out_dir, "{0}.{1}.external_sources.tiff".format(base, variant))
+        path = os.path.join(out_dir, "{0}.{1}.{2}.external_sources.tiff".format(base, resolution_suffix, variant))
         t0 = time.time()
-        exported, accepted = _export_tiff(doc, view, path)
-        report["export"] = {"path": exported, "accepted_pixel_size": accepted, "timing_ms": round((time.time() - t0) * 1000.0, 3)}
+        exported, accepted = _export_tiff(doc, view, path, resolution_report["accepted_width_px"])
+        actual_w, actual_h = _actual_tiff_dimensions(exported)
+        resolution = _finalize_resolution_report(_resolution_report_for_accepted_width(resolution_report, accepted), actual_w, actual_h)
+        report["export"] = {"path": exported, "accepted_pixel_size": accepted, "requested_pixel_size": resolution_report["requested_width_px"], "timing_ms": round((time.time() - t0) * 1000.0, 3), "resolution": resolution}
         report["image_analysis"] = _analyze(exported, report["assignments"])
         report["classification"] = _classify_variant(variant, {"assignments": report["assignments"], "hidden_link_fallback_ids": report["hidden_link_fallback"]}, report["image_analysis"])
     except Exception as ex:
@@ -577,7 +794,7 @@ def _run_variant(doc, view, out_dir, base, variant, items):
     return report
 
 
-def run(raw_view, output_dir, raw_links, raw_dwgs):
+def run(raw_view, output_dir, raw_links, raw_dwgs, resolution_policy=DEFAULT_RESOLUTION_POLICY, target_dpi=DEFAULT_TARGET_DPI, fixed_pixel_width=DEFAULT_FIXED_PIXEL_WIDTH, max_pixel_dimension=DEFAULT_MAX_PIXEL_DIMENSION):
     out_dir = os.path.abspath(str(output_dir or os.getcwd()))
     _ensure_repo_import_path(out_dir)
     _ensure_revit_api_reference()
@@ -593,13 +810,20 @@ def run(raw_view, output_dir, raw_links, raw_dwgs):
     if not os.path.isdir(probe_dir):
         os.makedirs(probe_dir)
     base = "{0}_{1}".format(_safe_name(getattr(view, "Name", "view")), _safe_int_id(view.Id))
-    report = {"probe": {"name": PROBE_NAME, "version": PROBE_VERSION, "target": "Revit 2025 / Dynamo 3.3 CPython3"}, "inputs": {"view_id": _safe_int_id(view.Id), "view_name": getattr(view, "Name", None), "output_directory": out_dir, "link_instance_input_ids": sorted(_element_id_set(links)), "dwg_import_input_ids": sorted(_element_id_set(dwgs))}, "discovery": discovery, "variants": [], "conclusion": "INCONCLUSIVE"}
-    for variant in VARIANTS:
-        items = _items_for_variant(variant, by_source)
-        if not items:
-            report["variants"].append({"variant": variant, "skipped": True, "reason": "No discovered candidates for required source type(s)", "conclusion": "INCONCLUSIVE", "assignments": []})
+    report = {"probe": {"name": PROBE_NAME, "version": PROBE_VERSION, "target": "Revit 2025 / Dynamo 3.3 CPython3"}, "inputs": {"view_id": _safe_int_id(view.Id), "view_name": getattr(view, "Name", None), "output_directory": out_dir, "link_instance_input_ids": sorted(_element_id_set(links)), "dwg_import_input_ids": sorted(_element_id_set(dwgs)), "resolution_policy": resolution_policy, "target_dpi": target_dpi, "fixed_pixel_width": fixed_pixel_width, "max_pixel_dimension": max_pixel_dimension}, "discovery": discovery, "variants": [], "conclusion": "INCONCLUSIVE"}
+    for run_cfg in _resolution_runs(resolution_policy, target_dpi, fixed_pixel_width, max_pixel_dimension):
+        try:
+            resolution_report = _resolution_from_view(view, run_cfg)
+        except Exception as ex:
+            report.setdefault("resolution_diagnostics", []).append({"policy": run_cfg.get("policy"), "target_dpi": run_cfg.get("target_dpi"), "conclusion": "INCONCLUSIVE", "reason": str(ex)})
             continue
-        report["variants"].append(_run_variant(doc, view, probe_dir, base, variant, items))
+        suffix = _resolution_suffix(run_cfg)
+        for variant in VARIANTS:
+            items = _items_for_variant(variant, by_source)
+            if not items:
+                report["variants"].append({"variant": variant, "resolution": resolution_report, "skipped": True, "reason": "No discovered candidates for required source type(s)", "conclusion": "INCONCLUSIVE", "assignments": []})
+                continue
+            report["variants"].append(_run_variant(doc, view, probe_dir, base, variant, items, resolution_report, suffix))
     report["recommended_linked_fallback"] = "When LinkElementId painting fails, hiding the owning link instance prevents unassigned linked contamination for the diagnostic export; do not treat this as final production policy without more samples."
     report["required_sidecar_schema_changes"] = ["source_type", "source_id", "source_label", "host_element_id", "link_instance_id", "linked_element_id", "import_instance_id", "paint_success", "hidden_link_fallback"]
     report["remaining_limitations"] = ["Dynamo/Revit runtime required for API behavior", "Pillow required for exact-color counts", "DWG fine attribution is limited to what repository import proxies expose; ImportInstance coloring is instance-level"]
@@ -635,6 +859,10 @@ try:
     output_dir = IN[1] if "IN" in globals() and len(IN) > 1 else None
     raw_links = IN[2] if "IN" in globals() and len(IN) > 2 else None
     raw_dwgs = IN[3] if "IN" in globals() and len(IN) > 3 else None
-    OUT = run(raw_view, output_dir, raw_links, raw_dwgs)
+    resolution_policy = IN[4] if "IN" in globals() and len(IN) > 4 else DEFAULT_RESOLUTION_POLICY
+    target_dpi = IN[5] if "IN" in globals() and len(IN) > 5 else DEFAULT_TARGET_DPI
+    fixed_pixel_width = IN[6] if "IN" in globals() and len(IN) > 6 else DEFAULT_FIXED_PIXEL_WIDTH
+    max_pixel_dimension = IN[7] if "IN" in globals() and len(IN) > 7 else DEFAULT_MAX_PIXEL_DIMENSION
+    OUT = run(raw_view, output_dir, raw_links, raw_dwgs, resolution_policy, target_dpi, fixed_pixel_width, max_pixel_dimension)
 except Exception as ex:
     OUT = {"conclusion": "FAIL", "error": str(ex), "error_type": type(ex).__name__, "traceback": traceback.format_exc()}

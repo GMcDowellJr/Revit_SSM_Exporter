@@ -23,7 +23,165 @@ import re
 import sys
 import time
 
-REQUESTED_PIXEL_SIZE = 1600
+DEFAULT_FIXED_PIXEL_WIDTH = 1600
+DEFAULT_RESOLUTION_POLICY = "paper_space_dpi"
+DEFAULT_TARGET_DPI = 150
+DEFAULT_FIXED_PIXEL_WIDTH = 1600
+DEFAULT_MAX_PIXEL_DIMENSION = None
+
+def round_half_up_positive(value):
+    value = float(value)
+    if value < 0:
+        raise ValueError("round_half_up_positive requires a nonnegative value")
+    return int(math.floor(value + 0.5))
+
+
+def _positive_float(value, name, allow_none=False):
+    if value is None:
+        if allow_none:
+            return None
+        raise ValueError("{0} is required".format(name))
+    number = float(value)
+    if number <= 0:
+        raise ValueError("{0} must be positive".format(name))
+    return number
+
+
+def _parse_resolution_policy(value):
+    text = str(value or "paper_space_dpi").strip().lower()
+    if text not in ("fixed_pixel_width", "paper_space_dpi", "both"):
+        raise ValueError("Unsupported resolution_policy '{0}'".format(value))
+    return text
+
+
+def _parse_dpi_values(value):
+    if value is None or value == "":
+        return [150.0]
+    if isinstance(value, (list, tuple)):
+        raw = value
+    else:
+        raw = str(value).replace(";", ",").split(",")
+    values = []
+    for item in raw:
+        if item is None or str(item).strip() == "":
+            continue
+        values.append(_positive_float(item, "target_dpi"))
+    return values or [150.0]
+
+
+def _parse_optional_cap(value):
+    if value is None or value == "":
+        return None
+    return int(round_half_up_positive(_positive_float(value, "max_pixel_dimension")))
+
+
+def _resolution_runs(policy, dpi_value, fixed_width, max_dimension):
+    policy = _parse_resolution_policy(policy)
+    fixed = int(round_half_up_positive(_positive_float(fixed_width if fixed_width is not None else 1600, "fixed_pixel_width")))
+    cap = _parse_optional_cap(max_dimension)
+    runs = []
+    if policy in ("paper_space_dpi", "both"):
+        for dpi in _parse_dpi_values(dpi_value):
+            runs.append({"policy": "paper_space_dpi", "target_dpi": float(dpi), "fixed_pixel_width": fixed, "max_pixel_dimension": cap})
+    if policy in ("fixed_pixel_width", "both"):
+        runs.append({"policy": "fixed_pixel_width", "target_dpi": None, "fixed_pixel_width": fixed, "max_pixel_dimension": cap})
+    return runs
+
+
+def _resolution_suffix(run):
+    if run.get("policy") == "fixed_pixel_width":
+        return "fixed_{0}".format(int(run.get("fixed_pixel_width")))
+    dpi = run.get("target_dpi")
+    return "dpi_{0}".format(int(dpi) if abs(float(dpi) - int(float(dpi))) < 1e-9 else str(dpi).replace(".", "p"))
+
+
+def calculate_paper_space_resolution(model_width_ft, model_height_ft, view_scale, target_dpi, bounds_source):
+    model_width_ft = _positive_float(model_width_ft, "model_width_ft")
+    model_height_ft = _positive_float(model_height_ft, "model_height_ft")
+    view_scale = int(round_half_up_positive(_positive_float(view_scale, "view_scale")))
+    target_dpi = _positive_float(target_dpi, "target_dpi")
+    paper_width_in = model_width_ft * 12.0 / float(view_scale)
+    requested_width_px = round_half_up_positive(paper_width_in * target_dpi)
+    pixels_per_model_foot = 12.0 * target_dpi / float(view_scale)
+    predicted_height_px = round_half_up_positive(model_height_ft * pixels_per_model_foot)
+    return {"policy": "paper_space_dpi", "target_dpi": float(target_dpi), "view_scale": view_scale, "bounds_source": str(bounds_source), "model_width_ft": float(model_width_ft), "model_height_ft": float(model_height_ft), "paper_width_in": paper_width_in, "requested_width_px": int(requested_width_px), "accepted_width_px": int(requested_width_px), "predicted_height_px": int(predicted_height_px), "target_pixels_per_model_foot": pixels_per_model_foot, "accepted_pixels_per_model_foot": pixels_per_model_foot, "effective_dpi": float(target_dpi), "target_model_inches_per_pixel": 12.0 / pixels_per_model_foot, "actual_model_inches_per_pixel": 12.0 / pixels_per_model_foot, "max_pixel_dimension": None, "capped": False}
+
+
+def apply_resolution_cap(report, max_pixel_dimension):
+    cap = _parse_optional_cap(max_pixel_dimension)
+    report = dict(report)
+    report["max_pixel_dimension"] = cap
+    if cap is None:
+        return report
+    width = int(report["requested_width_px"])
+    height = int(report["predicted_height_px"])
+    factor = min(1.0, float(cap) / float(width), float(cap) / float(height))
+    if factor < 1.0:
+        accepted = max(1, round_half_up_positive(width * factor))
+        report["accepted_width_px"] = int(accepted)
+        report["predicted_height_px"] = max(1, round_half_up_positive(height * factor))
+        report["accepted_pixels_per_model_foot"] = float(accepted) / float(report["model_width_ft"])
+        report["effective_dpi"] = report["accepted_pixels_per_model_foot"] * float(report["view_scale"]) / 12.0
+        report["actual_model_inches_per_pixel"] = 12.0 / report["accepted_pixels_per_model_foot"]
+        report["capped"] = True
+    return report
+
+
+def build_resolution_report(policy, model_width_ft, model_height_ft, view_scale, target_dpi, bounds_source, fixed_pixel_width, max_pixel_dimension=None):
+    if policy == "fixed_pixel_width":
+        model_width_ft = _positive_float(model_width_ft, "model_width_ft")
+        model_height_ft = _positive_float(model_height_ft, "model_height_ft")
+        fixed = int(round_half_up_positive(_positive_float(fixed_pixel_width, "fixed_pixel_width")))
+        ppf = float(fixed) / model_width_ft
+        return {"policy": "fixed_pixel_width", "target_dpi": None, "view_scale": int(view_scale) if view_scale else None, "bounds_source": str(bounds_source), "model_width_ft": float(model_width_ft), "model_height_ft": float(model_height_ft), "paper_width_in": None, "requested_width_px": fixed, "accepted_width_px": fixed, "predicted_height_px": round_half_up_positive(model_height_ft * ppf), "target_pixels_per_model_foot": ppf, "accepted_pixels_per_model_foot": ppf, "effective_dpi": (ppf * float(view_scale) / 12.0) if view_scale else None, "target_model_inches_per_pixel": 12.0 / ppf, "actual_model_inches_per_pixel": 12.0 / ppf, "max_pixel_dimension": None, "capped": False}
+    return apply_resolution_cap(calculate_paper_space_resolution(model_width_ft, model_height_ft, view_scale, target_dpi, bounds_source), max_pixel_dimension)
+
+
+def _actual_tiff_dimensions(path):
+    try:
+        from PIL import Image
+        with Image.open(path) as img:
+            return int(img.size[0]), int(img.size[1])
+    except Exception:
+        return None, None
+
+
+def _finalize_resolution_report(report, actual_width, actual_height):
+    report = dict(report)
+    report["actual_width_px"] = int(actual_width) if actual_width else None
+    report["actual_height_px"] = int(actual_height) if actual_height else None
+    report["dimension_discrepancy"] = {"width_px": (int(actual_width) - int(report["accepted_width_px"])) if actual_width else None, "height_px": (int(actual_height) - int(report["predicted_height_px"])) if actual_height else None}
+    return report
+
+
+def _resolution_report_for_accepted_width(report, accepted_width):
+    report = dict(report)
+    accepted_width = int(round_half_up_positive(_positive_float(accepted_width, "accepted_width_px")))
+    model_width = _positive_float(report.get("model_width_ft"), "model_width_ft")
+    model_height = _positive_float(report.get("model_height_ft"), "model_height_ft")
+    report["accepted_width_px"] = accepted_width
+    report["accepted_pixels_per_model_foot"] = float(accepted_width) / model_width
+    report["predicted_height_px"] = round_half_up_positive(model_height * report["accepted_pixels_per_model_foot"])
+    view_scale = report.get("view_scale")
+    report["effective_dpi"] = (report["accepted_pixels_per_model_foot"] * float(view_scale) / 12.0) if view_scale else None
+    report["actual_model_inches_per_pixel"] = 12.0 / report["accepted_pixels_per_model_foot"]
+    if accepted_width != int(report.get("requested_width_px", accepted_width)):
+        report["pixel_size_backoff"] = True
+    return report
+
+
+def calculate_canvas_placement(model_bounds, canvas_bounds, accepted_pixels_per_model_foot):
+    if not model_bounds or not canvas_bounds:
+        return {"available": False, "reason": "missing model or canvas bounds"}
+    mb = _bounds_tuple(model_bounds); cb = _bounds_tuple(canvas_bounds)
+    density = _positive_float(accepted_pixels_per_model_foot, "accepted_pixels_per_model_foot")
+    canvas_w = (cb[2] - cb[0]) * density; canvas_h = (cb[3] - cb[1]) * density
+    off_x = (mb[0] - cb[0]) * density; off_y = (cb[3] - mb[3]) * density
+    vals = [canvas_w, canvas_h, off_x, off_y]
+    rounded = [round_half_up_positive(v) for v in vals]
+    errors = [abs(vals[i] - rounded[i]) for i in range(len(vals))]
+    return {"available": True, "canvas_width_px": rounded[0], "canvas_height_px": rounded[1], "model_offset_px": [rounded[2], rounded[3]], "model_offset_float_px": [off_x, off_y], "model_offset_fractional_px": [off_x - math.floor(off_x), off_y - math.floor(off_y)], "rounding_error_px": {"canvas_width": errors[0], "canvas_height": errors[1], "offset_x": errors[2], "offset_y": errors[3], "max": max(errors)}, "rounding_error_model_units": max(errors) / density, "lossless_padding_possible": max(errors) < 1e-9, "resampling_required": max(errors) >= 1e-9}
+
 SUPPORTED_MODES = ("original", "model_bounds", "canvas_bounds", "all")
 MARKER_SPECS = [
     ("lower_left",  (255, 0, 0)),
@@ -494,6 +652,10 @@ def _run():
     view = _unwrap(IN[0])  # noqa: F821
     mode = (IN[2] if len(IN) > 2 and IN[2] else "all").strip().lower()  # noqa: F821
     create_markers = bool(IN[3]) if len(IN) > 3 and IN[3] is not None else True  # noqa: F821
+    resolution_policy = IN[4] if len(IN) > 4 else DEFAULT_RESOLUTION_POLICY  # noqa: F821
+    target_dpi = IN[5] if len(IN) > 5 else DEFAULT_TARGET_DPI  # noqa: F821
+    fixed_pixel_width = IN[6] if len(IN) > 6 else DEFAULT_FIXED_PIXEL_WIDTH  # noqa: F821
+    max_pixel_dimension = IN[7] if len(IN) > 7 else DEFAULT_MAX_PIXEL_DIMENSION  # noqa: F821
     if mode not in SUPPORTED_MODES:
         raise ValueError("Unsupported export mode '{0}'. Expected one of {1}".format(mode, SUPPORTED_MODES))
     reject = _reject_reason(view)
@@ -507,7 +669,7 @@ def _run():
     basis, cell_req, resolved, original_crop, model_bounds, model_bounds_source, annotation_bounds, canvas_bounds = _compute_bounds(doc, view, cfg)
     base = "{0}_{1}".format(_sanitize_filename(getattr(view, "Name", "view")), _safe_int_id(view.Id))
     modes = ["original", "model_bounds", "canvas_bounds"] if mode == "all" else [mode]
-    result = {"paths": [], "view": {"name": getattr(view, "Name", None), "id": _safe_int_id(view.Id), "type": str(getattr(view, "ViewType", None))}, "requested_pixel_size": REQUESTED_PIXEL_SIZE, "basis": {"origin": list(basis.origin), "right": list(basis.right), "up": list(basis.up), "forward": list(basis.forward)}, "bounds": {"original_crop_uv": _bounds_dict(original_crop), "original_crop_active": before_state.get("CropBoxActive"), "original_crop_visible": before_state.get("CropBoxVisible"), "pre_annotation_model_uv": _bounds_dict(model_bounds), "pre_annotation_model_bounds_source": model_bounds_source, "annotation_uv": _bounds_dict(annotation_bounds), "canvas_uv": _bounds_dict(canvas_bounds), "resolve_view_bounds_result": {k: (_bounds_dict(v) if k.endswith("bounds_uv") or k == "bounds_uv" else v) for k, v in resolved.items() if k != "bounds_uv"}, "resolve_view_bounds_uv": _bounds_dict(resolved.get("bounds_uv"))}, "grid": {"W": int(resolved.get("grid_W", 0) or 0), "H": int(resolved.get("grid_H", 0) or 0), "cell_size_ft_requested": cell_req, "cell_size_ft_effective": float(resolved.get("cell_size_ft_effective", cell_req))}, "state_before": before_state, "document_is_modified_before": before_doc_modified, "exports": {}, "diagnostics": [], "transaction_group": {}, "requires_external_analysis": True}
+    result = {"paths": [], "view": {"name": getattr(view, "Name", None), "id": _safe_int_id(view.Id), "type": str(getattr(view, "ViewType", None))}, "requested_pixel_size": DEFAULT_FIXED_PIXEL_WIDTH, "resolution_policy": resolution_policy, "target_dpi": target_dpi, "fixed_pixel_width": fixed_pixel_width, "max_pixel_dimension": max_pixel_dimension, "basis": {"origin": list(basis.origin), "right": list(basis.right), "up": list(basis.up), "forward": list(basis.forward)}, "bounds": {"original_crop_uv": _bounds_dict(original_crop), "original_crop_active": before_state.get("CropBoxActive"), "original_crop_visible": before_state.get("CropBoxVisible"), "pre_annotation_model_uv": _bounds_dict(model_bounds), "pre_annotation_model_bounds_source": model_bounds_source, "annotation_uv": _bounds_dict(annotation_bounds), "canvas_uv": _bounds_dict(canvas_bounds), "resolve_view_bounds_result": {k: (_bounds_dict(v) if k.endswith("bounds_uv") or k == "bounds_uv" else v) for k, v in resolved.items() if k != "bounds_uv"}, "resolve_view_bounds_uv": _bounds_dict(resolved.get("bounds_uv"))}, "grid": {"W": int(resolved.get("grid_W", 0) or 0), "H": int(resolved.get("grid_H", 0) or 0), "cell_size_ft_requested": cell_req, "cell_size_ft_effective": float(resolved.get("cell_size_ft_effective", cell_req))}, "state_before": before_state, "document_is_modified_before": before_doc_modified, "exports": {}, "diagnostics": [], "transaction_group": {}, "requires_external_analysis": True}
     _force_close_dynamo_transaction()
     group = TransactionGroup(doc, "VOP Stage A image alignment probe")
     group_status = group.Start()
@@ -544,43 +706,48 @@ def _run():
         result["diagnostics"].extend(marker_diags)
         marker_ids = [eid for m in markers for eid in m.get("element_ids", [])]
         analyzed_by_mode = {}
-        for m in modes:
-            if m == "original":
-                target_bounds = original_crop if bool(getattr(view, "CropBoxActive", False)) else resolved.get("bounds_uv")
-                crop_change = {"changed": False, "reason": "original mode uses existing crop behavior", "analysis_bounds_source": "original_crop" if bool(getattr(view, "CropBoxActive", False)) else "resolve_view_bounds.bounds_uv_inactive_crop"}
-            elif m == "model_bounds":
-                target_bounds = model_bounds
-                if target_bounds is None:
-                    json_path = os.path.join(out_dir, "{0}.{1}.alignment.json".format(base, m))
-                    result["exports"][m] = {
-                        "skipped": True,
-                        "reason": "model-only bounds unavailable; not substituting annotation-expanded canvas bounds",
-                        "target_bounds_uv": None,
-                        "images": [],
-                        "sequential_export_equality": None,
-                        "json_path": json_path,
-                    }
-                    continue
-                crop_change = _set_crop_to_bounds(doc, view, basis, target_bounds, m)
-            else:
-                target_bounds = canvas_bounds
-                crop_change = _set_crop_to_bounds(doc, view, basis, target_bounds, m)
-            images = []
-            for seq in (1, 2):
-                path = os.path.join(out_dir, "{0}.{1}.alignment_{2}.tiff".format(base, m, seq))
-                exported, accepted = _export_tiff(doc, view, path, REQUESTED_PIXEL_SIZE)
-                result["paths"].append(exported)
-                analysis = _analyze_image(exported, markers, target_bounds)
-                analysis["effective_pixel_size"] = accepted
-                analysis["pixel_size_equals_actual_width"] = None
-                images.append(analysis)
-            sequential_equal = images[0].get("sha256") == images[1].get("sha256") and images[0].get("actual_width") == images[1].get("actual_width") and images[0].get("actual_height") == images[1].get("actual_height")
-            analyzed_by_mode[m] = images[0]
-            result["exports"][m] = {"crop_change": crop_change, "target_bounds_uv": _bounds_dict(target_bounds), "images": images, "sequential_export_equality": bool(sequential_equal)}
-            json_path = os.path.join(out_dir, "{0}.{1}.alignment.json".format(base, m))
-            result["exports"][m]["json_path"] = json_path
+        for run_cfg in _resolution_runs(resolution_policy, target_dpi, fixed_pixel_width, max_pixel_dimension):
+            suffix = _resolution_suffix(run_cfg)
+            for m in modes:
+                if m == "original":
+                    target_bounds = original_crop if bool(getattr(view, "CropBoxActive", False)) else resolved.get("bounds_uv")
+                    crop_change = {"changed": False, "reason": "original mode uses existing crop behavior", "analysis_bounds_source": "original_crop" if bool(getattr(view, "CropBoxActive", False)) else "resolve_view_bounds.bounds_uv_inactive_crop"}
+                elif m == "model_bounds":
+                    target_bounds = model_bounds
+                    if target_bounds is None:
+                        key = m + "." + suffix
+                        json_path = os.path.join(out_dir, "{0}.{1}.{2}.alignment.json".format(base, m, suffix))
+                        result["exports"][key] = {"skipped": True, "reason": "model-only bounds unavailable; not substituting annotation-expanded canvas bounds", "target_bounds_uv": None, "images": [], "sequential_export_equality": None, "json_path": json_path}
+                        continue
+                    crop_change = _set_crop_to_bounds(doc, view, basis, target_bounds, m)
+                else:
+                    target_bounds = canvas_bounds
+                    crop_change = _set_crop_to_bounds(doc, view, basis, target_bounds, m)
+                tb = _bounds_tuple(target_bounds); bounds_source = "canvas_bounds" if m == "canvas_bounds" else ("active_model_crop" if before_state.get("CropBoxActive") and m == "original" else ("resolved_model_bounds" if model_bounds_source else "explicit_model_bounds"))
+                resolution_report = build_resolution_report(run_cfg.get("policy"), tb[2]-tb[0], tb[3]-tb[1], getattr(view, "Scale", None), run_cfg.get("target_dpi"), bounds_source, run_cfg.get("fixed_pixel_width"), run_cfg.get("max_pixel_dimension"))
+                images = []
+                for seq in (1, 2):
+                    path = os.path.join(out_dir, "{0}.{1}.{2}.alignment_{3}.tiff".format(base, m, suffix, seq))
+                    exported, accepted = _export_tiff(doc, view, path, resolution_report["accepted_width_px"])
+                    result["paths"].append(exported)
+                    actual_w, actual_h = _actual_tiff_dimensions(exported)
+                    analysis = _analyze_image(exported, markers, target_bounds)
+                    analysis["effective_pixel_size"] = accepted
+                    analysis["resolution"] = _finalize_resolution_report(_resolution_report_for_accepted_width(resolution_report, accepted), actual_w, actual_h)
+                    analysis["marker_residual_units"] = {"pixels": "pending_external_analysis", "view_uv_model_units": "pending_external_analysis", "paper_space_inches": "pending_external_analysis"}
+                    analysis["pixel_size_equals_actual_width"] = None
+                    images.append(analysis)
+                sequential_equal = images[0].get("sha256") == images[1].get("sha256") and images[0].get("actual_width") == images[1].get("actual_width") and images[0].get("actual_height") == images[1].get("actual_height")
+                analyzed_by_mode[m] = images[0]
+                key = m + "." + suffix
+                result["exports"][key] = {"crop_change": crop_change, "target_bounds_uv": _bounds_dict(target_bounds), "images": images, "sequential_export_equality": bool(sequential_equal)}
+                json_path = os.path.join(out_dir, "{0}.{1}.{2}.alignment.json".format(base, m, suffix))
+                result["exports"][key]["json_path"] = json_path
         model_img = analyzed_by_mode.get("model_bounds") or analyzed_by_mode.get("original")
-        result["model_to_canvas_placement"] = _placement(model_bounds, canvas_bounds, model_img)
+        res_for_place = None
+        if model_img and model_img.get("resolution"):
+            res_for_place = model_img["resolution"].get("accepted_pixels_per_model_foot")
+        result["model_to_canvas_placement"] = calculate_canvas_placement(model_bounds, canvas_bounds, res_for_place) if res_for_place else _placement(model_bounds, canvas_bounds, model_img)
     finally:
         if group_started:
             try:

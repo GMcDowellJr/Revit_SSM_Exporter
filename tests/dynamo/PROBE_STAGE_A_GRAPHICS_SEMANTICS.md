@@ -208,3 +208,18 @@ For every variant:
 The probe conclusion is `FAIL` if any variant fails rollback or state safety,
 `PASS` if all requested variants pass with image analysis, and `INCONCLUSIVE`
 when safety passes but image analysis cannot be completed locally.
+
+## 2026 production paper-space resolution update
+
+Additional optional Dynamo inputs preserve the original wiring:
+
+```text
+IN[4] = resolution policy: "paper_space_dpi" (default), "fixed_pixel_width", or "both"
+IN[5] = target DPI, default 150
+IN[6] = fixed diagnostic pixel width, default 1600
+IN[7] = optional maximum pixel dimension, default null
+```
+
+Run the normal comparative variants at scale-derived 150 DPI. Fixed 1600 px remains available only as an optional diagnostic baseline. Variant comparisons are valid only when all variants in the run report identical model bounds, requested width, accepted width, actual image dimensions, and pixel-to-UV density.
+
+Inactive-crop production runs use the repository's centralized `resolve_view_bounds()` path to obtain model-only bounds when available. If Revit backs off `ImageExportOptions.PixelSize`, the resolution block is recomputed from the accepted width before variant comparison.
