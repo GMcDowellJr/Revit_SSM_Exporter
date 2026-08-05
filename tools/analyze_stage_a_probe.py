@@ -65,6 +65,7 @@ def analyze_graphics_image(path: Path, assigned: dict[str, Any]) -> dict[str, An
     out = base_info(path)
     out.update({
         'actual_dimensions': [int(w), int(h)], 'status': 'analyzed_external',
+        'pixel_data_sha256': hashlib.sha256(arr.tobytes()).hexdigest(),
         'expected_palette_pixel_count': int(sum(expected_counts.values())),
         'expected_color_pixel_counts': expected_counts,
         'off_palette_foreground_pixel_count': int(off),
@@ -99,6 +100,126 @@ def recommend_graphics(results):
                 rec['settings_blocked_by_view_template'].append({'variant': r.get('variant'), 'diagnostic': d})
     rec['questions_still_requiring_more_view_samples'].append('Repeat the documented matrix; do not generalize from one view because filters, templates, phase filters, and halftone differ by view.')
     return rec
+
+
+def _minimum_assigned(data: dict[str, Any]) -> dict[str, Any]:
+    return ((data.get('assignment_set') or {}).get('assigned') or {})
+
+
+def _minimum_image_path(json_path: Path, variant: dict[str, Any]) -> Path | None:
+    ia = variant.get('image_analysis') or {}
+    p = resolve_path(json_path, ia.get('path'))
+    if p and p.exists():
+        return p
+    # Fallback for early/incomplete reports: derive the prescribed filename from
+    # the JSON stem, resolution suffix, and variant name.
+    name = variant.get('variant')
+    if not name:
+        return None
+    stem = json_path.name
+    marker = '.minimum_id_mutations.json'
+    if stem.endswith(marker):
+        candidate = json_path.with_name(stem[:-len(marker)] + f'.{name}.tiff')
+        if candidate.exists():
+            return candidate
+    return p
+
+
+def _minimum_normalize_analysis(analysis: dict[str, Any]) -> dict[str, Any]:
+    out = dict(analysis)
+    # Preserve the probe's field names while accepting graphics-analyzer aliases.
+    out['file_sha256'] = out.get('file_sha256') or out.get('sha256')
+    out['off_palette_foreground_pixels'] = out.get('off_palette_foreground_pixels', out.get('off_palette_foreground_pixel_count'))
+    out['exact_expected_palette_pixel_count'] = out.get('exact_expected_palette_pixel_count', out.get('expected_palette_pixel_count'))
+    out['assigned_colors_detected'] = out.get('assigned_colors_detected', out.get('expected_colors_detected'))
+    out['visible_pixel_count_by_assigned_element'] = out.get('visible_pixel_count_by_assigned_element', out.get('visible_pixel_area_by_element'))
+    out['black_violations'] = out.get('black_violations', out.get('black_violation_pixel_count'))
+    out['near_white_violations'] = out.get('near_white_violations', out.get('near_white_violation_pixel_count'))
+    unexpected = out.get('unexpected_rgb_values')
+    if unexpected is None:
+        unexpected = {k: v for k, v in out.get('unexpected_colors_top_50', [])}
+    out['unexpected_rgb_values'] = unexpected
+    return out
+
+
+def _mutation_ok(variant: dict[str, Any]) -> bool:
+    requested = set(variant.get('requested_mutations') or [])
+    statuses = variant.get('mutations') or {}
+    return all((statuses.get(mid) or {}).get('status') in ('APPLIED', 'ALREADY_MATCHED') for mid in requested)
+
+
+def _variant_clean(variant: dict[str, Any]) -> bool:
+    ia = variant.get('image_analysis') or {}
+    status = ia.get('analysis_status') or ia.get('status')
+    if status not in ('complete', 'analyzed_external'):
+        return False
+    if ia.get('off_palette_foreground_pixels') is None:
+        return False
+    if ia.get('unexpected_rgb_values') is None:
+        return False
+    return int(ia.get('off_palette_foreground_pixels')) == 0 and len(ia.get('unexpected_rgb_values') or {}) == 0
+
+
+def recommend_minimum_mutations(variants: list[dict[str, Any]]) -> dict[str, Any]:
+    rec = {
+        'recommended_minimum': {'mutations': [], 'fidelity_status': 'INCONCLUSIVE', 'semantic_preservation_status': 'INCONCLUSIVE', 'resolution_status': 'INCONCLUSIVE', 'rollback_status': 'FAIL'},
+        'required_for_color_fidelity': [],
+        'required_for_model_only_scope': [],
+        'prerequisite_only': [],
+        'unnecessary_in_tested_view': [],
+        'semantic_diagnostics_not_for_default': [],
+        'blocked_or_unsupported': [],
+        'view_types_still_required': ['floor_plan_active_crop', 'floor_plan_inactive_crop', 'rcp', 'section', 'elevation', 'detail_view'],
+    }
+    eligible = [v for v in variants if not v.get('diagnostic') and _mutation_ok(v) and not any(((v.get('mutations') or {}).get(mid) or {}).get('classification') == 'semantic_diagnostic' for mid in (v.get('requested_mutations') or []))]
+    clean = [v for v in eligible if _variant_clean(v)]
+    if clean:
+        best = min(clean, key=lambda v: (len(v.get('requested_mutations') or []), v.get('variant') or ''))
+        rec['recommended_minimum']['mutations'] = list(best.get('requested_mutations') or [])
+        rec['recommended_minimum']['fidelity_status'] = 'PASS'
+        rec['recommended_minimum']['rollback_status'] = 'PASS' if best.get('rollback_status') == 'PASS' else 'FAIL'
+        rec['recommended_minimum']['resolution_status'] = 'PASS' if (best.get('resolution') or {}).get('actual_width_px') else 'INCONCLUSIVE'
+        rec['recommended_minimum']['semantic_preservation_status'] = 'INCONCLUSIVE'
+    elif eligible:
+        rec['recommended_minimum']['fidelity_status'] = 'FAIL'
+    for v in variants:
+        if v.get('diagnostic'):
+            rec['semantic_diagnostics_not_for_default'].append(v.get('variant'))
+        for mid, m in (v.get('mutations') or {}).items():
+            if not m.get('requested'):
+                continue
+            status = m.get('status')
+            if status in ('FAILED', 'BLOCKED_BY_TEMPLATE', 'UNSUPPORTED'):
+                rec['blocked_or_unsupported'].append({'variant': v.get('variant'), 'mutation': mid, 'status': status})
+    return rec
+
+def analyze_minimum_id_mutations(json_path: Path, data: dict[str, Any]) -> list[str]:
+    assigned = _minimum_assigned(data)
+    summary = []
+    baseline_hash = full_hash = None
+    for v in data.get('variants', []):
+        p = _minimum_image_path(json_path, v)
+        if p and p.exists() and _mutation_ok(v):
+            analysis = _minimum_normalize_analysis(analyze_graphics_image(p, assigned))
+            existing = v.get('image_analysis') or {}
+            existing.update(analysis)
+            v['image_analysis'] = existing
+            summary.append(f"minimum {v.get('variant')}: off_palette={existing.get('off_palette_foreground_percent')} unexpected={len(existing.get('unexpected_rgb_values') or {})}")
+            if v.get('variant') in ('detached_ASF', 'faithful_baseline', 'reduced_candidate') and baseline_hash is None:
+                baseline_hash = existing.get('pixel_data_sha256')
+            if v.get('variant') == 'full_suppression_reference':
+                full_hash = existing.get('pixel_data_sha256')
+        else:
+            v['image_analysis'] = {'path': str(p) if p else None, 'analysis_status': 'not_analyzed', 'status': 'error', 'error': 'referenced TIFF missing/path not provided or mutation attestation failed'}
+    for v in data.get('variants', []):
+        ia = v.get('image_analysis') or {}
+        if baseline_hash and ia.get('pixel_data_sha256'):
+            ia['pixel_difference_from_faithful_baseline'] = 0 if ia.get('pixel_data_sha256') == baseline_hash else 'DIFFERENT_PIXEL_HASH'
+        if full_hash and ia.get('pixel_data_sha256'):
+            ia['pixel_difference_from_full_suppression'] = 0 if ia.get('pixel_data_sha256') == full_hash else 'DIFFERENT_PIXEL_HASH'
+    data['recommendation'] = recommend_minimum_mutations(data.get('variants', []))
+    data['external_analysis_status'] = 'analyzed_external'
+    return summary
 
 def connected_components(mask: np.ndarray) -> dict[str, Any]:
     h, w = mask.shape
@@ -283,7 +404,10 @@ def analyze_json(json_path: Path) -> tuple[Path, str]:
     data=json.loads(json_path.read_text())
     name=(data.get('probe',{}).get('name') or json_path.name).lower()
     summary=[]
-    if 'graphics_semantics' in name:
+    if 'minimum_id_mutations' in name or name == 'stage_a_minimum_id_mutations':
+        summary.extend(analyze_minimum_id_mutations(json_path, data))
+
+    elif 'graphics_semantics' in name:
         for v in data.get('variants',[]):
             p=resolve_path(json_path, v.get('export',{}).get('path'))
             if p and p.exists():
