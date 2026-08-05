@@ -150,7 +150,14 @@ def _mutation_ok(variant: dict[str, Any]) -> bool:
 
 def _variant_clean(variant: dict[str, Any]) -> bool:
     ia = variant.get('image_analysis') or {}
-    return int(ia.get('off_palette_foreground_pixels') or 0) == 0 and len(ia.get('unexpected_rgb_values') or {}) == 0
+    status = ia.get('analysis_status') or ia.get('status')
+    if status not in ('complete', 'analyzed_external'):
+        return False
+    if ia.get('off_palette_foreground_pixels') is None:
+        return False
+    if ia.get('unexpected_rgb_values') is None:
+        return False
+    return int(ia.get('off_palette_foreground_pixels')) == 0 and len(ia.get('unexpected_rgb_values') or {}) == 0
 
 
 def recommend_minimum_mutations(variants: list[dict[str, Any]]) -> dict[str, Any]:
@@ -164,7 +171,7 @@ def recommend_minimum_mutations(variants: list[dict[str, Any]]) -> dict[str, Any
         'blocked_or_unsupported': [],
         'view_types_still_required': ['floor_plan_active_crop', 'floor_plan_inactive_crop', 'rcp', 'section', 'elevation', 'detail_view'],
     }
-    eligible = [v for v in variants if not v.get('diagnostic') and _mutation_ok(v)]
+    eligible = [v for v in variants if not v.get('diagnostic') and _mutation_ok(v) and not any(((v.get('mutations') or {}).get(mid) or {}).get('classification') == 'semantic_diagnostic' for mid in (v.get('requested_mutations') or []))]
     clean = [v for v in eligible if _variant_clean(v)]
     if clean:
         best = min(clean, key=lambda v: (len(v.get('requested_mutations') or []), v.get('variant') or ''))

@@ -156,6 +156,16 @@ individually redundant mutations, rerun `reduced_candidate`, and then rerun
 leave-one-out variants for every retained mutation until no additional mutation
 can be removed without fidelity or semantic failure.
 
+
+## Attestation and rollback details
+
+Template detachment is committed in its own child transaction before annotation
+category hiding, matching the earlier graphics-semantics probe behavior required
+for templated views.  If any later child transaction fails, the probe rolls that
+child transaction back before rolling back the `TransactionGroup`.  Semantic
+mutations such as phase-filter neutralization and visibility-off-filter disabling
+remain diagnostic-only even when attested successfully.
+
 ## Semantic diagnostics excluded from the default recommendation
 
 These variants are labeled diagnostic and are not eligible for the default

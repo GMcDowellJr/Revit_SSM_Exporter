@@ -396,7 +396,8 @@ def build_resolution_report(policy, model_width_ft, model_height_ft, view_scale,
         model_height_ft = _positive_float(model_height_ft, "model_height_ft")
         fixed = int(round_half_up_positive(_positive_float(fixed_pixel_width, "fixed_pixel_width")))
         ppf = float(fixed) / model_width_ft
-        return {"policy": "fixed_pixel_width", "target_dpi": None, "view_scale": int(view_scale) if view_scale else None, "bounds_source": str(bounds_source), "model_width_ft": float(model_width_ft), "model_height_ft": float(model_height_ft), "paper_width_in": None, "requested_width_px": fixed, "accepted_width_px": fixed, "predicted_height_px": round_half_up_positive(model_height_ft * ppf), "target_pixels_per_model_foot": ppf, "accepted_pixels_per_model_foot": ppf, "effective_dpi": (ppf * float(view_scale) / 12.0) if view_scale else None, "target_model_inches_per_pixel": 12.0 / ppf, "actual_model_inches_per_pixel": 12.0 / ppf, "max_pixel_dimension": None, "capped": False}
+        report = {"policy": "fixed_pixel_width", "target_dpi": None, "view_scale": int(view_scale) if view_scale else None, "bounds_source": str(bounds_source), "model_width_ft": float(model_width_ft), "model_height_ft": float(model_height_ft), "paper_width_in": None, "requested_width_px": fixed, "accepted_width_px": fixed, "predicted_height_px": round_half_up_positive(model_height_ft * ppf), "target_pixels_per_model_foot": ppf, "accepted_pixels_per_model_foot": ppf, "effective_dpi": (ppf * float(view_scale) / 12.0) if view_scale else None, "target_model_inches_per_pixel": 12.0 / ppf, "actual_model_inches_per_pixel": 12.0 / ppf, "max_pixel_dimension": None, "capped": False}
+        return apply_resolution_cap(report, max_pixel_dimension)
     return apply_resolution_cap(calculate_paper_space_resolution(model_width_ft, model_height_ft, view_scale, target_dpi, bounds_source), max_pixel_dimension)
 
 
@@ -434,7 +435,13 @@ def generate_stage2_variants(baseline_mutations, remaining=REMAINING_FULL_SUPPRE
     for m in remaining:
         if m in full:
             variants.append(make_variant("full_minus_" + m, tuple(x for x in full if x != m), reference=True))
-    variants.extend(make_variant(name, baseline + (name.replace("diagnostic_", ""),), diagnostic=True, recollect=("recollect" in name)) for name in SEMANTIC_DIAGNOSTICS)
+    diagnostic_mutations = {
+        "diagnostic_disable_visibility_off_filters": "visibility_off_filters_disabled",
+        "diagnostic_neutral_phase_filter": "phase_filter_neutralized",
+        "diagnostic_recollect_after_filter_change": "visibility_off_filters_disabled",
+        "diagnostic_recollect_after_phase_change": "phase_filter_neutralized",
+    }
+    variants.extend(make_variant(name, baseline + (diagnostic_mutations[name],), diagnostic=True, recollect=("recollect" in name)) for name in SEMANTIC_DIAGNOSTICS)
     return variants
 
 
@@ -724,6 +731,7 @@ def _hide_annotation_categories(doc, view, result):
     trace = []
     applied = 0
     blocked = 0
+    errors = 0
     for cat in doc.Settings.Categories:
         try:
             cid = cat.Id
@@ -742,10 +750,14 @@ def _hide_annotation_categories(doc, view, result):
                 blocked += 1
             trace.append(rec)
         except Exception as ex:
+            errors += 1
             trace.append({"error": str(ex)})
     result["annotation_category_trace"] = trace
-    status = STATUS_APPLIED if applied else (STATUS_ALREADY if trace and blocked == 0 else (STATUS_TEMPLATE if blocked else STATUS_UNSUPPORTED))
-    _set_status(result, "hide_annotation_categories", status, "see annotation_category_trace", "hidden categories={0}, blocked={1}".format(applied, blocked), blocked > 0, applied > 0)
+    if blocked or errors:
+        status = STATUS_TEMPLATE if blocked else STATUS_FAILED
+    else:
+        status = STATUS_APPLIED if applied else (STATUS_ALREADY if trace else STATUS_UNSUPPORTED)
+    _set_status(result, "hide_annotation_categories", status, "see annotation_category_trace", "hidden categories={0}, blocked={1}, errors={2}".format(applied, blocked, errors), blocked > 0, applied > 0 and not blocked and not errors)
 
 
 def _neutralize_visible_filter_graphics(view, result):
@@ -978,6 +990,31 @@ def analyze_tiff(path, assigned, baseline_pixels=None, full_pixels=None):
     return result
 
 
+
+def compare_tiff_pixels(path, reference_path):
+    if not path or not reference_path or path == reference_path:
+        return {"pixel_difference_count": 0, "changed_pixel_bounding_rectangle": None}
+    try:
+        from PIL import Image
+        a = Image.open(path).convert("RGB")
+        b = Image.open(reference_path).convert("RGB")
+        if a.size != b.size:
+            return {"pixel_difference_count": None, "changed_pixel_bounding_rectangle": None, "reason": "dimension mismatch", "dimensions": [list(a.size), list(b.size)]}
+        w, h = a.size
+        ap = list(a.getdata()); bp = list(b.getdata())
+        count = 0; min_x = min_y = None; max_x = max_y = None
+        for idx, (pa, pb) in enumerate(zip(ap, bp)):
+            if pa == pb:
+                continue
+            count += 1; x = idx % w; y = idx // w
+            min_x = x if min_x is None or x < min_x else min_x
+            min_y = y if min_y is None or y < min_y else min_y
+            max_x = x if max_x is None or x > max_x else max_x
+            max_y = y if max_y is None or y > max_y else max_y
+        return {"pixel_difference_count": int(count), "changed_pixel_bounding_rectangle": ([int(min_x), int(min_y), int(max_x), int(max_y)] if count else None)}
+    except Exception as ex:
+        return {"pixel_difference_count": None, "changed_pixel_bounding_rectangle": None, "reason": str(ex)}
+
 def _write_json(path, data):
     with open(path, "w") as f:
         json.dump(data, f, indent=2, sort_keys=True)
@@ -1007,31 +1044,67 @@ def _write_csv(path, variants):
             })
 
 
+
+def _variant_has_semantic_diagnostic_mutation(variant):
+    for mid in variant.get("mutations", ()): 
+        if MUTATION_CATALOG.get(mid, {}).get("classification") == "semantic_diagnostic":
+            return True
+    return False
+
+
+def _collect_assigned_id_set(doc, view, max_count):
+    ids, _counts = _collect_assignment_set(doc, view, max_count)
+    return set(eid.IntegerValue for eid in ids)
+
 def _run_variant(doc, view, out_dir, base, variant, assigned_ids, assigned, res_report, res_suffix):
     from Autodesk.Revit.DB import Transaction, TransactionGroup, TransactionStatus
-    result = {"variant": variant["name"], "requested_mutations": list(variant["mutations"]), "diagnostic": variant.get("diagnostic"), "reference": variant.get("reference"), "mutations": {}, "image_analysis": {}, "visible_set_analysis": {"assignment_set_changed": False, "resolved_visible_element_set_changed": "not_directly_exposed_by_revit_probe", "elements_gained": [], "elements_lost": [], "model_pixel_occupancy_changed": None, "annotation_pixel_occupancy_changed": None}, "state": {}, "transaction_group": {}, "eligible_for_recommended_minimum": False, "rollback_status": "FAIL", "exceptions": []}
+    result = {"variant": variant["name"], "requested_mutations": list(variant["mutations"]), "diagnostic": variant.get("diagnostic"), "reference": variant.get("reference"), "recollect": variant.get("recollect"), "mutations": {}, "image_analysis": {}, "visible_set_analysis": {"assignment_set_changed": False, "resolved_visible_element_set_changed": "not_directly_exposed_by_revit_probe", "elements_gained": [], "elements_lost": [], "model_pixel_occupancy_changed": None, "annotation_pixel_occupancy_changed": None}, "state": {}, "transaction_group": {}, "eligible_for_recommended_minimum": False, "rollback_status": "FAIL", "exceptions": []}
     for mid in MUTATION_CATALOG:
         result["mutations"][mid] = mutation_status_record(mid, requested=False)
     group = None
+    tx = None
     t0 = time.time()
     tiff_path = os.path.join(out_dir, base + "." + res_suffix + "." + variant["name"] + ".tiff")
     try:
         try:
-            import RevitServices.Transaction.TransactionManager as TM
-            TM.TransactionManager.Instance.ForceCloseTransaction()
-        except Exception:
-            pass
+            from RevitServices.Transactions import TransactionManager
+            TransactionManager.Instance.ForceCloseTransaction()
+            result["transaction_group"]["dynamo_transaction_force_closed"] = True
+        except Exception as ex:
+            result["transaction_group"]["dynamo_transaction_force_close_error"] = str(ex)
         result["state"]["before"] = _snapshot(doc, view)
         group = TransactionGroup(doc, "VOP minimum ID mutations: " + variant["name"])
         st = group.Start(); result["transaction_group"]["start_status"] = _safe_enum(st)
         if st != TransactionStatus.Started:
             raise RuntimeError("TransactionGroup.Start returned {0}".format(st))
+
+        remaining = list(variant["mutations"])
+        if "detach_template" in remaining:
+            tx = Transaction(doc, "Apply detach_template for " + variant["name"]); tx.Start()
+            _apply_mutation(doc, view, assigned_ids, result, "detach_template")
+            tx.Commit(); tx = None
+            result["transaction_group"]["detach_transaction_committed"] = True
+            remaining = [m for m in remaining if m != "detach_template"]
+
         tx = Transaction(doc, "Apply " + variant["name"]); tx.Start()
-        for mid in variant["mutations"]:
+        for mid in remaining:
             _apply_mutation(doc, view, assigned_ids, result, mid)
+        if variant.get("recollect"):
+            try:
+                before_ids = set(eid.IntegerValue for eid in assigned_ids)
+                after_ids = _collect_assigned_id_set(doc, view, None)
+                result["visible_set_analysis"].update({
+                    "assignment_set_changed": before_ids != after_ids,
+                    "resolved_visible_element_set_changed": before_ids != after_ids,
+                    "elements_gained": sorted(after_ids - before_ids),
+                    "elements_lost": sorted(before_ids - after_ids),
+                    "recollection_diagnostic": True,
+                })
+            except Exception as ex:
+                result["visible_set_analysis"]["recollection_error"] = str(ex)
         paint_assigned, failures, step = _paint(doc, view, assigned_ids)
         result["paint_failures"] = failures; result["palette_step"] = step
-        tx.Commit(); result["transaction_group"]["child_transaction_committed"] = True
+        tx.Commit(); tx = None; result["transaction_group"]["child_transaction_committed"] = True
         requested_ok = all(result["mutations"].get(mid, {}).get("status") in (STATUS_APPLIED, STATUS_ALREADY) for mid in variant["mutations"])
         result["mutation_attestation_passed"] = bool(requested_ok)
         if requested_ok:
@@ -1044,9 +1117,15 @@ def _run_variant(doc, view, out_dir, base, variant, assigned_ids, assigned, res_
                 result["resolution"]["actual_height_px"] = result["image_analysis"]["actual_dimensions"][1]
         else:
             result["image_analysis"] = {"path": tiff_path, "analysis_status": "not_exported_failed_attestation"}
-        result["eligible_for_recommended_minimum"] = bool(requested_ok and not variant.get("diagnostic"))
+        result["eligible_for_recommended_minimum"] = bool(requested_ok and not variant.get("diagnostic") and not _variant_has_semantic_diagnostic_mutation(variant))
     except Exception as ex:
         result["exceptions"].append({"type": type(ex).__name__, "message": str(ex), "traceback": traceback.format_exc()})
+        if tx is not None:
+            try:
+                tx.RollBack(); result["transaction_group"]["failed_child_transaction_rolled_back"] = True
+            except Exception as rb_ex:
+                result["transaction_group"]["failed_child_transaction_rollback_error"] = str(rb_ex)
+            tx = None
     finally:
         try:
             if group is not None:
@@ -1097,6 +1176,25 @@ def run(raw_view, output_dir, max_elements=None, selection="all", resolution_pol
             vr = _run_variant(doc, view, out_dir, base, variant, assigned_ids, frozen_assignment, res, res_suffix)
             vr["resolution_run"] = run_cfg
             report["variants"].append(vr)
+
+    baseline_hash = baseline_path = None
+    full_hash = full_path = None
+    for _v in report["variants"]:
+        _ia = _v.get("image_analysis") or {}
+        if _v.get("variant") in ("detached_ASF", "faithful_baseline", "reduced_candidate") and baseline_hash is None:
+            baseline_hash = _ia.get("pixel_data_sha256"); baseline_path = _ia.get("path")
+        if _v.get("variant") == "full_suppression_reference":
+            full_hash = _ia.get("pixel_data_sha256"); full_path = _ia.get("path")
+    for _v in report["variants"]:
+        _ia = _v.get("image_analysis") or {}
+        if baseline_hash and _ia.get("pixel_data_sha256"):
+            cmp = compare_tiff_pixels(_ia.get("path"), baseline_path)
+            _ia["pixel_difference_from_faithful_baseline"] = cmp.get("pixel_difference_count")
+            _ia["changed_pixel_bounding_rectangle_from_faithful_baseline"] = cmp.get("changed_pixel_bounding_rectangle")
+        if full_hash and _ia.get("pixel_data_sha256"):
+            cmp = compare_tiff_pixels(_ia.get("path"), full_path)
+            _ia["pixel_difference_from_full_suppression"] = cmp.get("pixel_difference_count")
+            _ia["changed_pixel_bounding_rectangle_from_full_suppression"] = cmp.get("changed_pixel_bounding_rectangle")
     json_path = os.path.join(out_dir, base + "." + resolution_suffix(resolution_runs(resolution_policy, target_dpi, fixed_pixel_width, max_pixel_dimension)[0]) + ".minimum_id_mutations.json")
     csv_path = os.path.join(out_dir, base + "." + resolution_suffix(resolution_runs(resolution_policy, target_dpi, fixed_pixel_width, max_pixel_dimension)[0]) + ".mutation_matrix.csv")
     _write_json(json_path, report); _write_csv(csv_path, report["variants"])

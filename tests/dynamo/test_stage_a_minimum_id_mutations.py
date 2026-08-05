@@ -1,6 +1,7 @@
 import builtins
 import csv
 import json
+import pytest
 from pathlib import Path
 
 from tests.dynamo.probe_stage_a_minimum_id_mutations import (
@@ -142,3 +143,34 @@ def test_typing_shim_supports_annotation_imports(monkeypatch):
     typing_mod = sys.modules["typing"]
     assert typing_mod.Tuple[str, ...] is typing_mod.Tuple
     assert typing_mod.Optional[int] is typing_mod.Optional
+
+
+def test_diagnostic_variants_use_canonical_mutation_ids():
+    variants = {v["name"]: v for v in generate_stage2_variants(("detach_template",))}
+    assert "visibility_off_filters_disabled" in variants["diagnostic_disable_visibility_off_filters"]["mutations"]
+    assert "phase_filter_neutralized" in variants["diagnostic_neutral_phase_filter"]["mutations"]
+    assert "visibility_off_filters_disabled" in variants["diagnostic_recollect_after_filter_change"]["mutations"]
+    assert "phase_filter_neutralized" in variants["diagnostic_recollect_after_phase_change"]["mutations"]
+
+
+def test_fixed_width_resolution_applies_cap():
+    report = __import__("tests.dynamo.probe_stage_a_minimum_id_mutations", fromlist=["build_resolution_report"]).build_resolution_report(
+        "fixed_pixel_width", 10, 100, 100, None, "resolved_model_bounds", 1600, max_pixel_dimension=1000
+    )
+    assert report["max_pixel_dimension"] == 1000
+    assert report["capped"] is True
+    assert report["accepted_width_px"] <= 1000
+    assert report["predicted_height_px"] <= 1000
+
+
+def test_compare_tiff_pixels_reports_counts_and_bbox(tmp_path):
+    Image = pytest.importorskip("PIL.Image")
+    mod = __import__("tests.dynamo.probe_stage_a_minimum_id_mutations", fromlist=["compare_tiff_pixels"])
+    a = tmp_path / "a.tiff"; b = tmp_path / "b.tiff"
+    ia = Image.new("RGB", (2, 2), (255, 255, 255))
+    ib = Image.new("RGB", (2, 2), (255, 255, 255))
+    ia.putpixel((1, 1), (1, 2, 3))
+    ia.save(a); ib.save(b)
+    result = mod.compare_tiff_pixels(str(a), str(b))
+    assert result["pixel_difference_count"] == 1
+    assert result["changed_pixel_bounding_rectangle"] == [1, 1, 1, 1]

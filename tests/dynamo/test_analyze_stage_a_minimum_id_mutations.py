@@ -72,3 +72,16 @@ def test_analyzer_marks_failed_attestation_as_non_evidence(tmp_path):
     analyzed = json.loads(out.read_text(encoding="utf-8"))
     assert analyzed["variants"][0]["image_analysis"]["analysis_status"] == "not_analyzed"
     assert analyzed["recommendation"]["blocked_or_unsupported"][0]["mutation"] == "display_style_flat_colors"
+
+
+def test_analyzer_does_not_recommend_without_real_metrics():
+    from tools.analyze_stage_a_probe import recommend_minimum_mutations
+    rec = recommend_minimum_mutations([{
+        "variant": "attached_element_overrides_only",
+        "requested_mutations": [],
+        "mutations": {},
+        "diagnostic": False,
+        "image_analysis": {"analysis_status": "not_analyzed"},
+    }])
+    assert rec["recommended_minimum"]["fidelity_status"] == "FAIL"
+    assert rec["recommended_minimum"]["mutations"] == []
