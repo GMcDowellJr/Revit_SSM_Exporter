@@ -36,17 +36,68 @@ try:
         round_half_up_positive,
     )
 except Exception:
-    # Dynamo may execute this file without repository root on sys.path.
-    _here = os.path.dirname(__file__)
-    if _here not in sys.path:
-        sys.path.append(_here)
-    from resolution_contract import (  # type: ignore
-        apply_resolution_cap,
-        calculate_paper_space_resolution,
-        choose_resolution_bounds,
-        resolution_report_for_accepted_width,
-        round_half_up_positive,
-    )
+    # Dynamo CPython can execute pasted node code without defining __file__.
+    # Search stable anchors before falling back to the adjacent-module import
+    # path used during normal repository test execution.
+    _seen_resolution_paths = set()
+    _anchors = []
+    for _env_name in ("REVIT_SSM_EXPORTER_ROOT", "VOP_REPO_ROOT"):
+        try:
+            _anchors.append(os.environ.get(_env_name))
+        except Exception:
+            pass
+    try:
+        _anchors.append(os.getcwd())
+    except Exception:
+        pass
+    try:
+        _anchors.append(os.path.dirname(os.path.abspath(__file__)))
+    except Exception:
+        # Expected in Dynamo pasted-node execution.
+        pass
+    _home = os.path.expanduser("~")
+    _anchors.extend([
+        os.path.join(_home, "Documents", "Revit_SSM_Exporter"),
+        os.path.join(_home, "Documents", "GitHub", "Revit_SSM_Exporter"),
+        os.path.join(_home, "source", "repos", "Revit_SSM_Exporter"),
+        os.path.join(_home, "Revit_SSM_Exporter"),
+        "/workspace/Revit_SSM_Exporter",
+    ])
+    for _anchor in _anchors:
+        if not _anchor:
+            continue
+        try:
+            _cur = os.path.abspath(os.path.expanduser(str(_anchor)))
+        except Exception:
+            continue
+        if os.path.isfile(_cur):
+            _cur = os.path.dirname(_cur)
+        for _ in range(8):
+            for _candidate in (_cur, os.path.join(_cur, "tests", "dynamo")):
+                if _candidate and _candidate not in _seen_resolution_paths:
+                    _seen_resolution_paths.add(_candidate)
+                    if os.path.isdir(_candidate) and _candidate not in sys.path:
+                        sys.path.insert(0, _candidate)
+            _parent = os.path.dirname(_cur)
+            if _parent == _cur:
+                break
+            _cur = _parent
+    try:
+        from tests.dynamo.resolution_contract import (
+            apply_resolution_cap,
+            calculate_paper_space_resolution,
+            choose_resolution_bounds,
+            resolution_report_for_accepted_width,
+            round_half_up_positive,
+        )
+    except Exception:
+        from resolution_contract import (  # type: ignore
+            apply_resolution_cap,
+            calculate_paper_space_resolution,
+            choose_resolution_bounds,
+            resolution_report_for_accepted_width,
+            round_half_up_positive,
+        )
 
 PROBE_NAME = "stage_a_minimum_id_mutations"
 PROBE_VERSION = "2026-08-05.1"

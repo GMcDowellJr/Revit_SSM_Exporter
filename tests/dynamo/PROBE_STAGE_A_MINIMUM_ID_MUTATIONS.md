@@ -22,7 +22,9 @@ IN[7] = optional maximum pixel dimension cap
 ```
 
 Use `paper_space_dpi` at 150 DPI as the authoritative production comparison.
-Use `both` only when you also want the fixed 1600 px diagnostic control.
+Use `both` only when you also want the fixed 1600 px diagnostic control. The
+probe is safe to paste directly into a Dynamo Python node: its import bootstrap
+does not require Dynamo to define `__file__`.
 
 ## Resolution contract reused
 

@@ -1,3 +1,4 @@
+import builtins
 import csv
 import json
 from pathlib import Path
@@ -89,3 +90,19 @@ def test_json_and_csv_serialization(tmp_path):
         writer.writeheader(); writer.writerow({"variant": "x", "mutations_requested": "smooth_edges_off"})
     assert json.loads(jp.read_text())["variants"][0]["variant"] == "x"
     assert "smooth_edges_off" in cp.read_text()
+
+
+def test_resolution_contract_fallback_does_not_require_dunder_file(monkeypatch):
+    source = Path("tests/dynamo/probe_stage_a_minimum_id_mutations.py").read_text(encoding="utf-8")
+    prefix = source.split("PROBE_NAME", 1)[0]
+    real_import = builtins.__import__
+
+    def blocked_tests_import(name, *args, **kwargs):
+        if name == "tests.dynamo.resolution_contract":
+            raise ImportError("simulate Dynamo without package import")
+        return real_import(name, *args, **kwargs)
+
+    namespace = {"__builtins__": builtins.__dict__, "__name__": "dynamo_string_probe"}
+    monkeypatch.setattr(builtins, "__import__", blocked_tests_import)
+    exec(compile(prefix, "<string>", "exec"), namespace)
+    assert namespace["round_half_up_positive"](1.5) == 2
