@@ -112,3 +112,15 @@ def test_explicit_bad_repo_root_is_rejected(tmp_path):
         assert "IN[8] repository root" in str(ex)
     else:
         raise AssertionError("bad explicit repo root should fail")
+
+
+def test_assignment_collection_uses_current_viewraster_signature():
+    source = Path("tests/dynamo/probe_stage_a_minimum_id_mutations.py").read_text(encoding="utf-8")
+    assert "from vop_interwoven.core.math_utils import Bounds2D" in source
+    assert "ViewRaster(" in source
+    assert "width=10" in source
+    assert "height=10" in source
+    assert "cell_size=1.0" in source
+    assert 'tile_size=getattr(cfg, "tile_size", 16)' in source
+    assert "cfg=cfg" in source
+    assert "ViewRaster(10, 10, 1.0" not in source

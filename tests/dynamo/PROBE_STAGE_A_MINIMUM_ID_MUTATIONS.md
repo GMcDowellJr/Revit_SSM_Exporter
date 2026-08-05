@@ -44,6 +44,15 @@ for comparison unless these values match:
 - accepted pixels per model foot / pixel-to-UV density
 - frozen assignment set and element-to-RGB mapping
 
+
+## Dynamo compatibility notes
+
+The probe creates its temporary assignment raster with the current repository
+`ViewRaster` signature: keyword arguments for `width`, `height`, `cell_size`,
+`bounds=Bounds2D(...)`, `tile_size`, and `cfg`.  If Dynamo reports a
+`ViewRaster` constructor/type error, confirm that `IN[8]` points at the same
+repository checkout as the pasted probe code.
+
 ## Required first run
 
 First run `IN[3] = "all"` on the same elevation used for the prior graphics

@@ -521,11 +521,19 @@ def _active_crop_bounds(view):
 
 def _collect_assignment_set(doc, view, max_count):
     from vop_interwoven.config import Config
+    from vop_interwoven.core.math_utils import Bounds2D
     from vop_interwoven.core.raster import ViewRaster
     from vop_interwoven.revit.collection import collect_view_elements, expand_host_link_import_model_elements
     from vop_interwoven.color_id_buffer import resolve_all
     cfg = Config()
-    raster = ViewRaster(10, 10, 1.0, (0.0, 0.0, 1.0, 1.0), cfg)
+    raster = ViewRaster(
+        width=10,
+        height=10,
+        cell_size=1.0,
+        bounds=Bounds2D(0.0, 0.0, 1.0, 1.0),
+        tile_size=getattr(cfg, "tile_size", 16),
+        cfg=cfg,
+    )
     elements = collect_view_elements(doc, view, raster, diag=None, cfg=cfg)
     expanded = expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None, elem_cache=None)
     host = []
