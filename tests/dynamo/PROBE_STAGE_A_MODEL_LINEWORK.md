@@ -243,3 +243,16 @@ For each run, return:
 - screenshots or notes completing the manual review checklist
 - the view name, id, view type, template/filter/phase context, and which
   representative content was present
+
+## 2026 production paper-space resolution update
+
+Additional optional Dynamo inputs preserve the original wiring:
+
+```text
+IN[4] = resolution policy: "paper_space_dpi" (default), "fixed_pixel_width", or "both"
+IN[5] = target DPI or DPI list, default 150; use `75,150,300` for one representative sensitivity sweep
+IN[6] = fixed diagnostic pixel width, default 1600
+IN[7] = optional maximum pixel dimension, default null
+```
+
+Use 150 DPI as the normal production model-linework test. Use one representative edge condition for the 75/150/300 DPI sweep rather than expanding the full runtime matrix. The model-ID reference TIFF and every linework TIFF now report the same bounds and resolution contract, including actual model and paper distance represented by one pixel. Expect large files at 300 DPI, especially when no cap is supplied.
