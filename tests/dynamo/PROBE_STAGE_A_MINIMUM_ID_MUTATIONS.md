@@ -51,7 +51,10 @@ The probe creates its temporary assignment raster with the current repository
 `ViewRaster` signature: keyword arguments for `width`, `height`, `cell_size`,
 `bounds=Bounds2D(...)`, `tile_size`, and `cfg`.  If Dynamo reports a
 `ViewRaster` constructor/type error, confirm that `IN[8]` points at the same
-repository checkout as the pasted probe code.
+repository checkout as the pasted probe code.  The probe also installs a small
+`typing` fallback before importing production collection modules, because some
+Dynamo Python-node environments omit the stdlib `typing` module even though the
+production collection policy only uses it for annotations.
 
 ## Required first run
 

@@ -31,6 +31,38 @@ import re
 _RESOLUTION_CONTRACT = None
 
 
+
+def _ensure_typing_module():
+    """Install a tiny typing fallback for stripped Dynamo Python runtimes.
+
+    Some Dynamo Python environments used for pasted nodes do not expose the
+    stdlib ``typing`` module, while the production collection policy imports
+    names only for annotations.  The probe must not edit production code, so it
+    supplies enough annotation placeholders before importing vop_interwoven.
+    """
+    try:
+        import typing  # noqa: F401
+        return False
+    except Exception:
+        pass
+    try:
+        import types
+        module = types.ModuleType("typing")
+
+        class _TypingAlias(object):
+            def __getitem__(self, _item):
+                return self
+            def __call__(self, *args, **kwargs):
+                return self
+
+        alias = _TypingAlias()
+        for name in ("Any", "Callable", "Dict", "Iterable", "List", "Optional", "Set", "Tuple", "TypeVar"):
+            setattr(module, name, alias)
+        sys.modules["typing"] = module
+        return True
+    except Exception:
+        return False
+
 def _candidate_roots(explicit_repo_root=None, output_dir=None):
     """Yield possible repository roots, preferring explicit Dynamo IN[8]."""
     seen = set()
@@ -270,6 +302,7 @@ def _candidate_repo_roots(output_dir=None, repo_root=None):
 
 
 def _ensure_repo_import_path(output_dir=None, repo_root=None):
+    _ensure_typing_module()
     try:
         import vop_interwoven  # noqa: F401
         return None
@@ -520,6 +553,7 @@ def _active_crop_bounds(view):
 
 
 def _collect_assignment_set(doc, view, max_count):
+    _ensure_typing_module()
     from vop_interwoven.config import Config
     from vop_interwoven.core.math_utils import Bounds2D
     from vop_interwoven.core.raster import ViewRaster

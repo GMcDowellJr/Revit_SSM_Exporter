@@ -5,6 +5,7 @@ from pathlib import Path
 
 from tests.dynamo.probe_stage_a_minimum_id_mutations import (
     _add_repo_root_to_path,
+    _ensure_typing_module,
     MUTATION_CATALOG,
     STATUS_APPLIED,
     STATUS_FAILED,
@@ -124,3 +125,20 @@ def test_assignment_collection_uses_current_viewraster_signature():
     assert 'tile_size=getattr(cfg, "tile_size", 16)' in source
     assert "cfg=cfg" in source
     assert "ViewRaster(10, 10, 1.0" not in source
+
+
+def test_typing_shim_supports_annotation_imports(monkeypatch):
+    import sys
+    monkeypatch.delitem(sys.modules, "typing", raising=False)
+    real_import = builtins.__import__
+
+    def block_typing(name, *args, **kwargs):
+        if name == "typing":
+            raise ImportError("simulate Dynamo without typing")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", block_typing)
+    assert _ensure_typing_module() is True
+    typing_mod = sys.modules["typing"]
+    assert typing_mod.Tuple[str, ...] is typing_mod.Tuple
+    assert typing_mod.Optional[int] is typing_mod.Optional
