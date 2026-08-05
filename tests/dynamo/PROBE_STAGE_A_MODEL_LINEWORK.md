@@ -256,3 +256,5 @@ IN[7] = optional maximum pixel dimension, default null
 ```
 
 Use 150 DPI as the normal production model-linework test. Use one representative edge condition for the 75/150/300 DPI sweep rather than expanding the full runtime matrix. The model-ID reference TIFF and every linework TIFF now report the same bounds and resolution contract, including actual model and paper distance represented by one pixel. Expect large files at 300 DPI, especially when no cap is supplied.
+
+Inactive-crop production runs use the repository's centralized `resolve_view_bounds()` path to obtain model-only bounds when available. If Revit backs off `ImageExportOptions.PixelSize`, the reference and linework resolution blocks are recomputed from the accepted width before pixel-density metrics are recorded.

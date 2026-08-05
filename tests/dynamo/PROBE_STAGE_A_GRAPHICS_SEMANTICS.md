@@ -221,3 +221,5 @@ IN[7] = optional maximum pixel dimension, default null
 ```
 
 Run the normal comparative variants at scale-derived 150 DPI. Fixed 1600 px remains available only as an optional diagnostic baseline. Variant comparisons are valid only when all variants in the run report identical model bounds, requested width, accepted width, actual image dimensions, and pixel-to-UV density.
+
+Inactive-crop production runs use the repository's centralized `resolve_view_bounds()` path to obtain model-only bounds when available. If Revit backs off `ImageExportOptions.PixelSize`, the resolution block is recomputed from the accepted width before variant comparison.

@@ -219,3 +219,5 @@ IN[7] = optional maximum pixel dimension, default null
 Use `paper_space_dpi` at 150 DPI as the authoritative production alignment run. Use `both` when a fixed 1600 px diagnostic control is useful. Filenames include the resolution, for example `.fixed_1600.alignment_1.tiff` or `.dpi_150.alignment_1.tiff`.
 
 The production run derives width from model UV bounds, `View.Scale`, and target DPI, then pads the model raster into the annotation canvas at the same pixels-per-model-foot density. Run the alignment matrix on a floor plan with active crop, a floor plan with inactive crop, RCP, section, elevation, and detail view. Uncapped high-DPI exports can grow quickly; only set `max_pixel_dimension` when you want an explicit capped confirmation with reported effective DPI.
+
+If Revit backs off `ImageExportOptions.PixelSize`, the per-TIFF resolution block is recomputed from the accepted width before canvas placement and residual-density metadata are reported.

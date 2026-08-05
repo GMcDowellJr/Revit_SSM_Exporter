@@ -6,6 +6,8 @@ from tests.dynamo.resolution_contract import (
     build_resolution_report,
     calculate_canvas_placement,
     calculate_paper_space_resolution,
+    choose_resolution_bounds,
+    resolution_report_for_accepted_width,
     round_half_up_positive,
 )
 
@@ -65,3 +67,19 @@ def test_complete_report_serializes():
     report = build_resolution_report(276, 100, 96, 150, "active_model_crop", actual_width_px=5175, actual_height_px=1875)
     text = json.dumps({"resolution": report})
     assert '"resolution"' in text
+
+
+def test_inactive_crop_uses_resolved_model_bounds():
+    bounds, source = choose_resolution_bounds(active_crop_bounds=None, resolved_model_bounds=(0, 0, 276, 100))
+    assert bounds == (0, 0, 276, 100)
+    assert source == "resolved_model_bounds"
+
+
+def test_resolution_recomputed_after_pixel_size_backoff():
+    report = calculate_paper_space_resolution(276, 100, 96, 150, "active_model_crop")
+    accepted = resolution_report_for_accepted_width(report, 4000)
+    assert accepted["accepted_width_px"] == 4000
+    assert accepted["accepted_pixels_per_model_foot"] == pytest.approx(4000 / 276)
+    assert accepted["effective_dpi"] == pytest.approx((4000 / 276) * 96 / 12)
+    assert accepted["actual_model_inches_per_pixel"] == pytest.approx(12 / (4000 / 276))
+    assert accepted["pixel_size_backoff"] is True

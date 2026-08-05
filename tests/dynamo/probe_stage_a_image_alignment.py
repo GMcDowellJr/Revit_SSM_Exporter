@@ -154,6 +154,22 @@ def _finalize_resolution_report(report, actual_width, actual_height):
     return report
 
 
+def _resolution_report_for_accepted_width(report, accepted_width):
+    report = dict(report)
+    accepted_width = int(round_half_up_positive(_positive_float(accepted_width, "accepted_width_px")))
+    model_width = _positive_float(report.get("model_width_ft"), "model_width_ft")
+    model_height = _positive_float(report.get("model_height_ft"), "model_height_ft")
+    report["accepted_width_px"] = accepted_width
+    report["accepted_pixels_per_model_foot"] = float(accepted_width) / model_width
+    report["predicted_height_px"] = round_half_up_positive(model_height * report["accepted_pixels_per_model_foot"])
+    view_scale = report.get("view_scale")
+    report["effective_dpi"] = (report["accepted_pixels_per_model_foot"] * float(view_scale) / 12.0) if view_scale else None
+    report["actual_model_inches_per_pixel"] = 12.0 / report["accepted_pixels_per_model_foot"]
+    if accepted_width != int(report.get("requested_width_px", accepted_width)):
+        report["pixel_size_backoff"] = True
+    return report
+
+
 def calculate_canvas_placement(model_bounds, canvas_bounds, accepted_pixels_per_model_foot):
     if not model_bounds or not canvas_bounds:
         return {"available": False, "reason": "missing model or canvas bounds"}
@@ -717,7 +733,7 @@ def _run():
                     actual_w, actual_h = _actual_tiff_dimensions(exported)
                     analysis = _analyze_image(exported, markers, target_bounds)
                     analysis["effective_pixel_size"] = accepted
-                    analysis["resolution"] = _finalize_resolution_report(resolution_report, actual_w, actual_h)
+                    analysis["resolution"] = _finalize_resolution_report(_resolution_report_for_accepted_width(resolution_report, accepted), actual_w, actual_h)
                     analysis["marker_residual_units"] = {"pixels": "pending_external_analysis", "view_uv_model_units": "pending_external_analysis", "paper_space_inches": "pending_external_analysis"}
                     analysis["pixel_size_equals_actual_width"] = None
                     images.append(analysis)

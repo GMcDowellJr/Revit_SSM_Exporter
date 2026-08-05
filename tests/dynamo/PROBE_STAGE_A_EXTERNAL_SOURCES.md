@@ -188,3 +188,5 @@ IN[7] = optional maximum pixel dimension, default null
 ```
 
 Keep fixed 1600 px for API capability diagnostics and override-failure reproduction. Use `paper_space_dpi` at 150 DPI for one production-resolution confirmation after a HOST, LINK, or DWG method succeeds. Do not treat higher DPI as a fix for linked-element override failures; API capability and raster resolution remain separate conclusions. After API behavior is resolved, include one known linked-RVT view and one known visible-DWG view in the runtime matrix.
+
+Inactive-crop production runs use the repository's centralized `resolve_view_bounds()` path to obtain model-only bounds when available. If Revit backs off `ImageExportOptions.PixelSize`, the resolution block is recomputed from the accepted width so API capability conclusions are not mixed with stale density metadata.

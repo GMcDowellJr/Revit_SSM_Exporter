@@ -156,6 +156,22 @@ def _finalize_resolution_report(report, actual_width, actual_height):
     return report
 
 
+def _resolution_report_for_accepted_width(report, accepted_width):
+    report = dict(report)
+    accepted_width = int(round_half_up_positive(_positive_float(accepted_width, "accepted_width_px")))
+    model_width = _positive_float(report.get("model_width_ft"), "model_width_ft")
+    model_height = _positive_float(report.get("model_height_ft"), "model_height_ft")
+    report["accepted_width_px"] = accepted_width
+    report["accepted_pixels_per_model_foot"] = float(accepted_width) / model_width
+    report["predicted_height_px"] = round_half_up_positive(model_height * report["accepted_pixels_per_model_foot"])
+    view_scale = report.get("view_scale")
+    report["effective_dpi"] = (report["accepted_pixels_per_model_foot"] * float(view_scale) / 12.0) if view_scale else None
+    report["actual_model_inches_per_pixel"] = 12.0 / report["accepted_pixels_per_model_foot"]
+    if accepted_width != int(report.get("requested_width_px", accepted_width)):
+        report["pixel_size_backoff"] = True
+    return report
+
+
 def calculate_canvas_placement(model_bounds, canvas_bounds, accepted_pixels_per_model_foot):
     if not model_bounds or not canvas_bounds:
         return {"available": False, "reason": "missing model or canvas bounds"}
@@ -191,7 +207,10 @@ def _bounds_tuple(b):
     try:
         return (float(b[0]), float(b[1]), float(b[2]), float(b[3]))
     except Exception:
-        return (float(b.Min.X), float(b.Min.Y), float(b.Max.X), float(b.Max.Y))
+        try:
+            return (float(b.xmin), float(b.ymin), float(b.xmax), float(b.ymax))
+        except Exception:
+            return (float(b.Min.X), float(b.Min.Y), float(b.Max.X), float(b.Max.Y))
 
 
 def _active_crop_bounds(view):
@@ -206,9 +225,25 @@ def _active_crop_bounds(view):
 
 def _current_resolution_bounds(view):
     bounds, source = _active_crop_bounds(view)
-    if bounds is None:
-        return None, source
-    return bounds, source
+    if bounds is not None:
+        return bounds, source
+    try:
+        doc = _doc()
+        from vop_interwoven.config import Config
+        from vop_interwoven.revit.view_basis import make_view_basis, resolve_view_bounds
+        cfg = Config()
+        if not hasattr(cfg, "cell_size_paper_in") or cfg.cell_size_paper_in is None:
+            cfg.cell_size_paper_in = 0.125
+        scale = _positive_float(getattr(view, "Scale", None), "view_scale")
+        basis = make_view_basis(view)
+        cell_size_ft = (float(cfg.cell_size_paper_in) * scale) / 12.0
+        resolved = resolve_view_bounds(view, policy={"doc": doc, "basis": basis, "cfg": cfg, "buffer_ft": float(getattr(cfg, "bounds_buffer_ft", 0.0) or 0.0), "cell_size_ft": cell_size_ft, "max_W": getattr(cfg, "max_grid_cells_width", None), "max_H": getattr(cfg, "max_grid_cells_height", None)})
+        model_bounds = resolved.get("model_bounds_uv") or resolved.get("bounds_uv")
+        if model_bounds is not None:
+            return _bounds_tuple(model_bounds), "resolved_model_bounds" if resolved.get("model_bounds_uv") is not None else "canvas_bounds"
+    except Exception:
+        pass
+    return None, "INCONCLUSIVE"
 
 
 def _resolution_from_view(view, run):
@@ -754,7 +789,7 @@ def _run_variant(doc, view, out_dir, base, name, max_count, resolution_report, r
         result["transaction_group"]["no_child_transaction_open_at_export"] = not bool(doc.IsModifiable)
         start = time.time(); path, accepted = _export_tiff(doc, view, tiff_path, resolution_report["accepted_width_px"]); elapsed = (time.time() - start) * 1000.0
         actual_w, actual_h = _actual_tiff_dimensions(path)
-        resolution = _finalize_resolution_report(resolution_report, actual_w, actual_h)
+        resolution = _finalize_resolution_report(_resolution_report_for_accepted_width(resolution_report, accepted), actual_w, actual_h)
         result["export"] = {"path": path, "requested_pixel_size": resolution_report["requested_width_px"], "accepted_pixel_size": accepted, "timing_ms": round(elapsed, 3), "resolution": resolution}
         result["image_analysis"] = _analyze_image(path, result["assigned_elements"])
     except Exception as ex:
@@ -810,7 +845,11 @@ def run(raw_view, output_dir, max_elements, selection, resolution_policy=DEFAULT
     base = "{0}_{1}.graphics_semantics".format(_safe_name(view.Name), _safe_int_id(view.Id))
     report = {"probe": {"name": PROBE_NAME, "version": PROBE_VERSION, "target": "Revit 2025 / Dynamo 3.3 CPython3"}, "inputs": {"view_id": _safe_int_id(view.Id), "view_name": getattr(view, "Name", None), "output_directory": out_dir, "maximum_elements_to_color": max_elements, "variant_selection": selected, "resolution_policy": resolution_policy, "target_dpi": target_dpi, "fixed_pixel_width": fixed_pixel_width, "max_pixel_dimension": max_pixel_dimension}, "variants": [], "recommendation": {}, "conclusion": "INCONCLUSIVE", "requires_external_analysis": True}
     for run_cfg in _resolution_runs(resolution_policy, target_dpi, fixed_pixel_width, max_pixel_dimension):
-        resolution_report = _resolution_from_view(view, run_cfg)
+        try:
+            resolution_report = _resolution_from_view(view, run_cfg)
+        except Exception as ex:
+            report.setdefault("resolution_diagnostics", []).append({"policy": run_cfg.get("policy"), "target_dpi": run_cfg.get("target_dpi"), "conclusion": "INCONCLUSIVE", "reason": str(ex)})
+            continue
         suffix = _resolution_suffix(run_cfg)
         for variant in variants:
             report["variants"].append(_run_variant(doc, view, probe_dir, base, variant, max_elements, resolution_report, suffix))

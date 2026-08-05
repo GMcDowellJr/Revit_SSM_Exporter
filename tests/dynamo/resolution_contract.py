@@ -94,3 +94,29 @@ def build_resolution_report(*args, actual_width_px=None, actual_height_px=None, 
     report["actual_height_px"] = actual_height_px
     json.dumps(report)
     return report
+
+
+def resolution_report_for_accepted_width(report, accepted_width_px):
+    report = dict(report)
+    accepted_width_px = int(_positive(accepted_width_px, "accepted_width_px"))
+    model_width = _positive(report["model_width_ft"], "model_width_ft")
+    model_height = _positive(report["model_height_ft"], "model_height_ft")
+    report["accepted_width_px"] = accepted_width_px
+    report["accepted_pixels_per_model_foot"] = accepted_width_px / model_width
+    report["predicted_height_px"] = round_half_up_positive(model_height * report["accepted_pixels_per_model_foot"])
+    report["effective_dpi"] = report["accepted_pixels_per_model_foot"] * report["view_scale"] / 12.0
+    report["actual_model_inches_per_pixel"] = 12.0 / report["accepted_pixels_per_model_foot"]
+    if accepted_width_px != report["requested_width_px"]:
+        report["pixel_size_backoff"] = True
+    json.dumps(report)
+    return report
+
+
+def choose_resolution_bounds(active_crop_bounds=None, resolved_model_bounds=None, canvas_bounds=None):
+    if active_crop_bounds is not None:
+        return active_crop_bounds, "active_model_crop"
+    if resolved_model_bounds is not None:
+        return resolved_model_bounds, "resolved_model_bounds"
+    if canvas_bounds is not None:
+        return canvas_bounds, "canvas_bounds"
+    return None, "INCONCLUSIVE"
