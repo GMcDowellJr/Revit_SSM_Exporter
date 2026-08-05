@@ -234,6 +234,20 @@ candidate and both reference controls (`attached_element_overrides_only` and
 Rerun the full factorial only on a view type where the reduced candidate fails or
 produces different evidence.
 
+
+## External analysis
+
+After the Dynamo run, analyze the returned JSON/TIFF bundle with:
+
+```bash
+python tools/analyze_stage_a_probe.py <output-directory-or-minimum_id_mutations.json>
+```
+
+The analyzer recognizes `stage_a_minimum_id_mutations` reports, fills decoded
+pixel metrics into each attested variant, marks blocked/failed mutation exports
+as non-evidence, and writes `<name>.minimum_id_mutations.analyzed.json` with the
+recommendation schema.
+
 ## Output artifacts
 
 The probe writes:
