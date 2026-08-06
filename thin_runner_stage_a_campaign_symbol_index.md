@@ -86,8 +86,8 @@ campaign state, common acceptance reduction, or optional LLM interpretation.
 | `vop_interwoven.config::Config` | Probe resolution/collection configuration | **Current production.** |
 | `vop_interwoven.revit.view_basis::{resolve_view_mode,make_view_basis,resolve_view_bounds,xy_bounds_from_crop_box_all_corners,crop_box_from_uv_bounds}` | View validation, basis, bounds and crop conversion across probes | **Current production.** |
 | `vop_interwoven.revit.annotation::compute_annotation_extents` | Alignment canvas bounds | **Current production.** |
-| `vop_interwoven.pipeline::init_view_raster` | Graphics/external assignment setup | **Current production.** |
-| `vop_interwoven.revit.collection::{collect_view_elements,expand_host_link_import_model_elements}` | Assignment/source discovery | **Current production.** |
+| `vop_interwoven.pipeline::init_view_raster` | Graphics-semantics, external-sources, and model-linework raster/assignment setup | **Current production.** |
+| `vop_interwoven.revit.collection::{collect_view_elements,expand_host_link_import_model_elements}` | Graphics-semantics, external-sources, minimum-mutations, and model-linework assignment/source discovery; model-linework calls them from both model-category and reference-element collectors | **Current production.** |
 | `vop_interwoven.color_id_buffer::{resolve_all,build_palette,choose_step,_build_flat_color_ogs,_get_solid_pattern_id,_try_color_link_element,get_or_create_neutral_phase_filter}` | Assignment resolution, palette/OGS, link color and filter mutation | **Current production.** |
 | `vop_interwoven.core.math_utils::Bounds2D`, `core.raster::ViewRaster`, `core.diagnostics::Diagnostics` | Bounds/raster/diagnostic objects | **Current production.** |
 

@@ -142,8 +142,10 @@ campaign.json                         [GAP: no schema/reader]
   source-level design deliberately changes the contract; nesting an outer group
   is not established safe by static evidence.
 * The Dynamo side must not infer image-dependent downstream acceptance. Existing
-  `requires_external_analysis`/pending markers support that separation for four
-  families, but schemas and coverage are incomplete.
+  `requires_external_analysis`/pending markers support that separation only for
+  graphics semantics, model linework, and image alignment. Minimum ID mutations
+  is externally analyzed but emits neither marker, so a campaign executor cannot
+  treat either field as a normalized four-family handshake.
 * An external planner cannot yet deterministically produce a next batch because
   campaign stage/dependency rules, stable identities, normalized attempts,
   analyzer completion, acceptance reduction, and state transition contracts are
