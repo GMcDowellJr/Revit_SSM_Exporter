@@ -1531,18 +1531,14 @@
     ],
     "35": [
       "claude",
-      "claude_automated_workflows",
-      "claude_branch_naming",
       "claude_claude_md_ai_assistant_guide_for_revit_ssm_exporter",
       "claude_code_quality_checks",
       "claude_commentary_markers_in_code",
-      "claude_commit_message_convention",
       "claude_core_architecture_principles",
       "claude_directory_structure",
       "claude_documentation_hierarchy",
       "claude_element_classification_system",
       "claude_environment_notes",
-      "claude_git_workflow",
       "claude_graphify",
       "claude_key_configuration_parameters",
       "claude_key_files_to_understand_first",
@@ -1719,6 +1715,8 @@
       "vop_interwoven_vop_interwoven_symbol_index_view_signature"
     ],
     "46": [
+      "concept_golden_baseline_testing",
+      "tools_readme",
       "tools_readme_compare_golden_py_golden_baseline_comparison",
       "tools_readme_establishing_initial_golden_baseline",
       "tools_readme_generate_manifest_py_generate_golden_baseline",
@@ -1762,19 +1760,19 @@
       "tests_test_bbox_policy_test_resolve_element_bbox_returns_none_when_unavailable"
     ],
     "49": [
-      "vop_interwoven_phase7_csv_export_plan_core_csv_headers_18_columns",
-      "vop_interwoven_phase7_csv_export_plan_csv_headers_reference",
+      "vop_interwoven_phase7_csv_export_plan_current_output_format_vop_interwoven",
+      "vop_interwoven_phase7_csv_export_plan_current_outputs_generated",
       "vop_interwoven_phase7_csv_export_plan_dependencies",
       "vop_interwoven_phase7_csv_export_plan_future_enhancements_post_phase_7",
-      "vop_interwoven_phase7_csv_export_plan_integration_test_dynamo",
+      "vop_interwoven_phase7_csv_export_plan_gap_analysis_current_vs_target",
+      "vop_interwoven_phase7_csv_export_plan_json_structure_per_view",
       "vop_interwoven_phase7_csv_export_plan_notes",
       "vop_interwoven_phase7_csv_export_plan_overview",
       "vop_interwoven_phase7_csv_export_plan_phase_7_csv_export_implementation_plan",
       "vop_interwoven_phase7_csv_export_plan_success_criteria",
-      "vop_interwoven_phase7_csv_export_plan_testing_strategy",
       "vop_interwoven_phase7_csv_export_plan_timeline_estimate",
-      "vop_interwoven_phase7_csv_export_plan_unit_tests_vop_interwoven_tests_test_csv_export_py",
-      "vop_interwoven_phase7_csv_export_plan_vop_csv_headers_27_columns"
+      "vop_interwoven_phase7_csv_export_plan_what_we_have_vop_interwoven",
+      "vop_interwoven_phase7_csv_export_plan_what_we_need_to_add"
     ],
     "50": [
       "agents_md",
@@ -1886,11 +1884,14 @@
       "vop_interwoven_diagnostics_occlusion_tracker_rationale_5"
     ],
     "58": [
+      "concept_8state_occupancy_partition",
       "concept_annotation_type_classification",
-      "concept_golden_baseline_testing",
+      "concept_external_cell_metrics",
+      "concept_multihot_model_class_cells",
+      "concept_occupancy_partition_legacy",
       "concept_ssm_csv_format",
       "dynamo_tests_readme",
-      "tools_readme",
+      "vop_interwoven_docs_metrics_totals_relationships_doc",
       "vop_interwoven_phase7_csv_export_plan_doc",
       "vop_interwoven_phase7_csv_export_plan_historical_superseded"
     ],
@@ -2064,11 +2065,10 @@
       "vop_interwoven_phase7_csv_export_plan_two_csv_files"
     ],
     "78": [
-      "concept_8state_occupancy_partition",
-      "concept_external_cell_metrics",
-      "concept_multihot_model_class_cells",
-      "concept_occupancy_partition_legacy",
-      "vop_interwoven_docs_metrics_totals_relationships_doc"
+      "claude_automated_workflows",
+      "claude_branch_naming",
+      "claude_commit_message_convention",
+      "claude_git_workflow"
     ],
     "79": [
       "claude_golden_baseline_testing",
@@ -2121,14 +2121,14 @@
       "tests_test_patch5_metrics_passthrough_test_view_result_to_vop_row_prefers_precomputed_metrics"
     ],
     "88": [
-      "vop_interwoven_phase7_csv_export_plan_current_output_format_vop_interwoven",
-      "vop_interwoven_phase7_csv_export_plan_current_outputs_generated",
-      "vop_interwoven_phase7_csv_export_plan_json_structure_per_view"
+      "vop_interwoven_phase7_csv_export_plan_core_csv_headers_18_columns",
+      "vop_interwoven_phase7_csv_export_plan_csv_headers_reference",
+      "vop_interwoven_phase7_csv_export_plan_vop_csv_headers_27_columns"
     ],
     "89": [
-      "vop_interwoven_phase7_csv_export_plan_gap_analysis_current_vs_target",
-      "vop_interwoven_phase7_csv_export_plan_what_we_have_vop_interwoven",
-      "vop_interwoven_phase7_csv_export_plan_what_we_need_to_add"
+      "vop_interwoven_phase7_csv_export_plan_integration_test_dynamo",
+      "vop_interwoven_phase7_csv_export_plan_testing_strategy",
+      "vop_interwoven_phase7_csv_export_plan_unit_tests_vop_interwoven_tests_test_csv_export_py"
     ],
     "90": [
       "tests_test_csv_raster_dict_restore_layers",
@@ -2197,7 +2197,7 @@
     "32": 0.11764705882352941,
     "33": 0.11764705882352941,
     "34": 0.16911764705882354,
-    "35": 0.1,
+    "35": 0.125,
     "36": 0.14166666666666666,
     "37": 0.125,
     "38": 0.18333333333333332,
@@ -2208,7 +2208,7 @@
     "43": 0.2857142857142857,
     "44": 0.18681318681318682,
     "45": 0.14285714285714285,
-    "46": 0.18181818181818182,
+    "46": 0.15384615384615385,
     "47": 0.15384615384615385,
     "48": 0.28205128205128205,
     "49": 0.15384615384615385,
@@ -2220,7 +2220,7 @@
     "55": 0.18181818181818182,
     "56": 0.2,
     "57": 0.18181818181818182,
-    "58": 0.2857142857142857,
+    "58": 0.2222222222222222,
     "59": 0.2,
     "60": 0.4444444444444444,
     "61": 0.3611111111111111,
@@ -2371,41 +2371,8 @@
       "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities"
     }
   ],
-  "questions": [
-    {
-      "type": "bridge_node",
-      "question": "Why does `Config` connect `Configuration Testing` to `Geometry Classification Testing`, `Test Configuration`, `Module Import Testing`, `UV Classification Testing`, `Linework Application`, `Graphics Semantics`, `External Source Analysis`, `Front Face Selection Testing`, `Image Alignment Probe`, `Final State Scanning`, `Identity Consistency Testing`, `Streaming Export Processing`, `Color ID Buffer Testing`, `View Raster Testing`, `Phase Validation`, `Proxy Generation Testing`, `Pipeline Diagnostics`, `CSV Export Testing`?",
-      "why": "High betweenness centrality (0.214) - this node is a cross-community bridge."
-    },
-    {
-      "type": "bridge_node",
-      "question": "Why does `Test Scripts` connect `Phase Validation` to `Dynamo Test Scripts`, `CSV Export Testing`?",
-      "why": "High betweenness centrality (0.116) - this node is a cross-community bridge."
-    },
-    {
-      "type": "bridge_node",
-      "question": "Why does `Dynamo Test Scripts` connect `Dynamo Test Scripts` to `Annotation Classification`, `Phase Validation`?",
-      "why": "High betweenness centrality (0.115) - this node is a cross-community bridge."
-    },
-    {
-      "type": "verify_inferred",
-      "question": "Are the 19 inferred relationships involving `Config` (e.g. with `_collect_expanded()` and `_current_resolution_bounds()`) actually correct?",
-      "why": "`Config` has 19 INFERRED edges - model-reasoned connections that need verification."
-    },
-    {
-      "type": "isolated_nodes",
-      "question": "What connects `graphify — Query the knowledge graph before browsing source`, `Core architecture constraints`, `bool` to the rest of the system?",
-      "why": "268 weakly-connected nodes found - possible documentation gaps or missing edges."
-    },
-    {
-      "type": "low_cohesion",
-      "question": "Should `Mock Objects` be split into smaller, more focused modules?",
-      "why": "Cohesion score 0.051839464882943144 - nodes in this community are weakly interconnected."
-    },
-    {
-      "type": "low_cohesion",
-      "question": "Should `Test Configuration` be split into smaller, more focused modules?",
-      "why": "Cohesion score 0.052184769038701624 - nodes in this community are weakly interconnected."
-    }
-  ]
+  "tokens": {
+    "input": 24778,
+    "output": 1162
+  }
 }
