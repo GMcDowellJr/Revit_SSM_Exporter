@@ -23,6 +23,8 @@ import re
 import sys
 import time
 
+from tests.dynamo.stage_a_probe_contract import execution_envelope, select_named, utc_now_iso, view_identity
+
 DEFAULT_FIXED_PIXEL_WIDTH = 1600
 DEFAULT_RESOLUTION_POLICY = "paper_space_dpi"
 DEFAULT_TARGET_DPI = 150
@@ -183,6 +185,13 @@ def calculate_canvas_placement(model_bounds, canvas_bounds, accepted_pixels_per_
     return {"available": True, "canvas_width_px": rounded[0], "canvas_height_px": rounded[1], "model_offset_px": [rounded[2], rounded[3]], "model_offset_float_px": [off_x, off_y], "model_offset_fractional_px": [off_x - math.floor(off_x), off_y - math.floor(off_y)], "rounding_error_px": {"canvas_width": errors[0], "canvas_height": errors[1], "offset_x": errors[2], "offset_y": errors[3], "max": max(errors)}, "rounding_error_model_units": max(errors) / density, "lossless_padding_possible": max(errors) < 1e-9, "resampling_required": max(errors) >= 1e-9}
 
 SUPPORTED_MODES = ("original", "model_bounds", "canvas_bounds", "all")
+
+
+def select_resolution_runs(resolution_cases, resolution_policy, target_dpi,
+                           fixed_pixel_width, max_pixel_dimension):
+    available = _resolution_runs(resolution_policy, target_dpi, fixed_pixel_width, max_pixel_dimension)
+    names = select_named(resolution_cases, [_resolution_suffix(item) for item in available], "resolution case(s)")
+    return [item for item in available if _resolution_suffix(item) in names]
 MARKER_SPECS = [
     ("lower_left",  (255, 0, 0)),
     ("lower_right", (0, 255, 0)),
@@ -643,19 +652,24 @@ def _placement(model_bounds, canvas_bounds, model_img):
     return {"available": True, "observed_px_per_model_unit": density, "density_source_content_width_px": int(content_width), "tiff_actual_width_px": int(model_img.get("actual_width") or 0), "canvas_pixel_dimensions_float": [canvas_w, canvas_h], "model_image_offset_float": [off_x, off_y], "offset_integral": [rounding[2] < 1e-6, rounding[3] < 1e-6], "max_rounding_error_px": max(rounding), "max_rounding_error_model_units": max(rounding) / density, "lossless_padding_sufficient": max(rounding) < 1e-6, "resampling_required_if_exact_canvas_needed": max(rounding) >= 1e-6}
 
 
-def _run():
-    out_dir = IN[1] if len(IN) > 1 and IN[1] else os.path.join(os.path.expanduser("~"), "Desktop")  # noqa: F821
+def _run_native(raw_view, output_dir=None, mode="all", create_markers=True,
+              resolution_policy=DEFAULT_RESOLUTION_POLICY, target_dpi=DEFAULT_TARGET_DPI,
+              fixed_pixel_width=DEFAULT_FIXED_PIXEL_WIDTH,
+              max_pixel_dimension=DEFAULT_MAX_PIXEL_DIMENSION,
+              resolution_cases="all", repetition_count=2):
+    """Execute selected alignment cases; owns and cleans up its TransactionGroup."""
+    out_dir = output_dir or os.path.join(os.path.expanduser("~"), "Desktop")
     _ensure_repo_on_path(output_dir=out_dir)
     _ensure_revit_api_reference()
     from Autodesk.Revit.DB import TransactionGroup, TransactionStatus
     doc = _document_manager_doc()
-    view = _unwrap(IN[0])  # noqa: F821
-    mode = (IN[2] if len(IN) > 2 and IN[2] else "all").strip().lower()  # noqa: F821
-    create_markers = bool(IN[3]) if len(IN) > 3 and IN[3] is not None else True  # noqa: F821
-    resolution_policy = IN[4] if len(IN) > 4 else DEFAULT_RESOLUTION_POLICY  # noqa: F821
-    target_dpi = IN[5] if len(IN) > 5 else DEFAULT_TARGET_DPI  # noqa: F821
-    fixed_pixel_width = IN[6] if len(IN) > 6 else DEFAULT_FIXED_PIXEL_WIDTH  # noqa: F821
-    max_pixel_dimension = IN[7] if len(IN) > 7 else DEFAULT_MAX_PIXEL_DIMENSION  # noqa: F821
+    view = _unwrap(raw_view)
+    mode = str(mode or "all").strip().lower()
+    repetition_count = int(repetition_count)
+    if repetition_count < 1:
+        raise ValueError("repetition_count must be at least 1")
+    selected_runs = select_resolution_runs(resolution_cases, resolution_policy, target_dpi, fixed_pixel_width, max_pixel_dimension)
+    selected_case_names = [_resolution_suffix(item) for item in selected_runs]
     if mode not in SUPPORTED_MODES:
         raise ValueError("Unsupported export mode '{0}'. Expected one of {1}".format(mode, SUPPORTED_MODES))
     reject = _reject_reason(view)
@@ -706,7 +720,7 @@ def _run():
         result["diagnostics"].extend(marker_diags)
         marker_ids = [eid for m in markers for eid in m.get("element_ids", [])]
         analyzed_by_mode = {}
-        for run_cfg in _resolution_runs(resolution_policy, target_dpi, fixed_pixel_width, max_pixel_dimension):
+        for run_cfg in selected_runs:
             suffix = _resolution_suffix(run_cfg)
             for m in modes:
                 if m == "original":
@@ -726,7 +740,7 @@ def _run():
                 tb = _bounds_tuple(target_bounds); bounds_source = "canvas_bounds" if m == "canvas_bounds" else ("active_model_crop" if before_state.get("CropBoxActive") and m == "original" else ("resolved_model_bounds" if model_bounds_source else "explicit_model_bounds"))
                 resolution_report = build_resolution_report(run_cfg.get("policy"), tb[2]-tb[0], tb[3]-tb[1], getattr(view, "Scale", None), run_cfg.get("target_dpi"), bounds_source, run_cfg.get("fixed_pixel_width"), run_cfg.get("max_pixel_dimension"))
                 images = []
-                for seq in (1, 2):
+                for seq in range(1, repetition_count + 1):
                     path = os.path.join(out_dir, "{0}.{1}.{2}.alignment_{3}.tiff".format(base, m, suffix, seq))
                     exported, accepted = _export_tiff(doc, view, path, resolution_report["accepted_width_px"])
                     result["paths"].append(exported)
@@ -737,7 +751,7 @@ def _run():
                     analysis["marker_residual_units"] = {"pixels": "pending_external_analysis", "view_uv_model_units": "pending_external_analysis", "paper_space_inches": "pending_external_analysis"}
                     analysis["pixel_size_equals_actual_width"] = None
                     images.append(analysis)
-                sequential_equal = images[0].get("sha256") == images[1].get("sha256") and images[0].get("actual_width") == images[1].get("actual_width") and images[0].get("actual_height") == images[1].get("actual_height")
+                sequential_equal = len(images) > 1 and all(images[0].get("sha256") == item.get("sha256") and images[0].get("actual_width") == item.get("actual_width") and images[0].get("actual_height") == item.get("actual_height") for item in images[1:])
                 analyzed_by_mode[m] = images[0]
                 key = m + "." + suffix
                 result["exports"][key] = {"crop_change": crop_change, "target_bounds_uv": _bounds_dict(target_bounds), "images": images, "sequential_export_equality": bool(sequential_equal)}
@@ -778,7 +792,49 @@ def _run():
     return result
 
 
-try:
-    OUT = _run()  # noqa: F821
-except Exception as ex:
-    OUT = {"conclusion": "FAIL", "error": str(ex), "error_type": type(ex).__name__}  # noqa: F821
+def run_probe(raw_view, output_dir=None, mode="all", create_markers=True,
+              resolution_policy=DEFAULT_RESOLUTION_POLICY, target_dpi=DEFAULT_TARGET_DPI,
+              fixed_pixel_width=DEFAULT_FIXED_PIXEL_WIDTH,
+              max_pixel_dimension=DEFAULT_MAX_PIXEL_DIMENSION,
+              resolution_cases="all", repetition_count=2):
+    started_at = utc_now_iso()
+    native = _run_native(raw_view, output_dir, mode, create_markers, resolution_policy,
+                         target_dpi, fixed_pixel_width, max_pixel_dimension,
+                         resolution_cases, repetition_count)
+    rollback = native.get("rollback_result")
+    differences = native.get("state_differences")
+    selected = select_named(resolution_cases, [_resolution_suffix(item) for item in _resolution_runs(resolution_policy, target_dpi, fixed_pixel_width, max_pixel_dimension)], "resolution case(s)")
+    diagnostics = native.get("diagnostics", [])
+    return execution_envelope(
+        "stage_a_image_alignment",
+        {"mode": mode, "create_markers": bool(create_markers), "resolution_policy": resolution_policy,
+         "target_dpi": target_dpi, "fixed_pixel_width": fixed_pixel_width,
+         "max_pixel_dimension": max_pixel_dimension, "resolution_cases": selected,
+         "repetition_count": int(repetition_count)},
+        view_identity(raw_view), native, native.get("paths", []),
+        "succeeded" if rollback == "rolled_back" else ("not_started" if rollback == "not_started" else "failed"),
+        "restored" if differences == [] else ("not_checked" if differences is None else "not_restored"), started_at,
+        execution_status="completed" if native.get("conclusion") != "FAIL" else "failed",
+        errors=diagnostics if native.get("conclusion") == "FAIL" else [],
+        warnings=diagnostics if native.get("conclusion") != "FAIL" else [])
+
+
+def dynamo_main(inputs):
+    """Compatibility adapter for the historical Dynamo IN positions."""
+    return run_probe(
+        inputs[0], inputs[1] if len(inputs) > 1 else None,
+        inputs[2] if len(inputs) > 2 else "all",
+        inputs[3] if len(inputs) > 3 else True,
+        inputs[4] if len(inputs) > 4 else DEFAULT_RESOLUTION_POLICY,
+        inputs[5] if len(inputs) > 5 else DEFAULT_TARGET_DPI,
+        inputs[6] if len(inputs) > 6 else DEFAULT_FIXED_PIXEL_WIDTH,
+        inputs[7] if len(inputs) > 7 else DEFAULT_MAX_PIXEL_DIMENSION,
+        inputs[8] if len(inputs) > 8 else "all",
+        inputs[9] if len(inputs) > 9 else 2)
+
+
+if "IN" in globals():
+    try:
+        OUT = dynamo_main(IN)  # noqa: F821
+    except Exception as ex:
+        OUT = {"conclusion": "FAIL", "error": str(ex), "error_type": type(ex).__name__}

@@ -862,15 +862,12 @@ def run(raw_view, output_dir, max_elements, selection, resolution_policy=DEFAULT
     return report
 
 
-try:
-    raw_view = IN[0] if "IN" in globals() and len(IN) > 0 else None
-    output_dir = IN[1] if "IN" in globals() and len(IN) > 1 else None
-    max_elements = IN[2] if "IN" in globals() and len(IN) > 2 else None
-    selection = IN[3] if "IN" in globals() and len(IN) > 3 else "all"
-    resolution_policy = IN[4] if "IN" in globals() and len(IN) > 4 else DEFAULT_RESOLUTION_POLICY
-    target_dpi = IN[5] if "IN" in globals() and len(IN) > 5 else DEFAULT_TARGET_DPI
-    fixed_pixel_width = IN[6] if "IN" in globals() and len(IN) > 6 else DEFAULT_FIXED_PIXEL_WIDTH
-    max_pixel_dimension = IN[7] if "IN" in globals() and len(IN) > 7 else DEFAULT_MAX_PIXEL_DIMENSION
-    OUT = run(raw_view, output_dir, max_elements, selection, resolution_policy, target_dpi, fixed_pixel_width, max_pixel_dimension)
-except Exception as ex:
-    OUT = {"conclusion": "FAIL", "error": str(ex), "error_type": type(ex).__name__, "traceback": traceback.format_exc()}
+def dynamo_main(inputs):
+    return run(inputs[0] if len(inputs) > 0 else None, inputs[1] if len(inputs) > 1 else None, inputs[2] if len(inputs) > 2 else None, inputs[3] if len(inputs) > 3 else "all", inputs[4] if len(inputs) > 4 else DEFAULT_RESOLUTION_POLICY, inputs[5] if len(inputs) > 5 else DEFAULT_TARGET_DPI, inputs[6] if len(inputs) > 6 else DEFAULT_FIXED_PIXEL_WIDTH, inputs[7] if len(inputs) > 7 else DEFAULT_MAX_PIXEL_DIMENSION)
+
+
+if "IN" in globals():
+    try:
+        OUT = dynamo_main(IN)
+    except Exception as ex:
+        OUT = {"conclusion": "FAIL", "error": str(ex), "error_type": type(ex).__name__, "traceback": traceback.format_exc()}

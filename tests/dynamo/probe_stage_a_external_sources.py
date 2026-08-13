@@ -25,6 +25,8 @@ import sys
 import time
 import traceback
 
+from tests.dynamo.stage_a_probe_contract import execution_envelope, select_named, utc_now_iso, view_identity
+
 PROBE_NAME = "stage_a_external_sources"
 PROBE_VERSION = "2026-07-24.1"
 DEFAULT_FIXED_PIXEL_WIDTH = 1600
@@ -193,6 +195,10 @@ VARIANTS = [
     "dwg_importinstance_coloring",
     "mixed_host_link_dwg_export",
 ]
+
+
+def select_variants(selection="all"):
+    return select_named(selection, VARIANTS, "external-source variant(s)")
 
 
 
@@ -794,7 +800,7 @@ def _run_variant(doc, view, out_dir, base, variant, items, resolution_report, re
     return report
 
 
-def run(raw_view, output_dir, raw_links, raw_dwgs, resolution_policy=DEFAULT_RESOLUTION_POLICY, target_dpi=DEFAULT_TARGET_DPI, fixed_pixel_width=DEFAULT_FIXED_PIXEL_WIDTH, max_pixel_dimension=DEFAULT_MAX_PIXEL_DIMENSION):
+def _run_native(raw_view, output_dir, raw_links, raw_dwgs, selection="all", resolution_policy=DEFAULT_RESOLUTION_POLICY, target_dpi=DEFAULT_TARGET_DPI, fixed_pixel_width=DEFAULT_FIXED_PIXEL_WIDTH, max_pixel_dimension=DEFAULT_MAX_PIXEL_DIMENSION):
     out_dir = os.path.abspath(str(output_dir or os.getcwd()))
     _ensure_repo_import_path(out_dir)
     _ensure_revit_api_reference()
@@ -810,6 +816,7 @@ def run(raw_view, output_dir, raw_links, raw_dwgs, resolution_policy=DEFAULT_RES
     if not os.path.isdir(probe_dir):
         os.makedirs(probe_dir)
     base = "{0}_{1}".format(_safe_name(getattr(view, "Name", "view")), _safe_int_id(view.Id))
+    selected_variants = select_variants(selection)
     report = {"probe": {"name": PROBE_NAME, "version": PROBE_VERSION, "target": "Revit 2025 / Dynamo 3.3 CPython3"}, "inputs": {"view_id": _safe_int_id(view.Id), "view_name": getattr(view, "Name", None), "output_directory": out_dir, "link_instance_input_ids": sorted(_element_id_set(links)), "dwg_import_input_ids": sorted(_element_id_set(dwgs)), "resolution_policy": resolution_policy, "target_dpi": target_dpi, "fixed_pixel_width": fixed_pixel_width, "max_pixel_dimension": max_pixel_dimension}, "discovery": discovery, "variants": [], "conclusion": "INCONCLUSIVE"}
     for run_cfg in _resolution_runs(resolution_policy, target_dpi, fixed_pixel_width, max_pixel_dimension):
         try:
@@ -818,7 +825,7 @@ def run(raw_view, output_dir, raw_links, raw_dwgs, resolution_policy=DEFAULT_RES
             report.setdefault("resolution_diagnostics", []).append({"policy": run_cfg.get("policy"), "target_dpi": run_cfg.get("target_dpi"), "conclusion": "INCONCLUSIVE", "reason": str(ex)})
             continue
         suffix = _resolution_suffix(run_cfg)
-        for variant in VARIANTS:
+        for variant in selected_variants:
             items = _items_for_variant(variant, by_source)
             if not items:
                 report["variants"].append({"variant": variant, "resolution": resolution_report, "skipped": True, "reason": "No discovered candidates for required source type(s)", "conclusion": "INCONCLUSIVE", "assignments": []})
@@ -854,15 +861,43 @@ def run(raw_view, output_dir, raw_links, raw_dwgs, resolution_policy=DEFAULT_RES
     return report
 
 
-try:
-    raw_view = IN[0] if "IN" in globals() and len(IN) > 0 else None
-    output_dir = IN[1] if "IN" in globals() and len(IN) > 1 else None
-    raw_links = IN[2] if "IN" in globals() and len(IN) > 2 else None
-    raw_dwgs = IN[3] if "IN" in globals() and len(IN) > 3 else None
-    resolution_policy = IN[4] if "IN" in globals() and len(IN) > 4 else DEFAULT_RESOLUTION_POLICY
-    target_dpi = IN[5] if "IN" in globals() and len(IN) > 5 else DEFAULT_TARGET_DPI
-    fixed_pixel_width = IN[6] if "IN" in globals() and len(IN) > 6 else DEFAULT_FIXED_PIXEL_WIDTH
-    max_pixel_dimension = IN[7] if "IN" in globals() and len(IN) > 7 else DEFAULT_MAX_PIXEL_DIMENSION
-    OUT = run(raw_view, output_dir, raw_links, raw_dwgs, resolution_policy, target_dpi, fixed_pixel_width, max_pixel_dimension)
-except Exception as ex:
-    OUT = {"conclusion": "FAIL", "error": str(ex), "error_type": type(ex).__name__, "traceback": traceback.format_exc()}
+def run_probe(raw_view, output_dir, raw_links=None, raw_dwgs=None, selection="all",
+              resolution_policy=DEFAULT_RESOLUTION_POLICY, target_dpi=DEFAULT_TARGET_DPI,
+              fixed_pixel_width=DEFAULT_FIXED_PIXEL_WIDTH,
+              max_pixel_dimension=DEFAULT_MAX_PIXEL_DIMENSION):
+    started_at = utc_now_iso()
+    native = _run_native(raw_view, output_dir, raw_links, raw_dwgs, selection,
+                         resolution_policy, target_dpi, fixed_pixel_width, max_pixel_dimension)
+    variants = native.get("variants", [])
+    rollback_ok = bool(variants) and all(item.get("transaction_group", {}).get("rollback_succeeded") for item in variants)
+    restored = bool(variants) and all(not item.get("state", {}).get("differences_after_rollback") for item in variants)
+    errors = [error for item in variants for error in item.get("exceptions", [])]
+    paths = native.get("paths", {})
+    artifacts = ([paths.get("combined_json")] if paths.get("combined_json") else []) + list(paths.get("tiffs", []))
+    return execution_envelope(
+        PROBE_NAME, {"selection": [item.get("variant") for item in variants],
+                     "resolution_policy": resolution_policy, "target_dpi": target_dpi,
+                     "fixed_pixel_width": fixed_pixel_width, "max_pixel_dimension": max_pixel_dimension},
+        view_identity(raw_view), native, artifacts, "succeeded" if rollback_ok else "failed",
+        "restored" if restored else "not_restored", started_at,
+        execution_status="failed" if errors or not rollback_ok or not restored else "completed", errors=errors)
+
+
+def dynamo_main(inputs):
+    # IN[0:8] retain their historical meaning; IN[8] optionally selects variants.
+    return run_probe(inputs[0] if len(inputs) > 0 else None,
+                     inputs[1] if len(inputs) > 1 else None,
+                     inputs[2] if len(inputs) > 2 else None,
+                     inputs[3] if len(inputs) > 3 else None,
+                     inputs[8] if len(inputs) > 8 else "all",
+                     inputs[4] if len(inputs) > 4 else DEFAULT_RESOLUTION_POLICY,
+                     inputs[5] if len(inputs) > 5 else DEFAULT_TARGET_DPI,
+                     inputs[6] if len(inputs) > 6 else DEFAULT_FIXED_PIXEL_WIDTH,
+                     inputs[7] if len(inputs) > 7 else DEFAULT_MAX_PIXEL_DIMENSION)
+
+
+if "IN" in globals():
+    try:
+        OUT = dynamo_main(IN)
+    except Exception as ex:
+        OUT = {"conclusion": "FAIL", "error": str(ex), "error_type": type(ex).__name__, "traceback": traceback.format_exc()}

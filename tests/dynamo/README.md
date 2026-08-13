@@ -2,6 +2,26 @@
 
 This directory contains Dynamo Python node test scripts for progressive testing of the VOP interwoven pipeline implementation.
 
+## Stage A probe callable contract
+
+Stage A probe modules are safe to import. Importing one does not read Dynamo
+`IN`, assign `OUT`, open a transaction, or create an artifact. Campaign-facing
+code calls each module's `run_probe(...)` function with explicit arguments;
+`dynamo_main(inputs)` is the thin compatibility adapter. Every probe continues
+to own its transactions, `TransactionGroup`, rollback, and restoration checks.
+
+The campaign probes return the JSON-compatible execution envelope defined in
+`stage_a_probe_contract.py`. Its `execution_status` describes Revit execution
+only; image fidelity, alignment, semantic preservation, and campaign acceptance
+remain downstream analysis concerns.
+
+Existing Dynamo inputs keep their prior positions and defaults. Image alignment
+adds optional `IN[8]` (resolution cases, default `"all"`) and `IN[9]`
+(repetitions, default `2`). External sources adds optional `IN[8]` (named
+variants, default `"all"`). Minimum-ID mutations and model linework retain
+their existing `IN[3]` selection. Missing selections still mean all cases;
+unknown names raise `ValueError` rather than silently selecting nothing.
+
 ## Usage
 
 1. **Open Dynamo** in Revit with your test model loaded

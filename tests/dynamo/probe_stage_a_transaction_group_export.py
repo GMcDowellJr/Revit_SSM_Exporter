@@ -715,30 +715,31 @@ def run_probe(raw_view, raw_elements, output_dir, inject_failure=False):
     return report
 
 
-try:
-    inject = False
-    try:
-        inject = bool(IN[3]) if len(IN) > 3 else False
-    except Exception:
-        inject = False
-    _report = run_probe(IN[0], IN[1], IN[2], inject)
-    OUT = {
-        "conclusion": _report.get("result", {}).get("conclusion"),
-        "success": _report.get("result", {}).get("success"),
-        "reasons": _report.get("result", {}).get("reasons"),
-        "tiff_path": _report.get("export", {}).get("path"),
-        "json_report_path": _report.get("json_report_path"),
-        "rollback_succeeded": _report.get("transaction_group", {}).get("rollback_succeeded"),
-        "no_child_transaction_open_at_export": _report.get("transaction_group", {}).get("no_child_transaction_open_at_export"),
-        "captured_state_equal_after_rollback": _report.get("state", {}).get("captured_state_equal_after_rollback"),
-        "state_differences": _report.get("state", {}).get("state_differences"),
-        "expected_temporary_colors": _report.get("export", {}).get("expected_element_colors"),
-        "temporary_colors_visible_in_export": _report.get("export", {}).get("temporary_colors_visible_in_export"),
-        "expected_color_pixel_counts": _report.get("export", {}).get("expected_color_pixel_counts"),
-        "missing_expected_colors": _report.get("export", {}).get("missing_expected_colors"),
-        "child_transaction_commit_status": _report.get("transaction_group", {}).get("child_transaction_commit_status"),
-        "exceptions": _report.get("exceptions"),
+def dynamo_main(inputs):
+    inject = bool(inputs[3]) if len(inputs) > 3 else False
+    report = run_probe(inputs[0], inputs[1], inputs[2], inject)
+    return {
+        "conclusion": report.get("result", {}).get("conclusion"),
+        "success": report.get("result", {}).get("success"),
+        "reasons": report.get("result", {}).get("reasons"),
+        "tiff_path": report.get("export", {}).get("path"),
+        "json_report_path": report.get("json_report_path"),
+        "rollback_succeeded": report.get("transaction_group", {}).get("rollback_succeeded"),
+        "no_child_transaction_open_at_export": report.get("transaction_group", {}).get("no_child_transaction_open_at_export"),
+        "captured_state_equal_after_rollback": report.get("state", {}).get("captured_state_equal_after_rollback"),
+        "state_differences": report.get("state", {}).get("state_differences"),
+        "expected_temporary_colors": report.get("export", {}).get("expected_element_colors"),
+        "temporary_colors_visible_in_export": report.get("export", {}).get("temporary_colors_visible_in_export"),
+        "expected_color_pixel_counts": report.get("export", {}).get("expected_color_pixel_counts"),
+        "missing_expected_colors": report.get("export", {}).get("missing_expected_colors"),
+        "child_transaction_commit_status": report.get("transaction_group", {}).get("child_transaction_commit_status"),
+        "exceptions": report.get("exceptions"),
         "required_second_run": "Run again with IN[3] set to {0}. Both normal and injected-failure runs are required.".format(not inject),
     }
-except Exception as _fatal:
-    OUT = {"conclusion": "FAIL", "success": False, "fatal_exception": _exception_record("dynamo_entrypoint", _fatal)}
+
+
+if "IN" in globals():
+    try:
+        OUT = dynamo_main(IN)
+    except Exception as fatal:
+        OUT = {"conclusion": "FAIL", "success": False, "fatal_exception": _exception_record("dynamo_entrypoint", fatal)}
