@@ -1061,6 +1061,7 @@ def run_probe(raw_view, output_dir, raw_focused=None, selection="all",
     native = _run_native(raw_view, output_dir, raw_focused, selection, resolution_policy,
                          target_dpi, fixed_pixel_width, max_pixel_dimension)
     runs = list(native.get("reference_runs", [])) + list(native.get("modes", []))
+    executed = bool(runs)
     rollback_ok = bool(runs) and all(item.get("transaction_group", {}).get("rollback_succeeded") for item in runs)
     restored = bool(runs) and all(not item.get("state", {}).get("differences_after_rollback") for item in runs)
     errors = [error for item in runs for error in item.get("exceptions", [])]
@@ -1071,9 +1072,12 @@ def run_probe(raw_view, output_dir, raw_focused=None, selection="all",
         PROBE_NAME, {"display_cases": selected_modes, "resolution_policy": resolution_policy,
                      "dpi_cases": _parse_dpi_values(target_dpi), "fixed_pixel_width": fixed_pixel_width,
                      "max_pixel_dimension": max_pixel_dimension},
-        _probe_contract().view_identity(raw_view), native, artifacts, "succeeded" if rollback_ok else "failed",
-        "restored" if restored else "not_restored", started_at,
-        execution_status="failed" if errors or not rollback_ok or not restored else "completed", errors=errors)
+        _probe_contract().view_identity(raw_view), native, artifacts,
+        "succeeded" if rollback_ok else ("not_started" if not executed else "failed"),
+        "restored" if restored else ("not_checked" if not executed else "not_restored"), started_at,
+        execution_status=("inconclusive" if not executed else
+                          ("failed" if errors or not rollback_ok or not restored else "completed")),
+        errors=errors)
 
 
 def dynamo_main(inputs):

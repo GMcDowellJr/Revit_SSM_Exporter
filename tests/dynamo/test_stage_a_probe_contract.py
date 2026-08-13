@@ -175,6 +175,30 @@ def test_unwired_alignment_repetition_uses_default(monkeypatch):
     assert captured["repetition_count"] == 2
 
 
+def test_single_alignment_export_has_no_equality_claim():
+    module = importlib.import_module("tests.dynamo.probe_stage_a_image_alignment")
+    assert module._sequential_export_equality([{"sha256": "one", "actual_width": 1, "actual_height": 1}]) is None
+    assert module._sequential_export_equality([]) is None
+    assert module._sequential_export_equality([
+        {"sha256": "same", "actual_width": 1, "actual_height": 2},
+        {"sha256": "same", "actual_width": 1, "actual_height": 2},
+    ]) is True
+
+
+@pytest.mark.parametrize("module_name,native_result", (
+    ("probe_stage_a_graphics_semantics", {"variants": [], "paths": {}, "conclusion": "INCONCLUSIVE", "resolution_diagnostics": [{"reason": "no bounds"}]}),
+    ("probe_stage_a_model_linework", {"modes": [], "reference_runs": [], "paths": {}, "conclusion": "INCONCLUSIVE", "resolution_diagnostics": [{"reason": "no bounds"}]}),
+))
+def test_resolution_only_skip_is_inconclusive(monkeypatch, tmp_path, module_name, native_result):
+    module = importlib.import_module("tests.dynamo." + module_name)
+    monkeypatch.setattr(module, "_ensure_contract_import_path", lambda *args, **kwargs: None)
+    monkeypatch.setattr(module, "_run_native", lambda *args: native_result)
+    result = module.run_probe(object(), str(tmp_path))
+    assert result["execution_status"] == "inconclusive"
+    assert result["rollback_status"] == "not_started"
+    assert result["state_restoration_status"] == "not_checked"
+
+
 def test_graphics_and_transaction_adapters_return_envelopes(monkeypatch, tmp_path):
     graphics = importlib.import_module("tests.dynamo.probe_stage_a_graphics_semantics")
     monkeypatch.setattr(graphics, "_ensure_repo_import_path", lambda _path: None)

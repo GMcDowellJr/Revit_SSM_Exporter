@@ -683,6 +683,17 @@ def _placement(model_bounds, canvas_bounds, model_img):
     return {"available": True, "observed_px_per_model_unit": density, "density_source_content_width_px": int(content_width), "tiff_actual_width_px": int(model_img.get("actual_width") or 0), "canvas_pixel_dimensions_float": [canvas_w, canvas_h], "model_image_offset_float": [off_x, off_y], "offset_integral": [rounding[2] < 1e-6, rounding[3] < 1e-6], "max_rounding_error_px": max(rounding), "max_rounding_error_model_units": max(rounding) / density, "lossless_padding_sufficient": max(rounding) < 1e-6, "resampling_required_if_exact_canvas_needed": max(rounding) >= 1e-6}
 
 
+def _sequential_export_equality(images):
+    """Return ``None`` when fewer than two exports exist to compare."""
+    if len(images) < 2:
+        return None
+    first = images[0]
+    return all(first.get("sha256") == item.get("sha256") and
+               first.get("actual_width") == item.get("actual_width") and
+               first.get("actual_height") == item.get("actual_height")
+               for item in images[1:])
+
+
 def _run_native(raw_view, output_dir=None, mode="all", create_markers=True,
               resolution_policy=DEFAULT_RESOLUTION_POLICY, target_dpi=DEFAULT_TARGET_DPI,
               fixed_pixel_width=DEFAULT_FIXED_PIXEL_WIDTH,
@@ -782,10 +793,10 @@ def _run_native(raw_view, output_dir=None, mode="all", create_markers=True,
                     analysis["marker_residual_units"] = {"pixels": "pending_external_analysis", "view_uv_model_units": "pending_external_analysis", "paper_space_inches": "pending_external_analysis"}
                     analysis["pixel_size_equals_actual_width"] = None
                     images.append(analysis)
-                sequential_equal = len(images) > 1 and all(images[0].get("sha256") == item.get("sha256") and images[0].get("actual_width") == item.get("actual_width") and images[0].get("actual_height") == item.get("actual_height") for item in images[1:])
+                sequential_equal = _sequential_export_equality(images)
                 analyzed_by_mode[m] = images[0]
                 key = m + "." + suffix
-                result["exports"][key] = {"crop_change": crop_change, "target_bounds_uv": _bounds_dict(target_bounds), "images": images, "sequential_export_equality": bool(sequential_equal)}
+                result["exports"][key] = {"crop_change": crop_change, "target_bounds_uv": _bounds_dict(target_bounds), "images": images, "sequential_export_equality": sequential_equal}
                 json_path = os.path.join(out_dir, "{0}.{1}.{2}.alignment.json".format(base, m, suffix))
                 result["exports"][key]["json_path"] = json_path
         model_img = analyzed_by_mode.get("model_bounds") or analyzed_by_mode.get("original")
@@ -793,6 +804,9 @@ def _run_native(raw_view, output_dir=None, mode="all", create_markers=True,
         if model_img and model_img.get("resolution"):
             res_for_place = model_img["resolution"].get("accepted_pixels_per_model_foot")
         result["model_to_canvas_placement"] = calculate_canvas_placement(model_bounds, canvas_bounds, res_for_place) if res_for_place else _placement(model_bounds, canvas_bounds, model_img)
+    except Exception as ex:
+        result["diagnostics"].append({"stage": "probe_execution", "type": type(ex).__name__, "message": str(ex)})
+        result["execution_exception"] = {"type": type(ex).__name__, "message": str(ex)}
     finally:
         if group_started:
             try:
@@ -801,7 +815,11 @@ def _run_native(raw_view, output_dir=None, mode="all", create_markers=True,
             except Exception as ex:
                 rollback_status = "rollback_failed: {0}".format(ex)
     result["rollback_result"] = rollback_status
-    result["state_after"] = _capture_crop_state(view)
+    try:
+        result["state_after"] = _capture_crop_state(view)
+    except Exception as ex:
+        result["state_after"] = None
+        result["diagnostics"].append({"stage": "post_rollback_state_capture", "type": type(ex).__name__, "message": str(ex)})
     result["document_is_modified_after"] = bool(getattr(doc, "IsModified", False))
     result["state_differences"] = [] if result["state_after"] == before_state else [{"before": before_state, "after": result["state_after"]}]
     result["calibration_elements_exist_after"] = []
@@ -812,7 +830,9 @@ def _run_native(raw_view, output_dir=None, mode="all", create_markers=True,
         except Exception as ex:
             result["calibration_elements_exist_after"].append({"id": eid, "error": str(ex)})
     exported_images = [img for exp in result["exports"].values() for img in exp["images"]]
-    ok = rollback_status == "rolled_back" and not result["state_differences"] and not any(x.get("exists") for x in result["calibration_elements_exist_after"])
+    ok = (not result.get("execution_exception") and rollback_status == "rolled_back" and
+          not result["state_differences"] and
+          not any(x.get("exists") for x in result["calibration_elements_exist_after"]))
     result["requires_external_analysis"] = True
     result["evidence_status"] = {"all_have_image_analysis": False, "all_have_marker_analysis": False, "markers_requested": bool(create_markers), "marker_count": len(result.get("calibration_markers", [])), "any_missing_markers": None, "status": "pending_external_analysis"}
     result["conclusion"] = "PASS_PARTIAL" if ok else "FAIL"

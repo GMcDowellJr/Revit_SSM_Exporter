@@ -25,6 +25,13 @@ starts. A selection whose variants are all intentionally skipped returns the
 execution status `inconclusive`, with rollback `not_started` and restoration
 `not_checked`.
 
+Resolution failures that prevent every requested graphics-semantics or
+model-linework case from starting use the same inconclusive cleanup statuses.
+Image-alignment execution failures are returned in a failed envelope after the
+probe attempts its own rollback and restoration attestation. When alignment is
+requested with one repetition, `sequential_export_equality` is `null` because
+no repeat comparison occurred.
+
 Existing Dynamo inputs keep their prior positions and defaults. Image alignment
 adds optional `IN[8]` (resolution cases, default `"all"`) and `IN[9]`
 (repetitions, default `2`). External sources adds optional `IN[8]` (named
