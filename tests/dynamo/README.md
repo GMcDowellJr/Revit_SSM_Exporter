@@ -2,6 +2,43 @@
 
 This directory contains Dynamo Python node test scripts for progressive testing of the VOP interwoven pipeline implementation.
 
+## Stage A probe callable contract
+
+Stage A probe modules are safe to import. Importing one does not read Dynamo
+`IN`, assign `OUT`, open a transaction, or create an artifact. Campaign-facing
+code calls each module's `run_probe(...)` function with explicit arguments;
+`dynamo_main(inputs)` is the thin compatibility adapter and returns the same
+execution envelope. Every probe continues
+to own its transactions, `TransactionGroup`, rollback, and restoration checks.
+
+The campaign probes return the JSON-compatible execution envelope defined in
+`stage_a_probe_contract.py`. Its `execution_status` describes Revit execution
+only; image fidelity, alignment, semantic preservation, and campaign acceptance
+remain downstream analysis concerns.
+
+Pasted Dynamo nodes locate the shared contract independently from production
+module imports, using their explicit repository-root or output-directory inputs
+(plus the existing environment/common-path fallbacks). This still bootstraps the
+checkout when `vop_interwoven` was previously installed or loaded from another
+location, so the checkout does not need to be on `sys.path` before the node
+starts. A selection whose variants are all intentionally skipped returns the
+execution status `inconclusive`, with rollback `not_started` and restoration
+`not_checked`.
+
+Resolution failures that prevent every requested graphics-semantics or
+model-linework case from starting use the same inconclusive cleanup statuses.
+Image-alignment execution failures are returned in a failed envelope after the
+probe attempts its own rollback and restoration attestation. When alignment is
+requested with one repetition, `sequential_export_equality` is `null` because
+no repeat comparison occurred.
+
+Existing Dynamo inputs keep their prior positions and defaults. Image alignment
+adds optional `IN[8]` (resolution cases, default `"all"`) and `IN[9]`
+(repetitions, default `2`). External sources adds optional `IN[8]` (named
+variants, default `"all"`). Minimum-ID mutations and model linework retain
+their existing `IN[3]` selection. Missing selections still mean all cases;
+unknown names raise `ValueError` rather than silently selecting nothing.
+
 ## Usage
 
 1. **Open Dynamo** in Revit with your test model loaded

@@ -15,6 +15,7 @@ import importlib.util
 import json
 import os
 import re
+import sys
 import time
 import traceback
 
@@ -22,6 +23,35 @@ import traceback
 PROBE_NAME = "stage_a_transaction_group_export"
 PROBE_VERSION = 1
 REQUESTED_PIXEL_SIZE = 1600
+_PROBE_CONTRACT = None
+
+
+def _probe_contract(output_dir=None):
+    """Locate and import the shared contract without assuming a package path."""
+    global _PROBE_CONTRACT
+    if _PROBE_CONTRACT is not None:
+        return _PROBE_CONTRACT
+    roots = [output_dir, os.getcwd(), os.environ.get("REVIT_SSM_EXPORTER_ROOT"), os.environ.get("VOP_REPO_ROOT")]
+    for seed in roots:
+        if not seed:
+            continue
+        current = os.path.abspath(os.path.expanduser(str(seed)))
+        for _ in range(8):
+            if os.path.isfile(os.path.join(current, "tests", "dynamo", "stage_a_probe_contract.py")):
+                for candidate in (current, os.path.join(current, "tests", "dynamo")):
+                    if candidate not in sys.path:
+                        sys.path.insert(0, candidate)
+                break
+            parent = os.path.dirname(current)
+            if parent == current:
+                break
+            current = parent
+    try:
+        import tests.dynamo.stage_a_probe_contract as contract
+    except ImportError:
+        import stage_a_probe_contract as contract
+    _PROBE_CONTRACT = contract
+    return contract
 
 
 def _now_ms():
@@ -557,7 +587,7 @@ def _apply_temporary_changes(doc, view, elements):
     return expected, diagnostics
 
 
-def run_probe(raw_view, raw_elements, output_dir, inject_failure=False):
+def _run_native(raw_view, raw_elements, output_dir, inject_failure=False):
     _ensure_revit_api_reference()
     from Autodesk.Revit.DB import Transaction, TransactionGroup, TransactionStatus
     report = {
@@ -715,30 +745,32 @@ def run_probe(raw_view, raw_elements, output_dir, inject_failure=False):
     return report
 
 
-try:
-    inject = False
+def run_probe(raw_view, raw_elements, output_dir, inject_failure=False):
+    contract = _probe_contract(output_dir)
+    started_at = contract.utc_now_iso()
+    native = _run_native(raw_view, raw_elements, output_dir, inject_failure)
+    transaction = native.get("transaction_group", {})
+    state = native.get("state", {})
+    rollback_ok = bool(transaction.get("rollback_succeeded"))
+    restored = bool(state.get("captured_state_equal_after_rollback"))
+    artifacts = [path for path in (native.get("export", {}).get("path"), native.get("json_report_path")) if path]
+    errors = [item for item in native.get("exceptions", []) if not item.get("controlled")]
+    return contract.execution_envelope(
+        PROBE_NAME, {"inject_failure": bool(inject_failure)}, contract.view_identity(raw_view),
+        native, artifacts, "succeeded" if rollback_ok else "failed",
+        "restored" if restored else "not_restored", started_at,
+        execution_status="failed" if errors or not rollback_ok or not restored else "completed",
+        errors=errors,
+        warnings=[item for item in native.get("exceptions", []) if item.get("controlled")])
+
+
+def dynamo_main(inputs):
+    inject = bool(inputs[3]) if len(inputs) > 3 and inputs[3] is not None else False
+    return run_probe(inputs[0], inputs[1], inputs[2], inject)
+
+
+if "IN" in globals():
     try:
-        inject = bool(IN[3]) if len(IN) > 3 else False
-    except Exception:
-        inject = False
-    _report = run_probe(IN[0], IN[1], IN[2], inject)
-    OUT = {
-        "conclusion": _report.get("result", {}).get("conclusion"),
-        "success": _report.get("result", {}).get("success"),
-        "reasons": _report.get("result", {}).get("reasons"),
-        "tiff_path": _report.get("export", {}).get("path"),
-        "json_report_path": _report.get("json_report_path"),
-        "rollback_succeeded": _report.get("transaction_group", {}).get("rollback_succeeded"),
-        "no_child_transaction_open_at_export": _report.get("transaction_group", {}).get("no_child_transaction_open_at_export"),
-        "captured_state_equal_after_rollback": _report.get("state", {}).get("captured_state_equal_after_rollback"),
-        "state_differences": _report.get("state", {}).get("state_differences"),
-        "expected_temporary_colors": _report.get("export", {}).get("expected_element_colors"),
-        "temporary_colors_visible_in_export": _report.get("export", {}).get("temporary_colors_visible_in_export"),
-        "expected_color_pixel_counts": _report.get("export", {}).get("expected_color_pixel_counts"),
-        "missing_expected_colors": _report.get("export", {}).get("missing_expected_colors"),
-        "child_transaction_commit_status": _report.get("transaction_group", {}).get("child_transaction_commit_status"),
-        "exceptions": _report.get("exceptions"),
-        "required_second_run": "Run again with IN[3] set to {0}. Both normal and injected-failure runs are required.".format(not inject),
-    }
-except Exception as _fatal:
-    OUT = {"conclusion": "FAIL", "success": False, "fatal_exception": _exception_record("dynamo_entrypoint", _fatal)}
+        OUT = dynamo_main(IN)
+    except Exception as fatal:
+        OUT = {"conclusion": "FAIL", "success": False, "fatal_exception": _exception_record("dynamo_entrypoint", fatal)}

@@ -26,10 +26,26 @@ import os
 import sys
 import time
 import traceback
+
 import re
 
 _RESOLUTION_CONTRACT = None
 
+
+
+_PROBE_CONTRACT = None
+
+
+def _probe_contract():
+    """Import the shared contract after the repository path has been bootstrapped."""
+    global _PROBE_CONTRACT
+    if _PROBE_CONTRACT is None:
+        try:
+            import tests.dynamo.stage_a_probe_contract as contract
+        except ImportError:
+            import stage_a_probe_contract as contract
+        _PROBE_CONTRACT = contract
+    return _PROBE_CONTRACT
 
 
 def _ensure_typing_module():
@@ -409,6 +425,7 @@ def generate_stage1_variants(flat_colors_supported=True):
     variants = [
         make_variant("attached_element_overrides_only", ()),
         make_variant("detached_preserve_original_display", ("detach_template",)),
+        make_variant("attached_AS", ("hide_annotation_categories", "smooth_edges_off")),
     ]
     combos = [
         ("detached_none", ()), ("detached_A", ("hide_annotation_categories",)),
@@ -1142,13 +1159,13 @@ def _run_variant(doc, view, out_dir, base, variant, assigned_ids, assigned, res_
 
 
 def _select_variants(selection, stage1, stage2):
-    if selection is None or str(selection).strip().lower() == "all":
-        return stage1 + stage2
-    wanted = set(str(selection).replace(";", ",").split(","))
-    return [v for v in stage1 + stage2 if v["name"] in wanted]
+    variants = stage1 + stage2
+    names = _probe_contract().select_named(selection, [variant["name"] for variant in variants], "minimum-ID variant(s)")
+    by_name = dict((variant["name"], variant) for variant in variants)
+    return [by_name[name] for name in names]
 
 
-def run(raw_view, output_dir, max_elements=None, selection="all", resolution_policy=DEFAULT_RESOLUTION_POLICY, target_dpi=DEFAULT_TARGET_DPI, fixed_pixel_width=DEFAULT_FIXED_PIXEL_WIDTH, max_pixel_dimension=DEFAULT_MAX_PIXEL_DIMENSION, repo_root=None):
+def _run_native(raw_view, output_dir, max_elements=None, selection="all", resolution_policy=DEFAULT_RESOLUTION_POLICY, target_dpi=DEFAULT_TARGET_DPI, fixed_pixel_width=DEFAULT_FIXED_PIXEL_WIDTH, max_pixel_dimension=DEFAULT_MAX_PIXEL_DIMENSION, repo_root=None):
     view = getattr(raw_view, "InternalElement", raw_view)
     doc = getattr(view, "Document", None)
     if doc is None:
@@ -1202,14 +1219,37 @@ def run(raw_view, output_dir, max_elements=None, selection="all", resolution_pol
     return report
 
 
+def run_probe(raw_view, output_dir, max_elements=None, selection="all",
+              resolution_policy=DEFAULT_RESOLUTION_POLICY, target_dpi=DEFAULT_TARGET_DPI,
+              fixed_pixel_width=DEFAULT_FIXED_PIXEL_WIDTH,
+              max_pixel_dimension=DEFAULT_MAX_PIXEL_DIMENSION, repo_root=None):
+    _add_repo_root_to_path(repo_root, output_dir)
+    started_at = _probe_contract().utc_now_iso()
+    native = _run_native(raw_view, output_dir, max_elements, selection, resolution_policy,
+                         target_dpi, fixed_pixel_width, max_pixel_dimension, repo_root)
+    variants = native.get("variants", [])
+    rollback_ok = bool(variants) and all(item.get("rollback_status") == "PASS" for item in variants)
+    restored = bool(variants) and all(item.get("state", {}).get("captured_state_equal_after_rollback") for item in variants)
+    artifacts = list((native.get("output_files") or {}).values())
+    errors = [error for item in variants for error in item.get("exceptions", [])]
+    return _probe_contract().execution_envelope(
+        PROBE_NAME, {"max_elements": max_elements, "selection": [item.get("variant") for item in variants],
+                     "resolution_policy": resolution_policy, "target_dpi": target_dpi,
+                     "fixed_pixel_width": fixed_pixel_width, "max_pixel_dimension": max_pixel_dimension},
+        _probe_contract().view_identity(raw_view), native, artifacts, "succeeded" if rollback_ok else "failed",
+        "restored" if restored else "not_restored", started_at,
+        execution_status="failed" if errors or not rollback_ok or not restored else "completed", errors=errors)
+
+
+def dynamo_main(inputs):
+    return run_probe(inputs[0], inputs[1], inputs[2] if len(inputs) > 2 else None,
+                     inputs[3] if len(inputs) > 3 else "all",
+                     inputs[4] if len(inputs) > 4 else DEFAULT_RESOLUTION_POLICY,
+                     inputs[5] if len(inputs) > 5 else DEFAULT_TARGET_DPI,
+                     inputs[6] if len(inputs) > 6 else DEFAULT_FIXED_PIXEL_WIDTH,
+                     inputs[7] if len(inputs) > 7 else DEFAULT_MAX_PIXEL_DIMENSION,
+                     inputs[8] if len(inputs) > 8 else None)
+
+
 if "IN" in globals():
-    raw_view = IN[0]
-    output_dir = IN[1]
-    max_elements = IN[2] if len(IN) > 2 else None
-    selection = IN[3] if len(IN) > 3 else "all"
-    resolution_policy = IN[4] if len(IN) > 4 else DEFAULT_RESOLUTION_POLICY
-    target_dpi = IN[5] if len(IN) > 5 else DEFAULT_TARGET_DPI
-    fixed_pixel_width = IN[6] if len(IN) > 6 else DEFAULT_FIXED_PIXEL_WIDTH
-    max_pixel_dimension = IN[7] if len(IN) > 7 else DEFAULT_MAX_PIXEL_DIMENSION
-    repo_root = IN[8] if len(IN) > 8 else None
-    OUT = run(raw_view, output_dir, max_elements, selection, resolution_policy, target_dpi, fixed_pixel_width, max_pixel_dimension, repo_root)
+    OUT = dynamo_main(IN)

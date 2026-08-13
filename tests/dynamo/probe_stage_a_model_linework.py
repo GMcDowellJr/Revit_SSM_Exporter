@@ -24,6 +24,7 @@ import sys
 import time
 import traceback
 
+
 PROBE_NAME = "stage_a_model_linework"
 PROBE_VERSION = "2026-07-24.1"
 DEFAULT_FIXED_PIXEL_WIDTH = 1600
@@ -31,6 +32,21 @@ DEFAULT_RESOLUTION_POLICY = "paper_space_dpi"
 DEFAULT_TARGET_DPI = 150
 DEFAULT_FIXED_PIXEL_WIDTH = 1600
 DEFAULT_MAX_PIXEL_DIMENSION = None
+
+_PROBE_CONTRACT = None
+
+
+def _probe_contract():
+    """Import the shared contract after the repository path has been bootstrapped."""
+    global _PROBE_CONTRACT
+    if _PROBE_CONTRACT is None:
+        try:
+            import tests.dynamo.stage_a_probe_contract as contract
+        except ImportError:
+            import stage_a_probe_contract as contract
+        _PROBE_CONTRACT = contract
+    return _PROBE_CONTRACT
+
 
 def round_half_up_positive(value):
     value = float(value)
@@ -326,6 +342,23 @@ def _candidate_repo_roots(output_dir):
         if root and root not in seen:
             seen.append(root)
     return seen
+
+
+def _ensure_contract_import_path(output_dir):
+    """Add the checkout containing the shared probe contract to ``sys.path``."""
+    checked = []
+    for root in _candidate_repo_roots(output_dir):
+        checked.append(root)
+        if os.path.isfile(os.path.join(root, "tests", "dynamo", "stage_a_probe_contract.py")):
+            for candidate in (root, os.path.join(root, "tests", "dynamo")):
+                if candidate not in sys.path:
+                    sys.path.insert(0, candidate)
+            return root
+    raise RuntimeError(
+        "Could not locate tests/dynamo/stage_a_probe_contract.py. "
+        "Set REVIT_SSM_EXPORTER_ROOT or place the output directory inside the checkout. "
+        "Checked: {0}".format(checked)
+    )
 
 
 def _ensure_repo_import_path(output_dir):
@@ -967,17 +1000,10 @@ def _run_mode(doc, view, out_dir, base, mode, focused_elements, reference_dims, 
 
 
 def _select_modes(selection):
-    text = str(selection or "all").strip()
-    if not text or text.lower() == "all":
-        return list(MODES)
-    requested = [p.strip() for p in text.split(",") if p.strip()]
-    bad = [m for m in requested if m not in MODES]
-    if bad:
-        raise ValueError("Unsupported rendering mode(s): {0}. Supported: {1}".format(bad, MODES))
-    return requested
+    return _probe_contract().select_named(selection, MODES, "model-linework display/configuration case(s)")
 
 
-def run(raw_view, output_dir, raw_focused, selection, resolution_policy=DEFAULT_RESOLUTION_POLICY, target_dpi=DEFAULT_TARGET_DPI, fixed_pixel_width=DEFAULT_FIXED_PIXEL_WIDTH, max_pixel_dimension=DEFAULT_MAX_PIXEL_DIMENSION):
+def _run_native(raw_view, output_dir, raw_focused=None, selection="all", resolution_policy=DEFAULT_RESOLUTION_POLICY, target_dpi=DEFAULT_TARGET_DPI, fixed_pixel_width=DEFAULT_FIXED_PIXEL_WIDTH, max_pixel_dimension=DEFAULT_MAX_PIXEL_DIMENSION):
     out_dir = os.path.abspath(str(output_dir or os.getcwd()))
     _ensure_repo_import_path(out_dir)
     _ensure_revit_api_reference()
@@ -1025,15 +1051,48 @@ def run(raw_view, output_dir, raw_focused, selection, resolution_policy=DEFAULT_
     return report
 
 
-try:
-    raw_view = IN[0] if "IN" in globals() and len(IN) > 0 else None
-    output_dir = IN[1] if "IN" in globals() and len(IN) > 1 else None
-    raw_focused = IN[2] if "IN" in globals() and len(IN) > 2 else None
-    selection = IN[3] if "IN" in globals() and len(IN) > 3 else "all"
-    resolution_policy = IN[4] if "IN" in globals() and len(IN) > 4 else DEFAULT_RESOLUTION_POLICY
-    target_dpi = IN[5] if "IN" in globals() and len(IN) > 5 else DEFAULT_TARGET_DPI
-    fixed_pixel_width = IN[6] if "IN" in globals() and len(IN) > 6 else DEFAULT_FIXED_PIXEL_WIDTH
-    max_pixel_dimension = IN[7] if "IN" in globals() and len(IN) > 7 else DEFAULT_MAX_PIXEL_DIMENSION
-    OUT = run(raw_view, output_dir, raw_focused, selection, resolution_policy, target_dpi, fixed_pixel_width, max_pixel_dimension)
-except Exception as ex:
-    OUT = {"conclusion": "FAIL", "error": str(ex), "error_type": type(ex).__name__, "traceback": traceback.format_exc()}
+def run_probe(raw_view, output_dir, raw_focused=None, selection="all",
+              resolution_policy=DEFAULT_RESOLUTION_POLICY, target_dpi=DEFAULT_TARGET_DPI,
+              fixed_pixel_width=DEFAULT_FIXED_PIXEL_WIDTH,
+              max_pixel_dimension=DEFAULT_MAX_PIXEL_DIMENSION):
+    """Run selected display/configuration and DPI cases with probe-owned cleanup."""
+    _ensure_contract_import_path(os.path.abspath(str(output_dir or os.getcwd())))
+    started_at = _probe_contract().utc_now_iso()
+    native = _run_native(raw_view, output_dir, raw_focused, selection, resolution_policy,
+                         target_dpi, fixed_pixel_width, max_pixel_dimension)
+    runs = list(native.get("reference_runs", [])) + list(native.get("modes", []))
+    executed = bool(runs)
+    rollback_ok = bool(runs) and all(item.get("transaction_group", {}).get("rollback_succeeded") for item in runs)
+    restored = bool(runs) and all(not item.get("state", {}).get("differences_after_rollback") for item in runs)
+    errors = [error for item in runs for error in item.get("exceptions", [])]
+    paths = native.get("paths", {})
+    artifacts = ([paths.get("combined_json")] if paths.get("combined_json") else []) + list(paths.get("tiffs", []))
+    selected_modes = _select_modes(selection)
+    return _probe_contract().execution_envelope(
+        PROBE_NAME, {"display_cases": selected_modes, "resolution_policy": resolution_policy,
+                     "dpi_cases": _parse_dpi_values(target_dpi), "fixed_pixel_width": fixed_pixel_width,
+                     "max_pixel_dimension": max_pixel_dimension},
+        _probe_contract().view_identity(raw_view), native, artifacts,
+        "succeeded" if rollback_ok else ("not_started" if not executed else "failed"),
+        "restored" if restored else ("not_checked" if not executed else "not_restored"), started_at,
+        execution_status=("inconclusive" if not executed else
+                          ("failed" if errors or not rollback_ok or not restored else "completed")),
+        errors=errors)
+
+
+def dynamo_main(inputs):
+    return run_probe(inputs[0] if len(inputs) > 0 else None,
+                     inputs[1] if len(inputs) > 1 else None,
+                     inputs[2] if len(inputs) > 2 else None,
+                     inputs[3] if len(inputs) > 3 else "all",
+                     inputs[4] if len(inputs) > 4 else DEFAULT_RESOLUTION_POLICY,
+                     inputs[5] if len(inputs) > 5 else DEFAULT_TARGET_DPI,
+                     inputs[6] if len(inputs) > 6 else DEFAULT_FIXED_PIXEL_WIDTH,
+                     inputs[7] if len(inputs) > 7 else DEFAULT_MAX_PIXEL_DIMENSION)
+
+
+if "IN" in globals():
+    try:
+        OUT = dynamo_main(IN)
+    except Exception as ex:
+        OUT = {"conclusion": "FAIL", "error": str(ex), "error_type": type(ex).__name__, "traceback": traceback.format_exc()}
