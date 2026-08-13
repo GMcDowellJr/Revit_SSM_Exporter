@@ -1,0 +1,971 @@
+{
+  "schema_version": "1.0",
+  "campaign_id": "stage-a-initial",
+  "description": "Initial Stage A staged campaign after PRs 1-3.",
+  "document_expectations": {
+    "expected_title": "REPLACE_WITH_MODEL_TITLE",
+    "expected_revit_version": "2025"
+  },
+  "view_registry": {
+    "elevation": {
+      "unique_id": "uid-elevation",
+      "expected_name": "Calibration Elevation",
+      "expected_view_type": "Elevation",
+      "expected_crop_active": true,
+      "roles": [
+        "calibration",
+        "alignment_matrix"
+      ],
+      "source_content_tags": [],
+      "notes": "Replace placeholder identity before execution."
+    },
+    "floor_active": {
+      "unique_id": "uid-floor-active",
+      "expected_name": "Floor Plan Active",
+      "expected_view_type": "FloorPlan",
+      "expected_crop_active": true,
+      "roles": [
+        "alignment_matrix"
+      ],
+      "source_content_tags": [],
+      "notes": "Replace placeholder identity before execution."
+    },
+    "floor_inactive": {
+      "unique_id": "uid-floor-inactive",
+      "expected_name": "Floor Plan Inactive",
+      "expected_view_type": "FloorPlan",
+      "expected_crop_active": false,
+      "roles": [
+        "alignment_matrix",
+        "paired_geometry:floor_active"
+      ],
+      "source_content_tags": [],
+      "notes": "Replace placeholder identity before execution."
+    },
+    "rcp": {
+      "unique_id": "uid-rcp",
+      "expected_name": "RCP Active",
+      "expected_view_type": "CeilingPlan",
+      "expected_crop_active": true,
+      "roles": [
+        "alignment_matrix"
+      ],
+      "source_content_tags": [],
+      "notes": "Replace placeholder identity before execution."
+    },
+    "section": {
+      "unique_id": "uid-section",
+      "expected_name": "Section Active",
+      "expected_view_type": "Section",
+      "expected_crop_active": true,
+      "roles": [
+        "alignment_matrix"
+      ],
+      "source_content_tags": [],
+      "notes": "Replace placeholder identity before execution."
+    },
+    "callout": {
+      "unique_id": "uid-callout",
+      "expected_name": "Model Callout Active",
+      "expected_view_type": "Detail",
+      "expected_crop_active": true,
+      "roles": [
+        "alignment_matrix",
+        "model_callout"
+      ],
+      "source_content_tags": [],
+      "notes": "Replace placeholder identity before execution."
+    },
+    "rvt_link": {
+      "unique_id": "uid-rvt-link",
+      "expected_name": "Known RVT Link",
+      "expected_view_type": "FloorPlan",
+      "expected_crop_active": true,
+      "roles": [
+        "external_source"
+      ],
+      "source_content_tags": [
+        "visible_rvt_link"
+      ],
+      "notes": "Replace placeholder identity before execution."
+    },
+    "dwg": {
+      "unique_id": "uid-dwg",
+      "expected_name": "Known DWG",
+      "expected_view_type": "FloorPlan",
+      "expected_crop_active": true,
+      "roles": [
+        "external_source"
+      ],
+      "source_content_tags": [
+        "visible_dwg"
+      ],
+      "notes": "Replace placeholder identity before execution."
+    }
+  },
+  "job_templates": {
+    "alignment": {
+      "probe_id": "stage_a_image_alignment"
+    },
+    "mutation": {
+      "probe_id": "stage_a_minimum_id_mutations"
+    },
+    "linework": {
+      "probe_id": "stage_a_model_linework"
+    },
+    "external_source": {
+      "probe_id": "stage_a_external_sources"
+    }
+  },
+  "stages": [
+    {
+      "stage_id": "01_mutation_closure",
+      "description": "Elevation mutation closure; analyzer compares attached_AS to referenced detached_AS evidence.",
+      "jobs": [
+        {
+          "job_key": "s1.attached_as",
+          "view_key": "elevation",
+          "probe_id": "stage_a_minimum_id_mutations",
+          "case": "closure",
+          "variant": "attached_AS",
+          "repetition": 1,
+          "settings": {
+            "dpi": 150,
+            "comparison_reference": "detached_AS"
+          }
+        }
+      ]
+    },
+    {
+      "stage_id": "02_elevation_alignment",
+      "description": "Calibration elevation 150 DPI alignment determinism.",
+      "jobs": [
+        {
+          "job_key": "s2.align.r1",
+          "view_key": "elevation",
+          "probe_id": "stage_a_image_alignment",
+          "case": "scale_150",
+          "variant": "150dpi",
+          "repetition": 1,
+          "settings": {
+            "mode": "all",
+            "dpi": 150
+          }
+        },
+        {
+          "job_key": "s2.align.r2",
+          "view_key": "elevation",
+          "probe_id": "stage_a_image_alignment",
+          "case": "scale_150",
+          "variant": "150dpi",
+          "repetition": 2,
+          "settings": {
+            "mode": "all",
+            "dpi": 150
+          }
+        }
+      ]
+    },
+    {
+      "stage_id": "03_elevation_linework",
+      "description": "Leading Hidden Line linework DPI sweep.",
+      "jobs": [
+        {
+          "job_key": "s3.line.75",
+          "view_key": "elevation",
+          "probe_id": "stage_a_model_linework",
+          "case": "dpi_75",
+          "variant": "hidden_white_black",
+          "repetition": 1,
+          "settings": {
+            "dpi": 75,
+            "display_style": "HiddenLine",
+            "fills": "white",
+            "lines": "black",
+            "bounds": "id_raster"
+          }
+        },
+        {
+          "job_key": "s3.line.150",
+          "view_key": "elevation",
+          "probe_id": "stage_a_model_linework",
+          "case": "dpi_150",
+          "variant": "hidden_white_black",
+          "repetition": 1,
+          "settings": {
+            "dpi": 150,
+            "display_style": "HiddenLine",
+            "fills": "white",
+            "lines": "black",
+            "bounds": "id_raster"
+          }
+        },
+        {
+          "job_key": "s3.line.300",
+          "view_key": "elevation",
+          "probe_id": "stage_a_model_linework",
+          "case": "dpi_300",
+          "variant": "hidden_white_black",
+          "repetition": 1,
+          "settings": {
+            "dpi": 300,
+            "display_style": "HiddenLine",
+            "fills": "white",
+            "lines": "black",
+            "bounds": "id_raster"
+          }
+        }
+      ]
+    },
+    {
+      "stage_id": "04_alignment_matrix",
+      "description": "Independent remaining alignment cells.",
+      "jobs": [
+        {
+          "job_key": "s4.floor_active.fixed",
+          "view_key": "floor_active",
+          "probe_id": "stage_a_image_alignment",
+          "case": "fixed_1600",
+          "variant": "fixed_1600",
+          "repetition": 1,
+          "settings": {
+            "mode": "all",
+            "pixel_size": 1600
+          }
+        },
+        {
+          "job_key": "s4.floor_active.150.r1",
+          "view_key": "floor_active",
+          "probe_id": "stage_a_image_alignment",
+          "case": "scale_150",
+          "variant": "150dpi",
+          "repetition": 1,
+          "settings": {
+            "mode": "all",
+            "dpi": 150
+          }
+        },
+        {
+          "job_key": "s4.floor_active.150.r2",
+          "view_key": "floor_active",
+          "probe_id": "stage_a_image_alignment",
+          "case": "scale_150",
+          "variant": "150dpi",
+          "repetition": 2,
+          "settings": {
+            "mode": "all",
+            "dpi": 150
+          }
+        },
+        {
+          "job_key": "s4.floor_inactive.fixed",
+          "view_key": "floor_inactive",
+          "probe_id": "stage_a_image_alignment",
+          "case": "fixed_1600",
+          "variant": "fixed_1600",
+          "repetition": 1,
+          "settings": {
+            "mode": "all",
+            "pixel_size": 1600
+          }
+        },
+        {
+          "job_key": "s4.floor_inactive.150.r1",
+          "view_key": "floor_inactive",
+          "probe_id": "stage_a_image_alignment",
+          "case": "scale_150",
+          "variant": "150dpi",
+          "repetition": 1,
+          "settings": {
+            "mode": "all",
+            "dpi": 150
+          }
+        },
+        {
+          "job_key": "s4.floor_inactive.150.r2",
+          "view_key": "floor_inactive",
+          "probe_id": "stage_a_image_alignment",
+          "case": "scale_150",
+          "variant": "150dpi",
+          "repetition": 2,
+          "settings": {
+            "mode": "all",
+            "dpi": 150
+          }
+        },
+        {
+          "job_key": "s4.rcp.fixed",
+          "view_key": "rcp",
+          "probe_id": "stage_a_image_alignment",
+          "case": "fixed_1600",
+          "variant": "fixed_1600",
+          "repetition": 1,
+          "settings": {
+            "mode": "all",
+            "pixel_size": 1600
+          }
+        },
+        {
+          "job_key": "s4.rcp.150.r1",
+          "view_key": "rcp",
+          "probe_id": "stage_a_image_alignment",
+          "case": "scale_150",
+          "variant": "150dpi",
+          "repetition": 1,
+          "settings": {
+            "mode": "all",
+            "dpi": 150
+          }
+        },
+        {
+          "job_key": "s4.rcp.150.r2",
+          "view_key": "rcp",
+          "probe_id": "stage_a_image_alignment",
+          "case": "scale_150",
+          "variant": "150dpi",
+          "repetition": 2,
+          "settings": {
+            "mode": "all",
+            "dpi": 150
+          }
+        },
+        {
+          "job_key": "s4.section.fixed",
+          "view_key": "section",
+          "probe_id": "stage_a_image_alignment",
+          "case": "fixed_1600",
+          "variant": "fixed_1600",
+          "repetition": 1,
+          "settings": {
+            "mode": "all",
+            "pixel_size": 1600
+          }
+        },
+        {
+          "job_key": "s4.section.150.r1",
+          "view_key": "section",
+          "probe_id": "stage_a_image_alignment",
+          "case": "scale_150",
+          "variant": "150dpi",
+          "repetition": 1,
+          "settings": {
+            "mode": "all",
+            "dpi": 150
+          }
+        },
+        {
+          "job_key": "s4.section.150.r2",
+          "view_key": "section",
+          "probe_id": "stage_a_image_alignment",
+          "case": "scale_150",
+          "variant": "150dpi",
+          "repetition": 2,
+          "settings": {
+            "mode": "all",
+            "dpi": 150
+          }
+        },
+        {
+          "job_key": "s4.callout.fixed",
+          "view_key": "callout",
+          "probe_id": "stage_a_image_alignment",
+          "case": "fixed_1600",
+          "variant": "fixed_1600",
+          "repetition": 1,
+          "settings": {
+            "mode": "all",
+            "pixel_size": 1600
+          }
+        },
+        {
+          "job_key": "s4.callout.150.r1",
+          "view_key": "callout",
+          "probe_id": "stage_a_image_alignment",
+          "case": "scale_150",
+          "variant": "150dpi",
+          "repetition": 1,
+          "settings": {
+            "mode": "all",
+            "dpi": 150
+          }
+        },
+        {
+          "job_key": "s4.callout.150.r2",
+          "view_key": "callout",
+          "probe_id": "stage_a_image_alignment",
+          "case": "scale_150",
+          "variant": "150dpi",
+          "repetition": 2,
+          "settings": {
+            "mode": "all",
+            "dpi": 150
+          }
+        }
+      ]
+    },
+    {
+      "stage_id": "05_reduced_mutation",
+      "description": "Reduced supported mutation set; excludes invalid full suppression.",
+      "jobs": [
+        {
+          "job_key": "s5.floor_active.attached_element_overrides",
+          "view_key": "floor_active",
+          "probe_id": "stage_a_minimum_id_mutations",
+          "case": "reduced",
+          "variant": "attached_element_overrides",
+          "repetition": 1,
+          "settings": {
+            "dpi": 150
+          }
+        },
+        {
+          "job_key": "s5.floor_active.attached_AS",
+          "view_key": "floor_active",
+          "probe_id": "stage_a_minimum_id_mutations",
+          "case": "reduced",
+          "variant": "attached_AS",
+          "repetition": 1,
+          "settings": {
+            "dpi": 150
+          }
+        },
+        {
+          "job_key": "s5.floor_active.detached_ASF",
+          "view_key": "floor_active",
+          "probe_id": "stage_a_minimum_id_mutations",
+          "case": "reduced",
+          "variant": "detached_ASF",
+          "repetition": 1,
+          "settings": {
+            "dpi": 150
+          }
+        },
+        {
+          "job_key": "s5.floor_inactive.attached_element_overrides",
+          "view_key": "floor_inactive",
+          "probe_id": "stage_a_minimum_id_mutations",
+          "case": "reduced",
+          "variant": "attached_element_overrides",
+          "repetition": 1,
+          "settings": {
+            "dpi": 150
+          }
+        },
+        {
+          "job_key": "s5.floor_inactive.attached_AS",
+          "view_key": "floor_inactive",
+          "probe_id": "stage_a_minimum_id_mutations",
+          "case": "reduced",
+          "variant": "attached_AS",
+          "repetition": 1,
+          "settings": {
+            "dpi": 150
+          }
+        },
+        {
+          "job_key": "s5.floor_inactive.detached_ASF",
+          "view_key": "floor_inactive",
+          "probe_id": "stage_a_minimum_id_mutations",
+          "case": "reduced",
+          "variant": "detached_ASF",
+          "repetition": 1,
+          "settings": {
+            "dpi": 150
+          }
+        },
+        {
+          "job_key": "s5.rcp.attached_element_overrides",
+          "view_key": "rcp",
+          "probe_id": "stage_a_minimum_id_mutations",
+          "case": "reduced",
+          "variant": "attached_element_overrides",
+          "repetition": 1,
+          "settings": {
+            "dpi": 150
+          }
+        },
+        {
+          "job_key": "s5.rcp.attached_AS",
+          "view_key": "rcp",
+          "probe_id": "stage_a_minimum_id_mutations",
+          "case": "reduced",
+          "variant": "attached_AS",
+          "repetition": 1,
+          "settings": {
+            "dpi": 150
+          }
+        },
+        {
+          "job_key": "s5.rcp.detached_ASF",
+          "view_key": "rcp",
+          "probe_id": "stage_a_minimum_id_mutations",
+          "case": "reduced",
+          "variant": "detached_ASF",
+          "repetition": 1,
+          "settings": {
+            "dpi": 150
+          }
+        },
+        {
+          "job_key": "s5.section.attached_element_overrides",
+          "view_key": "section",
+          "probe_id": "stage_a_minimum_id_mutations",
+          "case": "reduced",
+          "variant": "attached_element_overrides",
+          "repetition": 1,
+          "settings": {
+            "dpi": 150
+          }
+        },
+        {
+          "job_key": "s5.section.attached_AS",
+          "view_key": "section",
+          "probe_id": "stage_a_minimum_id_mutations",
+          "case": "reduced",
+          "variant": "attached_AS",
+          "repetition": 1,
+          "settings": {
+            "dpi": 150
+          }
+        },
+        {
+          "job_key": "s5.section.detached_ASF",
+          "view_key": "section",
+          "probe_id": "stage_a_minimum_id_mutations",
+          "case": "reduced",
+          "variant": "detached_ASF",
+          "repetition": 1,
+          "settings": {
+            "dpi": 150
+          }
+        },
+        {
+          "job_key": "s5.callout.attached_element_overrides",
+          "view_key": "callout",
+          "probe_id": "stage_a_minimum_id_mutations",
+          "case": "reduced",
+          "variant": "attached_element_overrides",
+          "repetition": 1,
+          "settings": {
+            "dpi": 150
+          }
+        },
+        {
+          "job_key": "s5.callout.attached_AS",
+          "view_key": "callout",
+          "probe_id": "stage_a_minimum_id_mutations",
+          "case": "reduced",
+          "variant": "attached_AS",
+          "repetition": 1,
+          "settings": {
+            "dpi": 150
+          }
+        },
+        {
+          "job_key": "s5.callout.detached_ASF",
+          "view_key": "callout",
+          "probe_id": "stage_a_minimum_id_mutations",
+          "case": "reduced",
+          "variant": "detached_ASF",
+          "repetition": 1,
+          "settings": {
+            "dpi": 150
+          }
+        }
+      ]
+    },
+    {
+      "stage_id": "06_linework_validation",
+      "description": "Linework only after alignment and mutation acceptance.",
+      "jobs": [
+        {
+          "job_key": "s6.floor_active.line",
+          "view_key": "floor_active",
+          "probe_id": "stage_a_model_linework",
+          "case": "validation",
+          "variant": "hidden_white_black",
+          "repetition": 1,
+          "settings": {
+            "dpi": 150,
+            "display_style": "HiddenLine",
+            "fills": "white",
+            "lines": "black",
+            "bounds": "accepted_id_raster"
+          },
+          "manual_review_required": true,
+          "manual_review_reason": "LINEWORK_VISUAL_INSPECTION"
+        },
+        {
+          "job_key": "s6.floor_inactive.line",
+          "view_key": "floor_inactive",
+          "probe_id": "stage_a_model_linework",
+          "case": "validation",
+          "variant": "hidden_white_black",
+          "repetition": 1,
+          "settings": {
+            "dpi": 150,
+            "display_style": "HiddenLine",
+            "fills": "white",
+            "lines": "black",
+            "bounds": "accepted_id_raster"
+          },
+          "manual_review_required": true,
+          "manual_review_reason": "LINEWORK_VISUAL_INSPECTION"
+        },
+        {
+          "job_key": "s6.rcp.line",
+          "view_key": "rcp",
+          "probe_id": "stage_a_model_linework",
+          "case": "validation",
+          "variant": "hidden_white_black",
+          "repetition": 1,
+          "settings": {
+            "dpi": 150,
+            "display_style": "HiddenLine",
+            "fills": "white",
+            "lines": "black",
+            "bounds": "accepted_id_raster"
+          },
+          "manual_review_required": true,
+          "manual_review_reason": "LINEWORK_VISUAL_INSPECTION"
+        },
+        {
+          "job_key": "s6.section.line",
+          "view_key": "section",
+          "probe_id": "stage_a_model_linework",
+          "case": "validation",
+          "variant": "hidden_white_black",
+          "repetition": 1,
+          "settings": {
+            "dpi": 150,
+            "display_style": "HiddenLine",
+            "fills": "white",
+            "lines": "black",
+            "bounds": "accepted_id_raster"
+          },
+          "manual_review_required": true,
+          "manual_review_reason": "LINEWORK_VISUAL_INSPECTION"
+        },
+        {
+          "job_key": "s6.callout.line",
+          "view_key": "callout",
+          "probe_id": "stage_a_model_linework",
+          "case": "validation",
+          "variant": "hidden_white_black",
+          "repetition": 1,
+          "settings": {
+            "dpi": 150,
+            "display_style": "HiddenLine",
+            "fills": "white",
+            "lines": "black",
+            "bounds": "accepted_id_raster"
+          },
+          "manual_review_required": true,
+          "manual_review_reason": "LINEWORK_VISUAL_INSPECTION"
+        }
+      ]
+    },
+    {
+      "stage_id": "07_external_sources",
+      "description": "Only explicitly tagged RVT-link and DWG views.",
+      "jobs": [
+        {
+          "job_key": "s7.rvt_link.fixed",
+          "view_key": "rvt_link",
+          "probe_id": "stage_a_external_sources",
+          "case": "capability",
+          "variant": "fixed_1600",
+          "repetition": 1,
+          "settings": {
+            "pixel_size": 1600
+          }
+        },
+        {
+          "job_key": "s7.rvt_link.150",
+          "view_key": "rvt_link",
+          "probe_id": "stage_a_external_sources",
+          "case": "handling",
+          "variant": "150dpi",
+          "repetition": 1,
+          "settings": {
+            "dpi": 150
+          }
+        },
+        {
+          "job_key": "s7.dwg.fixed",
+          "view_key": "dwg",
+          "probe_id": "stage_a_external_sources",
+          "case": "capability",
+          "variant": "fixed_1600",
+          "repetition": 1,
+          "settings": {
+            "pixel_size": 1600
+          }
+        },
+        {
+          "job_key": "s7.dwg.150",
+          "view_key": "dwg",
+          "probe_id": "stage_a_external_sources",
+          "case": "handling",
+          "variant": "150dpi",
+          "repetition": 1,
+          "settings": {
+            "dpi": 150
+          }
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "job": "s2.align.r1",
+      "requires_job": "s1.attached_as",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s2.align.r2",
+      "requires_job": "s1.attached_as",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s3.line.75",
+      "requires_job": "s2.align.r2",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s3.line.150",
+      "requires_job": "s2.align.r2",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s3.line.300",
+      "requires_job": "s2.align.r2",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s5.floor_active.attached_element_overrides",
+      "requires_job": "s4.floor_active.150.r2",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s5.floor_active.attached_AS",
+      "requires_job": "s4.floor_active.150.r2",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s5.floor_active.detached_ASF",
+      "requires_job": "s4.floor_active.150.r2",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s5.floor_inactive.attached_element_overrides",
+      "requires_job": "s4.floor_inactive.150.r2",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s5.floor_inactive.attached_AS",
+      "requires_job": "s4.floor_inactive.150.r2",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s5.floor_inactive.detached_ASF",
+      "requires_job": "s4.floor_inactive.150.r2",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s5.rcp.attached_element_overrides",
+      "requires_job": "s4.rcp.150.r2",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s5.rcp.attached_AS",
+      "requires_job": "s4.rcp.150.r2",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s5.rcp.detached_ASF",
+      "requires_job": "s4.rcp.150.r2",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s5.section.attached_element_overrides",
+      "requires_job": "s4.section.150.r2",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s5.section.attached_AS",
+      "requires_job": "s4.section.150.r2",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s5.section.detached_ASF",
+      "requires_job": "s4.section.150.r2",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s5.callout.attached_element_overrides",
+      "requires_job": "s4.callout.150.r2",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s5.callout.attached_AS",
+      "requires_job": "s4.callout.150.r2",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s5.callout.detached_ASF",
+      "requires_job": "s4.callout.150.r2",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s6.floor_active.line",
+      "requires_job": "s4.floor_active.150.r2",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s6.floor_active.line",
+      "requires_job": "s5.floor_active.detached_ASF",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s6.floor_inactive.line",
+      "requires_job": "s4.floor_inactive.150.r2",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s6.floor_inactive.line",
+      "requires_job": "s5.floor_inactive.detached_ASF",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s6.rcp.line",
+      "requires_job": "s4.rcp.150.r2",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s6.rcp.line",
+      "requires_job": "s5.rcp.detached_ASF",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s6.section.line",
+      "requires_job": "s4.section.150.r2",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s6.section.line",
+      "requires_job": "s5.section.detached_ASF",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s6.callout.line",
+      "requires_job": "s4.callout.150.r2",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s6.callout.line",
+      "requires_job": "s5.callout.detached_ASF",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s7.rvt_link.150",
+      "requires_job": "s7.rvt_link.fixed",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s7.dwg.150",
+      "requires_job": "s7.dwg.fixed",
+      "statuses": [
+        "PASS"
+      ]
+    }
+  ],
+  "acceptance_requirements": {
+    "gate_source": "normalized_acceptance_record",
+    "accepted_status": "PASS",
+    "rollback_required": true,
+    "restoration_required": true
+  },
+  "execution_defaults": {
+    "batch_size": 8,
+    "on_job_error": "continue"
+  },
+  "diagnostic_expansion_rules": [
+    {
+      "rule_id": "targeted_asf",
+      "description": "Authorized targeted A/S/F expansion for one failed cell",
+      "variants": [
+        "A",
+        "S",
+        "F"
+      ],
+      "full_factorial": false
+    },
+    {
+      "rule_id": "fixed_1600",
+      "description": "Optional fixed-1600 alignment diagnostic when evidence is absent"
+    }
+  ]
+}

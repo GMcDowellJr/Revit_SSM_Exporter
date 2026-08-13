@@ -9,6 +9,7 @@
     "campaign_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
     "batch_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
     "created_at": {"type": "string", "format": "date-time"},
+    "campaign_configuration_fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "document": {
       "type": "object", "required": ["expected_title"],
       "properties": {"expected_title": {"type": "string"}, "expected_revit_version": {"type": "string"}, "expected_path": {"type": "string"}},
