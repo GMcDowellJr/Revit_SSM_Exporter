@@ -7,7 +7,9 @@ dependencies, or gate later campaign stages. See `next_batch.schema.json` and
 
 ## Dynamo entry
 
-Paste or import `revit_batch_dynamo.py`. Supply `IN[0]` as the batch path,
+Paste or import `revit_batch_dynamo.py`. The pasted script discovers the checkout
+from the batch path, current directory, or `REVIT_SSM_EXPORTER_ROOT` /
+`VOP_REPO_ROOT` before importing its modules. Supply `IN[0]` as the batch path,
 optional `IN[1]` as the manifest root, and optional `IN[2] = true` for
 validation only. Validation-only still writes a manifest, but invokes no probe
 and creates no TIFF. `OUT` contains identities, executed/failed/deferred job IDs,
@@ -16,6 +18,12 @@ manifest path, and whether another invocation is required.
 The fixed registry in `revit_probe_registry.py` contains the six PR 1 adapters.
 Each adapter calls `run_probe(raw_view=..., output_dir=..., **settings)`; there is
 no `exec`, configured import, transaction group, analyzer, or planner call.
+
+For `stage_a_transaction_group_export`, JSON settings must contain one or both of
+`element_ids` (integer Revit element IDs) and `element_unique_ids` (strings).
+The registry resolves these through the current document and passes actual Revit
+elements to the adapter. This resolution also occurs in validation-only mode;
+JSON cannot supply `raw_elements` directly.
 
 ## Resolution and resumption
 

@@ -1,4 +1,6 @@
 import json
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -6,6 +8,7 @@ import pytest
 from tests.dynamo.revit_batch_contract import (BATCH_SCHEMA_VERSION, MANIFEST_SCHEMA_VERSION,
     ContractError, job_fingerprint, parse_view_reference, validate_batch, validate_manifest)
 from tests.dynamo.revit_batch_executor import execute_batch, resolve_view
+from tests.dynamo.revit_probe_registry import PROBE_MODULES, build_registry
 
 
 class Id:
@@ -26,6 +29,10 @@ class Doc:
     Title, PathName, Application = "Model", "/models/model.rvt", App()
     def __init__(self, views): self.views = views
     def GetElement(self, uid): return next((v for v in self.views if v.UniqueId == uid), None)
+
+
+class NonView:
+    def __init__(self, uid): self.UniqueId = uid
 
 
 def batch(jobs=None, limit=10, error="stop", resume=False):
@@ -76,6 +83,51 @@ def test_view_resolution_rejects_ambiguity_and_assertion_mismatch():
     views = [View("a", "Same"), View("b", "Same")]; doc = Doc(views)
     with pytest.raises(ContractError, match="resolved to 2"): resolve_view(doc, {"name": "Same"}, views)
     with pytest.raises(ContractError, match="name mismatch"): resolve_view(doc, {"unique_id": "a", "name": "Wrong"}, views)
+
+
+def test_unique_id_must_resolve_to_a_view():
+    element = NonView("element"); doc = Doc([element])
+    with pytest.raises(ContractError, match="not a Revit view"):
+        resolve_view(doc, {"unique_id": "element"}, [], is_view=lambda value: isinstance(value, View))
+
+
+def test_transaction_adapter_resolves_unique_id_elements(monkeypatch):
+    target_view, element = View("view", "View"), NonView("element")
+    doc = Doc([target_view, element]); captured = {}
+    module_name = PROBE_MODULES["stage_a_transaction_group_export"]
+    fake_module = types.ModuleType(module_name)
+    def run_probe(**arguments): captured.update(arguments); return envelope()
+    fake_module.run_probe = run_probe
+    monkeypatch.setitem(sys.modules, module_name, fake_module)
+    adapter = build_registry(doc)["stage_a_transaction_group_export"]
+    adapter(target_view, {"element_unique_ids": ["element"], "inject_failure": True}, "/raw")
+    assert captured["raw_elements"] == [element]
+    assert captured["inject_failure"] is True
+    with pytest.raises(ValueError, match="requires element_ids"):
+        adapter(target_view, {}, "/raw")
+
+
+def test_validation_only_resolves_transaction_element_references(tmp_path, monkeypatch):
+    view, element = View("u1", "View 1"), NonView("element")
+    doc = Doc([view, element]); module_name = PROBE_MODULES["stage_a_transaction_group_export"]
+    fake_module = types.ModuleType(module_name)
+    fake_module.run_probe = lambda **arguments: (_ for _ in ()).throw(AssertionError("must not dispatch"))
+    monkeypatch.setitem(sys.modules, module_name, fake_module)
+    configured = batch([job("one", "u1", "stage_a_transaction_group_export",
+                            {"element_unique_ids": ["element"]})])
+    result = execute_batch(configured, doc, build_registry(doc), lambda current: [view],
+                           str(tmp_path), validation_only=True, run_id="validation",
+                           is_view=lambda value: isinstance(value, View))
+    manifest = json.loads(Path(result["manifest_path"]).read_text())
+    assert manifest["execution_status"] == "validation_only"
+    assert manifest["jobs"][0]["execution_status"] == "validated_only"
+
+
+def test_json_schema_identifier_patterns_match_runtime():
+    schema = json.loads(Path(__file__).with_name("next_batch.schema.json").read_text())
+    properties = schema["$defs"]["job"]["properties"]
+    assert properties["job_id"]["pattern"] == properties["probe_id"]["pattern"]
+    assert properties["job_id"]["pattern"] == r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 
 
 def test_ordered_dispatch_and_job_limit(tmp_path):

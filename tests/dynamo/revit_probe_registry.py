@@ -23,5 +23,51 @@ def _adapter(module_name):
     return invoke
 
 
-def build_registry():
-    return {probe_id: _adapter(module) for probe_id, module in PROBE_MODULES.items()}
+def _transaction_adapter(doc, module_name):
+    def resolve_elements(settings):
+        arguments = dict(settings)
+        integer_ids = arguments.pop("element_ids", [])
+        unique_ids = arguments.pop("element_unique_ids", [])
+        if "raw_elements" in arguments:
+            raise ValueError("raw_elements cannot be supplied by JSON; use element_ids or element_unique_ids")
+        if not isinstance(integer_ids, list) or not isinstance(unique_ids, list):
+            raise ValueError("element_ids and element_unique_ids must be arrays")
+        elements = []
+        for unique_id in unique_ids:
+            element = doc.GetElement(str(unique_id))
+            if element is None:
+                raise ValueError("No element has UniqueId {0}".format(unique_id))
+            elements.append(element)
+        if integer_ids:
+            from Autodesk.Revit.DB import ElementId
+            for integer_id in integer_ids:
+                if isinstance(integer_id, bool):
+                    raise ValueError("element_ids must contain integers")
+                try:
+                    element_id = ElementId(int(integer_id))
+                except (TypeError, ValueError, OverflowError):
+                    raise ValueError("Invalid element id: {0!r}".format(integer_id))
+                element = doc.GetElement(element_id)
+                if element is None:
+                    raise ValueError("No element has ElementId {0}".format(integer_id))
+                elements.append(element)
+        if not elements:
+            raise ValueError("stage_a_transaction_group_export requires element_ids or element_unique_ids")
+        return elements, arguments
+
+    def invoke(view, settings, output_directory):
+        module = __import__(module_name, fromlist=["run_probe"])
+        elements, arguments = resolve_elements(settings)
+        return module.run_probe(raw_view=view, raw_elements=elements,
+                                output_dir=output_directory, **arguments)
+    invoke.validate_settings = lambda settings, output_directory: resolve_elements(settings)
+    return invoke
+
+
+def build_registry(doc=None):
+    registry = {probe_id: _adapter(module) for probe_id, module in PROBE_MODULES.items()
+                if probe_id != "stage_a_transaction_group_export"}
+    transaction_module = PROBE_MODULES["stage_a_transaction_group_export"]
+    registry["stage_a_transaction_group_export"] = (_transaction_adapter(doc, transaction_module)
+                                                       if doc is not None else _adapter(transaction_module))
+    return registry

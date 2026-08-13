@@ -23,7 +23,7 @@
   },
   "$defs": {
     "view": {"type": "object", "anyOf": [{"required": ["unique_id"]}, {"required": ["name"]}], "properties": {"unique_id": {"type": "string"}, "name": {"type": "string"}, "view_type": {"type": "string"}, "crop_active": {"type": "boolean"}, "is_template": {"type": "boolean"}}, "additionalProperties": false},
-    "job": {"type": "object", "required": ["job_id", "probe_id", "view", "settings", "output_directory"], "properties": {"job_id": {"type": "string"}, "probe_id": {"type": "string"}, "view": {"$ref": "#/$defs/view"}, "settings": {"type": "object"}, "output_directory": {"type": "string", "minLength": 1}}, "additionalProperties": false}
+    "job": {"type": "object", "required": ["job_id", "probe_id", "view", "settings", "output_directory"], "properties": {"job_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}, "probe_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}, "view": {"$ref": "#/$defs/view"}, "settings": {"type": "object"}, "output_directory": {"type": "string", "minLength": 1}}, "additionalProperties": false}
   },
   "additionalProperties": false
 }

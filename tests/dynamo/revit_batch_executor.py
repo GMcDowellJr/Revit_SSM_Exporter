@@ -39,7 +39,7 @@ def validate_document(doc, expected):
     return actual
 
 
-def resolve_view(doc, reference, all_views=None):
+def resolve_view(doc, reference, all_views=None, is_view=None):
     reference = parse_view_reference(reference)
     if reference.get("unique_id"):
         view = doc.GetElement(reference["unique_id"])
@@ -51,6 +51,16 @@ def resolve_view(doc, reference, all_views=None):
         if len(matches) != 1:
             raise ContractError("View name {0!r} resolved to {1} views; unique resolution required".format(reference["name"], len(matches)))
         view = matches[0]
+    if is_view is not None:
+        valid_view = bool(is_view(view))
+    elif all_views is not None:
+        candidates = list(all_views(doc) if callable(all_views) else all_views)
+        valid_view = any(candidate is view or getattr(candidate, "UniqueId", None) == getattr(view, "UniqueId", None)
+                         for candidate in candidates)
+    else:
+        valid_view = all(hasattr(view, name) for name in ("UniqueId", "Name", "ViewType"))
+    if not valid_view:
+        raise ContractError("Resolved element is not a Revit view")
     actual = view_identity(view)
     for requested, resolved in (("unique_id", "unique_id"), ("name", "name"),
                                 ("view_type", "view_type"), ("crop_active", "crop_active"),
@@ -88,7 +98,7 @@ def _prior_successes(root, campaign_id, batch_id):
 
 
 def execute_batch(batch_or_path, doc, registry, all_views=None, manifest_root=None,
-                  validation_only=False, environment=None, run_id=None):
+                  validation_only=False, environment=None, run_id=None, is_view=None):
     source = os.path.abspath(batch_or_path) if isinstance(batch_or_path, str) else None
     batch = load_batch(source) if source else validate_batch(batch_or_path)
     run_id = run_id or uuid.uuid4().hex
@@ -107,7 +117,10 @@ def execute_batch(batch_or_path, doc, registry, all_views=None, manifest_root=No
         for job in batch["jobs"]:
             if job["probe_id"] not in registry:
                 raise ContractError("Unknown probe_id: {0}".format(job["probe_id"]))
-            view, identity = resolve_view(doc, job["view"], all_views)
+            adapter_validator = getattr(registry[job["probe_id"]], "validate_settings", None)
+            if adapter_validator is not None:
+                adapter_validator(dict(job["settings"]), job["output_directory"])
+            view, identity = resolve_view(doc, job["view"], all_views, is_view)
             resolved.append((job, view, identity))
         policy = batch["execution_policy"]
         prior = _prior_successes(root, batch["campaign_id"], batch["batch_id"]) if policy["resume"] else {}
