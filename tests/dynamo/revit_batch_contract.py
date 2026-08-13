@@ -55,11 +55,14 @@ def validate_batch(value):
         raise ContractError("Missing batch fields: {0}".format(missing))
     if value["schema_version"] != BATCH_SCHEMA_VERSION:
         raise ContractError("Unsupported schema_version: {0}".format(value["schema_version"]))
-    unknown = sorted(set(value) - set(required))
+    unknown = sorted(set(value) - set(required) - {"campaign_configuration_fingerprint"})
     if unknown:
         raise ContractError("Unknown batch fields: {0}".format(unknown))
     _stable_id(value["campaign_id"], "campaign_id")
     _stable_id(value["batch_id"], "batch_id")
+    fingerprint = value.get("campaign_configuration_fingerprint")
+    if fingerprint is not None and (not isinstance(fingerprint, str) or not re.match(r"^[a-f0-9]{64}$", fingerprint)):
+        raise ContractError("campaign_configuration_fingerprint must be a SHA-256 hex digest")
     document = _object(value["document"], "document")
     unknown = sorted(set(document) - {"expected_title", "expected_revit_version", "expected_path"})
     if unknown:
