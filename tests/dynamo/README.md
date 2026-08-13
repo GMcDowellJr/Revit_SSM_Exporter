@@ -2,6 +2,14 @@
 
 This directory contains Dynamo Python node test scripts for progressive testing of the VOP interwoven pipeline implementation.
 
+## Prepared batch execution
+
+PR 2's thin, resumable runner is documented in
+[`REVIT_BATCH_EXECUTOR.md`](REVIT_BATCH_EXECUTOR.md). Its versioned contract and
+sample input are `next_batch.schema.json` and `next_batch.example.json`. The
+runner dispatches the existing callable probes without replacing their
+individual Dynamo entry points or taking ownership of their transactions.
+
 ## Stage A probe callable contract
 
 Stage A probe modules are safe to import. Importing one does not read Dynamo

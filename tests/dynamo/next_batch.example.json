@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "campaign_id": "stage-a-2026-08",
+  "batch_id": "batch-002",
+  "created_at": "2026-08-13T12:00:00Z",
+  "document": {"expected_title": "Stage A Test Model", "expected_revit_version": "2025"},
+  "execution_policy": {"max_jobs_per_run": 1, "on_job_error": "stop", "resume": true, "allow_rerun": false},
+  "jobs": [{
+    "job_id": "alignment-floor-01",
+    "probe_id": "stage_a_image_alignment",
+    "view": {"unique_id": "00000000-0000-0000-0000-000000000000-00000001", "name": "Level 1", "view_type": "FloorPlan", "crop_active": true},
+    "settings": {"mode": "original", "create_markers": false},
+    "output_directory": "C:\\temp\\revit-stage-a\\alignment-floor-01"
+  }]
+}
