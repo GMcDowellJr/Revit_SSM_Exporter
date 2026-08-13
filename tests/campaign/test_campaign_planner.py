@@ -24,6 +24,10 @@ def test_end_to_end_partial_missing_analysis_and_idempotence():
  a=get(s,'align'); m=manifest(s,a); p.ingest_manifests(c,s,[m,m]); assert a['status']=='EXECUTED' and len(s['history'])==len({x['event_id'] for x in s['history']}); assert get(s,'mutate')['status']=='PLANNED'
  rec=analysis(s,a); p.ingest_analysis(c,s,[rec,rec]); assert a['status']=='PASSED' and get(s,'mutate')['status']=='ELIGIBLE'; assert a['artifact_references']==['raw.tif']
  assert len(s['ingested_revit_runs'])==1 and len(s['ingested_analysis_records'])==1
+def test_envelope_less_executor_failure_is_final_without_analysis():
+ c=compact(); c['stages'][1]['jobs']=c['stages'][1]['jobs'][:1]; s=p.initialize_state(c); p.generate_next_batch(c,s); a=get(s,'align'); failed=manifest(s,a,status='failed'); failed['jobs'][0]['raw_result_envelope']=None; failed['jobs'][0]['errors']=[{'type':'RuntimeError','message':'probe raised'}]; p.ingest_manifests(c,s,[failed]); assert a['status']=='FAILED'; assert a['status_reason']['code']=='REVIT_EXECUTION_FAILED'; assert get(s,'mutate')['status']=='BLOCKED'; p.generate_next_batch(c,s); assert s['next_recommendation']['code']=='BLOCKED_BY_FAILURE'
+def test_failed_execution_with_envelope_still_awaits_analysis():
+ c=compact(); s=p.initialize_state(c); p.generate_next_batch(c,s); a=get(s,'align'); p.ingest_manifests(c,s,[manifest(s,a,status='failed')]); assert a['status']=='EXECUTED'
 def test_fail_inconclusive_gating_and_independent_progression():
  for outcome in ('FAIL','INCONCLUSIVE'):
   c=compact(); s=p.initialize_state(c); p.generate_next_batch(c,s); a=get(s,'align'); p.ingest_manifests(c,s,[manifest(s,a)]); p.ingest_analysis(c,s,[analysis(s,a,outcome)]); assert get(s,'mutate')['status']=='BLOCKED'; assert get(s,'independent')['status']=='BATCHED'
@@ -36,5 +40,7 @@ def test_diagnostic_expansion_and_manual_completion_state():
  c=compact(); c['stages'][0]['jobs'][0]['manual_review_required']=True; s=p.initialize_state(c); p.generate_next_batch(c,s); a=get(s,'align'); p.ingest_manifests(c,s,[manifest(s,a)]); p.ingest_analysis(c,s,[analysis(s,a,'FAIL')]); p.diagnostic_action(c,s,a['job_id'],'request','targeted_asf'); assert len([j for j in s['jobs'].values() if j['case']=='diagnostic_targeted_asf'])==3
  # A separate all-terminal state remains awaiting review until explicitly recorded.
  c2=compact(); c2['stages']=c2['stages'][:1]; c2['dependencies']=[]; c2['stages'][0]['jobs'][0]['manual_review_required']=True; s2=p.initialize_state(c2); p.generate_next_batch(c2,s2); a2=get(s2,'align'); p.ingest_manifests(c2,s2,[manifest(s2,a2)]); p.ingest_analysis(c2,s2,[analysis(s2,a2)]); assert p.generate_next_batch(c2,s2) is None and s2['next_recommendation']['code']=='AWAITING_MANUAL_REVIEW'; p.record_manual_review(c2,s2,a2['job_id'],'ACCEPTED','operator'); p.generate_next_batch(c2,s2); assert s2['next_recommendation']['code']=='CAMPAIGN_COMPLETE'
+def test_rejected_manual_review_blocks_completion():
+ c=compact(); c['stages']=c['stages'][:1]; c['dependencies']=[]; c['stages'][0]['jobs'][0]['manual_review_required']=True; s=p.initialize_state(c); p.generate_next_batch(c,s); a=get(s,'align'); p.ingest_manifests(c,s,[manifest(s,a)]); p.ingest_analysis(c,s,[analysis(s,a)]); p.record_manual_review(c,s,a['job_id'],'REJECTED','operator'); assert p.generate_next_batch(c,s) is None; assert s['next_recommendation']=={'code':'BLOCKED_BY_FAILURE','reason':'MANUAL_REVIEW_REJECTED','job_ids':[a['job_id']]}
 def test_no_revit_import_or_probe_execution():
  source=Path(p.__file__).read_text(); assert 'Autodesk.Revit' not in source and 'revit_probe_registry' not in source and 'run_probe(' not in source

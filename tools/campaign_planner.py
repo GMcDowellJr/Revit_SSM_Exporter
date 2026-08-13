@@ -25,7 +25,7 @@ TERMINAL = {"PASSED", "FAILED", "INCONCLUSIVE", "SKIPPED", "SUPERSEDED"}
 LEGAL_TRANSITIONS = {
     "PLANNED": {"ELIGIBLE", "BLOCKED", "SKIPPED", "SUPERSEDED", "NEEDS_DIAGNOSTIC"},
     "ELIGIBLE": {"BATCHED", "BLOCKED", "SKIPPED", "SUPERSEDED"},
-    "BATCHED": {"EXECUTED", "ELIGIBLE", "SUPERSEDED"},
+    "BATCHED": {"EXECUTED", "FAILED", "ELIGIBLE", "SUPERSEDED"},
     "EXECUTED": {"ANALYZED", "FAILED", "INCONCLUSIVE", "SUPERSEDED"},
     "ANALYZED": {"PASSED", "FAILED", "INCONCLUSIVE", "SUPERSEDED"},
     "FAILED": {"NEEDS_DIAGNOSTIC", "SUPERSEDED"},
@@ -245,10 +245,19 @@ def ingest_manifests(campaign: dict[str, Any], state: dict[str, Any], manifests:
             if not expected or result.get("configuration_fingerprint") != expected:
                 _conflict(state, "JOB_CONFIGURATION_DRIFT", job["job_id"], expected, result.get("configuration_fingerprint")); continue
             status = result.get("execution_status")
-            if status in {"completed", "inconclusive", "failed"} and job["status"] == "BATCHED":
-                transition(state, job["job_id"], "EXECUTED", "REVIT_EXECUTION_RECORDED", {"run_id": run_id, "execution_status": status})
             if run_id not in job["run_ids"]: job["run_ids"].append(run_id)
-            envelope = result.get("raw_result_envelope") or {}
+            envelope = result.get("raw_result_envelope")
+            if status == "failed" and envelope is None and job["status"] == "BATCHED":
+                # The analyzer intentionally skips manifest jobs without an envelope.
+                # Finalize this executor-level failure so it cannot wait forever for
+                # analysis that can never be produced.
+                transition(state, job["job_id"], "FAILED", "REVIT_EXECUTION_FAILED",
+                           {"run_id": run_id, "execution_status": status,
+                            "errors": result.get("errors", [])})
+            elif status in {"completed", "inconclusive", "failed"} and job["status"] == "BATCHED":
+                transition(state, job["job_id"], "EXECUTED", "REVIT_EXECUTION_RECORDED",
+                           {"run_id": run_id, "execution_status": status})
+            envelope = envelope or {}
             for artifact in envelope.get("artifact_paths", []):
                 if artifact not in job["artifact_references"]: job["artifact_references"].append(artifact)
         _event(state, "REVIT_RUN_INGESTED", run_id=run_id, fingerprint=digest)
@@ -291,7 +300,14 @@ def generate_next_batch(campaign: dict[str, Any], state: dict[str, Any]) -> dict
     eligible = sorted((j for j in state["jobs"].values() if j["status"] == "ELIGIBLE"), key=lambda j: (j["stage_order"], j["job_order"]))
     if not eligible:
         statuses = {j["status"] for j in state["jobs"].values()}
+        rejected_reviews = sorted(job_id for job_id, review in state["manual_review_requirements"].items()
+                                  if review["status"] == "REJECTED")
         if state["conflicts"]: code = "INVALID_CAMPAIGN_STATE"
+        elif rejected_reviews:
+            state["next_recommendation"] = {"code": "BLOCKED_BY_FAILURE",
+                                              "reason": "MANUAL_REVIEW_REJECTED",
+                                              "job_ids": rejected_reviews}
+            return None
         elif statuses <= TERMINAL and any(v["status"] == "PENDING" for v in state["manual_review_requirements"].values()): code = "AWAITING_MANUAL_REVIEW"
         elif statuses <= TERMINAL: code = "CAMPAIGN_COMPLETE"
         elif "BATCHED" in statuses: code = "AWAITING_REVIT_EXECUTION"

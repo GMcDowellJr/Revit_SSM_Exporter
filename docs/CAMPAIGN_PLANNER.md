@@ -30,14 +30,14 @@ Legal transitions are:
 
 - `PLANNED -> ELIGIBLE | BLOCKED | NEEDS_DIAGNOSTIC | SKIPPED | SUPERSEDED`
 - `ELIGIBLE -> BATCHED | BLOCKED | SKIPPED | SUPERSEDED`
-- `BATCHED -> EXECUTED | ELIGIBLE | SUPERSEDED`
+- `BATCHED -> EXECUTED | FAILED | ELIGIBLE | SUPERSEDED` (`FAILED` is used directly when the executor reports failure without an analyzable result envelope)
 - `EXECUTED -> ANALYZED | FAILED | INCONCLUSIVE | SUPERSEDED`
 - `ANALYZED -> PASSED | FAILED | INCONCLUSIVE | SUPERSEDED`
 - `FAILED | INCONCLUSIVE -> NEEDS_DIAGNOSTIC | SUPERSEDED`
 - `BLOCKED -> ELIGIBLE | NEEDS_DIAGNOSTIC | SKIPPED | SUPERSEDED`
 - `NEEDS_DIAGNOSTIC -> ELIGIBLE | BLOCKED | SUPERSEDED`; all accepted, skipped, or superseded evidence can only be superseded.
 
-Every transition has a reason code and deduplicated history event. A normalized `PASS` is the only default successful dependency. `FAIL`/`INCONCLUSIVE`, restoration/rollback failures, missing records, and conflicts never become passes. Dependencies are job-specific, so one view cannot block unrelated matrix cells. Manual review is a separate record and can remain pending after automated `PASSED`.
+Every transition has a reason code and deduplicated history event. A normalized `PASS` is the only default successful dependency. `FAIL`/`INCONCLUSIVE`, restoration/rollback failures, missing records, and conflicts never become passes. An envelope-less executor failure is finalized directly as `FAILED` because the external analyzer has no record it can analyze; failures with an envelope still await normalized analysis. Dependencies are job-specific, so one view cannot block unrelated matrix cells. Manual review is a separate record and can remain pending after automated `PASSED`; a rejected required review produces `BLOCKED_BY_FAILURE` with reason `MANUAL_REVIEW_REJECTED`, never campaign completion.
 
 Batch selection sorts eligible jobs by configured stage and job order, applies `execution_defaults.batch_size`, and moves only selected jobs to `BATCHED`. Already batched/executed jobs are not selected. With no eligible work, the recommendation distinguishes complete, Revit execution, analyzer, failure, manual review, and invalid/conflicting state.
 
