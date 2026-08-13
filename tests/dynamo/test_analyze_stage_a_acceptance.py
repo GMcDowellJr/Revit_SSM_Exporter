@@ -178,3 +178,86 @@ def test_run_manifest_produces_one_record_per_raw_envelope(tmp_path, monkeypatch
     analyzed, _ = run(tmp_path, manifest)
     assert analyzed["acceptance_records"][0]["campaign_id"] == "c"
     assert analyzed["acceptance_records"][0]["job_id"] == "j"
+
+
+def test_alignment_coverage_normalizes_resolution_qualified_export_keys():
+    native = {"exports": {"original.dpi_150": {"images": []},
+                          "original.fixed_1600": {"images": []}}}
+    assert analyzer._actual_names(native, "image_alignment") == ["original"]
+    checks = analyzer._family_checks(
+        {"requested_settings": {"mode": "original"}}, native, "image_alignment")
+    coverage = next(check for check in checks if check["check_id"] == "requested_case_coverage")
+    assert coverage["status"] == "PASS"
+    assert coverage["evidence"]["not_analyzed"] == []
+
+
+def test_alignment_enrichment_uses_qualified_model_export_for_placement(tmp_path, monkeypatch):
+    image_path = tmp_path / "model.tiff"
+    image_path.write_bytes(b"synthetic")
+    monkeypatch.setattr(analyzer, "analyze_alignment_image", lambda *args: {
+        "status": "analyzed_external", "actual_width": 100, "actual_height": 50,
+        "affine_fit_residual": {"available": False}, "marker_analysis_available": True,
+        "missing_markers": [], "content_rect_px": [0, 0, 99, 49],
+    })
+    native = {
+        "exports": {"model_bounds.dpi_150": {
+            "target_bounds_uv": [0, 0, 10, 5],
+            "images": [{"path": str(image_path), "effective_pixel_size": 100}],
+        }},
+        "bounds": {"pre_annotation_model_uv": [0, 0, 10, 5],
+                   "canvas_uv": [-1, -1, 11, 6]},
+    }
+    analyzer._enrich_report(tmp_path / "raw.json", native, "stage_a_image_alignment")
+    assert native["model_to_canvas_placement"]["available"] is True
+    assert native["model_to_canvas_placement"]["tiff_actual_width_px"] == 100
+
+
+def test_alignment_enrichment_preserves_native_placement_without_analyzed_export(tmp_path):
+    placement = {"available": True, "lossless_padding_sufficient": True,
+                 "source": "native_resolution_contract"}
+    native = {"exports": {}, "model_to_canvas_placement": placement.copy()}
+    analyzer._enrich_report(tmp_path / "raw.json", native, "stage_a_image_alignment")
+    assert native["model_to_canvas_placement"] == placement
+
+
+def test_linework_modes_match_their_per_resolution_references(tmp_path, monkeypatch):
+    paths = {}
+    for name in ("ref150", "ref300", "mode150", "mode300"):
+        paths[name] = tmp_path / (name + ".tiff")
+        paths[name].write_bytes(b"synthetic")
+
+    dimensions = {"ref150": [100, 50], "mode150": [100, 50],
+                  "ref300": [200, 100], "mode300": [200, 100]}
+    def fake_analysis(path, reference_dims=None):
+        dims = dimensions[path.stem]
+        result = {"status": "analyzed_external", "dimensions": dims,
+                  "dark_line_pixel_count": 10, "unexpected_color_pixel_count": 0,
+                  "non_dark_gray_foreground_pixel_count": 0, "foreground_pixel_count": 10,
+                  "sha256": path.stem}
+        if reference_dims:
+            result["reference_dimension_agreement"] = {
+                "reference_dimensions": reference_dims, "matches": dims == reference_dims}
+        return result
+    monkeypatch.setattr(analyzer, "analyze_linework_image", fake_analysis)
+
+    def image(name, dpi):
+        return {"path": str(paths[name]), "resolution": {
+            "policy": "paper_space_dpi", "target_dpi": dpi,
+            "requested_width_px": dimensions[name][0],
+            "accepted_width_px": dimensions[name][0],
+            "predicted_height_px": dimensions[name][1],
+        }}
+    native = {
+        "reference_runs": [
+            {"images": [image("ref150", 150)]},
+            {"images": [image("ref300", 300)]},
+        ],
+        "modes": [
+            {"mode": "wire", "images": [image("mode150", 150)]},
+            {"mode": "wire", "images": [image("mode300", 300)]},
+        ],
+    }
+    analyzer._enrich_report(tmp_path / "raw.json", native, "stage_a_model_linework")
+    assert [mode["classification"]["dimension_alignment"] for mode in native["modes"]] == ["pass", "pass"]
+    assert [mode["images"][0]["analysis"]["reference_dimension_agreement"]["reference_dimensions"]
+            for mode in native["modes"]] == [[100, 50], [200, 100]]

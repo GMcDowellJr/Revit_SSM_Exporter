@@ -286,12 +286,14 @@ def classify_mode(mode_result, reference_dims):
         return {'candidate_status':'rejected','analysis_error':'mode produced no TIFF images to analyze','manual_review_required':True,'dimension_alignment':'fail','fill_contamination':'unknown','fill_contamination_evidence':{'reason':'missing image analysis'}}
     if ia.get('status') == 'error':
         return {'candidate_status':'rejected','analysis_error':ia.get('error'),'manual_review_required':True,'dimension_alignment':'fail','fill_contamination':'unknown','fill_contamination_evidence':{'reason':ia.get('error')}}
-    dims_match = bool(ia.get('dimensions') and reference_dims and ia.get('dimensions') == reference_dims)
+    dims_available = bool(ia.get('dimensions') and reference_dims)
+    dims_match = bool(dims_available and ia.get('dimensions') == reference_dims)
     dark = int(ia.get('dark_line_pixel_count') or 0); unexpected = int(ia.get('unexpected_color_pixel_count') or 0); non_dark_gray = int(ia.get('non_dark_gray_foreground_pixel_count') or 0); foreground = int(ia.get('foreground_pixel_count') or 0)
     tol = max(10, int(round(0.001 * max(1, foreground))))
     fill_ok = 'acceptable' if unexpected == 0 and non_dark_gray <= tol else 'unacceptable'
     candidate = 'rejected' if mode_result.get('exceptions') or dark <= 0 else ('recommended' if fill_ok == 'acceptable' and dims_match else 'inconclusive')
-    return {'internal_edges':'uncertain','hidden_back_edges':'uncertain','fill_contamination':fill_ok,'fill_contamination_evidence':{'unexpected_color_pixel_count':unexpected,'non_dark_gray_foreground_pixel_count':non_dark_gray,'non_dark_gray_tolerance':tol},'link_behavior':'requires_manual_review','dwg_behavior':'requires_manual_review','dimension_alignment':'pass' if dims_match else 'fail','candidate_status':candidate,'manual_review_required':True}
+    dimension_alignment = 'pass' if dims_match else ('fail' if dims_available else 'inconclusive')
+    return {'internal_edges':'uncertain','hidden_back_edges':'uncertain','fill_contamination':fill_ok,'fill_contamination_evidence':{'unexpected_color_pixel_count':unexpected,'non_dark_gray_foreground_pixel_count':non_dark_gray,'non_dark_gray_tolerance':tol},'link_behavior':'requires_manual_review','dwg_behavior':'requires_manual_review','dimension_alignment':dimension_alignment,'candidate_status':candidate,'manual_review_required':True}
 
 
 def write_diff(a: Path, b: Path, out: Path):
@@ -418,6 +420,14 @@ def placement(model_bounds, canvas_bounds, model_img):
     rounding = [abs(v - round(v)) for v in vals]
     return {'available': True, 'observed_px_per_model_unit': density, 'density_source_content_width_px': int(content_width), 'tiff_actual_width_px': int(model_img.get('actual_width') or 0), 'canvas_pixel_dimensions_float': [canvas_w, canvas_h], 'model_image_offset_float': [off_x, off_y], 'offset_integral': [rounding[2] < 1e-6, rounding[3] < 1e-6], 'max_rounding_error_px': max(rounding), 'max_rounding_error_model_units': max(rounding) / density, 'lossless_padding_sufficient': max(rounding) < 1e-6, 'resampling_required_if_exact_canvas_needed': max(rounding) >= 1e-6}
 
+
+def _resolution_identity(run):
+    """Return the producer contract fields that identify one resolution case."""
+    images = run.get('images') or []
+    resolution = (images[0].get('resolution') or {}) if images else (run.get('resolution') or {})
+    return tuple(resolution.get(key) for key in
+                 ('policy', 'target_dpi', 'requested_width_px', 'accepted_width_px', 'predicted_height_px'))
+
 def _enrich_report(json_path: Path, data: dict[str, Any], probe_id: str) -> list[str]:
     """Run the existing probe-specific pixel calculations in place."""
     name = probe_id.lower()
@@ -435,14 +445,22 @@ def _enrich_report(json_path: Path, data: dict[str, Any], probe_id: str) -> list
         data['recommendation']=recommend_graphics(data.get('variants',[]))
 
     elif 'model_linework' in name:
-        ref=data.get('reference_element_id_tiff') or {}; ref_dims=None
-        for img in ref.get('images',[]):
-            p=resolve_path(json_path, img.get('path'))
-            if p and p.exists(): img['analysis']=analyze_linework_image(p); ref_dims=img['analysis'].get('dimensions') or ref_dims
-            else: img['analysis']={'path': str(p) if p else None, 'status':'error', 'error':'referenced TIFF missing or path not provided'}
-        if ref.get('images'):
-            ref['sequential_export_repeatability'] = repeatability(ref.get('images', []))
+        references = data.get('reference_runs') or []
+        if not references and data.get('reference_element_id_tiff'):
+            references = [data['reference_element_id_tiff']]
+        reference_dims = {}
+        for ref in references:
+            ref_dims = None
+            for img in ref.get('images',[]):
+                p=resolve_path(json_path, img.get('path'))
+                if p and p.exists(): img['analysis']=analyze_linework_image(p); ref_dims=img['analysis'].get('dimensions') or ref_dims
+                else: img['analysis']={'path': str(p) if p else None, 'status':'error', 'error':'referenced TIFF missing or path not provided'}
+            if ref.get('images'):
+                ref['sequential_export_repeatability'] = repeatability(ref.get('images', []))
+            if ref_dims:
+                reference_dims[_resolution_identity(ref)] = ref_dims
         for m in data.get('modes',[]):
+            ref_dims = reference_dims.get(_resolution_identity(m))
             for img in m.get('images',[]):
                 p=resolve_path(json_path, img.get('path'))
                 if p and p.exists(): img['analysis']=analyze_linework_image(p, ref_dims)
@@ -451,12 +469,18 @@ def _enrich_report(json_path: Path, data: dict[str, Any], probe_id: str) -> list
                 m['sequential_export_repeatability'] = repeatability(m.get('images', []))
             m['classification']=classify_mode(m, ref_dims); summary.append(f"linework {m.get('mode')}: non_dark_gray={m['images'][0]['analysis'].get('non_dark_gray_foreground_pixel_count') if m.get('images') else None} unexpected={m['images'][0]['analysis'].get('unexpected_color_pixel_count') if m.get('images') else None}")
         data['difference_images']=[]
-        modes_with_images = [(m, first_image_path(json_path, m)) for m in data.get('modes', [])]
-        modes_with_images = [(m, p) for m, p in modes_with_images if p and p.exists()]
-        if len(modes_with_images)>1:
+        modes_by_resolution = {}
+        for mode in data.get('modes', []):
+            p = first_image_path(json_path, mode)
+            if p and p.exists():
+                modes_by_resolution.setdefault(_resolution_identity(mode), []).append((mode, p))
+        for resolution_id, modes_with_images in modes_by_resolution.items():
+            if len(modes_with_images) < 2:
+                continue
             ref_mode, refp = modes_with_images[0]
             for m, p in modes_with_images[1:]:
-                out=json_path.parent / f"{json_path.stem}.{m.get('mode')}_minus_{ref_mode.get('mode')}.diff.tiff"; data['difference_images'].append({'mode':m.get('mode'),'against':ref_mode.get('mode'),'diff':write_diff(refp,p,out)})
+                suffix = str(resolution_id[1] or resolution_id[3] or 'resolution')
+                out=json_path.parent / f"{json_path.stem}.{suffix}.{m.get('mode')}_minus_{ref_mode.get('mode')}.diff.tiff"; data['difference_images'].append({'mode':m.get('mode'),'against':ref_mode.get('mode'),'resolution_identity':resolution_id,'diff':write_diff(refp,p,out)})
         data['ranked_modes']=rank_modes(data.get('modes',[]))
     elif 'external_sources' in name:
         for variant in data.get('variants', []):
@@ -485,11 +509,19 @@ def _enrich_report(json_path: Path, data: dict[str, Any], probe_id: str) -> list
             if vals: summary.append(f"alignment {mode}: affine_max={vals[0]:.6f}")
         model_img = None
         for preferred in ('model_bounds', 'original'):
-            images = data.get('exports', {}).get(preferred, {}).get('images', [])
-            if images and images[0].get('status') == 'analyzed_external':
-                model_img = images[0]
+            for key, export in data.get('exports', {}).items():
+                if key.split('.', 1)[0] != preferred:
+                    continue
+                images = export.get('images', [])
+                if images and images[0].get('status') == 'analyzed_external':
+                    model_img = images[0]
+                    break
+            if model_img:
                 break
-        data['model_to_canvas_placement'] = placement(data.get('bounds', {}).get('pre_annotation_model_uv'), data.get('bounds', {}).get('canvas_uv'), model_img)
+        if model_img:
+            data['model_to_canvas_placement'] = placement(data.get('bounds', {}).get('pre_annotation_model_uv'), data.get('bounds', {}).get('canvas_uv'), model_img)
+        elif 'model_to_canvas_placement' not in data:
+            data['model_to_canvas_placement'] = {'available': False, 'reason': 'no analyzed model export available'}
         data['evidence_status'] = alignment_evidence_status(data)
     return summary
 
@@ -541,7 +573,8 @@ def _requested_names(data: dict[str, Any], native: dict[str, Any], family: str) 
 
 def _actual_names(native: dict[str, Any], family: str) -> list[str]:
     if family == 'image_alignment':
-        return [k for k, v in (native.get('exports') or {}).items() if not v.get('skipped')]
+        return sorted({k.split('.', 1)[0] for k, v in (native.get('exports') or {}).items()
+                       if not v.get('skipped')})
     key, label = ('modes', 'mode') if family == 'model_linework' else ('variants', 'variant')
     return [v.get(label) for v in native.get(key, []) if not v.get('skipped') and v.get(label)]
 

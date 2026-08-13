@@ -247,12 +247,17 @@ static requested list.
 The automated checks are intentionally bounded:
 
 * alignment checks actual/requested dimensions, exact calibration evidence,
-  repeatability, and model-to-canvas offset;
+  repeatability, and model-to-canvas offset. Resolution-qualified export keys
+  such as `original.dpi_150` count toward the requested `original` mode, and
+  placement enrichment uses those qualified exports without discarding an
+  already-recorded native placement;
 * minimum-ID checks attestation, TIFF dimensions, palette contamination,
   requested coverage, rollback, restoration, and separately reported semantic
   preservation;
 * linework checks ID-reference dimensional agreement, contamination and
-  repeatability, while internal/hidden edges remain manual evidence;
+  repeatability, while internal/hidden edges remain manual evidence. Each
+  linework mode and generated difference image is compared only within its
+  matching resolution case;
 * external-source checks HOST/LINK/DWG variant coverage, artifacts,
   attestation, rollback and restoration, while linked-source visual handling
   remains inconclusive unless explicit evidence establishes it.
