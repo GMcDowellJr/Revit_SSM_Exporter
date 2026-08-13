@@ -197,7 +197,9 @@ def evaluate(campaign: dict[str, Any], state: dict[str, Any]) -> None:
     """Recompute deterministic gates without regressing batched or completed work."""
     key_map = {j["job_key"]: j for j in state["jobs"].values()}
     for job in sorted(state["jobs"].values(), key=lambda j: (j["stage_order"], j["job_order"])):
-        if job["status"] not in {"PLANNED", "ELIGIBLE", "BLOCKED", "NEEDS_DIAGNOSTIC"}: continue
+        # NEEDS_DIAGNOSTIC is a holding state for the failed source job.  Only
+        # the separately materialized diagnostic jobs may re-enter eligibility.
+        if job["status"] not in {"PLANNED", "ELIGIBLE", "BLOCKED"}: continue
         deps = _dependencies(campaign, job)
         failures, waiting = [], []
         for dep in deps:
@@ -299,22 +301,8 @@ def generate_next_batch(campaign: dict[str, Any], state: dict[str, Any]) -> dict
     _assert_binding(campaign, state); evaluate(campaign, state)
     eligible = sorted((j for j in state["jobs"].values() if j["status"] == "ELIGIBLE"), key=lambda j: (j["stage_order"], j["job_order"]))
     if not eligible:
-        statuses = {j["status"] for j in state["jobs"].values()}
-        rejected_reviews = sorted(job_id for job_id, review in state["manual_review_requirements"].items()
-                                  if review["status"] == "REJECTED")
-        if state["conflicts"]: code = "INVALID_CAMPAIGN_STATE"
-        elif rejected_reviews:
-            state["next_recommendation"] = {"code": "BLOCKED_BY_FAILURE",
-                                              "reason": "MANUAL_REVIEW_REJECTED",
-                                              "job_ids": rejected_reviews}
-            return None
-        elif statuses <= TERMINAL and any(v["status"] == "PENDING" for v in state["manual_review_requirements"].values()): code = "AWAITING_MANUAL_REVIEW"
-        elif statuses <= TERMINAL: code = "CAMPAIGN_COMPLETE"
-        elif "BATCHED" in statuses: code = "AWAITING_REVIT_EXECUTION"
-        elif "EXECUTED" in statuses or "ANALYZED" in statuses: code = "AWAITING_EXTERNAL_ANALYSIS"
-        elif any(v["status"] == "PENDING" for v in state["manual_review_requirements"].values()): code = "AWAITING_MANUAL_REVIEW"
-        else: code = "BLOCKED_BY_FAILURE"
-        state["next_recommendation"] = {"code": code}; return None
+        state["next_recommendation"] = compute_next_recommendation(state)
+        return None
     defaults = campaign["execution_defaults"]; selected = eligible[:defaults["batch_size"]]
     sequence = len({b for j in state["jobs"].values() for b in j["batch_ids"]}) + 1
     batch_id = f"{campaign['campaign_id']}.batch.{sequence:04d}"
@@ -343,13 +331,18 @@ def diagnostic_action(campaign: dict[str, Any], state: dict[str, Any], job_id: s
     if action == "request":
         allowed = {r["rule_id"] for r in campaign["diagnostic_expansion_rules"]}
         if rule not in allowed: raise CampaignError("diagnostic rule is not authorized by campaign")
+        configured = next(r for r in campaign["diagnostic_expansion_rules"] if r["rule_id"] == rule)
+        variants = configured.get("variants")
+        if not isinstance(variants, list) or not variants:
+            raise CampaignError("diagnostic rule must define a non-empty variants expansion")
         state["diagnostic_requests"][job_id] = {"rule_id": rule, "status": "AUTHORIZED", "requested_at": utc_now()}
         if job["status"] in {"FAILED", "INCONCLUSIVE", "BLOCKED"}: transition(state, job_id, "NEEDS_DIAGNOSTIC", "AUTHORIZED_DIAGNOSTIC", {"rule_id": rule})
-        configured = next(r for r in campaign["diagnostic_expansion_rules"] if r["rule_id"] == rule)
-        for index, variant in enumerate(configured.get("variants", []), 1):
+        for index, variant in enumerate(variants, 1):
             diagnostic = copy.deepcopy(job)
             diagnostic["job_key"] = f"diagnostic.{job['job_key']}.{rule}.{variant}"
-            diagnostic["case"] = f"diagnostic_{rule}"; diagnostic["variant"] = str(variant)
+            # The source ID is identity material: two repetitions or variants in
+            # the same view/probe must receive distinct diagnostic expansions.
+            diagnostic["case"] = f"diagnostic_{rule}_{job['job_id']}"; diagnostic["variant"] = str(variant)
             diagnostic["repetition"] = index; diagnostic["job_order"] = job["job_order"] + index / 1000.0
             diagnostic["job_id"] = stable_job_id(campaign["campaign_id"], job["stage_id"], job["view_key"], job["probe_id"], diagnostic["case"], diagnostic["variant"], index)
             if diagnostic["job_id"] in state["jobs"]: continue
@@ -376,9 +369,34 @@ def record_manual_review(campaign: dict[str, Any], state: dict[str, Any], job_id
     _summarize(campaign, state)
 
 
-def status_summary(state: dict[str, Any]) -> dict[str, Any]:
+def compute_next_recommendation(state: dict[str, Any]) -> dict[str, Any]:
+    """Derive the operator's next step from current state without mutating it."""
+    statuses = {j["status"] for j in state["jobs"].values()}
+    eligible = [j["job_id"] for j in state["jobs"].values() if j["status"] == "ELIGIBLE"]
+    rejected = sorted(job_id for job_id, review in state["manual_review_requirements"].items()
+                      if review["status"] == "REJECTED")
+    pending_review = any(review["status"] == "PENDING"
+                         for review in state["manual_review_requirements"].values())
+    if state["conflicts"]: return {"code": "INVALID_CAMPAIGN_STATE"}
+    if eligible: return {"code": "GENERATE_NEXT_BATCH", "eligible_job_count": len(eligible)}
+    if rejected: return {"code": "BLOCKED_BY_FAILURE", "reason": "MANUAL_REVIEW_REJECTED", "job_ids": rejected}
+    if statuses <= TERMINAL and pending_review: return {"code": "AWAITING_MANUAL_REVIEW"}
+    if statuses <= TERMINAL: return {"code": "CAMPAIGN_COMPLETE"}
+    if "BATCHED" in statuses: return {"code": "AWAITING_REVIT_EXECUTION"}
+    if "EXECUTED" in statuses or "ANALYZED" in statuses: return {"code": "AWAITING_EXTERNAL_ANALYSIS"}
+    if pending_review: return {"code": "AWAITING_MANUAL_REVIEW"}
+    return {"code": "BLOCKED_BY_FAILURE"}
+
+
+def status_summary(campaign: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    if (state.get("campaign_id") != campaign.get("campaign_id") or
+            state.get("campaign_configuration_fingerprint") != canonical_fingerprint(campaign)):
+        recommendation = {"code": "INVALID_CAMPAIGN_STATE", "reason": "CAMPAIGN_STATE_MISMATCH"}
+    else:
+        recommendation = compute_next_recommendation(state)
     return {"campaign_id": state["campaign_id"], "jobs": {s: sum(j["status"] == s for j in state["jobs"].values()) for s in STATES},
-            "stages": state["stage_status"], "coverage": state["view_coverage"], "conflicts": state["conflicts"], "next_recommendation": state["next_recommendation"]}
+            "stages": state["stage_status"], "coverage": state["view_coverage"],
+            "conflicts": state["conflicts"], "next_recommendation": recommendation}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -395,7 +413,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "validate": print(json.dumps({"valid": True, "fingerprint": canonical_fingerprint(campaign)})); return 0
     if args.command == "init": atomic_write(args.state, initialize_state(campaign)); return 0
     state = load_json(args.state)
-    if args.command == "status": print(json.dumps(status_summary(state), indent=2, sort_keys=True)); return 0
+    if args.command == "status": print(json.dumps(status_summary(campaign, state), indent=2, sort_keys=True)); return 0
     if args.command == "ingest-runs": ingest_manifests(campaign, state, map(load_json, args.inputs))
     elif args.command == "ingest-analysis": ingest_analysis(campaign, state, map(load_json, args.inputs))
     elif args.command == "diagnostic": diagnostic_action(campaign, state, args.job_id, args.action, args.rule)

@@ -52,7 +52,9 @@ python tools/campaign_planner.py diagnostic campaign.json campaign_state.json re
 python tools/campaign_planner.py manual-review campaign.json campaign_state.json JOB_ID ACCEPTED operator-name
 ```
 
-A request materializes only the configured variants for that cell, never the full factorial. A reset preserves old provenance as `SUPERSEDED`; it does not erase evidence. To amend execution-affecting settings, create a new campaign version/ID and initialize new state. Notes may change without drift. Copy/reference prior raw evidence through new normalized records only when the campaign explicitly models that evidence; never edit old state fingerprints.
+A request materializes only the configured variants for that source job and cell, never the full factorial. The failed source remains in `NEEDS_DIAGNOSTIC`; it is not rescheduled alongside its diagnostic variants. Diagnostic IDs include the source job identity, so repeated jobs receive independent expansions. Rules without a non-empty `variants` expansion are rejected rather than authorizing work that cannot be scheduled. A reset preserves old provenance as `SUPERSEDED`; it does not erase evidence. To amend execution-affecting settings, create a new campaign version/ID and initialize new state. Notes may change without drift. Copy/reference prior raw evidence through new normalized records only when the campaign explicitly models that evidence; never edit old state fingerprints.
+
+`status` always derives its recommendation from current job and review state without changing scheduling state. It therefore reports newly eligible work as `GENERATE_NEXT_BATCH` immediately after analysis ingestion instead of repeating an obsolete `RUN_BATCH_IN_REVIT` recommendation.
 
 ## Initial Stage A configuration
 
