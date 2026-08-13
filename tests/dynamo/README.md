@@ -7,13 +7,19 @@ This directory contains Dynamo Python node test scripts for progressive testing 
 Stage A probe modules are safe to import. Importing one does not read Dynamo
 `IN`, assign `OUT`, open a transaction, or create an artifact. Campaign-facing
 code calls each module's `run_probe(...)` function with explicit arguments;
-`dynamo_main(inputs)` is the thin compatibility adapter. Every probe continues
+`dynamo_main(inputs)` is the thin compatibility adapter and returns the same
+execution envelope. Every probe continues
 to own its transactions, `TransactionGroup`, rollback, and restoration checks.
 
 The campaign probes return the JSON-compatible execution envelope defined in
 `stage_a_probe_contract.py`. Its `execution_status` describes Revit execution
 only; image fidelity, alignment, semantic preservation, and campaign acceptance
 remain downstream analysis concerns.
+
+Pasted Dynamo nodes bootstrap the checkout from their explicit repository-root
+or output-directory inputs (plus the existing environment/common-path fallbacks)
+before importing the shared contract. The checkout therefore does not need to
+be on `sys.path` before the node starts.
 
 Existing Dynamo inputs keep their prior positions and defaults. Image alignment
 adds optional `IN[8]` (resolution cases, default `"all"`) and `IN[9]`

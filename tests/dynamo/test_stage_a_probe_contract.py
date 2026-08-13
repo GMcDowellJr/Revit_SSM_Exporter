@@ -1,4 +1,5 @@
 import importlib
+import inspect
 import json
 
 import pytest
@@ -25,6 +26,14 @@ def test_probe_import_is_inert(module_name):
     module = importlib.import_module("tests.dynamo." + module_name)
     assert "OUT" not in vars(module)
     assert callable(getattr(module, "dynamo_main"))
+
+
+@pytest.mark.parametrize("module_name", PROBE_MODULES)
+def test_probe_has_no_eager_shared_contract_import(module_name):
+    module = importlib.import_module("tests.dynamo." + module_name)
+    source = inspect.getsource(module)
+    prefix = source.split("def _probe_contract", 1)[0] if "def _probe_contract" in source else source
+    assert "from tests.dynamo.stage_a_probe_contract import" not in prefix
 
 
 def test_common_selection_defaults_and_preserves_requested_order():
@@ -75,6 +84,7 @@ def test_attached_as_has_only_requested_attached_template_mutations():
     )
 
 
+
 def test_execution_envelope_is_json_compatible_and_analysis_neutral():
     value = execution_envelope(
         "probe", {"case": "a"}, {"id": 7}, {"raw": True}, ["raw.tiff"],
@@ -99,3 +109,55 @@ def test_execution_envelope_rejects_analysis_status():
     value["alignment_status"] = "pass"
     with pytest.raises(ValueError, match="Image-analysis fields"):
         validate_execution_envelope(value)
+
+
+def test_external_sources_ignores_skipped_variants_for_cleanup(monkeypatch, tmp_path):
+    module = importlib.import_module("tests.dynamo.probe_stage_a_external_sources")
+    monkeypatch.setattr(module, "_ensure_repo_import_path", lambda _path: None)
+    monkeypatch.setattr(module, "_run_native", lambda *args: {
+        "conclusion": "INCONCLUSIVE",
+        "variants": [
+            {"variant": "host_reference_coloring", "transaction_group": {"rollback_succeeded": True},
+             "state": {"differences_after_rollback": []}, "exceptions": []},
+            {"variant": "dwg_importinstance_coloring", "skipped": True, "reason": "no DWG"},
+        ],
+        "paths": {},
+    })
+    result = module.run_probe(object(), str(tmp_path))
+    assert result["execution_status"] == "completed"
+    assert result["rollback_status"] == "succeeded"
+    assert result["state_restoration_status"] == "restored"
+
+
+def test_unwired_alignment_repetition_uses_default(monkeypatch):
+    module = importlib.import_module("tests.dynamo.probe_stage_a_image_alignment")
+    captured = {}
+
+    def fake_run_probe(*args):
+        captured["repetition_count"] = args[-1]
+        return {}
+
+    monkeypatch.setattr(module, "run_probe", fake_run_probe)
+    module.dynamo_main([object(), "out", "all", True, "paper_space_dpi", 150, 1600, None, "all", None])
+    assert captured["repetition_count"] == 2
+
+
+def test_graphics_and_transaction_adapters_return_envelopes(monkeypatch, tmp_path):
+    graphics = importlib.import_module("tests.dynamo.probe_stage_a_graphics_semantics")
+    monkeypatch.setattr(graphics, "_ensure_repo_import_path", lambda _path: None)
+    monkeypatch.setattr(graphics, "_run_native", lambda *args: {
+        "variants": [{"transaction_group": {"rollback_succeeded": True},
+                      "state": {"differences_after_rollback": []}, "exceptions": []}],
+        "paths": {}, "conclusion": "PASS_PARTIAL",
+    })
+    graphics_result = graphics.dynamo_main([object(), str(tmp_path)])
+    assert validate_execution_envelope(graphics_result)
+
+    transaction = importlib.import_module("tests.dynamo.probe_stage_a_transaction_group_export")
+    monkeypatch.setattr(transaction, "_run_native", lambda *args: {
+        "transaction_group": {"rollback_succeeded": True},
+        "state": {"captured_state_equal_after_rollback": True},
+        "export": {}, "exceptions": [], "result": {"conclusion": "PASS"},
+    })
+    transaction_result = transaction.dynamo_main([object(), [], str(tmp_path)])
+    assert validate_execution_envelope(transaction_result)

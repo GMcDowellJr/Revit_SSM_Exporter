@@ -24,7 +24,6 @@ import sys
 import time
 import traceback
 
-from tests.dynamo.stage_a_probe_contract import execution_envelope, select_named, utc_now_iso, view_identity
 
 PROBE_NAME = "stage_a_model_linework"
 PROBE_VERSION = "2026-07-24.1"
@@ -33,6 +32,21 @@ DEFAULT_RESOLUTION_POLICY = "paper_space_dpi"
 DEFAULT_TARGET_DPI = 150
 DEFAULT_FIXED_PIXEL_WIDTH = 1600
 DEFAULT_MAX_PIXEL_DIMENSION = None
+
+_PROBE_CONTRACT = None
+
+
+def _probe_contract():
+    """Import the shared contract after the repository path has been bootstrapped."""
+    global _PROBE_CONTRACT
+    if _PROBE_CONTRACT is None:
+        try:
+            import tests.dynamo.stage_a_probe_contract as contract
+        except ImportError:
+            import stage_a_probe_contract as contract
+        _PROBE_CONTRACT = contract
+    return _PROBE_CONTRACT
+
 
 def round_half_up_positive(value):
     value = float(value)
@@ -969,7 +983,7 @@ def _run_mode(doc, view, out_dir, base, mode, focused_elements, reference_dims, 
 
 
 def _select_modes(selection):
-    return select_named(selection, MODES, "model-linework display/configuration case(s)")
+    return _probe_contract().select_named(selection, MODES, "model-linework display/configuration case(s)")
 
 
 def _run_native(raw_view, output_dir, raw_focused=None, selection="all", resolution_policy=DEFAULT_RESOLUTION_POLICY, target_dpi=DEFAULT_TARGET_DPI, fixed_pixel_width=DEFAULT_FIXED_PIXEL_WIDTH, max_pixel_dimension=DEFAULT_MAX_PIXEL_DIMENSION):
@@ -1025,7 +1039,8 @@ def run_probe(raw_view, output_dir, raw_focused=None, selection="all",
               fixed_pixel_width=DEFAULT_FIXED_PIXEL_WIDTH,
               max_pixel_dimension=DEFAULT_MAX_PIXEL_DIMENSION):
     """Run selected display/configuration and DPI cases with probe-owned cleanup."""
-    started_at = utc_now_iso()
+    _ensure_repo_import_path(os.path.abspath(str(output_dir or os.getcwd())))
+    started_at = _probe_contract().utc_now_iso()
     native = _run_native(raw_view, output_dir, raw_focused, selection, resolution_policy,
                          target_dpi, fixed_pixel_width, max_pixel_dimension)
     runs = list(native.get("reference_runs", [])) + list(native.get("modes", []))
@@ -1035,11 +1050,11 @@ def run_probe(raw_view, output_dir, raw_focused=None, selection="all",
     paths = native.get("paths", {})
     artifacts = ([paths.get("combined_json")] if paths.get("combined_json") else []) + list(paths.get("tiffs", []))
     selected_modes = _select_modes(selection)
-    return execution_envelope(
+    return _probe_contract().execution_envelope(
         PROBE_NAME, {"display_cases": selected_modes, "resolution_policy": resolution_policy,
                      "dpi_cases": _parse_dpi_values(target_dpi), "fixed_pixel_width": fixed_pixel_width,
                      "max_pixel_dimension": max_pixel_dimension},
-        view_identity(raw_view), native, artifacts, "succeeded" if rollback_ok else "failed",
+        _probe_contract().view_identity(raw_view), native, artifacts, "succeeded" if rollback_ok else "failed",
         "restored" if restored else "not_restored", started_at,
         execution_status="failed" if errors or not rollback_ok or not restored else "completed", errors=errors)
 

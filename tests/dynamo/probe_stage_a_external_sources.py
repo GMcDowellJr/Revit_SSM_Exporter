@@ -25,7 +25,21 @@ import sys
 import time
 import traceback
 
-from tests.dynamo.stage_a_probe_contract import execution_envelope, select_named, utc_now_iso, view_identity
+
+_PROBE_CONTRACT = None
+
+
+def _probe_contract():
+    """Import the shared contract after the repository path has been bootstrapped."""
+    global _PROBE_CONTRACT
+    if _PROBE_CONTRACT is None:
+        try:
+            import tests.dynamo.stage_a_probe_contract as contract
+        except ImportError:
+            import stage_a_probe_contract as contract
+        _PROBE_CONTRACT = contract
+    return _PROBE_CONTRACT
+
 
 PROBE_NAME = "stage_a_external_sources"
 PROBE_VERSION = "2026-07-24.1"
@@ -198,7 +212,7 @@ VARIANTS = [
 
 
 def select_variants(selection="all"):
-    return select_named(selection, VARIANTS, "external-source variant(s)")
+    return _probe_contract().select_named(selection, VARIANTS, "external-source variant(s)")
 
 
 
@@ -865,21 +879,24 @@ def run_probe(raw_view, output_dir, raw_links=None, raw_dwgs=None, selection="al
               resolution_policy=DEFAULT_RESOLUTION_POLICY, target_dpi=DEFAULT_TARGET_DPI,
               fixed_pixel_width=DEFAULT_FIXED_PIXEL_WIDTH,
               max_pixel_dimension=DEFAULT_MAX_PIXEL_DIMENSION):
-    started_at = utc_now_iso()
+    _ensure_repo_import_path(os.path.abspath(str(output_dir or os.getcwd())))
+    started_at = _probe_contract().utc_now_iso()
     native = _run_native(raw_view, output_dir, raw_links, raw_dwgs, selection,
                          resolution_policy, target_dpi, fixed_pixel_width, max_pixel_dimension)
     variants = native.get("variants", [])
-    rollback_ok = bool(variants) and all(item.get("transaction_group", {}).get("rollback_succeeded") for item in variants)
-    restored = bool(variants) and all(not item.get("state", {}).get("differences_after_rollback") for item in variants)
-    errors = [error for item in variants for error in item.get("exceptions", [])]
+    executed = [item for item in variants if not item.get("skipped")]
+    rollback_ok = bool(executed) and all(item.get("transaction_group", {}).get("rollback_succeeded") for item in executed)
+    restored = bool(executed) and all(not item.get("state", {}).get("differences_after_rollback") for item in executed)
+    errors = [error for item in executed for error in item.get("exceptions", [])]
     paths = native.get("paths", {})
     artifacts = ([paths.get("combined_json")] if paths.get("combined_json") else []) + list(paths.get("tiffs", []))
-    return execution_envelope(
+    return _probe_contract().execution_envelope(
         PROBE_NAME, {"selection": [item.get("variant") for item in variants],
                      "resolution_policy": resolution_policy, "target_dpi": target_dpi,
                      "fixed_pixel_width": fixed_pixel_width, "max_pixel_dimension": max_pixel_dimension},
-        view_identity(raw_view), native, artifacts, "succeeded" if rollback_ok else "failed",
-        "restored" if restored else "not_restored", started_at,
+        _probe_contract().view_identity(raw_view), native, artifacts,
+        "succeeded" if rollback_ok else ("not_started" if not executed else "failed"),
+        "restored" if restored else ("not_checked" if not executed else "not_restored"), started_at,
         execution_status="failed" if errors or not rollback_ok or not restored else "completed", errors=errors)
 
 

@@ -23,13 +23,27 @@ import re
 import sys
 import time
 
-from tests.dynamo.stage_a_probe_contract import execution_envelope, select_named, utc_now_iso, view_identity
 
 DEFAULT_FIXED_PIXEL_WIDTH = 1600
 DEFAULT_RESOLUTION_POLICY = "paper_space_dpi"
 DEFAULT_TARGET_DPI = 150
 DEFAULT_FIXED_PIXEL_WIDTH = 1600
 DEFAULT_MAX_PIXEL_DIMENSION = None
+
+_PROBE_CONTRACT = None
+
+
+def _probe_contract():
+    """Import the shared contract after the repository path has been bootstrapped."""
+    global _PROBE_CONTRACT
+    if _PROBE_CONTRACT is None:
+        try:
+            import tests.dynamo.stage_a_probe_contract as contract
+        except ImportError:
+            import stage_a_probe_contract as contract
+        _PROBE_CONTRACT = contract
+    return _PROBE_CONTRACT
+
 
 def round_half_up_positive(value):
     value = float(value)
@@ -190,7 +204,7 @@ SUPPORTED_MODES = ("original", "model_bounds", "canvas_bounds", "all")
 def select_resolution_runs(resolution_cases, resolution_policy, target_dpi,
                            fixed_pixel_width, max_pixel_dimension):
     available = _resolution_runs(resolution_policy, target_dpi, fixed_pixel_width, max_pixel_dimension)
-    names = select_named(resolution_cases, [_resolution_suffix(item) for item in available], "resolution case(s)")
+    names = _probe_contract().select_named(resolution_cases, [_resolution_suffix(item) for item in available], "resolution case(s)")
     return [item for item in available if _resolution_suffix(item) in names]
 MARKER_SPECS = [
     ("lower_left",  (255, 0, 0)),
@@ -797,21 +811,22 @@ def run_probe(raw_view, output_dir=None, mode="all", create_markers=True,
               fixed_pixel_width=DEFAULT_FIXED_PIXEL_WIDTH,
               max_pixel_dimension=DEFAULT_MAX_PIXEL_DIMENSION,
               resolution_cases="all", repetition_count=2):
-    started_at = utc_now_iso()
+    _ensure_repo_on_path(output_dir=output_dir)
+    started_at = _probe_contract().utc_now_iso()
     native = _run_native(raw_view, output_dir, mode, create_markers, resolution_policy,
                          target_dpi, fixed_pixel_width, max_pixel_dimension,
                          resolution_cases, repetition_count)
     rollback = native.get("rollback_result")
     differences = native.get("state_differences")
-    selected = select_named(resolution_cases, [_resolution_suffix(item) for item in _resolution_runs(resolution_policy, target_dpi, fixed_pixel_width, max_pixel_dimension)], "resolution case(s)")
+    selected = _probe_contract().select_named(resolution_cases, [_resolution_suffix(item) for item in _resolution_runs(resolution_policy, target_dpi, fixed_pixel_width, max_pixel_dimension)], "resolution case(s)")
     diagnostics = native.get("diagnostics", [])
-    return execution_envelope(
+    return _probe_contract().execution_envelope(
         "stage_a_image_alignment",
         {"mode": mode, "create_markers": bool(create_markers), "resolution_policy": resolution_policy,
          "target_dpi": target_dpi, "fixed_pixel_width": fixed_pixel_width,
          "max_pixel_dimension": max_pixel_dimension, "resolution_cases": selected,
          "repetition_count": int(repetition_count)},
-        view_identity(raw_view), native, native.get("paths", []),
+        _probe_contract().view_identity(raw_view), native, native.get("paths", []),
         "succeeded" if rollback == "rolled_back" else ("not_started" if rollback == "not_started" else "failed"),
         "restored" if differences == [] else ("not_checked" if differences is None else "not_restored"), started_at,
         execution_status="completed" if native.get("conclusion") != "FAIL" else "failed",
@@ -830,7 +845,7 @@ def dynamo_main(inputs):
         inputs[6] if len(inputs) > 6 else DEFAULT_FIXED_PIXEL_WIDTH,
         inputs[7] if len(inputs) > 7 else DEFAULT_MAX_PIXEL_DIMENSION,
         inputs[8] if len(inputs) > 8 else "all",
-        inputs[9] if len(inputs) > 9 else 2)
+        inputs[9] if len(inputs) > 9 and inputs[9] is not None else 2)
 
 
 if "IN" in globals():
