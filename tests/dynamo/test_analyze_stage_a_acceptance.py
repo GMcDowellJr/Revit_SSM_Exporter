@@ -191,6 +191,30 @@ def test_alignment_coverage_normalizes_resolution_qualified_export_keys():
     assert coverage["evidence"]["not_analyzed"] == []
 
 
+def test_alignment_coverage_requires_every_requested_resolution_case():
+    native = {"exports": {"original.dpi_150": {"images": [{}]}}}
+    checks = analyzer._family_checks({"requested_settings": {
+        "mode": "original", "resolution_cases": ["dpi_150", "dpi_300"]}},
+        native, "image_alignment")
+    coverage = next(check for check in checks if check["check_id"] == "requested_case_coverage")
+    assert coverage["status"] == "FAIL"
+    assert coverage["evidence"]["requested"] == ["original.dpi_150", "original.dpi_300"]
+    assert coverage["evidence"]["not_analyzed"] == ["original.dpi_300"]
+    assert "REQUESTED_CASE_NOT_ANALYZED" in coverage["reason_codes"]
+
+
+def test_alignment_all_mode_requires_each_mode_at_each_resolution():
+    native = {"exports": {
+        "original.dpi_150": {"images": [{}]}, "model_bounds.dpi_150": {"images": [{}]},
+        "canvas_bounds.dpi_150": {"images": [{}]}, "original.dpi_300": {"images": [{}]},
+    }}
+    coverage = analyzer._alignment_coverage({"requested_settings": {
+        "mode": "all", "resolution_cases": ["dpi_150", "dpi_300"]}}, native)
+    assert coverage["status"] == "FAIL"
+    assert coverage["evidence"]["not_analyzed"] == [
+        "canvas_bounds.dpi_300", "model_bounds.dpi_300"]
+
+
 def test_alignment_enrichment_uses_qualified_model_export_for_placement(tmp_path, monkeypatch):
     image_path = tmp_path / "model.tiff"
     image_path.write_bytes(b"synthetic")
@@ -261,3 +285,43 @@ def test_linework_modes_match_their_per_resolution_references(tmp_path, monkeypa
     assert [mode["classification"]["dimension_alignment"] for mode in native["modes"]] == ["pass", "pass"]
     assert [mode["images"][0]["analysis"]["reference_dimension_agreement"]["reference_dimensions"]
             for mode in native["modes"]] == [[100, 50], [200, 100]]
+
+
+def _external_variant(name, source, analyzed=True, rendered=True):
+    assignment = {"assignment_key": name, "source_type": source, "paint_success": True}
+    analysis = ({"status": "analyzed_external", "actual_dimensions": [2, 2],
+                 "expected_color_pixel_counts": {name: 1 if rendered else 0}}
+                if analyzed else {"status": "pillow_unavailable"})
+    return {"variant": name, "assignments": [assignment], "image_analysis": analysis,
+            "transaction_group": {"rollback_succeeded": True}, "state": {}}
+
+
+def test_external_false_raw_boolean_remains_inconclusive_without_image_evidence():
+    variants = [
+        _external_variant("host_reference_coloring", "HOST", analyzed=False),
+        _external_variant("linked_per_element_linkelementid_coloring", "LINK", analyzed=False),
+        {**_external_variant("forced_linked_override_failure_hide_instance_fallback", "LINK", analyzed=False),
+         "hidden_link_fallback": [123]},
+        _external_variant("dwg_importinstance_coloring", "DWG", analyzed=False),
+    ]
+    native = {"variants": variants, "required_source_family_status": {
+        source: {"ran": True, "passed": False} for source in ("HOST", "LINK", "DWG")}}
+    checks = analyzer._family_checks({}, native, "external_sources")
+    source_checks = [check for check in checks if check["check_id"].startswith("external_source_")]
+    assert {check["status"] for check in source_checks} == {"INCONCLUSIVE"}
+    assert all("EXTERNAL_SOURCE_VISUAL_FAILURE" not in check["reason_codes"] for check in source_checks)
+
+
+def test_external_refreshed_variant_metrics_override_stale_family_boolean():
+    variants = [
+        _external_variant("host_reference_coloring", "HOST"),
+        _external_variant("linked_per_element_linkelementid_coloring", "LINK"),
+        {**_external_variant("forced_linked_override_failure_hide_instance_fallback", "LINK"),
+         "hidden_link_fallback": [123]},
+        _external_variant("dwg_importinstance_coloring", "DWG"),
+    ]
+    native = {"variants": variants, "required_source_family_status": {
+        source: {"ran": True, "passed": False} for source in ("HOST", "LINK", "DWG")}}
+    checks = analyzer._family_checks({}, native, "external_sources")
+    source_checks = [check for check in checks if check["check_id"].startswith("external_source_")]
+    assert {check["status"] for check in source_checks} == {"PASS"}

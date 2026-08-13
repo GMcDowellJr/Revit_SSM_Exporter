@@ -249,6 +249,8 @@ The automated checks are intentionally bounded:
 * alignment checks actual/requested dimensions, exact calibration evidence,
   repeatability, and model-to-canvas offset. Resolution-qualified export keys
   such as `original.dpi_150` count toward the requested `original` mode, and
+  every requested mode/resolution-case combination must be present, so one DPI
+  export cannot satisfy a multi-DPI request. The
   placement enrichment uses those qualified exports without discarding an
   already-recorded native placement;
 * minimum-ID checks attestation, TIFF dimensions, palette contamination,
@@ -260,7 +262,10 @@ The automated checks are intentionally bounded:
   matching resolution case;
 * external-source checks HOST/LINK/DWG variant coverage, artifacts,
   attestation, rollback and restoration, while linked-source visual handling
-  remains inconclusive unless explicit evidence establishes it.
+  remains inconclusive unless explicit evidence establishes it. Source-family
+  status is recalculated as a tri-state from externally refreshed per-variant
+  pixels; a stale raw `passed: false` caused by unavailable in-Revit Pillow is
+  not treated as a visual failure.
 
 Thresholds used by legacy pixel calculations remain the documented probe
 contract thresholds (`DARK_THRESHOLD`, `WHITE_THRESHOLD`, reserved near-white,

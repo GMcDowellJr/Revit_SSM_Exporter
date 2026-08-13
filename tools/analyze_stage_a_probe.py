@@ -579,6 +579,60 @@ def _actual_names(native: dict[str, Any], family: str) -> list[str]:
     return [v.get(label) for v in native.get(key, []) if not v.get('skipped') and v.get(label)]
 
 
+def _alignment_coverage(data: dict[str, Any], native: dict[str, Any]) -> dict[str, Any]:
+    """Check the mode × resolution cases requested by the alignment envelope."""
+    settings = data.get('requested_settings') or {}
+    mode_value = settings.get('mode', settings.get('modes'))
+    resolution_value = settings.get('resolution_cases')
+    exports = native.get('exports') or {}
+    actual = sorted(key for key, export in exports.items() if not export.get('skipped'))
+    actual_modes = sorted({key.split('.', 1)[0] for key in actual})
+    actual_resolutions = sorted({key.split('.', 1)[1] for key in actual if '.' in key})
+    modes = (['original', 'model_bounds', 'canvas_bounds'] if mode_value == 'all' else
+             ([] if mode_value is None else ([mode_value] if isinstance(mode_value, str) else list(mode_value))))
+    resolutions = ([] if resolution_value in (None, 'all') else
+                   ([resolution_value] if isinstance(resolution_value, str) else list(resolution_value)))
+    if modes and resolutions:
+        requested = sorted('{0}.{1}'.format(mode, resolution) for mode in modes for resolution in resolutions)
+        missing = sorted(set(requested) - set(actual))
+    elif modes:
+        requested, missing = sorted(modes), sorted(set(modes) - set(actual_modes))
+    elif resolutions:
+        requested = sorted(resolutions)
+        missing = sorted(set(resolutions) - set(actual_resolutions))
+    else:
+        requested, missing = [], []
+    status = 'FAIL' if missing else ('PASS' if actual else 'INCONCLUSIVE')
+    return _check('requested_case_coverage', status,
+                  ['REQUESTED_CASE_NOT_ANALYZED'] if missing else ([] if actual else ['NO_CASES_ANALYZED']),
+                  {'requested': requested, 'analyzed': actual, 'not_analyzed': missing,
+                   'requested_modes': modes, 'requested_resolution_cases': resolutions})
+
+
+def _external_variant_visual_status(variant: dict[str, Any]) -> str:
+    """Derive tri-state visual evidence from refreshed external TIFF metrics."""
+    if variant.get('exceptions') or variant.get('conclusion') == 'FAIL':
+        return 'FAIL'
+    analysis = variant.get('image_analysis') or {}
+    if (analysis.get('status') not in ('analyzed_external', 'complete') or
+            not _artifact_dimensions(analysis)):
+        return 'INCONCLUSIVE'
+    if variant.get('variant') == 'forced_linked_override_failure_hide_instance_fallback':
+        return 'PASS' if variant.get('hidden_link_fallback') else 'FAIL'
+    assignments = variant.get('assignments') or []
+    if not assignments:
+        return 'INCONCLUSIVE'
+    counts = analysis.get('expected_color_pixel_counts') or {}
+    required_sources = {item.get('source_type') for item in assignments if item.get('source_type')}
+    for source in required_sources:
+        source_items = [item for item in assignments if item.get('source_type') == source]
+        if not any(item.get('paint_success') for item in source_items):
+            return 'FAIL'
+        if not any(int(counts.get(str(item.get('assignment_key')), 0) or 0) > 0 for item in source_items):
+            return 'INCONCLUSIVE'
+    return 'PASS' if required_sources else 'INCONCLUSIVE'
+
+
 def _safety_checks(data: dict[str, Any], native: dict[str, Any]) -> list[dict[str, Any]]:
     execution = data.get('execution_status')
     checks = [_check('raw_execution', _status(execution, {'completed'}, {'failed'}),
@@ -613,12 +667,15 @@ def _artifact_dimensions(analysis: dict[str, Any]) -> list[int] | None:
 
 def _family_checks(data: dict[str, Any], native: dict[str, Any], family: str) -> list[dict[str, Any]]:
     checks = []
-    requested, actual = _requested_names(data, native, family), _actual_names(native, family)
-    missing = sorted(set(requested) - set(actual))
-    coverage_status = 'FAIL' if missing else ('PASS' if actual else 'INCONCLUSIVE')
-    checks.append(_check('requested_case_coverage', coverage_status,
-                         ['REQUESTED_CASE_NOT_ANALYZED'] if missing else ([] if actual else ['NO_CASES_ANALYZED']),
-                         {'requested': requested, 'analyzed': actual, 'not_analyzed': missing}))
+    if family == 'image_alignment':
+        checks.append(_alignment_coverage(data, native))
+    else:
+        requested, actual = _requested_names(data, native, family), _actual_names(native, family)
+        missing = sorted(set(requested) - set(actual))
+        coverage_status = 'FAIL' if missing else ('PASS' if actual else 'INCONCLUSIVE')
+        checks.append(_check('requested_case_coverage', coverage_status,
+                             ['REQUESTED_CASE_NOT_ANALYZED'] if missing else ([] if actual else ['NO_CASES_ANALYZED']),
+                             {'requested': requested, 'analyzed': actual, 'not_analyzed': missing}))
 
     if family in ('minimum_id_mutations', 'external_sources', 'graphics_semantics'):
         variants = native.get('variants') or []
@@ -662,10 +719,25 @@ def _family_checks(data: dict[str, Any], native: dict[str, Any], family: str) ->
                              ['SEMANTIC_PRESERVATION_FAILED' if semantic_status == 'FAIL' else 'MANUAL_SEMANTIC_REVIEW_REQUIRED'], semantic))
         if family == 'external_sources':
             families = native.get('required_source_family_status') or {}
+            required_variants = {
+                'HOST': ('host_reference_coloring',),
+                'LINK': ('linked_per_element_linkelementid_coloring',
+                         'forced_linked_override_failure_hide_instance_fallback'),
+                'DWG': ('dwg_importinstance_coloring',),
+            }
             for source in ('HOST', 'LINK', 'DWG'):
-                evidence = families.get(source) or {}
-                source_status = ('PASS' if evidence.get('ran') and evidence.get('passed') else
-                                 ('FAIL' if evidence.get('ran') and evidence.get('passed') is False else 'INCONCLUSIVE'))
+                raw_evidence = families.get(source) or {}
+                matching = [variant for variant in variants
+                            if variant.get('variant') in required_variants[source] and not variant.get('skipped')]
+                statuses = [_external_variant_visual_status(variant) for variant in matching]
+                complete = len(matching) == len(required_variants[source])
+                source_status = ('FAIL' if 'FAIL' in statuses else
+                                 ('PASS' if complete and statuses and all(s == 'PASS' for s in statuses)
+                                  else 'INCONCLUSIVE'))
+                evidence = {'required_variants': list(required_variants[source]),
+                            'variant_statuses': {variant.get('variant'): status
+                                                 for variant, status in zip(matching, statuses)},
+                            'raw_family_status': raw_evidence}
                 checks.append(_check('external_source_{0}'.format(source.lower()), source_status,
                                      [] if source_status == 'PASS' else
                                      ['EXTERNAL_SOURCE_VISUAL_FAILURE' if source_status == 'FAIL' else
