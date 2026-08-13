@@ -3,11 +3,29 @@
 from __future__ import annotations
 
 import argparse, hashlib, json, math, os, sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-from PIL import Image, ImageChops
+try:
+    import numpy as np
+except ImportError:  # Reported as an analysis limitation by the public API.
+    np = None
+try:
+    from PIL import Image, ImageChops
+except ImportError:  # Reported as an analysis limitation by the public API.
+    Image = ImageChops = None
+
+ANALYSIS_SCHEMA_VERSION = "1.0"
+ANALYZER_VERSION = "3.0.0"
+SUPPORTED_PROBE_SCHEMA_VERSIONS = {"1.0"}
+SUPPORTED_PROBES = {
+    "stage_a_image_alignment": "image_alignment",
+    "stage_a_minimum_id_mutations": "minimum_id_mutations",
+    "stage_a_model_linework": "model_linework",
+    "stage_a_external_sources": "external_sources",
+    "stage_a_graphics_semantics": "graphics_semantics",
+}
 
 DARK_THRESHOLD = 64
 WHITE_THRESHOLD = 244
@@ -268,12 +286,14 @@ def classify_mode(mode_result, reference_dims):
         return {'candidate_status':'rejected','analysis_error':'mode produced no TIFF images to analyze','manual_review_required':True,'dimension_alignment':'fail','fill_contamination':'unknown','fill_contamination_evidence':{'reason':'missing image analysis'}}
     if ia.get('status') == 'error':
         return {'candidate_status':'rejected','analysis_error':ia.get('error'),'manual_review_required':True,'dimension_alignment':'fail','fill_contamination':'unknown','fill_contamination_evidence':{'reason':ia.get('error')}}
-    dims_match = bool(ia.get('dimensions') and reference_dims and ia.get('dimensions') == reference_dims)
+    dims_available = bool(ia.get('dimensions') and reference_dims)
+    dims_match = bool(dims_available and ia.get('dimensions') == reference_dims)
     dark = int(ia.get('dark_line_pixel_count') or 0); unexpected = int(ia.get('unexpected_color_pixel_count') or 0); non_dark_gray = int(ia.get('non_dark_gray_foreground_pixel_count') or 0); foreground = int(ia.get('foreground_pixel_count') or 0)
     tol = max(10, int(round(0.001 * max(1, foreground))))
     fill_ok = 'acceptable' if unexpected == 0 and non_dark_gray <= tol else 'unacceptable'
     candidate = 'rejected' if mode_result.get('exceptions') or dark <= 0 else ('recommended' if fill_ok == 'acceptable' and dims_match else 'inconclusive')
-    return {'internal_edges':'uncertain','hidden_back_edges':'uncertain','fill_contamination':fill_ok,'fill_contamination_evidence':{'unexpected_color_pixel_count':unexpected,'non_dark_gray_foreground_pixel_count':non_dark_gray,'non_dark_gray_tolerance':tol},'link_behavior':'requires_manual_review','dwg_behavior':'requires_manual_review','dimension_alignment':'pass' if dims_match else 'fail','candidate_status':candidate,'manual_review_required':True}
+    dimension_alignment = 'pass' if dims_match else ('fail' if dims_available else 'inconclusive')
+    return {'internal_edges':'uncertain','hidden_back_edges':'uncertain','fill_contamination':fill_ok,'fill_contamination_evidence':{'unexpected_color_pixel_count':unexpected,'non_dark_gray_foreground_pixel_count':non_dark_gray,'non_dark_gray_tolerance':tol},'link_behavior':'requires_manual_review','dwg_behavior':'requires_manual_review','dimension_alignment':dimension_alignment,'candidate_status':candidate,'manual_review_required':True}
 
 
 def write_diff(a: Path, b: Path, out: Path):
@@ -400,9 +420,17 @@ def placement(model_bounds, canvas_bounds, model_img):
     rounding = [abs(v - round(v)) for v in vals]
     return {'available': True, 'observed_px_per_model_unit': density, 'density_source_content_width_px': int(content_width), 'tiff_actual_width_px': int(model_img.get('actual_width') or 0), 'canvas_pixel_dimensions_float': [canvas_w, canvas_h], 'model_image_offset_float': [off_x, off_y], 'offset_integral': [rounding[2] < 1e-6, rounding[3] < 1e-6], 'max_rounding_error_px': max(rounding), 'max_rounding_error_model_units': max(rounding) / density, 'lossless_padding_sufficient': max(rounding) < 1e-6, 'resampling_required_if_exact_canvas_needed': max(rounding) >= 1e-6}
 
-def analyze_json(json_path: Path) -> tuple[Path, str]:
-    data=json.loads(json_path.read_text())
-    name=(data.get('probe',{}).get('name') or json_path.name).lower()
+
+def _resolution_identity(run):
+    """Return the producer contract fields that identify one resolution case."""
+    images = run.get('images') or []
+    resolution = (images[0].get('resolution') or {}) if images else (run.get('resolution') or {})
+    return tuple(resolution.get(key) for key in
+                 ('policy', 'target_dpi', 'requested_width_px', 'accepted_width_px', 'predicted_height_px'))
+
+def _enrich_report(json_path: Path, data: dict[str, Any], probe_id: str) -> list[str]:
+    """Run the existing probe-specific pixel calculations in place."""
+    name = probe_id.lower()
     summary=[]
     if 'minimum_id_mutations' in name or name == 'stage_a_minimum_id_mutations':
         summary.extend(analyze_minimum_id_mutations(json_path, data))
@@ -417,14 +445,22 @@ def analyze_json(json_path: Path) -> tuple[Path, str]:
         data['recommendation']=recommend_graphics(data.get('variants',[]))
 
     elif 'model_linework' in name:
-        ref=data.get('reference_element_id_tiff') or {}; ref_dims=None
-        for img in ref.get('images',[]):
-            p=resolve_path(json_path, img.get('path'))
-            if p and p.exists(): img['analysis']=analyze_linework_image(p); ref_dims=img['analysis'].get('dimensions') or ref_dims
-            else: img['analysis']={'path': str(p) if p else None, 'status':'error', 'error':'referenced TIFF missing or path not provided'}
-        if ref.get('images'):
-            ref['sequential_export_repeatability'] = repeatability(ref.get('images', []))
+        references = data.get('reference_runs') or []
+        if not references and data.get('reference_element_id_tiff'):
+            references = [data['reference_element_id_tiff']]
+        reference_dims = {}
+        for ref in references:
+            ref_dims = None
+            for img in ref.get('images',[]):
+                p=resolve_path(json_path, img.get('path'))
+                if p and p.exists(): img['analysis']=analyze_linework_image(p); ref_dims=img['analysis'].get('dimensions') or ref_dims
+                else: img['analysis']={'path': str(p) if p else None, 'status':'error', 'error':'referenced TIFF missing or path not provided'}
+            if ref.get('images'):
+                ref['sequential_export_repeatability'] = repeatability(ref.get('images', []))
+            if ref_dims:
+                reference_dims[_resolution_identity(ref)] = ref_dims
         for m in data.get('modes',[]):
+            ref_dims = reference_dims.get(_resolution_identity(m))
             for img in m.get('images',[]):
                 p=resolve_path(json_path, img.get('path'))
                 if p and p.exists(): img['analysis']=analyze_linework_image(p, ref_dims)
@@ -433,38 +469,438 @@ def analyze_json(json_path: Path) -> tuple[Path, str]:
                 m['sequential_export_repeatability'] = repeatability(m.get('images', []))
             m['classification']=classify_mode(m, ref_dims); summary.append(f"linework {m.get('mode')}: non_dark_gray={m['images'][0]['analysis'].get('non_dark_gray_foreground_pixel_count') if m.get('images') else None} unexpected={m['images'][0]['analysis'].get('unexpected_color_pixel_count') if m.get('images') else None}")
         data['difference_images']=[]
-        modes_with_images = [(m, first_image_path(json_path, m)) for m in data.get('modes', [])]
-        modes_with_images = [(m, p) for m, p in modes_with_images if p and p.exists()]
-        if len(modes_with_images)>1:
+        modes_by_resolution = {}
+        for mode in data.get('modes', []):
+            p = first_image_path(json_path, mode)
+            if p and p.exists():
+                modes_by_resolution.setdefault(_resolution_identity(mode), []).append((mode, p))
+        for resolution_id, modes_with_images in modes_by_resolution.items():
+            if len(modes_with_images) < 2:
+                continue
             ref_mode, refp = modes_with_images[0]
             for m, p in modes_with_images[1:]:
-                out=json_path.parent / f"{json_path.stem}.{m.get('mode')}_minus_{ref_mode.get('mode')}.diff.tiff"; data['difference_images'].append({'mode':m.get('mode'),'against':ref_mode.get('mode'),'diff':write_diff(refp,p,out)})
+                suffix = str(resolution_id[1] or resolution_id[3] or 'resolution')
+                out=json_path.parent / f"{json_path.stem}.{suffix}.{m.get('mode')}_minus_{ref_mode.get('mode')}.diff.tiff"; data['difference_images'].append({'mode':m.get('mode'),'against':ref_mode.get('mode'),'resolution_identity':resolution_id,'diff':write_diff(refp,p,out)})
         data['ranked_modes']=rank_modes(data.get('modes',[]))
-    elif 'alignment' in name or any(k in data for k in ('exports','calibration_markers')):
+    elif 'external_sources' in name:
+        for variant in data.get('variants', []):
+            export = variant.get('export') or {}
+            p = resolve_path(json_path, export.get('path'))
+            assigned = {str(a.get('assignment_key', i)): a
+                        for i, a in enumerate(variant.get('assignments') or [])
+                        if a.get('rgb') is not None}
+            if p and p.exists():
+                variant['image_analysis'] = analyze_graphics_image(p, assigned)
+                summary.append(f"external {variant.get('variant')}: expected={variant['image_analysis'].get('expected_palette_pixel_count')}")
+            else:
+                variant['image_analysis'] = {'path': str(p) if p else None, 'status': 'error',
+                                             'error': 'referenced TIFF missing or path not provided'}
+    elif 'alignment' in name:
         markers=data.get('calibration_markers',[])
         for mode, exp in data.get('exports',{}).items():
             bounds=exp.get('target_bounds_uv')
             for img in exp.get('images',[]):
                 p=resolve_path(json_path, img.get('path'))
                 if p and p.exists():
-                    eff=img.get('effective_pixel_size'); img.clear(); img.update(analyze_alignment_image(p, markers, bounds)); img['effective_pixel_size']=eff; img['pixel_size_equals_actual_width']=(img.get('actual_width')==eff)
+                    eff = img.get('effective_pixel_size')
+                    resolution = img.get('resolution')
+                    marker_units = img.get('marker_residual_units')
+                    img.clear()
+                    img.update(analyze_alignment_image(p, markers, bounds))
+                    img['effective_pixel_size'] = eff
+                    if resolution is not None:
+                        img['resolution'] = resolution
+                    if marker_units is not None:
+                        img['marker_residual_units'] = marker_units
+                    img['pixel_size_equals_actual_width'] = (img.get('actual_width') == eff)
                 else:
                     img.clear(); img.update({'path': str(p) if p else None, 'status':'error', 'error':'referenced TIFF missing or path not provided'})
             vals=[im.get('affine_fit_residual',{}).get('max_residual_px') for im in exp.get('images',[]) if im.get('affine_fit_residual',{}).get('available')]
             if vals: summary.append(f"alignment {mode}: affine_max={vals[0]:.6f}")
         model_img = None
         for preferred in ('model_bounds', 'original'):
-            images = data.get('exports', {}).get(preferred, {}).get('images', [])
-            if images and images[0].get('status') == 'analyzed_external':
-                model_img = images[0]
+            for key, export in data.get('exports', {}).items():
+                if key.split('.', 1)[0] != preferred:
+                    continue
+                images = export.get('images', [])
+                if images and images[0].get('status') == 'analyzed_external':
+                    model_img = images[0]
+                    break
+            if model_img:
                 break
-        data['model_to_canvas_placement'] = placement(data.get('bounds', {}).get('pre_annotation_model_uv'), data.get('bounds', {}).get('canvas_uv'), model_img)
+        if model_img:
+            data['model_to_canvas_placement'] = placement(data.get('bounds', {}).get('pre_annotation_model_uv'), data.get('bounds', {}).get('canvas_uv'), model_img)
+        elif 'model_to_canvas_placement' not in data:
+            data['model_to_canvas_placement'] = {'available': False, 'reason': 'no analyzed model export available'}
         data['evidence_status'] = alignment_evidence_status(data)
+    return summary
+
+
+def _probe_identity(data: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
+    """Return explicit identity, family and native report; never guess from a filename."""
+    explicit = data.get('probe_id')
+    native = data.get('native_report') if isinstance(data.get('native_report'), dict) else data
+    embedded = (native.get('probe') or {}).get('name') if isinstance(native.get('probe'), dict) else None
+    probe_id = str(explicit or embedded or '').lower()
+    if not probe_id:
+        raise ValueError('MISSING_PROBE_ID: report requires probe_id or probe.name')
+    if explicit and embedded and str(explicit).lower() != str(embedded).lower():
+        raise ValueError('INCONSISTENT_PROBE_ID: probe_id and native probe.name disagree')
+    if probe_id not in SUPPORTED_PROBES:
+        raise ValueError('UNKNOWN_PROBE_TYPE: {0}'.format(probe_id))
+    version = data.get('probe_schema_version')
+    if version is not None and str(version) not in SUPPORTED_PROBE_SCHEMA_VERSIONS:
+        raise ValueError('UNSUPPORTED_PROBE_SCHEMA_VERSION: {0}'.format(version))
+    return probe_id, SUPPORTED_PROBES[probe_id], native
+
+
+def _status(value: Any, good: set[str], bad: set[str]) -> str:
+    normalized = str(value or '').lower()
+    if normalized in good:
+        return 'PASS'
+    if normalized in bad:
+        return 'FAIL'
+    return 'INCONCLUSIVE'
+
+
+def _check(name: str, status: str, reasons: list[str], evidence: Any = None) -> dict[str, Any]:
+    return {'check_id': name, 'status': status, 'reason_codes': sorted(set(reasons)), 'evidence': evidence}
+
+
+def _requested_names(data: dict[str, Any], native: dict[str, Any], family: str) -> list[str]:
+    settings = data.get('requested_settings') or {}
+    keys = {'minimum_id_mutations': ('selection', 'variants'), 'model_linework': ('display_cases', 'rendering_modes'),
+            'external_sources': ('selection', 'variants'), 'image_alignment': ('modes', 'mode'),
+            'graphics_semantics': ('selection', 'variants')}.get(family, ())
+    value = next((settings.get(k) for k in keys if settings.get(k) is not None), None)
+    if value is None:
+        inputs = native.get('inputs') or {}
+        value = next((inputs.get(k) for k in keys if inputs.get(k) is not None), None)
+    if value is None or value == 'all':
+        return []
+    return [value] if isinstance(value, str) else list(value)
+
+
+def _actual_names(native: dict[str, Any], family: str) -> list[str]:
+    if family == 'image_alignment':
+        return sorted({k.split('.', 1)[0] for k, v in (native.get('exports') or {}).items()
+                       if not v.get('skipped')})
+    key, label = ('modes', 'mode') if family == 'model_linework' else ('variants', 'variant')
+    return [v.get(label) for v in native.get(key, []) if not v.get('skipped') and v.get(label)]
+
+
+def _alignment_coverage(data: dict[str, Any], native: dict[str, Any]) -> dict[str, Any]:
+    """Check the mode × resolution cases requested by the alignment envelope."""
+    settings = data.get('requested_settings') or {}
+    mode_value = settings.get('mode', settings.get('modes'))
+    resolution_value = settings.get('resolution_cases')
+    exports = native.get('exports') or {}
+    actual = sorted(key for key, export in exports.items() if not export.get('skipped'))
+    actual_modes = sorted({key.split('.', 1)[0] for key in actual})
+    actual_resolutions = sorted({key.split('.', 1)[1] for key in actual if '.' in key})
+    modes = (['original', 'model_bounds', 'canvas_bounds'] if mode_value == 'all' else
+             ([] if mode_value is None else ([mode_value] if isinstance(mode_value, str) else list(mode_value))))
+    resolutions = ([] if resolution_value in (None, 'all') else
+                   ([resolution_value] if isinstance(resolution_value, str) else list(resolution_value)))
+    if modes and resolutions:
+        requested = sorted('{0}.{1}'.format(mode, resolution) for mode in modes for resolution in resolutions)
+        missing = sorted(set(requested) - set(actual))
+    elif modes:
+        requested, missing = sorted(modes), sorted(set(modes) - set(actual_modes))
+    elif resolutions:
+        requested = sorted(resolutions)
+        missing = sorted(set(resolutions) - set(actual_resolutions))
     else:
-        return json_path, f"SKIP unrecognized {json_path}"
-    out=json_path.with_name(json_path.stem + '.analyzed.json')
-    out.write_text(json.dumps(data, indent=2, sort_keys=True))
-    return out, '; '.join(summary) or f'analyzed {json_path.name}'
+        requested, missing = [], []
+    status = 'FAIL' if missing else ('PASS' if actual else 'INCONCLUSIVE')
+    return _check('requested_case_coverage', status,
+                  ['REQUESTED_CASE_NOT_ANALYZED'] if missing else ([] if actual else ['NO_CASES_ANALYZED']),
+                  {'requested': requested, 'analyzed': actual, 'not_analyzed': missing,
+                   'requested_modes': modes, 'requested_resolution_cases': resolutions})
+
+
+def _external_variant_visual_status(variant: dict[str, Any]) -> str:
+    """Derive tri-state visual evidence from refreshed external TIFF metrics."""
+    if variant.get('exceptions') or variant.get('conclusion') == 'FAIL':
+        return 'FAIL'
+    analysis = variant.get('image_analysis') or {}
+    if (analysis.get('status') not in ('analyzed_external', 'complete') or
+            not _artifact_dimensions(analysis)):
+        return 'INCONCLUSIVE'
+    if variant.get('variant') == 'forced_linked_override_failure_hide_instance_fallback':
+        return 'PASS' if variant.get('hidden_link_fallback') else 'FAIL'
+    assignments = variant.get('assignments') or []
+    if not assignments:
+        return 'INCONCLUSIVE'
+    counts = analysis.get('expected_color_pixel_counts') or {}
+    required_sources = {item.get('source_type') for item in assignments if item.get('source_type')}
+    for source in required_sources:
+        source_items = [item for item in assignments if item.get('source_type') == source]
+        if not any(item.get('paint_success') for item in source_items):
+            return 'FAIL'
+        if not any(int(counts.get(str(item.get('assignment_key')), 0) or 0) > 0 for item in source_items):
+            return 'INCONCLUSIVE'
+    return 'PASS' if required_sources else 'INCONCLUSIVE'
+
+
+def _safety_checks(data: dict[str, Any], native: dict[str, Any]) -> list[dict[str, Any]]:
+    execution = data.get('execution_status')
+    checks = [_check('raw_execution', _status(execution, {'completed'}, {'failed'}),
+                     [] if execution == 'completed' else ['RAW_EXECUTION_FAILED' if execution == 'failed' else 'RAW_EXECUTION_STATUS_MISSING'], execution)]
+    variants = native.get('variants') or native.get('modes') or []
+    executed = [v for v in variants if not v.get('skipped')]
+    raw_rb = data.get('rollback_status')
+    rb_values = [v.get('rollback_status') or (v.get('transaction_group') or {}).get('rollback_status') for v in executed]
+    rb_statuses = [_status(v, {'pass', 'succeeded', 'rolled_back', 'rolledback'}, {'fail', 'failed', 'rollback_failed'}) for v in rb_values]
+    rb = _status(raw_rb, {'succeeded', 'pass', 'rolled_back'}, {'failed', 'fail'})
+    if rb == 'INCONCLUSIVE' and rb_statuses:
+        rb = 'FAIL' if 'FAIL' in rb_statuses else ('PASS' if all(s == 'PASS' for s in rb_statuses) else 'INCONCLUSIVE')
+    checks.append(_check('rollback', rb, [] if rb == 'PASS' else ['ROLLBACK_FAILED' if rb == 'FAIL' else 'ROLLBACK_EVIDENCE_MISSING'],
+                         {'aggregate': raw_rb, 'variant_values': rb_values}))
+    restoration = _status(data.get('state_restoration_status'), {'restored'}, {'not_restored'})
+    state_values = [(v.get('state') or {}).get('captured_state_equal_after_rollback') for v in executed]
+    if restoration == 'INCONCLUSIVE' and state_values:
+        restoration = 'FAIL' if False in state_values else ('PASS' if all(v is True for v in state_values) else 'INCONCLUSIVE')
+    checks.append(_check('state_restoration', restoration, [] if restoration == 'PASS' else
+                         ['STATE_RESTORATION_FAILED' if restoration == 'FAIL' else 'STATE_RESTORATION_EVIDENCE_MISSING'], state_values))
+    return checks
+
+
+def _artifact_dimensions(analysis: dict[str, Any]) -> list[int] | None:
+    dims = analysis.get('actual_dimensions') or analysis.get('dimensions')
+    if dims:
+        return [int(dims[0]), int(dims[1])]
+    if analysis.get('actual_width') and analysis.get('actual_height'):
+        return [int(analysis['actual_width']), int(analysis['actual_height'])]
+    return None
+
+
+def _family_checks(data: dict[str, Any], native: dict[str, Any], family: str) -> list[dict[str, Any]]:
+    checks = []
+    if family == 'image_alignment':
+        checks.append(_alignment_coverage(data, native))
+    else:
+        requested, actual = _requested_names(data, native, family), _actual_names(native, family)
+        missing = sorted(set(requested) - set(actual))
+        coverage_status = 'FAIL' if missing else ('PASS' if actual else 'INCONCLUSIVE')
+        checks.append(_check('requested_case_coverage', coverage_status,
+                             ['REQUESTED_CASE_NOT_ANALYZED'] if missing else ([] if actual else ['NO_CASES_ANALYZED']),
+                             {'requested': requested, 'analyzed': actual, 'not_analyzed': missing}))
+
+    if family in ('minimum_id_mutations', 'external_sources', 'graphics_semantics'):
+        variants = native.get('variants') or []
+        failed_attestation, missing_tiffs, dimension_mismatch, contaminated = [], [], [], []
+        for variant in variants:
+            if variant.get('skipped'):
+                continue
+            name = variant.get('variant')
+            if family == 'minimum_id_mutations' and not _mutation_ok(variant):
+                failed_attestation.append(name)
+                continue
+            if variant.get('mutation_attestation_passed') is False:
+                failed_attestation.append(name)
+                continue
+            ia = variant.get('image_analysis') or {}
+            dims = _artifact_dimensions(ia)
+            if not dims:
+                missing_tiffs.append(name)
+                continue
+            resolution = variant.get('resolution') or (variant.get('export') or {}).get('resolution') or {}
+            required_w = resolution.get('accepted_width_px') or resolution.get('requested_width_px')
+            required_h = resolution.get('predicted_height_px')
+            if (required_w and dims[0] != int(required_w)) or (required_h and dims[1] != int(required_h)):
+                dimension_mismatch.append({'case': name, 'required': [required_w, required_h], 'actual': dims})
+            if ia.get('off_palette_foreground_pixel_count', ia.get('off_palette_foreground_pixels', 0)) not in (None, 0):
+                contaminated.append(name)
+        checks.append(_check('mutation_attestation', 'FAIL' if failed_attestation else ('PASS' if variants else 'INCONCLUSIVE'),
+                             ['MUTATION_ATTESTATION_FAILED'] if failed_attestation else [], failed_attestation))
+        checks.append(_check('required_tiffs', 'INCONCLUSIVE' if missing_tiffs else ('PASS' if variants else 'INCONCLUSIVE'),
+                             ['REQUIRED_TIFF_MISSING'] if missing_tiffs else [], missing_tiffs))
+        checks.append(_check('dimensions', 'FAIL' if dimension_mismatch else ('PASS' if variants and not missing_tiffs else 'INCONCLUSIVE'),
+                             ['DIMENSION_MISMATCH'] if dimension_mismatch else [], dimension_mismatch))
+        checks.append(_check('palette_fidelity', 'FAIL' if contaminated else ('PASS' if variants and not missing_tiffs else 'INCONCLUSIVE'),
+                             ['OFF_PALETTE_CONTAMINATION'] if contaminated else [], contaminated))
+        # A color raster cannot, by itself, prove preservation of Revit visibility semantics.
+        semantic = native.get('rendered_semantic_preservation') or {}
+        semantic_status = _status(semantic.get('status') if isinstance(semantic, dict) else semantic,
+                                  {'pass', 'proven'}, {'fail', 'disproven'})
+        checks.append(_check('rendered_semantic_preservation', semantic_status,
+                             [] if semantic_status == 'PASS' else
+                             ['SEMANTIC_PRESERVATION_FAILED' if semantic_status == 'FAIL' else 'MANUAL_SEMANTIC_REVIEW_REQUIRED'], semantic))
+        if family == 'external_sources':
+            families = native.get('required_source_family_status') or {}
+            required_variants = {
+                'HOST': ('host_reference_coloring',),
+                'LINK': ('linked_per_element_linkelementid_coloring',
+                         'forced_linked_override_failure_hide_instance_fallback'),
+                'DWG': ('dwg_importinstance_coloring',),
+            }
+            for source in ('HOST', 'LINK', 'DWG'):
+                raw_evidence = families.get(source) or {}
+                matching = [variant for variant in variants
+                            if variant.get('variant') in required_variants[source] and not variant.get('skipped')]
+                statuses = [_external_variant_visual_status(variant) for variant in matching]
+                complete = len(matching) == len(required_variants[source])
+                source_status = ('FAIL' if 'FAIL' in statuses else
+                                 ('PASS' if complete and statuses and all(s == 'PASS' for s in statuses)
+                                  else 'INCONCLUSIVE'))
+                evidence = {'required_variants': list(required_variants[source]),
+                            'variant_statuses': {variant.get('variant'): status
+                                                 for variant, status in zip(matching, statuses)},
+                            'raw_family_status': raw_evidence}
+                checks.append(_check('external_source_{0}'.format(source.lower()), source_status,
+                                     [] if source_status == 'PASS' else
+                                     ['EXTERNAL_SOURCE_VISUAL_FAILURE' if source_status == 'FAIL' else
+                                      'EXTERNAL_SOURCE_VISUAL_EVIDENCE_MISSING'], evidence))
+
+    elif family == 'model_linework':
+        modes = native.get('modes') or []
+        dim_bad, repeat_bad, contamination, missing = [], [], [], []
+        for mode in modes:
+            name = mode.get('mode')
+            images = mode.get('images') or []
+            if not images or any(not _artifact_dimensions(i.get('analysis') or {}) for i in images):
+                missing.append(name); continue
+            classification = mode.get('classification') or {}
+            if classification.get('dimension_alignment') == 'fail': dim_bad.append(name)
+            repeat = mode.get('sequential_export_repeatability') or {}
+            if repeat.get('available') and (not repeat.get('same_sha256') or not repeat.get('same_dimensions')): repeat_bad.append(name)
+            if classification.get('fill_contamination') == 'unacceptable': contamination.append(name)
+        checks.extend([
+            _check('required_tiffs', 'INCONCLUSIVE' if missing else ('PASS' if modes else 'INCONCLUSIVE'), ['REQUIRED_TIFF_MISSING'] if missing else [], missing),
+            _check('dimensions', 'FAIL' if dim_bad else ('PASS' if modes and not missing else 'INCONCLUSIVE'), ['DIMENSION_MISMATCH'] if dim_bad else [], dim_bad),
+            _check('repeatability', 'FAIL' if repeat_bad else ('PASS' if modes and not missing else 'INCONCLUSIVE'), ['REPEATABILITY_MISMATCH'] if repeat_bad else [], repeat_bad),
+            _check('linework_contamination', 'FAIL' if contamination else ('PASS' if modes and not missing else 'INCONCLUSIVE'), ['LINEWORK_COLOR_CONTAMINATION'] if contamination else [], contamination),
+            _check('internal_and_hidden_edges', 'INCONCLUSIVE', ['MANUAL_EDGE_REVIEW_REQUIRED']),
+        ])
+
+    elif family == 'image_alignment':
+        exports = native.get('exports') or {}
+        images = [i for e in exports.values() for i in e.get('images', [])]
+        missing = [name for name, e in exports.items() if not e.get('skipped') and not e.get('images')]
+        dim_bad, dim_unknown, repeat_bad, repeat_unknown = [], [], [], []
+        for name, export in exports.items():
+            for image in export.get('images', []):
+                dims = _artifact_dimensions(image)
+                resolution = image.get('resolution') or {}
+                required_width = (resolution.get('accepted_width_px') or
+                                  image.get('effective_pixel_size'))
+                required_height = resolution.get('predicted_height_px')
+                if not dims or not required_width or not required_height:
+                    dim_unknown.append(name)
+                elif (dims[0] != int(required_width) or
+                      dims[1] != int(required_height)):
+                    dim_bad.append({'case': name,
+                                    'required': [int(required_width), int(required_height)],
+                                    'actual': dims})
+            equal = export.get('sequential_export_equality')
+            if equal is False or (isinstance(equal, dict) and not all(equal.get(k) is True for k in ('same_dimensions', 'same_sha256'))):
+                repeat_bad.append(name)
+            elif equal is not True:
+                repeat_unknown.append(name)
+        marker_complete = bool(images) and all(i.get('marker_analysis_available') and not i.get('missing_markers') for i in images)
+        checks.extend([
+            _check('required_tiffs', 'INCONCLUSIVE' if missing or not images else 'PASS', ['REQUIRED_TIFF_MISSING'] if missing or not images else [], missing),
+            _check('dimensions', 'FAIL' if dim_bad else ('INCONCLUSIVE' if dim_unknown or not images else 'PASS'),
+                   ['DIMENSION_MISMATCH'] if dim_bad else (['DIMENSION_EVIDENCE_INCOMPLETE'] if dim_unknown else []),
+                   {'mismatches': dim_bad, 'incomplete_cases': sorted(set(dim_unknown))}),
+            _check('calibration_marker_fit', 'PASS' if marker_complete else 'INCONCLUSIVE', [] if marker_complete else ['CALIBRATION_EVIDENCE_INCOMPLETE']),
+            _check('repeatability', 'FAIL' if repeat_bad else ('INCONCLUSIVE' if repeat_unknown or not images else 'PASS'),
+                   ['REPEATABILITY_MISMATCH'] if repeat_bad else (['REPEATABILITY_EVIDENCE_MISSING'] if repeat_unknown else []),
+                   {'mismatches': repeat_bad, 'incomplete_cases': repeat_unknown}),
+            _check('model_to_annotation_canvas_offset', 'PASS' if (native.get('model_to_canvas_placement') or {}).get('lossless_padding_sufficient') else 'INCONCLUSIVE', ['CANVAS_OFFSET_NOT_ESTABLISHED'] if not (native.get('model_to_canvas_placement') or {}).get('lossless_padding_sufficient') else [], native.get('model_to_canvas_placement')),
+        ])
+    return checks
+
+
+def _acceptance_record(json_path: Path, data: dict[str, Any], probe_id: str,
+                       family: str, native: dict[str, Any], limitations: list[dict[str, Any]],
+                       analysis_errors: list[dict[str, Any]]) -> dict[str, Any]:
+    checks = _safety_checks(data, native) + _family_checks(data, native, family)
+    if analysis_errors:
+        checks.append(_check('analyzer_execution', 'INCONCLUSIVE', ['ANALYZER_EXCEPTION'], analysis_errors))
+    fail = [c for c in checks if c['status'] == 'FAIL']
+    inconclusive = [c for c in checks if c['status'] == 'INCONCLUSIVE']
+    acceptance = 'FAIL' if fail else ('INCONCLUSIVE' if inconclusive or limitations else 'PASS')
+    reasons = sorted({r for c in checks for r in c['reason_codes']})
+    artifacts = list(data.get('artifact_paths') or [])
+    if not artifacts:
+        paths = native.get('paths') or native.get('output_files') or {}
+        values = paths.values() if isinstance(paths, dict) else paths
+        for value in values:
+            artifacts.extend(value if isinstance(value, list) else [value])
+    record = {
+        'analysis_schema_version': ANALYSIS_SCHEMA_VERSION,
+        'campaign_id': data.get('campaign_id'), 'batch_id': data.get('batch_id'),
+        'run_id': data.get('run_id'), 'job_id': data.get('job_id'),
+        'probe_id': probe_id, 'probe_schema_version': str(data.get('probe_schema_version') or (native.get('probe') or {}).get('version') or 'legacy'),
+        'analyzer_version': ANALYZER_VERSION,
+        'source_report': {'path': str(json_path), 'sha256': sha256_file(json_path)},
+        'artifact_references': artifacts,
+        'analysis_status': 'ERROR' if analysis_errors else ('LIMITED' if limitations else 'COMPLETED'),
+        'acceptance_status': acceptance, 'execution_status': data.get('execution_status'),
+        'reason_codes': reasons,
+        'summary': {'probe_family': family, 'checks_passed': sum(c['status'] == 'PASS' for c in checks),
+                    'checks_failed': len(fail), 'checks_inconclusive': len(inconclusive)},
+        'metrics': {'probe_specific': native}, 'checks': checks, 'limitations': limitations,
+        'errors': list(data.get('errors') or []) + analysis_errors,
+        'warnings': list(data.get('warnings') or []),
+        'analyzed_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+    }
+    # Transitional compatibility: existing consumers can still read enriched native fields.
+    for key, value in native.items():
+        record.setdefault(key, value)
+    return record
+
+
+def analyze_json(json_path: Path) -> tuple[Path, str]:
+    """Analyze one raw report and write a sibling acceptance record without overwriting it."""
+    json_path = Path(json_path)
+    data = json.loads(json_path.read_text(encoding='utf-8'))
+    if not isinstance(data, dict):
+        raise ValueError('MALFORMED_RAW_REPORT: top-level JSON must be an object')
+    if isinstance(data.get('jobs'), list) and data.get('schema_version') == '1.0':
+        records = []
+        for job in data['jobs']:
+            envelope = job.get('raw_result_envelope')
+            if not isinstance(envelope, dict):
+                continue
+            merged = dict(envelope)
+            for key in ('campaign_id', 'batch_id', 'run_id'):
+                merged[key] = data.get(key)
+            merged['job_id'] = job.get('job_id')
+            probe_id, family, native = _probe_identity(merged)
+            limitations, analysis_errors, summary = [], [], []
+            if Image is None or np is None:
+                limitations.append({'code': 'IMAGE_ANALYSIS_DEPENDENCY_UNAVAILABLE',
+                                    'message': 'Pillow and NumPy are required for TIFF analysis; rollback was evaluated independently.'})
+            else:
+                try:
+                    summary.extend(_enrich_report(json_path, native, probe_id))
+                except Exception as exc:
+                    analysis_errors.append({'code': 'ANALYZER_EXCEPTION', 'type': type(exc).__name__, 'message': str(exc)})
+            records.append(_acceptance_record(json_path, merged, probe_id, family, native, limitations, analysis_errors))
+        if not records:
+            raise ValueError('MANIFEST_HAS_NO_ANALYZABLE_JOBS')
+        out = json_path.with_name(json_path.stem + '.analyzed.json')
+        out.write_text(json.dumps({'analysis_schema_version': ANALYSIS_SCHEMA_VERSION,
+                                   'source_manifest': str(json_path), 'acceptance_records': records},
+                                  indent=2, sort_keys=True), encoding='utf-8')
+        return out, 'analyzed {0} manifest job(s)'.format(len(records))
+    probe_id, family, native = _probe_identity(data)
+    limitations, analysis_errors, summary = [], [], []
+    if Image is None or np is None:
+        limitations.append({'code': 'IMAGE_ANALYSIS_DEPENDENCY_UNAVAILABLE',
+                            'message': 'Pillow and NumPy are required for TIFF analysis; rollback was evaluated independently.'})
+    else:
+        try:
+            summary = _enrich_report(json_path, native, probe_id)
+        except Exception as exc:
+            analysis_errors.append({'code': 'ANALYZER_EXCEPTION', 'type': type(exc).__name__, 'message': str(exc)})
+    record = _acceptance_record(json_path, data, probe_id, family, native, limitations, analysis_errors)
+    out = json_path.with_name(json_path.stem + '.analyzed.json')
+    out.write_text(json.dumps(record, indent=2, sort_keys=True), encoding='utf-8')
+    return out, '; '.join(summary) or 'analyzed {0}: {1}'.format(json_path.name, record['acceptance_status'])
 
 
 def collect(paths):

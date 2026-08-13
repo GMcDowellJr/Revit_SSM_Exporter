@@ -215,3 +215,68 @@ steps:
 - `tests/ssm_vop_v1/README.md` - Golden baseline specification
 - `docs/golden_artifacts_rules.md` - Ordering semantics policy
 - GitHub Issues A1, A2 (Tier 2 tooling)
+
+## Stage A external acceptance records
+
+`analyze_stage_a_probe.py` accepts a raw probe execution envelope or a legacy
+probe-native report and writes a sibling `*.analyzed.json`; raw evidence is never
+overwritten. The acceptance schema is version `1.0` and dispatch is explicit for
+image alignment, minimum-ID mutations, model linework, external sources, and
+graphics semantics. Envelope `probe_schema_version` currently supports `1.0`.
+Unknown probe identities and schema versions are errors rather than filename
+inferences.
+
+Each record separates `analysis_status` (`COMPLETED`, `LIMITED`, or `ERROR`),
+the imported `execution_status`, and deterministic `acceptance_status` (`PASS`,
+`FAIL`, or `INCONCLUSIVE`). It includes campaign/run/job identifiers when
+provided, source and artifact references, stable reason codes, checks,
+limitations, errors, warnings, timestamps, and the enriched native report under
+`metrics.probe_specific`. Existing enriched native fields are also mirrored at
+the top level during the version-1 compatibility period.
+
+Gate precedence is deterministic: failed execution, rollback, restoration,
+dimensions, repeatability, attestation, and probe-specific contamination are
+failures; a failure dominates inconclusive checks. Missing execution state,
+TIFFs, image dependencies, cases, calibration, or visual/semantic evidence are
+inconclusive unless the probe contract explicitly makes them failures. Failed
+mutation attestation excludes that variant from pixel fidelity analysis.
+Rollback is aggregated from every executed variant when an envelope aggregate
+is unavailable; requested case coverage is based on executed cases, never a
+static requested list.
+
+The automated checks are intentionally bounded:
+
+* alignment checks actual/requested dimensions, exact calibration evidence,
+  repeatability, and model-to-canvas offset. Resolution-qualified export keys
+  such as `original.dpi_150` count toward the requested `original` mode, and
+  every requested mode/resolution-case combination must be present, so one DPI
+  export cannot satisfy a multi-DPI request. The
+  placement enrichment uses those qualified exports without discarding an
+  already-recorded native placement. Dimension acceptance compares both the
+  accepted width and predicted height from the preserved resolution report.
+  Repeatability passes only when the producer records an explicit successful
+  sequential comparison; a single export remains inconclusive;
+* minimum-ID checks attestation, TIFF dimensions, palette contamination,
+  requested coverage, rollback, restoration, and separately reported semantic
+  preservation;
+* linework checks ID-reference dimensional agreement, contamination and
+  repeatability, while internal/hidden edges remain manual evidence. Each
+  linework mode and generated difference image is compared only within its
+  matching resolution case;
+* external-source checks HOST/LINK/DWG variant coverage, artifacts,
+  attestation, rollback and restoration, while linked-source visual handling
+  remains inconclusive unless explicit evidence establishes it. Source-family
+  status is recalculated as a tri-state from externally refreshed per-variant
+  pixels; a stale raw `passed: false` caused by unavailable in-Revit Pillow is
+  not treated as a visual failure.
+
+Thresholds used by legacy pixel calculations remain the documented probe
+contract thresholds (`DARK_THRESHOLD`, `WHITE_THRESHOLD`, reserved near-white,
+and the linework 0.1%/10-pixel tolerance). Acceptance adds no hidden residual
+threshold. Install external-test dependencies with:
+
+```bash
+python -m pip install -r requirements-test.txt
+python -m pytest tests/dynamo/test_analyze_stage_a_acceptance.py \
+  tests/dynamo/test_analyze_stage_a_minimum_id_mutations.py
+```
