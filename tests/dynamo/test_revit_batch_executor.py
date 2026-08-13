@@ -204,6 +204,24 @@ def test_resume_rejects_success_from_a_different_document(tmp_path):
     assert "different document" in manifest["errors"][0]["message"]
 
 
+def test_resume_ignores_cross_document_manifest_without_completed_evidence(tmp_path):
+    wrong_doc = Doc([]); wrong_doc.PathName = "/models/wrong-model.rvt"
+    invalid = batch(); invalid["document"]["expected_path"] = "/models/correct-model.rvt"
+    failed = execute_batch(invalid, wrong_doc, {"stub": lambda *args: envelope()}, [],
+                           str(tmp_path), run_id="wrong-model")
+    failed_manifest = json.loads(Path(failed["manifest_path"]).read_text())
+    assert failed_manifest["execution_status"] == "configuration_failed"
+
+    calls = []
+    resumed = batch(); resumed["execution_policy"]["resume"] = True
+    adapter = lambda view, settings, output: (calls.append(view.UniqueId) or envelope())
+    result = execute_batch(resumed, Doc([View("u1", "View 1")]), {"stub": adapter},
+                           lambda doc: doc.views, str(tmp_path), run_id="correct-model")
+    manifest = json.loads(Path(result["manifest_path"]).read_text())
+    assert manifest["execution_status"] == "completed"
+    assert calls == ["u1"]
+
+
 def test_example_uses_supported_image_alignment_mode():
     example = json.loads(Path(__file__).with_name("next_batch.example.json").read_text())
     assert example["jobs"][0]["settings"]["mode"] in ("original", "model_bounds", "canvas_bounds", "all")

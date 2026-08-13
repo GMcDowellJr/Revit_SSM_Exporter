@@ -91,12 +91,15 @@ def _prior_successes(root, campaign_id, batch_id, current_document_identity):
             prior = json.load(stream)
         if prior.get("campaign_id") != campaign_id or prior.get("batch_id") != batch_id:
             continue
+        completed = [record for record in prior.get("jobs", [])
+                     if record.get("execution_status") == "completed"]
+        if not completed:
+            continue
         if prior.get("document_identity") != current_document_identity:
             raise ContractError("Cannot resume campaign {0} batch {1}: prior run {2} belongs to a different document".format(
                 campaign_id, batch_id, prior.get("run_id", "unknown")))
-        for record in prior.get("jobs", []):
-            if record.get("execution_status") == "completed":
-                successes[record["job_id"]] = record.get("configuration_fingerprint")
+        for record in completed:
+            successes[record["job_id"]] = record.get("configuration_fingerprint")
     return successes
 
 
