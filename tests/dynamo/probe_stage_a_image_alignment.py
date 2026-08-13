@@ -273,6 +273,23 @@ def _candidate_repo_roots(output_dir=None):
             yield out
 
 
+def _ensure_contract_import_path(output_dir=None):
+    """Add the checkout containing the shared probe contract to ``sys.path``."""
+    checked = []
+    for root in _candidate_repo_roots(output_dir=output_dir):
+        checked.append(root)
+        if os.path.isfile(os.path.join(root, "tests", "dynamo", "stage_a_probe_contract.py")):
+            for candidate in (root, os.path.join(root, "tests", "dynamo")):
+                if candidate not in sys.path:
+                    sys.path.insert(0, candidate)
+            return root
+    raise RuntimeError(
+        "Could not locate tests/dynamo/stage_a_probe_contract.py. "
+        "Set REVIT_SSM_EXPORTER_ROOT or place the output directory inside the checkout. "
+        "Checked: {0}".format(checked)
+    )
+
+
 def _ensure_repo_on_path(output_dir=None):
     """Put the repo root on sys.path in Dynamo, where __file__ may not exist."""
     try:
@@ -811,7 +828,7 @@ def run_probe(raw_view, output_dir=None, mode="all", create_markers=True,
               fixed_pixel_width=DEFAULT_FIXED_PIXEL_WIDTH,
               max_pixel_dimension=DEFAULT_MAX_PIXEL_DIMENSION,
               resolution_cases="all", repetition_count=2):
-    _ensure_repo_on_path(output_dir=output_dir)
+    _ensure_contract_import_path(output_dir=output_dir)
     started_at = _probe_contract().utc_now_iso()
     native = _run_native(raw_view, output_dir, mode, create_markers, resolution_policy,
                          target_dpi, fixed_pixel_width, max_pixel_dimension,

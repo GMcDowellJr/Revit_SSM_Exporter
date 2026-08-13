@@ -344,6 +344,23 @@ def _candidate_repo_roots(output_dir):
     return seen
 
 
+def _ensure_contract_import_path(output_dir):
+    """Add the checkout containing the shared probe contract to ``sys.path``."""
+    checked = []
+    for root in _candidate_repo_roots(output_dir):
+        checked.append(root)
+        if os.path.isfile(os.path.join(root, "tests", "dynamo", "stage_a_probe_contract.py")):
+            for candidate in (root, os.path.join(root, "tests", "dynamo")):
+                if candidate not in sys.path:
+                    sys.path.insert(0, candidate)
+            return root
+    raise RuntimeError(
+        "Could not locate tests/dynamo/stage_a_probe_contract.py. "
+        "Set REVIT_SSM_EXPORTER_ROOT or place the output directory inside the checkout. "
+        "Checked: {0}".format(checked)
+    )
+
+
 def _ensure_repo_import_path(output_dir):
     try:
         import vop_interwoven  # noqa: F401
@@ -1039,7 +1056,7 @@ def run_probe(raw_view, output_dir, raw_focused=None, selection="all",
               fixed_pixel_width=DEFAULT_FIXED_PIXEL_WIDTH,
               max_pixel_dimension=DEFAULT_MAX_PIXEL_DIMENSION):
     """Run selected display/configuration and DPI cases with probe-owned cleanup."""
-    _ensure_repo_import_path(os.path.abspath(str(output_dir or os.getcwd())))
+    _ensure_contract_import_path(os.path.abspath(str(output_dir or os.getcwd())))
     started_at = _probe_contract().utc_now_iso()
     native = _run_native(raw_view, output_dir, raw_focused, selection, resolution_policy,
                          target_dpi, fixed_pixel_width, max_pixel_dimension)

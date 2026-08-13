@@ -1,6 +1,8 @@
 import importlib
 import inspect
 import json
+import sys
+import types
 
 import pytest
 
@@ -127,6 +129,37 @@ def test_external_sources_ignores_skipped_variants_for_cleanup(monkeypatch, tmp_
     assert result["execution_status"] == "completed"
     assert result["rollback_status"] == "succeeded"
     assert result["state_restoration_status"] == "restored"
+
+
+def test_contract_bootstrap_does_not_depend_on_production_import(monkeypatch, tmp_path):
+    module = importlib.import_module("tests.dynamo.probe_stage_a_external_sources")
+    checkout = tmp_path / "checkout"
+    contract_dir = checkout / "tests" / "dynamo"
+    contract_dir.mkdir(parents=True)
+    (contract_dir / "stage_a_probe_contract.py").write_text("# contract marker\n")
+    monkeypatch.setitem(sys.modules, "vop_interwoven", types.ModuleType("vop_interwoven"))
+    monkeypatch.setattr(module, "_candidate_repo_roots", lambda _output: [str(checkout)])
+    monkeypatch.setattr(sys, "path", [path for path in sys.path if path not in (str(checkout), str(contract_dir))])
+
+    resolved = module._ensure_contract_import_path(str(tmp_path / "output"))
+
+    assert resolved == str(checkout)
+    assert str(checkout) in sys.path
+    assert str(contract_dir) in sys.path
+
+
+def test_external_sources_all_skipped_is_inconclusive(monkeypatch, tmp_path):
+    module = importlib.import_module("tests.dynamo.probe_stage_a_external_sources")
+    monkeypatch.setattr(module, "_ensure_contract_import_path", lambda _path: None)
+    monkeypatch.setattr(module, "_run_native", lambda *args: {
+        "conclusion": "INCONCLUSIVE",
+        "variants": [{"variant": "dwg_importinstance_coloring", "skipped": True, "reason": "no DWG"}],
+        "paths": {},
+    })
+    result = module.run_probe(object(), str(tmp_path), selection="dwg_importinstance_coloring")
+    assert result["execution_status"] == "inconclusive"
+    assert result["rollback_status"] == "not_started"
+    assert result["state_restoration_status"] == "not_checked"
 
 
 def test_unwired_alignment_repetition_uses_default(monkeypatch):

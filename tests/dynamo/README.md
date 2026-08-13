@@ -16,10 +16,14 @@ The campaign probes return the JSON-compatible execution envelope defined in
 only; image fidelity, alignment, semantic preservation, and campaign acceptance
 remain downstream analysis concerns.
 
-Pasted Dynamo nodes bootstrap the checkout from their explicit repository-root
-or output-directory inputs (plus the existing environment/common-path fallbacks)
-before importing the shared contract. The checkout therefore does not need to
-be on `sys.path` before the node starts.
+Pasted Dynamo nodes locate the shared contract independently from production
+module imports, using their explicit repository-root or output-directory inputs
+(plus the existing environment/common-path fallbacks). This still bootstraps the
+checkout when `vop_interwoven` was previously installed or loaded from another
+location, so the checkout does not need to be on `sys.path` before the node
+starts. A selection whose variants are all intentionally skipped returns the
+execution status `inconclusive`, with rollback `not_started` and restoration
+`not_checked`.
 
 Existing Dynamo inputs keep their prior positions and defaults. Image alignment
 adds optional `IN[8]` (resolution cases, default `"all"`) and `IN[9]`
