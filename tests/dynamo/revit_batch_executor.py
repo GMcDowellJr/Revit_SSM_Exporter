@@ -80,7 +80,7 @@ def _atomic_json(path, value):
     os.replace(temporary, path)
 
 
-def _prior_successes(root, campaign_id, batch_id):
+def _prior_successes(root, campaign_id, batch_id, current_document_identity):
     successes = {}
     if not os.path.isdir(root):
         return successes
@@ -91,6 +91,9 @@ def _prior_successes(root, campaign_id, batch_id):
             prior = json.load(stream)
         if prior.get("campaign_id") != campaign_id or prior.get("batch_id") != batch_id:
             continue
+        if prior.get("document_identity") != current_document_identity:
+            raise ContractError("Cannot resume campaign {0} batch {1}: prior run {2} belongs to a different document".format(
+                campaign_id, batch_id, prior.get("run_id", "unknown")))
         for record in prior.get("jobs", []):
             if record.get("execution_status") == "completed":
                 successes[record["job_id"]] = record.get("configuration_fingerprint")
@@ -100,18 +103,22 @@ def _prior_successes(root, campaign_id, batch_id):
 def execute_batch(batch_or_path, doc, registry, all_views=None, manifest_root=None,
                   validation_only=False, environment=None, run_id=None, is_view=None):
     source = os.path.abspath(batch_or_path) if isinstance(batch_or_path, str) else None
-    batch = load_batch(source) if source else validate_batch(batch_or_path)
     run_id = run_id or uuid.uuid4().hex
     root = os.path.abspath(manifest_root or os.path.join(os.path.dirname(source) if source else os.getcwd(), "revit_runs"))
     path = os.path.join(root, run_id, "revit_run_manifest.json")
     started = utc_now()
-    manifest = {"schema_version": MANIFEST_SCHEMA_VERSION, "campaign_id": batch["campaign_id"],
-        "batch_id": batch["batch_id"], "run_id": run_id, "document_identity": {},
+    supplied = batch_or_path if isinstance(batch_or_path, dict) else {}
+    manifest = {"schema_version": MANIFEST_SCHEMA_VERSION,
+        "campaign_id": supplied.get("campaign_id"), "batch_id": supplied.get("batch_id"),
+        "run_id": run_id, "document_identity": document_identity(doc),
         "environment": environment or {"python": platform.python_version()},
         "batch_source": source or "in-memory", "started_at": started, "completed_at": None,
         "execution_status": "running", "validation_only": bool(validation_only), "jobs": [],
         "jobs_not_attempted": [], "errors": [], "warnings": []}
     try:
+        batch = load_batch(source) if source else validate_batch(batch_or_path)
+        manifest["campaign_id"] = batch["campaign_id"]
+        manifest["batch_id"] = batch["batch_id"]
         manifest["document_identity"] = validate_document(doc, batch["document"])
         resolved = []
         for job in batch["jobs"]:
@@ -123,7 +130,8 @@ def execute_batch(batch_or_path, doc, registry, all_views=None, manifest_root=No
             view, identity = resolve_view(doc, job["view"], all_views, is_view)
             resolved.append((job, view, identity))
         policy = batch["execution_policy"]
-        prior = _prior_successes(root, batch["campaign_id"], batch["batch_id"]) if policy["resume"] else {}
+        prior = _prior_successes(root, batch["campaign_id"], batch["batch_id"],
+                                 manifest["document_identity"]) if policy["resume"] else {}
         selected = []
         for job, view, identity in resolved:
             fingerprint = job_fingerprint(job)
@@ -171,13 +179,14 @@ def execute_batch(batch_or_path, doc, registry, all_views=None, manifest_root=No
         manifest["execution_status"] = "validation_only" if validation_only else ("failed" if any(j["execution_status"] == "failed" for j in manifest["jobs"]) else "completed")
     except Exception as error:
         manifest["execution_status"] = "configuration_failed"
-        manifest["errors"].append({"type": type(error).__name__, "message": str(error)})
+        manifest["errors"].append({"phase": "configuration", "type": type(error).__name__,
+                                   "message": str(error)})
     manifest["completed_at"] = utc_now()
     validate_manifest(manifest)
     _atomic_json(path, manifest)
     executed = [j["job_id"] for j in manifest["jobs"] if j["execution_status"] in ("completed", "failed", "inconclusive")]
     failed = [j["job_id"] for j in manifest["jobs"] if j["execution_status"] == "failed"]
-    return {"campaign_id": batch["campaign_id"], "batch_id": batch["batch_id"], "run_id": run_id,
+    return {"campaign_id": manifest["campaign_id"], "batch_id": manifest["batch_id"], "run_id": run_id,
             "validation_only": bool(validation_only), "jobs_executed": executed, "jobs_failed": failed,
             "jobs_deferred": [j["job_id"] for j in manifest["jobs_not_attempted"] if j["reason"] == "execution_limit"],
             "manifest_path": path, "another_invocation_needed": bool(manifest["jobs_not_attempted"])}

@@ -34,12 +34,19 @@ required; configured Revit version and path are assertions.
 
 Every invocation receives its own `<manifest-root>/<run-id>/revit_run_manifest.json`,
 written through a flushed temporary file and atomic replacement. Resume reads
-only manifests with the same campaign and batch. A completed job is skipped only
+only manifests with the same campaign, batch, and exact resolved document
+identity (title, path, and Revit version). A differing prior document stops
+resumption rather than reusing its evidence. A completed job is skipped only
 when its deterministic SHA-256 configuration fingerprint matches; drift stops
 the run. `allow_rerun` explicitly overrides the skip. Job order is preserved and
 only the first `max_jobs_per_run` eligible jobs execute. Remaining jobs are
 recorded as `execution_limit`; `stop` records later selected jobs as not attempted,
 while `continue` runs independent listed jobs.
+
+Malformed JSON and contract-validation failures also produce a
+`configuration_failed` manifest. If identity fields could not be parsed, their
+manifest values are `null`; the batch source and structured configuration error
+still identify the failed request.
 
 ## Manual Revit acceptance procedure (still required)
 

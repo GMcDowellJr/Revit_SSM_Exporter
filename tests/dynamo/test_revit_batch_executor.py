@@ -79,6 +79,20 @@ def test_unknown_probe_is_a_recorded_configuration_failure(tmp_path):
     assert "Unknown probe_id" in manifest["errors"][0]["message"]
 
 
+@pytest.mark.parametrize("contents,error_type", [("{not json", "JSONDecodeError"),
+                                                   (json.dumps({"schema_version": "1.0"}), "ContractError")])
+def test_batch_load_failures_write_configuration_manifest(tmp_path, contents, error_type):
+    batch_path = tmp_path / "next_batch.json"
+    batch_path.write_text(contents)
+    result = execute_batch(str(batch_path), Doc([]), {}, [], str(tmp_path / "manifests"),
+                           validation_only=True, run_id="invalid")
+    manifest = json.loads(Path(result["manifest_path"]).read_text())
+    assert manifest["execution_status"] == "configuration_failed"
+    assert manifest["errors"][0]["phase"] == "configuration"
+    assert manifest["errors"][0]["type"] == error_type
+    assert result["campaign_id"] is None and result["batch_id"] is None
+
+
 def test_view_resolution_rejects_ambiguity_and_assertion_mismatch():
     views = [View("a", "Same"), View("b", "Same")]; doc = Doc(views)
     with pytest.raises(ContractError, match="resolved to 2"): resolve_view(doc, {"name": "Same"}, views)
@@ -105,6 +119,8 @@ def test_transaction_adapter_resolves_unique_id_elements(monkeypatch):
     assert captured["inject_failure"] is True
     with pytest.raises(ValueError, match="requires element_ids"):
         adapter(target_view, {}, "/raw")
+    with pytest.raises(ValueError, match="must contain integers"):
+        adapter(target_view, {"element_ids": [123.9]}, "/raw")
 
 
 def test_validation_only_resolves_transaction_element_references(tmp_path, monkeypatch):
@@ -172,6 +188,25 @@ def test_resume_skips_success_and_detects_drift(tmp_path):
     _, drift_manifest = run(tmp_path, drifted, adapter, run_id="third")
     assert drift_manifest["execution_status"] == "configuration_failed"
     assert "Configuration drift" in drift_manifest["errors"][0]["message"]
+
+
+def test_resume_rejects_success_from_a_different_document(tmp_path):
+    adapter = lambda *args: envelope()
+    run(tmp_path, batch(), adapter, run_id="first")
+    resumed = batch(); resumed["execution_policy"]["resume"] = True
+    other_doc = Doc([View("u1", "View 1")]); other_doc.PathName = "/models/copied-model.rvt"
+    # Keep configured assertions valid to exercise the stronger prior-manifest binding.
+    resumed["document"]["expected_path"] = "/models/copied-model.rvt"
+    result = execute_batch(resumed, other_doc, {"stub": adapter}, lambda doc: doc.views,
+                           str(tmp_path), run_id="second")
+    manifest = json.loads(Path(result["manifest_path"]).read_text())
+    assert manifest["execution_status"] == "configuration_failed"
+    assert "different document" in manifest["errors"][0]["message"]
+
+
+def test_example_uses_supported_image_alignment_mode():
+    example = json.loads(Path(__file__).with_name("next_batch.example.json").read_text())
+    assert example["jobs"][0]["settings"]["mode"] in ("original", "model_bounds", "canvas_bounds", "all")
 
 
 def test_manifest_serialization_contract_and_raw_evidence(tmp_path):

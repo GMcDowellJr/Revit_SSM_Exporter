@@ -39,12 +39,12 @@ def _transaction_adapter(doc, module_name):
                 raise ValueError("No element has UniqueId {0}".format(unique_id))
             elements.append(element)
         if integer_ids:
+            if any(isinstance(value, bool) or not isinstance(value, int) for value in integer_ids):
+                raise ValueError("element_ids must contain integers")
             from Autodesk.Revit.DB import ElementId
             for integer_id in integer_ids:
-                if isinstance(integer_id, bool):
-                    raise ValueError("element_ids must contain integers")
                 try:
-                    element_id = ElementId(int(integer_id))
+                    element_id = ElementId(integer_id)
                 except (TypeError, ValueError, OverflowError):
                     raise ValueError("Invalid element id: {0!r}".format(integer_id))
                 element = doc.GetElement(element_id)

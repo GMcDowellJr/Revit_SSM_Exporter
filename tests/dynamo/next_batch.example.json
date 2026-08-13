@@ -9,7 +9,7 @@
     "job_id": "alignment-floor-01",
     "probe_id": "stage_a_image_alignment",
     "view": {"unique_id": "00000000-0000-0000-0000-000000000000-00000001", "name": "Level 1", "view_type": "FloorPlan", "crop_active": true},
-    "settings": {"mode": "baseline", "create_markers": false},
+    "settings": {"mode": "original", "create_markers": false},
     "output_directory": "C:\\temp\\revit-stage-a\\alignment-floor-01"
   }]
 }
