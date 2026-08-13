@@ -252,7 +252,10 @@ The automated checks are intentionally bounded:
   every requested mode/resolution-case combination must be present, so one DPI
   export cannot satisfy a multi-DPI request. The
   placement enrichment uses those qualified exports without discarding an
-  already-recorded native placement;
+  already-recorded native placement. Dimension acceptance compares both the
+  accepted width and predicted height from the preserved resolution report.
+  Repeatability passes only when the producer records an explicit successful
+  sequential comparison; a single export remains inconclusive;
 * minimum-ID checks attestation, TIFF dimensions, palette contamination,
   requested coverage, rollback, restoration, and separately reported semantic
   preservation;

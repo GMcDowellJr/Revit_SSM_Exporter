@@ -502,7 +502,17 @@ def _enrich_report(json_path: Path, data: dict[str, Any], probe_id: str) -> list
             for img in exp.get('images',[]):
                 p=resolve_path(json_path, img.get('path'))
                 if p and p.exists():
-                    eff=img.get('effective_pixel_size'); img.clear(); img.update(analyze_alignment_image(p, markers, bounds)); img['effective_pixel_size']=eff; img['pixel_size_equals_actual_width']=(img.get('actual_width')==eff)
+                    eff = img.get('effective_pixel_size')
+                    resolution = img.get('resolution')
+                    marker_units = img.get('marker_residual_units')
+                    img.clear()
+                    img.update(analyze_alignment_image(p, markers, bounds))
+                    img['effective_pixel_size'] = eff
+                    if resolution is not None:
+                        img['resolution'] = resolution
+                    if marker_units is not None:
+                        img['marker_residual_units'] = marker_units
+                    img['pixel_size_equals_actual_width'] = (img.get('actual_width') == eff)
                 else:
                     img.clear(); img.update({'path': str(p) if p else None, 'status':'error', 'error':'referenced TIFF missing or path not provided'})
             vals=[im.get('affine_fit_residual',{}).get('max_residual_px') for im in exp.get('images',[]) if im.get('affine_fit_residual',{}).get('available')]
@@ -768,20 +778,36 @@ def _family_checks(data: dict[str, Any], native: dict[str, Any], family: str) ->
         exports = native.get('exports') or {}
         images = [i for e in exports.values() for i in e.get('images', [])]
         missing = [name for name, e in exports.items() if not e.get('skipped') and not e.get('images')]
-        dim_bad, repeat_bad = [], []
+        dim_bad, dim_unknown, repeat_bad, repeat_unknown = [], [], [], []
         for name, export in exports.items():
             for image in export.get('images', []):
                 dims = _artifact_dimensions(image)
-                required = image.get('effective_pixel_size')
-                if dims and required and dims[0] != int(required): dim_bad.append(name)
+                resolution = image.get('resolution') or {}
+                required_width = (resolution.get('accepted_width_px') or
+                                  image.get('effective_pixel_size'))
+                required_height = resolution.get('predicted_height_px')
+                if not dims or not required_width or not required_height:
+                    dim_unknown.append(name)
+                elif (dims[0] != int(required_width) or
+                      dims[1] != int(required_height)):
+                    dim_bad.append({'case': name,
+                                    'required': [int(required_width), int(required_height)],
+                                    'actual': dims})
             equal = export.get('sequential_export_equality')
-            if equal is False or (isinstance(equal, dict) and not all(equal.get(k, True) for k in ('same_dimensions', 'same_sha256'))): repeat_bad.append(name)
+            if equal is False or (isinstance(equal, dict) and not all(equal.get(k) is True for k in ('same_dimensions', 'same_sha256'))):
+                repeat_bad.append(name)
+            elif equal is not True:
+                repeat_unknown.append(name)
         marker_complete = bool(images) and all(i.get('marker_analysis_available') and not i.get('missing_markers') for i in images)
         checks.extend([
             _check('required_tiffs', 'INCONCLUSIVE' if missing or not images else 'PASS', ['REQUIRED_TIFF_MISSING'] if missing or not images else [], missing),
-            _check('dimensions', 'FAIL' if dim_bad else ('PASS' if images else 'INCONCLUSIVE'), ['DIMENSION_MISMATCH'] if dim_bad else [], dim_bad),
+            _check('dimensions', 'FAIL' if dim_bad else ('INCONCLUSIVE' if dim_unknown or not images else 'PASS'),
+                   ['DIMENSION_MISMATCH'] if dim_bad else (['DIMENSION_EVIDENCE_INCOMPLETE'] if dim_unknown else []),
+                   {'mismatches': dim_bad, 'incomplete_cases': sorted(set(dim_unknown))}),
             _check('calibration_marker_fit', 'PASS' if marker_complete else 'INCONCLUSIVE', [] if marker_complete else ['CALIBRATION_EVIDENCE_INCOMPLETE']),
-            _check('repeatability', 'FAIL' if repeat_bad else ('PASS' if images else 'INCONCLUSIVE'), ['REPEATABILITY_MISMATCH'] if repeat_bad else [], repeat_bad),
+            _check('repeatability', 'FAIL' if repeat_bad else ('INCONCLUSIVE' if repeat_unknown or not images else 'PASS'),
+                   ['REPEATABILITY_MISMATCH'] if repeat_bad else (['REPEATABILITY_EVIDENCE_MISSING'] if repeat_unknown else []),
+                   {'mismatches': repeat_bad, 'incomplete_cases': repeat_unknown}),
             _check('model_to_annotation_canvas_offset', 'PASS' if (native.get('model_to_canvas_placement') or {}).get('lossless_padding_sufficient') else 'INCONCLUSIVE', ['CANVAS_OFFSET_NOT_ESTABLISHED'] if not (native.get('model_to_canvas_placement') or {}).get('lossless_padding_sufficient') else [], native.get('model_to_canvas_placement')),
         ])
     return checks

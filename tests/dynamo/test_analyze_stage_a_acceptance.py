@@ -143,6 +143,7 @@ def test_complete_alignment_evidence_can_pass(tmp_path, monkeypatch):
     monkeypatch.setattr(analyzer, "np", object())
     monkeypatch.setattr(analyzer, "_enrich_report", lambda *args: [])
     image = {"actual_width": 2, "actual_height": 3, "effective_pixel_size": 2,
+             "resolution": {"accepted_width_px": 2, "predicted_height_px": 3},
              "marker_analysis_available": True, "missing_markers": []}
     native = {"exports": {"original": {"images": [image], "sequential_export_equality": True}},
               "model_to_canvas_placement": {"lossless_padding_sufficient": True}}
@@ -226,7 +227,9 @@ def test_alignment_enrichment_uses_qualified_model_export_for_placement(tmp_path
     native = {
         "exports": {"model_bounds.dpi_150": {
             "target_bounds_uv": [0, 0, 10, 5],
-            "images": [{"path": str(image_path), "effective_pixel_size": 100}],
+            "images": [{"path": str(image_path), "effective_pixel_size": 100,
+                        "resolution": {"accepted_width_px": 100,
+                                       "predicted_height_px": 50}}],
         }},
         "bounds": {"pre_annotation_model_uv": [0, 0, 10, 5],
                    "canvas_uv": [-1, -1, 11, 6]},
@@ -234,6 +237,8 @@ def test_alignment_enrichment_uses_qualified_model_export_for_placement(tmp_path
     analyzer._enrich_report(tmp_path / "raw.json", native, "stage_a_image_alignment")
     assert native["model_to_canvas_placement"]["available"] is True
     assert native["model_to_canvas_placement"]["tiff_actual_width_px"] == 100
+    assert native["exports"]["model_bounds.dpi_150"]["images"][0]["resolution"] == {
+        "accepted_width_px": 100, "predicted_height_px": 50}
 
 
 def test_alignment_enrichment_preserves_native_placement_without_analyzed_export(tmp_path):
@@ -242,6 +247,31 @@ def test_alignment_enrichment_preserves_native_placement_without_analyzed_export
     native = {"exports": {}, "model_to_canvas_placement": placement.copy()}
     analyzer._enrich_report(tmp_path / "raw.json", native, "stage_a_image_alignment")
     assert native["model_to_canvas_placement"] == placement
+
+
+def test_alignment_dimensions_validate_predicted_height():
+    image = {"actual_width": 100, "actual_height": 49, "effective_pixel_size": 100,
+             "resolution": {"accepted_width_px": 100, "predicted_height_px": 50}}
+    native = {"exports": {"original.dpi_150": {
+        "images": [image], "sequential_export_equality": True}}}
+    checks = analyzer._family_checks({}, native, "image_alignment")
+    dimensions = next(check for check in checks if check["check_id"] == "dimensions")
+    assert dimensions["status"] == "FAIL"
+    assert dimensions["reason_codes"] == ["DIMENSION_MISMATCH"]
+    assert dimensions["evidence"]["mismatches"] == [{
+        "case": "original.dpi_150", "required": [100, 50], "actual": [100, 49]}]
+
+
+def test_alignment_repeatability_requires_explicit_comparison():
+    image = {"actual_width": 100, "actual_height": 50,
+             "resolution": {"accepted_width_px": 100, "predicted_height_px": 50}}
+    native = {"exports": {"original.dpi_150": {
+        "images": [image], "sequential_export_equality": None}}}
+    checks = analyzer._family_checks({}, native, "image_alignment")
+    repeatability = next(check for check in checks if check["check_id"] == "repeatability")
+    assert repeatability["status"] == "INCONCLUSIVE"
+    assert repeatability["reason_codes"] == ["REPEATABILITY_EVIDENCE_MISSING"]
+    assert repeatability["evidence"]["incomplete_cases"] == ["original.dpi_150"]
 
 
 def test_linework_modes_match_their_per_resolution_references(tmp_path, monkeypatch):
