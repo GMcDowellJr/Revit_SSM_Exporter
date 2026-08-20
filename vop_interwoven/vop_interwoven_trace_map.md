@@ -22,6 +22,8 @@ Notes:
     - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
+  - `GeometryCache`
+    - called from: streaming.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
@@ -58,16 +60,22 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotation_included_bic_names`
+    - called from: view_raster_export.py
   - `build_core_csv_row`
     - called from: csv_export.py
   - `build_occlusion_row`
     - called from: csv_export.py
+  - `build_palette`
+    - called from: color_id_buffer.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
     - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
+  - `choose_step`
+    - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
   - `classify_keynote`
@@ -80,19 +88,21 @@ Notes:
     - called from: pipeline.py
   - `compute_annotation_extents`
     - called from: revit/view_basis.py
-  - `compute_annotation_type_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_cell_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_config_hash`
-    - called from: csv_export.py, streaming.py
-  - `compute_external_cell_metrics`
-    - called from: csv_export.py, root_cache.py
+    - `compute_annotation_type_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_cell_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_config_hash`
+      - called from: csv_export.py, streaming.py
+    - `compute_external_cell_metrics`
+      - called from: csv_export.py, root_cache.py
     - `compute_manifest_sha256`
       - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
+      - called from: pipeline.py
+    - `decompose_to_rects`
       - called from: pipeline.py
     - `estimate_depth_from_loops_or_bbox`
       - called from: pipeline.py
@@ -103,8 +113,10 @@ Notes:
     - `evaluate_metrics_manifest`
       - called from: pipeline.py
     - `excluded_bic_names_global`
-      - called from: revit/collection_policy.py, revit/linked_documents.py
+      - called from: revit/collection_policy.py, revit/linked_documents.py, view_raster_export.py
     - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_color_id_buffer_view`
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
@@ -114,12 +126,14 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_view_image`
+      - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
       - called from: pipeline.py
     - `extract_areal_geometry`
       - called from: pipeline.py
     - `extract_metrics_from_view_result`
-      - called from: pipeline.py
+      - called from: pipeline.py, streaming.py
     - `extract_view_metadata`
       - called from: csv_export.py
     - `filter_supported_views`
@@ -138,6 +152,8 @@ Notes:
       - called from: pipeline.py
     - `get_occlusion_csv_header`
       - called from: streaming.py
+    - `get_or_create_neutral_phase_filter`
+      - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
     - `get_views_from_input_or_current`
@@ -146,8 +162,6 @@ Notes:
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
-    - `included_bic_names_for_source`
-      - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -184,6 +198,8 @@ Notes:
       - called from: pipeline.py
     - `reset_family_region_caches`
       - called from: pipeline.py, streaming.py
+    - `resolve_all`
+      - called from: color_id_buffer.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -273,6 +289,8 @@ Notes:
     - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
+  - `GeometryCache`
+    - called from: streaming.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
@@ -309,16 +327,22 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotation_included_bic_names`
+    - called from: view_raster_export.py
   - `build_core_csv_row`
     - called from: csv_export.py
   - `build_occlusion_row`
     - called from: csv_export.py
+  - `build_palette`
+    - called from: color_id_buffer.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
     - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
+  - `choose_step`
+    - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
   - `classify_keynote`
@@ -331,19 +355,21 @@ Notes:
     - called from: pipeline.py
   - `compute_annotation_extents`
     - called from: revit/view_basis.py
-  - `compute_annotation_type_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_cell_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_config_hash`
-    - called from: csv_export.py, streaming.py
-  - `compute_external_cell_metrics`
-    - called from: csv_export.py, root_cache.py
+    - `compute_annotation_type_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_cell_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_config_hash`
+      - called from: csv_export.py, streaming.py
+    - `compute_external_cell_metrics`
+      - called from: csv_export.py, root_cache.py
     - `compute_manifest_sha256`
       - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
+      - called from: pipeline.py
+    - `decompose_to_rects`
       - called from: pipeline.py
     - `estimate_depth_from_loops_or_bbox`
       - called from: pipeline.py
@@ -354,8 +380,10 @@ Notes:
     - `evaluate_metrics_manifest`
       - called from: pipeline.py
     - `excluded_bic_names_global`
-      - called from: revit/collection_policy.py, revit/linked_documents.py
+      - called from: revit/collection_policy.py, revit/linked_documents.py, view_raster_export.py
     - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_color_id_buffer_view`
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
@@ -365,12 +393,14 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_view_image`
+      - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
       - called from: pipeline.py
     - `extract_areal_geometry`
       - called from: pipeline.py
     - `extract_metrics_from_view_result`
-      - called from: pipeline.py
+      - called from: pipeline.py, streaming.py
     - `extract_view_metadata`
       - called from: csv_export.py
     - `filter_supported_views`
@@ -389,6 +419,8 @@ Notes:
       - called from: pipeline.py
     - `get_occlusion_csv_header`
       - called from: streaming.py
+    - `get_or_create_neutral_phase_filter`
+      - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
     - `get_views_from_input_or_current`
@@ -397,8 +429,6 @@ Notes:
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
-    - `included_bic_names_for_source`
-      - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -435,6 +465,8 @@ Notes:
       - called from: pipeline.py
     - `reset_family_region_caches`
       - called from: pipeline.py, streaming.py
+    - `resolve_all`
+      - called from: color_id_buffer.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -508,7 +540,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `run_vop_pipeline_with_csv` (entry_dynamo.py:L441)
+## Trace: `run_vop_pipeline_with_csv` (entry_dynamo.py:L451)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -524,6 +556,8 @@ Notes:
     - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
+  - `GeometryCache`
+    - called from: streaming.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
@@ -560,16 +594,22 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotation_included_bic_names`
+    - called from: view_raster_export.py
   - `build_core_csv_row`
     - called from: csv_export.py
   - `build_occlusion_row`
     - called from: csv_export.py
+  - `build_palette`
+    - called from: color_id_buffer.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
     - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
+  - `choose_step`
+    - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
   - `classify_keynote`
@@ -582,19 +622,21 @@ Notes:
     - called from: pipeline.py
   - `compute_annotation_extents`
     - called from: revit/view_basis.py
-  - `compute_annotation_type_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_cell_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_config_hash`
-    - called from: csv_export.py, streaming.py
-  - `compute_external_cell_metrics`
-    - called from: csv_export.py, root_cache.py
+    - `compute_annotation_type_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_cell_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_config_hash`
+      - called from: csv_export.py, streaming.py
+    - `compute_external_cell_metrics`
+      - called from: csv_export.py, root_cache.py
     - `compute_manifest_sha256`
       - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
+      - called from: pipeline.py
+    - `decompose_to_rects`
       - called from: pipeline.py
     - `estimate_depth_from_loops_or_bbox`
       - called from: pipeline.py
@@ -605,8 +647,10 @@ Notes:
     - `evaluate_metrics_manifest`
       - called from: pipeline.py
     - `excluded_bic_names_global`
-      - called from: revit/collection_policy.py, revit/linked_documents.py
+      - called from: revit/collection_policy.py, revit/linked_documents.py, view_raster_export.py
     - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_color_id_buffer_view`
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
@@ -616,12 +660,14 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_view_image`
+      - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
       - called from: pipeline.py
     - `extract_areal_geometry`
       - called from: pipeline.py
     - `extract_metrics_from_view_result`
-      - called from: pipeline.py
+      - called from: pipeline.py, streaming.py
     - `extract_view_metadata`
       - called from: csv_export.py
     - `filter_supported_views`
@@ -640,6 +686,8 @@ Notes:
       - called from: pipeline.py
     - `get_occlusion_csv_header`
       - called from: streaming.py
+    - `get_or_create_neutral_phase_filter`
+      - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
     - `get_views_from_input_or_current`
@@ -648,8 +696,6 @@ Notes:
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
-    - `included_bic_names_for_source`
-      - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -686,6 +732,8 @@ Notes:
       - called from: pipeline.py
     - `reset_family_region_caches`
       - called from: pipeline.py, streaming.py
+    - `resolve_all`
+      - called from: color_id_buffer.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -759,7 +807,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `run_vop_pipeline_streaming` (streaming.py:L766)
+## Trace: `run_vop_pipeline_streaming` (streaming.py:L979)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -775,6 +823,8 @@ Notes:
     - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
+  - `GeometryCache`
+    - called from: streaming.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
@@ -811,16 +861,22 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotation_included_bic_names`
+    - called from: view_raster_export.py
   - `build_core_csv_row`
     - called from: csv_export.py
   - `build_occlusion_row`
     - called from: csv_export.py
+  - `build_palette`
+    - called from: color_id_buffer.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
     - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
+  - `choose_step`
+    - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
   - `classify_keynote`
@@ -833,19 +889,21 @@ Notes:
     - called from: pipeline.py
   - `compute_annotation_extents`
     - called from: revit/view_basis.py
-  - `compute_annotation_type_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_cell_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_config_hash`
-    - called from: csv_export.py, streaming.py
-  - `compute_external_cell_metrics`
-    - called from: csv_export.py, root_cache.py
+    - `compute_annotation_type_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_cell_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_config_hash`
+      - called from: csv_export.py, streaming.py
+    - `compute_external_cell_metrics`
+      - called from: csv_export.py, root_cache.py
     - `compute_manifest_sha256`
       - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
+      - called from: pipeline.py
+    - `decompose_to_rects`
       - called from: pipeline.py
     - `estimate_depth_from_loops_or_bbox`
       - called from: pipeline.py
@@ -856,8 +914,10 @@ Notes:
     - `evaluate_metrics_manifest`
       - called from: pipeline.py
     - `excluded_bic_names_global`
-      - called from: revit/collection_policy.py, revit/linked_documents.py
+      - called from: revit/collection_policy.py, revit/linked_documents.py, view_raster_export.py
     - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_color_id_buffer_view`
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
@@ -867,12 +927,14 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_view_image`
+      - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
       - called from: pipeline.py
     - `extract_areal_geometry`
       - called from: pipeline.py
     - `extract_metrics_from_view_result`
-      - called from: pipeline.py
+      - called from: pipeline.py, streaming.py
     - `extract_view_metadata`
       - called from: csv_export.py
     - `filter_supported_views`
@@ -891,6 +953,8 @@ Notes:
       - called from: pipeline.py
     - `get_occlusion_csv_header`
       - called from: streaming.py
+    - `get_or_create_neutral_phase_filter`
+      - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
     - `get_views_from_input_or_current`
@@ -899,8 +963,6 @@ Notes:
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
-    - `included_bic_names_for_source`
-      - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -937,6 +999,8 @@ Notes:
       - called from: pipeline.py
     - `reset_family_region_caches`
       - called from: pipeline.py, streaming.py
+    - `resolve_all`
+      - called from: color_id_buffer.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -1026,6 +1090,8 @@ Notes:
     - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
+  - `GeometryCache`
+    - called from: streaming.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
@@ -1062,16 +1128,22 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotation_included_bic_names`
+    - called from: view_raster_export.py
   - `build_core_csv_row`
     - called from: csv_export.py
   - `build_occlusion_row`
     - called from: csv_export.py
+  - `build_palette`
+    - called from: color_id_buffer.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
     - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
+  - `choose_step`
+    - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
   - `classify_keynote`
@@ -1084,19 +1156,21 @@ Notes:
     - called from: pipeline.py
   - `compute_annotation_extents`
     - called from: revit/view_basis.py
-  - `compute_annotation_type_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_cell_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_config_hash`
-    - called from: csv_export.py, streaming.py
-  - `compute_external_cell_metrics`
-    - called from: csv_export.py, root_cache.py
+    - `compute_annotation_type_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_cell_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_config_hash`
+      - called from: csv_export.py, streaming.py
+    - `compute_external_cell_metrics`
+      - called from: csv_export.py, root_cache.py
     - `compute_manifest_sha256`
       - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
+      - called from: pipeline.py
+    - `decompose_to_rects`
       - called from: pipeline.py
     - `estimate_depth_from_loops_or_bbox`
       - called from: pipeline.py
@@ -1107,8 +1181,10 @@ Notes:
     - `evaluate_metrics_manifest`
       - called from: pipeline.py
     - `excluded_bic_names_global`
-      - called from: revit/collection_policy.py, revit/linked_documents.py
+      - called from: revit/collection_policy.py, revit/linked_documents.py, view_raster_export.py
     - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_color_id_buffer_view`
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
@@ -1118,12 +1194,14 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_view_image`
+      - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
       - called from: pipeline.py
     - `extract_areal_geometry`
       - called from: pipeline.py
     - `extract_metrics_from_view_result`
-      - called from: pipeline.py
+      - called from: pipeline.py, streaming.py
     - `extract_view_metadata`
       - called from: csv_export.py
     - `filter_supported_views`
@@ -1142,6 +1220,8 @@ Notes:
       - called from: pipeline.py
     - `get_occlusion_csv_header`
       - called from: streaming.py
+    - `get_or_create_neutral_phase_filter`
+      - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
     - `get_views_from_input_or_current`
@@ -1150,8 +1230,6 @@ Notes:
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
-    - `included_bic_names_for_source`
-      - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -1188,6 +1266,8 @@ Notes:
       - called from: pipeline.py
     - `reset_family_region_caches`
       - called from: pipeline.py, streaming.py
+    - `resolve_all`
+      - called from: color_id_buffer.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -1263,7 +1343,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `process_document_views` (pipeline.py:L540)
+## Trace: `process_document_views` (pipeline.py:L533)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1279,6 +1359,8 @@ Notes:
     - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
+  - `GeometryCache`
+    - called from: streaming.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
@@ -1315,16 +1397,22 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotation_included_bic_names`
+    - called from: view_raster_export.py
   - `build_core_csv_row`
     - called from: csv_export.py
   - `build_occlusion_row`
     - called from: csv_export.py
+  - `build_palette`
+    - called from: color_id_buffer.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
     - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
+  - `choose_step`
+    - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
   - `classify_keynote`
@@ -1337,19 +1425,21 @@ Notes:
     - called from: pipeline.py
   - `compute_annotation_extents`
     - called from: revit/view_basis.py
-  - `compute_annotation_type_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_cell_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_config_hash`
-    - called from: csv_export.py, streaming.py
-  - `compute_external_cell_metrics`
-    - called from: csv_export.py, root_cache.py
+    - `compute_annotation_type_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_cell_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_config_hash`
+      - called from: csv_export.py, streaming.py
+    - `compute_external_cell_metrics`
+      - called from: csv_export.py, root_cache.py
     - `compute_manifest_sha256`
       - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
+      - called from: pipeline.py
+    - `decompose_to_rects`
       - called from: pipeline.py
     - `estimate_depth_from_loops_or_bbox`
       - called from: pipeline.py
@@ -1360,8 +1450,10 @@ Notes:
     - `evaluate_metrics_manifest`
       - called from: pipeline.py
     - `excluded_bic_names_global`
-      - called from: revit/collection_policy.py, revit/linked_documents.py
+      - called from: revit/collection_policy.py, revit/linked_documents.py, view_raster_export.py
     - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_color_id_buffer_view`
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
@@ -1371,12 +1463,14 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_view_image`
+      - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
       - called from: pipeline.py
     - `extract_areal_geometry`
       - called from: pipeline.py
     - `extract_metrics_from_view_result`
-      - called from: pipeline.py
+      - called from: pipeline.py, streaming.py
     - `extract_view_metadata`
       - called from: csv_export.py
     - `filter_supported_views`
@@ -1395,6 +1489,8 @@ Notes:
       - called from: pipeline.py
     - `get_occlusion_csv_header`
       - called from: streaming.py
+    - `get_or_create_neutral_phase_filter`
+      - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
     - `get_views_from_input_or_current`
@@ -1403,8 +1499,6 @@ Notes:
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
-    - `included_bic_names_for_source`
-      - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -1439,6 +1533,8 @@ Notes:
       - called from: pipeline.py
     - `reset_family_region_caches`
       - called from: pipeline.py, streaming.py
+    - `resolve_all`
+      - called from: color_id_buffer.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -1514,7 +1610,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `process_document_views_streaming` (streaming.py:L549)
+## Trace: `process_document_views_streaming` (streaming.py:L688)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1530,6 +1626,8 @@ Notes:
     - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
+  - `GeometryCache`
+    - called from: streaming.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
@@ -1566,16 +1664,22 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotation_included_bic_names`
+    - called from: view_raster_export.py
   - `build_core_csv_row`
     - called from: csv_export.py
   - `build_occlusion_row`
     - called from: csv_export.py
+  - `build_palette`
+    - called from: color_id_buffer.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
     - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
+  - `choose_step`
+    - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
   - `classify_keynote`
@@ -1588,19 +1692,21 @@ Notes:
     - called from: pipeline.py
   - `compute_annotation_extents`
     - called from: revit/view_basis.py
-  - `compute_annotation_type_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_cell_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_config_hash`
-    - called from: csv_export.py, streaming.py
-  - `compute_external_cell_metrics`
-    - called from: csv_export.py, root_cache.py
+    - `compute_annotation_type_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_cell_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_config_hash`
+      - called from: csv_export.py, streaming.py
+    - `compute_external_cell_metrics`
+      - called from: csv_export.py, root_cache.py
     - `compute_manifest_sha256`
       - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
+      - called from: pipeline.py
+    - `decompose_to_rects`
       - called from: pipeline.py
     - `estimate_depth_from_loops_or_bbox`
       - called from: pipeline.py
@@ -1611,8 +1717,10 @@ Notes:
     - `evaluate_metrics_manifest`
       - called from: pipeline.py
     - `excluded_bic_names_global`
-      - called from: revit/collection_policy.py, revit/linked_documents.py
+      - called from: revit/collection_policy.py, revit/linked_documents.py, view_raster_export.py
     - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_color_id_buffer_view`
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
@@ -1622,12 +1730,14 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_view_image`
+      - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
       - called from: pipeline.py
     - `extract_areal_geometry`
       - called from: pipeline.py
     - `extract_metrics_from_view_result`
-      - called from: pipeline.py
+      - called from: pipeline.py, streaming.py
     - `extract_view_metadata`
       - called from: csv_export.py
     - `filter_supported_views`
@@ -1646,6 +1756,8 @@ Notes:
       - called from: pipeline.py
     - `get_occlusion_csv_header`
       - called from: streaming.py
+    - `get_or_create_neutral_phase_filter`
+      - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
     - `get_views_from_input_or_current`
@@ -1654,8 +1766,6 @@ Notes:
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
-    - `included_bic_names_for_source`
-      - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -1690,6 +1800,8 @@ Notes:
       - called from: pipeline.py
     - `reset_family_region_caches`
       - called from: pipeline.py, streaming.py
+    - `resolve_all`
+      - called from: color_id_buffer.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -1765,7 +1877,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `render_model_front_to_back` (pipeline.py:L1933)
+## Trace: `render_model_front_to_back` (pipeline.py:L2217)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1781,6 +1893,8 @@ Notes:
     - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
+  - `GeometryCache`
+    - called from: streaming.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
@@ -1817,16 +1931,22 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotation_included_bic_names`
+    - called from: view_raster_export.py
   - `build_core_csv_row`
     - called from: csv_export.py
   - `build_occlusion_row`
     - called from: csv_export.py
+  - `build_palette`
+    - called from: color_id_buffer.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
     - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
+  - `choose_step`
+    - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
   - `classify_keynote`
@@ -1839,19 +1959,21 @@ Notes:
     - called from: pipeline.py
   - `compute_annotation_extents`
     - called from: revit/view_basis.py
-  - `compute_annotation_type_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_cell_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_config_hash`
-    - called from: csv_export.py, streaming.py
-  - `compute_external_cell_metrics`
-    - called from: csv_export.py, root_cache.py
+    - `compute_annotation_type_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_cell_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_config_hash`
+      - called from: csv_export.py, streaming.py
+    - `compute_external_cell_metrics`
+      - called from: csv_export.py, root_cache.py
     - `compute_manifest_sha256`
       - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
+      - called from: pipeline.py
+    - `decompose_to_rects`
       - called from: pipeline.py
     - `estimate_depth_from_loops_or_bbox`
       - called from: pipeline.py
@@ -1862,8 +1984,10 @@ Notes:
     - `evaluate_metrics_manifest`
       - called from: pipeline.py
     - `excluded_bic_names_global`
-      - called from: revit/collection_policy.py, revit/linked_documents.py
+      - called from: revit/collection_policy.py, revit/linked_documents.py, view_raster_export.py
     - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_color_id_buffer_view`
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
@@ -1873,12 +1997,14 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_view_image`
+      - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
       - called from: pipeline.py
     - `extract_areal_geometry`
       - called from: pipeline.py
     - `extract_metrics_from_view_result`
-      - called from: pipeline.py
+      - called from: pipeline.py, streaming.py
     - `extract_view_metadata`
       - called from: csv_export.py
     - `filter_supported_views`
@@ -1897,6 +2023,8 @@ Notes:
       - called from: pipeline.py
     - `get_occlusion_csv_header`
       - called from: streaming.py
+    - `get_or_create_neutral_phase_filter`
+      - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
     - `get_views_from_input_or_current`
@@ -1905,8 +2033,6 @@ Notes:
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
-    - `included_bic_names_for_source`
-      - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -1941,6 +2067,8 @@ Notes:
       - called from: revit/safe_api.py
     - `reset_family_region_caches`
       - called from: pipeline.py, streaming.py
+    - `resolve_all`
+      - called from: color_id_buffer.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -2016,7 +2144,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `init_view_raster` (pipeline.py:L1628)
+## Trace: `init_view_raster` (pipeline.py:L1673)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -2032,6 +2160,8 @@ Notes:
     - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
+  - `GeometryCache`
+    - called from: streaming.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
@@ -2068,16 +2198,22 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotation_included_bic_names`
+    - called from: view_raster_export.py
   - `build_core_csv_row`
     - called from: csv_export.py
   - `build_occlusion_row`
     - called from: csv_export.py
+  - `build_palette`
+    - called from: color_id_buffer.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
     - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
+  - `choose_step`
+    - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
   - `classify_keynote`
@@ -2090,19 +2226,21 @@ Notes:
     - called from: pipeline.py
   - `compute_annotation_extents`
     - called from: revit/view_basis.py
-  - `compute_annotation_type_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_cell_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_config_hash`
-    - called from: csv_export.py, streaming.py
-  - `compute_external_cell_metrics`
-    - called from: csv_export.py, root_cache.py
+    - `compute_annotation_type_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_cell_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_config_hash`
+      - called from: csv_export.py, streaming.py
+    - `compute_external_cell_metrics`
+      - called from: csv_export.py, root_cache.py
     - `compute_manifest_sha256`
       - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
+      - called from: pipeline.py
+    - `decompose_to_rects`
       - called from: pipeline.py
     - `estimate_depth_from_loops_or_bbox`
       - called from: pipeline.py
@@ -2113,8 +2251,10 @@ Notes:
     - `evaluate_metrics_manifest`
       - called from: pipeline.py
     - `excluded_bic_names_global`
-      - called from: revit/collection_policy.py, revit/linked_documents.py
+      - called from: revit/collection_policy.py, revit/linked_documents.py, view_raster_export.py
     - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_color_id_buffer_view`
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
@@ -2124,12 +2264,14 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_view_image`
+      - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
       - called from: pipeline.py
     - `extract_areal_geometry`
       - called from: pipeline.py
     - `extract_metrics_from_view_result`
-      - called from: pipeline.py
+      - called from: pipeline.py, streaming.py
     - `extract_view_metadata`
       - called from: csv_export.py
     - `filter_supported_views`
@@ -2148,6 +2290,8 @@ Notes:
       - called from: pipeline.py
     - `get_occlusion_csv_header`
       - called from: streaming.py
+    - `get_or_create_neutral_phase_filter`
+      - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
     - `get_views_from_input_or_current`
@@ -2156,8 +2300,6 @@ Notes:
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
-    - `included_bic_names_for_source`
-      - called from: revit/collection.py, revit/collection_policy.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
     - `iter_front_facing_planar_faces`
@@ -2192,6 +2334,8 @@ Notes:
       - called from: pipeline.py
     - `reset_family_region_caches`
       - called from: pipeline.py, streaming.py
+    - `resolve_all`
+      - called from: color_id_buffer.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -2267,7 +2411,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `_view_signature` (pipeline.py:L272)
+## Trace: `_view_signature` (pipeline.py:L264)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -2283,6 +2427,8 @@ Notes:
     - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
+  - `GeometryCache`
+    - called from: streaming.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
@@ -2317,16 +2463,22 @@ Notes:
     - called from: revit/view_basis.py
   - `ViewRaster`
     - called from: csv_export.py, pipeline.py, root_cache.py
+  - `annotation_included_bic_names`
+    - called from: view_raster_export.py
   - `build_core_csv_row`
     - called from: csv_export.py
   - `build_occlusion_row`
     - called from: csv_export.py
+  - `build_palette`
+    - called from: color_id_buffer.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
     - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
+  - `choose_step`
+    - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
   - `classify_keynote`
@@ -2341,17 +2493,19 @@ Notes:
     - called from: revit/view_basis.py
   - `compute_annotation_type_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_cell_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_config_hash`
-    - called from: csv_export.py, streaming.py
-  - `compute_external_cell_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_cell_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_config_hash`
+      - called from: csv_export.py, streaming.py
+    - `compute_external_cell_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
+      - called from: pipeline.py
+    - `decompose_to_rects`
       - called from: pipeline.py
     - `estimate_depth_from_loops_or_bbox`
       - called from: pipeline.py
@@ -2362,8 +2516,10 @@ Notes:
     - `evaluate_metrics_manifest`
       - called from: pipeline.py
     - `excluded_bic_names_global`
-      - called from: revit/collection_policy.py, revit/linked_documents.py
+      - called from: revit/collection_policy.py, revit/linked_documents.py, view_raster_export.py
     - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_color_id_buffer_view`
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
@@ -2373,12 +2529,14 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_view_image`
+      - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
       - called from: pipeline.py
     - `extract_areal_geometry`
       - called from: pipeline.py
     - `extract_metrics_from_view_result`
-      - called from: pipeline.py
+      - called from: pipeline.py, streaming.py
     - `extract_view_metadata`
       - called from: csv_export.py
     - `filter_supported_views`
@@ -2397,6 +2555,8 @@ Notes:
       - called from: pipeline.py
     - `get_occlusion_csv_header`
       - called from: streaming.py
+    - `get_or_create_neutral_phase_filter`
+      - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
     - `get_views_from_input_or_current`
@@ -2405,8 +2565,6 @@ Notes:
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
-    - `included_bic_names_for_source`
-      - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -2443,6 +2601,8 @@ Notes:
       - called from: pipeline.py
     - `reset_family_region_caches`
       - called from: pipeline.py, streaming.py
+    - `resolve_all`
+      - called from: color_id_buffer.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -2518,7 +2678,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `resolve_view_bounds` (revit/view_basis.py:L733)
+## Trace: `resolve_view_bounds` (revit/view_basis.py:L794)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -2534,6 +2694,8 @@ Notes:
     - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
+  - `GeometryCache`
+    - called from: streaming.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
@@ -2570,16 +2732,22 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotation_included_bic_names`
+    - called from: view_raster_export.py
   - `build_core_csv_row`
     - called from: csv_export.py
   - `build_occlusion_row`
     - called from: csv_export.py
+  - `build_palette`
+    - called from: color_id_buffer.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
     - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
+  - `choose_step`
+    - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
   - `classify_keynote`
@@ -2592,19 +2760,21 @@ Notes:
     - called from: pipeline.py
   - `compute_annotation_extents`
     - called from: revit/view_basis.py
-  - `compute_annotation_type_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_cell_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_config_hash`
-    - called from: csv_export.py, streaming.py
-  - `compute_external_cell_metrics`
-    - called from: csv_export.py, root_cache.py
+    - `compute_annotation_type_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_cell_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_config_hash`
+      - called from: csv_export.py, streaming.py
+    - `compute_external_cell_metrics`
+      - called from: csv_export.py, root_cache.py
     - `compute_manifest_sha256`
       - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
+      - called from: pipeline.py
+    - `decompose_to_rects`
       - called from: pipeline.py
     - `estimate_depth_from_loops_or_bbox`
       - called from: pipeline.py
@@ -2615,8 +2785,10 @@ Notes:
     - `evaluate_metrics_manifest`
       - called from: pipeline.py
     - `excluded_bic_names_global`
-      - called from: revit/collection_policy.py, revit/linked_documents.py
+      - called from: revit/collection_policy.py, revit/linked_documents.py, view_raster_export.py
     - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_color_id_buffer_view`
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
@@ -2626,12 +2798,14 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_view_image`
+      - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
       - called from: pipeline.py
     - `extract_areal_geometry`
       - called from: pipeline.py
     - `extract_metrics_from_view_result`
-      - called from: pipeline.py
+      - called from: pipeline.py, streaming.py
     - `extract_view_metadata`
       - called from: csv_export.py
     - `filter_supported_views`
@@ -2650,6 +2824,8 @@ Notes:
       - called from: pipeline.py
     - `get_occlusion_csv_header`
       - called from: streaming.py
+    - `get_or_create_neutral_phase_filter`
+      - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
     - `get_views_from_input_or_current`
@@ -2658,8 +2834,6 @@ Notes:
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
-    - `included_bic_names_for_source`
-      - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -2696,6 +2870,8 @@ Notes:
       - called from: pipeline.py
     - `reset_family_region_caches`
       - called from: pipeline.py, streaming.py
+    - `resolve_all`
+      - called from: color_id_buffer.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -2769,7 +2945,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `resolve_annotation_only_bounds` (revit/view_basis.py:L1411)
+## Trace: `resolve_annotation_only_bounds` (revit/view_basis.py:L1472)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -2785,6 +2961,8 @@ Notes:
     - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
+  - `GeometryCache`
+    - called from: streaming.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
@@ -2821,16 +2999,22 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotation_included_bic_names`
+    - called from: view_raster_export.py
   - `build_core_csv_row`
     - called from: csv_export.py
   - `build_occlusion_row`
     - called from: csv_export.py
+  - `build_palette`
+    - called from: color_id_buffer.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
     - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
+  - `choose_step`
+    - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
   - `classify_keynote`
@@ -2843,19 +3027,21 @@ Notes:
     - called from: pipeline.py
   - `compute_annotation_extents`
     - called from: revit/view_basis.py
-  - `compute_annotation_type_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_cell_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_config_hash`
-    - called from: csv_export.py, streaming.py
-  - `compute_external_cell_metrics`
-    - called from: csv_export.py, root_cache.py
+    - `compute_annotation_type_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_cell_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_config_hash`
+      - called from: csv_export.py, streaming.py
+    - `compute_external_cell_metrics`
+      - called from: csv_export.py, root_cache.py
     - `compute_manifest_sha256`
       - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
+      - called from: pipeline.py
+    - `decompose_to_rects`
       - called from: pipeline.py
     - `estimate_depth_from_loops_or_bbox`
       - called from: pipeline.py
@@ -2866,8 +3052,10 @@ Notes:
     - `evaluate_metrics_manifest`
       - called from: pipeline.py
     - `excluded_bic_names_global`
-      - called from: revit/collection_policy.py, revit/linked_documents.py
+      - called from: revit/collection_policy.py, revit/linked_documents.py, view_raster_export.py
     - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_color_id_buffer_view`
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
@@ -2877,12 +3065,14 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_view_image`
+      - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
       - called from: pipeline.py
     - `extract_areal_geometry`
       - called from: pipeline.py
     - `extract_metrics_from_view_result`
-      - called from: pipeline.py
+      - called from: pipeline.py, streaming.py
     - `extract_view_metadata`
       - called from: csv_export.py
     - `filter_supported_views`
@@ -2901,6 +3091,8 @@ Notes:
       - called from: pipeline.py
     - `get_occlusion_csv_header`
       - called from: streaming.py
+    - `get_or_create_neutral_phase_filter`
+      - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
     - `get_views_from_input_or_current`
@@ -2909,8 +3101,6 @@ Notes:
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
-    - `included_bic_names_for_source`
-      - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -2947,6 +3137,8 @@ Notes:
       - called from: pipeline.py
     - `reset_family_region_caches`
       - called from: pipeline.py, streaming.py
+    - `resolve_all`
+      - called from: color_id_buffer.py
     - `resolve_category_ids`
       - called from: revit/collection_policy.py, revit/linked_documents.py
     - `resolve_element_bbox`
@@ -3036,6 +3228,8 @@ Notes:
     - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
+  - `GeometryCache`
+    - called from: streaming.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
@@ -3072,16 +3266,22 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotation_included_bic_names`
+    - called from: view_raster_export.py
   - `build_core_csv_row`
     - called from: csv_export.py
   - `build_occlusion_row`
     - called from: csv_export.py
+  - `build_palette`
+    - called from: color_id_buffer.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
     - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
+  - `choose_step`
+    - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
   - `classify_keynote`
@@ -3094,19 +3294,21 @@ Notes:
     - called from: pipeline.py
   - `compute_annotation_extents`
     - called from: revit/view_basis.py
-  - `compute_annotation_type_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_cell_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_config_hash`
-    - called from: csv_export.py, streaming.py
-  - `compute_external_cell_metrics`
-    - called from: csv_export.py, root_cache.py
+    - `compute_annotation_type_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_cell_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_config_hash`
+      - called from: csv_export.py, streaming.py
+    - `compute_external_cell_metrics`
+      - called from: csv_export.py, root_cache.py
     - `compute_manifest_sha256`
       - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
+      - called from: pipeline.py
+    - `decompose_to_rects`
       - called from: pipeline.py
     - `estimate_depth_from_loops_or_bbox`
       - called from: pipeline.py
@@ -3117,8 +3319,10 @@ Notes:
     - `evaluate_metrics_manifest`
       - called from: pipeline.py
     - `excluded_bic_names_global`
-      - called from: revit/collection_policy.py, revit/linked_documents.py
+      - called from: revit/collection_policy.py, revit/linked_documents.py, view_raster_export.py
     - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_color_id_buffer_view`
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
@@ -3128,12 +3332,14 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_view_image`
+      - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
       - called from: pipeline.py
     - `extract_areal_geometry`
       - called from: pipeline.py
     - `extract_metrics_from_view_result`
-      - called from: pipeline.py
+      - called from: pipeline.py, streaming.py
     - `extract_view_metadata`
       - called from: csv_export.py
     - `filter_supported_views`
@@ -3152,6 +3358,8 @@ Notes:
       - called from: pipeline.py
     - `get_occlusion_csv_header`
       - called from: streaming.py
+    - `get_or_create_neutral_phase_filter`
+      - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
     - `get_views_from_input_or_current`
@@ -3160,8 +3368,6 @@ Notes:
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
-    - `included_bic_names_for_source`
-      - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -3196,6 +3402,8 @@ Notes:
       - called from: pipeline.py
     - `reset_family_region_caches`
       - called from: pipeline.py, streaming.py
+    - `resolve_all`
+      - called from: color_id_buffer.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -3287,6 +3495,8 @@ Notes:
     - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
+  - `GeometryCache`
+    - called from: streaming.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
@@ -3323,16 +3533,22 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotation_included_bic_names`
+    - called from: view_raster_export.py
   - `build_core_csv_row`
     - called from: csv_export.py
   - `build_occlusion_row`
     - called from: csv_export.py
+  - `build_palette`
+    - called from: color_id_buffer.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
     - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
+  - `choose_step`
+    - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
   - `classify_keynote`
@@ -3345,17 +3561,19 @@ Notes:
     - called from: revit/view_basis.py
   - `compute_annotation_type_metrics`
     - called from: csv_export.py, root_cache.py
-  - `compute_cell_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_config_hash`
-    - called from: csv_export.py, streaming.py
-  - `compute_external_cell_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_manifest_sha256`
-    - called from: metrics_manifest.py
+    - `compute_cell_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_config_hash`
+      - called from: csv_export.py, streaming.py
+    - `compute_external_cell_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_manifest_sha256`
+      - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
+      - called from: pipeline.py
+    - `decompose_to_rects`
       - called from: pipeline.py
     - `estimate_depth_from_loops_or_bbox`
       - called from: pipeline.py
@@ -3366,8 +3584,10 @@ Notes:
     - `evaluate_metrics_manifest`
       - called from: pipeline.py
     - `excluded_bic_names_global`
-      - called from: revit/collection_policy.py, revit/linked_documents.py
+      - called from: revit/collection_policy.py, revit/linked_documents.py, view_raster_export.py
     - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_color_id_buffer_view`
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
@@ -3377,12 +3597,14 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_view_image`
+      - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
       - called from: pipeline.py
     - `extract_areal_geometry`
       - called from: pipeline.py
     - `extract_metrics_from_view_result`
-      - called from: pipeline.py
+      - called from: pipeline.py, streaming.py
     - `extract_view_metadata`
       - called from: csv_export.py
     - `filter_supported_views`
@@ -3401,6 +3623,8 @@ Notes:
       - called from: pipeline.py
     - `get_occlusion_csv_header`
       - called from: streaming.py
+    - `get_or_create_neutral_phase_filter`
+      - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
     - `get_views_from_input_or_current`
@@ -3409,8 +3633,6 @@ Notes:
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
-    - `included_bic_names_for_source`
-      - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -3447,6 +3669,8 @@ Notes:
       - called from: pipeline.py
     - `reset_family_region_caches`
       - called from: pipeline.py, streaming.py
+    - `resolve_all`
+      - called from: color_id_buffer.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
@@ -3522,7 +3746,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `get_element_silhouette` (core/silhouette.py:L1920)
+## Trace: `get_element_silhouette` (core/silhouette.py:L1923)
 
   - `Bounds2D`
     - called from: core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -3538,6 +3762,8 @@ Notes:
     - called from: pipeline.py, streaming.py
   - `ElementFingerprint`
     - called from: core/element_cache.py
+  - `GeometryCache`
+    - called from: streaming.py
   - `HullFootprint`
     - called from: pipeline.py
   - `LRUCache`
@@ -3574,16 +3800,22 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotation_included_bic_names`
+    - called from: view_raster_export.py
   - `build_core_csv_row`
     - called from: csv_export.py
   - `build_occlusion_row`
     - called from: csv_export.py
+  - `build_palette`
+    - called from: color_id_buffer.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
     - called from: metrics_manifest.py
   - `cellrect_dims`
     - called from: pipeline.py
+  - `choose_step`
+    - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
   - `classify_keynote`
@@ -3596,19 +3828,21 @@ Notes:
     - called from: pipeline.py
   - `compute_annotation_extents`
     - called from: revit/view_basis.py
-  - `compute_annotation_type_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_cell_metrics`
-    - called from: csv_export.py, root_cache.py
-  - `compute_config_hash`
-    - called from: csv_export.py, streaming.py
-  - `compute_external_cell_metrics`
-    - called from: csv_export.py, root_cache.py
+    - `compute_annotation_type_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_cell_metrics`
+      - called from: csv_export.py, root_cache.py
+    - `compute_config_hash`
+      - called from: csv_export.py, streaming.py
+    - `compute_external_cell_metrics`
+      - called from: csv_export.py, root_cache.py
     - `compute_manifest_sha256`
       - called from: metrics_manifest.py
     - `compute_view_frame_hash`
       - called from: csv_export.py
     - `convex_hull_uv`
+      - called from: pipeline.py
+    - `decompose_to_rects`
       - called from: pipeline.py
     - `estimate_depth_from_loops_or_bbox`
       - called from: pipeline.py
@@ -3619,8 +3853,10 @@ Notes:
     - `evaluate_metrics_manifest`
       - called from: pipeline.py
     - `excluded_bic_names_global`
-      - called from: revit/collection_policy.py, revit/linked_documents.py
+      - called from: revit/collection_policy.py, revit/linked_documents.py, view_raster_export.py
     - `expand_host_link_import_model_elements`
+      - called from: pipeline.py
+    - `export_color_id_buffer_view`
       - called from: pipeline.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
@@ -3630,12 +3866,14 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_view_image`
+      - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
       - called from: pipeline.py
     - `extract_areal_geometry`
       - called from: pipeline.py
     - `extract_metrics_from_view_result`
-      - called from: pipeline.py
+      - called from: pipeline.py, streaming.py
     - `extract_view_metadata`
       - called from: csv_export.py
     - `filter_supported_views`
@@ -3652,6 +3890,8 @@ Notes:
       - called from: core/areal_extraction.py
     - `get_occlusion_csv_header`
       - called from: streaming.py
+    - `get_or_create_neutral_phase_filter`
+      - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
     - `get_views_from_input_or_current`
@@ -3660,8 +3900,6 @@ Notes:
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
-    - `included_bic_names_for_source`
-      - called from: revit/collection.py, revit/collection_policy.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -3698,6 +3936,8 @@ Notes:
       - called from: pipeline.py
     - `reset_family_region_caches`
       - called from: pipeline.py, streaming.py
+    - `resolve_all`
+      - called from: color_id_buffer.py
     - `resolve_annotation_only_bounds`
       - called from: pipeline.py
     - `resolve_category_ids`
