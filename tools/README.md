@@ -5,6 +5,25 @@ Quality assurance and testing utilities for the SSM/VOP exporter.
 ## Scripts
 
 
+### `stage_a_cycle.py` - One-command Stage A campaign advance
+
+A thin, idempotent wrapper that composes `campaign_planner.py` and
+`analyze_stage_a_probe.py` so normal Stage A operation is one command
+between Dynamo runs: discover manifests, ingest execution evidence, analyze
+outstanding evidence, ingest normalized acceptance, and prepare the next
+batch. It runs outside Revit, imports no Revit API modules, and makes no
+acceptance/gating/fallback decision of its own - see
+`docs/CAMPAIGN_PLANNER.md` ("`stage_a_cycle.py` - one command between Dynamo
+runs") for the full contract, path defaults, and exit codes.
+
+**Usage:**
+```bash
+python tools/stage_a_cycle.py advance campaign/campaign.json campaign/campaign_state.json
+python tools/stage_a_cycle.py advance campaign/campaign.json campaign/campaign_state.json --dry-run --json
+```
+
+---
+
 ### `analyze_stage_a_probe.py` - External Stage A Probe Analysis
 
 Analyzes extraction-only Stage A Dynamo probe outputs using standalone Python,
