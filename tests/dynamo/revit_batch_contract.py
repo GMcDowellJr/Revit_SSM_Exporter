@@ -84,12 +84,17 @@ def validate_batch(value):
     if not isinstance(value["jobs"], list) or not value["jobs"]:
         raise ContractError("jobs must be a non-empty array")
     seen = set()
+    # `variant` and `job_configuration_fingerprint` are optional batch-job-level
+    # metadata (never probe-facing settings, never part of dispatch identity -
+    # see job_fingerprint(), which deliberately excludes them).
+    known_job_fields = {"job_id", "probe_id", "view", "settings", "output_directory",
+                        "variant", "job_configuration_fingerprint"}
     for index, job in enumerate(value["jobs"]):
         job = _object(job, "jobs[{0}]".format(index))
         for key in ("job_id", "probe_id", "view", "settings", "output_directory"):
             if key not in job:
                 raise ContractError("jobs[{0}] is missing {1}".format(index, key))
-        unknown = sorted(set(job) - {"job_id", "probe_id", "view", "settings", "output_directory"})
+        unknown = sorted(set(job) - known_job_fields)
         if unknown:
             raise ContractError("Unknown job fields: {0}".format(unknown))
         job_id = _stable_id(job["job_id"], "job_id")
@@ -101,6 +106,8 @@ def validate_batch(value):
         _object(job["settings"], "settings")
         if not isinstance(job["output_directory"], str) or not job["output_directory"]:
             raise ContractError("output_directory must be a non-empty string")
+        if "variant" in job and not isinstance(job["variant"], str):
+            raise ContractError("job.variant must be a string")
     return value
 
 
@@ -111,7 +118,14 @@ def load_batch(path):
 
 
 def job_fingerprint(job):
-    material = {key: job[key] for key in ("job_id", "probe_id", "view", "settings", "output_directory")}
+    # `variant` is dispatch identity, not incidental metadata: the specialized
+    # stage_a_minimum_id_mutations adapter maps it to run_probe(selection=...)
+    # whenever `settings` doesn't already carry an explicit `selection`. It
+    # must be part of the fingerprint the planner's execution_fingerprints and
+    # this executor's ingestion/resume checks agree on, or a batch job could
+    # be tampered with to dispatch a different variant while still matching
+    # the expected fingerprint.
+    material = {key: job.get(key) for key in ("job_id", "probe_id", "view", "settings", "output_directory", "variant")}
     encoded = json.dumps(material, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 

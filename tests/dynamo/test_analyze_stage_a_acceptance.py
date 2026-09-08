@@ -181,6 +181,23 @@ def test_run_manifest_produces_one_record_per_raw_envelope(tmp_path, monkeypatch
     assert analyzed["acceptance_records"][0]["job_id"] == "j"
 
 
+def test_manifest_fan_out_preserves_comparison_reference_from_job_record(tmp_path, monkeypatch):
+    # The envelope's own requested_settings reflects only what the adapter
+    # forwarded to run_probe() (comparison_reference correctly stripped
+    # before dispatch); the outer manifest job record's requested_settings
+    # is where the executor preserves the full as-configured settings, and
+    # that is what must survive into the normalized record for provenance.
+    monkeypatch.setattr(analyzer, "Image", None)
+    raw = envelope("stage_a_minimum_id_mutations", {"variants": []},
+                   requested_settings={"selection": "attached_AS", "target_dpi": 150})
+    manifest = {"schema_version": "1.0", "campaign_id": "c", "batch_id": "b", "run_id": "r",
+                "jobs": [{"job_id": "j", "raw_result_envelope": raw,
+                          "requested_settings": {"dpi": 150, "selection": "attached_AS",
+                                                 "comparison_reference": "detached_AS"}}]}
+    analyzed, _ = run(tmp_path, manifest)
+    assert analyzed["acceptance_records"][0]["comparison_reference"] == "detached_AS"
+
+
 def test_alignment_coverage_normalizes_resolution_qualified_export_keys():
     native = {"exports": {"original.dpi_150": {"images": []},
                           "original.fixed_1600": {"images": []}}}
@@ -355,3 +372,126 @@ def test_external_refreshed_variant_metrics_override_stale_family_boolean():
     checks = analyzer._family_checks({}, native, "external_sources")
     source_checks = [check for check in checks if check["check_id"].startswith("external_source_")]
     assert {check["status"] for check in source_checks} == {"PASS"}
+
+
+# --- Stage 1 mutation-closure evidence: template-blocked attestation failure ---
+
+def _attached_as_blocked_by_template_variant():
+    return {
+        "variant": "attached_AS", "requested_mutations": ["hide_annotation_categories", "smooth_edges_off"],
+        "mutations": {
+            "hide_annotation_categories": {"status": "BLOCKED_BY_TEMPLATE", "template_controlled": True},
+            "smooth_edges_off": {"status": "APPLIED", "template_controlled": False},
+        },
+        "mutation_attestation_passed": False,
+        "image_analysis": {"analysis_status": "not_exported_failed_attestation"},
+    }
+
+
+def test_blocked_by_template_gets_distinct_reason_code_and_tiffs_are_not_applicable(tmp_path, monkeypatch):
+    monkeypatch.setattr(analyzer, "Image", None)
+    native = {"variants": [_attached_as_blocked_by_template_variant()]}
+    record, _ = run(tmp_path, envelope("stage_a_minimum_id_mutations", native))
+    assert record["acceptance_status"] == "FAIL"
+    assert "MUTATION_ATTESTATION_FAILED" in record["reason_codes"]
+    assert "MUTATION_BLOCKED_BY_TEMPLATE_ONLY" in record["reason_codes"]
+    checks_by_id = {c["check_id"]: c for c in record["checks"]}
+    # A TIFF was never exported because attestation failed first - that must
+    # never read as a vacuous PASS on empty evidence.
+    assert checks_by_id["required_tiffs"]["status"] == "NOT_APPLICABLE"
+    assert checks_by_id["dimensions"]["status"] == "NOT_APPLICABLE"
+    assert checks_by_id["palette_fidelity"]["status"] == "NOT_APPLICABLE"
+
+
+def test_unrelated_mutation_failure_does_not_claim_template_block(tmp_path, monkeypatch):
+    monkeypatch.setattr(analyzer, "Image", None)
+    variant = {
+        "variant": "attached_AS", "requested_mutations": ["hide_annotation_categories", "smooth_edges_off"],
+        "mutations": {
+            "hide_annotation_categories": {"status": "FAILED", "template_controlled": False},
+            "smooth_edges_off": {"status": "APPLIED", "template_controlled": False},
+        },
+        "image_analysis": {"analysis_status": "not_exported_failed_attestation"},
+    }
+    native = {"variants": [variant]}
+    record, _ = run(tmp_path, envelope("stage_a_minimum_id_mutations", native))
+    assert record["acceptance_status"] == "FAIL"
+    assert "MUTATION_ATTESTATION_FAILED" in record["reason_codes"]
+    assert "MUTATION_BLOCKED_BY_TEMPLATE_ONLY" not in record["reason_codes"]
+
+
+def test_mixed_template_and_unrelated_failure_is_not_a_clean_template_block(tmp_path, monkeypatch):
+    monkeypatch.setattr(analyzer, "Image", None)
+    variant = {
+        "variant": "attached_AS", "requested_mutations": ["hide_annotation_categories", "smooth_edges_off"],
+        "mutations": {
+            "hide_annotation_categories": {"status": "BLOCKED_BY_TEMPLATE", "template_controlled": True},
+            "smooth_edges_off": {"status": "FAILED", "template_controlled": False},
+        },
+        "image_analysis": {"analysis_status": "not_exported_failed_attestation"},
+    }
+    record, _ = run(tmp_path, envelope("stage_a_minimum_id_mutations", {"variants": [variant]}))
+    assert "MUTATION_ATTESTATION_FAILED" in record["reason_codes"]
+    assert "MUTATION_BLOCKED_BY_TEMPLATE_ONLY" not in record["reason_codes"]
+
+
+def test_rollback_variant_evidence_not_overridden_by_stale_recommendation(tmp_path, monkeypatch):
+    # Regression lock: `recommendation.recommended_minimum.rollback_status` is a
+    # separate, sometimes-stale aggregate the raw probe also reports; the
+    # `rollback` check must be derived from the envelope/variant evidence only.
+    monkeypatch.setattr(analyzer, "Image", None)
+    native = {
+        "variants": [{"variant": "attached_AS", "rollback_status": "PASS",
+                      "state": {"captured_state_equal_after_rollback": True}}],
+        "recommendation": {"recommended_minimum": {"rollback_status": "FAIL"}},
+    }
+    record, _ = run(tmp_path, envelope("stage_a_minimum_id_mutations", native, rollback_status="succeeded"))
+    rollback = next(c for c in record["checks"] if c["check_id"] == "rollback")
+    assert rollback["status"] == "PASS"
+    assert "ROLLBACK_FAILED" not in record["reason_codes"]
+
+
+def test_comparison_reference_not_resolved_in_this_report_is_not_applicable(tmp_path, monkeypatch):
+    # Stage 1's attached_AS -> detached_AS closure runs as two separate probe
+    # invocations; comparison_reference cannot resolve within one report, and
+    # that must not be silently ignored nor gate this job's own acceptance -
+    # it is a campaign-level closure decision (see campaign_planner.py).
+    monkeypatch.setattr(analyzer, "Image", None)
+    native = {"variants": [_attached_as_blocked_by_template_variant()]}
+    report = envelope("stage_a_minimum_id_mutations", native,
+                      requested_settings={"comparison_reference": "detached_AS"})
+    record, _ = run(tmp_path, report)
+    assert record["comparison_reference"] == "detached_AS"
+    resolution = next(c for c in record["checks"] if c["check_id"] == "comparison_reference_resolution")
+    assert resolution["status"] == "NOT_APPLICABLE"
+    assert resolution["evidence"]["resolved_in_this_report"] is False
+    # Not resolvable in-report must not, by itself, force the record inconclusive.
+    assert "COMPARISON_REFERENCE_NOT_RESOLVED" not in record["reason_codes"]
+
+
+def test_comparison_reference_resolved_when_reference_variant_present(tmp_path, monkeypatch):
+    monkeypatch.setattr(analyzer, "Image", None)
+    reference = {"variant": "detached_AS", "requested_mutations": ["smooth_edges_off"],
+                 "mutations": {"smooth_edges_off": {"status": "APPLIED"}},
+                 "image_analysis": {"actual_dimensions": [2, 2], "path": "raw/detached_AS.tiff", "sha256": "abc"}}
+    native = {"variants": [_attached_as_blocked_by_template_variant(), reference]}
+    report = envelope("stage_a_minimum_id_mutations", native,
+                      requested_settings={"comparison_reference": "detached_AS"})
+    record, _ = run(tmp_path, report)
+    resolution = next(c for c in record["checks"] if c["check_id"] == "comparison_reference_resolution")
+    assert resolution["status"] == "PASS"
+    assert resolution["evidence"]["resolved_in_this_report"] is True
+    assert resolution["evidence"]["reference_artifact_sha256"] == "abc"
+
+
+def test_comparison_reference_incomplete_evidence_cannot_pass(tmp_path, monkeypatch):
+    monkeypatch.setattr(analyzer, "Image", None)
+    reference = {"variant": "detached_AS", "requested_mutations": ["smooth_edges_off"],
+                 "mutations": {"smooth_edges_off": {"status": "FAILED"}}, "image_analysis": {}}
+    native = {"variants": [_attached_as_blocked_by_template_variant(), reference]}
+    report = envelope("stage_a_minimum_id_mutations", native,
+                      requested_settings={"comparison_reference": "detached_AS"})
+    record, _ = run(tmp_path, report)
+    resolution = next(c for c in record["checks"] if c["check_id"] == "comparison_reference_resolution")
+    assert resolution["status"] == "INCONCLUSIVE"
+    assert record["acceptance_status"] != "PASS"

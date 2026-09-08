@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import types
 from pathlib import Path
@@ -240,3 +241,93 @@ def test_executor_has_no_analysis_or_campaign_gating_imports():
     source = Path(__file__).with_name("revit_batch_executor.py").read_text()
     forbidden = ("compare_golden", "analyze_stage", "campaign_acceptance", "eligibility")
     assert all(term not in source for term in forbidden)
+
+
+# --- output_directory resolution is independent of the process cwd ---
+
+def test_relative_output_directory_resolves_against_batch_file_directory(tmp_path, monkeypatch):
+    campaign_dir = tmp_path / "campaign"
+    campaign_dir.mkdir()
+    relative_job = job("one", "u1")
+    relative_job["output_directory"] = "raw/one"
+    batch_path = campaign_dir / "next_batch.json"
+    batch_path.write_text(json.dumps(batch([relative_job])))
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)  # process cwd must never affect resolution
+    seen = {}
+    def adapter(view, settings, output_directory):
+        seen["output_directory"] = output_directory
+        return envelope()
+    views = [View("u1", "View 1", number=1)]
+    result = execute_batch(str(batch_path), Doc(views), {"stub": adapter}, lambda doc: doc.views,
+                           str(campaign_dir / "manifests"), run_id="run")
+    expected = str((campaign_dir / "raw" / "one").resolve())
+    assert seen["output_directory"] == expected
+    assert os.path.isabs(seen["output_directory"])
+    manifest = json.loads(Path(result["manifest_path"]).read_text())
+    job_record = manifest["jobs"][0]
+    assert job_record["output_directory"] == "raw/one"  # configured relative identity preserved
+    assert job_record["output_directory_resolved"] == expected  # canonical absolute path used
+
+
+def test_absolute_output_directory_is_used_unchanged(tmp_path):
+    _, manifest = run(tmp_path, batch(), lambda *args: envelope())
+    absolute_job = batch()["jobs"][0]
+    assert manifest["jobs"][0]["output_directory"] == absolute_job["output_directory"]
+    assert manifest["jobs"][0]["output_directory_resolved"] == os.path.normpath(absolute_job["output_directory"])
+
+
+def test_artifact_root_overrides_batch_file_directory_for_relative_paths(tmp_path):
+    campaign_dir = tmp_path / "campaign"
+    campaign_dir.mkdir()
+    artifact_root = tmp_path / "artifacts"
+    relative_job = job("one", "u1")
+    relative_job["output_directory"] = "raw/one"
+    batch_path = campaign_dir / "next_batch.json"
+    batch_path.write_text(json.dumps(batch([relative_job])))
+    seen = {}
+    def adapter(view, settings, output_directory):
+        seen["output_directory"] = output_directory
+        return envelope()
+    views = [View("u1", "View 1", number=1)]
+    execute_batch(str(batch_path), Doc(views), {"stub": adapter}, lambda doc: doc.views,
+                 str(campaign_dir / "manifests"), run_id="run", artifact_root=str(artifact_root))
+    assert seen["output_directory"] == str((artifact_root / "raw" / "one").resolve())
+
+
+def test_relative_artifact_root_is_itself_resolved_to_absolute(tmp_path, monkeypatch):
+    # A caller-supplied artifact_root that is itself relative must not leave
+    # the final output_directory relative - that would silently reintroduce
+    # a dependency on the process cwd, defeating the whole point.
+    from tests.dynamo.revit_batch_executor import resolve_output_directory
+    monkeypatch.chdir(tmp_path)
+    resolved = resolve_output_directory("raw/one", None, artifact_root="relative_artifacts")
+    assert os.path.isabs(resolved)
+    assert resolved == str((tmp_path / "relative_artifacts" / "raw" / "one").resolve())
+
+
+# --- ViewType is always reported as a stable name, never a bare ordinal ---
+
+def test_view_type_numeric_stringification_is_not_reported_as_an_ordinal():
+    from tests.dynamo.revit_batch_executor import _view_type_name
+
+    class NumericViewType:
+        def __str__(self): return "1"
+
+    class RawView:
+        ViewType = NumericViewType()
+
+    # Outside Revit (Autodesk.Revit.DB unavailable) resolution cannot recover
+    # the real name, but it must not silently look like a clean value either -
+    # the raw ordinal string is preserved verbatim rather than crashing.
+    assert _view_type_name(RawView()) == "1"
+
+
+def test_view_type_stable_name_passes_through_unchanged():
+    from tests.dynamo.revit_batch_executor import _view_type_name
+
+    class RawView:
+        ViewType = "Elevation"
+
+    assert _view_type_name(RawView()) == "Elevation"

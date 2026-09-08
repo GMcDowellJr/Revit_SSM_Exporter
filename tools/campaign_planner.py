@@ -29,7 +29,10 @@ LEGAL_TRANSITIONS = {
     "EXECUTED": {"ANALYZED", "FAILED", "INCONCLUSIVE", "SUPERSEDED"},
     "ANALYZED": {"PASSED", "FAILED", "INCONCLUSIVE", "SUPERSEDED"},
     "FAILED": {"NEEDS_DIAGNOSTIC", "SUPERSEDED"},
-    "INCONCLUSIVE": {"NEEDS_DIAGNOSTIC", "SUPERSEDED"},
+    # PASSED is reachable only via an authorized manual review that resolves a
+    # gate-scoped MANUAL_SEMANTIC_REVIEW_REQUIRED outcome (see
+    # record_manual_review); it is never a side effect of an unrelated review.
+    "INCONCLUSIVE": {"NEEDS_DIAGNOSTIC", "SUPERSEDED", "PASSED", "FAILED"},
     "BLOCKED": {"ELIGIBLE", "SKIPPED", "SUPERSEDED", "NEEDS_DIAGNOSTIC"},
     "NEEDS_DIAGNOSTIC": {"ELIGIBLE", "BLOCKED", "SUPERSEDED"},
     "PASSED": {"SUPERSEDED"}, "SKIPPED": {"SUPERSEDED"}, "SUPERSEDED": set(),
@@ -41,6 +44,20 @@ class CampaignError(ValueError):
     """Invalid campaign, state, or evidence."""
 
 
+class ConfigurationDriftError(CampaignError):
+    """Raised only by _assert_binding on CONFIGURATION_DRIFT.
+
+    By the time this is raised, `state` has already been fully and
+    self-containedly mutated (every job superseded, next_recommendation set,
+    a history event recorded) - never a partial application of unrelated
+    work. This is the *only* CampaignError subtype whose in-memory mutation
+    the CLI persists to disk after an error; any other CampaignError (a
+    malformed manifest, an invalid analysis record, an unauthorized
+    diagnostic request, ...) must leave the on-disk state file exactly as it
+    was before the command ran.
+    """
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -49,8 +66,12 @@ def canonical_fingerprint(value: Any) -> str:
     """Hash canonical JSON, excluding descriptive notes and volatile timestamps."""
     def clean(item: Any) -> Any:
         if isinstance(item, dict):
+            # analyzed_at is stripped so re-running the analyzer on an
+            # unchanged manifest and re-ingesting it is a clean idempotent
+            # no-op (same record_id, same digest) rather than a spurious
+            # ANALYSIS_CONFLICT caused only by a fresh timestamp.
             return {k: clean(v) for k, v in sorted(item.items())
-                    if k not in {"notes", "created_at", "updated_at"}}
+                    if k not in {"notes", "created_at", "updated_at", "analyzed_at"}}
         if isinstance(item, list):
             return [clean(v) for v in item]
         return item
@@ -117,10 +138,29 @@ def validate_campaign(campaign: dict[str, Any]) -> dict[str, Any]:
             if job["view_key"] not in campaign["view_registry"]: raise CampaignError(f"unknown view_key: {job['view_key']}")
             job_keys.add(job["job_key"])
     if len(stage_ids) != len(set(stage_ids)): raise CampaignError("duplicate stage_id")
+    closure_ids = set()
+    for fallback in campaign.get("conditional_fallbacks", []):
+        needed = {"fallback_id", "trigger_job", "trigger_reason_codes", "fallback_job"}
+        if not needed <= set(fallback): raise CampaignError(f"conditional_fallback is missing {sorted(needed-set(fallback))}")
+        if fallback["fallback_id"] in closure_ids: raise CampaignError(f"duplicate fallback_id: {fallback['fallback_id']}")
+        closure_ids.add(fallback["fallback_id"])
+        if fallback["trigger_job"] not in job_keys:
+            raise CampaignError(f"conditional_fallback {fallback['fallback_id']} references unknown trigger_job")
+        codes = fallback["trigger_reason_codes"]
+        if not isinstance(codes, list) or not codes or not all(isinstance(c, str) for c in codes):
+            raise CampaignError(f"conditional_fallback {fallback['fallback_id']} trigger_reason_codes must be a non-empty list of strings")
+        fjob = fallback["fallback_job"]
+        fneeded = {"job_key", "view_key", "probe_id", "case", "variant", "repetition", "settings"}
+        if not fneeded <= set(fjob): raise CampaignError(f"conditional_fallback {fallback['fallback_id']} fallback_job is missing {sorted(fneeded-set(fjob))}")
+        if fjob["job_key"] in job_keys: raise CampaignError(f"conditional_fallback {fallback['fallback_id']} fallback_job.job_key collides with an existing job_key")
+        if fjob["view_key"] not in campaign["view_registry"]: raise CampaignError(f"conditional_fallback {fallback['fallback_id']} fallback_job references unknown view_key")
     for dep in campaign["dependencies"]:
-        if dep.get("job") not in job_keys or dep.get("requires_job") not in job_keys:
+        if dep.get("requires_closure") is not None:
+            if dep.get("job") not in job_keys: raise CampaignError(f"dependency references unknown job: {dep}")
+            if dep["requires_closure"] not in closure_ids: raise CampaignError(f"dependency references unknown requires_closure: {dep}")
+        elif dep.get("job") not in job_keys or dep.get("requires_job") not in job_keys:
             raise CampaignError(f"dependency references unknown job: {dep}")
-        if dep.get("statuses", ["PASS"]) and not set(dep.get("statuses", ["PASS"])) <= {"PASS", "FAIL", "INCONCLUSIVE"}:
+        if dep.get("statuses", ["PASS"]) and not set(dep.get("statuses", ["PASS"])) <= {"PASS", "FAIL", "INCONCLUSIVE", "BLOCKED"}:
             raise CampaignError("dependency statuses must be analyzer acceptance values")
     defaults = campaign["execution_defaults"]
     if not isinstance(defaults.get("batch_size"), int) or defaults["batch_size"] < 1:
@@ -167,7 +207,8 @@ def initialize_state(campaign: dict[str, Any], now: str | None = None) -> dict[s
         "campaign_configuration_fingerprint": fingerprint, "created_at": now, "updated_at": now,
         "view_coverage": {}, "stage_status": {}, "jobs": {}, "ingested_revit_runs": {},
         "ingested_analysis_records": {}, "conflicts": [], "blocked_jobs": {},
-        "diagnostic_requests": {}, "manual_review_requirements": {}, "next_recommendation": {}, "history": []}
+        "diagnostic_requests": {}, "manual_review_requirements": {}, "closures": {},
+        "next_recommendation": {}, "history": []}
     for job in _expanded_jobs(campaign):
         state["jobs"][job["job_id"]] = {**job, "status": "PLANNED",
             "status_reason": {"code": "INITIALIZED"}, "batch_ids": [], "run_ids": [],
@@ -186,15 +227,96 @@ def _assert_binding(campaign: dict[str, Any], state: dict[str, Any]) -> None:
         for job in state.get("jobs", {}).values():
             if job["status"] != "SUPERSEDED": transition(state, job["job_id"], "SUPERSEDED", "CONFIGURATION_DRIFT")
         state["next_recommendation"] = {"code": "INVALID_CAMPAIGN_STATE", "reason": "CONFIGURATION_DRIFT", "current_fingerprint": current}
-        raise CampaignError("campaign configuration drift; prior jobs were superseded, initialize amended state")
+        raise ConfigurationDriftError("campaign configuration drift; prior jobs were superseded, initialize amended state")
 
 
 def _dependencies(campaign: dict[str, Any], job: dict[str, Any]) -> list[dict[str, Any]]:
     return [d for d in campaign["dependencies"] if d["job"] == job["job_key"]]
 
 
+# Closures resolved this way (RESOLVED_PRIMARY / RESOLVED_FALLBACK_PASS) are
+# treated as an upstream "PASS" for any dependency gated on them.
+_CLOSURE_PASS = {"RESOLVED_PRIMARY", "RESOLVED_FALLBACK_PASS"}
+_CLOSURE_FAIL = {"RESOLVED_FAILED", "RESOLVED_FALLBACK_FAILED"}
+_CLOSURE_OPEN = {"PENDING", "AWAITING_FALLBACK_EXECUTION"}
+
+
+def _closure_candidate_settled(state: dict[str, Any], job: dict[str, Any]) -> bool:
+    """A job is settled for closure-resolution purposes once it is terminal
+    AND, if INCONCLUSIVE, not still awaiting a PENDING gate-scoped manual
+    review that could still convert it to PASSED/FAILED. Resolving the
+    closure the instant a candidate goes INCONCLUSIVE - without waiting for
+    that review - would prematurely lock in RESOLVED_*_FAILED even though an
+    ACCEPTED review is about to make it PASSED."""
+    if job["status"] != "INCONCLUSIVE":
+        return job["status"] in TERMINAL
+    requirement = state["manual_review_requirements"].get(job["job_id"])
+    return not (requirement and requirement["status"] == "PENDING")
+
+
+def _apply_conditional_fallbacks(campaign: dict[str, Any], state: dict[str, Any]) -> None:
+    """Deterministically resolve Stage-1-style mutation closures.
+
+    A closure watches one ``trigger_job``.  If it PASSES, the closure resolves
+    immediately on the primary job.  If it fails/inconclusive *and* its actual
+    reason codes are a superset of the configured ``trigger_reason_codes``
+    (e.g. a template-control blockage, never an arbitrary FAIL/INCONCLUSIVE),
+    a fallback job is materialized once and the closure awaits its outcome.
+    Any other terminal outcome resolves the closure as failed without ever
+    scheduling the fallback or converting the trigger's result into a pass.
+    """
+    key_map = {j["job_key"]: j for j in state["jobs"].values()}
+    for fallback in campaign.get("conditional_fallbacks", []):
+        closure_id = fallback["fallback_id"]
+        closure = state["closures"].setdefault(closure_id, {
+            "status": "PENDING", "trigger_job_key": fallback["trigger_job"],
+            "primary_job_id": None, "fallback_job_id": None,
+            "candidate_job_id": None, "resolved_at": None})
+        if closure["status"] == "AWAITING_FALLBACK_EXECUTION":
+            candidate = state["jobs"].get(closure["fallback_job_id"])
+            if candidate and _closure_candidate_settled(state, candidate):
+                resolved = "RESOLVED_FALLBACK_PASS" if candidate["status"] == "PASSED" else "RESOLVED_FALLBACK_FAILED"
+                closure.update({"status": resolved, "candidate_job_id": candidate["job_id"], "resolved_at": utc_now()})
+                _event(state, "CLOSURE_RESOLVED", closure_id=closure_id, status=resolved, candidate_job_id=candidate["job_id"])
+            continue
+        if closure["status"] != "PENDING": continue
+        trigger = key_map.get(fallback["trigger_job"])
+        if not trigger or not _closure_candidate_settled(state, trigger): continue
+        closure["primary_job_id"] = trigger["job_id"]
+        if trigger["status"] == "PASSED":
+            closure.update({"status": "RESOLVED_PRIMARY", "candidate_job_id": trigger["job_id"], "resolved_at": utc_now()})
+            _event(state, "CLOSURE_RESOLVED", closure_id=closure_id, status="RESOLVED_PRIMARY", candidate_job_id=trigger["job_id"])
+            continue
+        actual_codes = set(((trigger.get("status_reason") or {}).get("details") or {}).get("reason_codes") or [])
+        trigger_codes = set(fallback["trigger_reason_codes"])
+        if trigger["status"] in {"FAILED", "INCONCLUSIVE"} and trigger_codes <= actual_codes:
+            spec = copy.deepcopy(fallback["fallback_job"])
+            spec.update({"stage_id": trigger["stage_id"], "stage_order": trigger["stage_order"],
+                        "job_order": trigger["job_order"] + 0.5})
+            spec["job_id"] = stable_job_id(campaign["campaign_id"], spec["stage_id"], spec["view_key"],
+                spec["probe_id"], spec["case"], spec["variant"], spec["repetition"])
+            if spec["job_id"] not in state["jobs"]:
+                spec["configuration_fingerprint"] = canonical_fingerprint(spec)
+                spec.update({"status": "PLANNED",
+                    "status_reason": {"code": "CLOSURE_FALLBACK_MATERIALIZED",
+                                      "details": {"closure_id": closure_id, "primary_job_id": trigger["job_id"]}},
+                    "batch_ids": [], "run_ids": [], "analysis_record_ids": [], "artifact_references": [],
+                    "execution_fingerprints": {},
+                    "provenance": {"closure_id": closure_id, "fallback_of_job_id": trigger["job_id"],
+                                   "trigger_reason_codes_matched": sorted(trigger_codes)}})
+                state["jobs"][spec["job_id"]] = spec
+            closure.update({"status": "AWAITING_FALLBACK_EXECUTION", "fallback_job_id": spec["job_id"],
+                            "candidate_job_id": spec["job_id"]})
+            _event(state, "CLOSURE_FALLBACK_MATERIALIZED", closure_id=closure_id,
+                   fallback_job_id=spec["job_id"], primary_job_id=trigger["job_id"])
+        else:
+            closure.update({"status": "RESOLVED_FAILED", "candidate_job_id": trigger["job_id"], "resolved_at": utc_now()})
+            _event(state, "CLOSURE_RESOLVED", closure_id=closure_id, status="RESOLVED_FAILED", candidate_job_id=trigger["job_id"])
+
+
 def evaluate(campaign: dict[str, Any], state: dict[str, Any]) -> None:
     """Recompute deterministic gates without regressing batched or completed work."""
+    _apply_conditional_fallbacks(campaign, state)
     key_map = {j["job_key"]: j for j in state["jobs"].values()}
     for job in sorted(state["jobs"].values(), key=lambda j: (j["stage_order"], j["job_order"])):
         # NEEDS_DIAGNOSTIC is a holding state for the failed source job.  Only
@@ -203,11 +325,27 @@ def evaluate(campaign: dict[str, Any], state: dict[str, Any]) -> None:
         deps = _dependencies(campaign, job)
         failures, waiting = [], []
         for dep in deps:
-            upstream = key_map[dep["requires_job"]]
             wanted = set(dep.get("statuses", ["PASS"]))
-            actual = {"PASSED": "PASS", "FAILED": "FAIL", "INCONCLUSIVE": "INCONCLUSIVE"}.get(upstream["status"])
+            if dep.get("requires_closure") is not None:
+                closure = state["closures"].get(dep["requires_closure"])
+                if not closure or closure["status"] in _CLOSURE_OPEN:
+                    waiting.append({"requires_closure": dep["requires_closure"],
+                                    "status": closure["status"] if closure else "PENDING"})
+                    continue
+                actual = "PASS" if closure["status"] in _CLOSURE_PASS else "FAIL"
+                if actual in wanted: continue
+                failures.append({"requires_closure": dep["requires_closure"], "actual": actual,
+                                 "wanted": sorted(wanted), "candidate_job_id": closure.get("candidate_job_id")})
+                continue
+            upstream = key_map[dep["requires_job"]]
+            # BLOCKED is a legal, explicitly-configured "concluded" outcome (e.g.
+            # "external-source investigation may proceed once the independent
+            # alignment/mutation matrix has concluded, pass or fail or blocked").
+            # It is never satisfied implicitly - only when a dependency row lists
+            # it in `statuses` does a BLOCKED upstream count as satisfying.
+            actual = {"PASSED": "PASS", "FAILED": "FAIL", "INCONCLUSIVE": "INCONCLUSIVE", "BLOCKED": "BLOCKED"}.get(upstream["status"])
             if actual in wanted: continue
-            if actual in {"FAIL", "INCONCLUSIVE"} or upstream["status"] in {"BLOCKED", "NEEDS_DIAGNOSTIC", "SKIPPED", "SUPERSEDED"}:
+            if actual in {"FAIL", "INCONCLUSIVE", "BLOCKED"} or upstream["status"] in {"NEEDS_DIAGNOSTIC", "SKIPPED", "SUPERSEDED"}:
                 failures.append({"requires_job": upstream["job_id"], "actual": actual or upstream["status"], "wanted": sorted(wanted)})
             else: waiting.append({"requires_job": upstream["job_id"], "status": upstream["status"]})
         target, reason, detail = ("BLOCKED", "DEPENDENCY_FAILED", failures) if failures else (("PLANNED", "AWAITING_DEPENDENCY", waiting) if waiting else ("ELIGIBLE", "DEPENDENCIES_SATISFIED", []))
@@ -218,13 +356,29 @@ def evaluate(campaign: dict[str, Any], state: dict[str, Any]) -> None:
     _summarize(campaign, state)
 
 
+_STAGE_SUCCESS = {"PASSED", "SKIPPED"}
+
+
+def _stage_status(jobs: list[dict[str, Any]]) -> str:
+    if not jobs: return "ACTIVE"
+    statuses = {j["status"] for j in jobs}
+    if statuses <= TERMINAL:
+        # All jobs reached a terminal state, but "COMPLETE" must never read as
+        # success unless every job actually succeeded (PASSED/SKIPPED). A
+        # stage where a job FAILED/INCONCLUSIVE/SUPERSEDED is complete-but-not-
+        # successful and must say so explicitly.
+        return "COMPLETE" if statuses <= _STAGE_SUCCESS else "COMPLETE_WITH_FAILURES"
+    if statuses <= TERMINAL | {"BLOCKED", "NEEDS_DIAGNOSTIC"}: return "BLOCKED"
+    return "ACTIVE"
+
+
 def _summarize(campaign: dict[str, Any], state: dict[str, Any]) -> None:
     for view_key in campaign["view_registry"]:
         jobs = [j for j in state["jobs"].values() if j["view_key"] == view_key]
         state["view_coverage"][view_key] = {s: sum(j["status"] == s for j in jobs) for s in STATES if any(j["status"] == s for j in jobs)}
     for stage in campaign["stages"]:
         jobs = [j for j in state["jobs"].values() if j["stage_id"] == stage["stage_id"]]
-        state["stage_status"][stage["stage_id"]] = "COMPLETE" if jobs and all(j["status"] in TERMINAL for j in jobs) else ("BLOCKED" if jobs and all(j["status"] in TERMINAL | {"BLOCKED", "NEEDS_DIAGNOSTIC"} for j in jobs) else "ACTIVE")
+        state["stage_status"][stage["stage_id"]] = _stage_status(jobs)
     state["blocked_jobs"] = {j["job_id"]: j["status_reason"] for j in state["jobs"].values() if j["status"] in {"BLOCKED", "NEEDS_DIAGNOSTIC"}}
     state["updated_at"] = utc_now()
 
@@ -291,8 +445,31 @@ def ingest_analysis(campaign: dict[str, Any], state: dict[str, Any], inputs: Ite
         acceptance = record.get("acceptance_status")
         target = {"PASS": "PASSED", "FAIL": "FAILED", "INCONCLUSIVE": "INCONCLUSIVE"}.get(acceptance)
         if not target: raise CampaignError(f"invalid acceptance_status: {acceptance}")
-        if record.get("execution_status") == "failed" or any(c in record.get("reason_codes", []) for c in ("ROLLBACK_FAILED", "RESTORATION_FAILED")): target = "FAILED"
-        transition(state, job["job_id"], target, "NORMALIZED_ACCEPTANCE", {"acceptance_status": acceptance, "reason_codes": record.get("reason_codes", [])})
+        reason_codes = record.get("reason_codes", [])
+        if record.get("execution_status") == "failed" or any(c in reason_codes for c in ("ROLLBACK_FAILED", "RESTORATION_FAILED")): target = "FAILED"
+        transition(state, job["job_id"], target, "NORMALIZED_ACCEPTANCE", {"acceptance_status": acceptance, "reason_codes": reason_codes})
+        # A gate-scoped manual review requirement: distinct from the campaign-
+        # authored manual_review_required flag, but the two can coincide on
+        # the same job (a job flagged manual_review_required that also ends
+        # up INCONCLUSIVE for MANUAL_SEMANTIC_REVIEW_REQUIRED). `setdefault`
+        # merges the gate marker into whichever requirement dict already
+        # exists rather than skipping seeding entirely when one does - a
+        # campaign-authored requirement predates this and has no "gate" key,
+        # so without merging, record_manual_review's gate check would never
+        # match and an ACCEPTED review could never transition the job out of
+        # INCONCLUSIVE, permanently stranding its dependents. It never
+        # becomes a blanket override of unrelated FAIL/INCONCLUSIVE findings
+        # on the same job (see record_manual_review). Seeded only when
+        # MANUAL_SEMANTIC_REVIEW_REQUIRED is the *sole* reason: a mixed set
+        # (e.g. alongside NO_CASES_ANALYZED) is not this gate's to resolve,
+        # and record_manual_review only ever resolves a job whose reason
+        # codes are exactly this one - seeding a requirement it could never
+        # satisfy would leave the operator with an unresolvable review.
+        if target == "INCONCLUSIVE" and set(reason_codes) == {"MANUAL_SEMANTIC_REVIEW_REQUIRED"}:
+            requirement = state["manual_review_requirements"].setdefault(
+                job["job_id"], {"status": "PENDING", "reason": "MANUAL_SEMANTIC_REVIEW_REQUIRED"})
+            requirement.setdefault("gate", "rendered_semantic_preservation")
+            requirement.setdefault("record_id", record_id)
         _event(state, "ANALYSIS_INGESTED", record_id=record_id, job_id=job["job_id"], fingerprint=digest)
     evaluate(campaign, state)
 
@@ -313,12 +490,26 @@ def generate_next_batch(campaign: dict[str, Any], state: dict[str, Any]) -> dict
         "execution_policy": {"max_jobs_per_run": defaults["batch_size"], "on_job_error": defaults.get("on_job_error", "continue"), "resume": True, "allow_rerun": False}, "jobs": []}
     for item in selected:
         view = campaign["view_registry"][item["view_key"]]
-        settings = copy.deepcopy(item["settings"]); settings["campaign_configuration_fingerprint"] = fingerprint; settings["job_configuration_fingerprint"] = item["configuration_fingerprint"]
-        batch_job = {"job_id": item["job_id"], "probe_id": item["probe_id"],
+        # NOTE: planner-owned identity fingerprints are batch-job-level metadata,
+        # never probe-facing settings. They must not ride inside `settings`,
+        # which the executor's adapter forwards almost verbatim to the probe.
+        settings = copy.deepcopy(item["settings"])
+        batch_job = {"job_id": item["job_id"], "probe_id": item["probe_id"], "variant": item["variant"],
             "view": {"unique_id": view["unique_id"], "name": view["expected_name"], "view_type": view["expected_view_type"], "crop_active": view["expected_crop_active"]},
-            "settings": settings, "output_directory": item.get("output_directory", f"raw/{item['job_id']}")}
+            "settings": settings, "output_directory": item.get("output_directory", f"raw/{item['job_id']}"),
+            "job_configuration_fingerprint": item["configuration_fingerprint"]}
         batch["jobs"].append(batch_job)
-        item["execution_fingerprints"][batch_id] = canonical_fingerprint(batch_job)
+        # Must match the executor's job_fingerprint() exactly: the same
+        # dispatch-identity fields, in the same canonical encoding. `variant`
+        # IS dispatch identity now (the adapter maps it to the probe's
+        # selection kwarg whenever `settings` doesn't already carry an
+        # explicit `selection`), so it must be included - otherwise a
+        # hand-edited/corrupted batch could change which mutations actually
+        # run while keeping the fingerprint ingestion/resume checks expect.
+        # `job_configuration_fingerprint` is batch-job metadata, not dispatch
+        # identity, and stays excluded.
+        execution_material = {key: batch_job.get(key) for key in ("job_id", "probe_id", "view", "settings", "output_directory", "variant")}
+        item["execution_fingerprints"][batch_id] = canonical_fingerprint(execution_material)
         transition(state, item["job_id"], "BATCHED", "SELECTED_FOR_BATCH", {"batch_id": batch_id}); item["batch_ids"].append(batch_id)
     state["next_recommendation"] = {"code": "RUN_BATCH_IN_REVIT", "batch_id": batch_id, "job_count": len(selected)}
     return batch
@@ -364,8 +555,22 @@ def record_manual_review(campaign: dict[str, Any], state: dict[str, Any], job_id
     _assert_binding(campaign, state)
     if job_id not in state["manual_review_requirements"]: raise CampaignError("job has no manual review requirement")
     if outcome not in {"ACCEPTED", "REJECTED"}: raise CampaignError("manual outcome must be ACCEPTED or REJECTED")
-    state["manual_review_requirements"][job_id].update({"status": outcome, "reviewer": reviewer, "reviewed_at": utc_now()})
+    requirement = state["manual_review_requirements"][job_id]
+    requirement.update({"status": outcome, "reviewer": reviewer, "reviewed_at": utc_now()})
     _event(state, "MANUAL_REVIEW_RECORDED", job_id=job_id, outcome=outcome, reviewer=reviewer)
+    # Gate-scoped reviews (seeded by ingest_analysis for MANUAL_SEMANTIC_REVIEW_REQUIRED)
+    # resolve only the job they were seeded for, and only when that specific gate
+    # was the job's sole blocking reason - never a blanket override of an
+    # unrelated FAIL/INCONCLUSIVE finding recorded on the same job.
+    if requirement.get("gate") == "rendered_semantic_preservation":
+        job = state["jobs"].get(job_id)
+        if job and job["status"] == "INCONCLUSIVE":
+            reason_codes = set(((job.get("status_reason") or {}).get("details") or {}).get("reason_codes") or [])
+            if reason_codes == {"MANUAL_SEMANTIC_REVIEW_REQUIRED"}:
+                target = "PASSED" if outcome == "ACCEPTED" else "FAILED"
+                transition(state, job_id, target, "MANUAL_REVIEW_" + outcome, {"record_id": requirement.get("record_id"), "reviewer": reviewer})
+                evaluate(campaign, state)
+                return
     _summarize(campaign, state)
 
 
@@ -388,6 +593,21 @@ def compute_next_recommendation(state: dict[str, Any]) -> dict[str, Any]:
     return {"code": "BLOCKED_BY_FAILURE"}
 
 
+def migrate_state(state: dict[str, Any]) -> dict[str, Any]:
+    """Backfill structurally-required keys added by newer planner code.
+
+    This never touches job statuses, history, run/analysis linkage, or any
+    other evidence already recorded in the state file - it only adds missing
+    containers (e.g. ``closures``, introduced for conditional Stage 1
+    mutation-closure fallbacks) so an older on-disk ``campaign_state.json``
+    keeps loading under newer planner code. Idempotent; safe to call on an
+    already-migrated state.
+    """
+    state = dict(state)
+    state.setdefault("closures", {})
+    return state
+
+
 def status_summary(campaign: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
     if (state.get("campaign_id") != campaign.get("campaign_id") or
             state.get("campaign_configuration_fingerprint") != canonical_fingerprint(campaign)):
@@ -402,7 +622,7 @@ def status_summary(campaign: dict[str, Any], state: dict[str, Any]) -> dict[str,
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="External deterministic Stage A campaign planner")
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("validate", "init", "status", "next-batch", "ingest-runs", "ingest-analysis", "diagnostic", "manual-review"):
+    for name in ("validate", "init", "migrate", "status", "next-batch", "ingest-runs", "ingest-analysis", "diagnostic", "manual-review"):
         p = sub.add_parser(name); p.add_argument("campaign")
         if name != "validate": p.add_argument("state")
         if name in {"ingest-runs", "ingest-analysis"}: p.add_argument("inputs", nargs="+")
@@ -412,16 +632,38 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv); campaign = validate_campaign(load_json(args.campaign))
     if args.command == "validate": print(json.dumps({"valid": True, "fingerprint": canonical_fingerprint(campaign)})); return 0
     if args.command == "init": atomic_write(args.state, initialize_state(campaign)); return 0
-    state = load_json(args.state)
+    if args.command == "migrate":
+        # In-place structural backfill only; never reconciles evidence against a
+        # changed campaign document. Follow with `status` to see whether the
+        # campaign itself has since drifted (CONFIGURATION_DRIFT supersedes,
+        # it never silently discards evidence already on disk).
+        atomic_write(args.state, migrate_state(load_json(args.state))); return 0
+    state = migrate_state(load_json(args.state))
     if args.command == "status": print(json.dumps(status_summary(campaign, state), indent=2, sort_keys=True)); return 0
-    if args.command == "ingest-runs": ingest_manifests(campaign, state, map(load_json, args.inputs))
-    elif args.command == "ingest-analysis": ingest_analysis(campaign, state, map(load_json, args.inputs))
-    elif args.command == "diagnostic": diagnostic_action(campaign, state, args.job_id, args.action, args.rule)
-    elif args.command == "manual-review": record_manual_review(campaign, state, args.job_id, args.outcome, args.reviewer)
-    elif args.command == "next-batch":
-        batch = generate_next_batch(campaign, state)
-        if batch: atomic_write(args.output, batch)
-        else: print(json.dumps(state["next_recommendation"]))
+    try:
+        if args.command == "ingest-runs": ingest_manifests(campaign, state, map(load_json, args.inputs))
+        elif args.command == "ingest-analysis": ingest_analysis(campaign, state, map(load_json, args.inputs))
+        elif args.command == "diagnostic": diagnostic_action(campaign, state, args.job_id, args.action, args.rule)
+        elif args.command == "manual-review": record_manual_review(campaign, state, args.job_id, args.outcome, args.reviewer)
+        elif args.command == "next-batch":
+            batch = generate_next_batch(campaign, state)
+            if batch: atomic_write(args.output, batch)
+            else: print(json.dumps(state["next_recommendation"]))
+    except ConfigurationDriftError:
+        # CONFIGURATION_DRIFT is the one CampaignError whose in-memory
+        # mutation (every job superseded, the drift event recorded) is
+        # complete and self-contained by construction - see
+        # ConfigurationDriftError's docstring - so it is the only case where
+        # persisting after an error is safe. Any other CampaignError (a
+        # malformed manifest partway through a multi-manifest ingest, an
+        # invalid analysis record, an unauthorized diagnostic request, ...)
+        # is deliberately NOT caught here: it propagates without writing
+        # anything, leaving the on-disk state exactly as it was. The
+        # operator is still told about the drift (this re-raises to a
+        # non-zero exit); nothing already applied is silently discarded
+        # either way.
+        atomic_write(args.state, state)
+        raise
     atomic_write(args.state, state); return 0
 
 

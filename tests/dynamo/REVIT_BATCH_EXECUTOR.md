@@ -18,6 +18,27 @@ manifest path, and whether another invocation is required.
 The fixed registry in `revit_probe_registry.py` contains the six PR 1 adapters.
 Each adapter calls `run_probe(raw_view=..., output_dir=..., **settings)`; there is
 no `exec`, configured import, transaction group, analyzer, or planner call.
+`stage_a_minimum_id_mutations` has its own explicit adapter (rather than the
+generic passthrough): campaign `dpi` maps to `run_probe(target_dpi=...)`,
+the campaign job's `variant` maps to `run_probe(selection=...)`, and
+`comparison_reference` (analysis-only provenance) is stripped and never
+forwarded. The same function backs `validate_settings`, so validation-only
+mode rejects unknown settings, unsupported aliases, a conflicting
+`dpi`/`target_dpi` pair, and an unknown variant/selection - without starting
+a transaction or exporting a TIFF.
+
+### `output_directory` resolution
+
+A job's `output_directory` is resolved to a canonical absolute path before
+it ever reaches an adapter or `validate_settings` - independent of whatever
+directory the Revit/Dynamo process happens to be running in. An already
+absolute path is used unchanged; a relative path resolves against an
+explicit `artifact_root` (an `execute_batch` parameter) when one is
+configured, and otherwise against the directory containing `next_batch.json`
+itself (a location that is always known, unlike the process cwd). The
+manifest records both the job's configured `output_directory` (its relative
+identity, exactly as authored) and `output_directory_resolved` (the
+canonical absolute path actually used for dispatch and artifacts).
 
 For `stage_a_transaction_group_export`, JSON settings must contain one or both of
 `element_ids` (integer Revit element IDs) and `element_unique_ids` (strings).
@@ -32,8 +53,19 @@ resolution must have exactly one match. Every supplied name, type, crop, and
 template assertion is checked even after identity resolution. Document title is
 required; configured Revit version and path are assertions.
 
-Every invocation receives its own `<manifest-root>/<run-id>/revit_run_manifest.json`,
-written through a flushed temporary file and atomic replacement. Resume reads
+Every invocation receives its own `<manifest-root>/<run-id>/revit_run_manifest.json`
+(`run_id` a fresh UUID4 hex per call unless one is explicitly supplied), written
+through a flushed temporary file and atomic replacement. **This is intentional
+run-identity behavior, not an overwrite defect**: each Dynamo invocation is a
+distinct, independently-auditable execution attempt, and its manifest must
+never be silently replaced by a later invocation's manifest even when they
+target the same batch (e.g. a retry, or a resumed run after a partial
+`execution_limit`/`stopped_after_job_error`). Resume across invocations does
+not rely on directory reuse - it walks `manifest_root` and matches on
+campaign/batch/document identity plus each job's own configuration
+fingerprint (see below), so distinct per-run-id manifest directories coexist
+correctly and every one of them remains part of the permanent evidence trail
+tying a job back to the exact Revit execution that produced it. Resume reads
 only evidence-bearing manifests with the same campaign, batch, and exact
 resolved document identity (title, path, and Revit version). Manifests without
 completed jobs, including configuration failures, do not bind resume identity.
