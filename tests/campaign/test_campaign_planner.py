@@ -177,6 +177,19 @@ def test_stage7_becomes_eligible_once_independent_matrix_concludes_even_if_block
  # s7.*.150 still correctly waits on its own .fixed sibling reaching PASS specifically.
  assert get(s,'s7.rvt_link.150')['status']=='PLANNED'
 
+def test_cli_persists_superseded_state_to_disk_on_configuration_drift(tmp_path):
+ c=compact(); s=p.initialize_state(c)
+ campaign_path=tmp_path/'campaign.json'; state_path=tmp_path/'state.json'
+ campaign_path.write_text(json.dumps(c)); state_path.write_text(json.dumps(s))
+ drifted=copy.deepcopy(c); drifted['description']='drift'
+ campaign_path.write_text(json.dumps(drifted))
+ batch_path=tmp_path/'batch.json'
+ pytest.raises(p.CampaignError,p.main,['next-batch',str(campaign_path),str(state_path),str(batch_path)])
+ assert not batch_path.exists()
+ on_disk=json.loads(state_path.read_text())
+ assert all(j['status']=='SUPERSEDED' for j in on_disk['jobs'].values())
+ assert on_disk['next_recommendation']['code']=='INVALID_CAMPAIGN_STATE'
+
 def test_end_to_end_simulated_progression_through_fallback_and_elevation_alignment():
  c=example(); s=p.initialize_state(c)
  run_batch(c,s,'s1.attached_as','FAIL',reason_codes=['MUTATION_ATTESTATION_FAILED','MUTATION_BLOCKED_BY_TEMPLATE_ONLY'])

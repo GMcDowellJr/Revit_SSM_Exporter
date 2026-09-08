@@ -181,6 +181,23 @@ def test_run_manifest_produces_one_record_per_raw_envelope(tmp_path, monkeypatch
     assert analyzed["acceptance_records"][0]["job_id"] == "j"
 
 
+def test_manifest_fan_out_preserves_comparison_reference_from_job_record(tmp_path, monkeypatch):
+    # The envelope's own requested_settings reflects only what the adapter
+    # forwarded to run_probe() (comparison_reference correctly stripped
+    # before dispatch); the outer manifest job record's requested_settings
+    # is where the executor preserves the full as-configured settings, and
+    # that is what must survive into the normalized record for provenance.
+    monkeypatch.setattr(analyzer, "Image", None)
+    raw = envelope("stage_a_minimum_id_mutations", {"variants": []},
+                   requested_settings={"selection": "attached_AS", "target_dpi": 150})
+    manifest = {"schema_version": "1.0", "campaign_id": "c", "batch_id": "b", "run_id": "r",
+                "jobs": [{"job_id": "j", "raw_result_envelope": raw,
+                          "requested_settings": {"dpi": 150, "selection": "attached_AS",
+                                                 "comparison_reference": "detached_AS"}}]}
+    analyzed, _ = run(tmp_path, manifest)
+    assert analyzed["acceptance_records"][0]["comparison_reference"] == "detached_AS"
+
+
 def test_alignment_coverage_normalizes_resolution_qualified_export_keys():
     native = {"exports": {"original.dpi_150": {"images": []},
                           "original.fixed_1600": {"images": []}}}

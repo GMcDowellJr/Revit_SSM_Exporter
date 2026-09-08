@@ -694,6 +694,17 @@ def _artifact_dimensions(analysis: dict[str, Any]) -> list[int] | None:
     return None
 
 
+def _comparison_reference(data: dict[str, Any]) -> str | None:
+    """The job's configured comparison_reference, preferring the manifest job
+    record's full as-configured settings (job_requested_settings) over the
+    envelope's requested_settings, which correctly no longer carries
+    analysis-only keys once the adapter strips them before dispatch."""
+    settings = data.get('job_requested_settings')
+    if settings is None:
+        settings = data.get('requested_settings')
+    return (settings or {}).get('comparison_reference')
+
+
 def _resolve_comparison_reference(data: dict[str, Any], native: dict[str, Any], family: str) -> dict[str, Any] | None:
     """Implement the ``comparison_reference`` resolution contract.
 
@@ -710,7 +721,7 @@ def _resolve_comparison_reference(data: dict[str, Any], native: dict[str, Any], 
     explicit via ``resolved_in_this_report: false`` rather than silently
     passing or hiding the request.
     """
-    ref = (data.get('requested_settings') or {}).get('comparison_reference')
+    ref = _comparison_reference(data)
     if not ref:
         return None
     variants = native.get('variants') or native.get('modes') or []
@@ -929,7 +940,7 @@ def _acceptance_record(json_path: Path, data: dict[str, Any], probe_id: str,
         'probe_id': probe_id, 'probe_schema_version': str(data.get('probe_schema_version') or (native.get('probe') or {}).get('version') or 'legacy'),
         'analyzer_version': ANALYZER_VERSION,
         'source_report': {'path': str(json_path), 'sha256': sha256_file(json_path)},
-        'comparison_reference': (data.get('requested_settings') or {}).get('comparison_reference'),
+        'comparison_reference': _comparison_reference(data),
         'artifact_references': artifacts,
         'analysis_status': 'ERROR' if analysis_errors else ('LIMITED' if limitations else 'COMPLETED'),
         'acceptance_status': acceptance, 'execution_status': data.get('execution_status'),
@@ -963,6 +974,13 @@ def analyze_json(json_path: Path) -> tuple[Path, str]:
             for key in ('campaign_id', 'batch_id', 'run_id'):
                 merged[key] = data.get(key)
             merged['job_id'] = job.get('job_id')
+            # The envelope's own `requested_settings` reflects only what the
+            # adapter actually forwarded to run_probe() - analysis-only keys
+            # like comparison_reference are correctly stripped from it before
+            # dispatch. The executor separately preserves the job's full
+            # as-configured settings on the outer manifest job record; that is
+            # the one that still carries comparison_reference for provenance.
+            merged['job_requested_settings'] = job.get('requested_settings')
             probe_id, family, native = _probe_identity(merged)
             limitations, analysis_errors, summary = [], [], []
             if Image is None or np is None:

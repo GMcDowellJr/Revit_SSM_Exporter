@@ -594,14 +594,23 @@ def main(argv: list[str] | None = None) -> int:
         atomic_write(args.state, migrate_state(load_json(args.state))); return 0
     state = migrate_state(load_json(args.state))
     if args.command == "status": print(json.dumps(status_summary(campaign, state), indent=2, sort_keys=True)); return 0
-    if args.command == "ingest-runs": ingest_manifests(campaign, state, map(load_json, args.inputs))
-    elif args.command == "ingest-analysis": ingest_analysis(campaign, state, map(load_json, args.inputs))
-    elif args.command == "diagnostic": diagnostic_action(campaign, state, args.job_id, args.action, args.rule)
-    elif args.command == "manual-review": record_manual_review(campaign, state, args.job_id, args.outcome, args.reviewer)
-    elif args.command == "next-batch":
-        batch = generate_next_batch(campaign, state)
-        if batch: atomic_write(args.output, batch)
-        else: print(json.dumps(state["next_recommendation"]))
+    try:
+        if args.command == "ingest-runs": ingest_manifests(campaign, state, map(load_json, args.inputs))
+        elif args.command == "ingest-analysis": ingest_analysis(campaign, state, map(load_json, args.inputs))
+        elif args.command == "diagnostic": diagnostic_action(campaign, state, args.job_id, args.action, args.rule)
+        elif args.command == "manual-review": record_manual_review(campaign, state, args.job_id, args.outcome, args.reviewer)
+        elif args.command == "next-batch":
+            batch = generate_next_batch(campaign, state)
+            if batch: atomic_write(args.output, batch)
+            else: print(json.dumps(state["next_recommendation"]))
+    except CampaignError:
+        # Even on a hard error (e.g. CONFIGURATION_DRIFT), any state mutation
+        # already applied in memory - such as superseding prior jobs and
+        # recording the drift event - must still reach disk. The operator is
+        # still told about the error (this re-raises to a non-zero exit);
+        # nothing already applied is silently discarded either way.
+        atomic_write(args.state, state)
+        raise
     atomic_write(args.state, state); return 0
 
 
