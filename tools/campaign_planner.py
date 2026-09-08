@@ -449,18 +449,27 @@ def ingest_analysis(campaign: dict[str, Any], state: dict[str, Any], inputs: Ite
         if record.get("execution_status") == "failed" or any(c in reason_codes for c in ("ROLLBACK_FAILED", "RESTORATION_FAILED")): target = "FAILED"
         transition(state, job["job_id"], target, "NORMALIZED_ACCEPTANCE", {"acceptance_status": acceptance, "reason_codes": reason_codes})
         # A gate-scoped manual review requirement: distinct from the campaign-
-        # authored manual_review_required flag. It exists only to let an
-        # authorized human review resolve *this specific* analyzer gate - it
-        # never becomes a blanket override of unrelated FAIL/INCONCLUSIVE
-        # findings on the same job (see record_manual_review). Seeded only
-        # when MANUAL_SEMANTIC_REVIEW_REQUIRED is the *sole* reason: a mixed
-        # set (e.g. alongside NO_CASES_ANALYZED) is not this gate's to
-        # resolve, and record_manual_review only ever resolves a job whose
-        # reason codes are exactly this one - seeding a requirement it could
-        # never satisfy would leave the operator with an unresolvable review.
-        if target == "INCONCLUSIVE" and set(reason_codes) == {"MANUAL_SEMANTIC_REVIEW_REQUIRED"} and job["job_id"] not in state["manual_review_requirements"]:
-            state["manual_review_requirements"][job["job_id"]] = {"status": "PENDING", "reason": "MANUAL_SEMANTIC_REVIEW_REQUIRED",
-                "gate": "rendered_semantic_preservation", "record_id": record_id}
+        # authored manual_review_required flag, but the two can coincide on
+        # the same job (a job flagged manual_review_required that also ends
+        # up INCONCLUSIVE for MANUAL_SEMANTIC_REVIEW_REQUIRED). `setdefault`
+        # merges the gate marker into whichever requirement dict already
+        # exists rather than skipping seeding entirely when one does - a
+        # campaign-authored requirement predates this and has no "gate" key,
+        # so without merging, record_manual_review's gate check would never
+        # match and an ACCEPTED review could never transition the job out of
+        # INCONCLUSIVE, permanently stranding its dependents. It never
+        # becomes a blanket override of unrelated FAIL/INCONCLUSIVE findings
+        # on the same job (see record_manual_review). Seeded only when
+        # MANUAL_SEMANTIC_REVIEW_REQUIRED is the *sole* reason: a mixed set
+        # (e.g. alongside NO_CASES_ANALYZED) is not this gate's to resolve,
+        # and record_manual_review only ever resolves a job whose reason
+        # codes are exactly this one - seeding a requirement it could never
+        # satisfy would leave the operator with an unresolvable review.
+        if target == "INCONCLUSIVE" and set(reason_codes) == {"MANUAL_SEMANTIC_REVIEW_REQUIRED"}:
+            requirement = state["manual_review_requirements"].setdefault(
+                job["job_id"], {"status": "PENDING", "reason": "MANUAL_SEMANTIC_REVIEW_REQUIRED"})
+            requirement.setdefault("gate", "rendered_semantic_preservation")
+            requirement.setdefault("record_id", record_id)
         _event(state, "ANALYSIS_INGESTED", record_id=record_id, job_id=job["job_id"], fingerprint=digest)
     evaluate(campaign, state)
 

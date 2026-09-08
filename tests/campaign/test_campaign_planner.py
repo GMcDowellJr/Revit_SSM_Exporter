@@ -169,6 +169,26 @@ def test_authorized_manual_review_resolves_only_its_configured_gate():
  assert get(s,'align')['status']=='PASSED'
  assert get(s,'mutate')['status']=='ELIGIBLE'
 
+def test_gate_metadata_merges_into_a_preexisting_campaign_authored_review():
+ # A job can be BOTH campaign-authored manual_review_required (seeded at
+ # init, no "gate" key) AND later found INCONCLUSIVE solely for
+ # MANUAL_SEMANTIC_REVIEW_REQUIRED. The gate marker must merge into the
+ # existing requirement rather than being skipped because one already
+ # exists - otherwise ACCEPTED could never transition the job out of
+ # INCONCLUSIVE.
+ c=compact(); c['stages'][0]['jobs'][0]['manual_review_required']=True; c['stages'][0]['jobs'][0]['manual_review_reason']='CONFIGURED_INSPECTION'
+ s=p.initialize_state(c)
+ requirement_before=s['manual_review_requirements'][get(s,'align')['job_id']]
+ assert requirement_before['reason']=='CONFIGURED_INSPECTION' and 'gate' not in requirement_before
+ a=run_batch(c,s,'align','INCONCLUSIVE',reason_codes=['MANUAL_SEMANTIC_REVIEW_REQUIRED'])
+ assert a['status']=='INCONCLUSIVE'
+ requirement=s['manual_review_requirements'][a['job_id']]
+ assert requirement['gate']=='rendered_semantic_preservation'
+ assert requirement['reason']=='CONFIGURED_INSPECTION'  # campaign-authored reason preserved, not clobbered
+ p.record_manual_review(c,s,a['job_id'],'ACCEPTED','operator')
+ assert get(s,'align')['status']=='PASSED'
+ assert get(s,'mutate')['status']=='ELIGIBLE'
+
 def test_manual_review_rejection_only_fails_its_gated_job():
  c=compact(); s=p.initialize_state(c); a=run_batch(c,s,'align','INCONCLUSIVE',reason_codes=['MANUAL_SEMANTIC_REVIEW_REQUIRED'])
  p.record_manual_review(c,s,a['job_id'],'REJECTED','operator')
