@@ -6,12 +6,16 @@ from tools import campaign_planner as p
 EXAMPLE = Path(__file__).parents[2] / 'examples' / 'stage_a_campaign.json'
 def example(): return json.loads(EXAMPLE.read_text())
 def compact():
- c=example(); c['campaign_id']='tiny'; c['view_registry']={'v':c['view_registry']['elevation']}; c['stages']=[{'stage_id':'one','description':'one','jobs':[{'job_key':'align','view_key':'v','probe_id':'stage_a_image_alignment','case':'a','variant':'x','repetition':1,'settings':{}}]},{'stage_id':'two','description':'two','jobs':[{'job_key':'mutate','view_key':'v','probe_id':'stage_a_minimum_id_mutations','case':'m','variant':'x','repetition':1,'settings':{}},{'job_key':'independent','view_key':'v','probe_id':'stage_a_image_alignment','case':'i','variant':'x','repetition':1,'settings':{}}]}]; c['dependencies']=[{'job':'mutate','requires_job':'align','statuses':['PASS']}]; c['execution_defaults']['batch_size']=2; return c
+ c=example(); c['campaign_id']='tiny'; c['view_registry']={'v':c['view_registry']['elevation']}; c['stages']=[{'stage_id':'one','description':'one','jobs':[{'job_key':'align','view_key':'v','probe_id':'stage_a_image_alignment','case':'a','variant':'x','repetition':1,'settings':{}}]},{'stage_id':'two','description':'two','jobs':[{'job_key':'mutate','view_key':'v','probe_id':'stage_a_minimum_id_mutations','case':'m','variant':'x','repetition':1,'settings':{}},{'job_key':'independent','view_key':'v','probe_id':'stage_a_image_alignment','case':'i','variant':'x','repetition':1,'settings':{}}]}]; c['dependencies']=[{'job':'mutate','requires_job':'align','statuses':['PASS']}]; c['conditional_fallbacks']=[]; c['execution_defaults']['batch_size']=2; return c
 def get(state,key): return next(x for x in state['jobs'].values() if x['job_key']==key)
 def manifest(state, job, status='completed', run='r1'):
  bid=job['batch_ids'][-1]; return {'schema_version':'1.0','campaign_id':state['campaign_id'],'batch_id':bid,'run_id':run,'document_identity':{},'environment':{},'batch_source':'batch.json','started_at':'x','completed_at':'y','execution_status':'completed','jobs':[{'job_id':job['job_id'],'configuration_fingerprint':job['execution_fingerprints'][bid],'execution_status':status,'raw_result_envelope':{'artifact_paths':['raw.tif']}}],'jobs_not_attempted':[]}
-def analysis(state,job,status='PASS',run='r1'):
- return {'analysis_schema_version':'1.0','campaign_id':state['campaign_id'],'batch_id':job['batch_ids'][-1],'run_id':run,'job_id':job['job_id'],'probe_id':job['probe_id'],'analyzer_version':'x','source_report':{'path':'raw.json','sha256':'a'},'artifact_references':['raw.tif'],'acceptance_status':status,'execution_status':'completed','reason_codes':[]}
+def analysis(state,job,status='PASS',run='r1',reason_codes=None):
+ return {'analysis_schema_version':'1.0','campaign_id':state['campaign_id'],'batch_id':job['batch_ids'][-1],'run_id':run,'job_id':job['job_id'],'probe_id':job['probe_id'],'analyzer_version':'x','source_report':{'path':'raw.json','sha256':'a'},'artifact_references':['raw.tif'],'acceptance_status':status,'execution_status':'completed','reason_codes':reason_codes or []}
+def run_batch(c,s,job_key,status='PASS',reason_codes=None,run=None):
+ """Generate the next batch, execute+analyze exactly the named job, return it."""
+ p.generate_next_batch(c,s); j=get(s,job_key); run=run or j['job_id']
+ p.ingest_manifests(c,s,[manifest(s,j,run=run)]); p.ingest_analysis(c,s,[analysis(s,j,status,run=run,reason_codes=reason_codes)]); return j
 
 def test_schema_validation_ids_fingerprints_and_drafting_rejection():
  c=example(); assert p.validate_campaign(c); assert p.canonical_fingerprint(c)==p.canonical_fingerprint(copy.deepcopy(c)); c2=copy.deepcopy(c); c2['description']='changed'; assert p.canonical_fingerprint(c)!=p.canonical_fingerprint(c2)
@@ -53,3 +57,131 @@ def test_status_recomputes_stale_recommendation_without_scheduling():
  c=compact(); s=p.initialize_state(c); p.generate_next_batch(c,s); a=get(s,'align'); p.ingest_manifests(c,s,[manifest(s,a)]); p.ingest_analysis(c,s,[analysis(s,a)]); assert s['next_recommendation']['code']=='RUN_BATCH_IN_REVIT'; before=copy.deepcopy(s['jobs']); summary=p.status_summary(c,s); assert summary['next_recommendation']['code']=='GENERATE_NEXT_BATCH'; assert summary['next_recommendation']['eligible_job_count']==1; assert s['jobs']==before
 def test_no_revit_import_or_probe_execution():
  source=Path(p.__file__).read_text(); assert 'Autodesk.Revit' not in source and 'revit_probe_registry' not in source and 'run_probe(' not in source
+
+# --- Stage 1 mutation-closure conditional fallback, and real example-campaign shape ---
+
+def test_initial_campaign_produces_only_stage1_batch():
+ c=example(); s=p.initialize_state(c)
+ eligible=[j['job_key'] for j in s['jobs'].values() if j['status']=='ELIGIBLE']
+ assert eligible==['s1.attached_as']
+ b=p.generate_next_batch(c,s); assert len(b['jobs'])==1 and b['jobs'][0]['job_id']==get(s,'s1.attached_as')['job_id']
+
+def test_batch_settings_are_separate_from_planner_fingerprints():
+ c=example(); s=p.initialize_state(c); b=p.generate_next_batch(c,s); job=b['jobs'][0]
+ assert 'campaign_configuration_fingerprint' not in job['settings'] and 'job_configuration_fingerprint' not in job['settings']
+ assert job['job_configuration_fingerprint']==get(s,'s1.attached_as')['configuration_fingerprint']
+ assert job['variant']=='attached_AS'
+ assert set(job['settings'])=={'dpi','comparison_reference'}
+
+def test_attached_as_fully_attested_and_accepted_unlocks_stage2():
+ c=example(); s=p.initialize_state(c); run_batch(c,s,'s1.attached_as','PASS')
+ closure=s['closures']['elevation_mutation_closure']
+ assert closure['status']=='RESOLVED_PRIMARY' and closure['candidate_job_id']==get(s,'s1.attached_as')['job_id']
+ assert all(get(s,k)['status']=='ELIGIBLE' for k in ('s2.align.r1','s2.align.r2'))
+ assert not any(j['job_key']=='s1.detached_as' for j in s['jobs'].values())
+
+def test_attached_as_blocked_by_template_schedules_detached_as_fallback():
+ c=example(); s=p.initialize_state(c)
+ run_batch(c,s,'s1.attached_as','FAIL',reason_codes=['MUTATION_ATTESTATION_FAILED','MUTATION_BLOCKED_BY_TEMPLATE_ONLY'])
+ assert get(s,'s1.attached_as')['status']=='FAILED'
+ closure=s['closures']['elevation_mutation_closure']
+ assert closure['status']=='AWAITING_FALLBACK_EXECUTION'
+ fb=next(j for j in s['jobs'].values() if j['job_key']=='s1.detached_as')
+ assert fb['status']=='ELIGIBLE' and fb['variant']=='detached_AS'
+ assert fb['provenance']=={'closure_id':'elevation_mutation_closure','fallback_of_job_id':get(s,'s1.attached_as')['job_id'],'trigger_reason_codes_matched':['MUTATION_BLOCKED_BY_TEMPLATE_ONLY']}
+ assert all(get(s,k)['status']=='PLANNED' for k in ('s2.align.r1','s2.align.r2'))
+ assert s['stage_status']['01_mutation_closure']=='ACTIVE'
+
+def test_unrelated_attached_as_failure_does_not_schedule_fallback():
+ c=example(); s=p.initialize_state(c)
+ run_batch(c,s,'s1.attached_as','FAIL',reason_codes=['MUTATION_ATTESTATION_FAILED'])
+ assert get(s,'s1.attached_as')['status']=='FAILED'
+ closure=s['closures']['elevation_mutation_closure']; assert closure['status']=='RESOLVED_FAILED'
+ assert not any(j['job_key']=='s1.detached_as' for j in s['jobs'].values())
+ assert all(get(s,k)['status']=='BLOCKED' for k in ('s2.align.r1','s2.align.r2'))
+
+def test_detached_as_execution_and_analysis_resolve_closure_deterministically():
+ for outcome,expected in (('PASS','RESOLVED_FALLBACK_PASS'),('FAIL','RESOLVED_FALLBACK_FAILED')):
+  c=example(); s=p.initialize_state(c)
+  run_batch(c,s,'s1.attached_as','FAIL',reason_codes=['MUTATION_ATTESTATION_FAILED','MUTATION_BLOCKED_BY_TEMPLATE_ONLY'])
+  fb=next(j for j in s['jobs'].values() if j['job_key']=='s1.detached_as')
+  run_batch(c,s,'s1.detached_as',outcome)
+  closure=s['closures']['elevation_mutation_closure']; assert closure['status']==expected and closure['candidate_job_id']==fb['job_id']
+  wants_open=(outcome=='FAIL')
+  assert all((get(s,k)['status']=='BLOCKED')==wants_open for k in ('s2.align.r1','s2.align.r2'))
+  assert all((get(s,k)['status']=='ELIGIBLE')==(not wants_open) for k in ('s2.align.r1','s2.align.r2'))
+
+def test_stage2_cannot_run_before_closure_resolved():
+ c=example(); s=p.initialize_state(c)
+ run_batch(c,s,'s1.attached_as','FAIL',reason_codes=['MUTATION_ATTESTATION_FAILED','MUTATION_BLOCKED_BY_TEMPLATE_ONLY'])
+ b=p.generate_next_batch(c,s)
+ assert all(j['job_id']!=get(s,'s2.align.r1')['job_id'] for j in b['jobs'])
+
+def test_stage_status_never_reads_complete_when_a_job_failed():
+ c=example(); s=p.initialize_state(c)
+ run_batch(c,s,'s1.attached_as','FAIL',reason_codes=['MUTATION_ATTESTATION_FAILED'])
+ assert s['stage_status']['01_mutation_closure']=='COMPLETE_WITH_FAILURES'
+
+def test_existing_failed_stage1_state_migrates_and_resupersedes_on_campaign_change():
+ # Simulates the supplied evidence: an old state file (pre-conditional_fallbacks)
+ # with a FAILED attached_AS job, migrated forward, then re-bound to the
+ # corrected campaign. Evidence (run_ids/analysis_record_ids/history) survives
+ # on the superseded job; nothing is silently discarded.
+ old_campaign=example(); old_campaign['conditional_fallbacks']=[]
+ for dep in old_campaign['dependencies']:
+  if dep['job'] in ('s2.align.r1','s2.align.r2'): dep.pop('requires_closure',None); dep['requires_job']='s1.attached_as'
+ s=p.initialize_state(old_campaign)
+ attached=run_batch(old_campaign,s,'s1.attached_as','FAIL',reason_codes=['MUTATION_ATTESTATION_FAILED','MUTATION_BLOCKED_BY_TEMPLATE_ONLY'])
+ assert attached['status']=='FAILED' and attached['run_ids'] and attached['analysis_record_ids']
+ migrated=p.migrate_state(json.loads(json.dumps(s))); assert migrated['closures']=={}
+ new_campaign=example()
+ pytest.raises(p.CampaignError,p.generate_next_batch,new_campaign,migrated)
+ assert migrated['jobs'][attached['job_id']]['status']=='SUPERSEDED'
+ assert migrated['jobs'][attached['job_id']]['run_ids']==attached['run_ids']
+ assert migrated['jobs'][attached['job_id']]['analysis_record_ids']==attached['analysis_record_ids']
+ assert any(e['kind']=='CONFIGURATION_DRIFT' or e.get('reason_code')=='CONFIGURATION_DRIFT' for e in migrated['history'])
+
+def test_authorized_manual_review_resolves_only_its_configured_gate():
+ c=compact(); s=p.initialize_state(c); a=run_batch(c,s,'align','INCONCLUSIVE',reason_codes=['MANUAL_SEMANTIC_REVIEW_REQUIRED'])
+ assert a['status']=='INCONCLUSIVE'
+ requirement=s['manual_review_requirements'][a['job_id']]; assert requirement['gate']=='rendered_semantic_preservation'
+ p.record_manual_review(c,s,a['job_id'],'ACCEPTED','operator')
+ assert get(s,'align')['status']=='PASSED'
+ assert get(s,'mutate')['status']=='ELIGIBLE'
+
+def test_manual_review_rejection_only_fails_its_gated_job():
+ c=compact(); s=p.initialize_state(c); a=run_batch(c,s,'align','INCONCLUSIVE',reason_codes=['MANUAL_SEMANTIC_REVIEW_REQUIRED'])
+ p.record_manual_review(c,s,a['job_id'],'REJECTED','operator')
+ assert get(s,'align')['status']=='FAILED' and get(s,'mutate')['status']=='BLOCKED'
+
+def test_manual_review_never_overrides_an_unrelated_failure_reason():
+ c=compact(); s=p.initialize_state(c); a=run_batch(c,s,'align','FAIL',reason_codes=['MANUAL_SEMANTIC_REVIEW_REQUIRED','MUTATION_ATTESTATION_FAILED'])
+ assert a['status']=='FAILED'  # a real automated failure code alongside the manual-review code, so it never became gate-scoped-only INCONCLUSIVE
+ assert a['job_id'] not in s['manual_review_requirements']
+
+def test_stage7_cannot_become_eligible_while_stage6_still_open():
+ c=example(); s=p.initialize_state(c)
+ eligible=[j['job_key'] for j in s['jobs'].values() if j['status']=='ELIGIBLE']
+ assert not any(k.startswith('s7.') for k in eligible)
+
+def test_stage7_becomes_eligible_once_independent_matrix_concludes_even_if_blocked():
+ # A legitimate, explicitly-configured "concluded" cascade (Stage 1 fails for
+ # an unrelated reason, cascading BLOCKED through Stages 2-6) still lets
+ # Stage 7's external-source jobs proceed, because their dependency rows
+ # explicitly list BLOCKED as an acceptable upstream outcome.
+ c=example(); s=p.initialize_state(c)
+ run_batch(c,s,'s1.attached_as','FAIL',reason_codes=['MUTATION_ATTESTATION_FAILED'])
+ for stage_id in ('02_elevation_alignment','03_elevation_linework','04_alignment_matrix','05_reduced_mutation','06_linework_validation'):
+  assert s['stage_status'][stage_id]=='BLOCKED', stage_id
+ assert get(s,'s7.rvt_link.fixed')['status']=='ELIGIBLE' and get(s,'s7.dwg.fixed')['status']=='ELIGIBLE'
+ # s7.*.150 still correctly waits on its own .fixed sibling reaching PASS specifically.
+ assert get(s,'s7.rvt_link.150')['status']=='PLANNED'
+
+def test_end_to_end_simulated_progression_through_fallback_and_elevation_alignment():
+ c=example(); s=p.initialize_state(c)
+ run_batch(c,s,'s1.attached_as','FAIL',reason_codes=['MUTATION_ATTESTATION_FAILED','MUTATION_BLOCKED_BY_TEMPLATE_ONLY'])
+ assert any(j['job_key']=='s1.detached_as' for j in s['jobs'].values())
+ run_batch(c,s,'s1.detached_as','PASS')
+ assert s['closures']['elevation_mutation_closure']['status']=='RESOLVED_FALLBACK_PASS'
+ b=p.generate_next_batch(c,s)
+ assert {j['job_id'] for j in b['jobs']}=={get(s,'s2.align.r1')['job_id'],get(s,'s2.align.r2')['job_id']}

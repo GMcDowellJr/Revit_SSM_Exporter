@@ -412,7 +412,7 @@
           "view_key": "floor_active",
           "probe_id": "stage_a_minimum_id_mutations",
           "case": "reduced",
-          "variant": "attached_element_overrides",
+          "variant": "attached_element_overrides_only",
           "repetition": 1,
           "settings": {
             "dpi": 150
@@ -445,7 +445,7 @@
           "view_key": "floor_inactive",
           "probe_id": "stage_a_minimum_id_mutations",
           "case": "reduced",
-          "variant": "attached_element_overrides",
+          "variant": "attached_element_overrides_only",
           "repetition": 1,
           "settings": {
             "dpi": 150
@@ -478,7 +478,7 @@
           "view_key": "rcp",
           "probe_id": "stage_a_minimum_id_mutations",
           "case": "reduced",
-          "variant": "attached_element_overrides",
+          "variant": "attached_element_overrides_only",
           "repetition": 1,
           "settings": {
             "dpi": 150
@@ -511,7 +511,7 @@
           "view_key": "section",
           "probe_id": "stage_a_minimum_id_mutations",
           "case": "reduced",
-          "variant": "attached_element_overrides",
+          "variant": "attached_element_overrides_only",
           "repetition": 1,
           "settings": {
             "dpi": 150
@@ -544,7 +544,7 @@
           "view_key": "callout",
           "probe_id": "stage_a_minimum_id_mutations",
           "case": "reduced",
-          "variant": "attached_element_overrides",
+          "variant": "attached_element_overrides_only",
           "repetition": 1,
           "settings": {
             "dpi": 150
@@ -719,14 +719,14 @@
   "dependencies": [
     {
       "job": "s2.align.r1",
-      "requires_job": "s1.attached_as",
+      "requires_closure": "elevation_mutation_closure",
       "statuses": [
         "PASS"
       ]
     },
     {
       "job": "s2.align.r2",
-      "requires_job": "s1.attached_as",
+      "requires_closure": "elevation_mutation_closure",
       "statuses": [
         "PASS"
       ]
@@ -748,6 +748,321 @@
     {
       "job": "s3.line.300",
       "requires_job": "s2.align.r2",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.floor_active.fixed",
+      "requires_job": "s3.line.75",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.floor_active.fixed",
+      "requires_job": "s3.line.150",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.floor_active.fixed",
+      "requires_job": "s3.line.300",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.floor_active.150.r1",
+      "requires_job": "s3.line.75",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.floor_active.150.r1",
+      "requires_job": "s3.line.150",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.floor_active.150.r1",
+      "requires_job": "s3.line.300",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.floor_active.150.r2",
+      "requires_job": "s3.line.75",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.floor_active.150.r2",
+      "requires_job": "s3.line.150",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.floor_active.150.r2",
+      "requires_job": "s3.line.300",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.floor_inactive.fixed",
+      "requires_job": "s3.line.75",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.floor_inactive.fixed",
+      "requires_job": "s3.line.150",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.floor_inactive.fixed",
+      "requires_job": "s3.line.300",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.floor_inactive.150.r1",
+      "requires_job": "s3.line.75",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.floor_inactive.150.r1",
+      "requires_job": "s3.line.150",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.floor_inactive.150.r1",
+      "requires_job": "s3.line.300",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.floor_inactive.150.r2",
+      "requires_job": "s3.line.75",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.floor_inactive.150.r2",
+      "requires_job": "s3.line.150",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.floor_inactive.150.r2",
+      "requires_job": "s3.line.300",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.rcp.fixed",
+      "requires_job": "s3.line.75",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.rcp.fixed",
+      "requires_job": "s3.line.150",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.rcp.fixed",
+      "requires_job": "s3.line.300",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.rcp.150.r1",
+      "requires_job": "s3.line.75",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.rcp.150.r1",
+      "requires_job": "s3.line.150",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.rcp.150.r1",
+      "requires_job": "s3.line.300",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.rcp.150.r2",
+      "requires_job": "s3.line.75",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.rcp.150.r2",
+      "requires_job": "s3.line.150",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.rcp.150.r2",
+      "requires_job": "s3.line.300",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.section.fixed",
+      "requires_job": "s3.line.75",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.section.fixed",
+      "requires_job": "s3.line.150",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.section.fixed",
+      "requires_job": "s3.line.300",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.section.150.r1",
+      "requires_job": "s3.line.75",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.section.150.r1",
+      "requires_job": "s3.line.150",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.section.150.r1",
+      "requires_job": "s3.line.300",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.section.150.r2",
+      "requires_job": "s3.line.75",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.section.150.r2",
+      "requires_job": "s3.line.150",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.section.150.r2",
+      "requires_job": "s3.line.300",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.callout.fixed",
+      "requires_job": "s3.line.75",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.callout.fixed",
+      "requires_job": "s3.line.150",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.callout.fixed",
+      "requires_job": "s3.line.300",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.callout.150.r1",
+      "requires_job": "s3.line.75",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.callout.150.r1",
+      "requires_job": "s3.line.150",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.callout.150.r1",
+      "requires_job": "s3.line.300",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.callout.150.r2",
+      "requires_job": "s3.line.75",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.callout.150.r2",
+      "requires_job": "s3.line.150",
+      "statuses": [
+        "PASS"
+      ]
+    },
+    {
+      "job": "s4.callout.150.r2",
+      "requires_job": "s3.line.300",
       "statuses": [
         "PASS"
       ]
@@ -928,6 +1243,106 @@
       ]
     },
     {
+      "job": "s7.rvt_link.fixed",
+      "requires_job": "s6.floor_active.line",
+      "statuses": [
+        "PASS",
+        "FAIL",
+        "INCONCLUSIVE",
+        "BLOCKED"
+      ]
+    },
+    {
+      "job": "s7.rvt_link.fixed",
+      "requires_job": "s6.floor_inactive.line",
+      "statuses": [
+        "PASS",
+        "FAIL",
+        "INCONCLUSIVE",
+        "BLOCKED"
+      ]
+    },
+    {
+      "job": "s7.rvt_link.fixed",
+      "requires_job": "s6.rcp.line",
+      "statuses": [
+        "PASS",
+        "FAIL",
+        "INCONCLUSIVE",
+        "BLOCKED"
+      ]
+    },
+    {
+      "job": "s7.rvt_link.fixed",
+      "requires_job": "s6.section.line",
+      "statuses": [
+        "PASS",
+        "FAIL",
+        "INCONCLUSIVE",
+        "BLOCKED"
+      ]
+    },
+    {
+      "job": "s7.rvt_link.fixed",
+      "requires_job": "s6.callout.line",
+      "statuses": [
+        "PASS",
+        "FAIL",
+        "INCONCLUSIVE",
+        "BLOCKED"
+      ]
+    },
+    {
+      "job": "s7.dwg.fixed",
+      "requires_job": "s6.floor_active.line",
+      "statuses": [
+        "PASS",
+        "FAIL",
+        "INCONCLUSIVE",
+        "BLOCKED"
+      ]
+    },
+    {
+      "job": "s7.dwg.fixed",
+      "requires_job": "s6.floor_inactive.line",
+      "statuses": [
+        "PASS",
+        "FAIL",
+        "INCONCLUSIVE",
+        "BLOCKED"
+      ]
+    },
+    {
+      "job": "s7.dwg.fixed",
+      "requires_job": "s6.rcp.line",
+      "statuses": [
+        "PASS",
+        "FAIL",
+        "INCONCLUSIVE",
+        "BLOCKED"
+      ]
+    },
+    {
+      "job": "s7.dwg.fixed",
+      "requires_job": "s6.section.line",
+      "statuses": [
+        "PASS",
+        "FAIL",
+        "INCONCLUSIVE",
+        "BLOCKED"
+      ]
+    },
+    {
+      "job": "s7.dwg.fixed",
+      "requires_job": "s6.callout.line",
+      "statuses": [
+        "PASS",
+        "FAIL",
+        "INCONCLUSIVE",
+        "BLOCKED"
+      ]
+    },
+    {
       "job": "s7.rvt_link.150",
       "requires_job": "s7.rvt_link.fixed",
       "statuses": [
@@ -966,6 +1381,27 @@
     {
       "rule_id": "fixed_1600",
       "description": "Optional fixed-1600 alignment diagnostic when evidence is absent"
+    }
+  ],
+  "conditional_fallbacks": [
+    {
+      "fallback_id": "elevation_mutation_closure",
+      "description": "Deterministic Stage 1 mutation closure: attached_AS blocked specifically by a read-only view template (not an unrelated mutation failure) schedules detached_AS as the fallback candidate. Any other attached_AS outcome (PASS, or FAIL/INCONCLUSIVE for an unrelated reason) resolves the closure directly on attached_AS and never fabricates a pass or auto-schedules detached_AS.",
+      "trigger_job": "s1.attached_as",
+      "trigger_reason_codes": [
+        "MUTATION_BLOCKED_BY_TEMPLATE_ONLY"
+      ],
+      "fallback_job": {
+        "job_key": "s1.detached_as",
+        "view_key": "elevation",
+        "probe_id": "stage_a_minimum_id_mutations",
+        "case": "closure_fallback",
+        "variant": "detached_AS",
+        "repetition": 1,
+        "settings": {
+          "dpi": 150
+        }
+      }
     }
   ]
 }

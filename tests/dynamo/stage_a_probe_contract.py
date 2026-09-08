@@ -37,6 +37,36 @@ def select_named(selection, supported, label="selection"):
     return result
 
 
+def _view_type_name(view):
+    """Return a stable Revit ViewType member name, never a bare ordinal.
+
+    Some Dynamo/IronPython interop paths stringify ``View.ViewType`` as a
+    number (e.g. ``"1"``) instead of its enum member name (e.g.
+    ``"FloorPlan"``); every probe envelope's resolved view identity must
+    report the stable name, not the raw ordinal.
+    """
+    value = getattr(view, "ViewType", None)
+    if value is None:
+        return None
+    text = str(value)
+    if not text.lstrip("-").isdigit():
+        return text
+    try:
+        from Autodesk.Revit.DB import ViewType as _ViewType  # noqa: local import, Revit-only
+        for name in dir(_ViewType):
+            if name.startswith("_"):
+                continue
+            member = getattr(_ViewType, name, None)
+            try:
+                if member is not None and str(int(member)) == text:
+                    return name
+            except (TypeError, ValueError):
+                continue
+    except Exception:
+        pass
+    return text
+
+
 def view_identity(view):
     view = getattr(view, "InternalElement", view)
     element_id = getattr(view, "Id", None)
@@ -45,7 +75,7 @@ def view_identity(view):
         integer_id = int(integer_id)
     except (TypeError, ValueError):
         integer_id = None
-    return {"id": integer_id, "name": getattr(view, "Name", None), "type": str(getattr(view, "ViewType", None))}
+    return {"id": integer_id, "name": getattr(view, "Name", None), "type": _view_type_name(view)}
 
 
 def execution_envelope(probe_id, requested_settings, resolved_view_identity,

@@ -166,6 +166,25 @@ def _mutation_ok(variant: dict[str, Any]) -> bool:
     return all((statuses.get(mid) or {}).get('status') in ('APPLIED', 'ALREADY_MATCHED') for mid in requested)
 
 
+def _mutation_failure_detail(variant: dict[str, Any]) -> dict[str, list[str]]:
+    """Split a variant's not-applied requested mutations into template-control
+    blockages vs everything else, so a probe-reported BLOCKED_BY_TEMPLATE
+    status is distinguishable, with machine-readable evidence, from an
+    unrelated mutation failure (FAILED/UNSUPPORTED/missing)."""
+    requested = sorted(variant.get('requested_mutations') or [])
+    statuses = variant.get('mutations') or {}
+    blocked_by_template, other = [], []
+    for mid in requested:
+        m = statuses.get(mid) or {}
+        if m.get('status') in ('APPLIED', 'ALREADY_MATCHED'):
+            continue
+        if m.get('status') == 'BLOCKED_BY_TEMPLATE' or m.get('template_controlled') is True:
+            blocked_by_template.append(mid)
+        else:
+            other.append(mid)
+    return {'blocked_by_template': blocked_by_template, 'other_failed': other}
+
+
 def _variant_clean(variant: dict[str, Any]) -> bool:
     ia = variant.get('image_analysis') or {}
     status = ia.get('analysis_status') or ia.get('status')
@@ -675,8 +694,54 @@ def _artifact_dimensions(analysis: dict[str, Any]) -> list[int] | None:
     return None
 
 
+def _resolve_comparison_reference(data: dict[str, Any], native: dict[str, Any], family: str) -> dict[str, Any] | None:
+    """Implement the ``comparison_reference`` resolution contract.
+
+    ``comparison_reference`` names another variant/mode (e.g. ``detached_AS``)
+    this job's result should be compared against. It must never be inert
+    metadata: this looks for matching, complete evidence *within this same
+    probe report* and reports an explicit resolved/not-resolved outcome with
+    provenance. When the reference lives in a different job's report (as for
+    the Stage 1 attached_AS -> detached_AS mutation closure, which runs as two
+    separate probe invocations), in-report resolution correctly cannot
+    succeed; that cross-job resolution is instead a deterministic
+    campaign-level closure decision (see campaign_planner.py
+    conditional_fallbacks/closures) - a separation the acceptance record makes
+    explicit via ``resolved_in_this_report: false`` rather than silently
+    passing or hiding the request.
+    """
+    ref = (data.get('requested_settings') or {}).get('comparison_reference')
+    if not ref:
+        return None
+    variants = native.get('variants') or native.get('modes') or []
+    key = 'mode' if family == 'model_linework' else 'variant'
+    match = next((v for v in variants if v.get(key) == ref), None)
+    if match is None:
+        # Not resolvable from this report alone is expected when the
+        # reference is a separate, not-yet-run job (e.g. Stage 1's
+        # attached_AS -> detached_AS fallback). That is a campaign-level
+        # closure decision, not evidence this job's own acceptance should be
+        # gated on - so it is reported for provenance/visibility only and
+        # deliberately excluded from the PASS/FAIL/INCONCLUSIVE rollup.
+        return _check('comparison_reference_resolution', 'NOT_APPLICABLE', [],
+                       {'requested_reference': ref, 'resolved_in_this_report': False,
+                        'note': 'cross-job resolution, if configured, is a campaign-level closure decision'})
+    ia = match.get('image_analysis') or {}
+    dims = _artifact_dimensions(ia)
+    attested = family != 'minimum_id_mutations' or _mutation_ok(match)
+    provenance = {'requested_reference': ref, 'resolved_in_this_report': True,
+                  'reference_artifact_path': ia.get('path'),
+                  'reference_artifact_sha256': ia.get('sha256') or ia.get('pixel_data_sha256')}
+    if not (dims and attested):
+        return _check('comparison_reference_resolution', 'INCONCLUSIVE', ['COMPARISON_REFERENCE_EVIDENCE_INCOMPLETE'], provenance)
+    return _check('comparison_reference_resolution', 'PASS', [], provenance)
+
+
 def _family_checks(data: dict[str, Any], native: dict[str, Any], family: str) -> list[dict[str, Any]]:
     checks = []
+    reference_check = _resolve_comparison_reference(data, native, family)
+    if reference_check is not None:
+        checks.append(reference_check)
     if family == 'image_alignment':
         checks.append(_alignment_coverage(data, native))
     else:
@@ -689,22 +754,31 @@ def _family_checks(data: dict[str, Any], native: dict[str, Any], family: str) ->
 
     if family in ('minimum_id_mutations', 'external_sources', 'graphics_semantics'):
         variants = native.get('variants') or []
-        failed_attestation, missing_tiffs, dimension_mismatch, contaminated = [], [], [], []
+        failed_attestation, blocked_by_template_only, missing_tiffs, dimension_mismatch, contaminated, evaluated = [], [], [], [], [], []
+        attestation_detail = []
         for variant in variants:
             if variant.get('skipped'):
                 continue
             name = variant.get('variant')
-            if family == 'minimum_id_mutations' and not _mutation_ok(variant):
+            attestation_failed = (family == 'minimum_id_mutations' and not _mutation_ok(variant)) or variant.get('mutation_attestation_passed') is False
+            if attestation_failed:
                 failed_attestation.append(name)
-                continue
-            if variant.get('mutation_attestation_passed') is False:
-                failed_attestation.append(name)
+                if family == 'minimum_id_mutations':
+                    detail = _mutation_failure_detail(variant)
+                    attestation_detail.append({'variant': name, **detail})
+                    if detail['blocked_by_template'] and not detail['other_failed']:
+                        blocked_by_template_only.append(name)
+                # A TIFF was, by probe design, never exported/compared for a
+                # variant whose mutation attestation failed - it is not
+                # evidence of a missing/bad TIFF, so it must not be folded
+                # into required_tiffs/dimensions/palette_fidelity below.
                 continue
             ia = variant.get('image_analysis') or {}
             dims = _artifact_dimensions(ia)
             if not dims:
                 missing_tiffs.append(name)
                 continue
+            evaluated.append(name)
             resolution = variant.get('resolution') or (variant.get('export') or {}).get('resolution') or {}
             required_w = resolution.get('accepted_width_px') or resolution.get('requested_width_px')
             required_h = resolution.get('predicted_height_px')
@@ -712,13 +786,32 @@ def _family_checks(data: dict[str, Any], native: dict[str, Any], family: str) ->
                 dimension_mismatch.append({'case': name, 'required': [required_w, required_h], 'actual': dims})
             if ia.get('off_palette_foreground_pixel_count', ia.get('off_palette_foreground_pixels', 0)) not in (None, 0):
                 contaminated.append(name)
+        attestation_reasons = []
+        if failed_attestation:
+            attestation_reasons.append('MUTATION_ATTESTATION_FAILED')
+            # A clean template-control blockage (every unmet mutation on that
+            # variant is BLOCKED_BY_TEMPLATE, none failed for an unrelated
+            # reason) gets its own reason code so a planner can branch on it
+            # deterministically without mistaking a confounded/unrelated
+            # failure for a pure template block.
+            if blocked_by_template_only and len(blocked_by_template_only) == len(failed_attestation):
+                attestation_reasons.append('MUTATION_BLOCKED_BY_TEMPLATE_ONLY')
         checks.append(_check('mutation_attestation', 'FAIL' if failed_attestation else ('PASS' if variants else 'INCONCLUSIVE'),
-                             ['MUTATION_ATTESTATION_FAILED'] if failed_attestation else [], failed_attestation))
-        checks.append(_check('required_tiffs', 'INCONCLUSIVE' if missing_tiffs else ('PASS' if variants else 'INCONCLUSIVE'),
-                             ['REQUIRED_TIFF_MISSING'] if missing_tiffs else [], missing_tiffs))
-        checks.append(_check('dimensions', 'FAIL' if dimension_mismatch else ('PASS' if variants and not missing_tiffs else 'INCONCLUSIVE'),
+                             attestation_reasons, {'failed_variants': failed_attestation, 'detail': attestation_detail} if attestation_detail else failed_attestation))
+        # TIFF-dependent checks are scoped to `evaluated` variants only: a
+        # variant excluded because its mutation attestation failed (the TIFF
+        # was intentionally never exported/compared) must read as
+        # NOT_APPLICABLE, never as a vacuous PASS on empty evidence.
+        no_real_evidence = bool(failed_attestation) and not evaluated and not missing_tiffs
+        checks.append(_check('required_tiffs',
+                             'NOT_APPLICABLE' if no_real_evidence else ('INCONCLUSIVE' if missing_tiffs else ('PASS' if evaluated else 'INCONCLUSIVE')),
+                             ['REQUIRED_TIFF_MISSING'] if missing_tiffs else [],
+                             {'missing': missing_tiffs, 'not_applicable_attestation_failed': failed_attestation}))
+        checks.append(_check('dimensions',
+                             'FAIL' if dimension_mismatch else ('NOT_APPLICABLE' if no_real_evidence else ('PASS' if evaluated else 'INCONCLUSIVE')),
                              ['DIMENSION_MISMATCH'] if dimension_mismatch else [], dimension_mismatch))
-        checks.append(_check('palette_fidelity', 'FAIL' if contaminated else ('PASS' if variants and not missing_tiffs else 'INCONCLUSIVE'),
+        checks.append(_check('palette_fidelity',
+                             'FAIL' if contaminated else ('NOT_APPLICABLE' if no_real_evidence else ('PASS' if evaluated else 'INCONCLUSIVE')),
                              ['OFF_PALETTE_CONTAMINATION'] if contaminated else [], contaminated))
         # A color raster cannot, by itself, prove preservation of Revit visibility semantics.
         semantic = native.get('rendered_semantic_preservation') or {}
@@ -836,6 +929,7 @@ def _acceptance_record(json_path: Path, data: dict[str, Any], probe_id: str,
         'probe_id': probe_id, 'probe_schema_version': str(data.get('probe_schema_version') or (native.get('probe') or {}).get('version') or 'legacy'),
         'analyzer_version': ANALYZER_VERSION,
         'source_report': {'path': str(json_path), 'sha256': sha256_file(json_path)},
+        'comparison_reference': (data.get('requested_settings') or {}).get('comparison_reference'),
         'artifact_references': artifacts,
         'analysis_status': 'ERROR' if analysis_errors else ('LIMITED' if limitations else 'COMPLETED'),
         'acceptance_status': acceptance, 'execution_status': data.get('execution_status'),

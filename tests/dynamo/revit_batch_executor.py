@@ -1,6 +1,7 @@
 """Thin, analysis-free execution orchestration for Dynamo/Revit."""
 from __future__ import absolute_import
 
+import inspect
 import json
 import os
 import platform
@@ -15,11 +16,42 @@ def utc_now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
+def _view_type_name(raw):
+    """Return a stable Revit ViewType member name, never a bare ordinal.
+
+    Some Dynamo/IronPython interop paths stringify ``View.ViewType`` as a
+    number (e.g. ``"1"``) instead of its enum member name (e.g.
+    ``"FloorPlan"``). Comparing/recording that raw ordinal is the historical
+    ViewType-as-integer defect: view_type assertions in resolve_view() and
+    manifest identity must always see the stable name.
+    """
+    value = getattr(raw, "ViewType", None)
+    if value is None:
+        return None
+    text = str(value)
+    if not text.lstrip("-").isdigit():
+        return text  # already a stable member name
+    try:
+        from Autodesk.Revit.DB import ViewType as _ViewType  # noqa: local import, Revit-only
+        for name in dir(_ViewType):
+            if name.startswith("_"):
+                continue
+            member = getattr(_ViewType, name, None)
+            try:
+                if member is not None and str(int(member)) == text:
+                    return name
+            except (TypeError, ValueError):
+                continue
+    except Exception:
+        pass
+    return text  # last resort: never crash, but this remains an unresolved ordinal
+
+
 def view_identity(view):
     raw = getattr(view, "InternalElement", view)
     element_id = getattr(getattr(raw, "Id", None), "IntegerValue", getattr(raw, "Id", None))
     return {"unique_id": getattr(raw, "UniqueId", None), "element_id": element_id,
-            "name": getattr(raw, "Name", None), "view_type": str(getattr(raw, "ViewType", None)),
+            "name": getattr(raw, "Name", None), "view_type": _view_type_name(raw),
             "crop_active": getattr(raw, "CropBoxActive", None), "is_template": getattr(raw, "IsTemplate", None)}
 
 
@@ -70,6 +102,35 @@ def resolve_view(doc, reference, all_views=None, is_view=None):
     return view, actual
 
 
+def resolve_output_directory(output_directory, batch_source_path=None, artifact_root=None):
+    """Resolve a job's configured ``output_directory`` to a deterministic
+    absolute path, independent of the Revit/Dynamo process's current working
+    directory at execution time.
+
+    Resolution order: an already-absolute path is used as-is; otherwise it is
+    resolved against an explicit ``artifact_root`` when one is configured, and
+    otherwise against the directory containing ``next_batch.json`` (a location
+    that is always known and stable, unlike the process cwd).
+    """
+    if output_directory is None:
+        raise ContractError("job output_directory is required")
+    if os.path.isabs(output_directory):
+        return os.path.normpath(output_directory)
+    base = artifact_root if artifact_root else (os.path.dirname(batch_source_path) if batch_source_path else os.getcwd())
+    return os.path.normpath(os.path.join(base, output_directory))
+
+
+def _variant_kwargs(adapter, job):
+    """Pass job["variant"] to adapters that declare a `variant` parameter
+    (the explicit per-probe adapter boundary); older/generic adapters that
+    don't accept it are called exactly as before."""
+    try:
+        accepts = "variant" in inspect.signature(adapter).parameters
+    except (TypeError, ValueError):
+        accepts = False
+    return {"variant": job.get("variant")} if accepts else {}
+
+
 def _atomic_json(path, value):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     temporary = path + ".tmp-" + uuid.uuid4().hex
@@ -104,7 +165,8 @@ def _prior_successes(root, campaign_id, batch_id, current_document_identity):
 
 
 def execute_batch(batch_or_path, doc, registry, all_views=None, manifest_root=None,
-                  validation_only=False, environment=None, run_id=None, is_view=None):
+                  validation_only=False, environment=None, run_id=None, is_view=None,
+                  artifact_root=None):
     source = os.path.abspath(batch_or_path) if isinstance(batch_or_path, str) else None
     run_id = run_id or uuid.uuid4().hex
     root = os.path.abspath(manifest_root or os.path.join(os.path.dirname(source) if source else os.getcwd(), "revit_runs"))
@@ -127,38 +189,40 @@ def execute_batch(batch_or_path, doc, registry, all_views=None, manifest_root=No
         for job in batch["jobs"]:
             if job["probe_id"] not in registry:
                 raise ContractError("Unknown probe_id: {0}".format(job["probe_id"]))
+            resolved_output_directory = resolve_output_directory(job["output_directory"], source, artifact_root)
             adapter_validator = getattr(registry[job["probe_id"]], "validate_settings", None)
             if adapter_validator is not None:
-                adapter_validator(dict(job["settings"]), job["output_directory"])
+                adapter_validator(dict(job["settings"]), resolved_output_directory, **_variant_kwargs(adapter_validator, job))
             view, identity = resolve_view(doc, job["view"], all_views, is_view)
-            resolved.append((job, view, identity))
+            resolved.append((job, view, identity, resolved_output_directory))
         policy = batch["execution_policy"]
         prior = _prior_successes(root, batch["campaign_id"], batch["batch_id"],
                                  manifest["document_identity"]) if policy["resume"] else {}
         selected = []
-        for job, view, identity in resolved:
+        for job, view, identity, resolved_output_directory in resolved:
             fingerprint = job_fingerprint(job)
             if job["job_id"] in prior and not policy.get("allow_rerun", False):
                 if prior[job["job_id"]] != fingerprint:
                     raise ContractError("Configuration drift for completed job {0}".format(job["job_id"]))
-                manifest["jobs"].append(_job_record(job, identity, fingerprint, "skipped_resume"))
+                manifest["jobs"].append(_job_record(job, identity, fingerprint, "skipped_resume", resolved_output_directory))
             else:
-                selected.append((job, view, identity, fingerprint))
+                selected.append((job, view, identity, fingerprint, resolved_output_directory))
         limit = policy["max_jobs_per_run"]
         attempted, deferred = selected[:limit], selected[limit:]
         manifest["jobs_not_attempted"] = [{"job_id": item[0]["job_id"], "reason": "execution_limit"} for item in deferred]
         if validation_only:
-            for job, _, identity, fingerprint in attempted + deferred:
-                manifest["jobs"].append(_job_record(job, identity, fingerprint, "validated_only"))
+            for job, _, identity, fingerprint, resolved_output_directory in attempted + deferred:
+                manifest["jobs"].append(_job_record(job, identity, fingerprint, "validated_only", resolved_output_directory))
         else:
             _atomic_json(path, manifest)
-            for index, (job, view, identity, fingerprint) in enumerate(attempted):
-                record = _job_record(job, identity, fingerprint, "running")
+            for index, (job, view, identity, fingerprint, resolved_output_directory) in enumerate(attempted):
+                record = _job_record(job, identity, fingerprint, "running", resolved_output_directory)
                 manifest["jobs"].append(record)
                 _atomic_json(path, manifest)
                 record["started_at"] = utc_now()
                 try:
-                    envelope = registry[job["probe_id"]](view, dict(job["settings"]), job["output_directory"])
+                    adapter = registry[job["probe_id"]]
+                    envelope = adapter(view, dict(job["settings"]), resolved_output_directory, **_variant_kwargs(adapter, job))
                     record.update({"raw_result_envelope": envelope, "artifact_paths": envelope.get("artifact_paths", []),
                         "rollback_status": envelope.get("rollback_status", "unknown"),
                         "state_restoration_status": envelope.get("state_restoration_status", "unknown"),
@@ -195,10 +259,16 @@ def execute_batch(batch_or_path, doc, registry, all_views=None, manifest_root=No
             "manifest_path": path, "another_invocation_needed": bool(manifest["jobs_not_attempted"])}
 
 
-def _job_record(job, resolved_identity, fingerprint, status):
+def _job_record(job, resolved_identity, fingerprint, status, resolved_output_directory=None):
     return {"job_id": job["job_id"], "probe_id": job["probe_id"],
         "requested_view_identity": dict(job["view"]), "resolved_view_identity": resolved_identity,
         "requested_settings": dict(job["settings"]), "configuration_fingerprint": fingerprint,
+        # `output_directory` preserves the configured (often relative) identity
+        # exactly as authored; `output_directory_resolved` is the canonical
+        # absolute path actually used for dispatch/artifacts, independent of
+        # the Revit/Dynamo process's current working directory.
+        "output_directory": job.get("output_directory"),
+        "output_directory_resolved": resolved_output_directory,
         "execution_status": status, "raw_result_envelope": None, "artifact_paths": [],
         "rollback_status": "not_started", "state_restoration_status": "not_checked",
         "errors": [], "warnings": [], "started_at": None, "completed_at": None}

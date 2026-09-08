@@ -10,6 +10,7 @@ from tests.dynamo.stage_a_probe_contract import (
     execution_envelope,
     select_named,
     validate_execution_envelope,
+    view_identity,
 )
 
 
@@ -218,3 +219,30 @@ def test_graphics_and_transaction_adapters_return_envelopes(monkeypatch, tmp_pat
     })
     transaction_result = transaction.dynamo_main([object(), [], str(tmp_path)])
     assert validate_execution_envelope(transaction_result)
+
+
+def test_view_identity_reports_stable_name_not_a_bare_ordinal():
+    class _Id:
+        IntegerValue = 42
+
+    class View:
+        UniqueId, Name, ViewType, Id = "uid", "Elevation View", "Elevation", _Id()
+
+    assert view_identity(View())["type"] == "Elevation"
+
+
+def test_view_identity_never_crashes_on_numeric_stringification_outside_revit():
+    class NumericViewType:
+        def __str__(self): return "5"
+
+    class _Id:
+        IntegerValue = 1
+
+    class View:
+        UniqueId, Name, Id = "uid", "Some View", _Id()
+        ViewType = NumericViewType()
+
+    # Autodesk.Revit.DB is unavailable in this test environment, so the
+    # ordinal cannot be resolved back to a name - it must be preserved
+    # verbatim (never crash, never silently invent a name).
+    assert view_identity(View())["type"] == "5"

@@ -23,6 +23,82 @@ def _adapter(module_name):
     return invoke
 
 
+# Runtime kwargs stage_a_minimum_id_mutations.run_probe() actually accepts
+# (excluding raw_view/output_dir, which the adapter always injects itself).
+_MINIMUM_ID_MUTATIONS_RUNTIME_SETTINGS = frozenset((
+    "max_elements", "selection", "resolution_policy", "target_dpi",
+    "fixed_pixel_width", "max_pixel_dimension", "repo_root",
+))
+# Campaign-facing setting name -> probe-facing kwarg name.
+_MINIMUM_ID_MUTATIONS_ALIASES = {"dpi": "target_dpi", "pixel_size": "fixed_pixel_width"}
+# Analysis/provenance-only metadata a campaign job may carry in `settings`;
+# it is retained in the manifest's `requested_settings` for the analyzer, but
+# must never reach run_probe().
+_MINIMUM_ID_MUTATIONS_ANALYSIS_ONLY = frozenset(("comparison_reference",))
+
+
+def _minimum_id_mutations_variant_names(module):
+    """The probe's real, current supported variant/selection vocabulary,
+    computed the same way _run_native() does, without touching Revit."""
+    baseline_mutations = ("detach_template", "hide_annotation_categories", "smooth_edges_off", "display_style_flat_colors")
+    variants = module.generate_stage1_variants(flat_colors_supported=True) + module.generate_stage2_variants(baseline_mutations)
+    return [item["name"] for item in variants]
+
+
+def _resolve_minimum_id_mutations_settings(module, settings, output_directory, variant=None):
+    """Explicit adapter boundary for stage_a_minimum_id_mutations:
+
+    * campaign ``dpi``          -> run_probe(target_dpi=...)
+    * campaign job ``variant``  -> run_probe(selection=...)
+    * ``comparison_reference``  -> analysis-only; stripped, never forwarded
+
+    Rejects unknown settings, unsupported aliases, conflicting dpi/target_dpi,
+    and unknown variants/selections - all without starting a transaction or
+    exporting a TIFF, so this same function is reused as validate_settings for
+    validation-only mode.
+    """
+    if not output_directory:
+        raise ValueError("output_directory is required")
+    settings = dict(settings)
+    for alias, canonical in _MINIMUM_ID_MUTATIONS_ALIASES.items():
+        if alias not in settings:
+            continue
+        aliased_value = settings.pop(alias)
+        if canonical in settings and settings[canonical] != aliased_value:
+            raise ValueError("conflicting {0} and {1} settings for stage_a_minimum_id_mutations".format(alias, canonical))
+        settings.setdefault(canonical, aliased_value)
+    for key in _MINIMUM_ID_MUTATIONS_ANALYSIS_ONLY:
+        settings.pop(key, None)
+    selection = settings.pop("selection", None)
+    if selection is None:
+        selection = variant
+    if selection is not None:
+        settings["selection"] = selection
+    unknown = sorted(set(settings) - _MINIMUM_ID_MUTATIONS_RUNTIME_SETTINGS)
+    if unknown:
+        raise ValueError("Unknown settings for stage_a_minimum_id_mutations: {0}".format(unknown))
+    if settings.get("selection") is not None:
+        from tests.dynamo.stage_a_probe_contract import select_named
+        select_named(settings["selection"], _minimum_id_mutations_variant_names(module), "minimum-ID variant(s)")
+    return settings
+
+
+def _minimum_id_mutations_adapter(module_name):
+    def invoke(view, settings, output_directory, variant=None):
+        module = __import__(module_name, fromlist=["run_probe"])
+        arguments = _resolve_minimum_id_mutations_settings(module, settings, output_directory, variant)
+        arguments["raw_view"] = view
+        arguments["output_dir"] = output_directory
+        return module.run_probe(**arguments)
+
+    def validate_settings(settings, output_directory, variant=None):
+        module = __import__(module_name, fromlist=["run_probe"])
+        _resolve_minimum_id_mutations_settings(module, settings, output_directory, variant)
+
+    invoke.validate_settings = validate_settings
+    return invoke
+
+
 def _transaction_adapter(doc, module_name):
     def resolve_elements(settings):
         arguments = dict(settings)
@@ -65,8 +141,10 @@ def _transaction_adapter(doc, module_name):
 
 
 def build_registry(doc=None):
+    specialized = {"stage_a_transaction_group_export", "stage_a_minimum_id_mutations"}
     registry = {probe_id: _adapter(module) for probe_id, module in PROBE_MODULES.items()
-                if probe_id != "stage_a_transaction_group_export"}
+                if probe_id not in specialized}
+    registry["stage_a_minimum_id_mutations"] = _minimum_id_mutations_adapter(PROBE_MODULES["stage_a_minimum_id_mutations"])
     transaction_module = PROBE_MODULES["stage_a_transaction_group_export"]
     registry["stage_a_transaction_group_export"] = (_transaction_adapter(doc, transaction_module)
                                                        if doc is not None else _adapter(transaction_module))
