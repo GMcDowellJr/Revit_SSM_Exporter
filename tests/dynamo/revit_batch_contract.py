@@ -118,7 +118,14 @@ def load_batch(path):
 
 
 def job_fingerprint(job):
-    material = {key: job[key] for key in ("job_id", "probe_id", "view", "settings", "output_directory")}
+    # `variant` is dispatch identity, not incidental metadata: the specialized
+    # stage_a_minimum_id_mutations adapter maps it to run_probe(selection=...)
+    # whenever `settings` doesn't already carry an explicit `selection`. It
+    # must be part of the fingerprint the planner's execution_fingerprints and
+    # this executor's ingestion/resume checks agree on, or a batch job could
+    # be tampered with to dispatch a different variant while still matching
+    # the expected fingerprint.
+    material = {key: job.get(key) for key in ("job_id", "probe_id", "view", "settings", "output_directory", "variant")}
     encoded = json.dumps(material, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 

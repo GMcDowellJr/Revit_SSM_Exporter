@@ -296,6 +296,17 @@ def test_artifact_root_overrides_batch_file_directory_for_relative_paths(tmp_pat
     assert seen["output_directory"] == str((artifact_root / "raw" / "one").resolve())
 
 
+def test_relative_artifact_root_is_itself_resolved_to_absolute(tmp_path, monkeypatch):
+    # A caller-supplied artifact_root that is itself relative must not leave
+    # the final output_directory relative - that would silently reintroduce
+    # a dependency on the process cwd, defeating the whole point.
+    from tests.dynamo.revit_batch_executor import resolve_output_directory
+    monkeypatch.chdir(tmp_path)
+    resolved = resolve_output_directory("raw/one", None, artifact_root="relative_artifacts")
+    assert os.path.isabs(resolved)
+    assert resolved == str((tmp_path / "relative_artifacts" / "raw" / "one").resolve())
+
+
 # --- ViewType is always reported as a stable name, never a bare ordinal ---
 
 def test_view_type_numeric_stringification_is_not_reported_as_an_ordinal():

@@ -116,7 +116,11 @@ def resolve_output_directory(output_directory, batch_source_path=None, artifact_
         raise ContractError("job output_directory is required")
     if os.path.isabs(output_directory):
         return os.path.normpath(output_directory)
-    base = artifact_root if artifact_root else (os.path.dirname(batch_source_path) if batch_source_path else os.getcwd())
+    # `artifact_root` itself must be made absolute: a caller-supplied relative
+    # artifact_root would otherwise still leave the final path relative,
+    # silently depending on the process cwd again at the point it's later
+    # opened - defeating the whole point of this function.
+    base = os.path.abspath(artifact_root) if artifact_root else (os.path.dirname(os.path.abspath(batch_source_path)) if batch_source_path else os.getcwd())
     return os.path.normpath(os.path.join(base, output_directory))
 
 

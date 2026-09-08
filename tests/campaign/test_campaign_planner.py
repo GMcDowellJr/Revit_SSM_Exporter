@@ -73,6 +73,26 @@ def test_batch_settings_are_separate_from_planner_fingerprints():
  assert job['variant']=='attached_AS'
  assert set(job['settings'])=={'dpi','comparison_reference'}
 
+def test_execution_fingerprint_includes_dispatched_variant():
+ # variant is dispatch identity (the adapter maps it to run_probe(selection=...)),
+ # so two jobs identical in every other batch field but a different variant
+ # must never collide on the same execution fingerprint - a tampered/corrupted
+ # next_batch.json that only changed `variant` must be caught as drift.
+ import tests.dynamo.revit_batch_contract as contract
+ c=example(); s=p.initialize_state(c); b=p.generate_next_batch(c,s)
+ job=get(s,'s1.attached_as')
+ planner_fp=job['execution_fingerprints'][b['batch_id']]
+ executor_fp=contract.job_fingerprint(b['jobs'][0])
+ assert planner_fp==executor_fp
+ tampered=copy.deepcopy(b['jobs'][0]); tampered['variant']='detached_AS'
+ assert contract.job_fingerprint(tampered)!=planner_fp
+
+def test_gate_scoped_review_is_not_seeded_for_a_mixed_inconclusive_reason():
+ c=compact(); s=p.initialize_state(c)
+ a=run_batch(c,s,'align','INCONCLUSIVE',reason_codes=['MANUAL_SEMANTIC_REVIEW_REQUIRED','NO_CASES_ANALYZED'])
+ assert a['status']=='INCONCLUSIVE'
+ assert a['job_id'] not in s['manual_review_requirements']
+
 def test_attached_as_fully_attested_and_accepted_unlocks_stage2():
  c=example(); s=p.initialize_state(c); run_batch(c,s,'s1.attached_as','PASS')
  closure=s['closures']['elevation_mutation_closure']

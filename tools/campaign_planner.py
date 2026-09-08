@@ -425,8 +425,13 @@ def ingest_analysis(campaign: dict[str, Any], state: dict[str, Any], inputs: Ite
         # authored manual_review_required flag. It exists only to let an
         # authorized human review resolve *this specific* analyzer gate - it
         # never becomes a blanket override of unrelated FAIL/INCONCLUSIVE
-        # findings on the same job (see record_manual_review).
-        if target == "INCONCLUSIVE" and "MANUAL_SEMANTIC_REVIEW_REQUIRED" in reason_codes and job["job_id"] not in state["manual_review_requirements"]:
+        # findings on the same job (see record_manual_review). Seeded only
+        # when MANUAL_SEMANTIC_REVIEW_REQUIRED is the *sole* reason: a mixed
+        # set (e.g. alongside NO_CASES_ANALYZED) is not this gate's to
+        # resolve, and record_manual_review only ever resolves a job whose
+        # reason codes are exactly this one - seeding a requirement it could
+        # never satisfy would leave the operator with an unresolvable review.
+        if target == "INCONCLUSIVE" and set(reason_codes) == {"MANUAL_SEMANTIC_REVIEW_REQUIRED"} and job["job_id"] not in state["manual_review_requirements"]:
             state["manual_review_requirements"][job["job_id"]] = {"status": "PENDING", "reason": "MANUAL_SEMANTIC_REVIEW_REQUIRED",
                 "gate": "rendered_semantic_preservation", "record_id": record_id}
         _event(state, "ANALYSIS_INGESTED", record_id=record_id, job_id=job["job_id"], fingerprint=digest)
@@ -458,11 +463,16 @@ def generate_next_batch(campaign: dict[str, Any], state: dict[str, Any]) -> dict
             "settings": settings, "output_directory": item.get("output_directory", f"raw/{item['job_id']}"),
             "job_configuration_fingerprint": item["configuration_fingerprint"]}
         batch["jobs"].append(batch_job)
-        # Must match the executor's job_fingerprint() exactly: the same five
+        # Must match the executor's job_fingerprint() exactly: the same
         # dispatch-identity fields, in the same canonical encoding. `variant`
-        # and `job_configuration_fingerprint` are batch-job metadata, not part
-        # of dispatch identity, so they are deliberately excluded here.
-        execution_material = {key: batch_job[key] for key in ("job_id", "probe_id", "view", "settings", "output_directory")}
+        # IS dispatch identity now (the adapter maps it to the probe's
+        # selection kwarg whenever `settings` doesn't already carry an
+        # explicit `selection`), so it must be included - otherwise a
+        # hand-edited/corrupted batch could change which mutations actually
+        # run while keeping the fingerprint ingestion/resume checks expect.
+        # `job_configuration_fingerprint` is batch-job metadata, not dispatch
+        # identity, and stays excluded.
+        execution_material = {key: batch_job.get(key) for key in ("job_id", "probe_id", "view", "settings", "output_directory", "variant")}
         item["execution_fingerprints"][batch_id] = canonical_fingerprint(execution_material)
         transition(state, item["job_id"], "BATCHED", "SELECTED_FOR_BATCH", {"batch_id": batch_id}); item["batch_ids"].append(batch_id)
     state["next_recommendation"] = {"code": "RUN_BATCH_IN_REVIT", "batch_id": batch_id, "job_count": len(selected)}
