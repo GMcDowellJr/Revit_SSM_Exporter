@@ -210,6 +210,56 @@ def test_cli_persists_superseded_state_to_disk_on_configuration_drift(tmp_path):
  assert all(j['status']=='SUPERSEDED' for j in on_disk['jobs'].values())
  assert on_disk['next_recommendation']['code']=='INVALID_CAMPAIGN_STATE'
 
+def test_cli_invalid_manifest_does_not_partially_persist_earlier_ingestion(tmp_path):
+ # A multi-manifest ingest where the first is valid (and would fully
+ # mutate state) and the second is malformed must not persist the first's
+ # ingestion either - only ConfigurationDriftError is ever persisted after
+ # an error; every other CampaignError must leave the on-disk file exactly
+ # as it was before the command ran, even though the valid manifest was
+ # genuinely applied to the in-memory object before the raise.
+ c=compact(); s=p.initialize_state(c)
+ campaign_path=tmp_path/'campaign.json'; state_path=tmp_path/'state.json'
+ campaign_path.write_text(json.dumps(c))
+ p.generate_next_batch(c,s)
+ state_path.write_text(json.dumps(s))
+ a=get(s,'align')
+ valid_manifest=manifest(s,a)
+ bad_manifest=copy.deepcopy(valid_manifest); bad_manifest['run_id']=None
+ m1=tmp_path/'m1.json'; m1.write_text(json.dumps(valid_manifest))
+ m2=tmp_path/'m2.json'; m2.write_text(json.dumps(bad_manifest))
+ pytest.raises(p.CampaignError,p.main,['ingest-runs',str(campaign_path),str(state_path),str(m1),str(m2)])
+ on_disk=json.loads(state_path.read_text())
+ assert get(on_disk,'align')['status']=='BATCHED'
+ assert on_disk['ingested_revit_runs']=={}
+
+def test_cli_malformed_analysis_does_not_partially_ingest_records(tmp_path):
+ c=compact(); s=p.initialize_state(c)
+ campaign_path=tmp_path/'campaign.json'; state_path=tmp_path/'state.json'
+ campaign_path.write_text(json.dumps(c))
+ p.generate_next_batch(c,s)
+ a=get(s,'align'); i=get(s,'independent')
+ p.ingest_manifests(c,s,[manifest(s,a,run='r1'),manifest(s,i,run='r2')])
+ assert a['status']=='EXECUTED' and i['status']=='EXECUTED'
+ state_path.write_text(json.dumps(s))
+ rec_a=analysis(s,a,'PASS',run='r1')
+ rec_i=analysis(s,i,'PASS',run='r2'); rec_i['acceptance_status']='BOGUS'
+ r1=tmp_path/'r1.json'; r1.write_text(json.dumps(rec_a))
+ r2=tmp_path/'r2.json'; r2.write_text(json.dumps(rec_i))
+ pytest.raises(p.CampaignError,p.main,['ingest-analysis',str(campaign_path),str(state_path),str(r1),str(r2)])
+ on_disk=json.loads(state_path.read_text())
+ assert get(on_disk,'align')['status']=='EXECUTED'
+ assert get(on_disk,'independent')['status']=='EXECUTED'
+ assert on_disk['ingested_analysis_records']=={}
+
+def test_cli_unexpected_campaign_error_leaves_state_byte_for_byte_unchanged(tmp_path):
+ c=compact(); s=p.initialize_state(c)
+ campaign_path=tmp_path/'campaign.json'; state_path=tmp_path/'state.json'
+ campaign_path.write_text(json.dumps(c))
+ before=json.dumps(s, sort_keys=True); state_path.write_text(before)
+ a=get(s,'align')
+ pytest.raises(p.CampaignError,p.main,['diagnostic',str(campaign_path),str(state_path),'request',a['job_id'],'--rule','not_a_real_rule'])
+ assert state_path.read_text()==before
+
 def test_end_to_end_simulated_progression_through_fallback_and_elevation_alignment():
  c=example(); s=p.initialize_state(c)
  run_batch(c,s,'s1.attached_as','FAIL',reason_codes=['MUTATION_ATTESTATION_FAILED','MUTATION_BLOCKED_BY_TEMPLATE_ONLY'])

@@ -44,6 +44,20 @@ class CampaignError(ValueError):
     """Invalid campaign, state, or evidence."""
 
 
+class ConfigurationDriftError(CampaignError):
+    """Raised only by _assert_binding on CONFIGURATION_DRIFT.
+
+    By the time this is raised, `state` has already been fully and
+    self-containedly mutated (every job superseded, next_recommendation set,
+    a history event recorded) - never a partial application of unrelated
+    work. This is the *only* CampaignError subtype whose in-memory mutation
+    the CLI persists to disk after an error; any other CampaignError (a
+    malformed manifest, an invalid analysis record, an unauthorized
+    diagnostic request, ...) must leave the on-disk state file exactly as it
+    was before the command ran.
+    """
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -213,7 +227,7 @@ def _assert_binding(campaign: dict[str, Any], state: dict[str, Any]) -> None:
         for job in state.get("jobs", {}).values():
             if job["status"] != "SUPERSEDED": transition(state, job["job_id"], "SUPERSEDED", "CONFIGURATION_DRIFT")
         state["next_recommendation"] = {"code": "INVALID_CAMPAIGN_STATE", "reason": "CONFIGURATION_DRIFT", "current_fingerprint": current}
-        raise CampaignError("campaign configuration drift; prior jobs were superseded, initialize amended state")
+        raise ConfigurationDriftError("campaign configuration drift; prior jobs were superseded, initialize amended state")
 
 
 def _dependencies(campaign: dict[str, Any], job: dict[str, Any]) -> list[dict[str, Any]]:
@@ -225,6 +239,19 @@ def _dependencies(campaign: dict[str, Any], job: dict[str, Any]) -> list[dict[st
 _CLOSURE_PASS = {"RESOLVED_PRIMARY", "RESOLVED_FALLBACK_PASS"}
 _CLOSURE_FAIL = {"RESOLVED_FAILED", "RESOLVED_FALLBACK_FAILED"}
 _CLOSURE_OPEN = {"PENDING", "AWAITING_FALLBACK_EXECUTION"}
+
+
+def _closure_candidate_settled(state: dict[str, Any], job: dict[str, Any]) -> bool:
+    """A job is settled for closure-resolution purposes once it is terminal
+    AND, if INCONCLUSIVE, not still awaiting a PENDING gate-scoped manual
+    review that could still convert it to PASSED/FAILED. Resolving the
+    closure the instant a candidate goes INCONCLUSIVE - without waiting for
+    that review - would prematurely lock in RESOLVED_*_FAILED even though an
+    ACCEPTED review is about to make it PASSED."""
+    if job["status"] != "INCONCLUSIVE":
+        return job["status"] in TERMINAL
+    requirement = state["manual_review_requirements"].get(job["job_id"])
+    return not (requirement and requirement["status"] == "PENDING")
 
 
 def _apply_conditional_fallbacks(campaign: dict[str, Any], state: dict[str, Any]) -> None:
@@ -247,14 +274,14 @@ def _apply_conditional_fallbacks(campaign: dict[str, Any], state: dict[str, Any]
             "candidate_job_id": None, "resolved_at": None})
         if closure["status"] == "AWAITING_FALLBACK_EXECUTION":
             candidate = state["jobs"].get(closure["fallback_job_id"])
-            if candidate and candidate["status"] in TERMINAL:
+            if candidate and _closure_candidate_settled(state, candidate):
                 resolved = "RESOLVED_FALLBACK_PASS" if candidate["status"] == "PASSED" else "RESOLVED_FALLBACK_FAILED"
                 closure.update({"status": resolved, "candidate_job_id": candidate["job_id"], "resolved_at": utc_now()})
                 _event(state, "CLOSURE_RESOLVED", closure_id=closure_id, status=resolved, candidate_job_id=candidate["job_id"])
             continue
         if closure["status"] != "PENDING": continue
         trigger = key_map.get(fallback["trigger_job"])
-        if not trigger or trigger["status"] not in TERMINAL: continue
+        if not trigger or not _closure_candidate_settled(state, trigger): continue
         closure["primary_job_id"] = trigger["job_id"]
         if trigger["status"] == "PASSED":
             closure.update({"status": "RESOLVED_PRIMARY", "candidate_job_id": trigger["job_id"], "resolved_at": utc_now()})
@@ -613,12 +640,19 @@ def main(argv: list[str] | None = None) -> int:
             batch = generate_next_batch(campaign, state)
             if batch: atomic_write(args.output, batch)
             else: print(json.dumps(state["next_recommendation"]))
-    except CampaignError:
-        # Even on a hard error (e.g. CONFIGURATION_DRIFT), any state mutation
-        # already applied in memory - such as superseding prior jobs and
-        # recording the drift event - must still reach disk. The operator is
-        # still told about the error (this re-raises to a non-zero exit);
-        # nothing already applied is silently discarded either way.
+    except ConfigurationDriftError:
+        # CONFIGURATION_DRIFT is the one CampaignError whose in-memory
+        # mutation (every job superseded, the drift event recorded) is
+        # complete and self-contained by construction - see
+        # ConfigurationDriftError's docstring - so it is the only case where
+        # persisting after an error is safe. Any other CampaignError (a
+        # malformed manifest partway through a multi-manifest ingest, an
+        # invalid analysis record, an unauthorized diagnostic request, ...)
+        # is deliberately NOT caught here: it propagates without writing
+        # anything, leaving the on-disk state exactly as it was. The
+        # operator is still told about the drift (this re-raises to a
+        # non-zero exit); nothing already applied is silently discarded
+        # either way.
         atomic_write(args.state, state)
         raise
     atomic_write(args.state, state); return 0
