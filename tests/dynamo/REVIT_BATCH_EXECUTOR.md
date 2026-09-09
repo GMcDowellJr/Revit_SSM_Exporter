@@ -46,6 +46,17 @@ The registry resolves these through the current document and passes actual Revit
 elements to the adapter. This resolution also occurs in validation-only mode;
 JSON cannot supply `raw_elements` directly.
 
+`stage_a_external_sources` similarly cannot discover its RVT-link/DWG-import
+targets on its own from a view - `run_probe()`'s `raw_links`/`raw_dwgs`
+parameters require real elements. JSON settings may supply
+`link_instance_unique_ids`/`link_instance_ids` and
+`dwg_import_unique_ids`/`dwg_import_ids`; the registry resolves these through
+the current document the same way as `stage_a_transaction_group_export`
+(`UniqueId` preferred), also in validation-only mode. Omitting both is legal
+JSON but not useful: every variant will report no discovered candidates for
+its required source type and the campaign result reads `INCONCLUSIVE`/`FAIL`,
+not as a clear "missing input" error - see `PROBE_STAGE_A_EXTERNAL_SOURCES.md`.
+
 ## Resolution and resumption
 
 `UniqueId` is preferred and resolved with `Document.GetElement`. Name-only

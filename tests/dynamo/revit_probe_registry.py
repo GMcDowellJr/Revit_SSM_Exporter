@@ -140,12 +140,94 @@ def _transaction_adapter(doc, module_name):
     return invoke
 
 
+# Runtime kwargs stage_a_external_sources.run_probe() actually accepts
+# (excluding raw_view/output_dir/raw_links/raw_dwgs, which the adapter always
+# supplies itself - raw_links/raw_dwgs are resolved from campaign-facing
+# settings below, never forwarded as JSON).
+_EXTERNAL_SOURCES_RUNTIME_SETTINGS = frozenset((
+    "selection", "resolution_policy", "target_dpi", "fixed_pixel_width", "max_pixel_dimension",
+))
+
+
+def _resolve_element_references(doc, unique_ids, integer_ids, label):
+    """Resolve a campaign-facing (unique_id-or-integer) element reference list
+    to real Revit elements. Shared shape with _transaction_adapter's
+    resolve_elements: UniqueId is preferred, ElementId is a supported
+    fallback, and everything is validated before any element is touched."""
+    if not isinstance(unique_ids, list) or not isinstance(integer_ids, list):
+        raise ValueError("{0}_unique_ids and {0}_ids must be arrays".format(label))
+    elements = []
+    for unique_id in unique_ids:
+        element = doc.GetElement(str(unique_id))
+        if element is None:
+            raise ValueError("No element has UniqueId {0}".format(unique_id))
+        elements.append(element)
+    if integer_ids:
+        if any(isinstance(value, bool) or not isinstance(value, int) for value in integer_ids):
+            raise ValueError("{0}_ids must contain integers".format(label))
+        from Autodesk.Revit.DB import ElementId
+        for integer_id in integer_ids:
+            try:
+                element_id = ElementId(integer_id)
+            except (TypeError, ValueError, OverflowError):
+                raise ValueError("Invalid element id: {0!r}".format(integer_id))
+            element = doc.GetElement(element_id)
+            if element is None:
+                raise ValueError("No element has ElementId {0}".format(integer_id))
+            elements.append(element)
+    return elements
+
+
+def _external_sources_adapter(doc, module_name):
+    """Explicit adapter boundary for stage_a_external_sources.
+
+    run_probe()'s raw_links/raw_dwgs parameters require real Revit elements
+    (RevitLinkInstance / ImportInstance); the probe never discovers them on
+    its own - a job with neither supplied reports "No discovered candidates
+    for required source type(s)" on every variant rather than failing loudly.
+    Campaign JSON can only carry element identity, never a live element, so
+    this adapter resolves campaign-facing ``link_instance_unique_ids`` /
+    ``link_instance_ids`` and ``dwg_import_unique_ids`` / ``dwg_import_ids``
+    into ``raw_links`` / ``raw_dwgs`` before dispatch - mirroring
+    _transaction_adapter's element resolution for stage_a_transaction_group_export.
+    Rejects unknown settings without starting a transaction or exporting a
+    TIFF, so this same function is reused as validate_settings.
+    """
+    def resolve(settings):
+        arguments = dict(settings)
+        raw_links = _resolve_element_references(
+            doc, arguments.pop("link_instance_unique_ids", []) or [],
+            arguments.pop("link_instance_ids", []) or [], "link_instance")
+        raw_dwgs = _resolve_element_references(
+            doc, arguments.pop("dwg_import_unique_ids", []) or [],
+            arguments.pop("dwg_import_ids", []) or [], "dwg_import")
+        unknown = sorted(set(arguments) - _EXTERNAL_SOURCES_RUNTIME_SETTINGS)
+        if unknown:
+            raise ValueError("Unknown settings for stage_a_external_sources: {0}".format(unknown))
+        return raw_links, raw_dwgs, arguments
+
+    def invoke(view, settings, output_directory):
+        module = __import__(module_name, fromlist=["run_probe"])
+        raw_links, raw_dwgs, arguments = resolve(settings)
+        return module.run_probe(raw_view=view, output_dir=output_directory,
+                                raw_links=raw_links, raw_dwgs=raw_dwgs, **arguments)
+
+    def validate_settings(settings, output_directory):
+        resolve(settings)
+
+    invoke.validate_settings = validate_settings
+    return invoke
+
+
 def build_registry(doc=None):
-    specialized = {"stage_a_transaction_group_export", "stage_a_minimum_id_mutations"}
+    specialized = {"stage_a_transaction_group_export", "stage_a_minimum_id_mutations", "stage_a_external_sources"}
     registry = {probe_id: _adapter(module) for probe_id, module in PROBE_MODULES.items()
                 if probe_id not in specialized}
     registry["stage_a_minimum_id_mutations"] = _minimum_id_mutations_adapter(PROBE_MODULES["stage_a_minimum_id_mutations"])
     transaction_module = PROBE_MODULES["stage_a_transaction_group_export"]
     registry["stage_a_transaction_group_export"] = (_transaction_adapter(doc, transaction_module)
                                                        if doc is not None else _adapter(transaction_module))
+    external_sources_module = PROBE_MODULES["stage_a_external_sources"]
+    registry["stage_a_external_sources"] = (_external_sources_adapter(doc, external_sources_module)
+                                              if doc is not None else _adapter(external_sources_module))
     return registry

@@ -20,6 +20,36 @@ logic. When inputs are supplied, they filter matching discovered link/import
 instances only; the probe reports discovery explicitly and never silently
 substitutes unrelated elements.
 
+**`run_probe()`'s `raw_links`/`raw_dwgs` parameters always require real Revit
+elements - the probe never discovers them on its own from just a view.** A run
+with neither supplied does not fail; every variant reports `"No discovered
+candidates for required source type(s)"` and is marked `skipped`, which reads
+as `INCONCLUSIVE`/`FAIL` once analyzed, not as an obvious "you forgot an
+input" error.
+
+### Via the campaign/batch pipeline (`stage_a_cycle.py` / `campaign_planner.py`)
+
+IN[2]/IN[3] above are for running this probe directly from a Dynamo graph.
+Through the campaign/batch pipeline, campaign JSON cannot carry a live Revit
+element - only identity - so the registry's `stage_a_external_sources` adapter
+(`revit_probe_registry.py`) resolves campaign-facing settings into
+`raw_links`/`raw_dwgs` before dispatch:
+
+```json
+"settings": {
+  "fixed_pixel_width": 1600,
+  "link_instance_unique_ids": ["<RevitLinkInstance UniqueId>"],
+  "dwg_import_unique_ids": ["<ImportInstance UniqueId>"]
+}
+```
+
+`link_instance_ids`/`dwg_import_ids` (integer `ElementId` values) are also
+accepted; `UniqueId` is preferred for the same reason it is elsewhere in this
+pipeline (stable across some document round-trips ElementId is not). Any
+other unrecognized setting is rejected before a transaction starts or a TIFF
+is exported - this same resolution function backs `validate_settings`, so a
+misconfigured job is caught in `IN[2] = True` validation-only mode too.
+
 ## Production code inspected and reused
 
 The probe reuses the same external-source surfaces used by Stage A without
