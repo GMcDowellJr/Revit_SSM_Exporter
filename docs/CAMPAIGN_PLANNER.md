@@ -129,6 +129,227 @@ This is the exact situation the supplied `stage-a-initial` evidence describes: `
 
 At no point does this procedure instruct manually editing `campaign_state.json` to set a job `PASSED`, deleting a prior manifest, or discarding the original `attached_AS` evidence - the superseded job record, and the backed-up state file, keep that linkage permanently auditable.
 
+## `stage_a_cycle.py` - one command between Dynamo runs
+
+`tools/stage_a_cycle.py` is a thin, idempotent wrapper around the planner and
+`tools/analyze_stage_a_probe.py`. It runs outside Revit, imports no Revit API
+modules, executes no probes, and makes no acceptance/gating/fallback decision
+itself - every decision above still comes from `campaign_planner.py` and
+`analyze_stage_a_probe.py` exactly as documented above. It exists only to
+remove the manual `ingest-runs` / analyze / `ingest-analysis` / `next-batch`
+sequence between Dynamo invocations:
+
+```cmd
+python tools\campaign_planner.py validate examples\stage_a_campaign.json
+python tools\campaign_planner.py init examples\stage_a_campaign.json campaign\campaign_state.json
+python tools\stage_a_cycle.py advance examples\stage_a_campaign.json campaign\campaign_state.json
+:: run Dynamo using the printed NEXT_BATCH
+python tools\stage_a_cycle.py advance examples\stage_a_campaign.json campaign\campaign_state.json
+:: run Dynamo again, repeat until CAMPAIGN_COMPLETE or a stop action
+```
+
+One-time validation and initialization (`validate`, `init`) are unchanged and
+still required first: `advance` refuses to run against a campaign/state pair
+that has never been initialized, and prints the exact `init` command to run
+instead of silently creating or resetting state.
+
+### Paths
+
+Every path defaults deterministically from the state file's own directory,
+never from the process's current directory:
+
+| Default | Override |
+|---|---|
+| `<state-dir>\next_batch.json` | `--batch PATH` |
+| `<state-dir>\manifests\` | `--manifest-root PATH` |
+| `<state-dir>\analysis\` | `--analysis-root PATH` |
+| `<state-dir>\raw\` | `--artifact-root PATH` |
+| `<state-dir>\batches\` | (not overridable) |
+
+`--manifest-root` is where the wrapper recursively looks for
+`revit_run_manifest.json` files (see `REVIT_BATCH_EXECUTOR.md`; if Dynamo's
+thin executor writes elsewhere, pass its manifest root here or point the
+executor at this directory). `--artifact-root` is reported for visibility
+only - the wrapper never reads or writes raw TIFFs/JSON itself; if Dynamo's
+`execute_batch(..., artifact_root=...)` is configured with a different root,
+pass the same value here so `--json`/`--dry-run` output reflects where
+artifacts actually land. Analysis is written next to its manifest (matching
+`analyze_json()`'s own contract, which always writes a sibling
+`<manifest>.analyzed.json`) and additionally mirrored into
+`<analysis-root>\<run_id>\revit_run_manifest.analyzed.json` for a stable,
+predictable browsing location; the copy next to the manifest is authoritative
+and is never overwritten with different content, and no raw report or TIFF is
+ever written or modified by this script.
+
+### What one `advance` call does
+
+1. **Validate**: loads and validates the campaign and state, confirms the
+   campaign/state binding (a changed campaign is `CONFIGURATION_DRIFT`,
+   reported and left exactly as `campaign_planner.py`'s own CLI already
+   handles it - existing jobs superseded, nothing silently reused), resolves
+   every path, and acquires a bounded lock file
+   (`<state-dir>\.stage_a_cycle.lock`) so two `advance` invocations against
+   the same state cannot interleave writes. A lock older than six hours, or
+   owned by a local process that is confirmed no longer running, is treated
+   as abandoned and reclaimed automatically - a crashed invocation never
+   permanently blocks recovery.
+2. **Discover manifests**: recursively finds every `revit_run_manifest.json`
+   under `--manifest-root`, validates its schema, and classifies it -
+   unrelated-campaign and validation-only manifests are counted and skipped;
+   everything else is handed to the planner's own `ingest_manifests()`
+   unchanged, so unknown job IDs, batch/fingerprint drift, and duplicate or
+   conflicting run evidence are exactly the conflicts `campaign_planner.py`
+   already defines (`status` will show them under `conflicts`). Discovery
+   orders manifests by their own recorded `started_at`/`run_id`, never by
+   file modification time.
+3. **Ingest execution**: exactly `campaign_planner.py`'s ingestion logic,
+   with a full atomic state write after this step (and after every step
+   below) so the same command can resume from wherever a prior invocation
+   stopped.
+4. **Analyze outstanding evidence**: for every run backing a job that is
+   `EXECUTED` but not yet `ANALYZED`, calls `analyze_stage_a_probe.analyze_json()`
+   on that run's manifest exactly once (an existing `*.analyzed.json` is
+   reused, never recomputed or overwritten). An unexpected analyzer failure
+   (a malformed/unknown probe report, not an ordinary FAIL/INCONCLUSIVE
+   result - those are normal analyzer output) is recorded to
+   `<analysis-root>\<run_id>\analyzer_error.json`, stops the cycle with a
+   nonzero exit, and generates no batch; state up to that point is already
+   persisted and safe to resume from by rerunning the same command once the
+   underlying report is fixed.
+5. **Ingest normalized acceptance**: exactly `campaign_planner.py`'s
+   `ingest_analysis()`. `PASS`/`FAIL`/`INCONCLUSIVE`, reason codes,
+   manual-review seeding, and conditional-fallback closures (including
+   `attached_AS -> detached_AS`) are entirely the planner's own decision;
+   the wrapper never reinterprets them.
+6. **Decide the next action** and print/return exactly one of:
+
+   | Action | Meaning | Exit code |
+   |---|---|---|
+   | `RUN_DYNAMO` | a batch is ready (existing pending batch, or a freshly generated one) - run it, then call `advance` again | 0 |
+   | `CAMPAIGN_COMPLETE` | every job reached a terminal planner state | 0 |
+   | `MANUAL_REVIEW_REQUIRED` | a gate-scoped or campaign-authored manual review is pending | 3 |
+   | `DIAGNOSTIC_AUTHORIZATION_REQUIRED` | one or more jobs are `FAILED` with no further automatic path; authorize a diagnostic yourself via `campaign_planner.py diagnostic ... request` if appropriate | 4 |
+   | `BLOCKED` | jobs are blocked with no eligible work and no rejected review or clean failure to point at | 5 |
+   | `CONFLICT` | the planner recorded a conflict (duplicate/mismatched evidence, inconsistent pending batch) - investigate under `state["conflicts"]` before continuing | 6 |
+   | `ERROR` | state not initialized, campaign drift, analyzer failure, lock contention, or another recoverable stop - see `errors` | 1 |
+
+   When a batch is already pending (jobs still `BATCHED`), `advance` never
+   regenerates it: it verifies `next_batch.json` still matches the
+   immutable snapshot in `<state-dir>\batches\<batch_id>.json` and republishes
+   only if that specific file is missing (e.g. after a crash between writing
+   the snapshot and publishing it) - if it exists and disagrees, that is
+   `NEXT_BATCH_MISMATCH`, an `ERROR` that must be investigated rather than
+   guessed past. Only once no batch is pending does it ask the planner to
+   generate the next one, write the immutable batch snapshot, and then
+   publish `next_batch.json`, in that order, so an interruption at any point
+   resumes without duplicating a batch identity.
+
+Console output stays concise, e.g.:
+
+```
+ACTION: RUN_DYNAMO
+CAMPAIGN: stage-a-initial
+BATCH: stage-a-initial.batch.0002
+JOBS: 1
+NEXT_BATCH: C:\...\campaign\next_batch.json
+VALIDATION_MANIFESTS_IGNORED: 1
+RUNS_INGESTED: 1
+ANALYSES_CREATED: 1
+ANALYSES_INGESTED: 1
+```
+
+When the batch includes a materialized conditional fallback, an extra
+annotation line follows (informational only - the authoritative data is
+`fallback_context` in `--json`):
+
+```
+NEXT_JOB: detached_AS
+REASON: attached_AS blocked by view-template control
+```
+
+Pass `--json` for a stable, script-friendly summary instead (never parse the
+console text): `action`, `campaign_id`, `state_path`, `batch_id`,
+`batch_path`, `job_ids`, `manifests_discovered`, `manifests_ingested`,
+`validation_manifests_ignored`, `analyses_created`, `analyses_ingested`,
+`conflicts`, `warnings`, `errors`, plus the resolved `manifest_root`,
+`analysis_root`, `artifact_root`, and `batches_root` for visibility.
+
+### `--dry-run`
+
+Validates configuration and paths, discovers and classifies manifests, and
+reports what ingestion/analysis/batch generation *would* do - without
+writing state, analysis output, or batch files, and without invoking the
+analyzer on evidence that has not already been analyzed (an existing
+`*.analyzed.json` is read, since that is a plain file read rather than an
+analysis invocation; outstanding evidence with no analyzed file yet is
+reported as pending, not analyzed). The result always carries
+`"dry_run": true`.
+
+### Recovering after interruption
+
+Every phase persists before the next one starts, so rerunning the exact same
+`advance` command after any interruption (killed process, machine restart,
+`Ctrl+C`) always resumes correctly: it can never duplicate ingested run/
+analysis history, never regress a job's status, never lose evidence already
+on disk, and never mint a second batch identity for work that was already
+committed to a batch. If the interruption happened mid-lock (the process
+died holding `.stage_a_cycle.lock`), the next invocation reclaims the lock
+automatically once it goes stale rather than blocking forever.
+
+### Investigating stop actions
+
+- **`CONFLICT`**: inspect `state["conflicts"]` (or the `conflicts` field of
+  `--json`) - each entry names the conflict code (`RUN_CONFLICT`,
+  `ANALYSIS_CONFLICT`, `UNKNOWN_JOB`, ...) and the existing vs. incoming
+  values. These are the same conflicts `campaign_planner.py ingest-runs`/
+  `ingest-analysis` would report; nothing here is wrapper-specific. Resolve
+  by correcting or removing the offending evidence file, then rerun.
+- **`BLOCKED` / `DIAGNOSTIC_AUTHORIZATION_REQUIRED`**: run
+  `python tools\campaign_planner.py status campaign.json campaign_state.json`
+  for the full picture, then use the documented diagnostic/manual-review
+  commands below.
+- **`ERROR`**: read the `errors` list - `STATE_NOT_INITIALIZED` names the
+  exact `init` command to run; `CONFIGURATION_DRIFT` means the campaign
+  document changed after `init` (see "Recovering an existing failed Stage 1
+  state" above); `ANALYZER_INVOCATION_FAILED` names the run and manifest to
+  inspect (and leaves an `analyzer_error.json` record next to it);
+  `CYCLE_LOCK_HELD` names the pid/host that owns the lock.
+
+### Manual review and diagnostic authorization stay explicit
+
+`advance` never records a manual review outcome and never authorizes a
+diagnostic - both remain deliberate operator actions through the existing
+commands:
+
+```cmd
+python tools\campaign_planner.py manual-review campaign.json campaign_state.json JOB_ID ACCEPTED operator-name
+python tools\campaign_planner.py diagnostic campaign.json campaign_state.json request JOB_ID --rule targeted_asf
+```
+
+After either, call `advance` again to pick up the resulting eligible work.
+
+### Validation-only Dynamo runs
+
+Running Dynamo's thin executor with `IN[2] = True` (validation-only, see
+`REVIT_BATCH_EXECUTOR.md`) still writes a `revit_run_manifest.json`, but with
+`execution_status: "validation_only"` and every job recorded `validated_only`
+- no probe ran and no TIFF was produced. `advance` recognizes and counts
+these (`VALIDATION_MANIFESTS_IGNORED`) but never ingests them for campaign
+progression: a validation-only run proves the batch is well-formed, not that
+any evidence was produced, so it must never silently advance a job's status.
+
+### Debugging with the individual commands
+
+`stage_a_cycle.py` composes `campaign_planner.py` and
+`analyze_stage_a_probe.py` without replacing them - both remain fully usable
+on their own (e.g. to re-run just the analyzer on one report, or to inspect
+`status` without triggering discovery/analysis/batch generation). Every
+Dynamo invocation still writes its own uniquely-identified
+`revit_run_manifest.json` under a fresh `<run_id>` directory (see
+"Resolution and resumption" in `REVIT_BATCH_EXECUTOR.md`) - this is what lets
+`advance` discover and process partial batches spanning multiple Dynamo
+invocations correctly.
+
 ## Initial Stage A configuration
 
 `examples/stage_a_campaign.json` encodes, rather than hard-codes: an elevation `attached_AS`/`detached_AS` mutation closure (see "Conditional fallbacks" above); repeated 150-DPI elevation alignment, gated on that closure resolving rather than on `attached_AS` specifically; Hidden Line/white-fill/black-line elevation calibration at 75/150/300 DPI; fixed-1600 plus repeated 150-DPI alignment for active/inactive floor, RCP, section, and model callout, gated on the elevation linework stage completing; the three supported reduced mutations (`attached_element_overrides_only`, `attached_AS`, `detached_ASF`); gated linework and separate manual review; and tagged RVT-link/DWG capability checks, eligible once the independent linework/alignment matrix has concluded (pass, fail, inconclusive, or blocked) rather than only on its success, before their 150-DPI runs. Replace placeholder document/view identities before use. Drafting views are rejected from the alignment matrix.
