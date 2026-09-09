@@ -125,13 +125,11 @@ def test_transaction_adapter_resolves_unique_id_elements(monkeypatch):
 
 
 def test_external_sources_adapter_resolves_link_and_dwg_unique_ids(monkeypatch):
+    import tests.dynamo.probe_stage_a_external_sources as probe
     target_view, link, dwg = View("view", "View"), NonView("link"), NonView("dwg")
     doc = Doc([target_view, link, dwg]); captured = {}
-    module_name = PROBE_MODULES["stage_a_external_sources"]
-    fake_module = types.ModuleType(module_name)
     def run_probe(**arguments): captured.update(arguments); return envelope()
-    fake_module.run_probe = run_probe
-    monkeypatch.setitem(sys.modules, module_name, fake_module)
+    monkeypatch.setattr(probe, "run_probe", run_probe)
     adapter = build_registry(doc)["stage_a_external_sources"]
     adapter(target_view, {"link_instance_unique_ids": ["link"], "dwg_import_unique_ids": ["dwg"],
                           "fixed_pixel_width": 1600}, "/raw")
@@ -143,24 +141,20 @@ def test_external_sources_adapter_resolves_link_and_dwg_unique_ids(monkeypatch):
 
 
 def test_external_sources_adapter_defaults_to_empty_when_no_sources_supplied(monkeypatch):
+    import tests.dynamo.probe_stage_a_external_sources as probe
     target_view = View("view", "View")
     doc = Doc([target_view]); captured = {}
-    module_name = PROBE_MODULES["stage_a_external_sources"]
-    fake_module = types.ModuleType(module_name)
-    fake_module.run_probe = lambda **arguments: captured.update(arguments) or envelope()
-    monkeypatch.setitem(sys.modules, module_name, fake_module)
+    monkeypatch.setattr(probe, "run_probe", lambda **arguments: captured.update(arguments) or envelope())
     adapter = build_registry(doc)["stage_a_external_sources"]
     adapter(target_view, {}, "/raw")
     assert captured["raw_links"] == [] and captured["raw_dwgs"] == []
 
 
 def test_external_sources_adapter_maps_dpi_alias_and_rejects_conflict(monkeypatch):
+    import tests.dynamo.probe_stage_a_external_sources as probe
     target_view = View("view", "View")
     doc = Doc([target_view]); captured = {}
-    module_name = PROBE_MODULES["stage_a_external_sources"]
-    fake_module = types.ModuleType(module_name)
-    fake_module.run_probe = lambda **arguments: captured.update(arguments) or envelope()
-    monkeypatch.setitem(sys.modules, module_name, fake_module)
+    monkeypatch.setattr(probe, "run_probe", lambda **arguments: captured.update(arguments) or envelope())
     adapter = build_registry(doc)["stage_a_external_sources"]
     # The checked-in examples/stage_a_campaign.json's s7.*.150 jobs use this
     # exact shape ({"dpi": 150}), matching the minimum-ID adapter's alias.
@@ -173,12 +167,10 @@ def test_external_sources_adapter_maps_dpi_alias_and_rejects_conflict(monkeypatc
 
 
 def test_external_sources_adapter_rejects_unknown_settings_and_unresolvable_ids(monkeypatch):
+    import tests.dynamo.probe_stage_a_external_sources as probe
     target_view = View("view", "View")
     doc = Doc([target_view])
-    module_name = PROBE_MODULES["stage_a_external_sources"]
-    fake_module = types.ModuleType(module_name)
-    fake_module.run_probe = lambda **arguments: (_ for _ in ()).throw(AssertionError("must not dispatch"))
-    monkeypatch.setitem(sys.modules, module_name, fake_module)
+    monkeypatch.setattr(probe, "run_probe", lambda **arguments: (_ for _ in ()).throw(AssertionError("must not dispatch")))
     adapter = build_registry(doc)["stage_a_external_sources"]
     with pytest.raises(ValueError, match="Unknown settings"):
         adapter.validate_settings({"pixel_size": 1600}, "/raw")
@@ -186,6 +178,37 @@ def test_external_sources_adapter_rejects_unknown_settings_and_unresolvable_ids(
         adapter.validate_settings({"link_instance_unique_ids": ["missing"]}, "/raw")
     with pytest.raises(ValueError, match="link_instance_ids must contain integers"):
         adapter.validate_settings({"link_instance_ids": [1.5]}, "/raw")
+
+
+def test_external_sources_adapter_rejects_malformed_falsey_reference_lists(monkeypatch):
+    import tests.dynamo.probe_stage_a_external_sources as probe
+    target_view = View("view", "View")
+    doc = Doc([target_view])
+    monkeypatch.setattr(probe, "run_probe", lambda **arguments: (_ for _ in ()).throw(AssertionError("must not dispatch")))
+    adapter = build_registry(doc)["stage_a_external_sources"]
+    # A malformed non-array value (empty string, 0, False) must never be
+    # silently treated as "no references supplied" - only an absent key or
+    # an explicit JSON null may default to [].
+    for bad in ("", 0, False):
+        with pytest.raises(ValueError, match="must be arrays"):
+            adapter.validate_settings({"link_instance_unique_ids": bad}, "/raw")
+    adapter.validate_settings({"link_instance_unique_ids": None}, "/raw")  # explicit null is fine
+
+
+def test_external_sources_adapter_rejects_invalid_selection_and_resolution_values(monkeypatch):
+    import tests.dynamo.probe_stage_a_external_sources as probe
+    target_view = View("view", "View")
+    doc = Doc([target_view])
+    monkeypatch.setattr(probe, "run_probe", lambda **arguments: (_ for _ in ()).throw(AssertionError("must not dispatch")))
+    adapter = build_registry(doc)["stage_a_external_sources"]
+    with pytest.raises(ValueError, match="Unknown external-source variant"):
+        adapter.validate_settings({"selection": "not_a_real_variant"}, "/raw")
+    with pytest.raises(ValueError, match="Unsupported resolution_policy"):
+        adapter.validate_settings({"resolution_policy": "nonsense"}, "/raw")
+    with pytest.raises(ValueError, match="fixed_pixel_width"):
+        adapter.validate_settings({"fixed_pixel_width": -1}, "/raw")
+    adapter.validate_settings({"selection": "host_reference_coloring", "resolution_policy": "fixed_pixel_width",
+                               "fixed_pixel_width": 1600}, "/raw")
 
 
 def test_external_sources_adapter_falls_back_to_generic_passthrough_without_a_document():
@@ -208,12 +231,44 @@ def test_example_campaign_external_sources_settings_validate_cleanly():
     assert checked == 4  # s7.rvt_link.fixed/.150, s7.dwg.fixed/.150
 
 
+def test_example_campaign_image_alignment_settings_validate_cleanly():
+    """Every stage_a_image_alignment job in the checked-in example campaign
+    (all of which use the campaign-wide `dpi` convention) must validate
+    through the real adapter."""
+    import json
+    from pathlib import Path
+    campaign = json.loads((Path(__file__).parents[2] / "examples" / "stage_a_campaign.json").read_text())
+    adapter = build_registry(Doc([]))["stage_a_image_alignment"]
+    checked = 0
+    for stage in campaign["stages"]:
+        for j in stage["jobs"]:
+            if j["probe_id"] == "stage_a_image_alignment":
+                adapter.validate_settings(j["settings"], "/raw")
+                checked += 1
+    assert checked == 17  # s2.align.r1/.r2 (2) + 5 views x (fixed + 150.r1 + 150.r2) (15)
+
+
+def test_model_linework_adapter_maps_dpi_and_selection(monkeypatch):
+    """The adapter itself (independent of what examples/stage_a_campaign.json
+    currently authors - see the module docstring note on its stale
+    display_style/fills/lines/bounds settings) correctly aliases dpi and
+    validates a real `selection` mode name."""
+    import tests.dynamo.probe_stage_a_model_linework as probe
+    target_view = View("view", "View"); captured = {}
+    monkeypatch.setattr(probe, "run_probe", lambda **arguments: captured.update(arguments) or envelope())
+    adapter = build_registry(Doc([]))["stage_a_model_linework"]
+    adapter(target_view, {"dpi": 150, "selection": "hidden_line_white_fill_black_lines"}, "/raw")
+    assert captured["target_dpi"] == 150
+    assert captured["selection"] == "hidden_line_white_fill_black_lines"
+    with pytest.raises(ValueError, match="Unknown settings"):
+        adapter.validate_settings({"display_style": "HiddenLine"}, "/raw")
+
+
 def test_validation_only_resolves_external_sources_element_references(tmp_path, monkeypatch):
+    import tests.dynamo.probe_stage_a_external_sources as probe
     view, link = View("u1", "View 1"), NonView("link")
-    doc = Doc([view, link]); module_name = PROBE_MODULES["stage_a_external_sources"]
-    fake_module = types.ModuleType(module_name)
-    fake_module.run_probe = lambda **arguments: (_ for _ in ()).throw(AssertionError("must not dispatch"))
-    monkeypatch.setitem(sys.modules, module_name, fake_module)
+    doc = Doc([view, link])
+    monkeypatch.setattr(probe, "run_probe", lambda **arguments: (_ for _ in ()).throw(AssertionError("must not dispatch")))
     configured = batch([job("one", "u1", "stage_a_external_sources",
                             {"link_instance_unique_ids": ["link"]})])
     result = execute_batch(configured, doc, build_registry(doc), lambda current: [view],
