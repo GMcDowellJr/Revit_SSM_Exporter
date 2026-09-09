@@ -248,6 +248,32 @@ def test_example_campaign_image_alignment_settings_validate_cleanly():
     assert checked == 17  # s2.align.r1/.r2 (2) + 5 views x (fixed + 150.r1 + 150.r2) (15)
 
 
+def test_image_alignment_adapter_normalizes_mode_before_validating():
+    """A runtime-legal mode value that isn't byte-identical to a
+    SUPPORTED_MODES member (differs only by case/whitespace, or is omitted/
+    null) must validate the same way _run_native()'s own
+    str(mode or "all").strip().lower() normalization would accept it - not
+    be rejected here only to succeed at real dispatch."""
+    adapter = build_registry(Doc([]))["stage_a_image_alignment"]
+    adapter.validate_settings({"mode": "ALL"}, "/raw")
+    adapter.validate_settings({"mode": " model_bounds "}, "/raw")
+    adapter.validate_settings({"mode": None}, "/raw")
+    adapter.validate_settings({}, "/raw")
+    with pytest.raises(ValueError, match="Unsupported export mode"):
+        adapter.validate_settings({"mode": "not_a_real_mode"}, "/raw")
+
+
+def test_image_alignment_adapter_validates_repetition_count():
+    adapter = build_registry(Doc([]))["stage_a_image_alignment"]
+    adapter.validate_settings({"repetition_count": 2}, "/raw")
+    with pytest.raises(ValueError, match="repetition_count must be at least 1"):
+        adapter.validate_settings({"repetition_count": 0}, "/raw")
+    with pytest.raises(ValueError, match="repetition_count must be at least 1"):
+        adapter.validate_settings({"repetition_count": -1}, "/raw")
+    with pytest.raises(ValueError, match="repetition_count must be an integer"):
+        adapter.validate_settings({"repetition_count": "not_a_number"}, "/raw")
+
+
 def test_model_linework_adapter_maps_dpi_and_selection(monkeypatch):
     """The adapter correctly aliases dpi and validates a real `selection`
     mode name; the older display_style/fills/lines/bounds shape (superseded

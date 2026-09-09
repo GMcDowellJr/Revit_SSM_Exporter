@@ -278,11 +278,18 @@ _IMAGE_ALIGNMENT_RUNTIME_SETTINGS = frozenset((
 
 def _image_alignment_adapter(module_name):
     """Explicit adapter boundary for stage_a_image_alignment: campaign `dpi`
-    maps to run_probe(target_dpi=...) as above. `mode` and resolution values
-    are validated through the probe's own SUPPORTED_MODES/select_resolution_runs
-    (not a second, driftable copy of accepted values) without starting a
-    transaction or exporting a TIFF, so this same function backs
-    validate_settings."""
+    maps to run_probe(target_dpi=...) as above. `mode`, `repetition_count`,
+    and resolution values are validated through the probe's own
+    SUPPORTED_MODES/select_resolution_runs (not a second, driftable copy of
+    accepted values) without starting a transaction or exporting a TIFF, so
+    this same function backs validate_settings.
+
+    `mode` is normalized (``str(mode or "all").strip().lower()``) with the
+    exact same logic _run_native() applies before its own SUPPORTED_MODES
+    check - matching this, not just the raw membership test, so a
+    runtime-legal value like "ALL" or " model_bounds " (or an explicit
+    null) is not rejected here only to succeed at real dispatch.
+    """
     def resolve(settings):
         module = __import__(module_name, fromlist=["run_probe"])
         arguments = dict(settings)
@@ -290,8 +297,16 @@ def _image_alignment_adapter(module_name):
         unknown = sorted(set(arguments) - _IMAGE_ALIGNMENT_RUNTIME_SETTINGS)
         if unknown:
             raise ValueError("Unknown settings for stage_a_image_alignment: {0}".format(unknown))
-        if "mode" in arguments and arguments["mode"] not in module.SUPPORTED_MODES:
-            raise ValueError("Unsupported export mode {0!r}. Expected one of {1}".format(arguments["mode"], module.SUPPORTED_MODES))
+        normalized_mode = str(arguments.get("mode") or "all").strip().lower()
+        if normalized_mode not in module.SUPPORTED_MODES:
+            raise ValueError("Unsupported export mode {0!r}. Expected one of {1}".format(arguments.get("mode"), module.SUPPORTED_MODES))
+        if "repetition_count" in arguments:
+            try:
+                repetition_count = int(arguments["repetition_count"])
+            except (TypeError, ValueError):
+                raise ValueError("repetition_count must be an integer")
+            if repetition_count < 1:
+                raise ValueError("repetition_count must be at least 1")
         module.select_resolution_runs(
             arguments.get("resolution_cases", "all"),
             arguments.get("resolution_policy", module.DEFAULT_RESOLUTION_POLICY),

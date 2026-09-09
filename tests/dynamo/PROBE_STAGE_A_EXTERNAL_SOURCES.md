@@ -20,20 +20,28 @@ logic. When inputs are supplied, they filter matching discovered link/import
 instances only; the probe reports discovery explicitly and never silently
 substitutes unrelated elements.
 
-**`run_probe()`'s `raw_links`/`raw_dwgs` parameters always require real Revit
-elements - the probe never discovers them on its own from just a view.** A run
-with neither supplied does not fail; every variant reports `"No discovered
-candidates for required source type(s)"` and is marked `skipped`, which reads
-as `INCONCLUSIVE`/`FAIL` once analyzed, not as an obvious "you forgot an
-input" error.
+`run_probe()`'s `raw_links`/`raw_dwgs` parameters are **optional filters, not
+required identity** - `_discover_assignments()` always calls `_collect_expanded()`
+to discover candidates from the target view first, and only narrows that
+discovered set down to the supplied elements when `raw_links`/`raw_dwgs` is
+non-empty (an empty/omitted filter is unrestricted, not "nothing to work
+with"). If a run reports `"No discovered candidates for required source
+type(s)"` with no filter supplied, that means the view itself has no visible
+element of that source type discoverable by `_collect_expanded()` - check
+that the RVT link/DWG import is actually visible (not hidden, not filtered
+out by a view filter or workset) in the view being probed, not that an input
+was "forgotten".
 
 ### Via the campaign/batch pipeline (`stage_a_cycle.py` / `campaign_planner.py`)
 
 IN[2]/IN[3] above are for running this probe directly from a Dynamo graph.
 Through the campaign/batch pipeline, campaign JSON cannot carry a live Revit
-element - only identity - so the registry's `stage_a_external_sources` adapter
-(`revit_probe_registry.py`) resolves campaign-facing settings into
-`raw_links`/`raw_dwgs` before dispatch:
+element, so the registry's `stage_a_external_sources` adapter
+(`revit_probe_registry.py`) resolves optional campaign-facing settings into
+`raw_links`/`raw_dwgs` before dispatch, the same optional-filter semantics as
+IN[2]/IN[3] above - useful for narrowing a probe run to a specific link/import
+instance in a view that has several, not for supplying identity the probe
+otherwise couldn't discover:
 
 ```json
 "settings": {

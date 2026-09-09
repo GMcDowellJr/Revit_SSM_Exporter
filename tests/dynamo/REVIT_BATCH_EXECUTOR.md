@@ -46,16 +46,18 @@ The registry resolves these through the current document and passes actual Revit
 elements to the adapter. This resolution also occurs in validation-only mode;
 JSON cannot supply `raw_elements` directly.
 
-`stage_a_external_sources` similarly cannot discover its RVT-link/DWG-import
-targets on its own from a view - `run_probe()`'s `raw_links`/`raw_dwgs`
-parameters require real elements. JSON settings may supply
+`stage_a_external_sources` discovers its RVT-link/DWG-import candidates from
+the target view automatically (`_discover_assignments()`/`_collect_expanded()`)
+- `run_probe()`'s `raw_links`/`raw_dwgs` are optional *filters* that narrow an
+already-discovered set, not required identity. JSON settings may supply
 `link_instance_unique_ids`/`link_instance_ids` and
-`dwg_import_unique_ids`/`dwg_import_ids`; the registry resolves these through
-the current document the same way as `stage_a_transaction_group_export`
-(`UniqueId` preferred), also in validation-only mode. Omitting both is legal
-JSON but not useful: every variant will report no discovered candidates for
-its required source type and the campaign result reads `INCONCLUSIVE`/`FAIL`,
-not as a clear "missing input" error - see `PROBE_STAGE_A_EXTERNAL_SOURCES.md`.
+`dwg_import_unique_ids`/`dwg_import_ids` to narrow a run to a specific
+instance; the registry resolves these through the current document the same
+way as `stage_a_transaction_group_export` (`UniqueId` preferred), also in
+validation-only mode. Omitting both is the normal case, not a misconfiguration:
+every visible link/DWG import of that type in the view is used. If a variant
+reports no discovered candidates with nothing supplied, the view itself has
+no visible element of that source type - see `PROBE_STAGE_A_EXTERNAL_SOURCES.md`.
 
 ## Resolution and resumption
 
