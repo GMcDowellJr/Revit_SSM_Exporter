@@ -714,7 +714,7 @@ def _export_tiff(doc, view, path, requested_pixel_size):
     if os.path.exists(long_path):
         os.remove(long_path)
     os.rename(created, long_path)
-    return path, accepted
+    return long_path, accepted
 
 
 def _sha(path):
@@ -837,8 +837,13 @@ def _run_variant(doc, view, out_dir, base, variant, items, resolution_report, re
         exported, accepted = _export_tiff(doc, view, path, resolution_report["accepted_width_px"])
         actual_w, actual_h = _actual_tiff_dimensions(exported)
         resolution = _finalize_resolution_report(_resolution_report_for_accepted_width(resolution_report, accepted), actual_w, actual_h)
-        report["export"] = {"path": exported, "accepted_pixel_size": accepted, "requested_pixel_size": resolution_report["requested_width_px"], "timing_ms": round((time.time() - t0) * 1000.0, 3), "resolution": resolution}
+        # `exported` is the long-path (\\?\-prefixed on Windows) form _export_tiff
+        # returns so every subsequent Pillow/os.path read below survives the same
+        # MAX_PATH limit the export rename does; `path` (the original, unprefixed
+        # form) is what gets reported so artifact metadata stays human-readable.
+        report["export"] = {"path": path, "accepted_pixel_size": accepted, "requested_pixel_size": resolution_report["requested_width_px"], "timing_ms": round((time.time() - t0) * 1000.0, 3), "resolution": resolution}
         report["image_analysis"] = _analyze(exported, report["assignments"])
+        report["image_analysis"]["path"] = path
         report["classification"] = _classify_variant(variant, {"assignments": report["assignments"], "hidden_link_fallback_ids": report["hidden_link_fallback"]}, report["image_analysis"])
     except Exception as ex:
         report["exceptions"].append(_exception_record("variant", ex))
