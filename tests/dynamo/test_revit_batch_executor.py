@@ -154,6 +154,24 @@ def test_external_sources_adapter_defaults_to_empty_when_no_sources_supplied(mon
     assert captured["raw_links"] == [] and captured["raw_dwgs"] == []
 
 
+def test_external_sources_adapter_maps_dpi_alias_and_rejects_conflict(monkeypatch):
+    target_view = View("view", "View")
+    doc = Doc([target_view]); captured = {}
+    module_name = PROBE_MODULES["stage_a_external_sources"]
+    fake_module = types.ModuleType(module_name)
+    fake_module.run_probe = lambda **arguments: captured.update(arguments) or envelope()
+    monkeypatch.setitem(sys.modules, module_name, fake_module)
+    adapter = build_registry(doc)["stage_a_external_sources"]
+    # The checked-in examples/stage_a_campaign.json's s7.*.150 jobs use this
+    # exact shape ({"dpi": 150}), matching the minimum-ID adapter's alias.
+    adapter(target_view, {"dpi": 150}, "/raw")
+    assert captured["target_dpi"] == 150
+    assert "dpi" not in captured
+    with pytest.raises(ValueError, match="conflicting"):
+        adapter.validate_settings({"dpi": 150, "target_dpi": 300}, "/raw")
+    adapter.validate_settings({"dpi": 150, "target_dpi": 150}, "/raw")
+
+
 def test_external_sources_adapter_rejects_unknown_settings_and_unresolvable_ids(monkeypatch):
     target_view = View("view", "View")
     doc = Doc([target_view])
@@ -173,6 +191,21 @@ def test_external_sources_adapter_rejects_unknown_settings_and_unresolvable_ids(
 def test_external_sources_adapter_falls_back_to_generic_passthrough_without_a_document():
     registry = build_registry(doc=None)
     assert not hasattr(registry["stage_a_external_sources"], "validate_settings")
+
+
+def test_example_campaign_external_sources_settings_validate_cleanly():
+    import json
+    from pathlib import Path
+    campaign = json.loads((Path(__file__).parents[2] / "examples" / "stage_a_campaign.json").read_text())
+    doc = Doc([])
+    adapter = build_registry(doc)["stage_a_external_sources"]
+    checked = 0
+    for stage in campaign["stages"]:
+        for j in stage["jobs"]:
+            if j["probe_id"] == "stage_a_external_sources":
+                adapter.validate_settings(j["settings"], "/raw")
+                checked += 1
+    assert checked == 4  # s7.rvt_link.fixed/.150, s7.dwg.fixed/.150
 
 
 def test_validation_only_resolves_external_sources_element_references(tmp_path, monkeypatch):

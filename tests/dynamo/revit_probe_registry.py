@@ -147,6 +147,10 @@ def _transaction_adapter(doc, module_name):
 _EXTERNAL_SOURCES_RUNTIME_SETTINGS = frozenset((
     "selection", "resolution_policy", "target_dpi", "fixed_pixel_width", "max_pixel_dimension",
 ))
+# Campaign-facing setting name -> probe-facing kwarg name, same alias
+# stage_a_minimum_id_mutations already accepts for the same campaign-authored
+# `dpi` convention used throughout examples/stage_a_campaign.json.
+_EXTERNAL_SOURCES_ALIASES = {"dpi": "target_dpi"}
 
 
 def _resolve_element_references(doc, unique_ids, integer_ids, label):
@@ -190,8 +194,10 @@ def _external_sources_adapter(doc, module_name):
     ``link_instance_ids`` and ``dwg_import_unique_ids`` / ``dwg_import_ids``
     into ``raw_links`` / ``raw_dwgs`` before dispatch - mirroring
     _transaction_adapter's element resolution for stage_a_transaction_group_export.
-    Rejects unknown settings without starting a transaction or exporting a
-    TIFF, so this same function is reused as validate_settings.
+    Campaign ``dpi`` maps to ``run_probe(target_dpi=...)``, the same alias
+    stage_a_minimum_id_mutations already accepts. Rejects unknown settings
+    and a conflicting dpi/target_dpi pair without starting a transaction or
+    exporting a TIFF, so this same function is reused as validate_settings.
     """
     def resolve(settings):
         arguments = dict(settings)
@@ -201,6 +207,13 @@ def _external_sources_adapter(doc, module_name):
         raw_dwgs = _resolve_element_references(
             doc, arguments.pop("dwg_import_unique_ids", []) or [],
             arguments.pop("dwg_import_ids", []) or [], "dwg_import")
+        for alias, canonical in _EXTERNAL_SOURCES_ALIASES.items():
+            if alias not in arguments:
+                continue
+            aliased_value = arguments.pop(alias)
+            if canonical in arguments and arguments[canonical] != aliased_value:
+                raise ValueError("conflicting {0} and {1} settings for stage_a_external_sources".format(alias, canonical))
+            arguments.setdefault(canonical, aliased_value)
         unknown = sorted(set(arguments) - _EXTERNAL_SOURCES_RUNTIME_SETTINGS)
         if unknown:
             raise ValueError("Unknown settings for stage_a_external_sources: {0}".format(unknown))
