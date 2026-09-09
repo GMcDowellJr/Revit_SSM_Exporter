@@ -45,6 +45,7 @@ otherwise couldn't discover:
 
 ```json
 "settings": {
+  "resolution_policy": "fixed_pixel_width",
   "fixed_pixel_width": 1600,
   "link_instance_unique_ids": ["<RevitLinkInstance UniqueId>"],
   "dwg_import_unique_ids": ["<ImportInstance UniqueId>"]
