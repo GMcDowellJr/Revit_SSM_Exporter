@@ -249,10 +249,10 @@ def test_example_campaign_image_alignment_settings_validate_cleanly():
 
 
 def test_model_linework_adapter_maps_dpi_and_selection(monkeypatch):
-    """The adapter itself (independent of what examples/stage_a_campaign.json
-    currently authors - see the module docstring note on its stale
-    display_style/fills/lines/bounds settings) correctly aliases dpi and
-    validates a real `selection` mode name."""
+    """The adapter correctly aliases dpi and validates a real `selection`
+    mode name; the older display_style/fills/lines/bounds shape (superseded
+    in examples/stage_a_campaign.json - see the module docstring) is
+    correctly rejected as unknown settings, not silently accepted."""
     import tests.dynamo.probe_stage_a_model_linework as probe
     target_view = View("view", "View"); captured = {}
     monkeypatch.setattr(probe, "run_probe", lambda **arguments: captured.update(arguments) or envelope())
@@ -262,6 +262,26 @@ def test_model_linework_adapter_maps_dpi_and_selection(monkeypatch):
     assert captured["selection"] == "hidden_line_white_fill_black_lines"
     with pytest.raises(ValueError, match="Unknown settings"):
         adapter.validate_settings({"display_style": "HiddenLine"}, "/raw")
+
+
+def test_example_campaign_model_linework_settings_validate_cleanly():
+    """All 8 stage_a_model_linework jobs (Stage 3's 75/150/300 DPI sweep and
+    Stage 6's 5 linework-validation jobs) use `selection` and validate
+    through the real adapter - see the module docstring in
+    revit_probe_registry.py for why they no longer use
+    display_style/fills/lines/bounds."""
+    import json
+    from pathlib import Path
+    campaign = json.loads((Path(__file__).parents[2] / "examples" / "stage_a_campaign.json").read_text())
+    adapter = build_registry(Doc([]))["stage_a_model_linework"]
+    checked = 0
+    for stage in campaign["stages"]:
+        for j in stage["jobs"]:
+            if j["probe_id"] == "stage_a_model_linework":
+                assert j["settings"] == {"dpi": j["settings"]["dpi"], "selection": "hidden_line_white_fill_black_lines"}
+                adapter.validate_settings(j["settings"], "/raw")
+                checked += 1
+    assert checked == 8
 
 
 def test_validation_only_resolves_external_sources_element_references(tmp_path, monkeypatch):

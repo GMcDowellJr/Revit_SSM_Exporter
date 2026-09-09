@@ -328,11 +328,17 @@ def _model_linework_adapter(module_name):
     NOTE: run_probe() only accepts `selection` (one of MODES, e.g.
     "hidden_line_white_fill_black_lines") to choose a display/fill/line
     configuration - there is no display_style/fills/lines/bounds kwarg.
-    examples/stage_a_campaign.json's Stage 3/6 jobs currently author settings
-    in that older shape; this adapter intentionally does not guess a mapping
-    from it to a `selection` value, since getting that mapping wrong would
-    silently change which linework mode actually runs. See the PR discussion
-    for the specific campaign settings that need updating to `selection`.
+    examples/stage_a_campaign.json's Stage 3/6 jobs previously authored
+    settings in that older shape ({"display_style": "HiddenLine", "fills":
+    "white", "lines": "black", "bounds": "..."}); "HiddenLine display + white
+    fills + black lines" is an exact match for the `hidden_line_white_fill_black_lines`
+    mode's own documented description (see PROBE_STAGE_A_MODEL_LINEWORK.md),
+    so those 8 jobs were updated to `"selection": "hidden_line_white_fill_black_lines"`.
+    `bounds` ("id_raster" / "accepted_id_raster") was dropped rather than
+    mapped: neither string, nor a `bounds` setting at all, appears anywhere
+    in this probe's implementation or in the repository's git history back
+    to the campaign file's original commit - it never corresponded to a real
+    capability.
     """
     def resolve(settings):
         module = __import__(module_name, fromlist=["run_probe"])

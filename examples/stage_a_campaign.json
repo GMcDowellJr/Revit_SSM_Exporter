@@ -179,10 +179,7 @@
           "repetition": 1,
           "settings": {
             "dpi": 75,
-            "display_style": "HiddenLine",
-            "fills": "white",
-            "lines": "black",
-            "bounds": "id_raster"
+            "selection": "hidden_line_white_fill_black_lines"
           }
         },
         {
@@ -194,10 +191,7 @@
           "repetition": 1,
           "settings": {
             "dpi": 150,
-            "display_style": "HiddenLine",
-            "fills": "white",
-            "lines": "black",
-            "bounds": "id_raster"
+            "selection": "hidden_line_white_fill_black_lines"
           }
         },
         {
@@ -209,10 +203,7 @@
           "repetition": 1,
           "settings": {
             "dpi": 300,
-            "display_style": "HiddenLine",
-            "fills": "white",
-            "lines": "black",
-            "bounds": "id_raster"
+            "selection": "hidden_line_white_fill_black_lines"
           }
         }
       ]
@@ -592,10 +583,7 @@
           "repetition": 1,
           "settings": {
             "dpi": 150,
-            "display_style": "HiddenLine",
-            "fills": "white",
-            "lines": "black",
-            "bounds": "accepted_id_raster"
+            "selection": "hidden_line_white_fill_black_lines"
           },
           "manual_review_required": true,
           "manual_review_reason": "LINEWORK_VISUAL_INSPECTION"
@@ -609,10 +597,7 @@
           "repetition": 1,
           "settings": {
             "dpi": 150,
-            "display_style": "HiddenLine",
-            "fills": "white",
-            "lines": "black",
-            "bounds": "accepted_id_raster"
+            "selection": "hidden_line_white_fill_black_lines"
           },
           "manual_review_required": true,
           "manual_review_reason": "LINEWORK_VISUAL_INSPECTION"
@@ -626,10 +611,7 @@
           "repetition": 1,
           "settings": {
             "dpi": 150,
-            "display_style": "HiddenLine",
-            "fills": "white",
-            "lines": "black",
-            "bounds": "accepted_id_raster"
+            "selection": "hidden_line_white_fill_black_lines"
           },
           "manual_review_required": true,
           "manual_review_reason": "LINEWORK_VISUAL_INSPECTION"
@@ -643,10 +625,7 @@
           "repetition": 1,
           "settings": {
             "dpi": 150,
-            "display_style": "HiddenLine",
-            "fills": "white",
-            "lines": "black",
-            "bounds": "accepted_id_raster"
+            "selection": "hidden_line_white_fill_black_lines"
           },
           "manual_review_required": true,
           "manual_review_reason": "LINEWORK_VISUAL_INSPECTION"
@@ -660,10 +639,7 @@
           "repetition": 1,
           "settings": {
             "dpi": 150,
-            "display_style": "HiddenLine",
-            "fills": "white",
-            "lines": "black",
-            "bounds": "accepted_id_raster"
+            "selection": "hidden_line_white_fill_black_lines"
           },
           "manual_review_required": true,
           "manual_review_reason": "LINEWORK_VISUAL_INSPECTION"
