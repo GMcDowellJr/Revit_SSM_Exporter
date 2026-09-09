@@ -30,7 +30,11 @@ type(s)"` with no filter supplied, that means the view itself has no visible
 element of that source type discoverable by `_collect_expanded()` - check
 that the RVT link/DWG import is actually visible (not hidden, not filtered
 out by a view filter or workset) in the view being probed, not that an input
-was "forgotten".
+was "forgotten". For DWG specifically, visibility alone is not enough:
+`_collect_from_dwg_imports()` (`vop_interwoven/revit/linked_documents.py`)
+deliberately excludes any `ImportInstance` whose `ViewSpecific` property is
+true, so a visible view-specific CAD import is never discovered - only
+model-level DWG imports are candidates.
 
 ### Via the campaign/batch pipeline (`stage_a_cycle.py` / `campaign_planner.py`)
 

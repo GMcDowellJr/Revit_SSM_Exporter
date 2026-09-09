@@ -55,9 +55,15 @@ already-discovered set, not required identity. JSON settings may supply
 instance; the registry resolves these through the current document the same
 way as `stage_a_transaction_group_export` (`UniqueId` preferred), also in
 validation-only mode. Omitting both is the normal case, not a misconfiguration:
-every visible link/DWG import of that type in the view is used. If a variant
-reports no discovered candidates with nothing supplied, the view itself has
-no visible element of that source type - see `PROBE_STAGE_A_EXTERNAL_SOURCES.md`.
+every visible link/DWG import of that type in the view is used - except that
+DWG discovery is further restricted to model-level (non-view-specific)
+imports: `_collect_from_dwg_imports()` (`vop_interwoven/revit/linked_documents.py`)
+deliberately skips any `ImportInstance` whose `ViewSpecific` property is true,
+so a visible view-specific CAD import is never a discovered candidate. If a
+variant reports no discovered candidates with nothing supplied, either the
+view has no visible element of that source type, or - for DWG specifically -
+the only DWG import(s) present are view-specific; see
+`PROBE_STAGE_A_EXTERNAL_SOURCES.md`.
 
 ## Resolution and resumption
 
