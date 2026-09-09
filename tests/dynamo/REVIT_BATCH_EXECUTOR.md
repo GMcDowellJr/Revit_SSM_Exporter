@@ -46,6 +46,25 @@ The registry resolves these through the current document and passes actual Revit
 elements to the adapter. This resolution also occurs in validation-only mode;
 JSON cannot supply `raw_elements` directly.
 
+`stage_a_external_sources` discovers its RVT-link/DWG-import candidates from
+the target view automatically (`_discover_assignments()`/`_collect_expanded()`)
+- `run_probe()`'s `raw_links`/`raw_dwgs` are optional *filters* that narrow an
+already-discovered set, not required identity. JSON settings may supply
+`link_instance_unique_ids`/`link_instance_ids` and
+`dwg_import_unique_ids`/`dwg_import_ids` to narrow a run to a specific
+instance; the registry resolves these through the current document the same
+way as `stage_a_transaction_group_export` (`UniqueId` preferred), also in
+validation-only mode. Omitting both is the normal case, not a misconfiguration:
+every visible link/DWG import of that type in the view is used - except that
+DWG discovery is further restricted to model-level (non-view-specific)
+imports: `_collect_from_dwg_imports()` (`vop_interwoven/revit/linked_documents.py`)
+deliberately skips any `ImportInstance` whose `ViewSpecific` property is true,
+so a visible view-specific CAD import is never a discovered candidate. If a
+variant reports no discovered candidates with nothing supplied, either the
+view has no visible element of that source type, or - for DWG specifically -
+the only DWG import(s) present are view-specific; see
+`PROBE_STAGE_A_EXTERNAL_SOURCES.md`.
+
 ## Resolution and resumption
 
 `UniqueId` is preferred and resolved with `Document.GetElement`. Name-only

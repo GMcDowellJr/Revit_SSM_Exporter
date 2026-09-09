@@ -36,6 +36,30 @@ class NonView:
     def __init__(self, uid): self.UniqueId = uid
 
 
+class FakeRevitLinkInstance(NonView):
+    """Stands in for Autodesk.Revit.DB.RevitLinkInstance - real class name
+    confirmed against tests/dynamo/test_import_check.py's own Revit API
+    import check, not guessed."""
+
+
+class FakeImportInstance(NonView):
+    """Stands in for Autodesk.Revit.DB.ImportInstance - see FakeRevitLinkInstance."""
+
+
+@pytest.fixture(autouse=True)
+def _fake_autodesk_revit_db(monkeypatch):
+    """_external_sources_adapter imports Autodesk.Revit.DB.RevitLinkInstance
+    and ImportInstance unconditionally (to validate a resolved element is
+    the right kind of source, not just any element) even when no link/DWG
+    settings are supplied, so every test in this file needs it satisfiable
+    - registering sys.modules["Autodesk.Revit.DB"] directly is sufficient
+    for `from Autodesk.Revit.DB import X` without needing parent packages."""
+    fake_db = types.ModuleType("Autodesk.Revit.DB")
+    fake_db.RevitLinkInstance = FakeRevitLinkInstance
+    fake_db.ImportInstance = FakeImportInstance
+    monkeypatch.setitem(sys.modules, "Autodesk.Revit.DB", fake_db)
+
+
 def batch(jobs=None, limit=10, error="stop", resume=False):
     jobs = jobs or [job("one", "u1")]
     return {"schema_version": "1.0", "campaign_id": "campaign", "batch_id": "batch",
@@ -122,6 +146,226 @@ def test_transaction_adapter_resolves_unique_id_elements(monkeypatch):
         adapter(target_view, {}, "/raw")
     with pytest.raises(ValueError, match="must contain integers"):
         adapter(target_view, {"element_ids": [123.9]}, "/raw")
+
+
+def test_external_sources_adapter_resolves_link_and_dwg_unique_ids(monkeypatch):
+    import tests.dynamo.probe_stage_a_external_sources as probe
+    target_view = View("view", "View")
+    link, dwg = FakeRevitLinkInstance("link"), FakeImportInstance("dwg")
+    doc = Doc([target_view, link, dwg]); captured = {}
+    def run_probe(**arguments): captured.update(arguments); return envelope()
+    monkeypatch.setattr(probe, "run_probe", run_probe)
+    adapter = build_registry(doc)["stage_a_external_sources"]
+    adapter(target_view, {"link_instance_unique_ids": ["link"], "dwg_import_unique_ids": ["dwg"],
+                          "fixed_pixel_width": 1600}, "/raw")
+    assert captured["raw_links"] == [link]
+    assert captured["raw_dwgs"] == [dwg]
+    assert captured["fixed_pixel_width"] == 1600
+    assert captured["raw_view"] is target_view
+    assert captured["output_dir"] == "/raw"
+
+
+def test_external_sources_adapter_defaults_to_empty_when_no_sources_supplied(monkeypatch):
+    import tests.dynamo.probe_stage_a_external_sources as probe
+    target_view = View("view", "View")
+    doc = Doc([target_view]); captured = {}
+    monkeypatch.setattr(probe, "run_probe", lambda **arguments: captured.update(arguments) or envelope())
+    adapter = build_registry(doc)["stage_a_external_sources"]
+    adapter(target_view, {}, "/raw")
+    assert captured["raw_links"] == [] and captured["raw_dwgs"] == []
+
+
+def test_external_sources_adapter_maps_dpi_alias_and_rejects_conflict(monkeypatch):
+    import tests.dynamo.probe_stage_a_external_sources as probe
+    target_view = View("view", "View")
+    doc = Doc([target_view]); captured = {}
+    monkeypatch.setattr(probe, "run_probe", lambda **arguments: captured.update(arguments) or envelope())
+    adapter = build_registry(doc)["stage_a_external_sources"]
+    # The checked-in examples/stage_a_campaign.json's s7.*.150 jobs use this
+    # exact shape ({"dpi": 150}), matching the minimum-ID adapter's alias.
+    adapter(target_view, {"dpi": 150}, "/raw")
+    assert captured["target_dpi"] == 150
+    assert "dpi" not in captured
+    with pytest.raises(ValueError, match="conflicting"):
+        adapter.validate_settings({"dpi": 150, "target_dpi": 300}, "/raw")
+    adapter.validate_settings({"dpi": 150, "target_dpi": 150}, "/raw")
+
+
+def test_external_sources_adapter_rejects_unknown_settings_and_unresolvable_ids(monkeypatch):
+    import tests.dynamo.probe_stage_a_external_sources as probe
+    target_view = View("view", "View")
+    doc = Doc([target_view])
+    monkeypatch.setattr(probe, "run_probe", lambda **arguments: (_ for _ in ()).throw(AssertionError("must not dispatch")))
+    adapter = build_registry(doc)["stage_a_external_sources"]
+    with pytest.raises(ValueError, match="Unknown settings"):
+        adapter.validate_settings({"pixel_size": 1600}, "/raw")
+    with pytest.raises(ValueError, match="No element has UniqueId"):
+        adapter.validate_settings({"link_instance_unique_ids": ["missing"]}, "/raw")
+    with pytest.raises(ValueError, match="link_instance_ids must contain integers"):
+        adapter.validate_settings({"link_instance_ids": [1.5]}, "/raw")
+
+
+def test_external_sources_adapter_rejects_wrong_element_class(monkeypatch):
+    # A valid UniqueId naming an ordinary element - not a RevitLinkInstance/
+    # ImportInstance - must be rejected here, not accepted and forwarded to
+    # silently produce skipped/inconclusive source variants at real dispatch.
+    import tests.dynamo.probe_stage_a_external_sources as probe
+    target_view, ordinary = View("view", "View"), NonView("wall")
+    dwg_masquerading_as_link = FakeImportInstance("not_a_link")
+    doc = Doc([target_view, ordinary, dwg_masquerading_as_link])
+    monkeypatch.setattr(probe, "run_probe", lambda **arguments: (_ for _ in ()).throw(AssertionError("must not dispatch")))
+    adapter = build_registry(doc)["stage_a_external_sources"]
+    with pytest.raises(ValueError, match="link_instance 'wall' resolved to a NonView, not a FakeRevitLinkInstance"):
+        adapter.validate_settings({"link_instance_unique_ids": ["wall"]}, "/raw")
+    with pytest.raises(ValueError, match="dwg_import 'wall' resolved to a NonView, not a FakeImportInstance"):
+        adapter.validate_settings({"dwg_import_unique_ids": ["wall"]}, "/raw")
+    with pytest.raises(ValueError, match="link_instance 'not_a_link' resolved to a FakeImportInstance, not a FakeRevitLinkInstance"):
+        adapter.validate_settings({"link_instance_unique_ids": ["not_a_link"]}, "/raw")
+
+
+def test_external_sources_adapter_rejects_malformed_falsey_reference_lists(monkeypatch):
+    import tests.dynamo.probe_stage_a_external_sources as probe
+    target_view = View("view", "View")
+    doc = Doc([target_view])
+    monkeypatch.setattr(probe, "run_probe", lambda **arguments: (_ for _ in ()).throw(AssertionError("must not dispatch")))
+    adapter = build_registry(doc)["stage_a_external_sources"]
+    # A malformed non-array value (empty string, 0, False) must never be
+    # silently treated as "no references supplied" - only an absent key or
+    # an explicit JSON null may default to [].
+    for bad in ("", 0, False):
+        with pytest.raises(ValueError, match="must be arrays"):
+            adapter.validate_settings({"link_instance_unique_ids": bad}, "/raw")
+    adapter.validate_settings({"link_instance_unique_ids": None}, "/raw")  # explicit null is fine
+
+
+def test_external_sources_adapter_rejects_invalid_selection_and_resolution_values(monkeypatch):
+    import tests.dynamo.probe_stage_a_external_sources as probe
+    target_view = View("view", "View")
+    doc = Doc([target_view])
+    monkeypatch.setattr(probe, "run_probe", lambda **arguments: (_ for _ in ()).throw(AssertionError("must not dispatch")))
+    adapter = build_registry(doc)["stage_a_external_sources"]
+    with pytest.raises(ValueError, match="Unknown external-source variant"):
+        adapter.validate_settings({"selection": "not_a_real_variant"}, "/raw")
+    with pytest.raises(ValueError, match="Unsupported resolution_policy"):
+        adapter.validate_settings({"resolution_policy": "nonsense"}, "/raw")
+    with pytest.raises(ValueError, match="fixed_pixel_width"):
+        adapter.validate_settings({"fixed_pixel_width": -1}, "/raw")
+    adapter.validate_settings({"selection": "host_reference_coloring", "resolution_policy": "fixed_pixel_width",
+                               "fixed_pixel_width": 1600}, "/raw")
+
+
+def test_external_sources_adapter_falls_back_to_generic_passthrough_without_a_document():
+    registry = build_registry(doc=None)
+    assert not hasattr(registry["stage_a_external_sources"], "validate_settings")
+
+
+def test_example_campaign_external_sources_settings_validate_cleanly():
+    import json
+    from pathlib import Path
+    campaign = json.loads((Path(__file__).parents[2] / "examples" / "stage_a_campaign.json").read_text())
+    doc = Doc([])
+    adapter = build_registry(doc)["stage_a_external_sources"]
+    checked = 0
+    for stage in campaign["stages"]:
+        for j in stage["jobs"]:
+            if j["probe_id"] == "stage_a_external_sources":
+                adapter.validate_settings(j["settings"], "/raw")
+                checked += 1
+    assert checked == 4  # s7.rvt_link.fixed/.150, s7.dwg.fixed/.150
+
+
+def test_example_campaign_image_alignment_settings_validate_cleanly():
+    """Every stage_a_image_alignment job in the checked-in example campaign
+    (all of which use the campaign-wide `dpi` convention) must validate
+    through the real adapter."""
+    import json
+    from pathlib import Path
+    campaign = json.loads((Path(__file__).parents[2] / "examples" / "stage_a_campaign.json").read_text())
+    adapter = build_registry(Doc([]))["stage_a_image_alignment"]
+    checked = 0
+    for stage in campaign["stages"]:
+        for j in stage["jobs"]:
+            if j["probe_id"] == "stage_a_image_alignment":
+                adapter.validate_settings(j["settings"], "/raw")
+                checked += 1
+    assert checked == 17  # s2.align.r1/.r2 (2) + 5 views x (fixed + 150.r1 + 150.r2) (15)
+
+
+def test_image_alignment_adapter_normalizes_mode_before_validating():
+    """A runtime-legal mode value that isn't byte-identical to a
+    SUPPORTED_MODES member (differs only by case/whitespace, or is omitted/
+    null) must validate the same way _run_native()'s own
+    str(mode or "all").strip().lower() normalization would accept it - not
+    be rejected here only to succeed at real dispatch."""
+    adapter = build_registry(Doc([]))["stage_a_image_alignment"]
+    adapter.validate_settings({"mode": "ALL"}, "/raw")
+    adapter.validate_settings({"mode": " model_bounds "}, "/raw")
+    adapter.validate_settings({"mode": None}, "/raw")
+    adapter.validate_settings({}, "/raw")
+    with pytest.raises(ValueError, match="Unsupported export mode"):
+        adapter.validate_settings({"mode": "not_a_real_mode"}, "/raw")
+
+
+def test_image_alignment_adapter_validates_repetition_count():
+    adapter = build_registry(Doc([]))["stage_a_image_alignment"]
+    adapter.validate_settings({"repetition_count": 2}, "/raw")
+    with pytest.raises(ValueError, match="repetition_count must be at least 1"):
+        adapter.validate_settings({"repetition_count": 0}, "/raw")
+    with pytest.raises(ValueError, match="repetition_count must be at least 1"):
+        adapter.validate_settings({"repetition_count": -1}, "/raw")
+    with pytest.raises(ValueError, match="repetition_count must be an integer"):
+        adapter.validate_settings({"repetition_count": "not_a_number"}, "/raw")
+
+
+def test_model_linework_adapter_maps_dpi_and_selection(monkeypatch):
+    """The adapter correctly aliases dpi and validates a real `selection`
+    mode name; the older display_style/fills/lines/bounds shape (superseded
+    in examples/stage_a_campaign.json - see the module docstring) is
+    correctly rejected as unknown settings, not silently accepted."""
+    import tests.dynamo.probe_stage_a_model_linework as probe
+    target_view = View("view", "View"); captured = {}
+    monkeypatch.setattr(probe, "run_probe", lambda **arguments: captured.update(arguments) or envelope())
+    adapter = build_registry(Doc([]))["stage_a_model_linework"]
+    adapter(target_view, {"dpi": 150, "selection": "hidden_line_white_fill_black_lines"}, "/raw")
+    assert captured["target_dpi"] == 150
+    assert captured["selection"] == "hidden_line_white_fill_black_lines"
+    with pytest.raises(ValueError, match="Unknown settings"):
+        adapter.validate_settings({"display_style": "HiddenLine"}, "/raw")
+
+
+def test_example_campaign_model_linework_settings_validate_cleanly():
+    """All 8 stage_a_model_linework jobs (Stage 3's 75/150/300 DPI sweep and
+    Stage 6's 5 linework-validation jobs) use `selection` and validate
+    through the real adapter - see the module docstring in
+    revit_probe_registry.py for why they no longer use
+    display_style/fills/lines/bounds."""
+    import json
+    from pathlib import Path
+    campaign = json.loads((Path(__file__).parents[2] / "examples" / "stage_a_campaign.json").read_text())
+    adapter = build_registry(Doc([]))["stage_a_model_linework"]
+    checked = 0
+    for stage in campaign["stages"]:
+        for j in stage["jobs"]:
+            if j["probe_id"] == "stage_a_model_linework":
+                assert j["settings"] == {"dpi": j["settings"]["dpi"], "selection": "hidden_line_white_fill_black_lines"}
+                adapter.validate_settings(j["settings"], "/raw")
+                checked += 1
+    assert checked == 8
+
+
+def test_validation_only_resolves_external_sources_element_references(tmp_path, monkeypatch):
+    import tests.dynamo.probe_stage_a_external_sources as probe
+    view, link = View("u1", "View 1"), FakeRevitLinkInstance("link")
+    doc = Doc([view, link])
+    monkeypatch.setattr(probe, "run_probe", lambda **arguments: (_ for _ in ()).throw(AssertionError("must not dispatch")))
+    configured = batch([job("one", "u1", "stage_a_external_sources",
+                            {"link_instance_unique_ids": ["link"]})])
+    result = execute_batch(configured, doc, build_registry(doc), lambda current: [view],
+                           str(tmp_path), validation_only=True, run_id="validation",
+                           is_view=lambda value: isinstance(value, View))
+    manifest = json.loads(Path(result["manifest_path"]).read_text())
+    assert manifest["execution_status"] == "validation_only"
+    assert manifest["jobs"][0]["execution_status"] == "validated_only"
 
 
 def test_validation_only_resolves_transaction_element_references(tmp_path, monkeypatch):

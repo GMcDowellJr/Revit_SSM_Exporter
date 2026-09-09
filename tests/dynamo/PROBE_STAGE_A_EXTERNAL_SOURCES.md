@@ -20,6 +20,49 @@ logic. When inputs are supplied, they filter matching discovered link/import
 instances only; the probe reports discovery explicitly and never silently
 substitutes unrelated elements.
 
+`run_probe()`'s `raw_links`/`raw_dwgs` parameters are **optional filters, not
+required identity** - `_discover_assignments()` always calls `_collect_expanded()`
+to discover candidates from the target view first, and only narrows that
+discovered set down to the supplied elements when `raw_links`/`raw_dwgs` is
+non-empty (an empty/omitted filter is unrestricted, not "nothing to work
+with"). If a run reports `"No discovered candidates for required source
+type(s)"` with no filter supplied, that means the view itself has no visible
+element of that source type discoverable by `_collect_expanded()` - check
+that the RVT link/DWG import is actually visible (not hidden, not filtered
+out by a view filter or workset) in the view being probed, not that an input
+was "forgotten". For DWG specifically, visibility alone is not enough:
+`_collect_from_dwg_imports()` (`vop_interwoven/revit/linked_documents.py`)
+deliberately excludes any `ImportInstance` whose `ViewSpecific` property is
+true, so a visible view-specific CAD import is never discovered - only
+model-level DWG imports are candidates.
+
+### Via the campaign/batch pipeline (`stage_a_cycle.py` / `campaign_planner.py`)
+
+IN[2]/IN[3] above are for running this probe directly from a Dynamo graph.
+Through the campaign/batch pipeline, campaign JSON cannot carry a live Revit
+element, so the registry's `stage_a_external_sources` adapter
+(`revit_probe_registry.py`) resolves optional campaign-facing settings into
+`raw_links`/`raw_dwgs` before dispatch, the same optional-filter semantics as
+IN[2]/IN[3] above - useful for narrowing a probe run to a specific link/import
+instance in a view that has several, not for supplying identity the probe
+otherwise couldn't discover:
+
+```json
+"settings": {
+  "resolution_policy": "fixed_pixel_width",
+  "fixed_pixel_width": 1600,
+  "link_instance_unique_ids": ["<RevitLinkInstance UniqueId>"],
+  "dwg_import_unique_ids": ["<ImportInstance UniqueId>"]
+}
+```
+
+`link_instance_ids`/`dwg_import_ids` (integer `ElementId` values) are also
+accepted; `UniqueId` is preferred for the same reason it is elsewhere in this
+pipeline (stable across some document round-trips ElementId is not). Any
+other unrecognized setting is rejected before a transaction starts or a TIFF
+is exported - this same resolution function backs `validate_settings`, so a
+misconfigured job is caught in `IN[2] = True` validation-only mode too.
+
 ## Production code inspected and reused
 
 The probe reuses the same external-source surfaces used by Stage A without

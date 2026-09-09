@@ -179,10 +179,7 @@
           "repetition": 1,
           "settings": {
             "dpi": 75,
-            "display_style": "HiddenLine",
-            "fills": "white",
-            "lines": "black",
-            "bounds": "id_raster"
+            "selection": "hidden_line_white_fill_black_lines"
           }
         },
         {
@@ -194,10 +191,7 @@
           "repetition": 1,
           "settings": {
             "dpi": 150,
-            "display_style": "HiddenLine",
-            "fills": "white",
-            "lines": "black",
-            "bounds": "id_raster"
+            "selection": "hidden_line_white_fill_black_lines"
           }
         },
         {
@@ -209,10 +203,7 @@
           "repetition": 1,
           "settings": {
             "dpi": 300,
-            "display_style": "HiddenLine",
-            "fills": "white",
-            "lines": "black",
-            "bounds": "id_raster"
+            "selection": "hidden_line_white_fill_black_lines"
           }
         }
       ]
@@ -230,7 +221,8 @@
           "repetition": 1,
           "settings": {
             "mode": "all",
-            "pixel_size": 1600
+            "resolution_policy": "fixed_pixel_width",
+            "fixed_pixel_width": 1600
           }
         },
         {
@@ -266,7 +258,8 @@
           "repetition": 1,
           "settings": {
             "mode": "all",
-            "pixel_size": 1600
+            "resolution_policy": "fixed_pixel_width",
+            "fixed_pixel_width": 1600
           }
         },
         {
@@ -302,7 +295,8 @@
           "repetition": 1,
           "settings": {
             "mode": "all",
-            "pixel_size": 1600
+            "resolution_policy": "fixed_pixel_width",
+            "fixed_pixel_width": 1600
           }
         },
         {
@@ -338,7 +332,8 @@
           "repetition": 1,
           "settings": {
             "mode": "all",
-            "pixel_size": 1600
+            "resolution_policy": "fixed_pixel_width",
+            "fixed_pixel_width": 1600
           }
         },
         {
@@ -374,7 +369,8 @@
           "repetition": 1,
           "settings": {
             "mode": "all",
-            "pixel_size": 1600
+            "resolution_policy": "fixed_pixel_width",
+            "fixed_pixel_width": 1600
           }
         },
         {
@@ -587,10 +583,7 @@
           "repetition": 1,
           "settings": {
             "dpi": 150,
-            "display_style": "HiddenLine",
-            "fills": "white",
-            "lines": "black",
-            "bounds": "accepted_id_raster"
+            "selection": "hidden_line_white_fill_black_lines"
           },
           "manual_review_required": true,
           "manual_review_reason": "LINEWORK_VISUAL_INSPECTION"
@@ -604,10 +597,7 @@
           "repetition": 1,
           "settings": {
             "dpi": 150,
-            "display_style": "HiddenLine",
-            "fills": "white",
-            "lines": "black",
-            "bounds": "accepted_id_raster"
+            "selection": "hidden_line_white_fill_black_lines"
           },
           "manual_review_required": true,
           "manual_review_reason": "LINEWORK_VISUAL_INSPECTION"
@@ -621,10 +611,7 @@
           "repetition": 1,
           "settings": {
             "dpi": 150,
-            "display_style": "HiddenLine",
-            "fills": "white",
-            "lines": "black",
-            "bounds": "accepted_id_raster"
+            "selection": "hidden_line_white_fill_black_lines"
           },
           "manual_review_required": true,
           "manual_review_reason": "LINEWORK_VISUAL_INSPECTION"
@@ -638,10 +625,7 @@
           "repetition": 1,
           "settings": {
             "dpi": 150,
-            "display_style": "HiddenLine",
-            "fills": "white",
-            "lines": "black",
-            "bounds": "accepted_id_raster"
+            "selection": "hidden_line_white_fill_black_lines"
           },
           "manual_review_required": true,
           "manual_review_reason": "LINEWORK_VISUAL_INSPECTION"
@@ -655,10 +639,7 @@
           "repetition": 1,
           "settings": {
             "dpi": 150,
-            "display_style": "HiddenLine",
-            "fills": "white",
-            "lines": "black",
-            "bounds": "accepted_id_raster"
+            "selection": "hidden_line_white_fill_black_lines"
           },
           "manual_review_required": true,
           "manual_review_reason": "LINEWORK_VISUAL_INSPECTION"
@@ -677,7 +658,8 @@
           "variant": "fixed_1600",
           "repetition": 1,
           "settings": {
-            "pixel_size": 1600
+            "resolution_policy": "fixed_pixel_width",
+            "fixed_pixel_width": 1600
           }
         },
         {
@@ -699,7 +681,8 @@
           "variant": "fixed_1600",
           "repetition": 1,
           "settings": {
-            "pixel_size": 1600
+            "resolution_policy": "fixed_pixel_width",
+            "fixed_pixel_width": 1600
           }
         },
         {

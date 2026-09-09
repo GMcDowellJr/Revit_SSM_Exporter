@@ -140,12 +140,280 @@ def _transaction_adapter(doc, module_name):
     return invoke
 
 
+# Runtime kwargs stage_a_external_sources.run_probe() actually accepts
+# (excluding raw_view/output_dir/raw_links/raw_dwgs, which the adapter always
+# supplies itself - raw_links/raw_dwgs are resolved from campaign-facing
+# settings below, never forwarded as JSON).
+_EXTERNAL_SOURCES_RUNTIME_SETTINGS = frozenset((
+    "selection", "resolution_policy", "target_dpi", "fixed_pixel_width", "max_pixel_dimension",
+))
+# Campaign-facing setting name -> probe-facing kwarg name, shared by every
+# specialized adapter below: none of these probes accept `dpi` directly
+# (only `target_dpi`), but `dpi` is the campaign-wide convention used
+# throughout examples/stage_a_campaign.json, matching the alias
+# stage_a_minimum_id_mutations already accepted before any of this file's
+# other adapters existed.
+_DPI_ALIAS = {"dpi": "target_dpi"}
+
+
+def _apply_dpi_alias(arguments, probe_id):
+    for alias, canonical in _DPI_ALIAS.items():
+        if alias not in arguments:
+            continue
+        aliased_value = arguments.pop(alias)
+        if canonical in arguments and arguments[canonical] != aliased_value:
+            raise ValueError("conflicting {0} and {1} settings for {2}".format(alias, canonical, probe_id))
+        arguments.setdefault(canonical, aliased_value)
+
+
+def _default_if_absent_or_null(arguments, key, default):
+    """Pop ``key``, substituting ``default`` only when it was absent or an
+    explicit JSON ``null`` - never for another falsey value (``""``, ``0``,
+    ``False``). A blanket ``value or default`` would silently turn a
+    malformed non-array setting into a valid empty one, masking exactly the
+    configuration error validation exists to catch."""
+    value = arguments.pop(key, default)
+    return default if value is None else value
+
+
+def _resolve_element_references(doc, unique_ids, integer_ids, label, expected_class=None):
+    """Resolve a campaign-facing (unique_id-or-integer) element reference list
+    to real Revit elements. Shared shape with _transaction_adapter's
+    resolve_elements: UniqueId is preferred, ElementId is a supported
+    fallback, and everything is validated before any element is touched.
+
+    ``expected_class`` (optional) rejects a resolved element that is not an
+    instance of it - a valid UniqueId/ElementId naming the wrong kind of
+    element (e.g. an ordinary host element instead of a RevitLinkInstance)
+    would otherwise be accepted here and only fail later, deep inside
+    _discover_assignments, as a silently skipped/inconclusive source
+    variant rather than a loud, preflight-catchable configuration error."""
+    if not isinstance(unique_ids, list) or not isinstance(integer_ids, list):
+        raise ValueError("{0}_unique_ids and {0}_ids must be arrays".format(label))
+    def _check_class(element, reference):
+        if expected_class is not None and not isinstance(element, expected_class):
+            raise ValueError("{0} {1!r} resolved to a {2}, not a {3}".format(
+                label, reference, type(element).__name__, expected_class.__name__))
+        return element
+    elements = []
+    for unique_id in unique_ids:
+        element = doc.GetElement(str(unique_id))
+        if element is None:
+            raise ValueError("No element has UniqueId {0}".format(unique_id))
+        elements.append(_check_class(element, unique_id))
+    if integer_ids:
+        if any(isinstance(value, bool) or not isinstance(value, int) for value in integer_ids):
+            raise ValueError("{0}_ids must contain integers".format(label))
+        from Autodesk.Revit.DB import ElementId
+        for integer_id in integer_ids:
+            try:
+                element_id = ElementId(integer_id)
+            except (TypeError, ValueError, OverflowError):
+                raise ValueError("Invalid element id: {0!r}".format(integer_id))
+            element = doc.GetElement(element_id)
+            if element is None:
+                raise ValueError("No element has ElementId {0}".format(integer_id))
+            elements.append(_check_class(element, integer_id))
+    return elements
+
+
+def _external_sources_adapter(doc, module_name):
+    """Explicit adapter boundary for stage_a_external_sources.
+
+    run_probe()'s raw_links/raw_dwgs parameters are optional filters, not
+    required identity - _discover_assignments() always auto-discovers
+    candidates from the target view first, and only narrows that discovered
+    set when a non-empty raw_links/raw_dwgs is supplied (see
+    PROBE_STAGE_A_EXTERNAL_SOURCES.md). Campaign JSON can only carry element
+    identity, never a live element, so this adapter resolves campaign-facing
+    ``link_instance_unique_ids`` / ``link_instance_ids`` and
+    ``dwg_import_unique_ids`` / ``dwg_import_ids`` into ``raw_links`` /
+    ``raw_dwgs`` before dispatch - mirroring _transaction_adapter's element
+    resolution for stage_a_transaction_group_export, but additionally
+    checking each resolved element is actually a RevitLinkInstance /
+    ImportInstance (not just any element with a matching UniqueId/ElementId)
+    since _transaction_adapter's precedent has no such check.
+    Campaign ``dpi`` maps to ``run_probe(target_dpi=...)``, the same alias
+    stage_a_minimum_id_mutations already accepts. Rejects unknown settings,
+    a conflicting dpi/target_dpi pair, an unresolvable/malformed/wrong-class
+    reference list, an unknown ``selection``, and an invalid resolution
+    combination - all without starting a transaction or exporting a TIFF, so
+    this same function is reused as validate_settings. Resolution/selection
+    values are validated by calling the probe module's own parsers (rather
+    than a second, driftable copy of its accepted values), matching exactly
+    what a real invocation would accept or reject.
+    """
+    def resolve(settings):
+        module = __import__(module_name, fromlist=["run_probe"])
+        from Autodesk.Revit.DB import RevitLinkInstance, ImportInstance
+        arguments = dict(settings)
+        raw_links = _resolve_element_references(
+            doc, _default_if_absent_or_null(arguments, "link_instance_unique_ids", []),
+            _default_if_absent_or_null(arguments, "link_instance_ids", []), "link_instance",
+            expected_class=RevitLinkInstance)
+        raw_dwgs = _resolve_element_references(
+            doc, _default_if_absent_or_null(arguments, "dwg_import_unique_ids", []),
+            _default_if_absent_or_null(arguments, "dwg_import_ids", []), "dwg_import",
+            expected_class=ImportInstance)
+        _apply_dpi_alias(arguments, "stage_a_external_sources")
+        unknown = sorted(set(arguments) - _EXTERNAL_SOURCES_RUNTIME_SETTINGS)
+        if unknown:
+            raise ValueError("Unknown settings for stage_a_external_sources: {0}".format(unknown))
+        if "selection" in arguments:
+            module.select_variants(arguments["selection"])
+        module._resolution_runs(  # noqa: SLF001 - reuse the probe's own parser, not a driftable copy
+            arguments.get("resolution_policy", module.DEFAULT_RESOLUTION_POLICY),
+            arguments.get("target_dpi", module.DEFAULT_TARGET_DPI),
+            arguments.get("fixed_pixel_width", module.DEFAULT_FIXED_PIXEL_WIDTH),
+            arguments.get("max_pixel_dimension", module.DEFAULT_MAX_PIXEL_DIMENSION))
+        return raw_links, raw_dwgs, arguments
+
+    def invoke(view, settings, output_directory):
+        module = __import__(module_name, fromlist=["run_probe"])
+        raw_links, raw_dwgs, arguments = resolve(settings)
+        return module.run_probe(raw_view=view, output_dir=output_directory,
+                                raw_links=raw_links, raw_dwgs=raw_dwgs, **arguments)
+
+    def validate_settings(settings, output_directory):
+        resolve(settings)
+
+    invoke.validate_settings = validate_settings
+    return invoke
+
+
+# stage_a_image_alignment and stage_a_model_linework, like
+# stage_a_external_sources above, only accept target_dpi - not dpi - and
+# previously went through the generic passthrough adapter with no aliasing
+# at all, so every campaign job using the campaign-wide `dpi` convention
+# (examples/stage_a_campaign.json uses it throughout Stages 2-4 and 6-7)
+# would fail at execution time with "run_probe() got an unexpected keyword
+# argument 'dpi'" the same way the stage_a_external_sources jobs did before
+# this file's shared _apply_dpi_alias() was added.
+_IMAGE_ALIGNMENT_RUNTIME_SETTINGS = frozenset((
+    "mode", "create_markers", "resolution_policy", "target_dpi", "fixed_pixel_width",
+    "max_pixel_dimension", "resolution_cases", "repetition_count",
+))
+
+
+def _image_alignment_adapter(module_name):
+    """Explicit adapter boundary for stage_a_image_alignment: campaign `dpi`
+    maps to run_probe(target_dpi=...) as above. `mode`, `repetition_count`,
+    and resolution values are validated through the probe's own
+    SUPPORTED_MODES/select_resolution_runs (not a second, driftable copy of
+    accepted values) without starting a transaction or exporting a TIFF, so
+    this same function backs validate_settings.
+
+    `mode` is normalized (``str(mode or "all").strip().lower()``) with the
+    exact same logic _run_native() applies before its own SUPPORTED_MODES
+    check - matching this, not just the raw membership test, so a
+    runtime-legal value like "ALL" or " model_bounds " (or an explicit
+    null) is not rejected here only to succeed at real dispatch.
+    """
+    def resolve(settings):
+        module = __import__(module_name, fromlist=["run_probe"])
+        arguments = dict(settings)
+        _apply_dpi_alias(arguments, "stage_a_image_alignment")
+        unknown = sorted(set(arguments) - _IMAGE_ALIGNMENT_RUNTIME_SETTINGS)
+        if unknown:
+            raise ValueError("Unknown settings for stage_a_image_alignment: {0}".format(unknown))
+        normalized_mode = str(arguments.get("mode") or "all").strip().lower()
+        if normalized_mode not in module.SUPPORTED_MODES:
+            raise ValueError("Unsupported export mode {0!r}. Expected one of {1}".format(arguments.get("mode"), module.SUPPORTED_MODES))
+        if "repetition_count" in arguments:
+            try:
+                repetition_count = int(arguments["repetition_count"])
+            except (TypeError, ValueError):
+                raise ValueError("repetition_count must be an integer")
+            if repetition_count < 1:
+                raise ValueError("repetition_count must be at least 1")
+        module.select_resolution_runs(
+            arguments.get("resolution_cases", "all"),
+            arguments.get("resolution_policy", module.DEFAULT_RESOLUTION_POLICY),
+            arguments.get("target_dpi", module.DEFAULT_TARGET_DPI),
+            arguments.get("fixed_pixel_width", module.DEFAULT_FIXED_PIXEL_WIDTH),
+            arguments.get("max_pixel_dimension", module.DEFAULT_MAX_PIXEL_DIMENSION))
+        return arguments
+
+    def invoke(view, settings, output_directory):
+        module = __import__(module_name, fromlist=["run_probe"])
+        arguments = resolve(settings)
+        return module.run_probe(raw_view=view, output_dir=output_directory, **arguments)
+
+    def validate_settings(settings, output_directory):
+        resolve(settings)
+
+    invoke.validate_settings = validate_settings
+    return invoke
+
+
+_MODEL_LINEWORK_RUNTIME_SETTINGS = frozenset((
+    "selection", "resolution_policy", "target_dpi", "fixed_pixel_width", "max_pixel_dimension",
+))
+
+
+def _model_linework_adapter(module_name):
+    """Explicit adapter boundary for stage_a_model_linework: campaign `dpi`
+    maps to run_probe(target_dpi=...) as above. `selection` and resolution
+    values are validated through the probe's own _select_modes/_resolution_runs
+    (reused rather than duplicated, same as the other specialized adapters
+    above) without starting a transaction or exporting a TIFF, so this same
+    function backs validate_settings.
+
+    NOTE: run_probe() only accepts `selection` (one of MODES, e.g.
+    "hidden_line_white_fill_black_lines") to choose a display/fill/line
+    configuration - there is no display_style/fills/lines/bounds kwarg.
+    examples/stage_a_campaign.json's Stage 3/6 jobs previously authored
+    settings in that older shape ({"display_style": "HiddenLine", "fills":
+    "white", "lines": "black", "bounds": "..."}); "HiddenLine display + white
+    fills + black lines" is an exact match for the `hidden_line_white_fill_black_lines`
+    mode's own documented description (see PROBE_STAGE_A_MODEL_LINEWORK.md),
+    so those 8 jobs were updated to `"selection": "hidden_line_white_fill_black_lines"`.
+    `bounds` ("id_raster" / "accepted_id_raster") was dropped rather than
+    mapped: neither string, nor a `bounds` setting at all, appears anywhere
+    in this probe's implementation or in the repository's git history back
+    to the campaign file's original commit - it never corresponded to a real
+    capability.
+    """
+    def resolve(settings):
+        module = __import__(module_name, fromlist=["run_probe"])
+        arguments = dict(settings)
+        _apply_dpi_alias(arguments, "stage_a_model_linework")
+        unknown = sorted(set(arguments) - _MODEL_LINEWORK_RUNTIME_SETTINGS)
+        if unknown:
+            raise ValueError("Unknown settings for stage_a_model_linework: {0}".format(unknown))
+        if "selection" in arguments:
+            module._select_modes(arguments["selection"])  # noqa: SLF001 - reuse the probe's own parser, not a driftable copy
+        module._resolution_runs(  # noqa: SLF001 - reuse the probe's own parser, not a driftable copy
+            arguments.get("resolution_policy", module.DEFAULT_RESOLUTION_POLICY),
+            arguments.get("target_dpi", module.DEFAULT_TARGET_DPI),
+            arguments.get("fixed_pixel_width", module.DEFAULT_FIXED_PIXEL_WIDTH),
+            arguments.get("max_pixel_dimension", module.DEFAULT_MAX_PIXEL_DIMENSION))
+        return arguments
+
+    def invoke(view, settings, output_directory):
+        module = __import__(module_name, fromlist=["run_probe"])
+        arguments = resolve(settings)
+        return module.run_probe(raw_view=view, output_dir=output_directory, **arguments)
+
+    def validate_settings(settings, output_directory):
+        resolve(settings)
+
+    invoke.validate_settings = validate_settings
+    return invoke
+
+
 def build_registry(doc=None):
-    specialized = {"stage_a_transaction_group_export", "stage_a_minimum_id_mutations"}
+    specialized = {"stage_a_transaction_group_export", "stage_a_minimum_id_mutations", "stage_a_external_sources",
+                   "stage_a_image_alignment", "stage_a_model_linework"}
     registry = {probe_id: _adapter(module) for probe_id, module in PROBE_MODULES.items()
                 if probe_id not in specialized}
     registry["stage_a_minimum_id_mutations"] = _minimum_id_mutations_adapter(PROBE_MODULES["stage_a_minimum_id_mutations"])
+    registry["stage_a_image_alignment"] = _image_alignment_adapter(PROBE_MODULES["stage_a_image_alignment"])
+    registry["stage_a_model_linework"] = _model_linework_adapter(PROBE_MODULES["stage_a_model_linework"])
     transaction_module = PROBE_MODULES["stage_a_transaction_group_export"]
     registry["stage_a_transaction_group_export"] = (_transaction_adapter(doc, transaction_module)
                                                        if doc is not None else _adapter(transaction_module))
+    external_sources_module = PROBE_MODULES["stage_a_external_sources"]
+    registry["stage_a_external_sources"] = (_external_sources_adapter(doc, external_sources_module)
+                                              if doc is not None else _adapter(external_sources_module))
     return registry

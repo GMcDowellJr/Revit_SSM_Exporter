@@ -652,13 +652,41 @@ def _set_pixel_size(opts, requested):
             candidate = max(16, candidate // 2)
 
 
+def _win_long_path(path):
+    """Bypass Windows' legacy 260-character MAX_PATH limit for file APIs by
+    using the extended-length ``\\\\?\\`` prefix, which Win32 honors
+    regardless of the LongPathsEnabled registry opt-in (unlike relying on
+    that setting alone - it requires both an OS-level opt-in and app/runtime
+    support neither Python nor this probe controls). A campaign job's
+    output_directory is the job's own long, hash-suffixed job_id (see
+    campaign_planner.py's default ``raw/<job_id>``), and this probe's export
+    filenames additionally encode the view name, resolution, and the full
+    variant name (e.g. "linked_per_element_linkelementid_coloring") - the
+    combination routinely exceeds 260 characters. Revit's own ExportImage
+    writes a short, fixed temp filename first (usually under the limit) and
+    only the later Python-side rename to the long final name actually fails,
+    which is why this must wrap the Python file operations, not the Revit
+    API call. No-op on non-Windows, an already-prefixed path, or a UNC path
+    (``\\\\server\\share\\...``, which needs the different ``\\?\\UNC\\``
+    form this does not attempt to construct); always normalizes to an
+    absolute path first since the prefix disables ``.``/``..`` resolution.
+    """
+    if os.name != "nt":
+        return path
+    absolute = os.path.abspath(path)
+    if absolute.startswith("\\\\"):
+        return absolute
+    return "\\\\?\\" + absolute
+
+
 def _export_tiff(doc, view, path, requested_pixel_size):
     from Autodesk.Revit.DB import ImageExportOptions, ExportRange, ZoomFitType, FitDirectionType, ElementId, ImageFileType
     import System.Collections.Generic as SCG
     out_dir = os.path.dirname(path)
-    if not os.path.isdir(out_dir):
-        os.makedirs(out_dir)
-    before = set(os.listdir(out_dir))
+    long_out_dir = _win_long_path(out_dir)
+    if not os.path.isdir(long_out_dir):
+        os.makedirs(long_out_dir)
+    before = set(os.listdir(long_out_dir))
     ids = SCG.List[ElementId](); ids.Add(view.Id)
     opts = ImageExportOptions()
     opts.ExportRange = ExportRange.SetOfViews
@@ -666,6 +694,10 @@ def _export_tiff(doc, view, path, requested_pixel_size):
     opts.ZoomType = ZoomFitType.FitToPage
     opts.FitDirection = FitDirectionType.Horizontal
     accepted = _set_pixel_size(opts, requested_pixel_size)
+    # Revit's own ImageExportOptions.FilePath is left un-prefixed: it already
+    # succeeds today (this temp name is short/fixed, unlike the final name
+    # below) and Revit's export machinery, not Python's os module, resolves
+    # this path, so the \\?\ prefix has no established meaning to it.
     opts.FilePath = os.path.join(out_dir, "_vop_external_sources_tmp")
     tiff = getattr(ImageFileType, "TIFF", getattr(ImageFileType, "TIF", None))
     if tiff is None:
@@ -673,15 +705,16 @@ def _export_tiff(doc, view, path, requested_pixel_size):
     opts.HLRandWFViewsFileType = tiff
     opts.ShadowViewsFileType = tiff
     doc.ExportImage(opts)
-    candidates = [f for f in (set(os.listdir(out_dir)) - before) if f.lower().endswith((".tif", ".tiff"))]
+    candidates = [f for f in (set(os.listdir(long_out_dir)) - before) if f.lower().endswith((".tif", ".tiff"))]
     if not candidates:
         raise RuntimeError("ExportImage produced no new TIFF in {0}".format(out_dir))
-    candidates.sort(key=lambda n: os.path.getmtime(os.path.join(out_dir, n)), reverse=True)
-    created = os.path.join(out_dir, candidates[0])
-    if os.path.exists(path):
-        os.remove(path)
-    os.rename(created, path)
-    return path, accepted
+    candidates.sort(key=lambda n: os.path.getmtime(os.path.join(long_out_dir, n)), reverse=True)
+    created = os.path.join(long_out_dir, candidates[0])
+    long_path = _win_long_path(path)
+    if os.path.exists(long_path):
+        os.remove(long_path)
+    os.rename(created, long_path)
+    return long_path, accepted
 
 
 def _sha(path):
@@ -804,8 +837,13 @@ def _run_variant(doc, view, out_dir, base, variant, items, resolution_report, re
         exported, accepted = _export_tiff(doc, view, path, resolution_report["accepted_width_px"])
         actual_w, actual_h = _actual_tiff_dimensions(exported)
         resolution = _finalize_resolution_report(_resolution_report_for_accepted_width(resolution_report, accepted), actual_w, actual_h)
-        report["export"] = {"path": exported, "accepted_pixel_size": accepted, "requested_pixel_size": resolution_report["requested_width_px"], "timing_ms": round((time.time() - t0) * 1000.0, 3), "resolution": resolution}
+        # `exported` is the long-path (\\?\-prefixed on Windows) form _export_tiff
+        # returns so every subsequent Pillow/os.path read below survives the same
+        # MAX_PATH limit the export rename does; `path` (the original, unprefixed
+        # form) is what gets reported so artifact metadata stays human-readable.
+        report["export"] = {"path": path, "accepted_pixel_size": accepted, "requested_pixel_size": resolution_report["requested_width_px"], "timing_ms": round((time.time() - t0) * 1000.0, 3), "resolution": resolution}
         report["image_analysis"] = _analyze(exported, report["assignments"])
+        report["image_analysis"]["path"] = path
         report["classification"] = _classify_variant(variant, {"assignments": report["assignments"], "hidden_link_fallback_ids": report["hidden_link_fallback"]}, report["image_analysis"])
     except Exception as ex:
         report["exceptions"].append(_exception_record("variant", ex))
