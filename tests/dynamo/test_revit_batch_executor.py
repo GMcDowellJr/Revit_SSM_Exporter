@@ -36,6 +36,30 @@ class NonView:
     def __init__(self, uid): self.UniqueId = uid
 
 
+class FakeRevitLinkInstance(NonView):
+    """Stands in for Autodesk.Revit.DB.RevitLinkInstance - real class name
+    confirmed against tests/dynamo/test_import_check.py's own Revit API
+    import check, not guessed."""
+
+
+class FakeImportInstance(NonView):
+    """Stands in for Autodesk.Revit.DB.ImportInstance - see FakeRevitLinkInstance."""
+
+
+@pytest.fixture(autouse=True)
+def _fake_autodesk_revit_db(monkeypatch):
+    """_external_sources_adapter imports Autodesk.Revit.DB.RevitLinkInstance
+    and ImportInstance unconditionally (to validate a resolved element is
+    the right kind of source, not just any element) even when no link/DWG
+    settings are supplied, so every test in this file needs it satisfiable
+    - registering sys.modules["Autodesk.Revit.DB"] directly is sufficient
+    for `from Autodesk.Revit.DB import X` without needing parent packages."""
+    fake_db = types.ModuleType("Autodesk.Revit.DB")
+    fake_db.RevitLinkInstance = FakeRevitLinkInstance
+    fake_db.ImportInstance = FakeImportInstance
+    monkeypatch.setitem(sys.modules, "Autodesk.Revit.DB", fake_db)
+
+
 def batch(jobs=None, limit=10, error="stop", resume=False):
     jobs = jobs or [job("one", "u1")]
     return {"schema_version": "1.0", "campaign_id": "campaign", "batch_id": "batch",
@@ -126,7 +150,8 @@ def test_transaction_adapter_resolves_unique_id_elements(monkeypatch):
 
 def test_external_sources_adapter_resolves_link_and_dwg_unique_ids(monkeypatch):
     import tests.dynamo.probe_stage_a_external_sources as probe
-    target_view, link, dwg = View("view", "View"), NonView("link"), NonView("dwg")
+    target_view = View("view", "View")
+    link, dwg = FakeRevitLinkInstance("link"), FakeImportInstance("dwg")
     doc = Doc([target_view, link, dwg]); captured = {}
     def run_probe(**arguments): captured.update(arguments); return envelope()
     monkeypatch.setattr(probe, "run_probe", run_probe)
@@ -178,6 +203,24 @@ def test_external_sources_adapter_rejects_unknown_settings_and_unresolvable_ids(
         adapter.validate_settings({"link_instance_unique_ids": ["missing"]}, "/raw")
     with pytest.raises(ValueError, match="link_instance_ids must contain integers"):
         adapter.validate_settings({"link_instance_ids": [1.5]}, "/raw")
+
+
+def test_external_sources_adapter_rejects_wrong_element_class(monkeypatch):
+    # A valid UniqueId naming an ordinary element - not a RevitLinkInstance/
+    # ImportInstance - must be rejected here, not accepted and forwarded to
+    # silently produce skipped/inconclusive source variants at real dispatch.
+    import tests.dynamo.probe_stage_a_external_sources as probe
+    target_view, ordinary = View("view", "View"), NonView("wall")
+    dwg_masquerading_as_link = FakeImportInstance("not_a_link")
+    doc = Doc([target_view, ordinary, dwg_masquerading_as_link])
+    monkeypatch.setattr(probe, "run_probe", lambda **arguments: (_ for _ in ()).throw(AssertionError("must not dispatch")))
+    adapter = build_registry(doc)["stage_a_external_sources"]
+    with pytest.raises(ValueError, match="link_instance 'wall' resolved to a NonView, not a FakeRevitLinkInstance"):
+        adapter.validate_settings({"link_instance_unique_ids": ["wall"]}, "/raw")
+    with pytest.raises(ValueError, match="dwg_import 'wall' resolved to a NonView, not a FakeImportInstance"):
+        adapter.validate_settings({"dwg_import_unique_ids": ["wall"]}, "/raw")
+    with pytest.raises(ValueError, match="link_instance 'not_a_link' resolved to a FakeImportInstance, not a FakeRevitLinkInstance"):
+        adapter.validate_settings({"link_instance_unique_ids": ["not_a_link"]}, "/raw")
 
 
 def test_external_sources_adapter_rejects_malformed_falsey_reference_lists(monkeypatch):
@@ -312,7 +355,7 @@ def test_example_campaign_model_linework_settings_validate_cleanly():
 
 def test_validation_only_resolves_external_sources_element_references(tmp_path, monkeypatch):
     import tests.dynamo.probe_stage_a_external_sources as probe
-    view, link = View("u1", "View 1"), NonView("link")
+    view, link = View("u1", "View 1"), FakeRevitLinkInstance("link")
     doc = Doc([view, link])
     monkeypatch.setattr(probe, "run_probe", lambda **arguments: (_ for _ in ()).throw(AssertionError("must not dispatch")))
     configured = batch([job("one", "u1", "stage_a_external_sources",

@@ -176,19 +176,31 @@ def _default_if_absent_or_null(arguments, key, default):
     return default if value is None else value
 
 
-def _resolve_element_references(doc, unique_ids, integer_ids, label):
+def _resolve_element_references(doc, unique_ids, integer_ids, label, expected_class=None):
     """Resolve a campaign-facing (unique_id-or-integer) element reference list
     to real Revit elements. Shared shape with _transaction_adapter's
     resolve_elements: UniqueId is preferred, ElementId is a supported
-    fallback, and everything is validated before any element is touched."""
+    fallback, and everything is validated before any element is touched.
+
+    ``expected_class`` (optional) rejects a resolved element that is not an
+    instance of it - a valid UniqueId/ElementId naming the wrong kind of
+    element (e.g. an ordinary host element instead of a RevitLinkInstance)
+    would otherwise be accepted here and only fail later, deep inside
+    _discover_assignments, as a silently skipped/inconclusive source
+    variant rather than a loud, preflight-catchable configuration error."""
     if not isinstance(unique_ids, list) or not isinstance(integer_ids, list):
         raise ValueError("{0}_unique_ids and {0}_ids must be arrays".format(label))
+    def _check_class(element, reference):
+        if expected_class is not None and not isinstance(element, expected_class):
+            raise ValueError("{0} {1!r} resolved to a {2}, not a {3}".format(
+                label, reference, type(element).__name__, expected_class.__name__))
+        return element
     elements = []
     for unique_id in unique_ids:
         element = doc.GetElement(str(unique_id))
         if element is None:
             raise ValueError("No element has UniqueId {0}".format(unique_id))
-        elements.append(element)
+        elements.append(_check_class(element, unique_id))
     if integer_ids:
         if any(isinstance(value, bool) or not isinstance(value, int) for value in integer_ids):
             raise ValueError("{0}_ids must contain integers".format(label))
@@ -201,41 +213,48 @@ def _resolve_element_references(doc, unique_ids, integer_ids, label):
             element = doc.GetElement(element_id)
             if element is None:
                 raise ValueError("No element has ElementId {0}".format(integer_id))
-            elements.append(element)
+            elements.append(_check_class(element, integer_id))
     return elements
 
 
 def _external_sources_adapter(doc, module_name):
     """Explicit adapter boundary for stage_a_external_sources.
 
-    run_probe()'s raw_links/raw_dwgs parameters require real Revit elements
-    (RevitLinkInstance / ImportInstance); the probe never discovers them on
-    its own - a job with neither supplied reports "No discovered candidates
-    for required source type(s)" on every variant rather than failing loudly.
-    Campaign JSON can only carry element identity, never a live element, so
-    this adapter resolves campaign-facing ``link_instance_unique_ids`` /
-    ``link_instance_ids`` and ``dwg_import_unique_ids`` / ``dwg_import_ids``
-    into ``raw_links`` / ``raw_dwgs`` before dispatch - mirroring
-    _transaction_adapter's element resolution for stage_a_transaction_group_export.
+    run_probe()'s raw_links/raw_dwgs parameters are optional filters, not
+    required identity - _discover_assignments() always auto-discovers
+    candidates from the target view first, and only narrows that discovered
+    set when a non-empty raw_links/raw_dwgs is supplied (see
+    PROBE_STAGE_A_EXTERNAL_SOURCES.md). Campaign JSON can only carry element
+    identity, never a live element, so this adapter resolves campaign-facing
+    ``link_instance_unique_ids`` / ``link_instance_ids`` and
+    ``dwg_import_unique_ids`` / ``dwg_import_ids`` into ``raw_links`` /
+    ``raw_dwgs`` before dispatch - mirroring _transaction_adapter's element
+    resolution for stage_a_transaction_group_export, but additionally
+    checking each resolved element is actually a RevitLinkInstance /
+    ImportInstance (not just any element with a matching UniqueId/ElementId)
+    since _transaction_adapter's precedent has no such check.
     Campaign ``dpi`` maps to ``run_probe(target_dpi=...)``, the same alias
     stage_a_minimum_id_mutations already accepts. Rejects unknown settings,
-    a conflicting dpi/target_dpi pair, an unresolvable/malformed reference
-    list, an unknown ``selection``, and an invalid resolution combination -
-    all without starting a transaction or exporting a TIFF, so this same
-    function is reused as validate_settings. Resolution/selection values are
-    validated by calling the probe module's own parsers (rather than a
-    second, driftable copy of its accepted values), matching exactly what a
-    real invocation would accept or reject.
+    a conflicting dpi/target_dpi pair, an unresolvable/malformed/wrong-class
+    reference list, an unknown ``selection``, and an invalid resolution
+    combination - all without starting a transaction or exporting a TIFF, so
+    this same function is reused as validate_settings. Resolution/selection
+    values are validated by calling the probe module's own parsers (rather
+    than a second, driftable copy of its accepted values), matching exactly
+    what a real invocation would accept or reject.
     """
     def resolve(settings):
         module = __import__(module_name, fromlist=["run_probe"])
+        from Autodesk.Revit.DB import RevitLinkInstance, ImportInstance
         arguments = dict(settings)
         raw_links = _resolve_element_references(
             doc, _default_if_absent_or_null(arguments, "link_instance_unique_ids", []),
-            _default_if_absent_or_null(arguments, "link_instance_ids", []), "link_instance")
+            _default_if_absent_or_null(arguments, "link_instance_ids", []), "link_instance",
+            expected_class=RevitLinkInstance)
         raw_dwgs = _resolve_element_references(
             doc, _default_if_absent_or_null(arguments, "dwg_import_unique_ids", []),
-            _default_if_absent_or_null(arguments, "dwg_import_ids", []), "dwg_import")
+            _default_if_absent_or_null(arguments, "dwg_import_ids", []), "dwg_import",
+            expected_class=ImportInstance)
         _apply_dpi_alias(arguments, "stage_a_external_sources")
         unknown = sorted(set(arguments) - _EXTERNAL_SOURCES_RUNTIME_SETTINGS)
         if unknown:
