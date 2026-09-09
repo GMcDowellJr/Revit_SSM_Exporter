@@ -230,7 +230,7 @@
           "repetition": 1,
           "settings": {
             "mode": "all",
-            "pixel_size": 1600
+            "fixed_pixel_width": 1600
           }
         },
         {
@@ -266,7 +266,7 @@
           "repetition": 1,
           "settings": {
             "mode": "all",
-            "pixel_size": 1600
+            "fixed_pixel_width": 1600
           }
         },
         {
@@ -302,7 +302,7 @@
           "repetition": 1,
           "settings": {
             "mode": "all",
-            "pixel_size": 1600
+            "fixed_pixel_width": 1600
           }
         },
         {
@@ -338,7 +338,7 @@
           "repetition": 1,
           "settings": {
             "mode": "all",
-            "pixel_size": 1600
+            "fixed_pixel_width": 1600
           }
         },
         {
@@ -374,7 +374,7 @@
           "repetition": 1,
           "settings": {
             "mode": "all",
-            "pixel_size": 1600
+            "fixed_pixel_width": 1600
           }
         },
         {
@@ -677,7 +677,7 @@
           "variant": "fixed_1600",
           "repetition": 1,
           "settings": {
-            "pixel_size": 1600
+            "fixed_pixel_width": 1600
           }
         },
         {
@@ -699,7 +699,7 @@
           "variant": "fixed_1600",
           "repetition": 1,
           "settings": {
-            "pixel_size": 1600
+            "fixed_pixel_width": 1600
           }
         },
         {
