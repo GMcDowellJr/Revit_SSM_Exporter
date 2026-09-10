@@ -429,6 +429,14 @@ def ingest_manifests(campaign: dict[str, Any], state: dict[str, Any], manifests:
             envelope = envelope or {}
             for artifact in envelope.get("artifact_paths", []):
                 if artifact not in job["artifact_references"]: job["artifact_references"].append(artifact)
+            # A job can go straight to terminal FAILED here (envelope-less
+            # executor failure) without ever reaching ingest_analysis, which
+            # is otherwise the only place evidence gets synced. Without this,
+            # a manual-review requirement on such a job would stay an
+            # accept/reject-able-looking PENDING forever despite having no
+            # artifact and no future analysis record that could ever supply
+            # one.
+            _sync_review_evidence(state, job)
         _event(state, "REVIT_RUN_INGESTED", run_id=run_id, fingerprint=digest)
     evaluate(campaign, state)
 
@@ -703,9 +711,29 @@ def migrate_state(state: dict[str, Any]) -> dict[str, Any]:
     mutation-closure fallbacks) so an older on-disk ``campaign_state.json``
     keeps loading under newer planner code. Idempotent; safe to call on an
     already-migrated state.
+
+    A requirement written by a pre-evidence-guard planner has no
+    ``artifact_references`` field at all, even when its job already carries
+    real raster artifacts - and because evidence normally syncs only when a
+    *new* analysis record is ingested, re-ingesting an already-recorded
+    analysis is a no-op duplicate that would never backfill it, permanently
+    stranding an in-progress campaign's still-open reviews behind the new
+    guard. A still-``PENDING`` requirement is therefore resynced from its
+    job's current evidence here (never touching job status, only the
+    requirement's own artifact_references/status via ``_sync_review_evidence``,
+    the same function ``ingest_analysis``/``ingest_manifests`` use). A
+    decision already recorded (``ACCEPTED``/``REJECTED``) is never touched -
+    its evidentiary status is instead surfaced read-only, without rewriting
+    it, by ``manual_review_evidence_warnings``.
     """
     state = dict(state)
     state.setdefault("closures", {})
+    for job_id, requirement in state.get("manual_review_requirements", {}).items():
+        requirement.setdefault("artifact_references", [])
+        if requirement.get("status") == "PENDING":
+            job = state.get("jobs", {}).get(job_id)
+            if job is not None:
+                _sync_review_evidence(state, job)
     return state
 
 
@@ -762,7 +790,7 @@ def package_campaign(campaign: dict[str, Any], state: dict[str, Any], output_dir
             continue
         refs = _raster_artifacts(requirement.get("artifact_references") or [])
         packaged_paths = []
-        for ref in refs:
+        for index, ref in enumerate(refs):
             source = Path(ref)
             if source_root is not None and not source.is_absolute():
                 source = Path(source_root) / source
@@ -770,11 +798,16 @@ def package_campaign(campaign: dict[str, Any], state: dict[str, Any], output_dir
                 raise CampaignError(
                     "MISSING_ARTIFACT_SOURCE: manual review artifact for {0} not found on disk: {1}".format(
                         job_id, source))
-            job_dir = artifacts_root / job_id
+            # Index-scoped per artifact: two references can share a filename
+            # while coming from different source directories (e.g. two
+            # resolution/run subfolders), and flattening both to a bare
+            # source.name would let the second copy silently overwrite the
+            # first, losing distinct review evidence.
+            job_dir = artifacts_root / job_id / str(index)
             job_dir.mkdir(parents=True, exist_ok=True)
             dest = job_dir / source.name
             shutil.copy2(str(source), str(dest))
-            packaged_paths.append(str(Path("artifacts") / "manual_review" / job_id / source.name))
+            packaged_paths.append(str(Path("artifacts") / "manual_review" / job_id / str(index) / source.name))
         packaged[job_id] = packaged_paths
         packaged_state["manual_review_requirements"][job_id]["artifact_references"] = packaged_paths
     output_dir.mkdir(parents=True, exist_ok=True)

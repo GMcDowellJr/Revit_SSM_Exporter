@@ -393,3 +393,83 @@ def test_package_campaign_refuses_to_ship_a_dangling_artifact_reference(tmp_path
  with pytest.raises(p.CampaignError):
   p.package_campaign(c,s,tmp_path/'package')
  assert not (tmp_path/'package').exists() or not any((tmp_path/'package').rglob('*.tif'))
+
+def test_package_campaign_preserves_both_artifacts_when_filenames_collide(tmp_path):
+ # Two references from different source directories sharing a basename must
+ # not flatten to the same destination and silently overwrite each other.
+ c=compact(); c['stages']=c['stages'][:1]; c['dependencies']=[]
+ c['stages'][0]['jobs'][0]['manual_review_required']=True
+ s=p.initialize_state(c); p.generate_next_batch(c,s); a=get(s,'align')
+ dir_a=tmp_path/'run_a'; dir_a.mkdir(); dir_b=tmp_path/'run_b'; dir_b.mkdir()
+ artifact_a=dir_a/'detail.tiff'; artifact_a.write_bytes(b'AAAA')
+ artifact_b=dir_b/'detail.tiff'; artifact_b.write_bytes(b'BBBB')
+ p.ingest_manifests(c,s,[manifest(s,a,artifact_paths=(str(artifact_a),str(artifact_b)))])
+ p.ingest_analysis(c,s,[analysis(s,a,'PASS')])
+ p.record_manual_review(c,s,a['job_id'],'ACCEPTED','operator')
+ result=p.package_campaign(c,s,tmp_path/'package')
+ packaged=result['packaged_artifacts'][a['job_id']]
+ assert len(packaged)==2 and len(set(packaged))==2  # distinct destinations
+ contents={(tmp_path/'package'/ref).read_bytes() for ref in packaged}
+ assert contents=={b'AAAA', b'BBBB'}  # both preserved, neither overwritten
+
+# --------------------------------------------------------------------------
+# Regressions found by automated review on the manual-review evidence guard.
+# --------------------------------------------------------------------------
+
+def test_manual_review_evidence_syncs_on_envelope_less_executor_failure():
+ # A job can go straight to terminal FAILED from ingest_manifests alone (no
+ # envelope, so the analyzer never runs and ingest_analysis is never
+ # called). Its manual-review requirement must still be classified
+ # EVIDENCE_MISSING rather than staying a falsely-actionable PENDING that
+ # record_manual_review can never resolve.
+ c=compact(); c['stages']=c['stages'][:1]; c['dependencies']=[]
+ c['stages'][0]['jobs'][0]['manual_review_required']=True
+ s=p.initialize_state(c); p.generate_next_batch(c,s); a=get(s,'align')
+ bid=a['batch_ids'][-1]
+ failed_no_envelope={'schema_version':'1.0','campaign_id':s['campaign_id'],'batch_id':bid,'run_id':'r1',
+     'document_identity':{},'environment':{},'batch_source':'batch.json','started_at':'x','completed_at':'y',
+     'execution_status':'completed',
+     'jobs':[{'job_id':a['job_id'],'configuration_fingerprint':a['execution_fingerprints'][bid],
+              'execution_status':'failed','raw_result_envelope':None,
+              'errors':[{'type':'RuntimeError','message':'probe raised'}]}],
+     'jobs_not_attempted':[]}
+ p.ingest_manifests(c,s,[failed_no_envelope])
+ assert a['status']=='FAILED'
+ requirement=s['manual_review_requirements'][a['job_id']]
+ assert requirement['status']=='EVIDENCE_MISSING'
+ assert requirement['artifact_references']==[]
+ with pytest.raises(p.CampaignError):
+  p.record_manual_review(c,s,a['job_id'],'ACCEPTED','operator')
+ assert p.generate_next_batch(c,s) is None
+ assert s['next_recommendation']=={'code':'BLOCKED_BY_FAILURE','reason':'MANUAL_REVIEW_EVIDENCE_MISSING','job_ids':[a['job_id']]}
+
+def test_migrate_state_backfills_pending_review_evidence_from_old_schema():
+ # A state written by a pre-evidence-guard planner never had
+ # artifact_references on its requirements at all, even though the job
+ # itself already carries a real raster artifact. Re-ingesting the already-
+ # recorded analysis is a no-op duplicate, so migration is the only place
+ # this can be backfilled without permanently stranding an in-progress
+ # review behind the new guard.
+ c=compact(); c['stages']=c['stages'][:1]; c['dependencies']=[]
+ c['stages'][0]['jobs'][0]['manual_review_required']=True
+ s=p.initialize_state(c); p.generate_next_batch(c,s); a=get(s,'align')
+ p.ingest_manifests(c,s,[manifest(s,a)]); p.ingest_analysis(c,s,[analysis(s,a,'PASS')])
+ old_shape=copy.deepcopy(s)
+ del old_shape['manual_review_requirements'][a['job_id']]['artifact_references']
+ migrated=p.migrate_state(old_shape)
+ requirement=migrated['manual_review_requirements'][a['job_id']]
+ assert requirement['status']=='PENDING' and requirement['artifact_references']==['raw.tif']
+ p.record_manual_review(c,migrated,a['job_id'],'ACCEPTED','operator')
+ assert migrated['manual_review_requirements'][a['job_id']]['status']=='ACCEPTED'
+
+def test_migrate_state_never_rewrites_an_already_recorded_decision():
+ c=compact(); c['stages']=c['stages'][:1]; c['dependencies']=[]
+ c['stages'][0]['jobs'][0]['manual_review_required']=True
+ s=p.initialize_state(c)
+ job_id=get(s,'align')['job_id']
+ s['manual_review_requirements'][job_id]={'status':'ACCEPTED','reason':'LINEWORK_VISUAL_INSPECTION',
+     'reviewer':'op','reviewed_at':'2023-01-01T00:00:00Z'}
+ migrated=p.migrate_state(copy.deepcopy(s))
+ requirement=migrated['manual_review_requirements'][job_id]
+ assert requirement['status']=='ACCEPTED'  # untouched, never resynced/rewritten
+ assert requirement['artifact_references']==[]  # only the missing key is backfilled empty, never fabricated
