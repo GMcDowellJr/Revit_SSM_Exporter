@@ -6,16 +6,16 @@ from tools import campaign_planner as p
 EXAMPLE = Path(__file__).parents[2] / 'examples' / 'stage_a_campaign.json'
 def example(): return json.loads(EXAMPLE.read_text())
 def compact():
- c=example(); c['campaign_id']='tiny'; c['view_registry']={'v':c['view_registry']['elevation']}; c['stages']=[{'stage_id':'one','description':'one','jobs':[{'job_key':'align','view_key':'v','probe_id':'stage_a_image_alignment','case':'a','variant':'x','repetition':1,'settings':{}}]},{'stage_id':'two','description':'two','jobs':[{'job_key':'mutate','view_key':'v','probe_id':'stage_a_minimum_id_mutations','case':'m','variant':'x','repetition':1,'settings':{}},{'job_key':'independent','view_key':'v','probe_id':'stage_a_image_alignment','case':'i','variant':'x','repetition':1,'settings':{}}]}]; c['dependencies']=[{'job':'mutate','requires_job':'align','statuses':['PASS']}]; c['conditional_fallbacks']=[]; c['execution_defaults']['batch_size']=2; return c
+ c=example(); c['campaign_id']='tiny'; c['view_registry']={'v':c['view_registry']['elevation']}; c['stages']=[{'stage_id':'one','description':'one','jobs':[{'job_key':'align','view_key':'v','probe_id':'stage_a_image_alignment','case':'a','variant':'x','repetition':1,'settings':{}}]},{'stage_id':'two','description':'two','jobs':[{'job_key':'mutate','view_key':'v','probe_id':'stage_a_minimum_id_mutations','case':'m','variant':'x','repetition':1,'settings':{}},{'job_key':'independent','view_key':'v','probe_id':'stage_a_image_alignment','case':'i','variant':'x','repetition':1,'settings':{}}]}]; c['dependencies']=[{'job':'mutate','requires_job':'align','statuses':['PASS']}]; c['conditional_fallbacks']=[]; c['host_color_id_feasibility']={}; c['execution_defaults']['batch_size']=2; return c
 def get(state,key): return next(x for x in state['jobs'].values() if x['job_key']==key)
 def manifest(state, job, status='completed', run='r1', artifact_paths=('raw.tif',)):
  bid=job['batch_ids'][-1]; return {'schema_version':'1.0','campaign_id':state['campaign_id'],'batch_id':bid,'run_id':run,'document_identity':{},'environment':{},'batch_source':'batch.json','started_at':'x','completed_at':'y','execution_status':'completed','jobs':[{'job_id':job['job_id'],'configuration_fingerprint':job['execution_fingerprints'][bid],'execution_status':status,'raw_result_envelope':{'artifact_paths':list(artifact_paths)}}],'jobs_not_attempted':[]}
 def analysis(state,job,status='PASS',run='r1',reason_codes=None):
  return {'analysis_schema_version':'1.0','campaign_id':state['campaign_id'],'batch_id':job['batch_ids'][-1],'run_id':run,'job_id':job['job_id'],'probe_id':job['probe_id'],'analyzer_version':'x','source_report':{'path':'raw.json','sha256':'a'},'artifact_references':['raw.tif'],'acceptance_status':status,'execution_status':'completed','reason_codes':reason_codes or []}
-def run_batch(c,s,job_key,status='PASS',reason_codes=None,run=None):
+def run_batch(c,s,job_key,status='PASS',reason_codes=None,run=None,artifact_paths=('raw.tif',)):
  """Generate the next batch, execute+analyze exactly the named job, return it."""
  p.generate_next_batch(c,s); j=get(s,job_key); run=run or j['job_id']
- p.ingest_manifests(c,s,[manifest(s,j,run=run)]); p.ingest_analysis(c,s,[analysis(s,j,status,run=run,reason_codes=reason_codes)]); return j
+ p.ingest_manifests(c,s,[manifest(s,j,run=run,artifact_paths=artifact_paths)]); p.ingest_analysis(c,s,[analysis(s,j,status,run=run,reason_codes=reason_codes)]); return j
 
 def test_schema_validation_ids_fingerprints_and_drafting_rejection():
  c=example(); assert p.validate_campaign(c); assert p.canonical_fingerprint(c)==p.canonical_fingerprint(copy.deepcopy(c)); c2=copy.deepcopy(c); c2['description']='changed'; assert p.canonical_fingerprint(c)!=p.canonical_fingerprint(c2)
@@ -147,7 +147,7 @@ def test_existing_failed_stage1_state_migrates_and_resupersedes_on_campaign_chan
  # with a FAILED attached_AS job, migrated forward, then re-bound to the
  # corrected campaign. Evidence (run_ids/analysis_record_ids/history) survives
  # on the superseded job; nothing is silently discarded.
- old_campaign=example(); old_campaign['conditional_fallbacks']=[]
+ old_campaign=example(); old_campaign['conditional_fallbacks']=[]; old_campaign['host_color_id_feasibility']={}
  for dep in old_campaign['dependencies']:
   if dep.get('requires_closure')=='elevation_mutation_closure': dep.pop('requires_closure',None); dep['requires_job']='s1.attached_as'
  s=p.initialize_state(old_campaign)
@@ -666,3 +666,58 @@ def test_external_source_jobs_cannot_block_host_feasibility_because_none_exist_i
  assert p.host_color_id_feasibility(c,s)['conclusion']=='HOST_COLOR_ID_FEASIBILITY_PASS'
  assert p.generate_next_batch(c,s) is None
  assert s['next_recommendation']['code']=='CAMPAIGN_COMPLETE'
+
+# --------------------------------------------------------------------------
+# Review-fixup regressions (PR #187 review findings).
+# --------------------------------------------------------------------------
+
+def test_fallback_resolution_retires_the_superseded_primarys_own_review():
+ # A closure's primary trigger job (blocked-by-template, no TIFF exported,
+ # so its own manual_review_required requirement is EVIDENCE_MISSING) must
+ # never strand the campaign after its fallback is materialized, reviewed,
+ # and PASSED - only the fallback (the closure's actual candidate) still
+ # matters for completion.
+ c=example(); s=p.initialize_state(c)
+ run_batch(c,s,'s1.attached_as','FAIL',reason_codes=['MUTATION_ATTESTATION_FAILED','MUTATION_BLOCKED_BY_TEMPLATE_ONLY'],artifact_paths=())
+ assert s['manual_review_requirements'][get(s,'s1.attached_as')['job_id']]['status']=='EVIDENCE_MISSING'
+ fb=run_batch(c,s,'s1.detached_as','INCONCLUSIVE',reason_codes=['MANUAL_SEMANTIC_REVIEW_REQUIRED'])
+ p.record_manual_review(c,s,fb['job_id'],'ACCEPTED','operator')
+ assert get(s,'s1.detached_as')['status']=='PASSED'
+ run_batch(c,s,'s2.align.r1','PASS'); run_batch(c,s,'s2.align.r2','PASS')
+ for view in CROSS_VIEWS:
+  _accept_cross_view(c,s,view)
+ assert p.host_color_id_feasibility(c,s)['conclusion']=='HOST_COLOR_ID_FEASIBILITY_PASS'
+ assert p.generate_next_batch(c,s) is None
+ assert s['next_recommendation']['code']=='CAMPAIGN_COMPLETE'  # not stranded on the primary's EVIDENCE_MISSING
+
+def test_status_and_feasibility_reject_a_mismatched_state_instead_of_crashing():
+ c=example(); s=p.initialize_state(c)
+ drifted=copy.deepcopy(c); drifted['description']='changed after init'
+ summary=p.status_summary(drifted,s)
+ assert summary['next_recommendation']['code']=='INVALID_CAMPAIGN_STATE'
+ assert summary['host_color_id_feasibility']=={'conclusion':'HOST_COLOR_ID_FEASIBILITY_INCONCLUSIVE','views':{},'reason':'CAMPAIGN_STATE_MISMATCH'}
+
+def test_feasibility_cli_rejects_a_mismatched_state(tmp_path, capsys):
+ c=example(); s=p.initialize_state(c)
+ campaign_path=tmp_path/'campaign.json'; state_path=tmp_path/'state.json'
+ campaign_path.write_text(json.dumps(c)); state_path.write_text(json.dumps(s))
+ drifted=copy.deepcopy(c); drifted['description']='changed after init'
+ campaign_path.write_text(json.dumps(drifted))
+ exit_code=p.main(['feasibility',str(campaign_path),str(state_path)])
+ assert exit_code==1
+ out=json.loads(capsys.readouterr().out)
+ assert out['reason']=='CAMPAIGN_STATE_MISMATCH'
+
+def test_core_views_mapping_is_validated_at_campaign_validation_time():
+ c=example()
+ c['host_color_id_feasibility']['core_views']['elevation']='not-an-object'
+ pytest.raises(p.CampaignError,p.validate_campaign,c)
+ c=example()
+ c['host_color_id_feasibility']['core_views']['elevation']={'closure_id':'no_such_closure'}
+ pytest.raises(p.CampaignError,p.validate_campaign,c)
+ c=example()
+ c['host_color_id_feasibility']['core_views']['bogus_view']={'closure_id':'elevation_mutation_closure'}
+ pytest.raises(p.CampaignError,p.validate_campaign,c)
+ c=example()
+ c['host_color_id_feasibility']['core_views']['elevation']={'closure_id':'elevation_mutation_closure','job_key':'s1.attached_as'}
+ pytest.raises(p.CampaignError,p.validate_campaign,c)  # exactly one of closure_id/job_key, not both

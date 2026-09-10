@@ -47,6 +47,7 @@ def pre_fallback_campaign():
     supplied evidence's campaign_state.json was bound to."""
     c = sanitized_campaign()
     c["conditional_fallbacks"] = []
+    c["host_color_id_feasibility"] = {}
     for dep in c["dependencies"]:
         if dep.get("requires_closure") == "elevation_mutation_closure":
             dep["requires_job"] = "s1.attached_as"
