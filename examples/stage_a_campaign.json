@@ -659,7 +659,11 @@
           "repetition": 1,
           "settings": {
             "resolution_policy": "fixed_pixel_width",
-            "fixed_pixel_width": 1600
+            "fixed_pixel_width": 1600,
+            "selection": [
+              "linked_per_element_linkelementid_coloring",
+              "forced_linked_override_failure_hide_instance_fallback"
+            ]
           }
         },
         {
@@ -670,7 +674,11 @@
           "variant": "150dpi",
           "repetition": 1,
           "settings": {
-            "dpi": 150
+            "dpi": 150,
+            "selection": [
+              "linked_per_element_linkelementid_coloring",
+              "forced_linked_override_failure_hide_instance_fallback"
+            ]
           }
         },
         {
@@ -682,7 +690,10 @@
           "repetition": 1,
           "settings": {
             "resolution_policy": "fixed_pixel_width",
-            "fixed_pixel_width": 1600
+            "fixed_pixel_width": 1600,
+            "selection": [
+              "dwg_importinstance_coloring"
+            ]
           }
         },
         {
@@ -693,7 +704,10 @@
           "variant": "150dpi",
           "repetition": 1,
           "settings": {
-            "dpi": 150
+            "dpi": 150,
+            "selection": [
+              "dwg_importinstance_coloring"
+            ]
           }
         }
       ]

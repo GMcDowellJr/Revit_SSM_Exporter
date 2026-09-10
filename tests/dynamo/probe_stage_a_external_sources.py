@@ -42,7 +42,25 @@ def _probe_contract():
 
 
 PROBE_NAME = "stage_a_external_sources"
-PROBE_VERSION = "2026-07-24.1"
+PROBE_VERSION = "2026-09-10.1"
+
+# Explicit LINK per-element override capability vocabulary, matching the
+# repository's existing status-token convention (mutation_status_record's
+# APPLIED/FAILED/UNSUPPORTED/BLOCKED_BY_TEMPLATE) rather than folding every
+# non-success outcome into a single generic failure:
+#   APPLIED      - _try_color_link_element() returned True; the override rendered.
+#   UNSUPPORTED  - _try_color_link_element() returned False with no exception -
+#                  a clean, non-exceptional signal that the current Revit/API
+#                  environment does not support this per-linked-element override,
+#                  not an unexpected failure.
+#   FAILED       - an exception was raised while attempting the override; a real,
+#                  unexpected failure distinct from a supported-but-declined API call.
+#   NOT_TESTED   - the forced-failure variant deliberately skips the attempt to
+#                  exercise the whole-link-instance fallback path instead.
+LINK_OVERRIDE_APPLIED = "APPLIED"
+LINK_OVERRIDE_UNSUPPORTED = "UNSUPPORTED"
+LINK_OVERRIDE_FAILED = "FAILED"
+LINK_OVERRIDE_NOT_TESTED = "NOT_TESTED"
 DEFAULT_FIXED_PIXEL_WIDTH = 1600
 DEFAULT_RESOLUTION_POLICY = "paper_space_dpi"
 DEFAULT_TARGET_DPI = 150
@@ -213,6 +231,52 @@ VARIANTS = [
 
 def select_variants(selection="all"):
     return _probe_contract().select_named(selection, VARIANTS, "external-source variant(s)")
+
+
+# Which variants belong to which source-family capability contract. A
+# campaign job requests a family implicitly by selecting one or more of its
+# variants (e.g. an RVT-link-only job selects only the two LINK variants);
+# HOST/DWG are never implicitly required just because a job happens to also
+# discover host or DWG content in the same view.
+SOURCE_FAMILY_VARIANTS = {
+    "HOST": ["host_reference_coloring"],
+    "LINK": ["linked_per_element_linkelementid_coloring", "forced_linked_override_failure_hide_instance_fallback"],
+    "DWG": ["dwg_importinstance_coloring"],
+}
+
+
+def _source_family_conclusion(report_variants, selected_variants):
+    """Compute per-family (HOST/LINK/DWG) status and the overall probe
+    conclusion, scoped strictly to the families a job actually selected.
+
+    An RVT-link-only job (``selected_variants`` restricted to the LINK
+    variants) must not fail requested-case coverage because HOST or DWG is
+    absent, and a DWG-only job must not fail because LINK or HOST is absent -
+    a family only enters the aggregate at all when at least one of its
+    variants was selected. UNSUPPORTED is a valid, non-failing terminal
+    capability conclusion for linked_per_element_linkelementid_coloring (see
+    _run_variant): a LINK family composed of that variant plus the forced
+    whole-link-fallback variant must be able to PASS even when the
+    per-element override is unsupported in the current Revit/API environment.
+    """
+    family_status = {}
+    for family, names in SOURCE_FAMILY_VARIANTS.items():
+        requested_names = [name for name in names if name in selected_variants]
+        if not requested_names:
+            family_status[family] = {"required_variants": names, "requested": False, "ran": None, "passed": None}
+            continue
+        matching = [v for v in report_variants if v.get("variant") in requested_names]
+        ran = bool(matching) and len(matching) == len(requested_names) and all(not v.get("skipped") for v in matching)
+        passed = ran and all(v.get("conclusion") in ("PASS", "UNSUPPORTED") for v in matching)
+        family_status[family] = {"required_variants": requested_names, "requested": True, "ran": ran, "passed": passed}
+    requested_families = [status for status in family_status.values() if status["requested"]]
+    if any(v.get("conclusion") == "FAIL" for v in report_variants):
+        conclusion = "FAIL"
+    elif requested_families and all(status["ran"] and status["passed"] for status in requested_families):
+        conclusion = "PASS"
+    else:
+        conclusion = "INCONCLUSIVE"
+    return family_status, conclusion
 
 
 
@@ -542,6 +606,75 @@ def _discover_assignments(doc, view, link_inputs, dwg_inputs):
     return by_source, discovered
 
 
+def _dwg_eligibility_diagnostics(doc, view, dwg_inputs, discovered_dwg_ids):
+    """Record explicit per-ImportInstance eligibility evidence instead of
+    letting an excluded/absent DWG collapse to an unexplained ``DWG = 0``.
+
+    Covers the union of every explicitly supplied ``dwg_inputs`` element and
+    every ``ImportInstance`` a direct view-scoped collector finds, so a
+    supplied fixture that production discovery silently excluded (e.g.
+    because ``ViewSpecific`` is True) is still reported with element id,
+    ``ViewSpecific``, whether the current production discovery policy
+    (``_collect_from_dwg_imports`` in vop_interwoven/revit/linked_documents.py)
+    treated it as eligible, and an explicit reason when it did not - without
+    changing that production policy.
+    """
+    from Autodesk.Revit.DB import FilteredElementCollector, ImportInstance
+    diagnostics = []
+    try:
+        collector_instances = {
+            eid: inst for inst in FilteredElementCollector(doc, view.Id).OfClass(ImportInstance).ToElements()
+            for eid in [_safe_int_id(getattr(inst, "Id", None))] if eid is not None
+        }
+    except Exception as ex:
+        return [{"error": "Could not enumerate ImportInstance elements in view: {0}".format(ex)}]
+    candidates = dict(collector_instances)
+    for inst in dwg_inputs or []:
+        eid = _safe_int_id(getattr(inst, "Id", None))
+        if eid is not None:
+            candidates.setdefault(eid, inst)
+    for eid in sorted(candidates):
+        inst = candidates[eid]
+        in_view_collector = eid in collector_instances
+        try:
+            view_specific = bool(getattr(inst, "ViewSpecific", False))
+        except Exception:
+            view_specific = None
+        cat = getattr(inst, "Category", None)
+        eligible = eid in discovered_dwg_ids
+        if eligible:
+            reason = None
+        elif not in_view_collector:
+            reason = "NOT_FOUND_IN_VIEW_IMPORT_INSTANCE_COLLECTOR"
+        elif view_specific:
+            reason = "EXCLUDED_VIEW_SPECIFIC_IMPORT"
+        else:
+            reason = "EXCLUDED_BY_PRODUCTION_DISCOVERY_POLICY_UNDETERMINED_REASON"
+        diagnostics.append({
+            "import_instance_id": eid,
+            "in_view_import_instance_collector": in_view_collector,
+            "view_specific": view_specific,
+            "category": getattr(cat, "Name", None),
+            "eligible_under_current_discovery_policy": eligible,
+            "exclusion_reason": reason,
+            "supplied": eid in {_safe_int_id(getattr(i, "Id", None)) for i in (dwg_inputs or [])},
+        })
+    return diagnostics
+
+
+def _skip_reason(variant, dwgs, discovery):
+    """A skipped variant's reason must say *why* candidates are absent when
+    that is already known, not just that they are absent - in particular, a
+    supplied DWG ImportInstance excluded for an explicit, recorded reason
+    (e.g. ViewSpecific == True) must never read as an unexplained ``DWG = 0``.
+    """
+    if variant == "dwg_importinstance_coloring" and dwgs:
+        excluded = [d for d in discovery.get("dwg_eligibility_diagnostics", []) if d.get("exclusion_reason")]
+        if excluded:
+            return "Supplied DWG ImportInstance(s) ineligible under current production discovery policy: {0}".format(excluded)
+    return "No discovered candidates for required source type(s)"
+
+
 def _solid_pattern_id(doc):
     from Autodesk.Revit.DB import FilteredElementCollector, FillPatternElement, FillPatternTarget
     for fp in FilteredElementCollector(doc).OfClass(FillPatternElement):
@@ -588,8 +721,21 @@ def _hide_element_ids(doc, view, element_ids):
 
 
 def _apply_assignments(doc, view, variant, items):
+    """Apply one color/override attempt per discovered item and return exactly
+    one assignment record per item.
+
+    Each item is appended to ``assignments`` exactly once, at the end of the
+    loop body, regardless of which branch handled it or whether it raised -
+    there is deliberately no second, parallel bookkeeping list that
+    re-records the same assignment under a different shape (a prior revision
+    kept a separate ``diagnostics`` list populated *in addition to* each
+    record's own ``paint_failure``/``link_override_status`` fields for failed
+    items, which double-counted every failing assignment - e.g. 21 discovered
+    LINK items that all fail would report 42 total records instead of 21).
+    ``diagnostics`` below is derived from the already-built ``assignments``
+    list afterward, purely for convenience, never populated independently.
+    """
     from vop_interwoven.color_id_buffer import _try_color_link_element
-    diagnostics = []
     palette, step = _palette(len(items))
     assignments = []
     hidden_link_fallback = []
@@ -599,8 +745,10 @@ def _apply_assignments(doc, view, variant, items):
         record["rgb"] = list(rgb)
         record["paint_success"] = False
         record["paint_failure"] = None
+        record["link_override_status"] = None
         try:
             if variant == "forced_linked_override_failure_hide_instance_fallback" and item.get("source_type") == "LINK":
+                record["link_override_status"] = LINK_OVERRIDE_NOT_TESTED
                 record["paint_failure"] = "forced diagnostic failure before LinkElementId override"
                 hidden = _hide_element_ids(doc, view, [item.get("link_instance_id")])
                 record["hidden_link_fallback"] = hidden
@@ -608,8 +756,11 @@ def _apply_assignments(doc, view, variant, items):
             elif item.get("source_type") == "LINK":
                 ok = _try_color_link_element(view, item["link_instance_api_id"], item["linked_element_api_id"], _ogs(doc, rgb))
                 record["paint_success"] = bool(ok)
-                if not ok:
-                    record["paint_failure"] = "LinkElementId override returned False"
+                if ok:
+                    record["link_override_status"] = LINK_OVERRIDE_APPLIED
+                else:
+                    record["link_override_status"] = LINK_OVERRIDE_UNSUPPORTED
+                    record["paint_failure"] = "LinkElementId override returned False (unsupported in this Revit/API environment)"
                     hidden = _hide_element_ids(doc, view, [item.get("link_instance_id")])
                     record["hidden_link_fallback"] = hidden
                     hidden_link_fallback.extend(hidden)
@@ -621,8 +772,12 @@ def _apply_assignments(doc, view, variant, items):
                 record["paint_success"] = True
         except Exception as ex:
             record["paint_failure"] = "{0}: {1}".format(type(ex).__name__, ex)
-            diagnostics.append({"assignment_key": item.get("assignment_key"), "message": str(ex), "type": type(ex).__name__})
+            if item.get("source_type") == "LINK" and variant != "forced_linked_override_failure_hide_instance_fallback":
+                record["link_override_status"] = LINK_OVERRIDE_FAILED
         assignments.append(record)
+    diagnostics = [{"assignment_key": a.get("assignment_key"), "message": a.get("paint_failure"),
+                    "type": "ExecutionFailure" if a.get("link_override_status") == LINK_OVERRIDE_FAILED else "PaintFailure"}
+                   for a in assignments if a.get("paint_failure") and a.get("link_override_status") != LINK_OVERRIDE_NOT_TESTED]
     return {"palette_step": step, "assignments": assignments, "hidden_link_fallback_ids": sorted(set(hidden_link_fallback)), "diagnostics": diagnostics}
 
 
@@ -748,6 +903,26 @@ def _analyze(path, assignments):
     return result
 
 
+def _link_override_capability(link_assignments):
+    """Aggregate one variant's per-item ``link_override_status`` values into a
+    single explicit capability determination, distinguishing a supported API
+    call, an environment that cleanly declines it (UNSUPPORTED), an
+    unexpected exception (FAILED), and a variant that never attempted the
+    call at all (NOT_TESTED / not_applicable)."""
+    if not link_assignments:
+        return "not_applicable"
+    statuses = {item.get("link_override_status") for item in link_assignments}
+    if LINK_OVERRIDE_FAILED in statuses:
+        return "failed_unexpectedly"
+    if statuses <= {LINK_OVERRIDE_APPLIED}:
+        return "supported"
+    if LINK_OVERRIDE_UNSUPPORTED in statuses:
+        return "unsupported"
+    if statuses <= {LINK_OVERRIDE_NOT_TESTED}:
+        return "not_tested"
+    return "inconclusive"
+
+
 def _classify_variant(variant, applied, analysis):
     assignments = applied.get("assignments", [])
     by_source = {"HOST": [], "LINK": [], "DWG": []}
@@ -755,7 +930,7 @@ def _classify_variant(variant, applied, analysis):
         by_source.get(a.get("source_type"), []).append(a)
     return {
         "per_source_success": {src: {"assigned": len(vals), "paint_success": sum(1 for v in vals if v.get("paint_success")), "colors_detected": sum(1 for v in vals if analysis.get("expected_color_pixel_counts", {}).get(str(v.get("assignment_key")), 0) > 0)} for src, vals in by_source.items()},
-        "linkelementid_supported": "yes" if any(v.get("paint_success") for v in by_source["LINK"]) else ("no_or_unresolved" if by_source["LINK"] else "not_tested"),
+        "linkelementid_capability": _link_override_capability(by_source["LINK"]),
         "hidden_link_fallback_exercised": bool(applied.get("hidden_link_fallback_ids")),
         "recommended_linked_fallback": "hide owning link instance prevents uncolored linked contamination in this diagnostic, but keep as a measured fallback rather than final production policy",
         "required_sidecar_schema_changes": ["preserve source_type HOST/LINK/DWG", "record link_instance_id and linked_element_id separately", "record import_instance_id separately from host_element_id", "record paint_success and hidden_link_fallback per assignment"],
@@ -783,6 +958,29 @@ def _source_evidence_status(variant, assignments, analysis, hidden_link_fallback
             "reason": "hidden owning link fallback exercised" if hidden_link_fallback else "forced linked failure did not hide any owning link instance",
             "rendered_counts_by_source": {src: rendered_count(vals) for src, vals in by_source.items()},
         }
+
+    if variant == "linked_per_element_linkelementid_coloring":
+        capability = _link_override_capability(by_source["LINK"])
+        if capability == "not_applicable":
+            return {"has_required_evidence": False, "reason": "no LINK assignments discovered"}
+        if capability == "failed_unexpectedly":
+            return {"has_required_evidence": False, "reason": "unexpected exception during LinkElementId override attempt(s)",
+                     "capability_status": "FAILED_UNEXPECTEDLY"}
+        if capability == "unsupported":
+            # A clean, non-exceptional False return is an explicit capability
+            # finding, not missing/failed evidence: per-linked-element
+            # host-style recoloring is not a required Stage A PASS criterion
+            # (see docs/PROBE_STAGE_A_EXTERNAL_SOURCES.md); the whole-link
+            # suppression fallback is exercised and evaluated separately by
+            # the forced_linked_override_failure_hide_instance_fallback variant.
+            return {"has_required_evidence": True, "capability_status": "UNSUPPORTED",
+                     "reason": "LinkElementId override determined unsupported in this Revit/API environment"}
+        if capability == "supported":
+            rendered_ok = rendered_count(by_source["LINK"]) > 0
+            return {"has_required_evidence": rendered_ok, "capability_status": "SUPPORTED" if rendered_ok else None,
+                     "reason": "LinkElementId override supported and rendered" if rendered_ok else
+                               "override reported success but no rendered color evidence"}
+        return {"has_required_evidence": False, "reason": "inconclusive LinkElementId capability determination"}
 
     required_sources = [src for src, vals in by_source.items() if vals]
     rendered = {src: rendered_count(by_source[src]) for src in required_sources}
@@ -860,8 +1058,21 @@ def _run_variant(doc, view, out_dir, base, variant, items, resolution_report, re
         report["state"]["after"] = _snapshot(doc, view, items)
         report["state"]["differences_after_rollback"] = _diff(report["state"].get("before", {}), report["state"].get("after", {}))
         report["evidence_status"] = _source_evidence_status(variant, report.get("assignments", []), report.get("image_analysis", {}), report.get("hidden_link_fallback", []))
-        if report["exceptions"] or not report["transaction_group"].get("rollback_succeeded") or report["state"].get("differences_after_rollback"):
+        capability_status = report["evidence_status"].get("capability_status")
+        if (report["exceptions"] or not report["transaction_group"].get("rollback_succeeded") or
+                report["state"].get("differences_after_rollback") or capability_status == "FAILED_UNEXPECTEDLY"):
+            # A real, unexpected exception attempting the LinkElementId override
+            # is a genuine failure needing investigation - never the same
+            # outcome as a clean, expected UNSUPPORTED capability finding.
             report["conclusion"] = "FAIL"
+        elif capability_status == "UNSUPPORTED":
+            # Explicit, non-failing capability determination: per-linked-
+            # element host-style recoloring is not supported in this Revit/API
+            # environment. This is not a required Stage A PASS criterion (see
+            # docs/PROBE_STAGE_A_EXTERNAL_SOURCES.md), so it must not read as
+            # a generic FAIL/INCONCLUSIVE - the whole-link suppression
+            # fallback is evaluated independently by its own forced variant.
+            report["conclusion"] = "UNSUPPORTED"
         elif report["evidence_status"].get("has_required_evidence"):
             report["conclusion"] = "PASS"
         else:
@@ -881,6 +1092,8 @@ def _run_native(raw_view, output_dir, raw_links, raw_dwgs, selection="all", reso
     links = _unwrap_many(raw_links)
     dwgs = _unwrap_many(raw_dwgs)
     by_source, discovery = _discover_assignments(doc, view, links, dwgs)
+    discovered_dwg_ids = {item.get("import_instance_id") for item in by_source["DWG"]}
+    discovery["dwg_eligibility_diagnostics"] = _dwg_eligibility_diagnostics(doc, view, dwgs, discovered_dwg_ids)
     probe_dir = os.path.join(out_dir, "external_sources_probe")
     if not os.path.isdir(probe_dir):
         os.makedirs(probe_dir)
@@ -897,32 +1110,16 @@ def _run_native(raw_view, output_dir, raw_links, raw_dwgs, selection="all", reso
         for variant in selected_variants:
             items = _items_for_variant(variant, by_source)
             if not items:
-                report["variants"].append({"variant": variant, "resolution": resolution_report, "skipped": True, "reason": "No discovered candidates for required source type(s)", "conclusion": "INCONCLUSIVE", "assignments": []})
+                report["variants"].append({"variant": variant, "resolution": resolution_report, "skipped": True,
+                                            "reason": _skip_reason(variant, dwgs, discovery),
+                                            "conclusion": "INCONCLUSIVE", "assignments": []})
                 continue
             report["variants"].append(_run_variant(doc, view, probe_dir, base, variant, items, resolution_report, suffix))
     report["recommended_linked_fallback"] = "When LinkElementId painting fails, hiding the owning link instance prevents unassigned linked contamination for the diagnostic export; do not treat this as final production policy without more samples."
     report["required_sidecar_schema_changes"] = ["source_type", "source_id", "source_label", "host_element_id", "link_instance_id", "linked_element_id", "import_instance_id", "paint_success", "hidden_link_fallback"]
     report["remaining_limitations"] = ["Dynamo/Revit runtime required for API behavior", "Pillow required for exact-color counts", "DWG fine attribution is limited to what repository import proxies expose; ImportInstance coloring is instance-level"]
-    required_family_variants = {
-        "HOST": ["host_reference_coloring"],
-        "LINK": ["linked_per_element_linkelementid_coloring", "forced_linked_override_failure_hide_instance_fallback"],
-        "DWG": ["dwg_importinstance_coloring"],
-    }
-    family_status = {}
-    for family, names in required_family_variants.items():
-        matching = [v for v in report["variants"] if v.get("variant") in names]
-        family_status[family] = {
-            "required_variants": names,
-            "ran": bool(matching) and all(not v.get("skipped") for v in matching),
-            "passed": bool(matching) and all(v.get("conclusion") == "PASS" for v in matching),
-        }
+    family_status, report["conclusion"] = _source_family_conclusion(report["variants"], selected_variants)
     report["required_source_family_status"] = family_status
-    if any(v.get("conclusion") == "FAIL" for v in report["variants"]):
-        report["conclusion"] = "FAIL"
-    elif all(status["ran"] and status["passed"] for status in family_status.values()):
-        report["conclusion"] = "PASS"
-    else:
-        report["conclusion"] = "INCONCLUSIVE"
     json_path = os.path.join(probe_dir, base + ".external_sources.json")
     with open(json_path, "w") as f:
         json.dump(report, f, indent=2, sort_keys=True)
