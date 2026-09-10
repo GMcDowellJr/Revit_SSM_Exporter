@@ -804,10 +804,26 @@ def _family_checks(data: dict[str, Any], native: dict[str, Any], family: str) ->
         checks.append(_alignment_coverage(data, native))
     else:
         requested, actual = _requested_names(data, native, family), _actual_names(native, family)
-        missing = sorted(set(requested) - set(actual))
-        coverage_status = 'FAIL' if missing else ('PASS' if actual else 'INCONCLUSIVE')
-        checks.append(_check('requested_case_coverage', coverage_status,
-                             ['REQUESTED_CASE_NOT_ANALYZED'] if missing else ([] if actual else ['NO_CASES_ANALYZED']),
+        if family == 'external_sources':
+            # A requested external-source variant that is present but skipped
+            # for a diagnosed, explicit reason (e.g. a supplied DWG excluded
+            # because ViewSpecific == True, or no candidates of that source
+            # type were discoverable) is a complete, non-blocking conclusion -
+            # the external_source_{host,link,dwg} checks below grade it
+            # NOT_APPLICABLE. requested_case_coverage must not contradict that
+            # by treating the same skip as a missing/unanalyzed case; only a
+            # variant genuinely absent from the report counts as missing here,
+            # and "covered but only via an explicit skip" must not fall back
+            # to the empty-`actual` NO_CASES_ANALYZED reason code either.
+            covered = {v.get('variant') for v in (native.get('variants') or [])}
+            missing = sorted(set(requested) - covered) if requested else []
+            coverage_status = 'FAIL' if missing else ('PASS' if covered else 'INCONCLUSIVE')
+            reasons = ['REQUESTED_CASE_NOT_ANALYZED'] if missing else ([] if covered else ['NO_CASES_ANALYZED'])
+        else:
+            missing = sorted(set(requested) - set(actual))
+            coverage_status = 'FAIL' if missing else ('PASS' if actual else 'INCONCLUSIVE')
+            reasons = ['REQUESTED_CASE_NOT_ANALYZED'] if missing else ([] if actual else ['NO_CASES_ANALYZED'])
+        checks.append(_check('requested_case_coverage', coverage_status, reasons,
                              {'requested': requested, 'analyzed': actual, 'not_analyzed': missing}))
 
     if family in ('minimum_id_mutations', 'external_sources', 'graphics_semantics'):

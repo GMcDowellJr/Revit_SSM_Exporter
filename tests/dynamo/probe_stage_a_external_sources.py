@@ -48,19 +48,47 @@ PROBE_VERSION = "2026-09-10.1"
 # repository's existing status-token convention (mutation_status_record's
 # APPLIED/FAILED/UNSUPPORTED/BLOCKED_BY_TEMPLATE) rather than folding every
 # non-success outcome into a single generic failure:
-#   APPLIED      - _try_color_link_element() returned True; the override rendered.
-#   UNSUPPORTED  - _try_color_link_element() returned False with no exception -
-#                  a clean, non-exceptional signal that the current Revit/API
-#                  environment does not support this per-linked-element override,
-#                  not an unexpected failure.
-#   FAILED       - an exception was raised while attempting the override; a real,
-#                  unexpected failure distinct from a supported-but-declined API call.
+#   APPLIED      - the override call succeeded; it rendered.
+#   UNSUPPORTED  - the override call raised an exception whose type indicates
+#                  a missing/incompatible API surface in the current Revit/API
+#                  environment (see _classify_link_override_exception below) -
+#                  an expected capability gap, not an unexpected failure.
+#   FAILED       - the override call raised any other exception; a real,
+#                  unexpected failure distinct from an environment capability gap.
 #   NOT_TESTED   - the forced-failure variant deliberately skips the attempt to
 #                  exercise the whole-link-instance fallback path instead.
 LINK_OVERRIDE_APPLIED = "APPLIED"
 LINK_OVERRIDE_UNSUPPORTED = "UNSUPPORTED"
 LINK_OVERRIDE_FAILED = "FAILED"
 LINK_OVERRIDE_NOT_TESTED = "NOT_TESTED"
+
+# _try_color_link_element_detailed() (vop_interwoven/color_id_buffer.py) always
+# returns via an except clause on any failure - there is no clean, non-
+# exceptional "unsupported" signal from the Revit API itself. So the
+# UNSUPPORTED/FAILED distinction is made here, from the caught exception's
+# type name, rather than from the mere presence/absence of an exception (a
+# prior revision treated every caught exception as UNSUPPORTED, which could
+# misreport a genuine bug - e.g. an invalid link/element reference - as an
+# expected, non-failing capability finding while discarding the real
+# exception). This is a best-effort heuristic: the exception's actual type
+# and message are always preserved verbatim on the assignment record
+# (`paint_failure`) regardless of which bucket it lands in, so a campaign
+# reviewer can see the ground truth even when the heuristic misclassifies.
+_LINK_OVERRIDE_UNSUPPORTED_EXCEPTION_MARKERS = (
+    "notsupported", "notimplemented", "missingmember", "missingmethod",
+    "ambiguousmatch", "attributeerror", "typeerror", "importerror", "modulenotfounderror",
+)
+
+
+def _classify_link_override_exception(ex):
+    """Best-effort UNSUPPORTED-vs-FAILED classification of an exception
+    raised while attempting a LinkElementId override. See the module-level
+    comment above for why this is heuristic and why the raw exception is
+    always preserved regardless of the classification."""
+    name = type(ex).__name__.lower()
+    if any(marker in name for marker in _LINK_OVERRIDE_UNSUPPORTED_EXCEPTION_MARKERS):
+        return LINK_OVERRIDE_UNSUPPORTED
+    return LINK_OVERRIDE_FAILED
 DEFAULT_FIXED_PIXEL_WIDTH = 1600
 DEFAULT_RESOLUTION_POLICY = "paper_space_dpi"
 DEFAULT_TARGET_DPI = 150
@@ -265,8 +293,17 @@ def _source_family_conclusion(report_variants, selected_variants):
         if not requested_names:
             family_status[family] = {"required_variants": names, "requested": False, "ran": None, "passed": None}
             continue
+        # report_variants can carry more than one entry per variant name when
+        # multiple resolution cases were requested (resolution_policy="both",
+        # or several target_dpi values): _run_native() appends one entry per
+        # (resolution case x selected variant). Coverage is checked against
+        # the distinct variant *names* present, not the raw entry count,
+        # while still requiring every emitted entry (every resolution case)
+        # to be non-skipped and passing.
         matching = [v for v in report_variants if v.get("variant") in requested_names]
-        ran = bool(matching) and len(matching) == len(requested_names) and all(not v.get("skipped") for v in matching)
+        present_names = {v.get("variant") for v in matching}
+        ran = (bool(matching) and present_names == set(requested_names) and
+               all(not v.get("skipped") for v in matching))
         passed = ran and all(v.get("conclusion") in ("PASS", "UNSUPPORTED") for v in matching)
         family_status[family] = {"required_variants": requested_names, "requested": True, "ran": ran, "passed": passed}
     requested_families = [status for status in family_status.values() if status["requested"]]
@@ -735,7 +772,7 @@ def _apply_assignments(doc, view, variant, items):
     ``diagnostics`` below is derived from the already-built ``assignments``
     list afterward, purely for convenience, never populated independently.
     """
-    from vop_interwoven.color_id_buffer import _try_color_link_element
+    from vop_interwoven.color_id_buffer import _try_color_link_element_detailed
     palette, step = _palette(len(items))
     assignments = []
     hidden_link_fallback = []
@@ -754,13 +791,15 @@ def _apply_assignments(doc, view, variant, items):
                 record["hidden_link_fallback"] = hidden
                 hidden_link_fallback.extend(hidden)
             elif item.get("source_type") == "LINK":
-                ok = _try_color_link_element(view, item["link_instance_api_id"], item["linked_element_api_id"], _ogs(doc, rgb))
+                ok, override_exception = _try_color_link_element_detailed(
+                    view, item["link_instance_api_id"], item["linked_element_api_id"], _ogs(doc, rgb))
                 record["paint_success"] = bool(ok)
                 if ok:
                     record["link_override_status"] = LINK_OVERRIDE_APPLIED
                 else:
-                    record["link_override_status"] = LINK_OVERRIDE_UNSUPPORTED
-                    record["paint_failure"] = "LinkElementId override returned False (unsupported in this Revit/API environment)"
+                    record["link_override_status"] = _classify_link_override_exception(override_exception)
+                    record["paint_failure"] = "{0}: {1}".format(
+                        type(override_exception).__name__, override_exception)
                     hidden = _hide_element_ids(doc, view, [item.get("link_instance_id")])
                     record["hidden_link_fallback"] = hidden
                     hidden_link_fallback.extend(hidden)

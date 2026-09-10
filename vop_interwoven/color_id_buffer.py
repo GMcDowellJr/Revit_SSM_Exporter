@@ -212,14 +212,36 @@ def _try_color_link_element(view, link_inst_id, link_elem_id, ogs):
     resets to a freshly-constructed blank override rather than a captured
     "prior" object — see export_color_id_buffer_view's painted_link_entries
     note for why.
+
+    Thin wrapper over ``_try_color_link_element_detailed`` that discards the
+    exception detail — this function's boolean-only contract and swallow-all
+    behavior are relied on by ``export_color_id_buffer_view`` below exactly as
+    before. A caller that needs to distinguish an environment/API-support gap
+    from a genuine unexpected failure (e.g. the Stage A external-source probe)
+    must call the detailed variant instead of trying to recover that
+    distinction from this function's return value, which cannot carry it.
+    """
+    success, _ = _try_color_link_element_detailed(view, link_inst_id, link_elem_id, ogs)
+    return success
+
+
+def _try_color_link_element_detailed(view, link_inst_id, link_elem_id, ogs):
+    """Same attempt as ``_try_color_link_element``, but returns
+    ``(success, exception)`` instead of swallowing the exception.
+
+    ``exception`` is the caught ``Exception`` instance on failure, or
+    ``None`` on success — callers that need to know *why* the LinkElementId
+    override failed (as opposed to just that it did) must record the actual
+    exception rather than losing it, so a real bug is never silently
+    reported the same way as a version/environment capability gap.
     """
     try:
         from Autodesk.Revit.DB import LinkElementId
         lek = LinkElementId(link_inst_id, link_elem_id)
         view.SetElementOverrides(lek, ogs)
-        return True
-    except Exception:
-        return False
+        return True, None
+    except Exception as ex:
+        return False, ex
 
 
 def _hidden_category_state(doc, view):

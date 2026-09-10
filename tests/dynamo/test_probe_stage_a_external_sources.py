@@ -112,17 +112,23 @@ def stub_paint(monkeypatch):
 
 
 def test_apply_assignments_one_record_per_item_when_override_unsupported(monkeypatch, stub_paint):
-    monkeypatch.setattr(color_id_buffer, "_try_color_link_element", lambda *a, **k: False)
+    # _try_color_link_element_detailed() never returns a clean (False, None) -
+    # every failure comes back as (False, <exception>) - so "unsupported" is
+    # only reachable through an exception whose type the classifier maps to
+    # LINK_OVERRIDE_UNSUPPORTED (see _classify_link_override_exception).
+    monkeypatch.setattr(color_id_buffer, "_try_color_link_element_detailed",
+                        lambda *a, **k: (False, AttributeError("SetElementOverrides has no LinkElementId overload")))
     items = [_link_item(i) for i in range(21)]
     result = probe._apply_assignments(_FakeDoc(), _FakeView(), "linked_per_element_linkelementid_coloring", items)
     assert len(result["assignments"]) == 21
     assert all(a["link_override_status"] == "UNSUPPORTED" for a in result["assignments"])
     assert all(not a["paint_success"] for a in result["assignments"])
+    assert all("AttributeError" in a["paint_failure"] for a in result["assignments"])
     assert result["hidden_link_fallback_ids"] == [100]
 
 
 def test_apply_assignments_one_record_per_item_when_override_supported(monkeypatch, stub_paint):
-    monkeypatch.setattr(color_id_buffer, "_try_color_link_element", lambda *a, **k: True)
+    monkeypatch.setattr(color_id_buffer, "_try_color_link_element_detailed", lambda *a, **k: (True, None))
     items = [_link_item(i) for i in range(21)]
     result = probe._apply_assignments(_FakeDoc(), _FakeView(), "linked_per_element_linkelementid_coloring", items)
     assert len(result["assignments"]) == 21
@@ -132,23 +138,53 @@ def test_apply_assignments_one_record_per_item_when_override_supported(monkeypat
 
 
 def test_apply_assignments_unexpected_exception_is_failed_not_unsupported(monkeypatch, stub_paint):
-    def _raise(*args, **kwargs):
-        raise RuntimeError("boom")
-    monkeypatch.setattr(color_id_buffer, "_try_color_link_element", _raise)
+    # A genuine bug (e.g. an invalid link/element reference) must surface as
+    # FAILED, with the real exception preserved - never silently reclassified
+    # as an expected, non-failing UNSUPPORTED capability finding.
+    monkeypatch.setattr(color_id_buffer, "_try_color_link_element_detailed",
+                        lambda *a, **k: (False, RuntimeError("boom")))
     result = probe._apply_assignments(_FakeDoc(), _FakeView(), "linked_per_element_linkelementid_coloring", [_link_item(0)])
     assert len(result["assignments"]) == 1
     assert result["assignments"][0]["link_override_status"] == "FAILED"
+    assert "boom" in result["assignments"][0]["paint_failure"]
 
 
 def test_apply_assignments_forced_variant_never_attempts_override(monkeypatch, stub_paint):
     def _fail_if_called(*args, **kwargs):
         raise AssertionError("forced-failure variant must not attempt LinkElementId override")
-    monkeypatch.setattr(color_id_buffer, "_try_color_link_element", _fail_if_called)
+    monkeypatch.setattr(color_id_buffer, "_try_color_link_element_detailed", _fail_if_called)
     items = [_link_item(i) for i in range(21)]
     result = probe._apply_assignments(_FakeDoc(), _FakeView(), "forced_linked_override_failure_hide_instance_fallback", items)
     assert len(result["assignments"]) == 21
     assert all(a["link_override_status"] == "NOT_TESTED" for a in result["assignments"])
     assert result["hidden_link_fallback_ids"] == [100]
+
+
+# --- _classify_link_override_exception(): UNSUPPORTED vs FAILED heuristic ---
+
+def test_classify_link_override_exception_environment_gap_is_unsupported():
+    assert probe._classify_link_override_exception(AttributeError("no such method")) == "UNSUPPORTED"
+    assert probe._classify_link_override_exception(TypeError("bad overload")) == "UNSUPPORTED"
+    assert probe._classify_link_override_exception(NotImplementedError("nope")) == "UNSUPPORTED"
+
+
+def test_classify_link_override_exception_real_bug_is_failed():
+    assert probe._classify_link_override_exception(RuntimeError("bad state")) == "FAILED"
+    assert probe._classify_link_override_exception(ValueError("invalid element id")) == "FAILED"
+
+
+# --- _try_color_link_element / _try_color_link_element_detailed wiring ---
+
+def test_try_color_link_element_wrapper_delegates_to_detailed(monkeypatch):
+    monkeypatch.setattr(color_id_buffer, "_try_color_link_element_detailed",
+                        lambda *a, **k: (True, None))
+    assert color_id_buffer._try_color_link_element(None, None, None, None) is True
+
+
+def test_try_color_link_element_wrapper_discards_exception_on_failure(monkeypatch):
+    monkeypatch.setattr(color_id_buffer, "_try_color_link_element_detailed",
+                        lambda *a, **k: (False, RuntimeError("boom")))
+    assert color_id_buffer._try_color_link_element(None, None, None, None) is False
 
 
 def test_apply_assignments_host_items_unaffected_by_link_capability_field(stub_paint):
@@ -267,6 +303,35 @@ def test_family_conclusion_host_only_selection_unaffected_by_redesign():
     assert family_status["LINK"]["requested"] is False
     assert family_status["DWG"]["requested"] is False
     assert conclusion == "PASS"
+
+
+def test_family_conclusion_counts_distinct_variants_across_resolution_runs():
+    # A job requesting more than one resolution case (resolution_policy="both",
+    # or several target_dpi values) makes _run_native() append one report
+    # entry per (resolution case x selected variant) - the same variant name
+    # appears more than once. Coverage must key off distinct variant names,
+    # not the raw entry count, while still requiring every emitted entry to
+    # have passed.
+    selected = ["dwg_importinstance_coloring"]
+    variants = [
+        _variant("dwg_importinstance_coloring", "PASS"),
+        _variant("dwg_importinstance_coloring", "PASS"),
+    ]
+    family_status, conclusion = probe._source_family_conclusion(variants, selected)
+    assert family_status["DWG"]["ran"] is True
+    assert family_status["DWG"]["passed"] is True
+    assert conclusion == "PASS"
+
+
+def test_family_conclusion_one_bad_resolution_run_fails_the_family():
+    selected = ["dwg_importinstance_coloring"]
+    variants = [
+        _variant("dwg_importinstance_coloring", "PASS"),
+        _variant("dwg_importinstance_coloring", "INCONCLUSIVE"),
+    ]
+    family_status, conclusion = probe._source_family_conclusion(variants, selected)
+    assert family_status["DWG"]["passed"] is False
+    assert conclusion == "INCONCLUSIVE"
 
 
 # --- _dwg_eligibility_diagnostics(): explicit ViewSpecific exclusion reason ---

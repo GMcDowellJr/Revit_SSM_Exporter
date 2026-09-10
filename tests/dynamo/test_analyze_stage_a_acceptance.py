@@ -477,6 +477,13 @@ def test_external_dwg_ineligible_fixture_is_not_applicable_not_a_silent_fail():
     dwg_check = next(c for c in checks if c["check_id"] == "external_source_dwg")
     assert dwg_check["status"] == "NOT_APPLICABLE"
     assert "EXTERNAL_SOURCE_CASE_INELIGIBLE" in dwg_check["reason_codes"]
+    # The generic requested_case_coverage check (computed earlier in the same
+    # call) must not contradict the NOT_APPLICABLE verdict above by treating
+    # the same diagnosed skip as a missing/unanalyzed case - a present-but-
+    # ineligible variant is a complete conclusion, not a coverage gap.
+    coverage_check = next(c for c in checks if c["check_id"] == "requested_case_coverage")
+    assert coverage_check["status"] == "PASS"
+    assert coverage_check["reason_codes"] == []
 
 
 # --- Stage 1 mutation-closure evidence: template-blocked attestation failure ---
