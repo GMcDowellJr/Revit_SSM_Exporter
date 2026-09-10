@@ -85,3 +85,86 @@ def test_analyzer_does_not_recommend_without_real_metrics():
     }])
     assert rec["recommended_minimum"]["fidelity_status"] == "FAIL"
     assert rec["recommended_minimum"]["mutations"] == []
+    # No rollback evidence was supplied at all -- must read as INCONCLUSIVE,
+    # never as a default FAIL manufactured from "no candidate selected".
+    assert rec["recommended_minimum"]["rollback_status"] == "INCONCLUSIVE"
+
+
+def test_recommend_minimum_reports_rollback_pass_without_a_selected_candidate():
+    """Mirrors the elevation mutation-closure campaign evidence: rollback and
+    state restoration passed for every variant, but no variant was eligible
+    for the recommended minimum (pixel fidelity evidence was never collected).
+    rollback_status must reflect the real PASS evidence, not FAIL-by-default."""
+    from tools.analyze_stage_a_probe import recommend_minimum_mutations
+    rec = recommend_minimum_mutations([
+        {
+            "variant": "attached_element_overrides_only",
+            "requested_mutations": [],
+            "mutations": {},
+            "diagnostic": False,
+            "rollback_status": "PASS",
+            "image_analysis": {"analysis_status": "not_analyzed"},
+        },
+        {
+            "variant": "detached_A",
+            "requested_mutations": ["hide_annotation_categories"],
+            "mutations": {"hide_annotation_categories": {"requested": True, "status": "APPLIED"}},
+            "diagnostic": False,
+            "rollback_status": "PASS",
+            "image_analysis": {"analysis_status": "not_analyzed"},
+        },
+    ])
+    assert rec["recommended_minimum"]["fidelity_status"] == "FAIL"
+    assert rec["recommended_minimum"]["mutations"] == []
+    assert rec["recommended_minimum"]["rollback_status"] == "PASS"
+
+
+def test_recommend_minimum_rollback_inconclusive_when_one_variant_has_no_evidence():
+    """One variant reporting PASS and another omitting rollback_status must
+    not be collapsed into an aggregate PASS by dropping the unevidenced
+    variant - it is incomplete evidence, so INCONCLUSIVE."""
+    from tools.analyze_stage_a_probe import recommend_minimum_mutations
+    rec = recommend_minimum_mutations([
+        {"variant": "a", "requested_mutations": [], "mutations": {}, "diagnostic": False,
+         "rollback_status": "PASS", "image_analysis": {"analysis_status": "not_analyzed"}},
+        {"variant": "b", "requested_mutations": [], "mutations": {}, "diagnostic": False,
+         "image_analysis": {"analysis_status": "not_analyzed"}},
+    ])
+    assert rec["recommended_minimum"]["rollback_status"] == "INCONCLUSIVE"
+
+
+def test_recommend_minimum_rollback_inconclusive_not_fail_for_explicit_inconclusive():
+    """An explicit INCONCLUSIVE rollback_status must not be converted into a
+    manufactured FAIL just because it isn't PASS."""
+    from tools.analyze_stage_a_probe import recommend_minimum_mutations
+    rec = recommend_minimum_mutations([
+        {"variant": "a", "requested_mutations": [], "mutations": {}, "diagnostic": False,
+         "rollback_status": "PASS", "image_analysis": {"analysis_status": "not_analyzed"}},
+        {"variant": "b", "requested_mutations": [], "mutations": {}, "diagnostic": False,
+         "rollback_status": "INCONCLUSIVE", "image_analysis": {"analysis_status": "not_analyzed"}},
+    ])
+    assert rec["recommended_minimum"]["rollback_status"] == "INCONCLUSIVE"
+
+
+def test_recommend_minimum_rollback_fail_wins_even_if_others_pass():
+    from tools.analyze_stage_a_probe import recommend_minimum_mutations
+    rec = recommend_minimum_mutations([
+        {"variant": "a", "requested_mutations": [], "mutations": {}, "diagnostic": False,
+         "rollback_status": "PASS", "image_analysis": {"analysis_status": "not_analyzed"}},
+        {"variant": "b", "requested_mutations": [], "mutations": {}, "diagnostic": False,
+         "rollback_status": "FAIL", "image_analysis": {"analysis_status": "not_analyzed"}},
+    ])
+    assert rec["recommended_minimum"]["rollback_status"] == "FAIL"
+
+
+def test_recommend_minimum_rollback_fail_reflects_actual_failure():
+    from tools.analyze_stage_a_probe import recommend_minimum_mutations
+    rec = recommend_minimum_mutations([{
+        "variant": "attached_element_overrides_only",
+        "requested_mutations": [],
+        "mutations": {},
+        "diagnostic": False,
+        "rollback_status": "FAIL",
+        "image_analysis": {"analysis_status": "not_analyzed"},
+    }])
+    assert rec["recommended_minimum"]["rollback_status"] == "FAIL"
