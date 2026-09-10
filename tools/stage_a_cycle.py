@@ -296,7 +296,7 @@ def _decide(campaign: dict[str, Any], state: dict[str, Any]) -> tuple[str, dict[
     if code == "INVALID_CAMPAIGN_STATE":
         return "CONFLICT", rec
     if code == "BLOCKED_BY_FAILURE":
-        if rec.get("reason") == "MANUAL_REVIEW_REJECTED":
+        if rec.get("reason") in ("MANUAL_REVIEW_REJECTED", "MANUAL_REVIEW_EVIDENCE_MISSING"):
             return "BLOCKED", rec
         failed_jobs = sorted(j["job_id"] for j in state["jobs"].values() if j["status"] == "FAILED")
         if failed_jobs:

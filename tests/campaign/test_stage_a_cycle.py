@@ -77,11 +77,13 @@ def read_state(state_path):
 
 
 def job_manifest_entry(job_id, batch_id, state, probe_id, status="completed",
-                       acceptance_status="PASS", reason_codes=None, envelope=True):
+                       acceptance_status="PASS", reason_codes=None, envelope=True,
+                       artifact_paths=None):
     fingerprint = state["jobs"][job_id]["execution_fingerprints"][batch_id]
     raw_envelope = None
     if envelope and status in ("completed", "inconclusive", "failed"):
-        raw_envelope = {"artifact_paths": ["raw/{0}.tiff".format(job_id)],
+        default_paths = ["raw/{0}.tiff".format(job_id)]
+        raw_envelope = {"artifact_paths": default_paths if artifact_paths is None else artifact_paths,
                         "_test_acceptance_status": acceptance_status,
                         "_test_reason_codes": reason_codes or []}
     return {"job_id": job_id, "probe_id": probe_id, "requested_view_identity": {}, "resolved_view_identity": {},
@@ -108,7 +110,7 @@ def write_manifest(manifest_root, campaign_id, batch_id, run_id, jobs, execution
 
 
 def run_job_to_completion(monkeypatch, tmp_path, campaign_path, state_path, job_key, acceptance="PASS",
-                          reason_codes=None, run_id=None):
+                          reason_codes=None, run_id=None, artifact_paths=None):
     """Advance once to batch a job, write its manifest, advance again to
     ingest+analyze+ingest-acceptance. Returns the final advance() result."""
     install_fake_analyzer(monkeypatch)
@@ -119,7 +121,8 @@ def run_job_to_completion(monkeypatch, tmp_path, campaign_path, state_path, job_
     manifest_root = state_path.parent / "manifests"
     write_manifest(manifest_root, state["campaign_id"], r1["batch_id"], run_id or job["job_id"],
                    [job_manifest_entry(job["job_id"], r1["batch_id"], state, job["probe_id"],
-                                       acceptance_status=acceptance, reason_codes=reason_codes)])
+                                       acceptance_status=acceptance, reason_codes=reason_codes,
+                                       artifact_paths=artifact_paths)])
     return cycle.advance(str(campaign_path), str(state_path))
 
 
@@ -580,6 +583,27 @@ def test_manual_review_stops_automatic_advancement(tmp_path, monkeypatch):
     assert state["manual_review_requirements"][get(state, "align")["job_id"]]["status"] == "PENDING"
     again = cycle.advance(str(campaign_path), str(state_path))
     assert again["action"] == "MANUAL_REVIEW_REQUIRED"
+
+
+def test_missing_review_artifact_reports_blocked_not_an_actionable_review(tmp_path, monkeypatch):
+    # A Stage 6-style job that reaches a terminal state with manual review
+    # configured but no raster artifact ever recorded must never surface as
+    # an actionable MANUAL_REVIEW_REQUIRED - there is nothing to review.
+    install_fake_analyzer(monkeypatch)
+    c = compact()
+    c["stages"] = c["stages"][:1]
+    c["dependencies"] = []
+    c["stages"][0]["jobs"][0]["manual_review_required"] = True
+    c["stages"][0]["jobs"][0]["manual_review_reason"] = "LINEWORK_VISUAL_INSPECTION"
+    campaign_path, state_path = init(tmp_path, c)
+    result = run_job_to_completion(monkeypatch, tmp_path, campaign_path, state_path, "align",
+                                   acceptance="PASS", artifact_paths=[])
+    assert result["action"] == "BLOCKED"
+    assert result["reason"] == "MANUAL_REVIEW_EVIDENCE_MISSING"
+    state = read_state(state_path)
+    requirement = state["manual_review_requirements"][get(state, "align")["job_id"]]
+    assert requirement["status"] == "EVIDENCE_MISSING"
+    assert requirement["artifact_references"] == []
 
 
 def test_unauthorized_diagnostics_stop_automatic_advancement(tmp_path, monkeypatch):
