@@ -199,7 +199,7 @@ def _variant_clean(variant: dict[str, Any]) -> bool:
 
 def recommend_minimum_mutations(variants: list[dict[str, Any]]) -> dict[str, Any]:
     rec = {
-        'recommended_minimum': {'mutations': [], 'fidelity_status': 'INCONCLUSIVE', 'semantic_preservation_status': 'INCONCLUSIVE', 'resolution_status': 'INCONCLUSIVE', 'rollback_status': 'FAIL'},
+        'recommended_minimum': {'mutations': [], 'fidelity_status': 'INCONCLUSIVE', 'semantic_preservation_status': 'INCONCLUSIVE', 'resolution_status': 'INCONCLUSIVE', 'rollback_status': 'INCONCLUSIVE'},
         'required_for_color_fidelity': [],
         'required_for_model_only_scope': [],
         'prerequisite_only': [],
@@ -208,13 +208,20 @@ def recommend_minimum_mutations(variants: list[dict[str, Any]]) -> dict[str, Any
         'blocked_or_unsupported': [],
         'view_types_still_required': ['floor_plan_active_crop', 'floor_plan_inactive_crop', 'rcp', 'section', 'elevation', 'detail_view'],
     }
+    # Rollback status is evidence-derived from every executed variant's own
+    # TransactionGroup rollback outcome, independent of whether any variant
+    # was eligible to be the recommended minimum: a probe run can roll back
+    # cleanly for all of them even when none qualifies as a recommendation,
+    # so "no candidate selected" must never be reported as a rollback FAIL.
+    rollback_values = [v.get('rollback_status') for v in variants if not v.get('skipped') and v.get('rollback_status') is not None]
+    if rollback_values:
+        rec['recommended_minimum']['rollback_status'] = 'PASS' if all(v == 'PASS' for v in rollback_values) else 'FAIL'
     eligible = [v for v in variants if not v.get('diagnostic') and _mutation_ok(v) and not any(((v.get('mutations') or {}).get(mid) or {}).get('classification') == 'semantic_diagnostic' for mid in (v.get('requested_mutations') or []))]
     clean = [v for v in eligible if _variant_clean(v)]
     if clean:
         best = min(clean, key=lambda v: (len(v.get('requested_mutations') or []), v.get('variant') or ''))
         rec['recommended_minimum']['mutations'] = list(best.get('requested_mutations') or [])
         rec['recommended_minimum']['fidelity_status'] = 'PASS'
-        rec['recommended_minimum']['rollback_status'] = 'PASS' if best.get('rollback_status') == 'PASS' else 'FAIL'
         rec['recommended_minimum']['resolution_status'] = 'PASS' if (best.get('resolution') or {}).get('actual_width_px') else 'INCONCLUSIVE'
         rec['recommended_minimum']['semantic_preservation_status'] = 'INCONCLUSIVE'
     elif eligible:

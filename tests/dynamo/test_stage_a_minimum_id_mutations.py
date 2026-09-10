@@ -1,15 +1,20 @@
 import builtins
 import csv
 import json
+import sys
+import types
 import pytest
 from pathlib import Path
 
 from tests.dynamo.probe_stage_a_minimum_id_mutations import (
     _add_repo_root_to_path,
     _ensure_typing_module,
+    _hide_annotation_categories,
     MUTATION_CATALOG,
+    STATUS_ALREADY,
     STATUS_APPLIED,
     STATUS_FAILED,
+    STATUS_TEMPLATE,
     backward_elimination_round,
     classify_mutation_evidence,
     dimensions_comparable,
@@ -19,6 +24,85 @@ from tests.dynamo.probe_stage_a_minimum_id_mutations import (
     pixel_data_sha256,
     resolution_runs,
 )
+
+
+class FakeElementId:
+    """Stands in for Autodesk.Revit.DB.ElementId - only IntegerValue and
+    equality are needed by _hide_annotation_categories."""
+
+    def __init__(self, value):
+        self.IntegerValue = value
+
+    def __eq__(self, other):
+        return isinstance(other, FakeElementId) and other.IntegerValue == self.IntegerValue
+
+    def __hash__(self):
+        return hash(self.IntegerValue)
+
+
+FakeElementId.InvalidElementId = FakeElementId(-1)
+
+
+class FakeCategoryType:
+    Annotation = "Annotation"
+    Model = "Model"
+
+
+class FakeBuiltInCategory:
+    OST_DetailComponents = 111
+    OST_Lines = 112
+
+
+class FakeCategory:
+    def __init__(self, id_value, name, category_type=FakeCategoryType.Annotation):
+        self.Id = FakeElementId(id_value)
+        self.Name = name
+        self.CategoryType = category_type
+
+
+class FakeSettings:
+    def __init__(self, categories):
+        self.Categories = categories
+
+
+class FakeDoc:
+    def __init__(self, categories):
+        self.Settings = FakeSettings(categories)
+
+
+class FakeCategoryView:
+    """Stands in for the subset of Autodesk.Revit.DB.View used by
+    _hide_annotation_categories: per-category hidden state plus
+    ViewTemplateId, the only affirmative signal of an attached template."""
+
+    def __init__(self, view_template_id, can_hide_map, hidden_map=None):
+        self.ViewTemplateId = view_template_id
+        self._can_hide = dict(can_hide_map)
+        self._hidden = dict(hidden_map or {})
+        self.set_calls = []
+
+    def GetCategoryHidden(self, cid):
+        return self._hidden.get(cid.IntegerValue, False)
+
+    def CanCategoryBeHidden(self, cid):
+        return self._can_hide.get(cid.IntegerValue, True)
+
+    def SetCategoryHidden(self, cid, value):
+        self._hidden[cid.IntegerValue] = value
+        self.set_calls.append(cid.IntegerValue)
+
+
+@pytest.fixture
+def fake_revit_db(monkeypatch):
+    """_hide_annotation_categories imports CategoryType/BuiltInCategory/
+    ElementId from Autodesk.Revit.DB - not present outside Revit, so tests
+    register a minimal fake module the same way test_revit_batch_executor.py
+    does for its own Revit API dependencies."""
+    fake_db = types.ModuleType("Autodesk.Revit.DB")
+    fake_db.CategoryType = FakeCategoryType
+    fake_db.BuiltInCategory = FakeBuiltInCategory
+    fake_db.ElementId = FakeElementId
+    monkeypatch.setitem(sys.modules, "Autodesk.Revit.DB", fake_db)
 
 
 def test_stage1_factorial_complete():
@@ -174,3 +258,78 @@ def test_compare_tiff_pixels_reports_counts_and_bbox(tmp_path):
     result = mod.compare_tiff_pixels(str(a), str(b))
     assert result["pixel_difference_count"] == 1
     assert result["changed_pixel_bounding_rectangle"] == [1, 1, 1, 1]
+
+
+def test_no_template_non_hideable_categories_do_not_block(fake_revit_db):
+    """The elevation minimum-ID-mutation probe found ViewTemplateId == -1 with
+    17 categories reporting CanCategoryBeHidden() == False; that must not be
+    classified BLOCKED_BY_TEMPLATE when no template is attached."""
+    categories = [FakeCategory(1, "Tags"), FakeCategory(2, "Text Notes"), FakeCategory(3, "Dimensions")]
+    doc = FakeDoc(categories)
+    view = FakeCategoryView(FakeElementId.InvalidElementId, {1: True, 2: True, 3: False})
+    result = {"mutations": {}}
+    _hide_annotation_categories(doc, view, result)
+    rec = result["mutations"]["hide_annotation_categories"]
+    assert rec["status"] != STATUS_TEMPLATE
+    assert rec["status"] == STATUS_APPLIED
+    assert rec["template_controlled"] is False
+    summary = result["annotation_category_summary"]
+    assert summary["template_attached"] is False
+    assert summary["template_blocked"] == 0
+    assert summary["non_hideable"] == 1
+
+
+def test_hideable_categories_are_still_mutated_and_attested(fake_revit_db):
+    categories = [FakeCategory(10, "Tags"), FakeCategory(11, "Levels")]
+    doc = FakeDoc(categories)
+    view = FakeCategoryView(FakeElementId.InvalidElementId, {10: True, 11: True})
+    result = {"mutations": {}}
+    _hide_annotation_categories(doc, view, result)
+    assert set(view.set_calls) == {10, 11}
+    assert view.GetCategoryHidden(FakeElementId(10)) is True
+    assert view.GetCategoryHidden(FakeElementId(11)) is True
+    rec = result["mutations"]["hide_annotation_categories"]
+    assert rec["status"] == STATUS_APPLIED
+    assert rec["applied"] is True
+
+
+def test_non_hideable_categories_remain_visible_in_diagnostics_without_failing(fake_revit_db):
+    categories = [FakeCategory(1, "Tags"), FakeCategory(20, "Elevation Marks")]
+    doc = FakeDoc(categories)
+    view = FakeCategoryView(FakeElementId.InvalidElementId, {1: True, 20: False})
+    result = {"mutations": {}}
+    _hide_annotation_categories(doc, view, result)
+    trace_by_id = {t["category_id"]: t for t in result["annotation_category_trace"]}
+    assert trace_by_id[20]["can_hide"] is False
+    assert 20 not in view.set_calls
+    rec = result["mutations"]["hide_annotation_categories"]
+    assert rec["status"] not in (STATUS_FAILED, STATUS_TEMPLATE)
+
+
+def test_attached_template_with_non_hideable_category_is_blocked_by_template(fake_revit_db):
+    """Affirmative evidence (an actually attached template) must still allow
+    BLOCKED_BY_TEMPLATE to be reported."""
+    categories = [FakeCategory(30, "Tags"), FakeCategory(31, "Locked Annotation")]
+    doc = FakeDoc(categories)
+    view = FakeCategoryView(FakeElementId(500), {30: True, 31: False})
+    result = {"mutations": {}}
+    _hide_annotation_categories(doc, view, result)
+    rec = result["mutations"]["hide_annotation_categories"]
+    assert rec["status"] == STATUS_TEMPLATE
+    assert rec["template_controlled"] is True
+    trace_by_id = {t["category_id"]: t for t in result["annotation_category_trace"]}
+    assert trace_by_id[31]["template_controlled"] is True
+    assert view.set_calls == [30]
+    summary = result["annotation_category_summary"]
+    assert summary["template_attached"] is True
+    assert summary["template_blocked"] == 1
+
+
+def test_already_hidden_categories_still_report_already_matched(fake_revit_db):
+    categories = [FakeCategory(40, "Tags")]
+    doc = FakeDoc(categories)
+    view = FakeCategoryView(FakeElementId.InvalidElementId, {40: True}, hidden_map={40: True})
+    result = {"mutations": {}}
+    _hide_annotation_categories(doc, view, result)
+    rec = result["mutations"]["hide_annotation_categories"]
+    assert rec["status"] == STATUS_ALREADY

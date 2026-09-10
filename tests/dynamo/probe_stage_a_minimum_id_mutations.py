@@ -743,18 +743,21 @@ def _apply_flat_colors(view, result):
 
 
 def _hide_annotation_categories(doc, view, result):
-    from Autodesk.Revit.DB import CategoryType, BuiltInCategory
+    from Autodesk.Revit.DB import CategoryType, BuiltInCategory, ElementId
     view_only = set(int(getattr(BuiltInCategory, n)) for n in ("OST_DetailComponents", "OST_Lines") if getattr(BuiltInCategory, n, None) is not None)
+    template_id = getattr(view, "ViewTemplateId", None)
+    template_attached = not (template_id is None or template_id == ElementId.InvalidElementId)
     trace = []
     applied = 0
-    blocked = 0
+    non_hideable = 0
+    template_blocked = 0
     errors = 0
     for cat in doc.Settings.Categories:
         try:
             cid = cat.Id
             if cat.CategoryType != CategoryType.Annotation and cid.IntegerValue not in view_only:
                 continue
-            rec = {"category_id": cid.IntegerValue, "name": cat.Name, "category_type": _safe_enum(cat.CategoryType), "was_hidden": None, "effective_hidden": None, "can_hide": None}
+            rec = {"category_id": cid.IntegerValue, "name": cat.Name, "category_type": _safe_enum(cat.CategoryType), "was_hidden": None, "effective_hidden": None, "can_hide": None, "template_controlled": False}
             try: rec["was_hidden"] = bool(view.GetCategoryHidden(cid))
             except Exception as ex: rec["get_hidden_error"] = str(ex)
             try: rec["can_hide"] = bool(view.CanCategoryBeHidden(cid))
@@ -764,17 +767,41 @@ def _hide_annotation_categories(doc, view, result):
                 rec["effective_hidden"] = bool(view.GetCategoryHidden(cid))
                 applied += 1 if rec["was_hidden"] is not True and rec["effective_hidden"] is True else 0
             else:
-                blocked += 1
+                # CanCategoryBeHidden()==False alone does not distinguish "this
+                # category can never be hidden in this view type" from "an
+                # attached view template locks it" -- Revit's API gives no
+                # separate signal for that. Only count it as template-blocked
+                # when a template is actually attached (affirmative evidence);
+                # otherwise it is an intrinsically non-hideable category and
+                # must not fail the mutation or the mutation-closure result.
+                rec["template_controlled"] = template_attached
+                if template_attached:
+                    template_blocked += 1
+                else:
+                    non_hideable += 1
             trace.append(rec)
         except Exception as ex:
             errors += 1
             trace.append({"error": str(ex)})
     result["annotation_category_trace"] = trace
-    if blocked or errors:
-        status = STATUS_TEMPLATE if blocked else STATUS_FAILED
+    result["annotation_category_summary"] = {
+        "applied": applied,
+        "non_hideable": non_hideable,
+        "template_blocked": template_blocked,
+        "errors": errors,
+        "template_attached": template_attached,
+    }
+    if errors:
+        status = STATUS_FAILED
+    elif template_blocked:
+        status = STATUS_TEMPLATE
     else:
         status = STATUS_APPLIED if applied else (STATUS_ALREADY if trace else STATUS_UNSUPPORTED)
-    _set_status(result, "hide_annotation_categories", status, "see annotation_category_trace", "hidden categories={0}, blocked={1}, errors={2}".format(applied, blocked, errors), blocked > 0, applied > 0 and not blocked and not errors)
+    _set_status(
+        result, "hide_annotation_categories", status, "see annotation_category_trace",
+        "hidden categories={0}, non_hideable={1}, template_blocked={2}, errors={3}".format(applied, non_hideable, template_blocked, errors),
+        template_blocked > 0, applied > 0 and not template_blocked and not errors,
+    )
 
 
 def _neutralize_visible_filter_graphics(view, result):
