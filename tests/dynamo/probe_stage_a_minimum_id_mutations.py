@@ -1290,7 +1290,13 @@ def run_probe(raw_view, output_dir, max_elements=None, selection="all",
     variants = native.get("variants", [])
     rollback_ok = bool(variants) and all(item.get("rollback_status") == "PASS" for item in variants)
     restored = bool(variants) and all(item.get("state", {}).get("captured_state_equal_after_rollback") for item in variants)
-    artifacts = list((native.get("output_files") or {}).values())
+    tiff_paths = [
+        item["image_analysis"]["path"]
+        for item in variants
+        if (item.get("image_analysis") or {}).get("path")
+        and (item["image_analysis"]).get("analysis_status") in ("complete", "external_analysis_required")
+    ]
+    artifacts = list((native.get("output_files") or {}).values()) + tiff_paths
     errors = [error for item in variants for error in item.get("exceptions", [])]
     return _probe_contract().execution_envelope(
         PROBE_NAME, {"max_elements": max_elements, "selection": [item.get("variant") for item in variants],
