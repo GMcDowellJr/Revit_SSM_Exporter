@@ -473,3 +473,39 @@ def test_migrate_state_never_rewrites_an_already_recorded_decision():
  requirement=migrated['manual_review_requirements'][job_id]
  assert requirement['status']=='ACCEPTED'  # untouched, never resynced/rewritten
  assert requirement['artifact_references']==[]  # only the missing key is backfilled empty, never fabricated
+
+def test_manual_review_on_a_blocked_job_surfaces_the_upstream_diagnostic_not_a_review():
+ # A manual-review job that is BLOCKED by a failed dependency may never run
+ # at all. It must not be advertised as an actionable PENDING review (nor
+ # outrank the upstream failure with a "manual review evidence missing"
+ # message) - the operator needs to see the real, fixable problem (align
+ # needs a diagnostic), not a review task for a job with nothing to look at.
+ c=compact(); c['stages'][1]['jobs']=[j for j in c['stages'][1]['jobs'] if j['job_key']=='mutate']
+ c['stages'][1]['jobs'][0]['manual_review_required']=True
+ s=p.initialize_state(c)
+ run_batch(c,s,'align','FAIL',reason_codes=['MUTATION_ATTESTATION_FAILED'])
+ mutate=get(s,'mutate')
+ assert mutate['status']=='BLOCKED'
+ requirement=s['manual_review_requirements'][mutate['job_id']]
+ assert requirement['status']=='EVIDENCE_MISSING'
+ assert requirement['artifact_references']==[]
+ with pytest.raises(p.CampaignError):
+  p.record_manual_review(c,s,mutate['job_id'],'ACCEPTED','operator')
+ assert p.generate_next_batch(c,s) is None
+ assert s['next_recommendation']=={'code':'BLOCKED_BY_FAILURE'}  # upstream failure surfaced, not a review prompt
+
+def test_stale_missing_evidence_diagnostic_is_cleared_once_a_real_artifact_arrives():
+ c=compact(); c['stages']=c['stages'][:1]; c['dependencies']=[]
+ c['stages'][0]['jobs'][0]['manual_review_required']=True
+ s=p.initialize_state(c); p.generate_next_batch(c,s); a=get(s,'align')
+ p.ingest_manifests(c,s,[manifest(s,a,artifact_paths=())]); p.ingest_analysis(c,s,[analysis(s,a,'PASS')])
+ requirement=s['manual_review_requirements'][a['job_id']]
+ assert requirement['status']=='EVIDENCE_MISSING' and 'diagnostic' in requirement
+ # A later manifest for the same job (a fresh run_id) supplies the missing raster.
+ p.ingest_manifests(c,s,[manifest(s,a,run='r2',artifact_paths=('raw.tif',))])
+ requirement=s['manual_review_requirements'][a['job_id']]
+ assert requirement['status']=='PENDING'
+ assert requirement['artifact_references']==['raw.tif']
+ assert 'diagnostic' not in requirement  # stale "nothing was ever recorded" text must not survive
+ p.record_manual_review(c,s,a['job_id'],'ACCEPTED','operator')
+ assert s['manual_review_requirements'][a['job_id']]['status']=='ACCEPTED'

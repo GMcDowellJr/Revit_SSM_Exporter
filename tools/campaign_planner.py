@@ -366,6 +366,14 @@ def evaluate(campaign: dict[str, Any], state: dict[str, Any]) -> None:
             if target == "PLANNED" and job["status"] in {"BLOCKED", "NEEDS_DIAGNOSTIC"}: continue
             transition(state, job["job_id"], target, reason, detail)
         elif target == "PLANNED": job["status_reason"] = {"code": reason, "details": detail}
+        if target == "BLOCKED":
+            # A manual-review requirement on a job that is blocked by a
+            # failed/concluded-negative dependency - and so may never run at
+            # all - must never be left advertising itself as an actionable
+            # PENDING review with nothing behind it; this is the only place
+            # such a job's evidence gets synced, since it never reaches
+            # ingest_manifests/ingest_analysis while blocked.
+            _sync_review_evidence(state, job)
     _summarize(campaign, state)
 
 
@@ -478,12 +486,18 @@ def _sync_review_evidence(state: dict[str, Any], job: dict[str, Any]) -> None:
         requirement["artifact_references"] = merged
         if requirement["status"] == "EVIDENCE_MISSING":
             requirement["status"] = "PENDING"
-    elif job["status"] in TERMINAL and requirement["status"] == "PENDING":
+            # The diagnostic explained why evidence was missing; leaving it
+            # in place once real evidence has arrived would have the
+            # requirement simultaneously claim "reviewable" (PENDING with
+            # artifact_references) and "no artifact was ever recorded"
+            # (the stale diagnostic text) at the same time.
+            requirement.pop("diagnostic", None)
+    elif job["status"] in (TERMINAL | {"BLOCKED"}) and requirement["status"] == "PENDING":
         requirement["status"] = "EVIDENCE_MISSING"
         requirement.setdefault("artifact_references", [])
         requirement["diagnostic"] = (
-            "This job reached a terminal state while a manual review was still required, but no "
-            "reviewable raster (PNG/TIFF/JPEG) artifact was ever recorded in artifact_references. "
+            "This job reached a terminal or blocked state while a manual review was still required, "
+            "but no reviewable raster (PNG/TIFF/JPEG) artifact was ever recorded in artifact_references. "
             "Manual review cannot be accepted or rejected until a reviewable artifact is produced "
             "and ingested for this job.")
 
@@ -682,8 +696,17 @@ def compute_next_recommendation(state: dict[str, Any]) -> dict[str, Any]:
     eligible = [j["job_id"] for j in state["jobs"].values() if j["status"] == "ELIGIBLE"]
     rejected = sorted(job_id for job_id, review in state["manual_review_requirements"].items()
                       if review["status"] == "REJECTED")
+    # Scoped to jobs that actually reached a TERMINAL status: a requirement
+    # downgraded to EVIDENCE_MISSING because its job is merely BLOCKED (an
+    # upstream dependency failed before this job ever ran) must not outrank
+    # the more useful upstream-failure/diagnostic signal below with a
+    # "manual review" message that would send the operator looking in the
+    # wrong place - the BLOCKED job's own dependency is what needs fixing.
+    # A BLOCKED job also can never make `statuses <= TERMINAL` true, so
+    # excluding it here does not risk a false CAMPAIGN_COMPLETE.
     evidence_missing = sorted(job_id for job_id, review in state["manual_review_requirements"].items()
-                              if review["status"] == "EVIDENCE_MISSING")
+                              if review["status"] == "EVIDENCE_MISSING"
+                              and state["jobs"].get(job_id, {}).get("status") in TERMINAL)
     pending_review = any(review["status"] == "PENDING"
                          for review in state["manual_review_requirements"].values())
     if state["conflicts"]: return {"code": "INVALID_CAMPAIGN_STATE"}
