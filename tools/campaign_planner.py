@@ -129,7 +129,7 @@ def validate_campaign(campaign: dict[str, Any]) -> dict[str, Any]:
         if not needed <= set(view): raise CampaignError(f"view {key} is missing {sorted(needed-set(view))}")
         if view["expected_view_type"].lower() in {"drafting", "draftingview"} and "alignment_matrix" in view["roles"]:
             raise CampaignError(f"drafting view {key} cannot have alignment_matrix role")
-    stage_ids, job_keys = [], set()
+    stage_ids, job_keys, job_view_key = [], set(), {}
     for stage in campaign["stages"]:
         if not {"stage_id", "description", "jobs"} <= set(stage): raise CampaignError("each stage requires stage_id, description, jobs")
         stage_ids.append(stage["stage_id"])
@@ -138,9 +138,9 @@ def validate_campaign(campaign: dict[str, Any]) -> dict[str, Any]:
             if not needed <= set(job): raise CampaignError(f"job is missing {sorted(needed-set(job))}")
             if job["job_key"] in job_keys: raise CampaignError(f"duplicate job_key: {job['job_key']}")
             if job["view_key"] not in campaign["view_registry"]: raise CampaignError(f"unknown view_key: {job['view_key']}")
-            job_keys.add(job["job_key"])
+            job_keys.add(job["job_key"]); job_view_key[job["job_key"]] = job["view_key"]
     if len(stage_ids) != len(set(stage_ids)): raise CampaignError("duplicate stage_id")
-    closure_ids = set()
+    closure_ids, closure_view_key = set(), {}
     for fallback in campaign.get("conditional_fallbacks", []):
         needed = {"fallback_id", "trigger_job", "trigger_reason_codes", "fallback_job"}
         if not needed <= set(fallback): raise CampaignError(f"conditional_fallback is missing {sorted(needed-set(fallback))}")
@@ -156,6 +156,10 @@ def validate_campaign(campaign: dict[str, Any]) -> dict[str, Any]:
         if not fneeded <= set(fjob): raise CampaignError(f"conditional_fallback {fallback['fallback_id']} fallback_job is missing {sorted(fneeded-set(fjob))}")
         if fjob["job_key"] in job_keys: raise CampaignError(f"conditional_fallback {fallback['fallback_id']} fallback_job.job_key collides with an existing job_key")
         if fjob["view_key"] not in campaign["view_registry"]: raise CampaignError(f"conditional_fallback {fallback['fallback_id']} fallback_job references unknown view_key")
+        trigger_view = job_view_key.get(fallback["trigger_job"])
+        if trigger_view != fjob["view_key"]:
+            raise CampaignError(f"conditional_fallback {fallback['fallback_id']} trigger_job and fallback_job belong to different views")
+        closure_view_key[fallback["fallback_id"]] = trigger_view
     for dep in campaign["dependencies"]:
         if dep.get("requires_closure") is not None:
             if dep.get("job") not in job_keys: raise CampaignError(f"dependency references unknown job: {dep}")
@@ -172,6 +176,7 @@ def validate_campaign(campaign: dict[str, Any]) -> dict[str, Any]:
         core_views = {}
     elif not isinstance(core_views, dict):
         raise CampaignError("host_color_id_feasibility.core_views must be an object")
+    seen_feasibility_targets = set()
     for view_key, view_config in core_views.items():
         if view_key not in campaign["view_registry"]:
             raise CampaignError(f"host_color_id_feasibility.core_views references unknown view_key: {view_key}")
@@ -180,10 +185,23 @@ def validate_campaign(campaign: dict[str, Any]) -> dict[str, Any]:
         has_closure, has_job = "closure_id" in view_config, "job_key" in view_config
         if has_closure == has_job:
             raise CampaignError(f"host_color_id_feasibility.core_views[{view_key}] must set exactly one of closure_id or job_key")
-        if has_closure and view_config["closure_id"] not in closure_ids:
-            raise CampaignError(f"host_color_id_feasibility.core_views[{view_key}] references unknown closure_id: {view_config['closure_id']}")
-        if has_job and view_config["job_key"] not in job_keys:
-            raise CampaignError(f"host_color_id_feasibility.core_views[{view_key}] references unknown job_key: {view_config['job_key']}")
+        if has_closure:
+            closure_id = view_config["closure_id"]
+            if closure_id not in closure_ids:
+                raise CampaignError(f"host_color_id_feasibility.core_views[{view_key}] references unknown closure_id: {closure_id}")
+            if closure_view_key.get(closure_id) != view_key:
+                raise CampaignError(f"host_color_id_feasibility.core_views[{view_key}] closure_id {closure_id!r} belongs to a different view")
+            target = ("closure", closure_id)
+        else:
+            job_key = view_config["job_key"]
+            if job_key not in job_keys:
+                raise CampaignError(f"host_color_id_feasibility.core_views[{view_key}] references unknown job_key: {job_key}")
+            if job_view_key.get(job_key) != view_key:
+                raise CampaignError(f"host_color_id_feasibility.core_views[{view_key}] job_key {job_key!r} belongs to a different view")
+            target = ("job", job_key)
+        if target in seen_feasibility_targets:
+            raise CampaignError(f"host_color_id_feasibility.core_views[{view_key}] duplicates a target already used by another core view: {target[1]}")
+        seen_feasibility_targets.add(target)
     defaults = campaign["execution_defaults"]
     if not isinstance(defaults.get("batch_size"), int) or defaults["batch_size"] < 1:
         raise CampaignError("execution_defaults.batch_size must be positive")

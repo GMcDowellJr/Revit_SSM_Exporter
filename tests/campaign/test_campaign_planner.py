@@ -721,3 +721,18 @@ def test_core_views_mapping_is_validated_at_campaign_validation_time():
  c=example()
  c['host_color_id_feasibility']['core_views']['elevation']={'closure_id':'elevation_mutation_closure','job_key':'s1.attached_as'}
  pytest.raises(p.CampaignError,p.validate_campaign,c)  # exactly one of closure_id/job_key, not both
+
+def test_core_views_mapping_rejects_a_closure_from_a_different_view():
+ # A valid closure_id belonging to a *different* view must still be
+ # rejected - otherwise host_color_id_feasibility() would double-count one
+ # view's candidate job while never checking the mismatched view's own
+ # result (e.g. mapping "callout" to the section closure would let a
+ # failed callout raster hide behind a passing section result).
+ c=example()
+ c['host_color_id_feasibility']['core_views']['callout']={'closure_id':'section_mutation_closure'}
+ pytest.raises(p.CampaignError,p.validate_campaign,c)
+
+def test_core_views_mapping_rejects_a_job_key_from_a_different_view():
+ c=example()
+ c['host_color_id_feasibility']['core_views']['callout']={'job_key':'s3.section.attached_AS'}
+ pytest.raises(p.CampaignError,p.validate_campaign,c)
