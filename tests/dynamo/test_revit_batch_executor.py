@@ -260,9 +260,12 @@ def test_external_sources_adapter_falls_back_to_generic_passthrough_without_a_do
 
 
 def test_example_campaign_external_sources_settings_validate_cleanly():
+    # External-source jobs live in the non-blocking follow-up campaign, not
+    # the core host color-ID feasibility campaign - see
+    # examples/stage_a_followup_campaign.json / docs/CAMPAIGN_PLANNER.md.
     import json
     from pathlib import Path
-    campaign = json.loads((Path(__file__).parents[2] / "examples" / "stage_a_campaign.json").read_text())
+    campaign = json.loads((Path(__file__).parents[2] / "examples" / "stage_a_followup_campaign.json").read_text())
     doc = Doc([])
     adapter = build_registry(doc)["stage_a_external_sources"]
     checked = 0
@@ -275,7 +278,7 @@ def test_example_campaign_external_sources_settings_validate_cleanly():
 
 
 def test_example_campaign_image_alignment_settings_validate_cleanly():
-    """Every stage_a_image_alignment job in the checked-in example campaign
+    """Every stage_a_image_alignment job in the checked-in core campaign
     (all of which use the campaign-wide `dpi` convention) must validate
     through the real adapter."""
     import json
@@ -288,7 +291,7 @@ def test_example_campaign_image_alignment_settings_validate_cleanly():
             if j["probe_id"] == "stage_a_image_alignment":
                 adapter.validate_settings(j["settings"], "/raw")
                 checked += 1
-    assert checked == 17  # s2.align.r1/.r2 (2) + 5 views x (fixed + 150.r1 + 150.r2) (15)
+    assert checked == 7  # s2.align.r1/.r2 (2) + 5 cross-view *.confirm jobs (5)
 
 
 def test_image_alignment_adapter_normalizes_mode_before_validating():
@@ -334,14 +337,15 @@ def test_model_linework_adapter_maps_dpi_and_selection(monkeypatch):
 
 
 def test_example_campaign_model_linework_settings_validate_cleanly():
-    """All 8 stage_a_model_linework jobs (Stage 3's 75/150/300 DPI sweep and
-    Stage 6's 5 linework-validation jobs) use `selection` and validate
+    """All 8 stage_a_model_linework jobs (the follow-up campaign's elevation
+    75/150/300 DPI sweep and 5 cross-view linework-validation jobs - see
+    examples/stage_a_followup_campaign.json) use `selection` and validate
     through the real adapter - see the module docstring in
     revit_probe_registry.py for why they no longer use
     display_style/fills/lines/bounds."""
     import json
     from pathlib import Path
-    campaign = json.loads((Path(__file__).parents[2] / "examples" / "stage_a_campaign.json").read_text())
+    campaign = json.loads((Path(__file__).parents[2] / "examples" / "stage_a_followup_campaign.json").read_text())
     adapter = build_registry(Doc([]))["stage_a_model_linework"]
     checked = 0
     for stage in campaign["stages"]:

@@ -164,8 +164,13 @@ def validate_campaign(campaign: dict[str, Any]) -> dict[str, Any]:
             raise CampaignError(f"dependency references unknown job: {dep}")
         if dep.get("statuses", ["PASS"]) and not set(dep.get("statuses", ["PASS"])) <= {"PASS", "FAIL", "INCONCLUSIVE", "BLOCKED"}:
             raise CampaignError("dependency statuses must be analyzer acceptance values")
-    core_views = (campaign.get("host_color_id_feasibility") or {}).get("core_views") or {}
-    if not isinstance(core_views, dict):
+    feasibility_config = campaign.get("host_color_id_feasibility")
+    if feasibility_config is not None and not isinstance(feasibility_config, dict):
+        raise CampaignError("host_color_id_feasibility must be an object")
+    core_views = (feasibility_config or {}).get("core_views")
+    if core_views is None:
+        core_views = {}
+    elif not isinstance(core_views, dict):
         raise CampaignError("host_color_id_feasibility.core_views must be an object")
     for view_key, view_config in core_views.items():
         if view_key not in campaign["view_registry"]:
@@ -333,6 +338,20 @@ def _apply_conditional_fallbacks(campaign: dict[str, Any], state: dict[str, Any]
                     "provenance": {"closure_id": closure_id, "fallback_of_job_id": trigger["job_id"],
                                    "trigger_reason_codes_matched": sorted(trigger_codes)}})
                 state["jobs"][spec["job_id"]] = spec
+                if spec.get("manual_review_required"):
+                    # Mirrors initialize_state()'s own registration for
+                    # statically staged jobs: a materialized fallback job is
+                    # never seeded here otherwise (initialize_state only ever
+                    # runs once, before any fallback exists), so a
+                    # manual_review_required flag on a fallback_job spec
+                    # would otherwise never gain a manual_review_requirements
+                    # entry at all - letting a clean automated PASS resolve
+                    # the closure and complete the campaign without ever
+                    # presenting the configured review to an operator.
+                    state["manual_review_requirements"][spec["job_id"]] = {
+                        "status": "PENDING", "reason": spec.get("manual_review_reason", "CONFIGURED"),
+                        "artifact_references": [],
+                    }
             closure.update({"status": "AWAITING_FALLBACK_EXECUTION", "fallback_job_id": spec["job_id"],
                             "candidate_job_id": spec["job_id"]})
             _event(state, "CLOSURE_FALLBACK_MATERIALIZED", closure_id=closure_id,
@@ -835,11 +854,21 @@ def host_color_id_feasibility(campaign: dict[str, Any], state: dict[str, Any]) -
     every configured core view is ``PASS``; ``INCONCLUSIVE`` while any core
     view is still ``NOT_TESTED``; otherwise ``FAIL`` when every concluded
     view failed, or ``MIXED`` when both PASS and FAIL views are present.
+
+    A job's own automated ``PASSED``/``FAILED`` status is not, by itself,
+    sufficient here: the gate-scoped review path already requires ACCEPTED
+    before transitioning a job to PASSED, but a *campaign-authored* review on
+    a job whose automated result never went through that gate (for example,
+    an explicit ``rendered_semantic_preservation: proven`` result) never
+    changes the job's own status either way - so this checks the review
+    requirement's own recorded outcome directly, never inferring ACCEPTED
+    from an automated PASSED status alone, and treats a REJECTED review as a
+    FAIL regardless of what the automated result said.
     """
-    config = (campaign.get("host_color_id_feasibility") or {}).get("core_views") or {}
+    core_views_config = (campaign.get("host_color_id_feasibility") or {}).get("core_views") or {}
     key_map = {j["job_key"]: j for j in state["jobs"].values() if j["status"] != "SUPERSEDED"}
     views: dict[str, Any] = {}
-    for view_key, view_config in config.items():
+    for view_key, view_config in core_views_config.items():
         job = None
         closure_id = view_config.get("closure_id")
         if closure_id:
@@ -848,13 +877,14 @@ def host_color_id_feasibility(campaign: dict[str, Any], state: dict[str, Any]) -
             job = state["jobs"].get(candidate_job_id) if candidate_job_id else None
         else:
             job = key_map.get(view_config.get("job_key"))
-        if job is not None and job["status"] == "PASSED":
+        requirement = state["manual_review_requirements"].get(job["job_id"]) if job else None
+        review_status = requirement.get("status") if requirement else None
+        if job is not None and job["status"] == "PASSED" and review_status in (None, "ACCEPTED"):
             result = "PASS"
-        elif job is not None and job["status"] == "FAILED":
+        elif job is not None and (job["status"] == "FAILED" or review_status == "REJECTED"):
             result = "FAIL"
         else:
             result = "NOT_TESTED"
-        requirement = state["manual_review_requirements"].get(job["job_id"]) if job else None
         views[view_key] = {
             "result": result,
             "job_id": job["job_id"] if job else None,
