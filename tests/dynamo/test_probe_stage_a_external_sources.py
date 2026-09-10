@@ -239,6 +239,48 @@ def test_evidence_status_supported_link_override_requires_rendered_color():
     assert rendered["capability_status"] == "SUPPORTED"
 
 
+def _no_pillow():
+    return {"pillow_available": False}
+
+
+def test_evidence_status_unsupported_link_override_does_not_require_pillow():
+    # A LINK capability determination (UNSUPPORTED/FAILED/NOT_TESTED) needs no
+    # image evidence at all - a Dynamo/IronPython environment without Pillow
+    # must still report it, not collapse it to a generic "Pillow unavailable"
+    # INCONCLUSIVE the same way a rendered-color claim would.
+    assignments = [{"assignment_key": "k0", "source_type": "LINK", "link_override_status": "UNSUPPORTED"}]
+    status = probe._source_evidence_status(
+        "linked_per_element_linkelementid_coloring", assignments, _no_pillow(), [])
+    assert status["has_required_evidence"] is True
+    assert status["capability_status"] == "UNSUPPORTED"
+
+
+def test_evidence_status_failed_link_override_does_not_require_pillow():
+    assignments = [{"assignment_key": "k0", "source_type": "LINK", "link_override_status": "FAILED"}]
+    status = probe._source_evidence_status(
+        "linked_per_element_linkelementid_coloring", assignments, _no_pillow(), [])
+    assert status["has_required_evidence"] is False
+    assert status["capability_status"] == "FAILED_UNEXPECTEDLY"
+
+
+def test_evidence_status_supported_link_override_without_pillow_is_inconclusive_not_unsupported():
+    # Only the "reportedly applied" path actually needs image evidence to
+    # confirm a real render - it must not silently pass, nor get relabeled
+    # UNSUPPORTED just because Pillow happens to be missing.
+    assignments = [{"assignment_key": "k0", "source_type": "LINK", "link_override_status": "APPLIED"}]
+    status = probe._source_evidence_status(
+        "linked_per_element_linkelementid_coloring", assignments, _no_pillow(), [])
+    assert status["has_required_evidence"] is False
+    assert "Pillow" in status["reason"]
+
+
+def test_evidence_status_forced_fallback_does_not_require_pillow():
+    assignments = [{"assignment_key": "k0", "source_type": "LINK", "link_override_status": "NOT_TESTED"}]
+    status = probe._source_evidence_status(
+        "forced_linked_override_failure_hide_instance_fallback", assignments, _no_pillow(), [123])
+    assert status["has_required_evidence"] is True
+
+
 # --- _source_family_conclusion(): requested-case scoping, not HOST+LINK+DWG always ---
 
 def _variant(name, conclusion, skipped=False):
@@ -376,7 +418,7 @@ def test_dwg_eligibility_reports_explicit_view_specific_exclusion(fake_dwg_revit
     view_specific = _FakeImportInstance(501, True, "Imports in Families")
     doc = types.SimpleNamespace(import_instances=[view_specific])
     view = types.SimpleNamespace(Id="view-1")
-    diagnostics = probe._dwg_eligibility_diagnostics(doc, view, [view_specific], discovered_dwg_ids=set())
+    diagnostics = probe._dwg_eligibility_diagnostics(doc, view, [view_specific], policy_eligible_dwg_ids=set())
     assert len(diagnostics) == 1
     entry = diagnostics[0]
     assert entry["import_instance_id"] == 501
@@ -390,7 +432,7 @@ def test_dwg_eligibility_reports_eligible_source_with_no_exclusion_reason(fake_d
     inst = _FakeImportInstance(77, False, "Imports in Families")
     doc = types.SimpleNamespace(import_instances=[inst])
     view = types.SimpleNamespace(Id="view-1")
-    diagnostics = probe._dwg_eligibility_diagnostics(doc, view, [], discovered_dwg_ids={77})
+    diagnostics = probe._dwg_eligibility_diagnostics(doc, view, [], policy_eligible_dwg_ids={77})
     assert diagnostics[0]["eligible_under_current_discovery_policy"] is True
     assert diagnostics[0]["exclusion_reason"] is None
 
@@ -399,9 +441,68 @@ def test_dwg_eligibility_reports_supplied_element_missing_from_view_collector(fa
     missing = _FakeImportInstance(9, False)
     doc = types.SimpleNamespace(import_instances=[])
     view = types.SimpleNamespace(Id="view-1")
-    diagnostics = probe._dwg_eligibility_diagnostics(doc, view, [missing], discovered_dwg_ids=set())
+    diagnostics = probe._dwg_eligibility_diagnostics(doc, view, [missing], policy_eligible_dwg_ids=set())
     assert diagnostics[0]["in_view_import_instance_collector"] is False
     assert diagnostics[0]["exclusion_reason"] == "NOT_FOUND_IN_VIEW_IMPORT_INSTANCE_COLLECTOR"
+
+
+def test_dwg_eligibility_does_not_mislabel_eligible_but_unselected_import_as_policy_excluded(fake_dwg_revit_db):
+    # A job's dwg_inputs filter narrows _discover_assignments()'s by_source
+    # result to the one import it asked about, but policy_eligible_dwg_ids
+    # must reflect unfiltered production discovery - a second, unselected
+    # import in the same view that production discovery also found eligible
+    # must not be reported as excluded by production policy just because
+    # this job didn't ask about it.
+    requested = _FakeImportInstance(1, False, "Imports in Families")
+    other_eligible = _FakeImportInstance(2, False, "Imports in Families")
+    doc = types.SimpleNamespace(import_instances=[requested, other_eligible])
+    view = types.SimpleNamespace(Id="view-1")
+    diagnostics = probe._dwg_eligibility_diagnostics(doc, view, [requested], policy_eligible_dwg_ids={1, 2})
+    by_id = {entry["import_instance_id"]: entry for entry in diagnostics}
+    assert by_id[1]["eligible_under_current_discovery_policy"] is True
+    assert by_id[1]["exclusion_reason"] is None
+    assert by_id[2]["eligible_under_current_discovery_policy"] is True
+    assert by_id[2]["exclusion_reason"] is None
+    assert by_id[2]["supplied"] is False
+
+
+def test_dwg_eligibility_preserves_view_specific_read_failure():
+    fake_db = types.ModuleType("Autodesk.Revit.DB")
+
+    class _RaisingImportInstance(object):
+        def __init__(self, id_value):
+            self.Id = _FakeElementId(id_value)
+
+        @property
+        def ViewSpecific(self):
+            raise RuntimeError("disposed reference")
+
+    class _RaisingCollector(object):
+        def __init__(self, doc, view_id=None):
+            self._doc = doc
+
+        def OfClass(self, cls):
+            return _FakeElementsResult(self._doc.import_instances)
+
+    fake_db.FilteredElementCollector = _RaisingCollector
+    fake_db.ImportInstance = _RaisingImportInstance
+    import sys as _sys
+    _orig = _sys.modules.get("Autodesk.Revit.DB")
+    _sys.modules["Autodesk.Revit.DB"] = fake_db
+    try:
+        broken = _RaisingImportInstance(55)
+        doc = types.SimpleNamespace(import_instances=[broken])
+        view = types.SimpleNamespace(Id="view-1")
+        diagnostics = probe._dwg_eligibility_diagnostics(doc, view, [broken], policy_eligible_dwg_ids=set())
+    finally:
+        if _orig is None:
+            del _sys.modules["Autodesk.Revit.DB"]
+        else:
+            _sys.modules["Autodesk.Revit.DB"] = _orig
+    entry = diagnostics[0]
+    assert entry["view_specific"] is None
+    assert "disposed reference" in entry["view_specific_read_error"]
+    assert entry["exclusion_reason"] == "VIEW_SPECIFIC_READ_FAILED"
 
 
 # --- _skip_reason(): a supplied-but-excluded DWG never reads as a bare "DWG = 0" ---

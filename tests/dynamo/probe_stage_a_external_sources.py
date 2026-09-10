@@ -627,11 +627,21 @@ def _discover_assignments(doc, view, link_inputs, dwg_inputs):
     dwg_filter = _element_id_set(dwg_inputs)
     discovered = {"mode": "view_discovery", "link_inputs_supplied": bool(link_filter), "dwg_inputs_supplied": bool(dwg_filter), "collection_stats": stats, "counts_by_source": {"HOST": 0, "LINK": 0, "DWG": 0}}
     by_source = {"HOST": [], "LINK": [], "DWG": []}
+    # Policy-eligible DWG ids reflect production discovery alone, before this
+    # job's own dwg_inputs filter narrows by_source["DWG"] below - a
+    # supplied filter that selects one of several eligible imports must never
+    # make _dwg_eligibility_diagnostics() report the *other*, unselected but
+    # still-eligible imports as excluded by production policy.
+    policy_eligible_dwg_ids = set()
     for entry in expanded:
         source_type = entry.get("source_type", "HOST")
         if source_type not in by_source:
             continue
         item = _identity_from_entry(doc, entry, len(by_source[source_type]))
+        if source_type == "DWG":
+            eid = item.get("import_instance_id")
+            if eid is not None:
+                policy_eligible_dwg_ids.add(eid)
         if source_type == "LINK" and link_filter and item.get("link_instance_id") not in link_filter:
             continue
         if source_type == "DWG" and dwg_filter and item.get("import_instance_id") not in dwg_filter:
@@ -639,11 +649,12 @@ def _discover_assignments(doc, view, link_inputs, dwg_inputs):
         by_source[source_type].append(item)
     for key in by_source:
         discovered["counts_by_source"][key] = len(by_source[key])
+    discovered["dwg_policy_eligible_ids"] = sorted(policy_eligible_dwg_ids)
     discovered["note"] = "Candidates were discovered from the target view; supplied IN[2]/IN[3] only filter matching link/import instances and do not substitute unrelated elements."
     return by_source, discovered
 
 
-def _dwg_eligibility_diagnostics(doc, view, dwg_inputs, discovered_dwg_ids):
+def _dwg_eligibility_diagnostics(doc, view, dwg_inputs, policy_eligible_dwg_ids):
     """Record explicit per-ImportInstance eligibility evidence instead of
     letting an excluded/absent DWG collapse to an unexplained ``DWG = 0``.
 
@@ -655,6 +666,14 @@ def _dwg_eligibility_diagnostics(doc, view, dwg_inputs, discovered_dwg_ids):
     (``_collect_from_dwg_imports`` in vop_interwoven/revit/linked_documents.py)
     treated it as eligible, and an explicit reason when it did not - without
     changing that production policy.
+
+    ``policy_eligible_dwg_ids`` must be the *unfiltered* set of ids production
+    discovery found eligible (``_discover_assignments()``'s
+    ``discovered["dwg_policy_eligible_ids"]``) - never a job's own
+    ``dwg_inputs``-narrowed result set. Deriving eligibility from a narrowed
+    result would mislabel every eligible-but-unselected import in the same
+    view as excluded by production policy, when it was simply not the one
+    this job asked about.
     """
     from Autodesk.Revit.DB import FilteredElementCollector, ImportInstance
     diagnostics = []
@@ -670,19 +689,24 @@ def _dwg_eligibility_diagnostics(doc, view, dwg_inputs, discovered_dwg_ids):
         eid = _safe_int_id(getattr(inst, "Id", None))
         if eid is not None:
             candidates.setdefault(eid, inst)
+    policy_eligible_dwg_ids = set(policy_eligible_dwg_ids or [])
     for eid in sorted(candidates):
         inst = candidates[eid]
         in_view_collector = eid in collector_instances
+        view_specific = None
+        view_specific_read_error = None
         try:
             view_specific = bool(getattr(inst, "ViewSpecific", False))
-        except Exception:
-            view_specific = None
+        except Exception as ex:
+            view_specific_read_error = "{0}: {1}".format(type(ex).__name__, ex)
         cat = getattr(inst, "Category", None)
-        eligible = eid in discovered_dwg_ids
+        eligible = eid in policy_eligible_dwg_ids
         if eligible:
             reason = None
         elif not in_view_collector:
             reason = "NOT_FOUND_IN_VIEW_IMPORT_INSTANCE_COLLECTOR"
+        elif view_specific_read_error is not None:
+            reason = "VIEW_SPECIFIC_READ_FAILED"
         elif view_specific:
             reason = "EXCLUDED_VIEW_SPECIFIC_IMPORT"
         else:
@@ -691,6 +715,7 @@ def _dwg_eligibility_diagnostics(doc, view, dwg_inputs, discovered_dwg_ids):
             "import_instance_id": eid,
             "in_view_import_instance_collector": in_view_collector,
             "view_specific": view_specific,
+            "view_specific_read_error": view_specific_read_error,
             "category": getattr(cat, "Name", None),
             "eligible_under_current_discovery_policy": eligible,
             "exclusion_reason": reason,
@@ -979,23 +1004,32 @@ def _classify_variant(variant, applied, analysis):
 
 
 def _source_evidence_status(variant, assignments, analysis, hidden_link_fallback):
+    """Determine whether a variant has the evidence its own contract needs.
+
+    The Pillow-availability gate is applied only where rendered-pixel
+    evidence is actually required (below) - a LINK capability determination
+    (UNSUPPORTED/FAILED/NOT_TESTED) and the forced whole-link fallback's
+    hidden-instance evidence do not depend on exact-color TIFF analysis at
+    all, so a Dynamo/IronPython environment without Pillow must still be able
+    to report those outcomes rather than collapsing them all to a generic
+    "Pillow unavailable" INCONCLUSIVE.
+    """
     if not assignments:
         return {"has_required_evidence": False, "reason": "no assignments"}
-    if not analysis.get("pillow_available"):
-        return {"has_required_evidence": False, "reason": "Pillow unavailable; exact source-color evidence missing"}
-    counts = analysis.get("expected_color_pixel_counts", {}) or {}
     by_source = {"HOST": [], "LINK": [], "DWG": []}
     for assignment in assignments:
         by_source.get(assignment.get("source_type"), []).append(assignment)
 
     def rendered_count(items):
+        counts = analysis.get("expected_color_pixel_counts", {}) or {}
         return sum(1 for item in items if counts.get(str(item.get("assignment_key")), 0) > 0)
 
     if variant == "forced_linked_override_failure_hide_instance_fallback":
         return {
             "has_required_evidence": bool(by_source["LINK"] and hidden_link_fallback),
             "reason": "hidden owning link fallback exercised" if hidden_link_fallback else "forced linked failure did not hide any owning link instance",
-            "rendered_counts_by_source": {src: rendered_count(vals) for src, vals in by_source.items()},
+            "rendered_counts_by_source": ({src: rendered_count(vals) for src, vals in by_source.items()}
+                                          if analysis.get("pillow_available") else {}),
         }
 
     if variant == "linked_per_element_linkelementid_coloring":
@@ -1012,15 +1046,23 @@ def _source_evidence_status(variant, assignments, analysis, hidden_link_fallback
             # (see docs/PROBE_STAGE_A_EXTERNAL_SOURCES.md); the whole-link
             # suppression fallback is exercised and evaluated separately by
             # the forced_linked_override_failure_hide_instance_fallback variant.
+            # No image evidence is needed to reach this determination.
             return {"has_required_evidence": True, "capability_status": "UNSUPPORTED",
                      "reason": "LinkElementId override determined unsupported in this Revit/API environment"}
         if capability == "supported":
+            # Only a reportedly-applied override needs image evidence to
+            # confirm it actually rendered.
+            if not analysis.get("pillow_available"):
+                return {"has_required_evidence": False,
+                         "reason": "Pillow unavailable; cannot confirm rendered color for a reportedly-applied LinkElementId override"}
             rendered_ok = rendered_count(by_source["LINK"]) > 0
             return {"has_required_evidence": rendered_ok, "capability_status": "SUPPORTED" if rendered_ok else None,
                      "reason": "LinkElementId override supported and rendered" if rendered_ok else
                                "override reported success but no rendered color evidence"}
         return {"has_required_evidence": False, "reason": "inconclusive LinkElementId capability determination"}
 
+    if not analysis.get("pillow_available"):
+        return {"has_required_evidence": False, "reason": "Pillow unavailable; exact source-color evidence missing"}
     required_sources = [src for src, vals in by_source.items() if vals]
     rendered = {src: rendered_count(by_source[src]) for src in required_sources}
     missing_sources = [src for src in required_sources if rendered.get(src, 0) <= 0]
@@ -1131,8 +1173,8 @@ def _run_native(raw_view, output_dir, raw_links, raw_dwgs, selection="all", reso
     links = _unwrap_many(raw_links)
     dwgs = _unwrap_many(raw_dwgs)
     by_source, discovery = _discover_assignments(doc, view, links, dwgs)
-    discovered_dwg_ids = {item.get("import_instance_id") for item in by_source["DWG"]}
-    discovery["dwg_eligibility_diagnostics"] = _dwg_eligibility_diagnostics(doc, view, dwgs, discovered_dwg_ids)
+    discovery["dwg_eligibility_diagnostics"] = _dwg_eligibility_diagnostics(
+        doc, view, dwgs, discovery.get("dwg_policy_eligible_ids"))
     probe_dir = os.path.join(out_dir, "external_sources_probe")
     if not os.path.isdir(probe_dir):
         os.makedirs(probe_dir)

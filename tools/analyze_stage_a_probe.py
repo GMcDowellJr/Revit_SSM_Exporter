@@ -936,7 +936,15 @@ def _family_checks(data: dict[str, Any], native: dict[str, Any], family: str) ->
                                           'raw_family_status': raw_evidence}))
                     continue
                 statuses = [_external_variant_visual_status(variant) for variant in matching]
-                complete = len(matching) == len(requested_for_source)
+                # `matching` can carry more than one entry per variant name
+                # when a job requested more than one resolution case
+                # (resolution_policy="both", multiple target_dpi values):
+                # _run_native() appends one report entry per (resolution case
+                # x selected variant). Completeness is checked against the
+                # distinct variant *names* present, not the raw entry count -
+                # `all(s in ('PASS', 'UNSUPPORTED') ...)` below still requires
+                # every one of those entries (every resolution case) to pass.
+                complete = {variant.get('variant') for variant in matching} == set(requested_for_source)
                 # UNSUPPORTED is an explicit, non-failing capability
                 # determination (see _external_variant_visual_status) and must
                 # count toward PASS alongside a rendered-color PASS - it must

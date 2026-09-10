@@ -439,6 +439,23 @@ def test_external_unexpected_link_override_exception_is_a_real_failure():
     assert "EXTERNAL_SOURCE_VISUAL_FAILURE" in link_check["reason_codes"]
 
 
+def test_external_family_check_counts_distinct_variants_across_resolution_runs():
+    # A job requesting more than one resolution case makes the raw report
+    # carry more than one entry per variant name (one per resolution case).
+    # `complete` must be based on distinct variant names, not entry count,
+    # while still requiring every emitted resolution-case entry to pass.
+    variants = [
+        _link_variant("linked_per_element_linkelementid_coloring", "UNSUPPORTED", rendered=False),
+        _link_variant("linked_per_element_linkelementid_coloring", "UNSUPPORTED", rendered=False),
+        {**_external_variant("forced_linked_override_failure_hide_instance_fallback", "LINK"),
+         "hidden_link_fallback": [123]},
+    ]
+    native = {"variants": variants}
+    checks = analyzer._family_checks({}, native, "external_sources")
+    link_check = next(c for c in checks if c["check_id"] == "external_source_link")
+    assert link_check["status"] == "PASS"
+
+
 def test_external_whole_link_fallback_passes_independently_of_per_element_override():
     # A job requesting only the forced whole-link-suppression fallback (not
     # the per-element override variant) must be able to PASS on its own -
