@@ -170,14 +170,16 @@ def test_template_blocked_attached_as_schedules_exactly_one_detached_as_fallback
     assert fallback["provenance"]["fallback_of_job_id"] == attached_job["job_id"]
     assert fallback["provenance"]["trigger_reason_codes_matched"] == ["MUTATION_BLOCKED_BY_TEMPLATE_ONLY"]
 
-    # Nothing else opened up: attached_AS is not rerun, Stage 2 and Stage 7
-    # remain gated.
+    # Nothing else opened up: attached_AS is not rerun, and every downstream
+    # job gated on the elevation closure - elevation determinism as well as
+    # the cross-view alignment/resolution confirmation matrix - remains
+    # gated.
     next_batch = p.generate_next_batch(campaign, state)
     assert [j["job_id"] for j in next_batch["jobs"]] == [fallback["job_id"]]
     assert get(state, "s2.align.r1")["status"] == "PLANNED"
     assert get(state, "s2.align.r2")["status"] == "PLANNED"
-    assert get(state, "s7.rvt_link.fixed")["status"] == "PLANNED"
-    assert get(state, "s7.dwg.fixed")["status"] == "PLANNED"
+    assert get(state, "s2.floor_active.confirm")["status"] == "PLANNED"
+    assert get(state, "s2.callout.confirm")["status"] == "PLANNED"
 
     resolved = resolve_output_directory(next_batch["jobs"][0]["output_directory"], str(manifest_path))
     assert resolved.endswith(fallback["job_id"])
@@ -230,9 +232,13 @@ def test_detached_as_resolution_unlocks_stage2_and_not_others(tmp_path):
 
     assert get(state, "s2.align.r1")["status"] == "ELIGIBLE"
     assert get(state, "s2.align.r2")["status"] == "ELIGIBLE"
-    # Stage 7 still has not been unlocked by this - it depends on Stage 6,
-    # which has not run at all yet.
-    assert get(state, "s7.rvt_link.fixed")["status"] == "PLANNED"
+    # The cross-view alignment/resolution confirmation matrix opens up too
+    # (it is gated on the same closure, not on the elevation determinism
+    # jobs specifically) - but the cross-view host raster matrix behind it
+    # still has not been unlocked, since its own per-view confirmation job
+    # has not run yet.
+    assert get(state, "s2.floor_active.confirm")["status"] == "ELIGIBLE"
+    assert get(state, "s3.floor_active.attached_AS")["status"] == "PLANNED"
 
 
 def test_drift_supersede_then_recovery_preserves_evidence_linkage(tmp_path):

@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
-  "campaign_id": "stage-a-initial",
-  "description": "Initial Stage A staged campaign after PRs 1-3.",
+  "campaign_id": "stage-a-host-color-id",
+  "description": "Core Stage A host-element color-ID feasibility campaign: can Stage A reliably assign unique colors to visible host Revit elements and export a raster from which those elements can be recovered, across elevation/plan(active)/plan(inactive)/RCP/section/callout. External-source and additional-semantic-diagnostic work is intentionally out of scope here - see examples/stage_a_followup_campaign.json.",
   "document_expectations": {
     "expected_title": "REPLACE_WITH_MODEL_TITLE",
     "expected_revit_version": "2025"
@@ -14,7 +14,8 @@
       "expected_crop_active": true,
       "roles": [
         "calibration",
-        "alignment_matrix"
+        "alignment_matrix",
+        "host_color_id_feasibility"
       ],
       "source_content_tags": [],
       "notes": "Replace placeholder identity before execution."
@@ -25,7 +26,8 @@
       "expected_view_type": "FloorPlan",
       "expected_crop_active": true,
       "roles": [
-        "alignment_matrix"
+        "alignment_matrix",
+        "host_color_id_feasibility"
       ],
       "source_content_tags": [],
       "notes": "Replace placeholder identity before execution."
@@ -37,6 +39,7 @@
       "expected_crop_active": false,
       "roles": [
         "alignment_matrix",
+        "host_color_id_feasibility",
         "paired_geometry:floor_active"
       ],
       "source_content_tags": [],
@@ -48,7 +51,8 @@
       "expected_view_type": "CeilingPlan",
       "expected_crop_active": true,
       "roles": [
-        "alignment_matrix"
+        "alignment_matrix",
+        "host_color_id_feasibility"
       ],
       "source_content_tags": [],
       "notes": "Replace placeholder identity before execution."
@@ -59,7 +63,8 @@
       "expected_view_type": "Section",
       "expected_crop_active": true,
       "roles": [
-        "alignment_matrix"
+        "alignment_matrix",
+        "host_color_id_feasibility"
       ],
       "source_content_tags": [],
       "notes": "Replace placeholder identity before execution."
@@ -71,35 +76,10 @@
       "expected_crop_active": true,
       "roles": [
         "alignment_matrix",
+        "host_color_id_feasibility",
         "model_callout"
       ],
       "source_content_tags": [],
-      "notes": "Replace placeholder identity before execution."
-    },
-    "rvt_link": {
-      "unique_id": "uid-rvt-link",
-      "expected_name": "Known RVT Link",
-      "expected_view_type": "FloorPlan",
-      "expected_crop_active": true,
-      "roles": [
-        "external_source"
-      ],
-      "source_content_tags": [
-        "visible_rvt_link"
-      ],
-      "notes": "Replace placeholder identity before execution."
-    },
-    "dwg": {
-      "unique_id": "uid-dwg",
-      "expected_name": "Known DWG",
-      "expected_view_type": "FloorPlan",
-      "expected_crop_active": true,
-      "roles": [
-        "external_source"
-      ],
-      "source_content_tags": [
-        "visible_dwg"
-      ],
       "notes": "Replace placeholder identity before execution."
     }
   },
@@ -109,18 +89,12 @@
     },
     "mutation": {
       "probe_id": "stage_a_minimum_id_mutations"
-    },
-    "linework": {
-      "probe_id": "stage_a_model_linework"
-    },
-    "external_source": {
-      "probe_id": "stage_a_external_sources"
     }
   },
   "stages": [
     {
-      "stage_id": "01_mutation_closure",
-      "description": "Elevation mutation closure; analyzer compares attached_AS to referenced detached_AS evidence.",
+      "stage_id": "01_mutation_recipe_confirmation",
+      "description": "Elevation reference view: confirm a viable minimum-mutation recipe (attached_AS, falling back to detached_AS only if template-blocked) and, in the same job, produce the reviewable elevation host color-ID raster - the recipe-confirmation raster IS the elevation Stage 3 validation artifact, so it is never re-rendered a second time just to be reviewed.",
       "jobs": [
         {
           "job_key": "s1.attached_as",
@@ -132,13 +106,15 @@
           "settings": {
             "dpi": 150,
             "comparison_reference": "detached_AS"
-          }
+          },
+          "manual_review_required": true,
+          "manual_review_reason": "Does this raster accurately represent the visible host-model elements and their boundaries/occlusion for this view, with annotations/non-model graphics excluded as intended and without obvious color contamination that would prevent element-ID recovery?"
         }
       ]
     },
     {
-      "stage_id": "02_elevation_alignment",
-      "description": "Calibration elevation 150 DPI alignment determinism.",
+      "stage_id": "02_alignment_resolution_confirmation",
+      "description": "Confirm the chosen export resolution/alignment policy (150 DPI, mode=all) is technically usable: twice at the elevation reference view (determinism), once per remaining core view (each view's bounds/geometry resolution is a distinct technical case). No repeated multi-DPI/fixed-width experimentation here - that belongs to the non-blocking resolution-sensitivity follow-up campaign.",
       "jobs": [
         {
           "job_key": "s2.align.r1",
@@ -163,70 +139,9 @@
             "mode": "all",
             "dpi": 150
           }
-        }
-      ]
-    },
-    {
-      "stage_id": "03_elevation_linework",
-      "description": "Leading Hidden Line linework DPI sweep.",
-      "jobs": [
-        {
-          "job_key": "s3.line.75",
-          "view_key": "elevation",
-          "probe_id": "stage_a_model_linework",
-          "case": "dpi_75",
-          "variant": "hidden_white_black",
-          "repetition": 1,
-          "settings": {
-            "dpi": 75,
-            "selection": "hidden_line_white_fill_black_lines"
-          }
         },
         {
-          "job_key": "s3.line.150",
-          "view_key": "elevation",
-          "probe_id": "stage_a_model_linework",
-          "case": "dpi_150",
-          "variant": "hidden_white_black",
-          "repetition": 1,
-          "settings": {
-            "dpi": 150,
-            "selection": "hidden_line_white_fill_black_lines"
-          }
-        },
-        {
-          "job_key": "s3.line.300",
-          "view_key": "elevation",
-          "probe_id": "stage_a_model_linework",
-          "case": "dpi_300",
-          "variant": "hidden_white_black",
-          "repetition": 1,
-          "settings": {
-            "dpi": 300,
-            "selection": "hidden_line_white_fill_black_lines"
-          }
-        }
-      ]
-    },
-    {
-      "stage_id": "04_alignment_matrix",
-      "description": "Independent remaining alignment cells.",
-      "jobs": [
-        {
-          "job_key": "s4.floor_active.fixed",
-          "view_key": "floor_active",
-          "probe_id": "stage_a_image_alignment",
-          "case": "fixed_1600",
-          "variant": "fixed_1600",
-          "repetition": 1,
-          "settings": {
-            "mode": "all",
-            "resolution_policy": "fixed_pixel_width",
-            "fixed_pixel_width": 1600
-          }
-        },
-        {
-          "job_key": "s4.floor_active.150.r1",
+          "job_key": "s2.floor_active.confirm",
           "view_key": "floor_active",
           "probe_id": "stage_a_image_alignment",
           "case": "scale_150",
@@ -238,32 +153,7 @@
           }
         },
         {
-          "job_key": "s4.floor_active.150.r2",
-          "view_key": "floor_active",
-          "probe_id": "stage_a_image_alignment",
-          "case": "scale_150",
-          "variant": "150dpi",
-          "repetition": 2,
-          "settings": {
-            "mode": "all",
-            "dpi": 150
-          }
-        },
-        {
-          "job_key": "s4.floor_inactive.fixed",
-          "view_key": "floor_inactive",
-          "probe_id": "stage_a_image_alignment",
-          "case": "fixed_1600",
-          "variant": "fixed_1600",
-          "repetition": 1,
-          "settings": {
-            "mode": "all",
-            "resolution_policy": "fixed_pixel_width",
-            "fixed_pixel_width": 1600
-          }
-        },
-        {
-          "job_key": "s4.floor_inactive.150.r1",
+          "job_key": "s2.floor_inactive.confirm",
           "view_key": "floor_inactive",
           "probe_id": "stage_a_image_alignment",
           "case": "scale_150",
@@ -275,32 +165,7 @@
           }
         },
         {
-          "job_key": "s4.floor_inactive.150.r2",
-          "view_key": "floor_inactive",
-          "probe_id": "stage_a_image_alignment",
-          "case": "scale_150",
-          "variant": "150dpi",
-          "repetition": 2,
-          "settings": {
-            "mode": "all",
-            "dpi": 150
-          }
-        },
-        {
-          "job_key": "s4.rcp.fixed",
-          "view_key": "rcp",
-          "probe_id": "stage_a_image_alignment",
-          "case": "fixed_1600",
-          "variant": "fixed_1600",
-          "repetition": 1,
-          "settings": {
-            "mode": "all",
-            "resolution_policy": "fixed_pixel_width",
-            "fixed_pixel_width": 1600
-          }
-        },
-        {
-          "job_key": "s4.rcp.150.r1",
+          "job_key": "s2.rcp.confirm",
           "view_key": "rcp",
           "probe_id": "stage_a_image_alignment",
           "case": "scale_150",
@@ -312,32 +177,7 @@
           }
         },
         {
-          "job_key": "s4.rcp.150.r2",
-          "view_key": "rcp",
-          "probe_id": "stage_a_image_alignment",
-          "case": "scale_150",
-          "variant": "150dpi",
-          "repetition": 2,
-          "settings": {
-            "mode": "all",
-            "dpi": 150
-          }
-        },
-        {
-          "job_key": "s4.section.fixed",
-          "view_key": "section",
-          "probe_id": "stage_a_image_alignment",
-          "case": "fixed_1600",
-          "variant": "fixed_1600",
-          "repetition": 1,
-          "settings": {
-            "mode": "all",
-            "resolution_policy": "fixed_pixel_width",
-            "fixed_pixel_width": 1600
-          }
-        },
-        {
-          "job_key": "s4.section.150.r1",
+          "job_key": "s2.section.confirm",
           "view_key": "section",
           "probe_id": "stage_a_image_alignment",
           "case": "scale_150",
@@ -349,49 +189,12 @@
           }
         },
         {
-          "job_key": "s4.section.150.r2",
-          "view_key": "section",
-          "probe_id": "stage_a_image_alignment",
-          "case": "scale_150",
-          "variant": "150dpi",
-          "repetition": 2,
-          "settings": {
-            "mode": "all",
-            "dpi": 150
-          }
-        },
-        {
-          "job_key": "s4.callout.fixed",
-          "view_key": "callout",
-          "probe_id": "stage_a_image_alignment",
-          "case": "fixed_1600",
-          "variant": "fixed_1600",
-          "repetition": 1,
-          "settings": {
-            "mode": "all",
-            "resolution_policy": "fixed_pixel_width",
-            "fixed_pixel_width": 1600
-          }
-        },
-        {
-          "job_key": "s4.callout.150.r1",
+          "job_key": "s2.callout.confirm",
           "view_key": "callout",
           "probe_id": "stage_a_image_alignment",
           "case": "scale_150",
           "variant": "150dpi",
           "repetition": 1,
-          "settings": {
-            "mode": "all",
-            "dpi": 150
-          }
-        },
-        {
-          "job_key": "s4.callout.150.r2",
-          "view_key": "callout",
-          "probe_id": "stage_a_image_alignment",
-          "case": "scale_150",
-          "variant": "150dpi",
-          "repetition": 2,
           "settings": {
             "mode": "all",
             "dpi": 150
@@ -400,315 +203,73 @@
       ]
     },
     {
-      "stage_id": "05_reduced_mutation",
-      "description": "Reduced supported mutation set; excludes invalid full suppression.",
+      "stage_id": "03_cross_view_host_raster_matrix",
+      "description": "Apply the single recipe selected at Stage 1 (attached_AS, with the same per-view template-block fallback safety net) to each remaining core view at the single confirmed resolution policy, producing one reviewable host color-ID raster per view. No full mutation-variant factorial is run here.",
       "jobs": [
         {
-          "job_key": "s5.floor_active.attached_element_overrides",
+          "job_key": "s3.floor_active.attached_AS",
           "view_key": "floor_active",
           "probe_id": "stage_a_minimum_id_mutations",
-          "case": "reduced",
-          "variant": "attached_element_overrides_only",
-          "repetition": 1,
-          "settings": {
-            "dpi": 150
-          }
-        },
-        {
-          "job_key": "s5.floor_active.attached_AS",
-          "view_key": "floor_active",
-          "probe_id": "stage_a_minimum_id_mutations",
-          "case": "reduced",
+          "case": "cross_view_host_raster",
           "variant": "attached_AS",
           "repetition": 1,
           "settings": {
             "dpi": 150
-          }
+          },
+          "manual_review_required": true,
+          "manual_review_reason": "Does this raster accurately represent the visible host-model elements and their boundaries/occlusion for this view, with annotations/non-model graphics excluded as intended and without obvious color contamination that would prevent element-ID recovery?"
         },
         {
-          "job_key": "s5.floor_active.detached_ASF",
-          "view_key": "floor_active",
-          "probe_id": "stage_a_minimum_id_mutations",
-          "case": "reduced",
-          "variant": "detached_ASF",
-          "repetition": 1,
-          "settings": {
-            "dpi": 150
-          }
-        },
-        {
-          "job_key": "s5.floor_inactive.attached_element_overrides",
+          "job_key": "s3.floor_inactive.attached_AS",
           "view_key": "floor_inactive",
           "probe_id": "stage_a_minimum_id_mutations",
-          "case": "reduced",
-          "variant": "attached_element_overrides_only",
-          "repetition": 1,
-          "settings": {
-            "dpi": 150
-          }
-        },
-        {
-          "job_key": "s5.floor_inactive.attached_AS",
-          "view_key": "floor_inactive",
-          "probe_id": "stage_a_minimum_id_mutations",
-          "case": "reduced",
+          "case": "cross_view_host_raster",
           "variant": "attached_AS",
           "repetition": 1,
           "settings": {
             "dpi": 150
-          }
+          },
+          "manual_review_required": true,
+          "manual_review_reason": "Does this raster accurately represent the visible host-model elements and their boundaries/occlusion for this view, with annotations/non-model graphics excluded as intended and without obvious color contamination that would prevent element-ID recovery?"
         },
         {
-          "job_key": "s5.floor_inactive.detached_ASF",
-          "view_key": "floor_inactive",
-          "probe_id": "stage_a_minimum_id_mutations",
-          "case": "reduced",
-          "variant": "detached_ASF",
-          "repetition": 1,
-          "settings": {
-            "dpi": 150
-          }
-        },
-        {
-          "job_key": "s5.rcp.attached_element_overrides",
+          "job_key": "s3.rcp.attached_AS",
           "view_key": "rcp",
           "probe_id": "stage_a_minimum_id_mutations",
-          "case": "reduced",
-          "variant": "attached_element_overrides_only",
-          "repetition": 1,
-          "settings": {
-            "dpi": 150
-          }
-        },
-        {
-          "job_key": "s5.rcp.attached_AS",
-          "view_key": "rcp",
-          "probe_id": "stage_a_minimum_id_mutations",
-          "case": "reduced",
+          "case": "cross_view_host_raster",
           "variant": "attached_AS",
           "repetition": 1,
           "settings": {
             "dpi": 150
-          }
+          },
+          "manual_review_required": true,
+          "manual_review_reason": "Does this raster accurately represent the visible host-model elements and their boundaries/occlusion for this view, with annotations/non-model graphics excluded as intended and without obvious color contamination that would prevent element-ID recovery?"
         },
         {
-          "job_key": "s5.rcp.detached_ASF",
-          "view_key": "rcp",
-          "probe_id": "stage_a_minimum_id_mutations",
-          "case": "reduced",
-          "variant": "detached_ASF",
-          "repetition": 1,
-          "settings": {
-            "dpi": 150
-          }
-        },
-        {
-          "job_key": "s5.section.attached_element_overrides",
+          "job_key": "s3.section.attached_AS",
           "view_key": "section",
           "probe_id": "stage_a_minimum_id_mutations",
-          "case": "reduced",
-          "variant": "attached_element_overrides_only",
-          "repetition": 1,
-          "settings": {
-            "dpi": 150
-          }
-        },
-        {
-          "job_key": "s5.section.attached_AS",
-          "view_key": "section",
-          "probe_id": "stage_a_minimum_id_mutations",
-          "case": "reduced",
+          "case": "cross_view_host_raster",
           "variant": "attached_AS",
           "repetition": 1,
           "settings": {
             "dpi": 150
-          }
+          },
+          "manual_review_required": true,
+          "manual_review_reason": "Does this raster accurately represent the visible host-model elements and their boundaries/occlusion for this view, with annotations/non-model graphics excluded as intended and without obvious color contamination that would prevent element-ID recovery?"
         },
         {
-          "job_key": "s5.section.detached_ASF",
-          "view_key": "section",
-          "probe_id": "stage_a_minimum_id_mutations",
-          "case": "reduced",
-          "variant": "detached_ASF",
-          "repetition": 1,
-          "settings": {
-            "dpi": 150
-          }
-        },
-        {
-          "job_key": "s5.callout.attached_element_overrides",
+          "job_key": "s3.callout.attached_AS",
           "view_key": "callout",
           "probe_id": "stage_a_minimum_id_mutations",
-          "case": "reduced",
-          "variant": "attached_element_overrides_only",
-          "repetition": 1,
-          "settings": {
-            "dpi": 150
-          }
-        },
-        {
-          "job_key": "s5.callout.attached_AS",
-          "view_key": "callout",
-          "probe_id": "stage_a_minimum_id_mutations",
-          "case": "reduced",
+          "case": "cross_view_host_raster",
           "variant": "attached_AS",
           "repetition": 1,
           "settings": {
             "dpi": 150
-          }
-        },
-        {
-          "job_key": "s5.callout.detached_ASF",
-          "view_key": "callout",
-          "probe_id": "stage_a_minimum_id_mutations",
-          "case": "reduced",
-          "variant": "detached_ASF",
-          "repetition": 1,
-          "settings": {
-            "dpi": 150
-          }
-        }
-      ]
-    },
-    {
-      "stage_id": "06_linework_validation",
-      "description": "Linework only after alignment and mutation acceptance.",
-      "jobs": [
-        {
-          "job_key": "s6.floor_active.line",
-          "view_key": "floor_active",
-          "probe_id": "stage_a_model_linework",
-          "case": "validation",
-          "variant": "hidden_white_black",
-          "repetition": 1,
-          "settings": {
-            "dpi": 150,
-            "selection": "hidden_line_white_fill_black_lines"
           },
           "manual_review_required": true,
-          "manual_review_reason": "LINEWORK_VISUAL_INSPECTION"
-        },
-        {
-          "job_key": "s6.floor_inactive.line",
-          "view_key": "floor_inactive",
-          "probe_id": "stage_a_model_linework",
-          "case": "validation",
-          "variant": "hidden_white_black",
-          "repetition": 1,
-          "settings": {
-            "dpi": 150,
-            "selection": "hidden_line_white_fill_black_lines"
-          },
-          "manual_review_required": true,
-          "manual_review_reason": "LINEWORK_VISUAL_INSPECTION"
-        },
-        {
-          "job_key": "s6.rcp.line",
-          "view_key": "rcp",
-          "probe_id": "stage_a_model_linework",
-          "case": "validation",
-          "variant": "hidden_white_black",
-          "repetition": 1,
-          "settings": {
-            "dpi": 150,
-            "selection": "hidden_line_white_fill_black_lines"
-          },
-          "manual_review_required": true,
-          "manual_review_reason": "LINEWORK_VISUAL_INSPECTION"
-        },
-        {
-          "job_key": "s6.section.line",
-          "view_key": "section",
-          "probe_id": "stage_a_model_linework",
-          "case": "validation",
-          "variant": "hidden_white_black",
-          "repetition": 1,
-          "settings": {
-            "dpi": 150,
-            "selection": "hidden_line_white_fill_black_lines"
-          },
-          "manual_review_required": true,
-          "manual_review_reason": "LINEWORK_VISUAL_INSPECTION"
-        },
-        {
-          "job_key": "s6.callout.line",
-          "view_key": "callout",
-          "probe_id": "stage_a_model_linework",
-          "case": "validation",
-          "variant": "hidden_white_black",
-          "repetition": 1,
-          "settings": {
-            "dpi": 150,
-            "selection": "hidden_line_white_fill_black_lines"
-          },
-          "manual_review_required": true,
-          "manual_review_reason": "LINEWORK_VISUAL_INSPECTION"
-        }
-      ]
-    },
-    {
-      "stage_id": "07_external_sources",
-      "description": "Only explicitly tagged RVT-link and DWG views.",
-      "jobs": [
-        {
-          "job_key": "s7.rvt_link.fixed",
-          "view_key": "rvt_link",
-          "probe_id": "stage_a_external_sources",
-          "case": "capability",
-          "variant": "fixed_1600",
-          "repetition": 1,
-          "settings": {
-            "resolution_policy": "fixed_pixel_width",
-            "fixed_pixel_width": 1600,
-            "selection": [
-              "linked_per_element_linkelementid_coloring",
-              "forced_linked_override_failure_hide_instance_fallback"
-            ]
-          }
-        },
-        {
-          "job_key": "s7.rvt_link.150",
-          "view_key": "rvt_link",
-          "probe_id": "stage_a_external_sources",
-          "case": "handling",
-          "variant": "150dpi",
-          "repetition": 1,
-          "settings": {
-            "dpi": 150,
-            "selection": [
-              "linked_per_element_linkelementid_coloring",
-              "forced_linked_override_failure_hide_instance_fallback"
-            ]
-          }
-        },
-        {
-          "job_key": "s7.dwg.fixed",
-          "view_key": "dwg",
-          "probe_id": "stage_a_external_sources",
-          "case": "capability",
-          "variant": "fixed_1600",
-          "repetition": 1,
-          "settings": {
-            "resolution_policy": "fixed_pixel_width",
-            "fixed_pixel_width": 1600,
-            "selection": [
-              "dwg_importinstance_coloring"
-            ]
-          }
-        },
-        {
-          "job_key": "s7.dwg.150",
-          "view_key": "dwg",
-          "probe_id": "stage_a_external_sources",
-          "case": "handling",
-          "variant": "150dpi",
-          "repetition": 1,
-          "settings": {
-            "dpi": 150,
-            "selection": [
-              "dwg_importinstance_coloring"
-            ]
-          }
+          "manual_review_reason": "Does this raster accurately represent the visible host-model elements and their boundaries/occlusion for this view, with annotations/non-model graphics excluded as intended and without obvious color contamination that would prevent element-ID recovery?"
         }
       ]
     }
@@ -729,626 +290,71 @@
       ]
     },
     {
-      "job": "s3.line.75",
-      "requires_job": "s2.align.r2",
+      "job": "s2.floor_active.confirm",
+      "requires_closure": "elevation_mutation_closure",
       "statuses": [
         "PASS"
       ]
     },
     {
-      "job": "s3.line.150",
-      "requires_job": "s2.align.r2",
+      "job": "s3.floor_active.attached_AS",
+      "requires_job": "s2.floor_active.confirm",
       "statuses": [
         "PASS"
       ]
     },
     {
-      "job": "s3.line.300",
-      "requires_job": "s2.align.r2",
+      "job": "s2.floor_inactive.confirm",
+      "requires_closure": "elevation_mutation_closure",
       "statuses": [
         "PASS"
       ]
     },
     {
-      "job": "s4.floor_active.fixed",
-      "requires_job": "s3.line.75",
+      "job": "s3.floor_inactive.attached_AS",
+      "requires_job": "s2.floor_inactive.confirm",
       "statuses": [
         "PASS"
       ]
     },
     {
-      "job": "s4.floor_active.fixed",
-      "requires_job": "s3.line.150",
+      "job": "s2.rcp.confirm",
+      "requires_closure": "elevation_mutation_closure",
       "statuses": [
         "PASS"
       ]
     },
     {
-      "job": "s4.floor_active.fixed",
-      "requires_job": "s3.line.300",
+      "job": "s3.rcp.attached_AS",
+      "requires_job": "s2.rcp.confirm",
       "statuses": [
         "PASS"
       ]
     },
     {
-      "job": "s4.floor_active.150.r1",
-      "requires_job": "s3.line.75",
+      "job": "s2.section.confirm",
+      "requires_closure": "elevation_mutation_closure",
       "statuses": [
         "PASS"
       ]
     },
     {
-      "job": "s4.floor_active.150.r1",
-      "requires_job": "s3.line.150",
+      "job": "s3.section.attached_AS",
+      "requires_job": "s2.section.confirm",
       "statuses": [
         "PASS"
       ]
     },
     {
-      "job": "s4.floor_active.150.r1",
-      "requires_job": "s3.line.300",
+      "job": "s2.callout.confirm",
+      "requires_closure": "elevation_mutation_closure",
       "statuses": [
         "PASS"
       ]
     },
     {
-      "job": "s4.floor_active.150.r2",
-      "requires_job": "s3.line.75",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.floor_active.150.r2",
-      "requires_job": "s3.line.150",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.floor_active.150.r2",
-      "requires_job": "s3.line.300",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.floor_inactive.fixed",
-      "requires_job": "s3.line.75",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.floor_inactive.fixed",
-      "requires_job": "s3.line.150",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.floor_inactive.fixed",
-      "requires_job": "s3.line.300",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.floor_inactive.150.r1",
-      "requires_job": "s3.line.75",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.floor_inactive.150.r1",
-      "requires_job": "s3.line.150",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.floor_inactive.150.r1",
-      "requires_job": "s3.line.300",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.floor_inactive.150.r2",
-      "requires_job": "s3.line.75",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.floor_inactive.150.r2",
-      "requires_job": "s3.line.150",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.floor_inactive.150.r2",
-      "requires_job": "s3.line.300",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.rcp.fixed",
-      "requires_job": "s3.line.75",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.rcp.fixed",
-      "requires_job": "s3.line.150",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.rcp.fixed",
-      "requires_job": "s3.line.300",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.rcp.150.r1",
-      "requires_job": "s3.line.75",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.rcp.150.r1",
-      "requires_job": "s3.line.150",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.rcp.150.r1",
-      "requires_job": "s3.line.300",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.rcp.150.r2",
-      "requires_job": "s3.line.75",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.rcp.150.r2",
-      "requires_job": "s3.line.150",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.rcp.150.r2",
-      "requires_job": "s3.line.300",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.section.fixed",
-      "requires_job": "s3.line.75",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.section.fixed",
-      "requires_job": "s3.line.150",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.section.fixed",
-      "requires_job": "s3.line.300",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.section.150.r1",
-      "requires_job": "s3.line.75",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.section.150.r1",
-      "requires_job": "s3.line.150",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.section.150.r1",
-      "requires_job": "s3.line.300",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.section.150.r2",
-      "requires_job": "s3.line.75",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.section.150.r2",
-      "requires_job": "s3.line.150",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.section.150.r2",
-      "requires_job": "s3.line.300",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.callout.fixed",
-      "requires_job": "s3.line.75",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.callout.fixed",
-      "requires_job": "s3.line.150",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.callout.fixed",
-      "requires_job": "s3.line.300",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.callout.150.r1",
-      "requires_job": "s3.line.75",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.callout.150.r1",
-      "requires_job": "s3.line.150",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.callout.150.r1",
-      "requires_job": "s3.line.300",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.callout.150.r2",
-      "requires_job": "s3.line.75",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.callout.150.r2",
-      "requires_job": "s3.line.150",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s4.callout.150.r2",
-      "requires_job": "s3.line.300",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s5.floor_active.attached_element_overrides",
-      "requires_job": "s4.floor_active.150.r2",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s5.floor_active.attached_AS",
-      "requires_job": "s4.floor_active.150.r2",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s5.floor_active.detached_ASF",
-      "requires_job": "s4.floor_active.150.r2",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s5.floor_inactive.attached_element_overrides",
-      "requires_job": "s4.floor_inactive.150.r2",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s5.floor_inactive.attached_AS",
-      "requires_job": "s4.floor_inactive.150.r2",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s5.floor_inactive.detached_ASF",
-      "requires_job": "s4.floor_inactive.150.r2",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s5.rcp.attached_element_overrides",
-      "requires_job": "s4.rcp.150.r2",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s5.rcp.attached_AS",
-      "requires_job": "s4.rcp.150.r2",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s5.rcp.detached_ASF",
-      "requires_job": "s4.rcp.150.r2",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s5.section.attached_element_overrides",
-      "requires_job": "s4.section.150.r2",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s5.section.attached_AS",
-      "requires_job": "s4.section.150.r2",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s5.section.detached_ASF",
-      "requires_job": "s4.section.150.r2",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s5.callout.attached_element_overrides",
-      "requires_job": "s4.callout.150.r2",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s5.callout.attached_AS",
-      "requires_job": "s4.callout.150.r2",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s5.callout.detached_ASF",
-      "requires_job": "s4.callout.150.r2",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s6.floor_active.line",
-      "requires_job": "s4.floor_active.150.r2",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s6.floor_active.line",
-      "requires_job": "s5.floor_active.detached_ASF",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s6.floor_inactive.line",
-      "requires_job": "s4.floor_inactive.150.r2",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s6.floor_inactive.line",
-      "requires_job": "s5.floor_inactive.detached_ASF",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s6.rcp.line",
-      "requires_job": "s4.rcp.150.r2",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s6.rcp.line",
-      "requires_job": "s5.rcp.detached_ASF",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s6.section.line",
-      "requires_job": "s4.section.150.r2",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s6.section.line",
-      "requires_job": "s5.section.detached_ASF",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s6.callout.line",
-      "requires_job": "s4.callout.150.r2",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s6.callout.line",
-      "requires_job": "s5.callout.detached_ASF",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s7.rvt_link.fixed",
-      "requires_job": "s6.floor_active.line",
-      "statuses": [
-        "PASS",
-        "FAIL",
-        "INCONCLUSIVE",
-        "BLOCKED"
-      ]
-    },
-    {
-      "job": "s7.rvt_link.fixed",
-      "requires_job": "s6.floor_inactive.line",
-      "statuses": [
-        "PASS",
-        "FAIL",
-        "INCONCLUSIVE",
-        "BLOCKED"
-      ]
-    },
-    {
-      "job": "s7.rvt_link.fixed",
-      "requires_job": "s6.rcp.line",
-      "statuses": [
-        "PASS",
-        "FAIL",
-        "INCONCLUSIVE",
-        "BLOCKED"
-      ]
-    },
-    {
-      "job": "s7.rvt_link.fixed",
-      "requires_job": "s6.section.line",
-      "statuses": [
-        "PASS",
-        "FAIL",
-        "INCONCLUSIVE",
-        "BLOCKED"
-      ]
-    },
-    {
-      "job": "s7.rvt_link.fixed",
-      "requires_job": "s6.callout.line",
-      "statuses": [
-        "PASS",
-        "FAIL",
-        "INCONCLUSIVE",
-        "BLOCKED"
-      ]
-    },
-    {
-      "job": "s7.dwg.fixed",
-      "requires_job": "s6.floor_active.line",
-      "statuses": [
-        "PASS",
-        "FAIL",
-        "INCONCLUSIVE",
-        "BLOCKED"
-      ]
-    },
-    {
-      "job": "s7.dwg.fixed",
-      "requires_job": "s6.floor_inactive.line",
-      "statuses": [
-        "PASS",
-        "FAIL",
-        "INCONCLUSIVE",
-        "BLOCKED"
-      ]
-    },
-    {
-      "job": "s7.dwg.fixed",
-      "requires_job": "s6.rcp.line",
-      "statuses": [
-        "PASS",
-        "FAIL",
-        "INCONCLUSIVE",
-        "BLOCKED"
-      ]
-    },
-    {
-      "job": "s7.dwg.fixed",
-      "requires_job": "s6.section.line",
-      "statuses": [
-        "PASS",
-        "FAIL",
-        "INCONCLUSIVE",
-        "BLOCKED"
-      ]
-    },
-    {
-      "job": "s7.dwg.fixed",
-      "requires_job": "s6.callout.line",
-      "statuses": [
-        "PASS",
-        "FAIL",
-        "INCONCLUSIVE",
-        "BLOCKED"
-      ]
-    },
-    {
-      "job": "s7.rvt_link.150",
-      "requires_job": "s7.rvt_link.fixed",
-      "statuses": [
-        "PASS"
-      ]
-    },
-    {
-      "job": "s7.dwg.150",
-      "requires_job": "s7.dwg.fixed",
+      "job": "s3.callout.attached_AS",
+      "requires_job": "s2.callout.confirm",
       "statuses": [
         "PASS"
       ]
@@ -1374,16 +380,12 @@
         "F"
       ],
       "full_factorial": false
-    },
-    {
-      "rule_id": "fixed_1600",
-      "description": "Optional fixed-1600 alignment diagnostic when evidence is absent"
     }
   ],
   "conditional_fallbacks": [
     {
       "fallback_id": "elevation_mutation_closure",
-      "description": "Deterministic Stage 1 mutation closure: attached_AS blocked specifically by a read-only view template (not an unrelated mutation failure) schedules detached_AS as the fallback candidate. Any other attached_AS outcome (PASS, or FAIL/INCONCLUSIVE for an unrelated reason) resolves the closure directly on attached_AS and never fabricates a pass or auto-schedules detached_AS.",
+      "description": "Stage 1 mutation-recipe closure for the elevation reference view: attached_AS blocked specifically by a read-only view template (never an unrelated mutation failure) schedules detached_AS as the fallback candidate. Whichever candidate resolves the closure carries the reviewable elevation host color-ID raster.",
       "trigger_job": "s1.attached_as",
       "trigger_reason_codes": [
         "MUTATION_BLOCKED_BY_TEMPLATE_ONLY"
@@ -1397,8 +399,139 @@
         "repetition": 1,
         "settings": {
           "dpi": 150
-        }
+        },
+        "manual_review_required": true,
+        "manual_review_reason": "Does this raster accurately represent the visible host-model elements and their boundaries/occlusion for this view, with annotations/non-model graphics excluded as intended and without obvious color contamination that would prevent element-ID recovery?"
+      }
+    },
+    {
+      "fallback_id": "floor_active_mutation_closure",
+      "description": "Cross-view mutation-recipe closure for floor_active: applies the same attached_AS recipe selected at the elevation reference view, falling back to detached_AS only if this view's own template specifically blocks attached_AS.",
+      "trigger_job": "s3.floor_active.attached_AS",
+      "trigger_reason_codes": [
+        "MUTATION_BLOCKED_BY_TEMPLATE_ONLY"
+      ],
+      "fallback_job": {
+        "job_key": "s3.floor_active.detached_AS",
+        "view_key": "floor_active",
+        "probe_id": "stage_a_minimum_id_mutations",
+        "case": "closure_fallback",
+        "variant": "detached_AS",
+        "repetition": 1,
+        "settings": {
+          "dpi": 150
+        },
+        "manual_review_required": true,
+        "manual_review_reason": "Does this raster accurately represent the visible host-model elements and their boundaries/occlusion for this view, with annotations/non-model graphics excluded as intended and without obvious color contamination that would prevent element-ID recovery?"
+      }
+    },
+    {
+      "fallback_id": "floor_inactive_mutation_closure",
+      "description": "Cross-view mutation-recipe closure for floor_inactive: applies the same attached_AS recipe selected at the elevation reference view, falling back to detached_AS only if this view's own template specifically blocks attached_AS.",
+      "trigger_job": "s3.floor_inactive.attached_AS",
+      "trigger_reason_codes": [
+        "MUTATION_BLOCKED_BY_TEMPLATE_ONLY"
+      ],
+      "fallback_job": {
+        "job_key": "s3.floor_inactive.detached_AS",
+        "view_key": "floor_inactive",
+        "probe_id": "stage_a_minimum_id_mutations",
+        "case": "closure_fallback",
+        "variant": "detached_AS",
+        "repetition": 1,
+        "settings": {
+          "dpi": 150
+        },
+        "manual_review_required": true,
+        "manual_review_reason": "Does this raster accurately represent the visible host-model elements and their boundaries/occlusion for this view, with annotations/non-model graphics excluded as intended and without obvious color contamination that would prevent element-ID recovery?"
+      }
+    },
+    {
+      "fallback_id": "rcp_mutation_closure",
+      "description": "Cross-view mutation-recipe closure for rcp: applies the same attached_AS recipe selected at the elevation reference view, falling back to detached_AS only if this view's own template specifically blocks attached_AS.",
+      "trigger_job": "s3.rcp.attached_AS",
+      "trigger_reason_codes": [
+        "MUTATION_BLOCKED_BY_TEMPLATE_ONLY"
+      ],
+      "fallback_job": {
+        "job_key": "s3.rcp.detached_AS",
+        "view_key": "rcp",
+        "probe_id": "stage_a_minimum_id_mutations",
+        "case": "closure_fallback",
+        "variant": "detached_AS",
+        "repetition": 1,
+        "settings": {
+          "dpi": 150
+        },
+        "manual_review_required": true,
+        "manual_review_reason": "Does this raster accurately represent the visible host-model elements and their boundaries/occlusion for this view, with annotations/non-model graphics excluded as intended and without obvious color contamination that would prevent element-ID recovery?"
+      }
+    },
+    {
+      "fallback_id": "section_mutation_closure",
+      "description": "Cross-view mutation-recipe closure for section: applies the same attached_AS recipe selected at the elevation reference view, falling back to detached_AS only if this view's own template specifically blocks attached_AS.",
+      "trigger_job": "s3.section.attached_AS",
+      "trigger_reason_codes": [
+        "MUTATION_BLOCKED_BY_TEMPLATE_ONLY"
+      ],
+      "fallback_job": {
+        "job_key": "s3.section.detached_AS",
+        "view_key": "section",
+        "probe_id": "stage_a_minimum_id_mutations",
+        "case": "closure_fallback",
+        "variant": "detached_AS",
+        "repetition": 1,
+        "settings": {
+          "dpi": 150
+        },
+        "manual_review_required": true,
+        "manual_review_reason": "Does this raster accurately represent the visible host-model elements and their boundaries/occlusion for this view, with annotations/non-model graphics excluded as intended and without obvious color contamination that would prevent element-ID recovery?"
+      }
+    },
+    {
+      "fallback_id": "callout_mutation_closure",
+      "description": "Cross-view mutation-recipe closure for callout: applies the same attached_AS recipe selected at the elevation reference view, falling back to detached_AS only if this view's own template specifically blocks attached_AS.",
+      "trigger_job": "s3.callout.attached_AS",
+      "trigger_reason_codes": [
+        "MUTATION_BLOCKED_BY_TEMPLATE_ONLY"
+      ],
+      "fallback_job": {
+        "job_key": "s3.callout.detached_AS",
+        "view_key": "callout",
+        "probe_id": "stage_a_minimum_id_mutations",
+        "case": "closure_fallback",
+        "variant": "detached_AS",
+        "repetition": 1,
+        "settings": {
+          "dpi": 150
+        },
+        "manual_review_required": true,
+        "manual_review_reason": "Does this raster accurately represent the visible host-model elements and their boundaries/occlusion for this view, with annotations/non-model graphics excluded as intended and without obvious color contamination that would prevent element-ID recovery?"
       }
     }
-  ]
+  ],
+  "host_color_id_feasibility": {
+    "description": "Aggregate host-element color-ID feasibility conclusion, derived from the terminal status of each core view's mutation-recipe closure (see conditional_fallbacks). A view is PASS only once its closure resolved on a candidate job that reached PASSED - which itself requires every automated technical gate (attestation, rollback, state restoration, TIFF dimensions, palette fidelity) plus an ACCEPTED operator visual review, never an automated pass alone. See campaign_planner.host_color_id_feasibility().",
+    "review_question": "Does this raster accurately represent the visible host-model elements and their boundaries/occlusion for this view, with annotations/non-model graphics excluded as intended and without obvious color contamination that would prevent element-ID recovery?",
+    "core_views": {
+      "elevation": {
+        "closure_id": "elevation_mutation_closure"
+      },
+      "floor_active": {
+        "closure_id": "floor_active_mutation_closure"
+      },
+      "floor_inactive": {
+        "closure_id": "floor_inactive_mutation_closure"
+      },
+      "rcp": {
+        "closure_id": "rcp_mutation_closure"
+      },
+      "section": {
+        "closure_id": "section_mutation_closure"
+      },
+      "callout": {
+        "closure_id": "callout_mutation_closure"
+      }
+    }
+  }
 }

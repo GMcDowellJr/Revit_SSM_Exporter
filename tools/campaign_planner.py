@@ -779,6 +779,66 @@ def manual_review_evidence_warnings(state: dict[str, Any]) -> list[dict[str, Any
     return warnings
 
 
+def host_color_id_feasibility(campaign: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    """Derive the core Stage A host-element color-ID feasibility conclusion.
+
+    Reads only ``campaign["host_color_id_feasibility"]["core_views"]`` (each
+    view mapped to either a ``closure_id`` - the normal shape, since every
+    core view carries its own mutation-recipe closure/fallback, see
+    ``conditional_fallbacks`` - or a bare ``job_key`` for a view with no
+    closure) plus already-computed closure/job/manual-review state; it never
+    re-derives acceptance on its own and never re-checks automated technical
+    gates itself. A view is ``PASS`` only once its resolved candidate job
+    reached ``PASSED``, which itself requires every automated technical gate
+    (attestation, rollback, state restoration, TIFF dimensions, palette
+    fidelity) *and* an ACCEPTED gate-scoped or campaign-authored manual
+    review (see ``record_manual_review``) - a job can never reach ``PASSED``
+    from an automated result alone while a manual review is still required.
+    A view whose candidate job is missing, not yet terminal, or whose closure
+    has not resolved is ``NOT_TESTED`` (not yet concluded), never silently
+    treated as a pass or a fail. The overall conclusion is ``PASS`` only when
+    every configured core view is ``PASS``; ``INCONCLUSIVE`` while any core
+    view is still ``NOT_TESTED``; otherwise ``FAIL`` when every concluded
+    view failed, or ``MIXED`` when both PASS and FAIL views are present.
+    """
+    config = (campaign.get("host_color_id_feasibility") or {}).get("core_views") or {}
+    key_map = {j["job_key"]: j for j in state["jobs"].values() if j["status"] != "SUPERSEDED"}
+    views: dict[str, Any] = {}
+    for view_key, view_config in config.items():
+        job = None
+        closure_id = view_config.get("closure_id")
+        if closure_id:
+            closure = state.get("closures", {}).get(closure_id)
+            candidate_job_id = closure.get("candidate_job_id") if closure else None
+            job = state["jobs"].get(candidate_job_id) if candidate_job_id else None
+        else:
+            job = key_map.get(view_config.get("job_key"))
+        if job is not None and job["status"] == "PASSED":
+            result = "PASS"
+        elif job is not None and job["status"] == "FAILED":
+            result = "FAIL"
+        else:
+            result = "NOT_TESTED"
+        requirement = state["manual_review_requirements"].get(job["job_id"]) if job else None
+        views[view_key] = {
+            "result": result,
+            "job_id": job["job_id"] if job else None,
+            "job_key": job["job_key"] if job else view_config.get("job_key"),
+            "closure_id": closure_id,
+            "artifact_references": list(requirement.get("artifact_references") or []) if requirement else [],
+        }
+    results = {v["result"] for v in views.values()}
+    if not views or "NOT_TESTED" in results:
+        conclusion = "HOST_COLOR_ID_FEASIBILITY_INCONCLUSIVE"
+    elif results == {"PASS"}:
+        conclusion = "HOST_COLOR_ID_FEASIBILITY_PASS"
+    elif results == {"FAIL"}:
+        conclusion = "HOST_COLOR_ID_FEASIBILITY_FAIL"
+    else:
+        conclusion = "HOST_COLOR_ID_FEASIBILITY_MIXED"
+    return {"conclusion": conclusion, "views": views}
+
+
 def status_summary(campaign: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
     if (state.get("campaign_id") != campaign.get("campaign_id") or
             state.get("campaign_configuration_fingerprint") != canonical_fingerprint(campaign)):
@@ -788,7 +848,8 @@ def status_summary(campaign: dict[str, Any], state: dict[str, Any]) -> dict[str,
     return {"campaign_id": state["campaign_id"], "jobs": {s: sum(j["status"] == s for j in state["jobs"].values()) for s in STATES},
             "stages": state["stage_status"], "coverage": state["view_coverage"],
             "conflicts": state["conflicts"], "next_recommendation": recommendation,
-            "manual_review_evidence_warnings": manual_review_evidence_warnings(state)}
+            "manual_review_evidence_warnings": manual_review_evidence_warnings(state),
+            "host_color_id_feasibility": host_color_id_feasibility(campaign, state)}
 
 
 def package_campaign(campaign: dict[str, Any], state: dict[str, Any], output_dir: str | Path,
@@ -842,7 +903,7 @@ def package_campaign(campaign: dict[str, Any], state: dict[str, Any], output_dir
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="External deterministic Stage A campaign planner")
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("validate", "init", "migrate", "status", "package", "next-batch", "ingest-runs", "ingest-analysis", "diagnostic", "manual-review"):
+    for name in ("validate", "init", "migrate", "status", "feasibility", "package", "next-batch", "ingest-runs", "ingest-analysis", "diagnostic", "manual-review"):
         p = sub.add_parser(name); p.add_argument("campaign")
         if name != "validate": p.add_argument("state")
         if name in {"ingest-runs", "ingest-analysis"}: p.add_argument("inputs", nargs="+")
@@ -861,6 +922,7 @@ def main(argv: list[str] | None = None) -> int:
         atomic_write(args.state, migrate_state(load_json(args.state))); return 0
     state = migrate_state(load_json(args.state))
     if args.command == "status": print(json.dumps(status_summary(campaign, state), indent=2, sort_keys=True)); return 0
+    if args.command == "feasibility": print(json.dumps(host_color_id_feasibility(campaign, state), indent=2, sort_keys=True)); return 0
     if args.command == "package":
         result = package_campaign(campaign, state, args.output_dir, source_root=args.source_root)
         print(json.dumps(result, indent=2, sort_keys=True)); return 0
