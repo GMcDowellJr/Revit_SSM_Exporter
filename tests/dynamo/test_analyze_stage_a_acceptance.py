@@ -374,6 +374,135 @@ def test_external_refreshed_variant_metrics_override_stale_family_boolean():
     assert {check["status"] for check in source_checks} == {"PASS"}
 
 
+def _link_variant(name, link_override_status, rendered=True, extra_assignment=None):
+    assignment = {"assignment_key": name, "source_type": "LINK", "link_override_status": link_override_status,
+                  "paint_success": link_override_status == "APPLIED"}
+    analysis = {"status": "analyzed_external", "actual_dimensions": [2, 2],
+                "expected_color_pixel_counts": {name: 1 if rendered else 0}}
+    assignments = [assignment] + ([extra_assignment] if extra_assignment else [])
+    return {"variant": name, "assignments": assignments, "image_analysis": analysis,
+            "transaction_group": {"rollback_succeeded": True}, "state": {}}
+
+
+def test_external_rvt_link_only_job_not_penalized_for_missing_host_or_dwg():
+    # An RVT-link capability job's requested_settings restrict selection to
+    # the two LINK variants; HOST and DWG must not appear as required checks
+    # at all, let alone as failures, just because this job never ran them.
+    variants = [
+        _link_variant("linked_per_element_linkelementid_coloring", "UNSUPPORTED", rendered=False),
+        {**_external_variant("forced_linked_override_failure_hide_instance_fallback", "LINK"),
+         "hidden_link_fallback": [123]},
+    ]
+    native = {"variants": variants}
+    data = {"requested_settings": {"selection": [
+        "linked_per_element_linkelementid_coloring", "forced_linked_override_failure_hide_instance_fallback"]}}
+    checks = analyzer._family_checks(data, native, "external_sources")
+    source_checks = {check["check_id"]: check for check in checks if check["check_id"].startswith("external_source_")}
+    assert set(source_checks) == {"external_source_link"}
+    assert source_checks["external_source_link"]["status"] == "PASS"
+
+
+def test_external_dwg_only_job_not_penalized_for_missing_link_or_host():
+    variants = [_external_variant("dwg_importinstance_coloring", "DWG")]
+    native = {"variants": variants}
+    data = {"requested_settings": {"selection": ["dwg_importinstance_coloring"]}}
+    checks = analyzer._family_checks(data, native, "external_sources")
+    source_checks = {check["check_id"]: check for check in checks if check["check_id"].startswith("external_source_")}
+    assert set(source_checks) == {"external_source_dwg"}
+    assert source_checks["external_source_dwg"]["status"] == "PASS"
+
+
+def test_external_unsupported_link_override_is_explicit_capability_not_generic_fail():
+    variants = [
+        _link_variant("linked_per_element_linkelementid_coloring", "UNSUPPORTED", rendered=False),
+        {**_external_variant("forced_linked_override_failure_hide_instance_fallback", "LINK"),
+         "hidden_link_fallback": [123]},
+    ]
+    native = {"variants": variants}
+    checks = analyzer._family_checks({}, native, "external_sources")
+    link_check = next(c for c in checks if c["check_id"] == "external_source_link")
+    assert link_check["status"] == "PASS"
+    assert "EXTERNAL_SOURCE_VISUAL_FAILURE" not in link_check["reason_codes"]
+    assert link_check["evidence"]["variant_statuses"]["linked_per_element_linkelementid_coloring"] == "UNSUPPORTED"
+
+
+def test_external_unexpected_link_override_exception_is_a_real_failure():
+    variants = [
+        _link_variant("linked_per_element_linkelementid_coloring", "FAILED", rendered=False),
+        {**_external_variant("forced_linked_override_failure_hide_instance_fallback", "LINK"),
+         "hidden_link_fallback": [123]},
+    ]
+    native = {"variants": variants}
+    checks = analyzer._family_checks({}, native, "external_sources")
+    link_check = next(c for c in checks if c["check_id"] == "external_source_link")
+    assert link_check["status"] == "FAIL"
+    assert "EXTERNAL_SOURCE_VISUAL_FAILURE" in link_check["reason_codes"]
+
+
+def test_external_family_check_counts_distinct_variants_across_resolution_runs():
+    # A job requesting more than one resolution case makes the raw report
+    # carry more than one entry per variant name (one per resolution case).
+    # `complete` must be based on distinct variant names, not entry count,
+    # while still requiring every emitted resolution-case entry to pass.
+    variants = [
+        _link_variant("linked_per_element_linkelementid_coloring", "UNSUPPORTED", rendered=False),
+        _link_variant("linked_per_element_linkelementid_coloring", "UNSUPPORTED", rendered=False),
+        {**_external_variant("forced_linked_override_failure_hide_instance_fallback", "LINK"),
+         "hidden_link_fallback": [123]},
+    ]
+    native = {"variants": variants}
+    checks = analyzer._family_checks({}, native, "external_sources")
+    link_check = next(c for c in checks if c["check_id"] == "external_source_link")
+    assert link_check["status"] == "PASS"
+
+
+def test_external_whole_link_fallback_passes_independently_of_per_element_override():
+    # A job requesting only the forced whole-link-suppression fallback (not
+    # the per-element override variant) must be able to PASS on its own -
+    # the existing supported fallback behavior must remain independently
+    # testable after the redesign.
+    variants = [{**_external_variant("forced_linked_override_failure_hide_instance_fallback", "LINK"),
+                 "hidden_link_fallback": [123]}]
+    native = {"variants": variants}
+    data = {"requested_settings": {"selection": ["forced_linked_override_failure_hide_instance_fallback"]}}
+    checks = analyzer._family_checks(data, native, "external_sources")
+    source_checks = {check["check_id"]: check for check in checks if check["check_id"].startswith("external_source_")}
+    assert set(source_checks) == {"external_source_link"}
+    assert source_checks["external_source_link"]["status"] == "PASS"
+
+
+def test_external_host_only_selection_unaffected_by_redesign():
+    variants = [_external_variant("host_reference_coloring", "HOST")]
+    native = {"variants": variants}
+    data = {"requested_settings": {"selection": ["host_reference_coloring"]}}
+    checks = analyzer._family_checks(data, native, "external_sources")
+    source_checks = {check["check_id"]: check for check in checks if check["check_id"].startswith("external_source_")}
+    assert set(source_checks) == {"external_source_host"}
+    assert source_checks["external_source_host"]["status"] == "PASS"
+
+
+def test_external_dwg_ineligible_fixture_is_not_applicable_not_a_silent_fail():
+    # Every requested DWG variant was skipped (e.g. the supplied ImportInstance
+    # was excluded because ViewSpecific == True) - this must read as an
+    # explicit, non-blocking NOT_APPLICABLE, never a generic INCONCLUSIVE/FAIL.
+    variants = [{"variant": "dwg_importinstance_coloring", "skipped": True,
+                 "reason": "Supplied DWG ImportInstance(s) ineligible under current production discovery "
+                           "policy: [{'exclusion_reason': 'EXCLUDED_VIEW_SPECIFIC_IMPORT'}]"}]
+    native = {"variants": variants}
+    data = {"requested_settings": {"selection": ["dwg_importinstance_coloring"]}}
+    checks = analyzer._family_checks(data, native, "external_sources")
+    dwg_check = next(c for c in checks if c["check_id"] == "external_source_dwg")
+    assert dwg_check["status"] == "NOT_APPLICABLE"
+    assert "EXTERNAL_SOURCE_CASE_INELIGIBLE" in dwg_check["reason_codes"]
+    # The generic requested_case_coverage check (computed earlier in the same
+    # call) must not contradict the NOT_APPLICABLE verdict above by treating
+    # the same diagnosed skip as a missing/unanalyzed case - a present-but-
+    # ineligible variant is a complete conclusion, not a coverage gap.
+    coverage_check = next(c for c in checks if c["check_id"] == "requested_case_coverage")
+    assert coverage_check["status"] == "PASS"
+    assert coverage_check["reason_codes"] == []
+
+
 # --- Stage 1 mutation-closure evidence: template-blocked attestation failure ---
 
 def _attached_as_blocked_by_template_variant():

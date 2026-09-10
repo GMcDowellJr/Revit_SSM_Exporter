@@ -653,19 +653,52 @@ def _alignment_coverage(data: dict[str, Any], native: dict[str, Any]) -> dict[st
 
 
 def _external_variant_visual_status(variant: dict[str, Any]) -> str:
-    """Derive tri-state visual evidence from refreshed external TIFF metrics."""
+    """Derive tri-state (plus UNSUPPORTED) visual evidence from refreshed
+    external TIFF metrics.
+
+    ``linked_per_element_linkelementid_coloring`` is handled separately from
+    every other source-family variant: the campaign established that a clean,
+    non-exceptional False return from the LinkElementId override API is an
+    explicit, expected capability finding in the current Revit/API
+    environment - not a required Stage A PASS criterion - and must read as
+    'UNSUPPORTED', never collapsed into the same 'FAIL' a real unexpected
+    exception produces. See probe_stage_a_external_sources.py's
+    LINK_OVERRIDE_* status vocabulary, recorded per-assignment as
+    ``link_override_status``.
+    """
     if variant.get('exceptions') or variant.get('conclusion') == 'FAIL':
         return 'FAIL'
     analysis = variant.get('image_analysis') or {}
     if (analysis.get('status') not in ('analyzed_external', 'complete') or
             not _artifact_dimensions(analysis)):
         return 'INCONCLUSIVE'
-    if variant.get('variant') == 'forced_linked_override_failure_hide_instance_fallback':
+    name = variant.get('variant')
+    if name == 'forced_linked_override_failure_hide_instance_fallback':
         return 'PASS' if variant.get('hidden_link_fallback') else 'FAIL'
     assignments = variant.get('assignments') or []
     if not assignments:
         return 'INCONCLUSIVE'
     counts = analysis.get('expected_color_pixel_counts') or {}
+    if name == 'linked_per_element_linkelementid_coloring':
+        link_items = [item for item in assignments if item.get('source_type') == 'LINK']
+        if not link_items:
+            return 'INCONCLUSIVE'
+        statuses = {item.get('link_override_status') for item in link_items}
+        if 'FAILED' in statuses:
+            return 'FAIL'
+        if None in statuses:
+            # Missing field: an older/legacy report shape. Fall back to the
+            # generic paint_success-based read rather than asserting a
+            # capability determination the report never actually recorded.
+            if not any(item.get('paint_success') for item in link_items):
+                return 'INCONCLUSIVE'
+        elif statuses <= {'APPLIED'}:
+            rendered = any(int(counts.get(str(item.get('assignment_key')), 0) or 0) > 0 for item in link_items)
+            return 'PASS' if rendered else 'INCONCLUSIVE'
+        elif 'UNSUPPORTED' in statuses:
+            return 'UNSUPPORTED'
+        rendered = any(int(counts.get(str(item.get('assignment_key')), 0) or 0) > 0 for item in link_items)
+        return 'PASS' if rendered else 'INCONCLUSIVE'
     required_sources = {item.get('source_type') for item in assignments if item.get('source_type')}
     for source in required_sources:
         source_items = [item for item in assignments if item.get('source_type') == source]
@@ -771,10 +804,26 @@ def _family_checks(data: dict[str, Any], native: dict[str, Any], family: str) ->
         checks.append(_alignment_coverage(data, native))
     else:
         requested, actual = _requested_names(data, native, family), _actual_names(native, family)
-        missing = sorted(set(requested) - set(actual))
-        coverage_status = 'FAIL' if missing else ('PASS' if actual else 'INCONCLUSIVE')
-        checks.append(_check('requested_case_coverage', coverage_status,
-                             ['REQUESTED_CASE_NOT_ANALYZED'] if missing else ([] if actual else ['NO_CASES_ANALYZED']),
+        if family == 'external_sources':
+            # A requested external-source variant that is present but skipped
+            # for a diagnosed, explicit reason (e.g. a supplied DWG excluded
+            # because ViewSpecific == True, or no candidates of that source
+            # type were discoverable) is a complete, non-blocking conclusion -
+            # the external_source_{host,link,dwg} checks below grade it
+            # NOT_APPLICABLE. requested_case_coverage must not contradict that
+            # by treating the same skip as a missing/unanalyzed case; only a
+            # variant genuinely absent from the report counts as missing here,
+            # and "covered but only via an explicit skip" must not fall back
+            # to the empty-`actual` NO_CASES_ANALYZED reason code either.
+            covered = {v.get('variant') for v in (native.get('variants') or [])}
+            missing = sorted(set(requested) - covered) if requested else []
+            coverage_status = 'FAIL' if missing else ('PASS' if covered else 'INCONCLUSIVE')
+            reasons = ['REQUESTED_CASE_NOT_ANALYZED'] if missing else ([] if covered else ['NO_CASES_ANALYZED'])
+        else:
+            missing = sorted(set(requested) - set(actual))
+            coverage_status = 'FAIL' if missing else ('PASS' if actual else 'INCONCLUSIVE')
+            reasons = ['REQUESTED_CASE_NOT_ANALYZED'] if missing else ([] if actual else ['NO_CASES_ANALYZED'])
+        checks.append(_check('requested_case_coverage', coverage_status, reasons,
                              {'requested': requested, 'analyzed': actual, 'not_analyzed': missing}))
 
     if family in ('minimum_id_mutations', 'external_sources', 'graphics_semantics'):
@@ -853,18 +902,60 @@ def _family_checks(data: dict[str, Any], native: dict[str, Any], family: str) ->
                          'forced_linked_override_failure_hide_instance_fallback'),
                 'DWG': ('dwg_importinstance_coloring',),
             }
-            for source in ('HOST', 'LINK', 'DWG'):
+            # `requested` (computed above from job.requested_settings/inputs
+            # selection) is empty for an unrestricted/"all" selection - unchanged
+            # legacy behavior evaluates every source family, exactly as before.
+            # A job that explicitly restricts its selection to one family's
+            # variants (an RVT-link-only or DWG-only job) must not be evaluated
+            # against, or fail requested-case coverage because of, a family it
+            # never requested: an RVT-link job is graded only on its RVT-link
+            # cases, and a DWG job only on its DWG cases.
+            for source, names in required_variants.items():
+                requested_for_source = [n for n in names if not requested or n in requested]
+                if not requested_for_source:
+                    continue
                 raw_evidence = families.get(source) or {}
-                matching = [variant for variant in variants
-                            if variant.get('variant') in required_variants[source] and not variant.get('skipped')]
+                present = [variant for variant in variants if variant.get('variant') in requested_for_source]
+                matching = [variant for variant in present if not variant.get('skipped')]
+                skipped = [variant for variant in present if variant.get('skipped')]
+                if not present:
+                    # Requested but not present in this report at all - the
+                    # generic requested_case_coverage check above already flags
+                    # this; avoid a second, redundant family-level FAIL/INCONCLUSIVE.
+                    continue
+                if not matching:
+                    # Every requested variant for this family was skipped (no
+                    # eligible candidates - e.g. a supplied DWG excluded because
+                    # ViewSpecific == True): an explicit, non-blocking outcome,
+                    # never a silent/generic "missing evidence" INCONCLUSIVE.
+                    checks.append(_check('external_source_{0}'.format(source.lower()), 'NOT_APPLICABLE',
+                                         ['EXTERNAL_SOURCE_CASE_INELIGIBLE'],
+                                         {'required_variants': requested_for_source,
+                                          'skipped_variants': [{'variant': v.get('variant'), 'reason': v.get('reason')}
+                                                               for v in skipped],
+                                          'raw_family_status': raw_evidence}))
+                    continue
                 statuses = [_external_variant_visual_status(variant) for variant in matching]
-                complete = len(matching) == len(required_variants[source])
+                # `matching` can carry more than one entry per variant name
+                # when a job requested more than one resolution case
+                # (resolution_policy="both", multiple target_dpi values):
+                # _run_native() appends one report entry per (resolution case
+                # x selected variant). Completeness is checked against the
+                # distinct variant *names* present, not the raw entry count -
+                # `all(s in ('PASS', 'UNSUPPORTED') ...)` below still requires
+                # every one of those entries (every resolution case) to pass.
+                complete = {variant.get('variant') for variant in matching} == set(requested_for_source)
+                # UNSUPPORTED is an explicit, non-failing capability
+                # determination (see _external_variant_visual_status) and must
+                # count toward PASS alongside a rendered-color PASS - it must
+                # never be folded into the same reason code as a real FAIL.
                 source_status = ('FAIL' if 'FAIL' in statuses else
-                                 ('PASS' if complete and statuses and all(s == 'PASS' for s in statuses)
+                                 ('PASS' if complete and statuses and all(s in ('PASS', 'UNSUPPORTED') for s in statuses)
                                   else 'INCONCLUSIVE'))
-                evidence = {'required_variants': list(required_variants[source]),
+                evidence = {'required_variants': requested_for_source,
                             'variant_statuses': {variant.get('variant'): status
                                                  for variant, status in zip(matching, statuses)},
+                            'skipped_variants': [{'variant': v.get('variant'), 'reason': v.get('reason')} for v in skipped],
                             'raw_family_status': raw_evidence}
                 checks.append(_check('external_source_{0}'.format(source.lower()), source_status,
                                      [] if source_status == 'PASS' else

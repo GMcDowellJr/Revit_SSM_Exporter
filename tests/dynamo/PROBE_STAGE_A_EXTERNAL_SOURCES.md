@@ -63,6 +63,17 @@ other unrecognized setting is rejected before a transaction starts or a TIFF
 is exported - this same resolution function backs `validate_settings`, so a
 misconfigured job is caught in `IN[2] = True` validation-only mode too.
 
+An external-source campaign job should also set `selection` to the variants
+that match its own source-family capability contract - an RVT-link job to
+`["linked_per_element_linkelementid_coloring",
+"forced_linked_override_failure_hide_instance_fallback"]`, a DWG job to
+`["dwg_importinstance_coloring"]` - so the analyzer only evaluates the cases
+that job actually requested (see "Source-family capability contract" above).
+`selection` is independent of image-resolution settings
+(`resolution_policy`/`target_dpi`/`fixed_pixel_width`): a resolution label
+such as `fixed_1600` is a `case`/`variant` name for the campaign's own job
+bookkeeping, never a source-family selector.
+
 ## Production code inspected and reused
 
 The probe reuses the same external-source surfaces used by Stage A without
@@ -93,10 +104,59 @@ Each variant runs in a separate transaction group from the same original state:
 5. `mixed_host_link_dwg_export`
 
 If a required source type is not discovered in the view, that variant is marked
-skipped with a clear reason instead of substituting unrelated elements. The
-aggregate report remains `INCONCLUSIVE` unless the required HOST, LINK, and DWG
-source-family variants actually run and pass; a host-only view cannot make the
-external-source probe look complete.
+skipped with a clear reason instead of substituting unrelated elements. A
+skipped `dwg_importinstance_coloring` variant names the actual exclusion
+reason (see "DWG eligibility diagnostics" below) rather than an unexplained
+`DWG = 0` when a DWG `ImportInstance` was supplied but excluded.
+
+### Source-family capability contract (requested cases only)
+
+`host_reference_coloring`, `linked_per_element_linkelementid_coloring` +
+`forced_linked_override_failure_hide_instance_fallback`, and
+`dwg_importinstance_coloring` map to three independent source-family
+capability contracts - HOST, LINK, and DWG (`SOURCE_FAMILY_VARIANTS`). A job
+requests a family by selecting one or more of its variants (`selection`
+setting); **a family is only evaluated, and only gates PASS/FAIL, when the
+job actually requested it.** An RVT-link-only job (selecting only the two
+LINK variants) is never penalized for a missing HOST or DWG case, and a
+DWG-only job is never penalized for a missing LINK or HOST case. A view that
+happens to also contain host geometry does not implicitly make HOST
+required.
+
+LINK capability specifically distinguishes:
+
+- `APPLIED` - the `LinkElementId` override rendered.
+- `UNSUPPORTED` - the override API returned `False` with no exception: an
+  explicit, expected finding that per-linked-element host-style recoloring is
+  not supported in the current Revit/API environment. This is **not** a
+  required Stage A PASS criterion and is reported as its own capability
+  result (`linked_per_element_linkelementid_coloring` concludes
+  `"UNSUPPORTED"`, not `"FAIL"`), never a generic visual failure.
+- `FAILED` - an unexpected exception was raised attempting the override; a
+  real failure needing investigation, distinct from a clean `UNSUPPORTED`.
+- `NOT_TESTED` - `forced_linked_override_failure_hide_instance_fallback`
+  deliberately skips the attempt to exercise the whole-link-instance
+  suppression fallback instead.
+
+The LINK family can PASS from `UNSUPPORTED` capability plus a passing
+whole-link fallback alone; per-linked-element host-style recoloring is
+explicitly **not** required. Obtaining individual linked-RVT linework/element
+identity beyond what `LinkElementId`/`View.SetElementOverrides` already
+exposes would require linked-document/raw-geometry extraction and
+translation - out of scope for this probe and not implemented here.
+
+### DWG eligibility diagnostics
+
+`discovery.dwg_eligibility_diagnostics` records, for every supplied and/or
+view-collected `ImportInstance`, its element id, `ViewSpecific`, whether the
+current production discovery policy
+(`_collect_from_dwg_imports` in `vop_interwoven/revit/linked_documents.py`)
+treats it as eligible, and an explicit `exclusion_reason` when it does not
+(`EXCLUDED_VIEW_SPECIFIC_IMPORT`, `NOT_FOUND_IN_VIEW_IMPORT_INSTANCE_COLLECTOR`,
+or `EXCLUDED_BY_PRODUCTION_DISCOVERY_POLICY_UNDETERMINED_REASON`) - without
+changing that production policy. A campaign fixture that is itself
+view-specific is a fixture/case eligibility problem, not evidence that DWG
+handling is broken.
 
 ## Transaction safety
 
@@ -129,10 +189,17 @@ Every assignment records:
 - `category`
 - `paint_success`
 - `paint_failure`
+- `link_override_status`: `APPLIED` / `UNSUPPORTED` / `FAILED` / `NOT_TESTED` for
+  LINK assignments (`null` for HOST/DWG); see the source-family capability
+  contract above.
 - `hidden_link_fallback`
 
 This schema is intentionally explicit because Stage A sidecars may need to keep
-HOST, LINK, and DWG attribution separate.
+HOST, LINK, and DWG attribution separate. Each discovered item produces
+exactly one assignment record - `_apply_assignments()` appends to its result
+list exactly once per item, and `diagnostics`/`paint_diagnostics` are derived
+from those same records afterward rather than tracked as a second, parallel
+list that could double-count a failing assignment.
 
 ## Failure semantics
 
