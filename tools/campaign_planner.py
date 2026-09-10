@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -18,6 +19,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 SCHEMA_VERSION = "1.0"
+RASTER_ARTIFACT_SUFFIXES = (".png", ".tif", ".tiff", ".jpg", ".jpeg", ".bmp")
 STATES = ("PLANNED", "ELIGIBLE", "BATCHED", "EXECUTED", "ANALYZED", "PASSED",
           "FAILED", "INCONCLUSIVE", "BLOCKED", "NEEDS_DIAGNOSTIC", "SKIPPED",
           "SUPERSEDED")
@@ -214,7 +216,18 @@ def initialize_state(campaign: dict[str, Any], now: str | None = None) -> dict[s
             "status_reason": {"code": "INITIALIZED"}, "batch_ids": [], "run_ids": [],
             "analysis_record_ids": [], "artifact_references": [], "execution_fingerprints": {}}
         if job.get("manual_review_required"):
-            state["manual_review_requirements"][job["job_id"]] = {"status": "PENDING", "reason": job.get("manual_review_reason", "CONFIGURED")}
+            # Evidence is not yet known at init time (the job has not run
+            # yet); it is filled in from the job's own artifact_references
+            # once analysis is ingested (see _sync_review_evidence). A
+            # campaign-authored requirement therefore starts PENDING with no
+            # artifact_references, exactly as before, but can never be
+            # accepted/rejected (record_manual_review) nor let the campaign
+            # report COMPLETE (compute_next_recommendation) unless a
+            # reviewable artifact actually arrives for this job.
+            state["manual_review_requirements"][job["job_id"]] = {
+                "status": "PENDING", "reason": job.get("manual_review_reason", "CONFIGURED"),
+                "artifact_references": [],
+            }
     _event(state, "STATE_INITIALIZED", campaign_fingerprint=fingerprint)
     evaluate(campaign, state)
     return state
@@ -420,6 +433,53 @@ def ingest_manifests(campaign: dict[str, Any], state: dict[str, Any], manifests:
     evaluate(campaign, state)
 
 
+def _raster_artifacts(paths: Iterable[Any]) -> list[str]:
+    """Return only the entries naming a concrete reviewable raster image.
+
+    A manual/visual review requirement must never be treated as satisfiable
+    by a JSON sidecar, a log path, or any other non-image reference - only a
+    real PNG/TIFF/JPEG an operator can actually open and look at counts as
+    "reviewable" evidence.
+    """
+    return [str(p) for p in paths if isinstance(p, str) and p.lower().endswith(RASTER_ARTIFACT_SUFFIXES)]
+
+
+def _sync_review_evidence(state: dict[str, Any], job: dict[str, Any]) -> None:
+    """Keep a manual review requirement's own evidence in step with the job's
+    artifact_references, and classify - rather than silently allow - the
+    case where a job needing review never produced anything reviewable.
+
+    This is the one place both kinds of requirement (campaign-authored
+    ``manual_review_required`` and the gate-scoped automated one) pick up
+    real evidence: a fresh reviewable artifact is merged in immediately, and
+    a requirement still PENDING once its job is terminal with nothing
+    reviewable is downgraded to EVIDENCE_MISSING with an explanatory
+    diagnostic rather than left as an accept/reject-able PENDING review that
+    has nothing behind it (see record_manual_review, which refuses to
+    resolve EVIDENCE_MISSING requirements).
+    """
+    requirement = state["manual_review_requirements"].get(job["job_id"])
+    if requirement is None:
+        return
+    reviewable = _raster_artifacts(job.get("artifact_references") or [])
+    if reviewable:
+        merged = list(requirement.get("artifact_references") or [])
+        for path in reviewable:
+            if path not in merged:
+                merged.append(path)
+        requirement["artifact_references"] = merged
+        if requirement["status"] == "EVIDENCE_MISSING":
+            requirement["status"] = "PENDING"
+    elif job["status"] in TERMINAL and requirement["status"] == "PENDING":
+        requirement["status"] = "EVIDENCE_MISSING"
+        requirement.setdefault("artifact_references", [])
+        requirement["diagnostic"] = (
+            "This job reached a terminal state while a manual review was still required, but no "
+            "reviewable raster (PNG/TIFF/JPEG) artifact was ever recorded in artifact_references. "
+            "Manual review cannot be accepted or rejected until a reviewable artifact is produced "
+            "and ingested for this job.")
+
+
 def _conflict(state: dict[str, Any], kind: str, identity: Any, existing: Any, incoming: Any) -> None:
     item = {"code": kind, "identity": identity, "existing": existing, "incoming": incoming}
     if item not in state["conflicts"]: state["conflicts"].append(item); _event(state, "CONFLICT", **item)
@@ -465,11 +525,35 @@ def ingest_analysis(campaign: dict[str, Any], state: dict[str, Any], inputs: Ite
         # and record_manual_review only ever resolves a job whose reason
         # codes are exactly this one - seeding a requirement it could never
         # satisfy would leave the operator with an unresolvable review.
+        #
+        # An analyzer concluding it cannot automatically verify semantic
+        # preservation is not, by itself, an operator review task: without a
+        # reviewable raster artifact already on the job, seeding an
+        # actionable PENDING requirement here would let record_manual_review
+        # be asked to rubber-stamp ACCEPTED with nothing to look at. When no
+        # requirement exists yet, seed EVIDENCE_MISSING (never PENDING)
+        # instead, using diagnostic-only wording so this never reads to an
+        # operator as "manual review required".
         if target == "INCONCLUSIVE" and set(reason_codes) == {"MANUAL_SEMANTIC_REVIEW_REQUIRED"}:
-            requirement = state["manual_review_requirements"].setdefault(
-                job["job_id"], {"status": "PENDING", "reason": "MANUAL_SEMANTIC_REVIEW_REQUIRED"})
+            if job["job_id"] not in state["manual_review_requirements"]:
+                reviewable_now = _raster_artifacts(job.get("artifact_references") or [])
+                if reviewable_now:
+                    state["manual_review_requirements"][job["job_id"]] = {
+                        "status": "PENDING", "reason": "MANUAL_SEMANTIC_REVIEW_REQUIRED",
+                        "artifact_references": list(reviewable_now),
+                    }
+                else:
+                    state["manual_review_requirements"][job["job_id"]] = {
+                        "status": "EVIDENCE_MISSING", "reason": "SEMANTIC_PRESERVATION_NOT_AUTOMATICALLY_VERIFIED",
+                        "artifact_references": [],
+                        "diagnostic": ("An automated check could not verify rendered semantic preservation, "
+                                       "and no reviewable raster artifact (PNG/TIFF/JPEG) was recorded for "
+                                       "this job, so no operator review task was created."),
+                    }
+            requirement = state["manual_review_requirements"][job["job_id"]]
             requirement.setdefault("gate", "rendered_semantic_preservation")
             requirement.setdefault("record_id", record_id)
+        _sync_review_evidence(state, job)
         _event(state, "ANALYSIS_INGESTED", record_id=record_id, job_id=job["job_id"], fingerprint=digest)
     evaluate(campaign, state)
 
@@ -556,6 +640,16 @@ def record_manual_review(campaign: dict[str, Any], state: dict[str, Any], job_id
     if job_id not in state["manual_review_requirements"]: raise CampaignError("job has no manual review requirement")
     if outcome not in {"ACCEPTED", "REJECTED"}: raise CampaignError("manual outcome must be ACCEPTED or REJECTED")
     requirement = state["manual_review_requirements"][job_id]
+    reviewable = _raster_artifacts(requirement.get("artifact_references") or [])
+    if not reviewable:
+        # Never let ACCEPTED/REJECTED stand in for evidence that does not
+        # exist: an operator with nothing to look at must get an explicit,
+        # actionable refusal, not a rubber-stamped review record.
+        raise CampaignError(
+            "NO_REVIEWABLE_ARTIFACT: cannot record manual review {0!r} for {1} - its requirement carries no "
+            "reviewable raster (PNG/TIFF/JPEG) artifact_references (current requirement status: {2!r}). "
+            "Produce and ingest the missing artifact before recording a decision.".format(
+                outcome, job_id, requirement.get("status")))
     requirement.update({"status": outcome, "reviewer": reviewer, "reviewed_at": utc_now()})
     _event(state, "MANUAL_REVIEW_RECORDED", job_id=job_id, outcome=outcome, reviewer=reviewer)
     # Gate-scoped reviews (seeded by ingest_analysis for MANUAL_SEMANTIC_REVIEW_REQUIRED)
@@ -580,11 +674,18 @@ def compute_next_recommendation(state: dict[str, Any]) -> dict[str, Any]:
     eligible = [j["job_id"] for j in state["jobs"].values() if j["status"] == "ELIGIBLE"]
     rejected = sorted(job_id for job_id, review in state["manual_review_requirements"].items()
                       if review["status"] == "REJECTED")
+    evidence_missing = sorted(job_id for job_id, review in state["manual_review_requirements"].items()
+                              if review["status"] == "EVIDENCE_MISSING")
     pending_review = any(review["status"] == "PENDING"
                          for review in state["manual_review_requirements"].values())
     if state["conflicts"]: return {"code": "INVALID_CAMPAIGN_STATE"}
     if eligible: return {"code": "GENERATE_NEXT_BATCH", "eligible_job_count": len(eligible)}
     if rejected: return {"code": "BLOCKED_BY_FAILURE", "reason": "MANUAL_REVIEW_REJECTED", "job_ids": rejected}
+    # A requirement stuck at EVIDENCE_MISSING can never be resolved by
+    # record_manual_review (see there): the campaign must never report
+    # COMPLETE, and this must never be mistaken for an ordinary actionable
+    # pending review, while one exists.
+    if evidence_missing: return {"code": "BLOCKED_BY_FAILURE", "reason": "MANUAL_REVIEW_EVIDENCE_MISSING", "job_ids": evidence_missing}
     if statuses <= TERMINAL and pending_review: return {"code": "AWAITING_MANUAL_REVIEW"}
     if statuses <= TERMINAL: return {"code": "CAMPAIGN_COMPLETE"}
     if "BATCHED" in statuses: return {"code": "AWAITING_REVIT_EXECUTION"}
@@ -608,6 +709,25 @@ def migrate_state(state: dict[str, Any]) -> dict[str, Any]:
     return state
 
 
+def manual_review_evidence_warnings(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """Read-only: flag any recorded manual-review decision whose requirement
+    carries no reviewable raster artifact_references.
+
+    This never rewrites historical state - an ACCEPTED/REJECTED record made
+    before this evidentiary check existed is preserved exactly as recorded
+    (migrate_state never touches it either) - it only makes that record's
+    invalid/incomplete evidentiary status explicit wherever state is read or
+    summarized.
+    """
+    warnings = []
+    for job_id, requirement in state["manual_review_requirements"].items():
+        status = requirement.get("status")
+        if status in {"ACCEPTED", "REJECTED"} and not _raster_artifacts(requirement.get("artifact_references") or []):
+            warnings.append({"job_id": job_id, "status": status,
+                             "issue": "DECISION_RECORDED_WITHOUT_REVIEWABLE_ARTIFACT"})
+    return warnings
+
+
 def status_summary(campaign: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
     if (state.get("campaign_id") != campaign.get("campaign_id") or
             state.get("campaign_configuration_fingerprint") != canonical_fingerprint(campaign)):
@@ -616,17 +736,62 @@ def status_summary(campaign: dict[str, Any], state: dict[str, Any]) -> dict[str,
         recommendation = compute_next_recommendation(state)
     return {"campaign_id": state["campaign_id"], "jobs": {s: sum(j["status"] == s for j in state["jobs"].values()) for s in STATES},
             "stages": state["stage_status"], "coverage": state["view_coverage"],
-            "conflicts": state["conflicts"], "next_recommendation": recommendation}
+            "conflicts": state["conflicts"], "next_recommendation": recommendation,
+            "manual_review_evidence_warnings": manual_review_evidence_warnings(state)}
+
+
+def package_campaign(campaign: dict[str, Any], state: dict[str, Any], output_dir: str | Path,
+                     *, source_root: str | Path | None = None) -> dict[str, Any]:
+    """Copy every reviewable artifact referenced by a pending or completed
+    (PENDING/ACCEPTED/REJECTED) manual review requirement into ``output_dir``,
+    alongside a self-contained copy of the campaign and state, so a packaged
+    campaign can be reviewed without access to the original evidence/scratch
+    directory. Never packages a dangling reference: a referenced artifact
+    that cannot be found on disk fails the whole operation loudly rather than
+    silently omitting it or shipping a state that points at nothing.
+    """
+    if (state.get("campaign_id") != campaign.get("campaign_id") or
+            state.get("campaign_configuration_fingerprint") != canonical_fingerprint(campaign)):
+        raise CampaignError("campaign/state mismatch; cannot package")
+    output_dir = Path(output_dir)
+    artifacts_root = output_dir / "artifacts" / "manual_review"
+    packaged: dict[str, list[str]] = {}
+    packaged_state = copy.deepcopy(state)
+    for job_id, requirement in state["manual_review_requirements"].items():
+        if requirement.get("status") not in {"PENDING", "ACCEPTED", "REJECTED"}:
+            continue
+        refs = _raster_artifacts(requirement.get("artifact_references") or [])
+        packaged_paths = []
+        for ref in refs:
+            source = Path(ref)
+            if source_root is not None and not source.is_absolute():
+                source = Path(source_root) / source
+            if not source.is_file():
+                raise CampaignError(
+                    "MISSING_ARTIFACT_SOURCE: manual review artifact for {0} not found on disk: {1}".format(
+                        job_id, source))
+            job_dir = artifacts_root / job_id
+            job_dir.mkdir(parents=True, exist_ok=True)
+            dest = job_dir / source.name
+            shutil.copy2(str(source), str(dest))
+            packaged_paths.append(str(Path("artifacts") / "manual_review" / job_id / source.name))
+        packaged[job_id] = packaged_paths
+        packaged_state["manual_review_requirements"][job_id]["artifact_references"] = packaged_paths
+    output_dir.mkdir(parents=True, exist_ok=True)
+    atomic_write(output_dir / "campaign.json", campaign)
+    atomic_write(output_dir / "campaign_state.json", packaged_state)
+    return {"output_dir": str(output_dir), "packaged_artifacts": packaged}
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="External deterministic Stage A campaign planner")
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("validate", "init", "migrate", "status", "next-batch", "ingest-runs", "ingest-analysis", "diagnostic", "manual-review"):
+    for name in ("validate", "init", "migrate", "status", "package", "next-batch", "ingest-runs", "ingest-analysis", "diagnostic", "manual-review"):
         p = sub.add_parser(name); p.add_argument("campaign")
         if name != "validate": p.add_argument("state")
         if name in {"ingest-runs", "ingest-analysis"}: p.add_argument("inputs", nargs="+")
         if name == "next-batch": p.add_argument("output")
+        if name == "package": p.add_argument("output_dir"); p.add_argument("--source-root")
         if name == "diagnostic": p.add_argument("action", choices=("request", "clear", "reset")); p.add_argument("job_id"); p.add_argument("--rule")
         if name == "manual-review": p.add_argument("job_id"); p.add_argument("outcome", choices=("ACCEPTED", "REJECTED")); p.add_argument("reviewer")
     args = parser.parse_args(argv); campaign = validate_campaign(load_json(args.campaign))
@@ -640,6 +805,9 @@ def main(argv: list[str] | None = None) -> int:
         atomic_write(args.state, migrate_state(load_json(args.state))); return 0
     state = migrate_state(load_json(args.state))
     if args.command == "status": print(json.dumps(status_summary(campaign, state), indent=2, sort_keys=True)); return 0
+    if args.command == "package":
+        result = package_campaign(campaign, state, args.output_dir, source_root=args.source_root)
+        print(json.dumps(result, indent=2, sort_keys=True)); return 0
     try:
         if args.command == "ingest-runs": ingest_manifests(campaign, state, map(load_json, args.inputs))
         elif args.command == "ingest-analysis": ingest_analysis(campaign, state, map(load_json, args.inputs))

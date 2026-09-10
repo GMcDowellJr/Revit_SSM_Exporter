@@ -8,8 +8,8 @@ def example(): return json.loads(EXAMPLE.read_text())
 def compact():
  c=example(); c['campaign_id']='tiny'; c['view_registry']={'v':c['view_registry']['elevation']}; c['stages']=[{'stage_id':'one','description':'one','jobs':[{'job_key':'align','view_key':'v','probe_id':'stage_a_image_alignment','case':'a','variant':'x','repetition':1,'settings':{}}]},{'stage_id':'two','description':'two','jobs':[{'job_key':'mutate','view_key':'v','probe_id':'stage_a_minimum_id_mutations','case':'m','variant':'x','repetition':1,'settings':{}},{'job_key':'independent','view_key':'v','probe_id':'stage_a_image_alignment','case':'i','variant':'x','repetition':1,'settings':{}}]}]; c['dependencies']=[{'job':'mutate','requires_job':'align','statuses':['PASS']}]; c['conditional_fallbacks']=[]; c['execution_defaults']['batch_size']=2; return c
 def get(state,key): return next(x for x in state['jobs'].values() if x['job_key']==key)
-def manifest(state, job, status='completed', run='r1'):
- bid=job['batch_ids'][-1]; return {'schema_version':'1.0','campaign_id':state['campaign_id'],'batch_id':bid,'run_id':run,'document_identity':{},'environment':{},'batch_source':'batch.json','started_at':'x','completed_at':'y','execution_status':'completed','jobs':[{'job_id':job['job_id'],'configuration_fingerprint':job['execution_fingerprints'][bid],'execution_status':status,'raw_result_envelope':{'artifact_paths':['raw.tif']}}],'jobs_not_attempted':[]}
+def manifest(state, job, status='completed', run='r1', artifact_paths=('raw.tif',)):
+ bid=job['batch_ids'][-1]; return {'schema_version':'1.0','campaign_id':state['campaign_id'],'batch_id':bid,'run_id':run,'document_identity':{},'environment':{},'batch_source':'batch.json','started_at':'x','completed_at':'y','execution_status':'completed','jobs':[{'job_id':job['job_id'],'configuration_fingerprint':job['execution_fingerprints'][bid],'execution_status':status,'raw_result_envelope':{'artifact_paths':list(artifact_paths)}}],'jobs_not_attempted':[]}
 def analysis(state,job,status='PASS',run='r1',reason_codes=None):
  return {'analysis_schema_version':'1.0','campaign_id':state['campaign_id'],'batch_id':job['batch_ids'][-1],'run_id':run,'job_id':job['job_id'],'probe_id':job['probe_id'],'analyzer_version':'x','source_report':{'path':'raw.json','sha256':'a'},'artifact_references':['raw.tif'],'acceptance_status':status,'execution_status':'completed','reason_codes':reason_codes or []}
 def run_batch(c,s,job_key,status='PASS',reason_codes=None,run=None):
@@ -288,3 +288,108 @@ def test_end_to_end_simulated_progression_through_fallback_and_elevation_alignme
  assert s['closures']['elevation_mutation_closure']['status']=='RESOLVED_FALLBACK_PASS'
  b=p.generate_next_batch(c,s)
  assert {j['job_id'] for j in b['jobs']}=={get(s,'s2.align.r1')['job_id'],get(s,'s2.align.r2')['job_id']}
+
+# --------------------------------------------------------------------------
+# Manual-review artifact-integrity: a review may only be accepted/rejected
+# when a concrete reviewable raster artifact backs it.
+# --------------------------------------------------------------------------
+
+def test_linework_visual_inspection_with_raster_artifact_accepts_and_rejects_normally():
+ c=compact(); c['stages']=c['stages'][:1]; c['dependencies']=[]
+ c['stages'][0]['jobs'][0]['manual_review_required']=True
+ c['stages'][0]['jobs'][0]['manual_review_reason']='LINEWORK_VISUAL_INSPECTION'
+ s=p.initialize_state(c); p.generate_next_batch(c,s); a=get(s,'align')
+ p.ingest_manifests(c,s,[manifest(s,a)]); p.ingest_analysis(c,s,[analysis(s,a,'PASS')])
+ requirement=s['manual_review_requirements'][a['job_id']]
+ assert requirement['status']=='PENDING' and requirement['artifact_references']==['raw.tif']
+ p.record_manual_review(c,s,a['job_id'],'ACCEPTED','operator')
+ assert s['manual_review_requirements'][a['job_id']]['status']=='ACCEPTED'
+ assert p.generate_next_batch(c,s) is None and s['next_recommendation']['code']=='CAMPAIGN_COMPLETE'
+ # A separate rejecting run of the same shape still works normally too.
+ c2=copy.deepcopy(c); s2=p.initialize_state(c2); p.generate_next_batch(c2,s2); a2=get(s2,'align')
+ p.ingest_manifests(c2,s2,[manifest(s2,a2)]); p.ingest_analysis(c2,s2,[analysis(s2,a2,'PASS')])
+ p.record_manual_review(c2,s2,a2['job_id'],'REJECTED','operator')
+ assert s2['manual_review_requirements'][a2['job_id']]['status']=='REJECTED'
+ assert p.generate_next_batch(c2,s2) is None
+ assert s2['next_recommendation']=={'code':'BLOCKED_BY_FAILURE','reason':'MANUAL_REVIEW_REJECTED','job_ids':[a2['job_id']]}
+
+def test_manual_review_cannot_be_accepted_or_rejected_with_empty_artifact_references():
+ c=compact(); c['stages']=c['stages'][:1]; c['dependencies']=[]
+ c['stages'][0]['jobs'][0]['manual_review_required']=True
+ c['stages'][0]['jobs'][0]['manual_review_reason']='LINEWORK_VISUAL_INSPECTION'
+ s=p.initialize_state(c); p.generate_next_batch(c,s); a=get(s,'align')
+ p.ingest_manifests(c,s,[manifest(s,a,artifact_paths=())]); p.ingest_analysis(c,s,[analysis(s,a,'PASS')])
+ requirement=s['manual_review_requirements'][a['job_id']]
+ assert requirement['status']=='EVIDENCE_MISSING'
+ assert requirement['artifact_references']==[]
+ assert 'diagnostic' in requirement
+ with pytest.raises(p.CampaignError):
+  p.record_manual_review(c,s,a['job_id'],'ACCEPTED','operator')
+ with pytest.raises(p.CampaignError):
+  p.record_manual_review(c,s,a['job_id'],'REJECTED','operator')
+ # The requirement is unchanged by the refused attempts.
+ assert s['manual_review_requirements'][a['job_id']]['status']=='EVIDENCE_MISSING'
+
+def test_missing_review_artifact_blocks_campaign_completion_as_evidence_missing():
+ c=compact(); c['stages']=c['stages'][:1]; c['dependencies']=[]
+ c['stages'][0]['jobs'][0]['manual_review_required']=True
+ s=p.initialize_state(c); p.generate_next_batch(c,s); a=get(s,'align')
+ p.ingest_manifests(c,s,[manifest(s,a,artifact_paths=())]); p.ingest_analysis(c,s,[analysis(s,a,'PASS')])
+ assert p.generate_next_batch(c,s) is None
+ assert s['next_recommendation']=={'code':'BLOCKED_BY_FAILURE','reason':'MANUAL_REVIEW_EVIDENCE_MISSING','job_ids':[a['job_id']]}
+
+def test_gate_scoped_semantic_review_without_artifact_is_not_an_actionable_review():
+ # A bare "not automatically verified" analyzer outcome must never become an
+ # actionable operator review task unless a reviewable artifact exists.
+ c=compact(); s=p.initialize_state(c); p.generate_next_batch(c,s); a=get(s,'align')
+ p.ingest_manifests(c,s,[manifest(s,a,artifact_paths=())])
+ p.ingest_analysis(c,s,[analysis(s,a,'INCONCLUSIVE',reason_codes=['MANUAL_SEMANTIC_REVIEW_REQUIRED'])])
+ assert a['status']=='INCONCLUSIVE'
+ requirement=s['manual_review_requirements'][a['job_id']]
+ assert requirement['status']=='EVIDENCE_MISSING'
+ assert requirement['reason']=='SEMANTIC_PRESERVATION_NOT_AUTOMATICALLY_VERIFIED'
+ assert requirement['gate']=='rendered_semantic_preservation'
+ with pytest.raises(p.CampaignError):
+  p.record_manual_review(c,s,a['job_id'],'ACCEPTED','operator')
+
+def test_manual_review_evidence_warnings_flags_historical_state_without_rewriting_it():
+ c=compact(); s=p.initialize_state(c)
+ # Simulate state written before this evidentiary check existed: an
+ # ACCEPTED decision with no artifact_references at all.
+ s['manual_review_requirements']['legacy-job']={'status':'ACCEPTED','reason':'LINEWORK_VISUAL_INSPECTION',
+     'reviewer':'op','reviewed_at':'2023-01-01T00:00:00Z'}
+ warnings=p.manual_review_evidence_warnings(s)
+ assert warnings==[{'job_id':'legacy-job','status':'ACCEPTED','issue':'DECISION_RECORDED_WITHOUT_REVIEWABLE_ARTIFACT'}]
+ summary=p.status_summary(c,s)
+ assert summary['manual_review_evidence_warnings']==warnings
+ assert s['manual_review_requirements']['legacy-job']['status']=='ACCEPTED'  # untouched, not rewritten
+
+def test_package_campaign_copies_referenced_artifacts_and_rewrites_state_paths(tmp_path):
+ c=compact(); c['stages']=c['stages'][:1]; c['dependencies']=[]
+ c['stages'][0]['jobs'][0]['manual_review_required']=True
+ s=p.initialize_state(c); p.generate_next_batch(c,s); a=get(s,'align')
+ evidence_dir=tmp_path/'evidence'; evidence_dir.mkdir()
+ artifact_path=evidence_dir/'raw.tif'; artifact_path.write_bytes(b'tiff-bytes')
+ p.ingest_manifests(c,s,[manifest(s,a,artifact_paths=(str(artifact_path),))])
+ p.ingest_analysis(c,s,[analysis(s,a,'PASS')])
+ p.record_manual_review(c,s,a['job_id'],'ACCEPTED','operator')
+ out_dir=tmp_path/'package'
+ result=p.package_campaign(c,s,out_dir)
+ packaged=result['packaged_artifacts'][a['job_id']]
+ assert len(packaged)==1
+ assert (out_dir/packaged[0]).read_bytes()==b'tiff-bytes'
+ packaged_state=json.loads((out_dir/'campaign_state.json').read_text())
+ assert packaged_state['manual_review_requirements'][a['job_id']]['artifact_references']==packaged
+ for ref in packaged_state['manual_review_requirements'][a['job_id']]['artifact_references']:
+  assert (out_dir/ref).is_file()  # no dangling reference in the package
+
+def test_package_campaign_refuses_to_ship_a_dangling_artifact_reference(tmp_path):
+ c=compact(); c['stages']=c['stages'][:1]; c['dependencies']=[]
+ c['stages'][0]['jobs'][0]['manual_review_required']=True
+ s=p.initialize_state(c); p.generate_next_batch(c,s); a=get(s,'align')
+ p.ingest_manifests(c,s,[manifest(s,a)])  # 'raw.tif' is never actually created on disk
+ p.ingest_analysis(c,s,[analysis(s,a,'PASS')])
+ p.record_manual_review(c,s,a['job_id'],'ACCEPTED','operator')
+ with pytest.raises(p.CampaignError):
+  p.package_campaign(c,s,tmp_path/'package')
+ assert not (tmp_path/'package').exists() or not any((tmp_path/'package').rglob('*.tif'))

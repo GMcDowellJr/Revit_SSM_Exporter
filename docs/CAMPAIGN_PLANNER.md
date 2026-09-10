@@ -80,6 +80,24 @@ Analyzer-side, `MUTATION_BLOCKED_BY_TEMPLATE_ONLY` is emitted (alongside the alw
 
 Distinct from the campaign-authored `manual_review_required`/`manual_review_reason` job flags (used e.g. for Stage 6's linework visual inspection, which never changes a job's own status - it only gates `CAMPAIGN_COMPLETE`), `ingest_analysis` automatically seeds a **gate-scoped** manual review requirement (`manual_review_requirements[job_id]["gate"] == "rendered_semantic_preservation"`) whenever a normalized acceptance record's only reason for `INCONCLUSIVE` is `MANUAL_SEMANTIC_REVIEW_REQUIRED`. Recording an outcome for that specific requirement (`manual-review JOB_ID ACCEPTED|REJECTED reviewer`) transitions the job itself - but *only* when `MANUAL_SEMANTIC_REVIEW_REQUIRED` was the job's sole reason code: `ACCEPTED` -> `PASSED`, `REJECTED` -> `FAILED`. If any other FAIL/INCONCLUSIVE reason is present on the same job (e.g. `MUTATION_ATTESTATION_FAILED` alongside it), no gate-scoped requirement is seeded at all and the job's own automated result stands - a manual review can never become a blanket override of an unrelated automated finding.
 
+### Manual review requires a reviewable artifact
+
+Every requirement in `manual_review_requirements` carries its own `artifact_references`, populated only from raster (PNG/TIFF/JPEG) paths actually recorded on the job's own `artifact_references` (`_sync_review_evidence`, called from `ingest_analysis`). A requirement is `PENDING` (actionable) only while at least one such reviewable artifact is on record.
+
+If a job that needs manual review reaches a terminal status with nothing reviewable ever recorded, its requirement is downgraded from `PENDING` to `EVIDENCE_MISSING` with a `diagnostic` explaining why, instead of staying an actionable review. For the automated gate specifically, an `INCONCLUSIVE`/`MANUAL_SEMANTIC_REVIEW_REQUIRED` result with no reviewable artifact is seeded directly as `EVIDENCE_MISSING` with `reason: "SEMANTIC_PRESERVATION_NOT_AUTOMATICALLY_VERIFIED"` - it is never presented to an operator as "manual review required", because an unresolved automated check is not the same thing as an actual reviewable artifact existing.
+
+`record_manual_review` refuses `ACCEPTED` and `REJECTED` outright (`NO_REVIEWABLE_ARTIFACT` `CampaignError`) for any requirement with no reviewable `artifact_references`, whatever its status - an operator can never rubber-stamp a review with nothing to look at. `compute_next_recommendation` treats any `EVIDENCE_MISSING` requirement the same way it treats a rejected review: it reports `BLOCKED_BY_FAILURE`/`MANUAL_REVIEW_EVIDENCE_MISSING` and the campaign can never report `CAMPAIGN_COMPLETE` while one remains.
+
+`manual_review_evidence_warnings(state)` (also surfaced under `status`'s `manual_review_evidence_warnings`) is a read-only check for state written before this rule existed: an `ACCEPTED`/`REJECTED` requirement with no reviewable `artifact_references` is flagged `DECISION_RECORDED_WITHOUT_REVIEWABLE_ARTIFACT` without rewriting the historical record.
+
+### Packaging a campaign for review
+
+```bash
+python tools/campaign_planner.py package campaign.json campaign_state.json out/package --source-root evidence/
+```
+
+`package_campaign` copies every raster artifact referenced by a `PENDING`, `ACCEPTED`, or `REJECTED` manual review requirement into `<output>/artifacts/manual_review/<job_id>/`, alongside self-contained `campaign.json`/`campaign_state.json` copies whose `artifact_references` are rewritten to those packaged, relative paths - so the package can be reviewed without access to the original evidence directory. A referenced artifact that cannot be found on disk fails the whole command (`MISSING_ARTIFACT_SOURCE`) rather than silently shipping a state that points at nothing.
+
 ## Diagnostics, resets, and amendments
 
 Authorize only a configured expansion, for example the targeted A/S/F rule:
