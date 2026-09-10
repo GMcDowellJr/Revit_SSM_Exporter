@@ -294,15 +294,44 @@ _CLOSURE_OPEN = {"PENDING", "AWAITING_FALLBACK_EXECUTION"}
 
 def _closure_candidate_settled(state: dict[str, Any], job: dict[str, Any]) -> bool:
     """A job is settled for closure-resolution purposes once it is terminal
-    AND, if INCONCLUSIVE, not still awaiting a PENDING gate-scoped manual
-    review that could still convert it to PASSED/FAILED. Resolving the
-    closure the instant a candidate goes INCONCLUSIVE - without waiting for
-    that review - would prematurely lock in RESOLVED_*_FAILED even though an
-    ACCEPTED review is about to make it PASSED."""
-    if job["status"] != "INCONCLUSIVE":
-        return job["status"] in TERMINAL
+    AND, if PASSED or INCONCLUSIVE, not still awaiting a PENDING manual
+    review that could still change whether it counts as a pass - gate-scoped
+    (INCONCLUSIVE pending MANUAL_SEMANTIC_REVIEW_REQUIRED, which could still
+    convert it to PASSED/FAILED) or campaign-authored (a job that already
+    went straight to automated PASSED without ever needing the gate-scoped
+    path, but still carries its own manual_review_required flag and could
+    still be REJECTED after the fact).
+
+    Resolving the closure the instant a PASSED/INCONCLUSIVE candidate's
+    review is still open would let it resolve RESOLVED_PRIMARY - unlocking
+    every dependent stage - on a recipe the operator has not yet accepted,
+    with no way to un-schedule the work once REJECTED arrives. A FAILED
+    job's own pending review, if any, never blocks closure routing here:
+    accepting or rejecting review evidence for an already-failed variant
+    does not change which reason codes triggered the failure or which
+    fallback path those codes select.
+    """
+    if job["status"] not in TERMINAL:
+        return False
+    if job["status"] not in ("PASSED", "INCONCLUSIVE"):
+        return True
     requirement = state["manual_review_requirements"].get(job["job_id"])
     return not (requirement and requirement["status"] == "PENDING")
+
+
+def _job_review_accepted_pass(state: dict[str, Any], job: dict[str, Any]) -> bool:
+    """True only when a job's own automated result is PASSED and, if it
+    carries a manual review requirement, that requirement's outcome is
+    ACCEPTED - never inferred from an automated PASSED status alone. This is
+    the single predicate closure resolution and host_color_id_feasibility()
+    both use to decide whether a PASSED status is trustworthy to propagate
+    forward, so a REJECTED (or still-open) review can never be silently
+    treated as a pass in either place.
+    """
+    if job["status"] != "PASSED":
+        return False
+    requirement = state["manual_review_requirements"].get(job["job_id"])
+    return requirement is None or requirement.get("status") == "ACCEPTED"
 
 
 def _apply_conditional_fallbacks(campaign: dict[str, Any], state: dict[str, Any]) -> None:
@@ -326,7 +355,7 @@ def _apply_conditional_fallbacks(campaign: dict[str, Any], state: dict[str, Any]
         if closure["status"] == "AWAITING_FALLBACK_EXECUTION":
             candidate = state["jobs"].get(closure["fallback_job_id"])
             if candidate and _closure_candidate_settled(state, candidate):
-                resolved = "RESOLVED_FALLBACK_PASS" if candidate["status"] == "PASSED" else "RESOLVED_FALLBACK_FAILED"
+                resolved = "RESOLVED_FALLBACK_PASS" if _job_review_accepted_pass(state, candidate) else "RESOLVED_FALLBACK_FAILED"
                 closure.update({"status": resolved, "candidate_job_id": candidate["job_id"], "resolved_at": utc_now()})
                 _event(state, "CLOSURE_RESOLVED", closure_id=closure_id, status=resolved, candidate_job_id=candidate["job_id"])
             continue
@@ -334,7 +363,7 @@ def _apply_conditional_fallbacks(campaign: dict[str, Any], state: dict[str, Any]
         trigger = key_map.get(fallback["trigger_job"])
         if not trigger or not _closure_candidate_settled(state, trigger): continue
         closure["primary_job_id"] = trigger["job_id"]
-        if trigger["status"] == "PASSED":
+        if _job_review_accepted_pass(state, trigger):
             closure.update({"status": "RESOLVED_PRIMARY", "candidate_job_id": trigger["job_id"], "resolved_at": utc_now()})
             _event(state, "CLOSURE_RESOLVED", closure_id=closure_id, status="RESOLVED_PRIMARY", candidate_job_id=trigger["job_id"])
             continue
@@ -739,7 +768,14 @@ def record_manual_review(campaign: dict[str, Any], state: dict[str, Any], job_id
                 transition(state, job_id, target, "MANUAL_REVIEW_" + outcome, {"record_id": requirement.get("record_id"), "reviewer": reviewer})
                 evaluate(campaign, state)
                 return
-    _summarize(campaign, state)
+    # Even a non-gate-scoped (campaign-authored-only) review can now affect
+    # closure resolution: _closure_candidate_settled() treats a PASSED/
+    # INCONCLUSIVE candidate with a PENDING review as not yet settled, so an
+    # ACCEPTED/REJECTED decision recorded here must re-run evaluate() (which
+    # re-applies conditional fallbacks and dependency gating) rather than
+    # only _summarize() - otherwise a closure already blocked on this exact
+    # PENDING review would never notice it was just resolved.
+    evaluate(campaign, state)
 
 
 def _closure_superseded_review_job_ids(state: dict[str, Any]) -> set[str]:

@@ -604,8 +604,18 @@ def _advance_locked(campaign_path: Path, paths: dict[str, Path], dry_run: bool) 
         return result
 
     if code == "MANUAL_REVIEW_REQUIRED":
+        # A campaign-authored requirement is seeded PENDING at init for
+        # every configured job, including ones staged later (e.g. the
+        # cross-view host raster matrix) that have not run yet and carry no
+        # artifact_references at all - `compute_next_recommendation`'s own
+        # fallback branch can report AWAITING_MANUAL_REVIEW while most of
+        # the campaign is still PLANNED, purely because *some* job's review
+        # (like the elevation gate-scoped one) is genuinely actionable now.
+        # Only requirements with a real reviewable artifact on record are
+        # ever surfaced here - an operator must never be pointed at a review
+        # with nothing to look at (record_manual_review would refuse it).
         pending = sorted(jid for jid, review in working_state["manual_review_requirements"].items()
-                         if review["status"] == "PENDING")
+                         if review["status"] == "PENDING" and review.get("artifact_references"))
         result["action"] = "MANUAL_REVIEW_REQUIRED"
         result["job_ids"] = pending
         # Per-job operator-facing detail: the operator must never have to

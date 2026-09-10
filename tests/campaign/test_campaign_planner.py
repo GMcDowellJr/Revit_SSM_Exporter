@@ -95,6 +95,13 @@ def test_gate_scoped_review_is_not_seeded_for_a_mixed_inconclusive_reason():
 
 def test_attached_as_fully_attested_and_accepted_unlocks_stage2():
  c=example(); s=p.initialize_state(c); run_batch(c,s,'s1.attached_as','PASS')
+ # A straight automated PASS still leaves the campaign-authored review
+ # PENDING - the closure must not resolve RESOLVED_PRIMARY until it is
+ # explicitly ACCEPTED (see _closure_candidate_settled).
+ closure=s['closures']['elevation_mutation_closure']
+ assert closure['status']=='PENDING'
+ assert all(get(s,k)['status']=='PLANNED' for k in ('s2.align.r1','s2.align.r2'))
+ p.record_manual_review(c,s,get(s,'s1.attached_as')['job_id'],'ACCEPTED','operator')
  closure=s['closures']['elevation_mutation_closure']
  assert closure['status']=='RESOLVED_PRIMARY' and closure['candidate_job_id']==get(s,'s1.attached_as')['job_id']
  assert all(get(s,k)['status']=='ELIGIBLE' for k in ('s2.align.r1','s2.align.r2'))
@@ -126,6 +133,9 @@ def test_detached_as_execution_and_analysis_resolve_closure_deterministically():
   run_batch(c,s,'s1.attached_as','FAIL',reason_codes=['MUTATION_ATTESTATION_FAILED','MUTATION_BLOCKED_BY_TEMPLATE_ONLY'])
   fb=next(j for j in s['jobs'].values() if j['job_key']=='s1.detached_as')
   run_batch(c,s,'s1.detached_as',outcome)
+  if outcome=='PASS':
+   assert s['closures']['elevation_mutation_closure']['status']=='AWAITING_FALLBACK_EXECUTION'  # awaiting the fallback's own review
+   p.record_manual_review(c,s,fb['job_id'],'ACCEPTED','operator')
   closure=s['closures']['elevation_mutation_closure']; assert closure['status']==expected and closure['candidate_job_id']==fb['job_id']
   wants_open=(outcome=='FAIL')
   assert all((get(s,k)['status']=='BLOCKED')==wants_open for k in ('s2.align.r1','s2.align.r2'))
@@ -306,7 +316,8 @@ def test_end_to_end_simulated_progression_through_fallback_and_elevation_alignme
  c=example(); s=p.initialize_state(c)
  run_batch(c,s,'s1.attached_as','FAIL',reason_codes=['MUTATION_ATTESTATION_FAILED','MUTATION_BLOCKED_BY_TEMPLATE_ONLY'])
  assert any(j['job_key']=='s1.detached_as' for j in s['jobs'].values())
- run_batch(c,s,'s1.detached_as','PASS')
+ fb=run_batch(c,s,'s1.detached_as','PASS')
+ p.record_manual_review(c,s,fb['job_id'],'ACCEPTED','operator')
  assert s['closures']['elevation_mutation_closure']['status']=='RESOLVED_FALLBACK_PASS'
  b=p.generate_next_batch(c,s)
  opened=('s2.align.r1','s2.align.r2','s2.floor_active.confirm','s2.floor_inactive.confirm','s2.rcp.confirm','s2.section.confirm','s2.callout.confirm')
@@ -736,3 +747,22 @@ def test_core_views_mapping_rejects_a_job_key_from_a_different_view():
  c=example()
  c['host_color_id_feasibility']['core_views']['callout']={'job_key':'s3.section.attached_AS'}
  pytest.raises(p.CampaignError,p.validate_campaign,c)
+
+def test_rejected_recipe_review_never_unlocks_downstream_stages():
+ # A job can reach automated PASSED directly (never touching the
+ # gate-scoped MANUAL_SEMANTIC_REVIEW_REQUIRED path) while its own
+ # campaign-authored review is still PENDING. The closure must not resolve
+ # RESOLVED_PRIMARY - and unlock Stage 2/3 - until that review is
+ # explicitly ACCEPTED; if the operator instead REJECTS it, downstream
+ # stages must never have run on a recipe the operator rejected.
+ c=example(); s=p.initialize_state(c)
+ run_batch(c,s,'s1.attached_as','PASS')
+ assert s['closures']['elevation_mutation_closure']['status']=='PENDING'
+ assert all(get(s,k)['status']=='PLANNED' for k in ('s2.align.r1','s2.align.r2'))
+ assert p.generate_next_batch(c,s) is None  # nothing eligible while the review is open
+ p.record_manual_review(c,s,get(s,'s1.attached_as')['job_id'],'REJECTED','operator')
+ assert get(s,'s1.attached_as')['status']=='PASSED'  # automated result itself is untouched
+ assert s['closures']['elevation_mutation_closure']['status']=='RESOLVED_FAILED'
+ assert all(get(s,k)['status']=='BLOCKED' for k in ('s2.align.r1','s2.align.r2'))
+ assert p.generate_next_batch(c,s) is None
+ assert p.host_color_id_feasibility(c,s)['views']['elevation']['result']=='FAIL'

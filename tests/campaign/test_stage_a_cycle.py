@@ -623,6 +623,32 @@ def test_manual_review_required_surfaces_artifact_path_view_and_question(tmp_pat
     assert "Does this raster accurately represent the visible host-model elements?" in out
 
 
+def test_manual_review_required_filters_out_not_yet_run_jobs_with_no_artifact(tmp_path, monkeypatch):
+    # The real core campaign flags manual_review_required on both the Stage
+    # 1 elevation job and all five Stage 3 cross-view jobs. Before Stage 3
+    # ever runs, initialize_state() already seeded PENDING requirements for
+    # all five with empty artifact_references - MANUAL_REVIEW_REQUIRED must
+    # never surface those as actionable reviews, only the genuinely
+    # reviewable elevation one (an operator would otherwise be pointed at
+    # five reviews with nothing to look at, which record_manual_review
+    # would refuse outright).
+    install_fake_analyzer(monkeypatch)
+    campaign_path, state_path = init(tmp_path, example())
+    result = run_job_to_completion(monkeypatch, tmp_path, campaign_path, state_path, "s1.attached_as",
+                                   acceptance="INCONCLUSIVE", reason_codes=["MANUAL_SEMANTIC_REVIEW_REQUIRED"])
+    assert result["action"] == "MANUAL_REVIEW_REQUIRED"
+    state = read_state(state_path)
+    attached = get(state, "s1.attached_as")
+    assert result["job_ids"] == [attached["job_id"]]
+    assert [r["job_id"] for r in result["reviews"]] == [attached["job_id"]]
+    # The noise is real: five Stage 3 requirements exist and are PENDING,
+    # just correctly excluded here for carrying no artifact yet.
+    unexecuted_pending = [jid for jid, r in state["manual_review_requirements"].items()
+                          if r["status"] == "PENDING" and jid != attached["job_id"]]
+    assert len(unexecuted_pending) == 5
+    assert all(not state["manual_review_requirements"][jid]["artifact_references"] for jid in unexecuted_pending)
+
+
 def test_missing_review_artifact_reports_blocked_not_an_actionable_review(tmp_path, monkeypatch):
     # A Stage 6-style job that reaches a terminal state with manual review
     # configured but no raster artifact ever recorded must never surface as
