@@ -552,12 +552,17 @@ def test_unrelated_attached_as_failure_does_not_trigger_fallback(tmp_path):
     state = read_state(state_path)
     assert state["closures"]["elevation_mutation_closure"]["status"] == "RESOLVED_FAILED"
     assert not any(j["job_key"] == "s1.detached_as" for j in state["jobs"].values())
-    assert state["stage_status"]["02_elevation_alignment"] == "BLOCKED"
-    # No fallback job means no fallback annotation, whatever the top-level
-    # action turns out to be (the campaign's Stage 7 is explicitly configured
-    # to proceed independently of this failure - see the dedicated Stage 7
-    # test below - so RUN_DYNAMO for that unrelated work is expected here).
+    assert state["stage_status"]["02_alignment_resolution_confirmation"] == "BLOCKED"
+    # No fallback job means no fallback annotation. There is no unrelated
+    # work left in this campaign to unlock (external sources/linework were
+    # moved to a separate, non-blocking follow-up campaign): s1.attached_as
+    # failed on a real automated reason (mutation attestation, not the
+    # gate-scoped semantic-review code), and the probe never exports a TIFF
+    # for a failed-attestation variant, so its own manual-review requirement
+    # has nothing reviewable and surfaces as evidence-missing, not a review.
     assert not result.get("fallback_context")
+    assert result["action"] == "BLOCKED"
+    assert result["reason"] == "MANUAL_REVIEW_EVIDENCE_MISSING"
 
 
 # --------------------------------------------------------------------------
@@ -583,6 +588,39 @@ def test_manual_review_stops_automatic_advancement(tmp_path, monkeypatch):
     assert state["manual_review_requirements"][get(state, "align")["job_id"]]["status"] == "PENDING"
     again = cycle.advance(str(campaign_path), str(state_path))
     assert again["action"] == "MANUAL_REVIEW_REQUIRED"
+
+
+def test_manual_review_required_surfaces_artifact_path_view_and_question(tmp_path, monkeypatch, capsys):
+    # Acceptance check: the cycle output must never make an operator search
+    # the campaign tree - each pending review names its job, the view it
+    # renders, the concrete raster artifact already on record, and the
+    # specific review question configured for that job.
+    install_fake_analyzer(monkeypatch)
+    c = compact()
+    c["stages"][1]["jobs"] = [j for j in c["stages"][1]["jobs"] if j["job_key"] != "independent"]
+    c["stages"][0]["jobs"][0]["manual_review_required"] = True
+    c["stages"][0]["jobs"][0]["manual_review_reason"] = (
+        "Does this raster accurately represent the visible host-model elements?")
+    campaign_path, state_path = init(tmp_path, c)
+    result = run_job_to_completion(monkeypatch, tmp_path, campaign_path, state_path, "align",
+                                   acceptance="INCONCLUSIVE", reason_codes=["MANUAL_SEMANTIC_REVIEW_REQUIRED"],
+                                   artifact_paths=["raw/align.tiff"])
+    assert result["action"] == "MANUAL_REVIEW_REQUIRED"
+    state = read_state(state_path)
+    align = get(state, "align")
+    assert result["reviews"] == [{
+        "job_id": align["job_id"], "job_key": "align", "view_key": "v",
+        "view_name": c["view_registry"]["v"]["expected_name"],
+        "view_type": c["view_registry"]["v"]["expected_view_type"],
+        "artifact_references": ["raw/align.tiff"],
+        "review_question": "Does this raster accurately represent the visible host-model elements?",
+    }]
+
+    cycle.main(["advance", str(campaign_path), str(state_path)])
+    out = capsys.readouterr().out
+    assert "JOB: {0}".format(align["job_id"]) in out
+    assert "raw/align.tiff" in out
+    assert "Does this raster accurately represent the visible host-model elements?" in out
 
 
 def test_missing_review_artifact_reports_blocked_not_an_actionable_review(tmp_path, monkeypatch):
@@ -625,7 +663,12 @@ def test_unauthorized_diagnostics_stop_automatic_advancement(tmp_path, monkeypat
 # 23-24: stage cascading and completion pass through the planner verbatim
 # --------------------------------------------------------------------------
 
-def test_global_prerequisite_failure_does_not_expose_unrelated_stage7_work(tmp_path):
+def test_global_prerequisite_failure_leaves_no_unrelated_work_and_no_feasibility_pass(tmp_path):
+    # External sources/linework are a separate, non-blocking follow-up
+    # campaign now - a Stage 1 failure here must cascade BLOCKED through the
+    # whole (much smaller) core campaign with nothing unrelated to fall back
+    # on, and the diagnostic stop on the failed job itself is the only path
+    # forward.
     campaign_path, state_path = init(tmp_path, example())
     envelope = {"probe_id": "stage_a_minimum_id_mutations", "probe_schema_version": "1.0",
                 "execution_status": "completed", "rollback_status": "succeeded", "state_restoration_status": "restored",
@@ -647,15 +690,21 @@ def test_global_prerequisite_failure_does_not_expose_unrelated_stage7_work(tmp_p
     write_manifest(manifest_root, state["campaign_id"], r1["batch_id"], job["job_id"], [entry])
     result = cycle.advance(str(campaign_path), str(state_path))
     state = read_state(state_path)
-    for stage_id in ("02_elevation_alignment", "03_elevation_linework", "04_alignment_matrix",
-                     "05_reduced_mutation", "06_linework_validation"):
+    for stage_id in ("02_alignment_resolution_confirmation", "03_cross_view_host_raster_matrix"):
         assert state["stage_status"][stage_id] == "BLOCKED"
-    # Stage 7 is explicitly configured to proceed once the independent
-    # matrix has *concluded* (pass, fail, or blocked) - this failure must
-    # unlock exactly that pre-authorized work, nothing more and nothing less.
-    assert result["action"] == "RUN_DYNAMO"
-    assert set(result["job_ids"]) == {get(state, "s7.rvt_link.fixed")["job_id"], get(state, "s7.dwg.fixed")["job_id"]}
-    assert get(state, "s7.rvt_link.150")["status"] == "PLANNED"
+    # s1.attached_as failed on a real automated reason and never exported a
+    # TIFF (probe design for a failed-attestation variant), so its own
+    # manual-review requirement is evidence-missing rather than actionable.
+    assert result["action"] == "BLOCKED"
+    assert result["reason"] == "MANUAL_REVIEW_EVIDENCE_MISSING"
+    # job_ids for a BLOCKED action lists every cascade-blocked job, not only
+    # the original failure - the cross-view matrix downstream of it included.
+    assert job["job_id"] not in result["job_ids"]  # itself FAILED, not BLOCKED
+    assert get(state, "s2.align.r1")["job_id"] in result["job_ids"]
+    campaign = p.validate_campaign(p.load_json(campaign_path))
+    feasibility = p.host_color_id_feasibility(campaign, state)
+    assert feasibility["conclusion"] == "HOST_COLOR_ID_FEASIBILITY_INCONCLUSIVE"
+    assert feasibility["views"]["elevation"]["result"] == "FAIL"
 
 
 def test_campaign_completion_is_reported_correctly(tmp_path, monkeypatch):

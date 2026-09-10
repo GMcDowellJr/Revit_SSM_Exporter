@@ -129,7 +129,7 @@ def validate_campaign(campaign: dict[str, Any]) -> dict[str, Any]:
         if not needed <= set(view): raise CampaignError(f"view {key} is missing {sorted(needed-set(view))}")
         if view["expected_view_type"].lower() in {"drafting", "draftingview"} and "alignment_matrix" in view["roles"]:
             raise CampaignError(f"drafting view {key} cannot have alignment_matrix role")
-    stage_ids, job_keys = [], set()
+    stage_ids, job_keys, job_view_key = [], set(), {}
     for stage in campaign["stages"]:
         if not {"stage_id", "description", "jobs"} <= set(stage): raise CampaignError("each stage requires stage_id, description, jobs")
         stage_ids.append(stage["stage_id"])
@@ -138,9 +138,9 @@ def validate_campaign(campaign: dict[str, Any]) -> dict[str, Any]:
             if not needed <= set(job): raise CampaignError(f"job is missing {sorted(needed-set(job))}")
             if job["job_key"] in job_keys: raise CampaignError(f"duplicate job_key: {job['job_key']}")
             if job["view_key"] not in campaign["view_registry"]: raise CampaignError(f"unknown view_key: {job['view_key']}")
-            job_keys.add(job["job_key"])
+            job_keys.add(job["job_key"]); job_view_key[job["job_key"]] = job["view_key"]
     if len(stage_ids) != len(set(stage_ids)): raise CampaignError("duplicate stage_id")
-    closure_ids = set()
+    closure_ids, closure_view_key = set(), {}
     for fallback in campaign.get("conditional_fallbacks", []):
         needed = {"fallback_id", "trigger_job", "trigger_reason_codes", "fallback_job"}
         if not needed <= set(fallback): raise CampaignError(f"conditional_fallback is missing {sorted(needed-set(fallback))}")
@@ -156,6 +156,10 @@ def validate_campaign(campaign: dict[str, Any]) -> dict[str, Any]:
         if not fneeded <= set(fjob): raise CampaignError(f"conditional_fallback {fallback['fallback_id']} fallback_job is missing {sorted(fneeded-set(fjob))}")
         if fjob["job_key"] in job_keys: raise CampaignError(f"conditional_fallback {fallback['fallback_id']} fallback_job.job_key collides with an existing job_key")
         if fjob["view_key"] not in campaign["view_registry"]: raise CampaignError(f"conditional_fallback {fallback['fallback_id']} fallback_job references unknown view_key")
+        trigger_view = job_view_key.get(fallback["trigger_job"])
+        if trigger_view != fjob["view_key"]:
+            raise CampaignError(f"conditional_fallback {fallback['fallback_id']} trigger_job and fallback_job belong to different views")
+        closure_view_key[fallback["fallback_id"]] = trigger_view
     for dep in campaign["dependencies"]:
         if dep.get("requires_closure") is not None:
             if dep.get("job") not in job_keys: raise CampaignError(f"dependency references unknown job: {dep}")
@@ -164,6 +168,40 @@ def validate_campaign(campaign: dict[str, Any]) -> dict[str, Any]:
             raise CampaignError(f"dependency references unknown job: {dep}")
         if dep.get("statuses", ["PASS"]) and not set(dep.get("statuses", ["PASS"])) <= {"PASS", "FAIL", "INCONCLUSIVE", "BLOCKED"}:
             raise CampaignError("dependency statuses must be analyzer acceptance values")
+    feasibility_config = campaign.get("host_color_id_feasibility")
+    if feasibility_config is not None and not isinstance(feasibility_config, dict):
+        raise CampaignError("host_color_id_feasibility must be an object")
+    core_views = (feasibility_config or {}).get("core_views")
+    if core_views is None:
+        core_views = {}
+    elif not isinstance(core_views, dict):
+        raise CampaignError("host_color_id_feasibility.core_views must be an object")
+    seen_feasibility_targets = set()
+    for view_key, view_config in core_views.items():
+        if view_key not in campaign["view_registry"]:
+            raise CampaignError(f"host_color_id_feasibility.core_views references unknown view_key: {view_key}")
+        if not isinstance(view_config, dict):
+            raise CampaignError(f"host_color_id_feasibility.core_views[{view_key}] must be an object")
+        has_closure, has_job = "closure_id" in view_config, "job_key" in view_config
+        if has_closure == has_job:
+            raise CampaignError(f"host_color_id_feasibility.core_views[{view_key}] must set exactly one of closure_id or job_key")
+        if has_closure:
+            closure_id = view_config["closure_id"]
+            if closure_id not in closure_ids:
+                raise CampaignError(f"host_color_id_feasibility.core_views[{view_key}] references unknown closure_id: {closure_id}")
+            if closure_view_key.get(closure_id) != view_key:
+                raise CampaignError(f"host_color_id_feasibility.core_views[{view_key}] closure_id {closure_id!r} belongs to a different view")
+            target = ("closure", closure_id)
+        else:
+            job_key = view_config["job_key"]
+            if job_key not in job_keys:
+                raise CampaignError(f"host_color_id_feasibility.core_views[{view_key}] references unknown job_key: {job_key}")
+            if job_view_key.get(job_key) != view_key:
+                raise CampaignError(f"host_color_id_feasibility.core_views[{view_key}] job_key {job_key!r} belongs to a different view")
+            target = ("job", job_key)
+        if target in seen_feasibility_targets:
+            raise CampaignError(f"host_color_id_feasibility.core_views[{view_key}] duplicates a target already used by another core view: {target[1]}")
+        seen_feasibility_targets.add(target)
     defaults = campaign["execution_defaults"]
     if not isinstance(defaults.get("batch_size"), int) or defaults["batch_size"] < 1:
         raise CampaignError("execution_defaults.batch_size must be positive")
@@ -318,6 +356,20 @@ def _apply_conditional_fallbacks(campaign: dict[str, Any], state: dict[str, Any]
                     "provenance": {"closure_id": closure_id, "fallback_of_job_id": trigger["job_id"],
                                    "trigger_reason_codes_matched": sorted(trigger_codes)}})
                 state["jobs"][spec["job_id"]] = spec
+                if spec.get("manual_review_required"):
+                    # Mirrors initialize_state()'s own registration for
+                    # statically staged jobs: a materialized fallback job is
+                    # never seeded here otherwise (initialize_state only ever
+                    # runs once, before any fallback exists), so a
+                    # manual_review_required flag on a fallback_job spec
+                    # would otherwise never gain a manual_review_requirements
+                    # entry at all - letting a clean automated PASS resolve
+                    # the closure and complete the campaign without ever
+                    # presenting the configured review to an operator.
+                    state["manual_review_requirements"][spec["job_id"]] = {
+                        "status": "PENDING", "reason": spec.get("manual_review_reason", "CONFIGURED"),
+                        "artifact_references": [],
+                    }
             closure.update({"status": "AWAITING_FALLBACK_EXECUTION", "fallback_job_id": spec["job_id"],
                             "candidate_job_id": spec["job_id"]})
             _event(state, "CLOSURE_FALLBACK_MATERIALIZED", closure_id=closure_id,
@@ -690,12 +742,30 @@ def record_manual_review(campaign: dict[str, Any], state: dict[str, Any], job_id
     _summarize(campaign, state)
 
 
+def _closure_superseded_review_job_ids(state: dict[str, Any]) -> set[str]:
+    """Job IDs whose own manual-review requirement must never block campaign
+    completion: a closure's trigger job that failed specifically to route to
+    its configured fallback is no longer the candidate that represents this
+    closure once it resolves - only the fallback (``candidate_job_id``) is.
+    The trigger's own requirement (typically ``EVIDENCE_MISSING``, since a
+    failed-attestation variant never exports a TIFF to review) would
+    otherwise strand the campaign forever even after the fallback itself is
+    reviewed and reaches ``PASSED``. A closure that resolved on its primary
+    (``RESOLVED_PRIMARY``) never supersedes anything here, since
+    ``primary_job_id == candidate_job_id`` in that case.
+    """
+    return {closure["primary_job_id"] for closure in state.get("closures", {}).values()
+            if closure.get("primary_job_id") and closure.get("candidate_job_id")
+            and closure["primary_job_id"] != closure["candidate_job_id"]}
+
+
 def compute_next_recommendation(state: dict[str, Any]) -> dict[str, Any]:
     """Derive the operator's next step from current state without mutating it."""
     statuses = {j["status"] for j in state["jobs"].values()}
     eligible = [j["job_id"] for j in state["jobs"].values() if j["status"] == "ELIGIBLE"]
+    superseded_reviews = _closure_superseded_review_job_ids(state)
     rejected = sorted(job_id for job_id, review in state["manual_review_requirements"].items()
-                      if review["status"] == "REJECTED")
+                      if review["status"] == "REJECTED" and job_id not in superseded_reviews)
     # Scoped to jobs that actually reached a TERMINAL status: a requirement
     # downgraded to EVIDENCE_MISSING because its job is merely BLOCKED (an
     # upstream dependency failed before this job ever ran) must not outrank
@@ -706,9 +776,11 @@ def compute_next_recommendation(state: dict[str, Any]) -> dict[str, Any]:
     # excluding it here does not risk a false CAMPAIGN_COMPLETE.
     evidence_missing = sorted(job_id for job_id, review in state["manual_review_requirements"].items()
                               if review["status"] == "EVIDENCE_MISSING"
-                              and state["jobs"].get(job_id, {}).get("status") in TERMINAL)
+                              and state["jobs"].get(job_id, {}).get("status") in TERMINAL
+                              and job_id not in superseded_reviews)
     pending_review = any(review["status"] == "PENDING"
-                         for review in state["manual_review_requirements"].values())
+                         for job_id, review in state["manual_review_requirements"].items()
+                         if job_id not in superseded_reviews)
     if state["conflicts"]: return {"code": "INVALID_CAMPAIGN_STATE"}
     if eligible: return {"code": "GENERATE_NEXT_BATCH", "eligible_job_count": len(eligible)}
     if rejected: return {"code": "BLOCKED_BY_FAILURE", "reason": "MANUAL_REVIEW_REJECTED", "job_ids": rejected}
@@ -779,16 +851,108 @@ def manual_review_evidence_warnings(state: dict[str, Any]) -> list[dict[str, Any
     return warnings
 
 
+def host_color_id_feasibility(campaign: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    """Derive the core Stage A host-element color-ID feasibility conclusion.
+
+    Reads only ``campaign["host_color_id_feasibility"]["core_views"]`` (each
+    view mapped to either a ``closure_id`` - the normal shape, since every
+    core view carries its own mutation-recipe closure/fallback, see
+    ``conditional_fallbacks`` - or a bare ``job_key`` for a view with no
+    closure) plus already-computed closure/job/manual-review state; it never
+    re-derives acceptance on its own and never re-checks automated technical
+    gates itself. A view is ``PASS`` only once its resolved candidate job
+    reached ``PASSED``, which itself requires every automated technical gate
+    (attestation, rollback, state restoration, TIFF dimensions, palette
+    fidelity) *and* an ACCEPTED gate-scoped or campaign-authored manual
+    review (see ``record_manual_review``) - a job can never reach ``PASSED``
+    from an automated result alone while a manual review is still required.
+    A view whose candidate job is missing, not yet terminal, or whose closure
+    has not resolved is ``NOT_TESTED`` (not yet concluded), never silently
+    treated as a pass or a fail. The overall conclusion is ``PASS`` only when
+    every configured core view is ``PASS``; ``INCONCLUSIVE`` while any core
+    view is still ``NOT_TESTED``; otherwise ``FAIL`` when every concluded
+    view failed, or ``MIXED`` when both PASS and FAIL views are present.
+
+    A job's own automated ``PASSED``/``FAILED`` status is not, by itself,
+    sufficient here: the gate-scoped review path already requires ACCEPTED
+    before transitioning a job to PASSED, but a *campaign-authored* review on
+    a job whose automated result never went through that gate (for example,
+    an explicit ``rendered_semantic_preservation: proven`` result) never
+    changes the job's own status either way - so this checks the review
+    requirement's own recorded outcome directly, never inferring ACCEPTED
+    from an automated PASSED status alone, and treats a REJECTED review as a
+    FAIL regardless of what the automated result said.
+    """
+    core_views_config = (campaign.get("host_color_id_feasibility") or {}).get("core_views") or {}
+    key_map = {j["job_key"]: j for j in state["jobs"].values() if j["status"] != "SUPERSEDED"}
+    views: dict[str, Any] = {}
+    for view_key, view_config in core_views_config.items():
+        job = None
+        closure_id = view_config.get("closure_id")
+        if closure_id:
+            closure = state.get("closures", {}).get(closure_id)
+            candidate_job_id = closure.get("candidate_job_id") if closure else None
+            job = state["jobs"].get(candidate_job_id) if candidate_job_id else None
+        else:
+            job = key_map.get(view_config.get("job_key"))
+        requirement = state["manual_review_requirements"].get(job["job_id"]) if job else None
+        review_status = requirement.get("status") if requirement else None
+        if job is not None and job["status"] == "PASSED" and review_status in (None, "ACCEPTED"):
+            result = "PASS"
+        elif job is not None and (job["status"] == "FAILED" or review_status == "REJECTED"):
+            result = "FAIL"
+        else:
+            result = "NOT_TESTED"
+        views[view_key] = {
+            "result": result,
+            "job_id": job["job_id"] if job else None,
+            "job_key": job["job_key"] if job else view_config.get("job_key"),
+            "closure_id": closure_id,
+            "artifact_references": list(requirement.get("artifact_references") or []) if requirement else [],
+        }
+    results = {v["result"] for v in views.values()}
+    if not views or "NOT_TESTED" in results:
+        conclusion = "HOST_COLOR_ID_FEASIBILITY_INCONCLUSIVE"
+    elif results == {"PASS"}:
+        conclusion = "HOST_COLOR_ID_FEASIBILITY_PASS"
+    elif results == {"FAIL"}:
+        conclusion = "HOST_COLOR_ID_FEASIBILITY_FAIL"
+    else:
+        conclusion = "HOST_COLOR_ID_FEASIBILITY_MIXED"
+    return {"conclusion": conclusion, "views": views}
+
+
+def _campaign_state_bound(campaign: dict[str, Any], state: dict[str, Any]) -> bool:
+    """Non-mutating identity/fingerprint check for read-only commands.
+
+    Unlike ``_assert_binding`` (which supersedes every job as a side effect
+    of detecting drift - appropriate for a command about to act on state),
+    a read-only query like ``status`` or ``feasibility`` must never mutate
+    state merely to report on it; this only answers whether the campaign
+    document and state file are still the same version of the same campaign.
+    """
+    return (state.get("campaign_id") == campaign.get("campaign_id") and
+            state.get("campaign_configuration_fingerprint") == canonical_fingerprint(campaign))
+
+
 def status_summary(campaign: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
-    if (state.get("campaign_id") != campaign.get("campaign_id") or
-            state.get("campaign_configuration_fingerprint") != canonical_fingerprint(campaign)):
+    bound = _campaign_state_bound(campaign, state)
+    if not bound:
         recommendation = {"code": "INVALID_CAMPAIGN_STATE", "reason": "CAMPAIGN_STATE_MISMATCH"}
     else:
         recommendation = compute_next_recommendation(state)
+    # A mismatched campaign/state pair must never be combined to derive a
+    # feasibility conclusion - that would silently mix the current campaign's
+    # configuration with stale or unrelated job/closure state and could
+    # report an authoritative-looking PASS/MIXED result from it.
+    feasibility = (host_color_id_feasibility(campaign, state) if bound else
+                   {"conclusion": "HOST_COLOR_ID_FEASIBILITY_INCONCLUSIVE", "views": {},
+                    "reason": "CAMPAIGN_STATE_MISMATCH"})
     return {"campaign_id": state["campaign_id"], "jobs": {s: sum(j["status"] == s for j in state["jobs"].values()) for s in STATES},
             "stages": state["stage_status"], "coverage": state["view_coverage"],
             "conflicts": state["conflicts"], "next_recommendation": recommendation,
-            "manual_review_evidence_warnings": manual_review_evidence_warnings(state)}
+            "manual_review_evidence_warnings": manual_review_evidence_warnings(state),
+            "host_color_id_feasibility": feasibility}
 
 
 def package_campaign(campaign: dict[str, Any], state: dict[str, Any], output_dir: str | Path,
@@ -842,7 +1006,7 @@ def package_campaign(campaign: dict[str, Any], state: dict[str, Any], output_dir
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="External deterministic Stage A campaign planner")
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("validate", "init", "migrate", "status", "package", "next-batch", "ingest-runs", "ingest-analysis", "diagnostic", "manual-review"):
+    for name in ("validate", "init", "migrate", "status", "feasibility", "package", "next-batch", "ingest-runs", "ingest-analysis", "diagnostic", "manual-review"):
         p = sub.add_parser(name); p.add_argument("campaign")
         if name != "validate": p.add_argument("state")
         if name in {"ingest-runs", "ingest-analysis"}: p.add_argument("inputs", nargs="+")
@@ -861,6 +1025,12 @@ def main(argv: list[str] | None = None) -> int:
         atomic_write(args.state, migrate_state(load_json(args.state))); return 0
     state = migrate_state(load_json(args.state))
     if args.command == "status": print(json.dumps(status_summary(campaign, state), indent=2, sort_keys=True)); return 0
+    if args.command == "feasibility":
+        if not _campaign_state_bound(campaign, state):
+            print(json.dumps({"conclusion": "HOST_COLOR_ID_FEASIBILITY_INCONCLUSIVE", "views": {},
+                              "reason": "CAMPAIGN_STATE_MISMATCH"}, indent=2, sort_keys=True))
+            return 1
+        print(json.dumps(host_color_id_feasibility(campaign, state), indent=2, sort_keys=True)); return 0
     if args.command == "package":
         result = package_campaign(campaign, state, args.output_dir, source_root=args.source_root)
         print(json.dumps(result, indent=2, sort_keys=True)); return 0

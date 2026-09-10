@@ -600,6 +600,7 @@ def _advance_locked(campaign_path: Path, paths: dict[str, Path], dry_run: bool) 
 
     if code == "CAMPAIGN_COMPLETE":
         result["action"] = "CAMPAIGN_COMPLETE"
+        result["host_color_id_feasibility"] = planner.host_color_id_feasibility(campaign, working_state)
         return result
 
     if code == "MANUAL_REVIEW_REQUIRED":
@@ -607,6 +608,28 @@ def _advance_locked(campaign_path: Path, paths: dict[str, Path], dry_run: bool) 
                          if review["status"] == "PENDING")
         result["action"] = "MANUAL_REVIEW_REQUIRED"
         result["job_ids"] = pending
+        # Per-job operator-facing detail: the operator must never have to
+        # search the campaign tree manually for what to look at or why - each
+        # pending review names its job, the view it renders, the concrete
+        # raster artifact(s) already on record for it, and the specific
+        # review question configured for that job (falling back to the
+        # gate-scoped reason code only when no campaign-authored question was
+        # ever set).
+        reviews = []
+        for job_id in pending:
+            job = working_state["jobs"].get(job_id, {})
+            view = campaign.get("view_registry", {}).get(job.get("view_key"), {})
+            requirement = working_state["manual_review_requirements"][job_id]
+            reviews.append({
+                "job_id": job_id,
+                "job_key": job.get("job_key"),
+                "view_key": job.get("view_key"),
+                "view_name": view.get("expected_name"),
+                "view_type": view.get("expected_view_type"),
+                "artifact_references": list(requirement.get("artifact_references") or []),
+                "review_question": requirement.get("reason"),
+            })
+        result["reviews"] = reviews
         result["reason"] = "gate-scoped or campaign-authored manual review is pending"
         return result
 
@@ -650,7 +673,22 @@ def _print_console(result: dict[str, Any]) -> None:
         for note in result.get("fallback_context") or []:
             print("NEXT_JOB: {0}".format(note.get("variant") or note.get("job_key")))
             print("REASON: {0}".format(note.get("reason")))
-    elif action in ("MANUAL_REVIEW_REQUIRED", "DIAGNOSTIC_AUTHORIZATION_REQUIRED"):
+    elif action == "MANUAL_REVIEW_REQUIRED":
+        for review in result.get("reviews") or [{"job_id": jid} for jid in result.get("job_ids", [])]:
+            print("JOB: {0}".format(review.get("job_id")))
+            if review.get("view_name") or review.get("view_type"):
+                print("  VIEW: {0} ({1})".format(review.get("view_name"), review.get("view_type")))
+            artifacts = review.get("artifact_references") or []
+            if artifacts:
+                for artifact in artifacts:
+                    print("  ARTIFACT: {0}".format(artifact))
+            else:
+                print("  ARTIFACT: none recorded")
+            if review.get("review_question"):
+                print("  REVIEW_QUESTION: {0}".format(review["review_question"]))
+        if result.get("reason"):
+            print("REASON: {0}".format(result["reason"]))
+    elif action == "DIAGNOSTIC_AUTHORIZATION_REQUIRED":
         for job_id in result.get("job_ids", []):
             print("JOB: {0}".format(job_id))
         if result.get("reason"):
@@ -665,6 +703,8 @@ def _print_console(result: dict[str, Any]) -> None:
     elif action == "ERROR":
         for e in result.get("errors", []):
             print("ERROR: {0}: {1}".format(e.get("code"), e.get("message")))
+    if action == "CAMPAIGN_COMPLETE" and result.get("host_color_id_feasibility"):
+        print("HOST_COLOR_ID_FEASIBILITY: {0}".format(result["host_color_id_feasibility"]["conclusion"]))
     if result.get("dry_run"):
         print("DRY_RUN: true (no state, analysis, or batch files were written)")
     print("VALIDATION_MANIFESTS_IGNORED: {0}".format(result.get("validation_manifests_ignored", 0)))

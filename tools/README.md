@@ -299,3 +299,22 @@ python -m pip install -r requirements-test.txt
 python -m pytest tests/dynamo/test_analyze_stage_a_acceptance.py \
   tests/dynamo/test_analyze_stage_a_minimum_id_mutations.py
 ```
+
+## Stage A campaigns: core host color-ID feasibility vs. non-blocking follow-up
+
+`examples/stage_a_campaign.json` is the core campaign, scoped to exactly one
+question: can Stage A reliably assign unique colors to visible host Revit
+elements and export a raster from which those elements can be recovered,
+across elevation/plan(active)/plan(inactive)/RCP/section/callout?
+`tools/campaign_planner.py feasibility campaign.json campaign_state.json` (or
+`status`'s `host_color_id_feasibility` field) reports the aggregate
+`HOST_COLOR_ID_FEASIBILITY_PASS|FAIL|MIXED|INCONCLUSIVE` conclusion, derived
+per-view from the terminal status of each view's mutation-recipe closure -
+see `docs/CAMPAIGN_PLANNER.md` ("Aggregate host-element color-ID
+feasibility") for the full contract.
+
+External-source capability testing, model-linework diagnostics, the full
+mutation-variant factorial, and resolution-sensitivity experiments live in a
+separate, independent `examples/stage_a_followup_campaign.json` with its own
+campaign ID and state file. None of that work blocks the core campaign's
+completion or its feasibility conclusion.
