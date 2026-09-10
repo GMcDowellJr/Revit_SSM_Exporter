@@ -742,6 +742,35 @@ def _apply_flat_colors(view, result):
         _set_status(result, "display_style_flat_colors", STATUS_FAILED, None, _safe_enum(getattr(view, "DisplayStyle", None)), False, False, str(ex))
 
 
+def _category_template_controls_visibility(doc, view, cid):
+    """Empirically establish whether the attached template is the actual
+    cause of CanCategoryBeHidden()==False for one category.
+
+    Template presence alone is not evidence: an attached template that does
+    not control category visibility for this category must not be blamed
+    for it. This detaches the template, re-tests CanCategoryBeHidden, and
+    unconditionally restores ViewTemplateId -- wrapped in a SubTransaction
+    (rolled back regardless of outcome) so nothing observable survives this
+    check beyond the enclosing TransactionGroup the caller already rolls
+    back. A failure to establish evidence is treated as "not established",
+    never as a false positive.
+    """
+    from Autodesk.Revit.DB import ElementId, SubTransaction
+    original = view.ViewTemplateId
+    sub = SubTransaction(doc)
+    sub.Start()
+    try:
+        view.ViewTemplateId = ElementId.InvalidElementId
+        return bool(view.CanCategoryBeHidden(cid))
+    except Exception:
+        return False
+    finally:
+        try:
+            sub.RollBack()
+        finally:
+            view.ViewTemplateId = original
+
+
 def _hide_annotation_categories(doc, view, result):
     from Autodesk.Revit.DB import CategoryType, BuiltInCategory, ElementId
     view_only = set(int(getattr(BuiltInCategory, n)) for n in ("OST_DetailComponents", "OST_Lines") if getattr(BuiltInCategory, n, None) is not None)
@@ -770,12 +799,16 @@ def _hide_annotation_categories(doc, view, result):
                 # CanCategoryBeHidden()==False alone does not distinguish "this
                 # category can never be hidden in this view type" from "an
                 # attached view template locks it" -- Revit's API gives no
-                # separate signal for that. Only count it as template-blocked
-                # when a template is actually attached (affirmative evidence);
-                # otherwise it is an intrinsically non-hideable category and
-                # must not fail the mutation or the mutation-closure result.
-                rec["template_controlled"] = template_attached
+                # separate signal for that, and an attached template is not
+                # by itself evidence that it controls *this* category (it may
+                # not touch category visibility at all). Only count it as
+                # template-blocked when detaching the template empirically
+                # makes the category hideable; otherwise it is an
+                # intrinsically non-hideable category and must not fail the
+                # mutation or the mutation-closure result.
                 if template_attached:
+                    rec["template_controlled"] = _category_template_controls_visibility(doc, view, cid)
+                if rec["template_controlled"]:
                     template_blocked += 1
                 else:
                     non_hideable += 1

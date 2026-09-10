@@ -70,14 +70,34 @@ class FakeDoc:
         self.Settings = FakeSettings(categories)
 
 
+class FakeSubTransaction:
+    """Stands in for Autodesk.Revit.DB.SubTransaction. _category_template_
+    controls_visibility relies only on Start()/RollBack() existing and the
+    fake view's CanCategoryBeHidden() re-reading current ViewTemplateId, so
+    no real undo bookkeeping is needed here - the production function
+    restores ViewTemplateId itself regardless of SubTransaction behavior."""
+
+    def __init__(self, doc):
+        self._doc = doc
+
+    def Start(self):
+        pass
+
+    def RollBack(self):
+        pass
+
+
 class FakeCategoryView:
     """Stands in for the subset of Autodesk.Revit.DB.View used by
-    _hide_annotation_categories: per-category hidden state plus
-    ViewTemplateId, the only affirmative signal of an attached template."""
+    _hide_annotation_categories: per-category hidden state, ViewTemplateId,
+    and CanCategoryBeHidden() results that can differ depending on whether
+    a template is currently attached - so the empirical detach-and-retest
+    in _category_template_controls_visibility has something real to detect."""
 
-    def __init__(self, view_template_id, can_hide_map, hidden_map=None):
+    def __init__(self, view_template_id, can_hide_map, can_hide_map_detached=None, hidden_map=None):
         self.ViewTemplateId = view_template_id
-        self._can_hide = dict(can_hide_map)
+        self._can_hide_attached = dict(can_hide_map)
+        self._can_hide_detached = dict(can_hide_map_detached if can_hide_map_detached is not None else can_hide_map)
         self._hidden = dict(hidden_map or {})
         self.set_calls = []
 
@@ -85,7 +105,8 @@ class FakeCategoryView:
         return self._hidden.get(cid.IntegerValue, False)
 
     def CanCategoryBeHidden(self, cid):
-        return self._can_hide.get(cid.IntegerValue, True)
+        table = self._can_hide_detached if self.ViewTemplateId == FakeElementId.InvalidElementId else self._can_hide_attached
+        return table.get(cid.IntegerValue, True)
 
     def SetCategoryHidden(self, cid, value):
         self._hidden[cid.IntegerValue] = value
@@ -95,13 +116,14 @@ class FakeCategoryView:
 @pytest.fixture
 def fake_revit_db(monkeypatch):
     """_hide_annotation_categories imports CategoryType/BuiltInCategory/
-    ElementId from Autodesk.Revit.DB - not present outside Revit, so tests
-    register a minimal fake module the same way test_revit_batch_executor.py
-    does for its own Revit API dependencies."""
+    ElementId/SubTransaction from Autodesk.Revit.DB - not present outside
+    Revit, so tests register a minimal fake module the same way
+    test_revit_batch_executor.py does for its own Revit API dependencies."""
     fake_db = types.ModuleType("Autodesk.Revit.DB")
     fake_db.CategoryType = FakeCategoryType
     fake_db.BuiltInCategory = FakeBuiltInCategory
     fake_db.ElementId = FakeElementId
+    fake_db.SubTransaction = FakeSubTransaction
     monkeypatch.setitem(sys.modules, "Autodesk.Revit.DB", fake_db)
 
 
@@ -307,11 +329,16 @@ def test_non_hideable_categories_remain_visible_in_diagnostics_without_failing(f
 
 
 def test_attached_template_with_non_hideable_category_is_blocked_by_template(fake_revit_db):
-    """Affirmative evidence (an actually attached template) must still allow
-    BLOCKED_BY_TEMPLATE to be reported."""
+    """Affirmative, category-level evidence: the template is attached AND
+    detaching it empirically makes category 31 hideable, so BLOCKED_BY_TEMPLATE
+    is warranted."""
     categories = [FakeCategory(30, "Tags"), FakeCategory(31, "Locked Annotation")]
     doc = FakeDoc(categories)
-    view = FakeCategoryView(FakeElementId(500), {30: True, 31: False})
+    view = FakeCategoryView(
+        FakeElementId(500),
+        can_hide_map={30: True, 31: False},
+        can_hide_map_detached={30: True, 31: True},
+    )
     result = {"mutations": {}}
     _hide_annotation_categories(doc, view, result)
     rec = result["mutations"]["hide_annotation_categories"]
@@ -323,6 +350,34 @@ def test_attached_template_with_non_hideable_category_is_blocked_by_template(fak
     summary = result["annotation_category_summary"]
     assert summary["template_attached"] is True
     assert summary["template_blocked"] == 1
+    # The empirical detach-and-retest must leave the template reattached.
+    assert view.ViewTemplateId == FakeElementId(500)
+
+
+def test_attached_template_does_not_block_intrinsically_non_hideable_category(fake_revit_db):
+    """A template being attached is not, by itself, evidence that it controls
+    a given category: category 51 stays non-hideable even after the template
+    is (empirically) detached, so it must not be reported BLOCKED_BY_TEMPLATE
+    or fail the mutation."""
+    categories = [FakeCategory(50, "Tags"), FakeCategory(51, "Sheets")]
+    doc = FakeDoc(categories)
+    view = FakeCategoryView(
+        FakeElementId(500),
+        can_hide_map={50: True, 51: False},
+        can_hide_map_detached={50: True, 51: False},
+    )
+    result = {"mutations": {}}
+    _hide_annotation_categories(doc, view, result)
+    rec = result["mutations"]["hide_annotation_categories"]
+    assert rec["status"] != STATUS_TEMPLATE
+    assert rec["status"] == STATUS_APPLIED
+    trace_by_id = {t["category_id"]: t for t in result["annotation_category_trace"]}
+    assert trace_by_id[51]["template_controlled"] is False
+    assert view.ViewTemplateId == FakeElementId(500)
+    summary = result["annotation_category_summary"]
+    assert summary["template_attached"] is True
+    assert summary["non_hideable"] == 1
+    assert summary["template_blocked"] == 0
 
 
 def test_already_hidden_categories_still_report_already_matched(fake_revit_db):
