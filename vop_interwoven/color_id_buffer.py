@@ -508,6 +508,23 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 view_id=view_id,
             )
 
+    # Captured only as (BoundingBoxXYZ, bool) -- same live-API-object-across-
+    # transaction-boundary caution as orig_display_style/orig_smooth_edges
+    # above -- rather than re-derived at restore time.
+    orig_crop_box = None
+    orig_crop_box_active = None
+    try:
+        orig_crop_box = view.CropBox
+        orig_crop_box_active = bool(view.CropBoxActive)
+    except Exception as ex:
+        if diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="crop_box_capture",
+                message=str(ex),
+                view_id=view_id,
+            )
+
     state_out = None
     suppress_tx = Transaction(doc, "VOP Stage A SUPPRESS color ID buffer")
     suppress_tx.Start()
@@ -542,20 +559,59 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         for cat_id_int, hstate in category_hidden_state.items():
             view.SetCategoryHidden(ElementId(int(cat_id_int)), True)
 
-        # NOTE: Stage A deliberately does NOT force the crop box to raster's UV
-        # bounds here. raster.bounds_xy is the model+annotation-inclusive
-        # extent computed earlier in the pipeline (before this view's
-        # annotation categories get hidden above); forcing the Revit crop to
-        # that larger box makes Revit's renderer consider whatever real model
-        # geometry physically sits in the extra (annotation-only) margin as
-        # "in view", polluting the color ID buffer with elements that were
-        # never meant to be there. Until the pipeline can hand Stage A a
-        # model-only bounds distinct from the annotation-expanded raster
-        # bounds, Stage A's export extent is whatever ExportImage's
-        # ZoomFitType.FitToPage naturally fits to the visible (model-only,
-        # post category-hide) geometry -- correct content, but not
-        # necessarily aligned to the annotation raster's canvas. Reconciling
-        # the two into one canvas is deferred to the post-process join step.
+        # Force the view's crop to raster.bounds_xy -- the same view-local UV
+        # rectangle the rest of the pipeline indexes cells against -- so the
+        # exported TIFF's pixel grid is, by construction, in that same
+        # coordinate frame instead of whatever extent ExportImage's
+        # ZoomFitType.FitToPage would auto-compute from visible geometry.
+        # MUST run before the re-collection call immediately below: that
+        # collection has to see the new crop, not the view's original one,
+        # or elements outside the new crop but inside the old one would
+        # still be collected/painted even though they will fall outside the
+        # exported image. crop_bounds_xy is recorded as-is into the JSON
+        # sidecar's "bounds_xy" field further down (not recomputed there),
+        # so the sidecar always reflects exactly what was set here (or None
+        # when it wasn't).
+        crop_bounds_xy = None
+        try:
+            if raster is not None and getattr(raster, "bounds_xy", None) is not None:
+                b = raster.bounds_xy
+                basis = getattr(raster, "view_basis", None)
+                if basis is None:
+                    from .revit.view_basis import make_view_basis as _make_view_basis
+                    basis = _make_view_basis(view, diag=diag)
+                from .revit.view_basis import crop_box_from_uv_bounds as _crop_box_from_uv_bounds
+                new_crop_box = _crop_box_from_uv_bounds(view, basis, b.xmin, b.ymin, b.xmax, b.ymax)
+                if new_crop_box is not None:
+                    view.CropBox = new_crop_box
+                    view.CropBoxActive = True
+                    crop_bounds_xy = (float(b.xmin), float(b.ymin), float(b.xmax), float(b.ymax))
+                elif diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite="crop_box_set",
+                        message="View has no CropBox; Stage A export falls back to "
+                                "FitToPage's auto-computed extent instead of raster.bounds_xy",
+                        view_id=view_id,
+                    )
+            elif diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="crop_box_set",
+                    message="raster/raster.bounds_xy not provided; Stage A export falls "
+                            "back to FitToPage's auto-computed extent instead of an "
+                            "explicit crop",
+                    view_id=view_id,
+                )
+        except Exception as ex:
+            crop_bounds_xy = None
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="crop_box_set",
+                    message=str(ex),
+                    view_id=view_id,
+                )
 
         # Force a flat, unlit display style so painted colors export exactly as
         # set — shading/shadows/ambient occlusion would tint a single flat-color
@@ -849,6 +905,12 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                         pass
             _restore_step("restore_smooth_edges", _restore_smooth_edges)
 
+        if orig_crop_box is not None:
+            def _restore_crop_box():
+                view.CropBox = orig_crop_box
+                view.CropBoxActive = orig_crop_box_active
+            _restore_step("restore_crop_box", _restore_crop_box)
+
         for cat_id_int, was_halftone in category_halftone_state.items():
             def _restore_halftone(cat_id_int=cat_id_int, was_halftone=was_halftone):
                 cat_id = ElementId(int(cat_id_int))
@@ -932,6 +994,13 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             "export_dpi": export_dpi,
             "view_scale": scale,
         },
+        # View-local UV rectangle (min_u, min_v, max_u, max_v) the export
+        # was cropped to -- the same tuple set as view.CropBox above, not
+        # recomputed here. None when the crop could not be applied (no
+        # raster/bounds_xy provided, or the view has no CropBox), in which
+        # case the TIFF's extent is whatever FitToPage auto-computed and a
+        # decode step cannot assume this field describes it.
+        "bounds_xy": list(crop_bounds_xy) if crop_bounds_xy is not None else None,
         "color_assignment_map": {str(k): list(v) for k, v in color_map.items()},
         "paint_failures": paint_failures,
         "paint_failed_element_ids": list(paint_failed_element_ids),
