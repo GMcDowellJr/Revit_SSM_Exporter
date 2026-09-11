@@ -212,7 +212,13 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
 
             loops = _cad_curves_silhouette(elem, view, view_basis, raster, cfg)
             strategy_name = 'cad_curves'
-            confidence = 'HIGH'
+            # MEDIUM, not HIGH: cad_curves is open CAD linework, not solid 3D
+            # model geometry. HIGH confidence would route it through
+            # rasterize_open_polylines(), which writes w_occ and lets this
+            # 2D import ink occlude real model geometry behind it -- a
+            # violation of "3D model geometry is the ONLY occlusion truth."
+            # MEDIUM keeps it as visible, non-occluding proxy ink.
+            confidence = 'MEDIUM'
 
             if not loops:
                 print("[DEBUG] Element {} ({}): Tier 0 - cad_curves FAILED, fallback=bbox".format(elem_id, category))

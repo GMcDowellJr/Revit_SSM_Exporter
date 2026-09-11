@@ -426,7 +426,10 @@ class TestArealExtractionDwgRouting(unittest.TestCase):
             loops, confidence, strategy = extract_areal_geometry(elem, view, vb, raster, cfg)
 
         self.assertEqual(strategy, 'cad_curves')
-        self.assertEqual(confidence, 'HIGH')
+        # MEDIUM, not HIGH: cad_curves is open CAD linework, not solid 3D
+        # model geometry, so it must not gain occlusion authority (only
+        # AREAL+HIGH elements write w_occ / occlude other geometry).
+        self.assertEqual(confidence, 'MEDIUM')
         self.assertTrue(m_cad.called)
         self.assertFalse(m_planar.called, "Tier 1 planar_face_loops must not run for DWG AREAL elements")
         self.assertFalse(m_sil.called, "Tier 1 silhouette_edges must not run for DWG AREAL elements")
@@ -465,6 +468,33 @@ class TestArealExtractionDwgRouting(unittest.TestCase):
         self.assertEqual(strategy, 'planar_face_loops')
         self.assertEqual(confidence, 'HIGH')
         self.assertFalse(m_cad.called, "cad_curves must not run for non-DWG AREAL elements")
+
+    def test_dwg_areal_cad_curves_never_granted_occlusion_authority(self):
+        """cad_curves is open CAD linework, not solid 3D model geometry.
+
+        Only AREAL elements with confidence == 'HIGH' are treated as
+        occluders (see pipeline._occlusion_allowed). A DWG import large
+        enough to classify AREAL must never return HIGH confidence for the
+        cad_curves strategy, or its 2D import linework would be able to
+        occlude real 3D model geometry behind it.
+        """
+        elem = MockElement(5001, "Import Symbol : floorplan.dwg")
+        view = MockView()
+        vb = MockViewBasis()
+        raster = MockRaster()
+        cfg = MockConfig()
+
+        with mock.patch("vop_interwoven.core.silhouette._cad_curves_silhouette",
+                         return_value=[dict(l) for l in self.FAKE_LOOPS]):
+            _, confidence, strategy = extract_areal_geometry(elem, view, vb, raster, cfg)
+
+        self.assertEqual(strategy, 'cad_curves')
+        self.assertNotEqual(confidence, 'HIGH')
+
+        def _occlusion_allowed(elem_class, confidence):
+            return (elem_class == "AREAL") and (confidence == "HIGH")
+
+        self.assertFalse(_occlusion_allowed('AREAL', confidence))
 
 
 if __name__ == '__main__':
