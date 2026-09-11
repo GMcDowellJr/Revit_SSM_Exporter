@@ -1925,10 +1925,15 @@ def _is_dwg_import_element(elem, diag=None):
     Detect DWG/DXF ImportInstance elements that must route through the
     cad_curves silhouette strategy instead of EdgeLoops-based extraction.
 
-    Prefers type-based detection (true ImportInstance). Some collection
-    paths may hand us a wrapped/proxied CAD element that isn't an
-    ImportInstance, so falls back to a conservative heuristic: category
-    name includes .dwg/.dxf.
+    ImportInstance covers every imported CAD format (DWG, DXF, SAT, SKP,
+    3DS, DGN, ...), not just DWG/DXF. SAT/SKP/3DS/DGN imports can carry
+    real solid 3D geometry and must keep the Tier 1 EdgeLoops path (and its
+    HIGH-confidence occlusion authority for AREAL elements), so the
+    ImportInstance class alone is not a safe signal. Prefer the
+    category/format name Revit derives from the imported file (e.g.
+    "....dwg") to positively confirm DWG/DXF; only fall back to the bare
+    ImportInstance type check when no category name is available to
+    inspect (e.g. a wrapped/proxied CAD element).
 
     Shared by get_element_silhouette (TINY/LINEAR) and
     extract_areal_geometry (AREAL) so the detection logic exists in one
@@ -1936,6 +1941,30 @@ def _is_dwg_import_element(elem, diag=None):
     """
     base_elem = _unwrap_elem(elem)
 
+    try:
+        cat = getattr(base_elem, "Category", None)
+        cat_name = getattr(cat, "Name", None) if cat is not None else None
+        if cat_name:
+            ln = str(cat_name).lower()
+            if (".dwg" in ln) or (".dxf" in ln):
+                return True
+            # A recognizable, non-DWG/DXF category name (e.g. an SAT/SKP
+            # import) positively rules this out -- don't fall through to
+            # the bare type check below, which can't distinguish formats.
+            return False
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="geometry_extraction",
+                callsite="_is_dwg_import_element",
+                message="Exception in _is_dwg_import_element: {}".format(e),
+                exc=e,
+            )
+
+    # No category name to inspect (e.g. a wrapped/proxied CAD element):
+    # fall back to the bare ImportInstance type check as a conservative
+    # last resort. Since ImportInstance also covers non-DWG formats, this
+    # is a weaker signal than the category-name check above.
     try:
         from Autodesk.Revit.DB import ImportInstance
     except Exception as e:
@@ -1946,28 +1975,9 @@ def _is_dwg_import_element(elem, diag=None):
                 message="Exception in _is_dwg_import_element: {}".format(e),
                 exc=e,
             )
-        ImportInstance = None
+        return False
 
-    if ImportInstance is not None and isinstance(base_elem, ImportInstance):
-        return True
-
-    try:
-        cat = getattr(base_elem, "Category", None)
-        cat_name = getattr(cat, "Name", None) if cat is not None else None
-        if cat_name:
-            ln = str(cat_name).lower()
-            if (".dwg" in ln) or (".dxf" in ln):
-                return True
-    except Exception as e:
-        if diag is not None:
-            diag.error(
-                phase="geometry_extraction",
-                callsite="_is_dwg_import_element",
-                message="Exception in _is_dwg_import_element: {}".format(e),
-                exc=e,
-            )
-
-    return False
+    return ImportInstance is not None and isinstance(base_elem, ImportInstance)
 
 def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None, cache_key=None, diag=None):
     """Extract element silhouette as 2D loops.

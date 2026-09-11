@@ -412,6 +412,17 @@ class TestArealExtractionDwgRouting(unittest.TestCase):
         self.assertTrue(_is_dwg_import_element(dwg_elem))
         self.assertFalse(_is_dwg_import_element(non_dwg_elem))
 
+    def test_is_dwg_import_element_excludes_non_dwg_cad_formats(self):
+        """ImportInstance also covers SAT/SKP/3DS/DGN imports, which can
+        carry real solid 3D geometry and must keep Tier 1's HIGH-confidence
+        occlusion authority. Only DWG/DXF should match.
+        """
+        sat_elem = MockElement(5003, "Import Symbol : sculpture.sat")
+        skp_elem = MockElement(5004, "Import Symbol : massing.skp")
+
+        self.assertFalse(_is_dwg_import_element(sat_elem))
+        self.assertFalse(_is_dwg_import_element(skp_elem))
+
     def test_dwg_areal_element_routes_to_cad_curves(self):
         elem = MockElement(5001, "Import Symbol : floorplan.dwg")
         view = MockView()
@@ -479,6 +490,39 @@ class TestArealExtractionDwgRouting(unittest.TestCase):
         closed_loops = [lp for lp in loops if not lp.get("open", False)]
         self.assertEqual(len(closed_loops), 0)
         self.assertEqual(len(open_loops), len(loops))
+
+    def test_dwg_total_failure_does_not_fall_through_to_solid_geometry_tiers(self):
+        """When a confirmed DWG element has no usable cad_curves or
+        view-specific bbox geometry, extract_areal_geometry must fail
+        cleanly rather than fall through to Tier 1/2/3. Those tiers assume
+        solid 3D model geometry: Tier 1's EdgeLoops extractors have nothing
+        to walk for CAD import linework, and Tier 3 falls back to the MODEL
+        bbox via resolve_element_bbox() -- reproducing the closed-loop
+        occlusion bug even when the view-specific bbox is unavailable.
+        """
+        elem = MockElement(5001, "Import Symbol : floorplan.dwg")
+        view = MockView()
+        vb = MockViewBasis()
+        raster = MockRaster()
+        cfg = MockConfig()
+
+        with mock.patch("vop_interwoven.core.silhouette._cad_curves_silhouette", return_value=[]), \
+             mock.patch("vop_interwoven.core.silhouette._bbox_silhouette", return_value=[]), \
+             mock.patch("vop_interwoven.core.silhouette._front_face_loops_silhouette") as m_planar, \
+             mock.patch("vop_interwoven.core.silhouette._silhouette_edges") as m_sil, \
+             mock.patch("vop_interwoven.revit.collection.get_element_obb_loops") as m_obb, \
+             mock.patch("vop_interwoven.revit.collection.resolve_element_bbox") as m_resolve_bbox:
+            loops, confidence, strategy = extract_areal_geometry(elem, view, vb, raster, cfg)
+
+        self.assertIsNone(loops)
+        self.assertIsNone(confidence)
+        self.assertEqual(strategy, 'failed')
+        self.assertFalse(m_planar.called, "Tier 1 planar_face_loops must not run for a failed DWG element")
+        self.assertFalse(m_sil.called, "Tier 1 silhouette_edges must not run for a failed DWG element")
+        self.assertFalse(m_obb.called, "Tier 2 get_element_obb_loops must not run for a failed DWG element")
+        self.assertFalse(m_resolve_bbox.called,
+                          "Tier 3 resolve_element_bbox must not run for a failed DWG element "
+                          "(it falls back to the MODEL bbox and would reintroduce the occlusion bug)")
 
     def test_non_dwg_areal_element_still_uses_tier1_edgeloops(self):
         """Regression guard: non-DWG AREAL elements must be unaffected by the routing guard."""

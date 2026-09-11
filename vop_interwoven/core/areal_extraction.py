@@ -290,6 +290,33 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
                     exc=e,
                 )
 
+        # A confirmed DWG element with no usable cad_curves/bbox geometry
+        # must NOT fall through to the Tier 1/2/3 solid-geometry paths
+        # below: Tier 1's EdgeLoops extractors have no faces/edges to walk
+        # for CAD import linework, and Tier 3 resolves the bbox via
+        # resolve_element_bbox(), which falls back to the MODEL bbox
+        # (get_BoundingBox(None)) even when the view-specific bbox
+        # _bbox_silhouette() tried above was unavailable -- reproducing the
+        # closed-loop occlusion bug fixed above, just via a different path.
+        # Fail cleanly instead.
+        if strategy_diag is not None and elem_id is not None:
+            try:
+                strategy_diag.record_geometry_extraction(
+                    elem_id=elem_id,
+                    outcome='failed_all_strategies',
+                    category=category,
+                    details={'reason': 'DWG import: cad_curves and bbox both failed'}
+                )
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="geometry_extraction",
+                        callsite="extract_areal_geometry",
+                        message="Exception in extract_areal_geometry: {}".format(e),
+                        exc=e,
+                    )
+        return (None, None, 'failed')
+
     # ========================================================================
     # TIER 1: HIGH CONFIDENCE - Planar face loops or silhouette edges
     # ========================================================================
