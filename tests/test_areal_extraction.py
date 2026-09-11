@@ -10,12 +10,14 @@ Tests the 3-tier fallback hierarchy and confidence level assignment:
 """
 
 import unittest
+from unittest import mock
 from vop_interwoven.core.areal_extraction import (
     extract_areal_geometry,
     _safe_elem_id,
     _safe_category,
     _get_aabb_loops_from_bbox
 )
+from vop_interwoven.core.silhouette import _is_dwg_import_element
 from vop_interwoven.diagnostics import StrategyDiagnostics
 
 
@@ -389,6 +391,80 @@ class TestArealExtractionIntegration(unittest.TestCase):
         # Both should return valid results
         self.assertIsInstance(strat1, str)
         self.assertIsInstance(strat2, str)
+
+
+class TestArealExtractionDwgRouting(unittest.TestCase):
+    """Test DWG/ImportInstance routing guard in extract_areal_geometry.
+
+    A DWG import large enough to classify AREAL has no solid faces/edges
+    for the EdgeLoops-based Tier 1 extractors to walk, so it must route
+    through the same cad_curves strategy get_element_silhouette already
+    uses for TINY/LINEAR DWG elements, not fall through to
+    _front_face_loops_silhouette / _silhouette_edges.
+    """
+
+    FAKE_LOOPS = [{'points': [(0, 0, 0), (10, 0, 0), (10, 10, 0), (0, 10, 0), (0, 0, 0)], 'is_hole': False}]
+
+    def test_is_dwg_import_element_category_heuristic(self):
+        dwg_elem = MockElement(5001, "Import Symbol : floorplan.dwg")
+        non_dwg_elem = MockElement(5002, "Floors")
+
+        self.assertTrue(_is_dwg_import_element(dwg_elem))
+        self.assertFalse(_is_dwg_import_element(non_dwg_elem))
+
+    def test_dwg_areal_element_routes_to_cad_curves(self):
+        elem = MockElement(5001, "Import Symbol : floorplan.dwg")
+        view = MockView()
+        vb = MockViewBasis()
+        raster = MockRaster()
+        cfg = MockConfig()
+
+        with mock.patch("vop_interwoven.core.silhouette._cad_curves_silhouette",
+                         return_value=[dict(l) for l in self.FAKE_LOOPS]) as m_cad, \
+             mock.patch("vop_interwoven.core.silhouette._front_face_loops_silhouette") as m_planar, \
+             mock.patch("vop_interwoven.core.silhouette._silhouette_edges") as m_sil:
+            loops, confidence, strategy = extract_areal_geometry(elem, view, vb, raster, cfg)
+
+        self.assertEqual(strategy, 'cad_curves')
+        self.assertEqual(confidence, 'HIGH')
+        self.assertTrue(m_cad.called)
+        self.assertFalse(m_planar.called, "Tier 1 planar_face_loops must not run for DWG AREAL elements")
+        self.assertFalse(m_sil.called, "Tier 1 silhouette_edges must not run for DWG AREAL elements")
+        self.assertEqual(loops[0]['strategy'], 'cad_curves')
+
+    def test_dwg_areal_cad_curves_failure_falls_back_to_bbox(self):
+        elem = MockElement(5001, "Import Symbol : floorplan.dwg")
+        view = MockView()
+        vb = MockViewBasis()
+        raster = MockRaster()
+        cfg = MockConfig()
+
+        with mock.patch("vop_interwoven.core.silhouette._cad_curves_silhouette", return_value=[]), \
+             mock.patch("vop_interwoven.core.silhouette._bbox_silhouette",
+                         return_value=[dict(l) for l in self.FAKE_LOOPS]), \
+             mock.patch("vop_interwoven.core.silhouette._front_face_loops_silhouette") as m_planar:
+            loops, confidence, strategy = extract_areal_geometry(elem, view, vb, raster, cfg)
+
+        self.assertEqual(strategy, 'bbox')
+        self.assertEqual(confidence, 'LOW')
+        self.assertFalse(m_planar.called)
+
+    def test_non_dwg_areal_element_still_uses_tier1_edgeloops(self):
+        """Regression guard: non-DWG AREAL elements must be unaffected by the routing guard."""
+        elem = MockElement(5002, "Floors")
+        view = MockView()
+        vb = MockViewBasis()
+        raster = MockRaster()
+        cfg = MockConfig()
+
+        with mock.patch("vop_interwoven.core.silhouette._cad_curves_silhouette") as m_cad, \
+             mock.patch("vop_interwoven.core.silhouette._front_face_loops_silhouette",
+                         return_value=[dict(l) for l in self.FAKE_LOOPS]):
+            loops, confidence, strategy = extract_areal_geometry(elem, view, vb, raster, cfg)
+
+        self.assertEqual(strategy, 'planar_face_loops')
+        self.assertEqual(confidence, 'HIGH')
+        self.assertFalse(m_cad.called, "cad_curves must not run for non-DWG AREAL elements")
 
 
 if __name__ == '__main__':
