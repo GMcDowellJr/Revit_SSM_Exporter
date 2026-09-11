@@ -225,6 +225,18 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
                 loops = _bbox_silhouette(elem, view, view_basis)
                 strategy_name = 'bbox'
                 confidence = 'LOW'
+                # _bbox_silhouette returns a CLOSED rectangle. At LOW
+                # confidence, rasterize_areal_loops() sends closed loops to
+                # rasterize_polygon_to_proxy(write_occ=True), which is
+                # correct for a real solid element's approximate footprint
+                # but wrong here: the DWG's bbox may enclose sparse 2D
+                # linework, not solid mass, so it must not gain occlusion
+                # authority either. Mark it 'open' to force the same
+                # non-occluding rasterize_open_polylines_to_proxy_edges path
+                # used by the cad_curves strategy above.
+                if loops:
+                    for loop in loops:
+                        loop['open'] = True
 
             if loops and len(loops) > 0:
                 for loop in loops:

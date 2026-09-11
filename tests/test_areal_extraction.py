@@ -451,6 +451,34 @@ class TestArealExtractionDwgRouting(unittest.TestCase):
         self.assertEqual(strategy, 'bbox')
         self.assertEqual(confidence, 'LOW')
         self.assertFalse(m_planar.called)
+        # Closed LOW-confidence loops write w_occ via
+        # rasterize_polygon_to_proxy(write_occ=True) -- correct for a real
+        # solid element's approximate footprint, wrong for a DWG bbox that
+        # may enclose sparse 2D linework. Must be marked 'open' so
+        # rasterize_areal_loops() routes it through the non-occluding
+        # rasterize_open_polylines_to_proxy_edges path instead.
+        self.assertTrue(loops[0].get('open'), "DWG bbox fallback must be marked open (non-occluding)")
+
+    def test_dwg_bbox_fallback_routes_as_open_loop_not_closed(self):
+        """Reproduce rasterize_areal_loops()'s open/closed split to prove the
+        DWG bbox fallback lands in open_loops, never closed_loops (which
+        would gain occlusion authority via rasterize_polygon_to_proxy).
+        """
+        elem = MockElement(5001, "Import Symbol : floorplan.dwg")
+        view = MockView()
+        vb = MockViewBasis()
+        raster = MockRaster()
+        cfg = MockConfig()
+
+        with mock.patch("vop_interwoven.core.silhouette._cad_curves_silhouette", return_value=[]), \
+             mock.patch("vop_interwoven.core.silhouette._bbox_silhouette",
+                         return_value=[dict(l) for l in self.FAKE_LOOPS]):
+            loops, confidence, strategy = extract_areal_geometry(elem, view, vb, raster, cfg)
+
+        open_loops = [lp for lp in loops if lp.get("open", False)]
+        closed_loops = [lp for lp in loops if not lp.get("open", False)]
+        self.assertEqual(len(closed_loops), 0)
+        self.assertEqual(len(open_loops), len(loops))
 
     def test_non_dwg_areal_element_still_uses_tier1_edgeloops(self):
         """Regression guard: non-DWG AREAL elements must be unaffected by the routing guard."""
