@@ -34,10 +34,13 @@ For input sidecar ``<name>.json``, this tool writes a sibling
       "source_sidecar": "<path>", "source_sidecar_sha256": "<hex>",
       "source_tiff": "<path>",    "source_tiff_sha256": "<hex>",
       "view_id": <int, from the sidecar>,
+      "capture_reliable": <bool>,
+      "capture_unreliable_reason": <str> | null,
       "image_dimensions_px": [width, height],
       "coordinate_space": "view_uv" | "pixel",
       "view_bounds_uv": [xmin, ymin, xmax, ymax] | null,
       "feet_per_pixel": <float> | null,
+      "feet_per_pixel_unreliable_reason": <str> | null,
       "background_element_id": 0,
       "off_palette_foreground_pixel_count": <int>,
       "background_pixel_count": <int>,
@@ -51,7 +54,7 @@ For input sidecar ``<name>.json``, this tool writes a sibling
              "strategy": "color_id_boundary"},
             ...
           ],
-          "confidence": "HIGH",
+          "confidence": "HIGH" | "MEDIUM",
           "strategy": "color_id_boundary",
           "pixel_area": <int, sum of |signed area| across this element's loops>
         },
@@ -60,6 +63,19 @@ For input sidecar ``<name>.json``, this tool writes a sibling
       "generated_at_unix": <float>,
       "decode_ms": <float>
     }
+
+"confidence" is "HIGH" only when "capture_reliable" is true for the whole
+document (Stage A confirmed DisplayStyle.FlatColors and smooth-edges-off,
+color_id_buffer.py:560-624 -- see _capture_reliability()); otherwise every
+element in this decode is "MEDIUM", since the render is not a guaranteed
+exact-match, anti-aliasing-off capture and must not be handed AREAL+HIGH
+occlusion authority (pipeline.py:2443-2444) it hasn't earned. Similarly,
+"feet_per_pixel" is null (with "feet_per_pixel_unreliable_reason" set) when
+color_id_buffer.py's own MAX_STAGE_A_PIXEL_SIZE clamp (color_id_buffer.py:
+398-399) makes the sidecar's "requested_pixel_size" the clamp value rather
+than the model's true desired width -- see _capture_reliability() and the
+feet_per_pixel computation in build_decoded_document() for exactly what is
+checked.
 
 An element present in color_assignment_map but with zero visible pixels
 (fully occluded, or a paint failure recorded in the sidecar) is simply
@@ -118,6 +134,16 @@ from typing import Any
 
 import numpy as np
 from PIL import Image
+
+# Repo root (parent of tools/) on sys.path so `vop_interwoven` is importable
+# regardless of the caller's current working directory -- this tool is meant
+# to be invoked as `python tools/decode_stage_a_color_id.py ...` from
+# anywhere, same as tools/analyze_stage_a_probe.py, not only from the repo root.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# Pure-Python constant, safe to import outside Revit/Dynamo (color_id_buffer.py
+# defers all Revit API imports to inside function bodies).
+from vop_interwoven.color_id_buffer import MAX_STAGE_A_PIXEL_SIZE
 
 TOOL_VERSION = "1.0.0"
 SCHEMA_VERSION = "1.0"
@@ -332,37 +358,69 @@ def _shoelace_area(loop: list[tuple[int, int]]) -> float:
     return area / 2.0
 
 
+# Row-chunk budget for _element_bounding_boxes: bounds the several full-chunk
+# int64 temporaries (order/row-index/col-index arrays, each 8 bytes/pixel) to
+# roughly this many pixels at once. At the producer's documented ceiling
+# (MAX_STAGE_A_PIXEL_SIZE=15000, a 15000x15000 image), sorting the WHOLE
+# flattened image in one pass -- as an earlier version of this function did --
+# allocates several such int64 arrays simultaneously (order, unravelled row/
+# col indices, their sorted copies) for ~1.8GB each, ~10GB+ peak; verified by
+# measuring actual numpy array sizes at that resolution. Chunking by rows
+# keeps the same vectorized sort+reduceat technique (no per-pixel Python
+# loop) but bounds peak temporary memory to one chunk's worth regardless of
+# total image size.
+_BBOX_CHUNK_PIXEL_BUDGET = 20_000_000
+
+
 def _element_bounding_boxes(id_array: np.ndarray) -> dict[int, tuple[int, int, int, int]]:
-    """Vectorized per-id bounding boxes over the whole image in one pass.
+    """Vectorized per-id bounding boxes, computed in row chunks to bound memory.
 
     A naive `id_array == elem_id` per element re-scans the full H*W image
     once per element (O(n_elements * H*W) -- measured at ~6s for a
     2400x1800px/500-element synthetic view, dominated by that repeated
-    full-image scan). Sorting the flattened array once is O(H*W log(H*W))
-    total regardless of element count, then per-id min/max row/col fall out
-    via a single vectorized reduceat over the sorted groups -- no per-element
-    image scan. Returns {elem_id: (row_min, col_min, row_max, col_max)}
-    (inclusive), omitting BACKGROUND_ELEMENT_ID.
+    full-image scan). Sorting one chunk's flattened pixels is O(chunk*log(chunk));
+    per-id min/max row/col within the chunk fall out via a single vectorized
+    reduceat over the sorted groups -- no per-element or per-pixel Python
+    loop, and no full-image-sized temporary array. Chunk bounding boxes are
+    merged into a running per-id result as each chunk completes. Returns
+    {elem_id: (row_min, col_min, row_max, col_max)} (inclusive), omitting
+    BACKGROUND_ELEMENT_ID.
     """
     h, w = id_array.shape
-    flat_ids = id_array.ravel()
-    order = np.argsort(flat_ids, kind="stable")
-    sorted_ids = flat_ids[order]
-    rows_full, cols_full = np.unravel_index(np.arange(h * w), (h, w))
-    rows_sorted = rows_full[order]
-    cols_sorted = cols_full[order]
+    rows_per_chunk = max(1, _BBOX_CHUNK_PIXEL_BUDGET // max(1, w))
 
-    unique_ids, start_idx = np.unique(sorted_ids, return_index=True)
-    row_min = np.minimum.reduceat(rows_sorted, start_idx)
-    row_max = np.maximum.reduceat(rows_sorted, start_idx)
-    col_min = np.minimum.reduceat(cols_sorted, start_idx)
-    col_max = np.maximum.reduceat(cols_sorted, start_idx)
+    out: dict[int, tuple[int, int, int, int]] = {}
+    for row_start in range(0, h, rows_per_chunk):
+        row_end = min(h, row_start + rows_per_chunk)
+        chunk = id_array[row_start:row_end, :]
+        chunk_h = row_end - row_start
 
-    out = {}
-    for uid, r0, c0, r1, c1 in zip(unique_ids.tolist(), row_min.tolist(), col_min.tolist(), row_max.tolist(), col_max.tolist()):
-        if uid == BACKGROUND_ELEMENT_ID:
-            continue
-        out[int(uid)] = (r0, c0, r1, c1)
+        flat_ids = chunk.ravel()
+        order = np.argsort(flat_ids, kind="stable")
+        sorted_ids = flat_ids[order]
+        rows_full, cols_full = np.unravel_index(np.arange(chunk_h * w), (chunk_h, w))
+        rows_sorted = rows_full[order]
+        cols_sorted = cols_full[order]
+
+        unique_ids, start_idx = np.unique(sorted_ids, return_index=True)
+        row_min = np.minimum.reduceat(rows_sorted, start_idx)
+        row_max = np.maximum.reduceat(rows_sorted, start_idx)
+        col_min = np.minimum.reduceat(cols_sorted, start_idx)
+        col_max = np.maximum.reduceat(cols_sorted, start_idx)
+
+        for uid, r0, c0, r1, c1 in zip(
+            unique_ids.tolist(), row_min.tolist(), col_min.tolist(), row_max.tolist(), col_max.tolist()
+        ):
+            if uid == BACKGROUND_ELEMENT_ID:
+                continue
+            r0 += row_start
+            r1 += row_start
+            prev = out.get(int(uid))
+            if prev is None:
+                out[int(uid)] = (r0, c0, r1, c1)
+            else:
+                pr0, pc0, pr1, pc1 = prev
+                out[int(uid)] = (min(pr0, r0), min(pc0, c0), max(pr1, r1), max(pc1, c1))
     return out
 
 
@@ -396,6 +454,34 @@ def _loops_for_element(id_array: np.ndarray, elem_id: int, bbox: tuple[int, int,
     return out
 
 
+def _capture_reliability(sidecar: dict[str, Any]) -> tuple[bool, str | None]:
+    """Whether this view's Stage A capture is a guaranteed clean, exact-match
+    render, per the producer's own recorded settings -- not assumed.
+
+    export_color_id_buffer_view() only guarantees exact-match colors (no
+    lighting/shading tint, no anti-aliased edge blending) when it actually
+    achieved DisplayStyle.FlatColors AND successfully disabled smooth edges
+    (color_id_buffer.py:560-624). On older Revit hosts, or a view type that
+    doesn't expose these settings, it falls back to plain Shading (still
+    lit/shadowed) or leaves the view's display unchanged, and records exactly
+    that in "applied_display_style"/"applied_smooth_edges" -- it does not
+    retroactively fail the export. Assuming HIGH confidence regardless would
+    hand a possibly tinted/anti-aliased, exact-match-only decode occlusion
+    authority it has not earned (AREAL HIGH is the only elem_class/confidence
+    combination that gates occlusion, pipeline.py:2443-2444).
+    """
+    display_style = sidecar.get("applied_display_style")
+    smooth_edges = sidecar.get("applied_smooth_edges")
+    if display_style == "FlatColors" and smooth_edges is False:
+        return True, None
+    return False, (
+        "Stage A did not confirm a clean flat-color, anti-aliasing-off capture for "
+        "this view (applied_display_style={0!r}, applied_smooth_edges={1!r}); "
+        "decoded colors may be lit/shaded or anti-aliased rather than exact palette "
+        "matches".format(display_style, smooth_edges)
+    )
+
+
 def _pixel_corner_to_uv(x: int, y: int, bounds_uv, image_w: int, image_h: int) -> tuple[float, float]:
     xmin, ymin, xmax, ymax = bounds_uv
     u = xmin + (float(x) / float(image_w)) * (xmax - xmin)
@@ -416,6 +502,7 @@ def build_decoded_document(
     id_array, stats = decode_ids(rgb, color_assignment_map)
 
     feet_per_pixel = None
+    feet_per_pixel_unreliable_reason = None
     resolution = sidecar.get("resolution") or {}
     try:
         actual_px = float(resolution.get("pixel_size"))
@@ -434,12 +521,39 @@ def build_decoded_document(
         export_dpi = float(resolution.get("export_dpi"))
         view_scale = float(resolution.get("view_scale"))
         if actual_px and export_dpi:
-            model_width_ft = (requested_px / export_dpi) * view_scale / 12.0
-            feet_per_pixel = model_width_ft / actual_px
+            if requested_px >= MAX_STAGE_A_PIXEL_SIZE:
+                # color_id_buffer.py:398-399 clamps its own `pixel_size` to
+                # MAX_STAGE_A_PIXEL_SIZE *before* writing it as
+                # "requested_pixel_size" (color_id_buffer.py:930-933) -- the
+                # true pre-clamp desired width (from raster.W/cell_size_ft) is
+                # never persisted anywhere in the sidecar once clamping
+                # occurs. requested_px here is then the clamp value, not the
+                # model's real paper extent, so model_width_ft/feet_per_pixel
+                # would be silently wrong (underestimated) even when Revit
+                # accepted this exact pixel count with no further backoff.
+                # There is no way to recover the true value from the sidecar
+                # alone -- report the gap rather than a wrong number.
+                feet_per_pixel_unreliable_reason = (
+                    "requested_pixel_size ({0}) is at or above MAX_STAGE_A_PIXEL_SIZE "
+                    "({1}); color_id_buffer.py clamps before persisting this field, so "
+                    "the true pre-clamp desired width is not recoverable from the "
+                    "sidecar".format(int(requested_px), MAX_STAGE_A_PIXEL_SIZE)
+                )
+            else:
+                model_width_ft = (requested_px / export_dpi) * view_scale / 12.0
+                feet_per_pixel = model_width_ft / actual_px
     except (TypeError, ValueError):
         feet_per_pixel = None
 
     coordinate_space = "view_uv" if bounds_uv is not None else "pixel"
+
+    capture_reliable, capture_unreliable_reason = _capture_reliability(sidecar)
+    # AREAL occlusion authority requires HIGH specifically (pipeline.py:2443-
+    # 2444); MEDIUM keeps this as visible, non-occluding proxy geometry --
+    # the same policy AREAL's own MEDIUM/LOW confidence already gets
+    # elsewhere in the pipeline -- rather than silently asserting exact-match
+    # fidelity the producer itself did not confirm for this view.
+    element_confidence = "HIGH" if capture_reliable else "MEDIUM"
 
     bboxes = _element_bounding_boxes(id_array)
 
@@ -470,7 +584,7 @@ def build_decoded_document(
             pixel_area += info["area_px"]
         elements[elem_id_str] = {
             "loops": loops_out,
-            "confidence": "HIGH",
+            "confidence": element_confidence,
             "strategy": STRATEGY_NAME,
             "pixel_area": pixel_area,
         }
@@ -483,10 +597,13 @@ def build_decoded_document(
         "source_tiff": str(tiff_path),
         "source_tiff_sha256": sha256_file(tiff_path),
         "view_id": sidecar.get("view_id"),
+        "capture_reliable": capture_reliable,
+        "capture_unreliable_reason": capture_unreliable_reason,
         "image_dimensions_px": [int(w), int(h)],
         "coordinate_space": coordinate_space,
         "view_bounds_uv": list(bounds_uv) if bounds_uv is not None else None,
         "feet_per_pixel": feet_per_pixel,
+        "feet_per_pixel_unreliable_reason": feet_per_pixel_unreliable_reason,
         "background_element_id": BACKGROUND_ELEMENT_ID,
         "off_palette_foreground_pixel_count": stats["off_palette_foreground_pixel_count"],
         "background_pixel_count": stats["background_pixel_count"],

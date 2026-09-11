@@ -32,6 +32,13 @@ if _DEPS_AVAILABLE:
     from tools import decode_stage_a_color_id as dsc
 
 
+def _diagonal_contact_trace_worker(mask, queue):
+    """Module-level (picklable under multiprocessing's "spawn" start method,
+    required on Windows) worker for test_diagonal_pixel_contact_does_not_hang."""
+    from tools import decode_stage_a_color_id as _dsc
+    queue.put(_dsc._trace_loops_for_mask(mask))
+
+
 @unittest.skipUnless(_DEPS_AVAILABLE, "numpy and Pillow required for this tool's own tests")
 class TestDecodeStageAColorId(unittest.TestCase):
     def _make_fixture(self, tmp_dir):
@@ -59,6 +66,12 @@ class TestDecodeStageAColorId(unittest.TestCase):
             "color_assignment_map": {"101": [10, 20, 30], "102": [40, 50, 60]},
             "link_color_assignment_map": {},
             "tiff_path": tiff_path,
+            # The clean/nominal case: Stage A confirmed a flat-color,
+            # anti-aliasing-off capture (color_id_buffer.py:560-624) --
+            # see test_capture_reliability_downgrades_confidence_when_not_confirmed
+            # for the degraded case.
+            "applied_display_style": "FlatColors",
+            "applied_smooth_edges": False,
         }
         sidecar_path = os.path.join(tmp_dir, "test_view_1001.json")
         with open(sidecar_path, "w") as f:
@@ -174,20 +187,30 @@ class TestDecodeStageAColorId(unittest.TestCase):
         # edges, so the traversal never returned to its start and hung
         # forever. This must terminate and must NOT merge the two pixels'
         # boundaries into one (wrong) loop.
-        import signal
+        #
+        # Uses multiprocessing rather than signal.SIGALRM/alarm: those are
+        # POSIX-only and don't exist on Windows, which is this repo's actual
+        # Revit/Dynamo development target (CLAUDE.md "Environment Notes") even
+        # though this particular tool runs outside Dynamo -- a Windows-hosted
+        # run of this test suite must not error out before even exercising
+        # the tracer. multiprocessing.Process + join(timeout) + terminate()
+        # is portable across POSIX and Windows ("spawn" is required on
+        # Windows anyway, so the worker below is a module-level function to
+        # stay picklable for it).
+        import multiprocessing
 
         mask = np.array([[True, False], [False, True]], dtype=bool)
-
-        def _handler(signum, frame):
-            raise TimeoutError("diagonal-contact tracing hung")
-
-        old_handler = signal.signal(signal.SIGALRM, _handler)
-        signal.alarm(5)
-        try:
-            loops = dsc._trace_loops_for_mask(mask)
-        finally:
-            signal.alarm(0)
-            signal.signal(signal.SIGALRM, old_handler)
+        ctx = multiprocessing.get_context("spawn")
+        queue = ctx.Queue()
+        proc = ctx.Process(target=_diagonal_contact_trace_worker, args=(mask, queue))
+        proc.start()
+        proc.join(timeout=10)
+        if proc.is_alive():
+            proc.terminate()
+            proc.join()
+            self.fail("diagonal-contact tracing hung (did not complete within 10s)")
+        self.assertEqual(proc.exitcode, 0, "tracer worker process exited abnormally")
+        loops = queue.get()
 
         self.assertEqual(len(loops), 2, "diagonal-touching pixels must trace as two separate loops")
         for loop in loops:
@@ -226,6 +249,60 @@ class TestDecodeStageAColorId(unittest.TestCase):
             doc = json.loads(out_path.read_text())
             self.assertEqual(doc["coordinate_space"], "pixel")
             self.assertIsNone(doc["view_bounds_uv"])
+
+    def test_feet_per_pixel_unreliable_when_requested_size_was_clamped(self):
+        # Regression test: color_id_buffer.py:398-399 clamps its own
+        # pixel_size to MAX_STAGE_A_PIXEL_SIZE *before* writing it as
+        # "requested_pixel_size" (color_id_buffer.py:930-933), so the true
+        # pre-clamp desired width is never in the sidecar once clamping
+        # occurs. feet_per_pixel must not silently report a wrong value
+        # derived from the clamp value in that case.
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sidecar_path, tiff_path, arr = self._make_fixture(tmp_dir)
+            sidecar = json.load(open(sidecar_path))
+            sidecar["resolution"]["requested_pixel_size"] = dsc.MAX_STAGE_A_PIXEL_SIZE
+            sidecar["resolution"]["pixel_size"] = dsc.MAX_STAGE_A_PIXEL_SIZE
+            from pathlib import Path
+            doc = dsc.build_decoded_document(Path(tiff_path), sidecar, Path(sidecar_path), bounds_uv=None)
+            self.assertIsNone(doc["feet_per_pixel"])
+            self.assertIsNotNone(doc["feet_per_pixel_unreliable_reason"])
+            self.assertIn("MAX_STAGE_A_PIXEL_SIZE", doc["feet_per_pixel_unreliable_reason"])
+
+    def test_capture_reliability_downgrades_confidence_when_not_confirmed(self):
+        # Regression test: a view where Stage A fell back to Shading, failed
+        # to change display style, or could not disable smooth edges
+        # (color_id_buffer.py:560-624) is not a guaranteed exact-match,
+        # anti-aliasing-off render. Emitting HIGH confidence regardless would
+        # hand pipeline.py's AREAL+HIGH occlusion-authority gate
+        # (pipeline.py:2443-2444) a decode that never earned it.
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sidecar_path, tiff_path, arr = self._make_fixture(tmp_dir)
+            sidecar = json.load(open(sidecar_path))
+            doc = dsc.build_decoded_document(Path(tiff_path), sidecar, Path(sidecar_path), bounds_uv=None)
+            self.assertTrue(doc["capture_reliable"])
+            self.assertIsNone(doc["capture_unreliable_reason"])
+            loops, confidence, strategy = dsc.reconstruct_areal_tuple(doc, 101)
+            self.assertEqual(confidence, "HIGH")
+
+        degraded_cases = [
+            {"applied_display_style": "Shading", "applied_smooth_edges": False},
+            {"applied_display_style": "FlatColors", "applied_smooth_edges": "unchanged (failed)"},
+            {"applied_display_style": "unchanged", "applied_smooth_edges": "unchanged"},
+        ]
+        for overrides in degraded_cases:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                sidecar_path, tiff_path, arr = self._make_fixture(tmp_dir)
+                sidecar = json.load(open(sidecar_path))
+                sidecar.update(overrides)
+                doc = dsc.build_decoded_document(Path(tiff_path), sidecar, Path(sidecar_path), bounds_uv=None)
+                self.assertFalse(doc["capture_reliable"], overrides)
+                self.assertIsNotNone(doc["capture_unreliable_reason"], overrides)
+                loops, confidence, strategy = dsc.reconstruct_areal_tuple(doc, 101)
+                self.assertEqual(confidence, "MEDIUM", overrides)
 
 
 if __name__ == "__main__":
