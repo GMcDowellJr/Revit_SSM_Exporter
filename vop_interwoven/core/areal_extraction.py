@@ -171,6 +171,126 @@ def extract_areal_geometry(elem, view, view_basis, raster, cfg, diag=None, strat
     category = _safe_category(elem)
 
     # ========================================================================
+    # TIER 0: DWG/ImportInstance routing guard
+    # ========================================================================
+    # DWG/DXF ImportInstance geometry has no solid faces/edges for the
+    # EdgeLoops-based Tier 1 extractors (_front_face_loops_silhouette,
+    # _silhouette_edges) to walk. get_element_silhouette already detects
+    # this case for TINY/LINEAR elements and routes to
+    # ['cad_curves', 'bbox']; mirror that here for AREAL elements before
+    # falling into the Tier 1/2 dispatch below.
+    try:
+        from .silhouette import _is_dwg_import_element
+
+        is_dwg = _is_dwg_import_element(elem, diag=diag)
+    except Exception as e:
+        is_dwg = False
+        if diag is not None:
+            diag.error(
+                phase="geometry_extraction",
+                callsite="extract_areal_geometry",
+                message="Exception in extract_areal_geometry: {}".format(e),
+                exc=e,
+            )
+
+    if is_dwg:
+        if strategy_diag is not None and elem_id is not None:
+            try:
+                strategy_diag.record_method_attempt(elem_id, 'cad_curves')
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="geometry_extraction",
+                        callsite="extract_areal_geometry",
+                        message="Exception in extract_areal_geometry: {}".format(e),
+                        exc=e,
+                    )
+        try:
+            from .silhouette import _cad_curves_silhouette, _bbox_silhouette
+
+            print("[DEBUG] Element {} ({}): Tier 0 - Attempting cad_curves extraction (DWG)".format(elem_id, category))
+
+            loops = _cad_curves_silhouette(elem, view, view_basis, raster, cfg)
+            strategy_name = 'cad_curves'
+            # MEDIUM, not HIGH: cad_curves is open CAD linework, not solid 3D
+            # model geometry. HIGH confidence would route it through
+            # rasterize_open_polylines(), which writes w_occ and lets this
+            # 2D import ink occlude real model geometry behind it -- a
+            # violation of "3D model geometry is the ONLY occlusion truth."
+            # MEDIUM keeps it as visible, non-occluding proxy ink.
+            confidence = 'MEDIUM'
+
+            if not loops:
+                print("[DEBUG] Element {} ({}): Tier 0 - cad_curves FAILED, fallback=bbox".format(elem_id, category))
+                loops = _bbox_silhouette(elem, view, view_basis)
+                strategy_name = 'bbox'
+                confidence = 'LOW'
+                # _bbox_silhouette returns a CLOSED rectangle. At LOW
+                # confidence, rasterize_areal_loops() sends closed loops to
+                # rasterize_polygon_to_proxy(write_occ=True), which is
+                # correct for a real solid element's approximate footprint
+                # but wrong here: the DWG's bbox may enclose sparse 2D
+                # linework, not solid mass, so it must not gain occlusion
+                # authority either. Mark it 'open' to force the same
+                # non-occluding rasterize_open_polylines_to_proxy_edges path
+                # used by the cad_curves strategy above.
+                if loops:
+                    for loop in loops:
+                        loop['open'] = True
+
+            if loops and len(loops) > 0:
+                for loop in loops:
+                    loop['strategy'] = strategy_name
+
+                if strategy_diag is not None and elem_id is not None:
+                    try:
+                        strategy_diag.record_areal_strategy(
+                            elem_id=elem_id,
+                            strategy=strategy_name,
+                            success=True,
+                            category=category,
+                            confidence=confidence
+                        )
+                        strategy_diag.record_geometry_extraction(
+                            elem_id=elem_id,
+                            outcome='success',
+                            category=category,
+                            details={'strategy': strategy_name, 'loop_count': len(loops)}
+                        )
+                        strategy_diag.record_extraction_method(
+                            elem_id=elem_id,
+                            category=category,
+                            method=strategy_name,
+                            success=True,
+                            confidence=confidence
+                        )
+                        strategy_diag.record_confidence(elem_id, confidence, category, elem_class='AREAL')
+                    except Exception as e:
+                        if diag is not None:
+                            diag.error(
+                                phase="geometry_extraction",
+                                callsite="extract_areal_geometry",
+                                message="Exception in extract_areal_geometry: {}".format(e),
+                                exc=e,
+                            )
+
+                print("[DEBUG] Element {} ({}): Tier 0 - {} SUCCESS ({} loops), confidence={}".format(
+                    elem_id, category, strategy_name, len(loops), confidence))
+
+                return (loops, confidence, strategy_name)
+            else:
+                print("[DEBUG] Element {} ({}): Tier 0 - cad_curves and bbox both FAILED".format(elem_id, category))
+        except Exception as e:
+            print("[DEBUG] Element {} ({}): Tier 0 - cad_curves EXCEPTION: {}".format(elem_id, category, e))
+            if diag is not None:
+                diag.error(
+                    phase="geometry_extraction",
+                    callsite="extract_areal_geometry",
+                    message="Exception in extract_areal_geometry: {}".format(e),
+                    exc=e,
+                )
+
+    # ========================================================================
     # TIER 1: HIGH CONFIDENCE - Planar face loops or silhouette edges
     # ========================================================================
 

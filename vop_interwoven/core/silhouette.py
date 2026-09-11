@@ -1920,6 +1920,55 @@ def _unwrap_elem(elem):
     except Exception as e:
         return elem
 
+def _is_dwg_import_element(elem, diag=None):
+    """
+    Detect DWG/DXF ImportInstance elements that must route through the
+    cad_curves silhouette strategy instead of EdgeLoops-based extraction.
+
+    Prefers type-based detection (true ImportInstance). Some collection
+    paths may hand us a wrapped/proxied CAD element that isn't an
+    ImportInstance, so falls back to a conservative heuristic: category
+    name includes .dwg/.dxf.
+
+    Shared by get_element_silhouette (TINY/LINEAR) and
+    extract_areal_geometry (AREAL) so the detection logic exists in one
+    place only.
+    """
+    base_elem = _unwrap_elem(elem)
+
+    try:
+        from Autodesk.Revit.DB import ImportInstance
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="geometry_extraction",
+                callsite="_is_dwg_import_element",
+                message="Exception in _is_dwg_import_element: {}".format(e),
+                exc=e,
+            )
+        ImportInstance = None
+
+    if ImportInstance is not None and isinstance(base_elem, ImportInstance):
+        return True
+
+    try:
+        cat = getattr(base_elem, "Category", None)
+        cat_name = getattr(cat, "Name", None) if cat is not None else None
+        if cat_name:
+            ln = str(cat_name).lower()
+            if (".dwg" in ln) or (".dxf" in ln):
+                return True
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="geometry_extraction",
+                callsite="_is_dwg_import_element",
+                message="Exception in _is_dwg_import_element: {}".format(e),
+                exc=e,
+            )
+
+    return False
+
 def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None, cache_key=None, diag=None):
     """Extract element silhouette as 2D loops.
 
@@ -2072,7 +2121,7 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
     base_elem = _unwrap_elem(elem)
 
     try:
-        from Autodesk.Revit.DB import ImportInstance, FamilyInstance
+        from Autodesk.Revit.DB import FamilyInstance
     except Exception as e:
         if diag is not None:
             diag.error(
@@ -2081,33 +2130,13 @@ def get_element_silhouette(elem, view, view_basis, raster, cfg=None, cache=None,
                 message="Exception in get_element_silhouette: {}".format(e),
                 exc=e,
             )
-        ImportInstance = None
         FamilyInstance = None
 
     strategies = None
 
-    # Prefer type-based detection (true ImportInstance)
-    if ImportInstance is not None and isinstance(base_elem, ImportInstance):
+    if _is_dwg_import_element(elem, diag=diag):
         strategies = ['cad_curves', 'bbox']
 
-    # Some collection paths may hand us a wrapped/proxied CAD element that isn't an ImportInstance.
-    # In those cases, use a conservative heuristic: category name includes .dwg/.dxf.
-    if strategies is None:
-        try:
-            cat = getattr(base_elem, "Category", None)
-            cat_name = getattr(cat, "Name", None) if cat is not None else None
-            if cat_name:
-                ln = str(cat_name).lower()
-                if (".dwg" in ln) or (".dxf" in ln):
-                    strategies = ['cad_curves', 'bbox']
-        except Exception as e:
-            if diag is not None:
-                diag.error(
-                    phase="geometry_extraction",
-                    callsite="get_element_silhouette",
-                    message="Exception in get_element_silhouette: {}".format(e),
-                    exc=e,
-                )
     # Family instances: prefer symbolic curves where possible
     if strategies is None and FamilyInstance is not None and isinstance(base_elem, FamilyInstance):
         if cfg is None:
