@@ -167,6 +167,54 @@ class TestDecodeStageAColorId(unittest.TestCase):
             self.assertEqual(doc["element_count_with_geometry"], 2)
             self.assertEqual(doc["schema_version"], dsc.SCHEMA_VERSION)
 
+    def test_diagonal_pixel_contact_does_not_hang_and_traces_separate_loops(self):
+        # Regression test: two same-element pixels touching only at a shared
+        # corner (a checkerboard 2x2 neighborhood) used to make the vertex ->
+        # vertex edge dict silently drop one of the vertex's two outgoing
+        # edges, so the traversal never returned to its start and hung
+        # forever. This must terminate and must NOT merge the two pixels'
+        # boundaries into one (wrong) loop.
+        import signal
+
+        mask = np.array([[True, False], [False, True]], dtype=bool)
+
+        def _handler(signum, frame):
+            raise TimeoutError("diagonal-contact tracing hung")
+
+        old_handler = signal.signal(signal.SIGALRM, _handler)
+        signal.alarm(5)
+        try:
+            loops = dsc._trace_loops_for_mask(mask)
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+
+        self.assertEqual(len(loops), 2, "diagonal-touching pixels must trace as two separate loops")
+        for loop in loops:
+            self.assertAlmostEqual(abs(dsc._shoelace_area(loop)), 1.0)
+
+    def test_feet_per_pixel_accounts_for_pixel_size_backoff(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sidecar_path, tiff_path, arr = self._make_fixture(tmp_dir)
+            sidecar = json.load(open(sidecar_path))
+            # Simulate Revit backing off from the requested width to half of it
+            # (_set_pixel_size_with_backoff, color_id_buffer.py:285-316): the
+            # TIFF is still `arr`'s actual 40px wide in this fixture, but the
+            # sidecar must still report truthfully what was requested vs. accepted.
+            sidecar["resolution"]["requested_pixel_size"] = 80
+            sidecar["resolution"]["pixel_size"] = 40  # accepted (backed off) width
+            from pathlib import Path
+            doc = dsc.build_decoded_document(Path(tiff_path), sidecar, Path(sidecar_path), bounds_uv=None)
+            # model_width_ft intended = (80/150)*96/12 = 4.2667 ft; actual image is
+            # 40px wide, so feet_per_pixel must be 4.2667/40, NOT the pre-backoff
+            # (80/150*96/12)/80 value the cancelling bug would have produced.
+            expected = ((80.0 / 150.0) * 96.0 / 12.0) / 40.0
+            self.assertAlmostEqual(doc["feet_per_pixel"], expected, places=9)
+            # The bug's value (actual_px cancels out): view_scale/(export_dpi*12).
+            buggy_value = 96.0 / (150.0 * 12.0)
+            self.assertNotAlmostEqual(doc["feet_per_pixel"], buggy_value, places=6)
+
     def test_pixel_space_output_when_bounds_omitted(self):
         import tempfile
         with tempfile.TemporaryDirectory() as tmp_dir:

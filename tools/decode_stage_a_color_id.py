@@ -214,10 +214,24 @@ def _trace_loops_for_mask(mask: np.ndarray) -> list[list[tuple[int, int]]]:
     # (c+1, j+1).
     h_diff = padded[:-1, :] != padded[1:, :]  # shape (h+1, w+2)
 
-    # Build a directed edge map keyed by start vertex, oriented so the True
-    # (inside-mask) region is always on the left of the walking direction.
-    # This is verified empirically below (test suite), not just asserted.
-    edges: dict[tuple[int, int], tuple[int, int]] = {}
+    # Every directed edge is oriented so the True (inside-mask) region is on
+    # the left of the walking direction, and tagged with the padded-space
+    # (row, col) of the inside pixel that "owns" it. At a diagonal-only pixel
+    # contact (a 2x2 neighborhood like TL=True, BR=True, TR=BL=False), the
+    # shared corner vertex is a degree-4 pinch point: TWO distinct pixels each
+    # contribute one outgoing edge from that vertex, which a plain
+    # vertex->vertex dict cannot represent (a second assignment silently
+    # overwrites the first, and the walk below then never returns to its
+    # start -- an infinite loop, not just a wrong answer). Edges are stored
+    # per-start-vertex as a list, and traversal disambiguates a multi-edge
+    # vertex by continuing with the outgoing edge that shares the same owner
+    # pixel as the incoming edge, so each pixel's own contour is walked to
+    # completion without jumping across the pinch into a different pixel's
+    # loop.
+    out_edges: dict[tuple[int, int], list[tuple[tuple[int, int], tuple[int, int]]]] = {}
+
+    def _add_edge(start, end, owner):
+        out_edges.setdefault(start, []).append((end, owner))
 
     vr, vk = np.nonzero(v_diff)
     for r, k in zip(vr.tolist(), vk.tolist()):
@@ -225,10 +239,10 @@ def _trace_loops_for_mask(mask: np.ndarray) -> list[list[tuple[int, int]]]:
         x = k + 1
         if left_inside:
             # Inside is to the west; walk downward (+y) to keep it on the left.
-            edges[(x, r)] = (x, r + 1)
+            _add_edge((x, r), (x, r + 1), (r, k))
         else:
             # Inside is to the east; walk upward (-y) to keep it on the left.
-            edges[(x, r + 1)] = (x, r)
+            _add_edge((x, r + 1), (x, r), (r, k + 1))
 
     hj, hc = np.nonzero(h_diff)
     for j, c in zip(hj.tolist(), hc.tolist()):
@@ -236,26 +250,54 @@ def _trace_loops_for_mask(mask: np.ndarray) -> list[list[tuple[int, int]]]:
         y = j + 1
         if top_inside:
             # Inside is to the north; walk leftward (-x) to keep it on the left.
-            edges[(c + 1, y)] = (c, y)
+            _add_edge((c + 1, y), (c, y), (j, c))
         else:
             # Inside is to the south; walk rightward (+x) to keep it on the left.
-            edges[(c, y)] = (c + 1, y)
+            _add_edge((c, y), (c + 1, y), (j + 1, c))
+
+    # Consume edges as (start, index-into-out_edges[start]) so a vertex with
+    # several outgoing edges (a pinch point) tracks each one's used state
+    # independently, rather than per-vertex as if only one could ever exist.
+    used = {start: [False] * len(lst) for start, lst in out_edges.items()}
+
+    def _take(vertex, preferred_owner):
+        candidates = out_edges.get(vertex, [])
+        used_here = used[vertex]
+        choice = None
+        for i, (_end, owner) in enumerate(candidates):
+            if not used_here[i] and owner == preferred_owner:
+                choice = i
+                break
+        if choice is None:
+            for i, (_end, _owner) in enumerate(candidates):
+                if not used_here[i]:
+                    choice = i
+                    break
+        if choice is None:
+            return None
+        used_here[choice] = True
+        end, owner = candidates[choice]
+        return end, owner
 
     loops_padded: list[list[tuple[int, int]]] = []
-    visited_starts = set()
-    for start in list(edges.keys()):
-        if start in visited_starts:
-            continue
-        loop = [start]
-        current = start
-        while True:
-            visited_starts.add(current)
-            nxt = edges[current]
-            if nxt == start:
-                break
-            loop.append(nxt)
-            current = nxt
-        loops_padded.append(loop)
+    for start, candidates in out_edges.items():
+        for i in range(len(candidates)):
+            if used[start][i]:
+                continue
+            used[start][i] = True
+            end0, owner0 = candidates[i]
+            loop = [start]
+            current, owner = end0, owner0
+            while current != start:
+                loop.append(current)
+                nxt = _take(current, owner)
+                if nxt is None:
+                    # Defensive: a well-formed mask boundary always closes: every
+                    # vertex's in-degree equals its out-degree. Bail out rather
+                    # than hang if that invariant is ever violated.
+                    break
+                current, owner = nxt
+            loops_padded.append(loop)
 
     # Shift back from padded-space corners to original-image corner space.
     loops = [[(x - 1, y - 1) for (x, y) in loop] for loop in loops_padded]
@@ -377,11 +419,23 @@ def build_decoded_document(
     resolution = sidecar.get("resolution") or {}
     try:
         actual_px = float(resolution.get("pixel_size"))
+        # requested_pixel_size (not the possibly-backed-off actual pixel_size)
+        # is what raster.W/cell_size_ft/scale was originally sized to
+        # (color_id_buffer.py:384-399): it's the model width, in pixels, the
+        # export was SUPPOSED to be. Deriving model_width_ft from actual_px
+        # instead would make it cancel out of feet_per_pixel entirely
+        # (model_width_ft/actual_px == (actual_px/export_dpi*view_scale/12)/actual_px,
+        # independent of actual_px), silently reporting the pre-backoff scale
+        # even when Revit's PixelSize backoff (color_id_buffer.py:285-316)
+        # actually shrank the export -- wrong by requested_px/actual_px on any
+        # degraded-resolution export.
+        requested_px = resolution.get("requested_pixel_size")
+        requested_px = float(requested_px) if requested_px else actual_px
         export_dpi = float(resolution.get("export_dpi"))
         view_scale = float(resolution.get("view_scale"))
         if actual_px and export_dpi:
-            model_width_ft = (actual_px / export_dpi) * view_scale / 12.0
-            feet_per_pixel = model_width_ft / actual_px if actual_px else None
+            model_width_ft = (requested_px / export_dpi) * view_scale / 12.0
+            feet_per_pixel = model_width_ft / actual_px
     except (TypeError, ValueError):
         feet_per_pixel = None
 
