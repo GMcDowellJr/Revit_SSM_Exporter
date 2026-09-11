@@ -23,6 +23,15 @@ Each input is a Stage A JSON sidecar written by export_color_id_buffer_view()
 "tiff_path" field, falling back to a same-directory, same-stem .tiff/.tif
 file if that recorded path no longer exists on this filesystem.
 
+Since export_color_id_buffer_view() now crops the export to raster.bounds_xy
+and persists that same rectangle into the sidecar's "bounds_xy" field
+(color_id_buffer.py's own JSON, not this tool's output "view_bounds_uv"),
+--bounds is normally unnecessary: when omitted, decode_one() reads
+"bounds_xy" from the sidecar itself and only falls back to pixel-space
+output when that field is absent or null (e.g. an older sidecar, or a
+capture where the crop could not be applied -- see KNOWN LIMITATION below).
+An explicit --bounds still overrides the sidecar's own field when given.
+
 OUTPUT-FILE CONTRACT (the deliverable a future pipeline.py change reads)
 -------------------------------------------------------------------------
 For input sidecar ``<name>.json``, this tool writes a sibling
@@ -99,28 +108,25 @@ with no depth component; estimate_depth_from_loops_or_bbox()
 by falling back to bbox-based depth, so this is a correctly-typed, honest
 output rather than a fabricated depth value.
 
-KNOWN LIMITATION -- view-space origin is not recoverable from the sidecar
---------------------------------------------------------------------------
-export_color_id_buffer_view() does not force the TIFF's crop to raster.
-bounds_xy (color_id_buffer.py:545-558): ExportImage's ZoomFitType.FitToPage
-fits to whatever bounding box Revit's renderer computes for the visible
-geometry, which the module's own comment says is "not necessarily aligned
-to the annotation raster's canvas." The JSON sidecar records enough to
-derive a pixel->feet SCALE (via resolution.pixel_size/export_dpi/view_scale,
-see feet_per_pixel above) but records no view-space ORIGIN (xmin/ymin) for
-the exported image. Without an explicit --bounds argument, this tool cannot
-know where in view-space the image sits, so it emits loop points in pixel-
-corner space (coordinate_space="pixel") rather than silently guessing an
-origin (e.g. assuming xmin=0, or assuming the image exactly covers raster.
-bounds_xy). Passing --bounds <raster.bounds_xy at export time> yields exact
-view-local UV output (coordinate_space="view_uv"), but the caller supplying
-those bounds is vouching that the FitToPage crop actually matched raster.
-bounds_xy for that run -- true only to the extent color_id_buffer.py's own
-sizing assumption (pixel_size computed from raster.W/cell_size_ft/scale,
-color_id_buffer.py:384-399) held for that export. Reconciling this properly
-(e.g. persisting the actual crop bounds into the sidecar) is a color_id_
-buffer.py change outside this tool's scope -- flagged for the 1b decision,
-not worked around here.
+KNOWN LIMITATION -- crop not guaranteed on every capture
+---------------------------------------------------------
+export_color_id_buffer_view() sets view.CropBox/CropBoxActive to
+raster.bounds_xy before export (color_id_buffer.py, "crop_box_set") and
+ExportImage's ZoomFitType.FitToPage then fits to that explicit crop rather
+than an auto-computed visible-geometry extent, so on a normal capture the
+TIFF's pixel grid corresponds exactly to raster.bounds_xy and the sidecar's
+"bounds_xy" field records that same rectangle (not recomputed -- the exact
+tuple that was set). This tool reads it automatically (see USAGE above).
+
+The crop can still fail to apply on a given capture -- no raster/bounds_xy
+was passed to export_color_id_buffer_view(), the view has no CropBox (some
+non-croppable view types), or setting CropBox/CropBoxActive raised -- in
+which case color_id_buffer.py records "bounds_xy": null and the TIFF's
+extent is whatever FitToPage auto-computed instead. This tool cannot
+recover a view-space origin for that case from the sidecar alone, so it
+falls back to pixel-corner space (coordinate_space="pixel") rather than
+silently guessing an origin. An explicit --bounds argument can still be
+supplied by a caller who otherwise knows the true crop for such a capture.
 """
 from __future__ import annotations
 
@@ -649,6 +655,10 @@ def _resolve_tiff_path(sidecar_path: Path, sidecar: dict[str, Any]) -> Path:
 
 def decode_one(sidecar_path: Path, bounds_uv=None) -> Path:
     sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    if bounds_uv is None:
+        sidecar_bounds = sidecar.get("bounds_xy")
+        if sidecar_bounds is not None and len(sidecar_bounds) == 4:
+            bounds_uv = tuple(float(x) for x in sidecar_bounds)
     tiff_path = _resolve_tiff_path(sidecar_path, sidecar)
     doc = build_decoded_document(tiff_path, sidecar, sidecar_path, bounds_uv)
     out_path = sidecar_path.with_name(sidecar_path.stem + ".decoded.json")
@@ -677,7 +687,9 @@ def main(argv=None):
         metavar="XMIN,YMIN,XMAX,YMAX",
         default=None,
         help="View-space (feet) bounds the exported TIFF spans, e.g. from raster.bounds_xy. "
-             "Required to emit view-local UV coordinates; omit to emit pixel-space coordinates instead.",
+             "Normally unnecessary: each sidecar's own \"bounds_xy\" field is used "
+             "automatically when this is omitted. Overrides the sidecar's field when given; "
+             "falls back to pixel-space coordinates only if neither is available.",
     )
     ns = ap.parse_args(argv)
     bounds_uv = None

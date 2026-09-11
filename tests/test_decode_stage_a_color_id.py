@@ -250,6 +250,67 @@ class TestDecodeStageAColorId(unittest.TestCase):
             self.assertEqual(doc["coordinate_space"], "pixel")
             self.assertIsNone(doc["view_bounds_uv"])
 
+    def test_bounds_xy_read_automatically_from_sidecar(self):
+        # color_id_buffer.py's crop_box_set step now crops the export to
+        # raster.bounds_xy and persists that same rectangle as the sidecar's
+        # "bounds_xy" field. Confirms the two pieces connect end-to-end: with
+        # no --bounds CLI argument, the sidecar's own field alone is enough
+        # to produce coordinate_space="view_uv" output.
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sidecar_path, tiff_path, arr = self._make_fixture(tmp_dir)
+            sidecar = json.load(open(sidecar_path))
+            sidecar["bounds_xy"] = [0.0, 0.0, 40.0, 30.0]
+            with open(sidecar_path, "w") as f:
+                json.dump(sidecar, f)
+
+            rc = dsc.main([sidecar_path])
+            self.assertEqual(rc, 0)
+
+            from pathlib import Path
+            out_path = Path(sidecar_path).with_name(Path(sidecar_path).stem + ".decoded.json")
+            doc = json.loads(out_path.read_text())
+            self.assertEqual(doc["coordinate_space"], "view_uv")
+            self.assertEqual(doc["view_bounds_uv"], [0.0, 0.0, 40.0, 30.0])
+
+    def test_explicit_bounds_overrides_sidecar_bounds_xy(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sidecar_path, tiff_path, arr = self._make_fixture(tmp_dir)
+            sidecar = json.load(open(sidecar_path))
+            sidecar["bounds_xy"] = [0.0, 0.0, 40.0, 30.0]
+            with open(sidecar_path, "w") as f:
+                json.dump(sidecar, f)
+
+            rc = dsc.main([sidecar_path, "--bounds", "100,200,140,230"])
+            self.assertEqual(rc, 0)
+
+            from pathlib import Path
+            out_path = Path(sidecar_path).with_name(Path(sidecar_path).stem + ".decoded.json")
+            doc = json.loads(out_path.read_text())
+            self.assertEqual(doc["coordinate_space"], "view_uv")
+            self.assertEqual(doc["view_bounds_uv"], [100.0, 200.0, 140.0, 230.0])
+
+    def test_null_bounds_xy_in_sidecar_falls_back_to_pixel_space(self):
+        # color_id_buffer.py writes "bounds_xy": null when the crop could not
+        # be applied (e.g. no raster provided, or the view has no CropBox).
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sidecar_path, tiff_path, arr = self._make_fixture(tmp_dir)
+            sidecar = json.load(open(sidecar_path))
+            sidecar["bounds_xy"] = None
+            with open(sidecar_path, "w") as f:
+                json.dump(sidecar, f)
+
+            rc = dsc.main([sidecar_path])
+            self.assertEqual(rc, 0)
+
+            from pathlib import Path
+            out_path = Path(sidecar_path).with_name(Path(sidecar_path).stem + ".decoded.json")
+            doc = json.loads(out_path.read_text())
+            self.assertEqual(doc["coordinate_space"], "pixel")
+            self.assertIsNone(doc["view_bounds_uv"])
+
     def test_feet_per_pixel_unreliable_when_requested_size_was_clamped(self):
         # Regression test: color_id_buffer.py:398-399 clamps its own
         # pixel_size to MAX_STAGE_A_PIXEL_SIZE *before* writing it as
