@@ -7,6 +7,7 @@ colors, exports a TIFF immediately, writes a JSON sidecar, and restores view
 state before returning to the next view.
 """
 
+import copy
 import json
 import os
 import time
@@ -229,17 +230,31 @@ def _dedupe_link_instances_by_document(link_instances):
 
 
 def _model_categories_in_linked_doc(linked_doc, filterable_ids):
-    """Distinct filterable, CategoryType.Model categories among elements in
-    ONE linked document.
+    """Distinct filterable categories among elements in ONE linked document
+    that the project's authoritative LINK category policy
+    (revit/collection_policy.py's should_include_element(), "single source
+    of truth" per CLAUDE.md) would include.
+
+    ``filterable_ids`` is a separate, narrower technical gate: whether
+    Revit's ParameterFilterElement API can even filter on this category at
+    all (ParameterFilterUtilities.GetAllFilterableCategories()) -- distinct
+    from should_include_element()'s policy decision (which excludes e.g.
+    Rooms/Areas/MEP Spaces/Lines regardless of filterability) and checked
+    first since it is cheap and category-only, unlike the policy call.
 
     Deliberately unscoped by host-view visibility: a category can be hidden
     in the host view while still visible via the link's own Custom
     category-visibility settings, and no API exposes that per-link state
     directly, so narrowing here would silently drop categories that are
-    genuinely visible. Overinclusion here only costs a spare filter/palette
-    slot, never wrong output.
+    genuinely visible. Overinclusion from that alone only costs a spare
+    filter/palette slot, never wrong output -- but skipping the policy call
+    would not be mere overinclusion, it would recolor categories (Rooms,
+    Areas, Lines, ...) the rest of the pipeline treats as non-physical/
+    non-model, and since a category filter paints HOST elements of that
+    category too, it would contaminate HOST content as well.
     """
-    from Autodesk.Revit.DB import FilteredElementCollector, CategoryType
+    from Autodesk.Revit.DB import FilteredElementCollector
+    from .revit.collection_policy import should_include_element
     seen_cat_ids = set()
     categories = []
     for elem in FilteredElementCollector(linked_doc).WhereElementIsNotElementType():
@@ -249,9 +264,12 @@ def _model_categories_in_linked_doc(linked_doc, filterable_ids):
         cid_int = cat.Id.IntegerValue
         if cid_int in seen_cat_ids or cid_int not in filterable_ids:
             continue
-        if cat.CategoryType != CategoryType.Model:
-            continue
         seen_cat_ids.add(cid_int)
+        include, _reason, _cat_name = should_include_element(
+            elem=elem, doc=linked_doc, source_type="LINK"
+        )
+        if not include:
+            continue
         categories.append(cat)
     return categories
 
@@ -305,8 +323,8 @@ def _collect_link_category_filters(doc, view, diag=None, view_id=None):
     return sorted(combined.values(), key=lambda cat: cat.Name)
 
 
-def _apply_link_category_filters(doc, view, categories_with_colors, solid_pattern_id, diag=None, view_id=None):
-    """Create/reuse one ParameterFilterElement per category and color it via
+def _apply_link_category_filters(doc, view, view_id, categories_with_colors, solid_pattern_id, diag=None):
+    """Create one ParameterFilterElement per category and color it via
     SetFilterOverrides, ported from the tested standalone filter-creation
     script (random per-run colors there are replaced with this call's
     caller-supplied palette slice — see export_color_id_buffer_view).
@@ -317,21 +335,41 @@ def _apply_link_category_filters(doc, view, categories_with_colors, solid_patter
     through to the filter's flat category color; a HOST element painted
     per-element still wins over any filter.
 
-    Returns ``(link_category_color_map, newly_applied_filter_ids)``:
+    Filter names are scoped to this view's id ("VOP_Color_<view_id>_
+    <category>"), NOT shared across views/runs the way the ported script's
+    find-or-create-by-fixed-name did. That script was a manual Dynamo tool
+    a human re-ran on the same view during iterative testing, where leaving
+    a stable-named filter behind was the point; this module's whole
+    contract is the opposite -- suppress, capture, and restore the view to
+    exactly how it was, with nothing left behind (see the module docstring
+    and the extensive suppress/restore machinery below). A stable shared
+    name risks colliding with a filter the *user* already has applied to
+    this view for their own reasons: overwriting its color with no
+    prior-state capture would permanently corrupt their view graphics, and
+    capturing/restoring a live OverrideGraphicSettings object across the
+    suppress_tx/export/restore_tx boundary is exactly the pattern this
+    module's history warns against (see the "Deliberately NOT capturing/
+    reusing prior OverrideGraphicSettings" comment above painted_link_
+    entries in export_color_id_buffer_view -- the curtain-panel restore bug
+    was caused by exactly that). View-scoping makes a name collision mean
+    only one thing: this same view's own Stage A run left a filter behind
+    after a crash before reaching restore -- safe to reuse and fully own.
+
+    Returns ``(link_category_color_map, applied_filter_ids)``:
       link_category_color_map: {category_name: [r, g, b]}
-      newly_applied_filter_ids: ElementId ints this call newly added to the
-        view's filter list (i.e. not already applied before this call) —
-        the caller must RemoveFilter these during restore so Stage A leaves
-        no filters permanently attached to the view.
+      applied_filter_ids: ElementId ints of every filter this call applied
+        to the view this run (freshly created or a same-view crash
+        leftover) -- the caller must RemoveFilter AND doc.Delete every one
+        of these during restore so Stage A leaves nothing behind.
     """
     from Autodesk.Revit.DB import ElementId, ParameterFilterElement, Color
     import System.Collections.Generic as SCG
 
     link_category_color_map = {}
-    newly_applied_filter_ids = []
+    applied_filter_ids = []
     for cat, rgb in categories_with_colors:
         cat_name = cat.Name
-        filter_name = "VOP_Color_" + cat_name
+        filter_name = "VOP_Color_{0}_{1}".format(view_id, cat_name)
         try:
             pfe = _find_existing_parameter_filter(doc, filter_name)
             if pfe is None:
@@ -341,13 +379,18 @@ def _apply_link_category_filters(doc, view, categories_with_colors, solid_patter
 
             if not view.IsFilterApplied(pfe.Id):
                 view.AddFilter(pfe.Id)
-                newly_applied_filter_ids.append(pfe.Id.IntegerValue)
-            # Always re-enable: the suppress step above unconditionally
-            # disables every pre-existing filter on this view (including a
-            # same-named filter left applied by an earlier Stage A run), so
-            # a filter we merely reuse here must be force-enabled to take
-            # effect for this export, not just a freshly-added one.
+            applied_filter_ids.append(pfe.Id.IntegerValue)
+            # Force both enabled AND visible: the suppress step above
+            # unconditionally disables every pre-existing filter on this
+            # view, and a filter's visibility (separate from its enabled
+            # state -- view.GetFilterVisibility/SetFilterVisibility, used
+            # the same way by export_color_id_buffer_view's own filter_
+            # state capture below) could independently be false on a
+            # same-view crash leftover. Either would leave this category's
+            # LINK elements invisible or uncolored in the export even
+            # though link_category_color_map reports them assigned.
             view.SetIsFilterEnabled(pfe.Id, True)
+            view.SetFilterVisibility(pfe.Id, True)
 
             color = Color(int(rgb[0]), int(rgb[1]), int(rgb[2]))
             ogs = _build_flat_color_ogs(solid_pattern_id, color)
@@ -364,7 +407,7 @@ def _apply_link_category_filters(doc, view, categories_with_colors, solid_patter
                             "view's ID buffer: {1}".format(cat_name, ex),
                     view_id=view_id,
                 )
-    return link_category_color_map, newly_applied_filter_ids
+    return link_category_color_map, applied_filter_ids
 
 
 def _try_color_link_element_detailed(view, link_inst_id, link_elem_id, ogs):
@@ -705,10 +748,13 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     # what it looked like before. Host elements are always reset via
     # resolved_ids directly (the full painted set, matching the reference
     # script); LINK elements get no individual override to reset at all --
-    # applied_link_category_filter_ids instead tracks which view filters this
-    # run newly applied, so restore can RemoveFilter exactly those and leave
-    # the view's pre-existing filter list untouched (see
-    # _apply_link_category_filters/_restore_remove_link_category_filters).
+    # applied_link_category_filter_ids instead tracks every view-id-scoped
+    # category filter this run applied (freshly created, or a same-view
+    # crash leftover reused), so restore can RemoveFilter AND doc.Delete
+    # every one of them and leave nothing behind (see
+    # _apply_link_category_filters's docstring for why these filters are
+    # always fully owned and cleaned up rather than reused/restored like a
+    # generic pre-existing view filter).
     applied_link_category_filter_ids = []
     category_hidden_state = _hidden_category_state(doc, view)
     solid_pattern_id = _get_solid_pattern_id(doc)
@@ -957,7 +1003,19 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
 
         try:
             from .revit.collection import expand_host_link_import_model_elements as _expand_elements
-            expanded = _expand_elements(doc, view, recollected, cfg, diag=diag, elem_cache=elem_cache)
+            # LINK proxies this expansion would build (via linked_documents.py's
+            # collect_all_linked_elements -> _collect_from_revit_links, one scan
+            # per PLACEMENT, not deduped by document) are never consumed below --
+            # LINK coloring now comes entirely from _collect_link_category_filters/
+            # _apply_link_category_filters, which already dedupe by unique linked
+            # document. Forcing include_linked_rvt off on a local Config copy (the
+            # two include_* flags are the only cfg this expansion reads, and they
+            # gate independent branches) skips that redundant per-placement work
+            # without touching DWG import expansion, which HOST-paints exactly as
+            # before.
+            host_only_cfg = copy.copy(cfg)
+            host_only_cfg.include_linked_rvt = False
+            expanded = _expand_elements(doc, view, recollected, host_only_cfg, diag=diag, elem_cache=elem_cache)
         except Exception as ex:
             if diag is not None:
                 diag.warn(
@@ -1020,7 +1078,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # to the filter's flat category color. Must run before the HOST paint
         # loop so the filters are in place before ExportImage.
         link_category_color_map, applied_link_category_filter_ids = _apply_link_category_filters(
-            doc, view, categories_with_colors, solid_pattern_id, diag=diag, view_id=view_id
+            doc, view, view_id, categories_with_colors, solid_pattern_id, diag=diag
         )
 
         # Paint per-element, but never let one element's failure (some categories/
@@ -1148,21 +1206,40 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # reverting the phase filter can trigger regeneration of curtain-grid
         # sub-elements, so nothing element-level should still depend on the
         # current identities of those elements by this point.
-        if applied_link_category_filter_ids:
-            def _restore_remove_link_category_filters():
-                # RemoveFilter only, never doc.Delete the ParameterFilterElement
-                # itself: filter definitions persist in the document (matching
-                # the tested standalone script's find-or-create/reuse behavior)
-                # so a later view/run can reuse the same named filter instead of
-                # recreating it -- only this view's filter LIST membership,
-                # which Stage A itself added, needs to be undone here.
-                for fid_int in applied_link_category_filter_ids:
-                    view.RemoveFilter(ElementId(int(fid_int)))
-            _restore_step("restore_remove_link_category_filters", _restore_remove_link_category_filters)
+        # Both RemoveFilter (view's active filter list) AND doc.Delete (the
+        # ParameterFilterElement itself), per filter, isolated so one bad id
+        # never blocks cleanup of the others: these filters are view-id-scoped
+        # by name (see _apply_link_category_filters), so unlike the neutral
+        # phase filter there is no other view or run that could ever benefit
+        # from finding this exact name again -- nothing to preserve by keeping
+        # the definition around, and every one leaves Stage A leaving nothing
+        # behind on this view.
+        for fid_int in applied_link_category_filter_ids:
+            def _restore_link_category_filter(fid_int=fid_int):
+                fid = ElementId(int(fid_int))
+                view.RemoveFilter(fid)
+                doc.Delete(fid)
+            _restore_step("restore_link_category_filter", _restore_link_category_filter)
 
         def _restore_filters():
+            already_cleaned_up = set(applied_link_category_filter_ids)
             for fid_int, fstate in filter_state.items():
+                if fid_int in already_cleaned_up:
+                    # A same-view Stage A crash leftover reused above and just
+                    # fully removed+deleted by the per-filter loop -- touching
+                    # its (now-deleted) ElementId here would raise and abort
+                    # this loop before it reaches any later, unrelated
+                    # pre-existing filter's own restore.
+                    continue
                 view.SetIsFilterEnabled(ElementId(int(fid_int)), fstate["was_enabled"])
+                # was_visible is captured above alongside was_enabled but was
+                # never restored here -- a latent gap that only matters once
+                # something actively calls SetFilterVisibility, which
+                # _apply_link_category_filters now does (a same-view crash
+                # leftover could have been left non-visible); for every other,
+                # untouched filter this is a no-op (nothing else in this
+                # module ever changes filter visibility).
+                view.SetFilterVisibility(ElementId(int(fid_int)), fstate["was_visible"])
         _restore_step("restore_filters", _restore_filters)
 
         def _restore_phase_filter():
