@@ -230,17 +230,33 @@ def _dedupe_link_instances_by_document(link_instances):
 
 
 def _model_categories_in_linked_doc(linked_doc, filterable_ids):
-    """Distinct filterable categories among elements in ONE linked document
-    that the project's authoritative LINK category policy
-    (revit/collection_policy.py's should_include_element(), "single source
-    of truth" per CLAUDE.md) would include.
+    """Distinct categories among elements in ONE linked document that the
+    project's authoritative LINK category policy (revit/collection_policy.
+    py's should_include_element(), "single source of truth" per CLAUDE.md)
+    would include -- split by whether Revit's ParameterFilterElement API can
+    actually filter on that category
+    (ParameterFilterUtilities.GetAllFilterableCategories()). Both checks
+    must run for every category now (unlike an earlier revision that
+    treated filterable_ids as a cheap first gate and skipped the policy
+    call otherwise): a policy-included-but-unfilterable category still
+    needs to be identified and returned, not silently dropped, or its LINK
+    elements end up neither colored nor suppressed.
 
-    ``filterable_ids`` is a separate, narrower technical gate: whether
-    Revit's ParameterFilterElement API can even filter on this category at
-    all (ParameterFilterUtilities.GetAllFilterableCategories()) -- distinct
-    from should_include_element()'s policy decision (which excludes e.g.
-    Rooms/Areas/MEP Spaces/Lines regardless of filterability) and checked
-    first since it is cheap and category-only, unlike the policy call.
+    Returns ``(colorable, uncolorable)``: ``colorable`` categories are both
+    policy-included AND filterable -- callable code can color their LINK
+    elements via a category filter. ``uncolorable`` categories are
+    policy-included but NOT filterable -- Stage A has no way to color their
+    LINK elements at all, and the caller must suppress them (hide the
+    category) rather than let them render with an uncontrolled native
+    color a decoder could alias onto some unrelated HOST element's palette
+    ID (see _apply_link_category_filters's docstring and the retired
+    per-element path's "hide what can't be colored" precedent this
+    restores). Policy-EXCLUDED categories (Rooms, Areas, Lines, ...) are in
+    neither list -- the rest of the pipeline already never collects their
+    LINK elements at all (linked_documents.py's own should_include_element
+    call), so their native rendering is an existing, out-of-scope
+    characteristic of the whole system, not something this function
+    introduces or needs to suppress.
 
     Deliberately unscoped by host-view visibility: a category can be hidden
     in the host view while still visible via the link's own Custom
@@ -256,13 +272,14 @@ def _model_categories_in_linked_doc(linked_doc, filterable_ids):
     from Autodesk.Revit.DB import FilteredElementCollector
     from .revit.collection_policy import should_include_element
     seen_cat_ids = set()
-    categories = []
+    colorable = []
+    uncolorable = []
     for elem in FilteredElementCollector(linked_doc).WhereElementIsNotElementType():
         cat = elem.Category
         if cat is None:
             continue
         cid_int = cat.Id.IntegerValue
-        if cid_int in seen_cat_ids or cid_int not in filterable_ids:
+        if cid_int in seen_cat_ids:
             continue
         seen_cat_ids.add(cid_int)
         include, _reason, _cat_name = should_include_element(
@@ -270,8 +287,11 @@ def _model_categories_in_linked_doc(linked_doc, filterable_ids):
         )
         if not include:
             continue
-        categories.append(cat)
-    return categories
+        if cid_int in filterable_ids:
+            colorable.append(cat)
+        else:
+            uncolorable.append(cat)
+    return colorable, uncolorable
 
 
 def _find_existing_parameter_filter(doc, name):
@@ -283,20 +303,26 @@ def _find_existing_parameter_filter(doc, name):
 
 
 def _collect_link_category_filters(doc, view, diag=None, view_id=None):
-    """Discover the union of CategoryType.Model, filterable categories across
-    every UNIQUE linked document referenced in this view.
+    """Discover the union of policy-included, CategoryType.Model categories
+    across every UNIQUE linked document referenced in this view.
 
     Ported from the tested standalone filter-creation script: deduplicates
     RevitLinkInstance placements by underlying document identity (PathName)
     before scanning, then unions each unique document's model categories.
 
-    Returns an ordered list of Category objects, sorted by category Name for
-    a deterministic, reproducible palette-slot assignment order.
+    Returns ``(colorable, uncolorable)``, each an ordered list of Category
+    objects sorted by category Name for a deterministic, reproducible
+    palette-slot assignment order. ``colorable`` categories get a
+    ParameterFilterElement (see _apply_link_category_filters);
+    ``uncolorable`` ones are policy-included but not filterable at all, so
+    the caller must suppress (hide) them instead -- see
+    _model_categories_in_linked_doc's docstring for why leaving them
+    uncontrolled is not an option.
     """
     from Autodesk.Revit.DB import FilteredElementCollector, RevitLinkInstance, ParameterFilterUtilities
     link_instances = list(FilteredElementCollector(doc, view.Id).OfClass(RevitLinkInstance))
     if not link_instances:
-        return []
+        return [], []
 
     unique_docs, unresolved_names = _dedupe_link_instances_by_document(link_instances)
     if unresolved_names and diag is not None:
@@ -313,14 +339,23 @@ def _collect_link_category_filters(doc, view, diag=None, view_id=None):
         cid.IntegerValue for cid in ParameterFilterUtilities.GetAllFilterableCategories()
     )
 
-    combined = {}
+    combined_colorable = {}
+    combined_uncolorable = {}
     for path_name, info in unique_docs.items():
-        for cat in _model_categories_in_linked_doc(info["linked_doc"], filterable_ids):
+        colorable, uncolorable = _model_categories_in_linked_doc(info["linked_doc"], filterable_ids)
+        for cat in colorable:
             cid_int = cat.Id.IntegerValue
-            if cid_int not in combined:
-                combined[cid_int] = cat
+            if cid_int not in combined_colorable:
+                combined_colorable[cid_int] = cat
+        for cat in uncolorable:
+            cid_int = cat.Id.IntegerValue
+            if cid_int not in combined_uncolorable:
+                combined_uncolorable[cid_int] = cat
 
-    return sorted(combined.values(), key=lambda cat: cat.Name)
+    return (
+        sorted(combined_colorable.values(), key=lambda cat: cat.Name),
+        sorted(combined_uncolorable.values(), key=lambda cat: cat.Name),
+    )
 
 
 def _apply_link_category_filters(doc, view, view_id, categories_with_colors, solid_pattern_id, diag=None):
@@ -366,13 +401,27 @@ def _apply_link_category_filters(doc, view, view_id, categories_with_colors, sol
     could have a reference to it before it exists), and only those are
     safe for the caller to doc.Delete() outright during restore.
 
-    Returns ``(link_category_color_map, created_filter_ids, reused_filter_ids)``:
+    A category whose filter creation/application fails here is NOT left to
+    render with its native, uncontrolled color: the decoder matches every
+    TIFF pixel against color_assignment_map's deterministic HOST palette,
+    and an unrelated native LINK color that happens to coincide with a HOST
+    element's assigned RGB would silently corrupt that HOST element's
+    decoded silhouette. The retired per-element path avoided exactly this
+    by hiding a link instance whose override failed; failed_categories
+    below is this function's equivalent -- the caller must hide these
+    categories view-wide (see _model_categories_in_linked_doc's docstring
+    for the matching "uncolorable" case discovery finds up front).
+
+    Returns ``(link_category_color_map, created_filter_ids, reused_filter_ids,
+    failed_categories)``:
       link_category_color_map: {category_name: [r, g, b]}
       created_filter_ids: ElementId ints of filters this call created fresh
         this run -- restore may RemoveFilter AND doc.Delete these.
       reused_filter_ids: ElementId ints of filters this call found already
         existing by name and recolored -- restore may only RemoveFilter
         these from THIS view, never doc.Delete the shared definition.
+      failed_categories: Category objects whose filter could not be
+        created/applied -- the caller must suppress (hide) these.
     """
     from Autodesk.Revit.DB import ElementId, ParameterFilterElement, Color
     import System.Collections.Generic as SCG
@@ -380,6 +429,7 @@ def _apply_link_category_filters(doc, view, view_id, categories_with_colors, sol
     link_category_color_map = {}
     created_filter_ids = []
     reused_filter_ids = []
+    failed_categories = []
     for cat, rgb in categories_with_colors:
         cat_name = cat.Name
         filter_name = "VOP_Color_{0}_{1}".format(view_id, cat_name)
@@ -418,16 +468,17 @@ def _apply_link_category_filters(doc, view, view_id, categories_with_colors, sol
 
             link_category_color_map[cat_name] = [int(rgb[0]), int(rgb[1]), int(rgb[2])]
         except Exception as ex:
+            failed_categories.append(cat)
             if diag is not None:
                 diag.warn(
                     phase="color_id_buffer",
                     callsite="apply_link_category_filter",
-                    message="Category '{0}' filter could not be created/applied; LINK "
-                            "elements of this category will render uncolored in this "
-                            "view's ID buffer: {1}".format(cat_name, ex),
+                    message="Category '{0}' filter could not be created/applied; this "
+                            "category will be hidden for this view's capture instead of "
+                            "rendering with an uncontrolled native color: {1}".format(cat_name, ex),
                     view_id=view_id,
                 )
-    return link_category_color_map, created_filter_ids, reused_filter_ids
+    return link_category_color_map, created_filter_ids, reused_filter_ids, failed_categories
 
 
 def _try_color_link_element_detailed(view, link_inst_id, link_elem_id, ogs):
@@ -1058,9 +1109,11 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # way an opted-out capture reports zero LINK assignments and applies no
         # category filters, matching prior behavior.
         if getattr(cfg, "include_linked_rvt", False):
-            link_categories = _collect_link_category_filters(doc, view, diag=diag, view_id=view_id)
+            link_categories, uncolorable_link_categories = _collect_link_category_filters(
+                doc, view, diag=diag, view_id=view_id
+            )
         else:
-            link_categories = []
+            link_categories, uncolorable_link_categories = [], []
         count_link_categories = len(link_categories)
         total_count = count_host + count_link_categories
 
@@ -1107,11 +1160,58 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # LINK elements, which never get an individual override, fall through
         # to the filter's flat category color. Must run before the HOST paint
         # loop so the filters are in place before ExportImage.
-        link_category_color_map, created_link_category_filter_ids, reused_link_category_filter_ids = (
-            _apply_link_category_filters(
-                doc, view, view_id, categories_with_colors, solid_pattern_id, diag=diag
-            )
+        (
+            link_category_color_map,
+            created_link_category_filter_ids,
+            reused_link_category_filter_ids,
+            failed_link_categories,
+        ) = _apply_link_category_filters(
+            doc, view, view_id, categories_with_colors, solid_pattern_id, diag=diag
         )
+
+        # Categories that are policy-included but couldn't be colored at all
+        # (not Revit-filterable -- uncolorable_link_categories) or whose
+        # filter creation/application failed (failed_link_categories) must
+        # not render with their uncontrolled native color: that color could
+        # coincidentally match a HOST element's deterministic palette RGB
+        # and the decoder would silently attribute those pixels to the
+        # wrong element. Hidden instead, mirroring the retired per-element
+        # path's "hide what can't be colored" precedent. Reuses
+        # category_hidden_state/the existing restore_category_hidden step
+        # (populated dynamically here, mid-transaction, rather than
+        # up-front like _hidden_category_state()'s sweep -- the dict is a
+        # plain Python object, restore just iterates whatever is in it when
+        # restore_tx runs later).
+        for cat in list(uncolorable_link_categories) + list(failed_link_categories):
+            cat_id_int = cat.Id.IntegerValue
+            if cat_id_int in category_hidden_state:
+                continue
+            try:
+                cat_id = ElementId(int(cat_id_int))
+                if view.CanCategoryBeHidden(cat_id):
+                    category_hidden_state[cat_id_int] = {
+                        "name": getattr(cat, "Name", None),
+                        "was_hidden": bool(view.GetCategoryHidden(cat_id)),
+                    }
+                    view.SetCategoryHidden(cat_id, True)
+                elif diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite="hide_uncolorable_link_category",
+                        message="Category '{0}' cannot be colored (not filterable, or filter "
+                                "application failed) and CANNOT be hidden either; its native "
+                                "LINK color may alias a HOST element's palette ID in this "
+                                "view's ID buffer".format(getattr(cat, "Name", cat_id_int)),
+                        view_id=view_id,
+                    )
+            except Exception as ex:
+                if diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite="hide_uncolorable_link_category",
+                        message=str(ex),
+                        view_id=view_id,
+                    )
 
         # Paint per-element, but never let one element's failure (some categories/
         # nested sub-components legitimately reject graphic overrides) roll back

@@ -283,7 +283,7 @@ def test_collect_link_category_filters_dedupes_and_applies_authoritative_policy(
     diag = _FakeDiag()
 
     with _install_fake_revit_db({10, 11, 12, 13, 14}):
-        categories = color_id_buffer._collect_link_category_filters(
+        colorable, uncolorable = color_id_buffer._collect_link_category_filters(
             view_doc, fake_view, diag=diag, view_id=1
         )
 
@@ -293,22 +293,49 @@ def test_collect_link_category_filters_dedupes_and_applies_authoritative_policy(
     )
     assert doc_b.scan_count == 1
 
-    names = [cat.Name for cat in categories]
+    names = [cat.Name for cat in colorable]
     assert names == ["Doors", "Floors", "Walls"], (
-        "expected only policy-included Model categories, sorted by name -- "
+        "expected only policy-included, filterable Model categories, sorted by name -- "
         "Rooms must be excluded despite being CategoryType.Model and filterable"
+    )
+    assert uncolorable == [], (
+        "Tags (Annotation) and Rooms fail the POLICY check, landing in neither list -- "
+        "only a policy-included-but-unfilterable category becomes 'uncolorable'"
     )
 
     assert any(w["callsite"] == "link_category_filter_discovery" for w in diag.warnings)
     assert "unloaded link" in diag.warnings[0]["message"]
 
 
+def test_collect_link_category_filters_splits_out_policy_included_but_unfilterable_categories():
+    """A category the policy would include but Revit's ParameterFilterUtilities
+    won't filter on at all must come back as "uncolorable", not silently
+    dropped -- the caller has to suppress (hide) it instead of leaving its
+    LINK elements rendering with an uncontrolled native color."""
+    cat_walls = _FakeCategory("Walls", 10)
+    cat_odd = _FakeCategory("OddModelCategory", 15)  # Model, policy-included, NOT filterable
+    doc_a = _FakeLinkedDoc("Z:\\typical_exam_room.rvt", [
+        _FakeElement(cat_walls),
+        _FakeElement(cat_odd),
+    ])
+    inst_a = _FakeLinkInstance("exam room", doc_a)
+    view_doc = types.SimpleNamespace(link_instances=[inst_a], parameter_filters=[])
+    fake_view = types.SimpleNamespace(Id=_FakeElementId(1))
+
+    with _install_fake_revit_db({10}):  # 15 deliberately absent -- not filterable
+        colorable, uncolorable = color_id_buffer._collect_link_category_filters(view_doc, fake_view)
+
+    assert [cat.Name for cat in colorable] == ["Walls"]
+    assert [cat.Name for cat in uncolorable] == ["OddModelCategory"]
+
+
 def test_collect_link_category_filters_returns_empty_when_no_links_in_view():
     view_doc = types.SimpleNamespace(link_instances=[], parameter_filters=[])
     fake_view = types.SimpleNamespace(Id=_FakeElementId(1))
     with _install_fake_revit_db({10}):
-        categories = color_id_buffer._collect_link_category_filters(view_doc, fake_view)
-    assert categories == []
+        colorable, uncolorable = color_id_buffer._collect_link_category_filters(view_doc, fake_view)
+    assert colorable == []
+    assert uncolorable == []
 
 
 # --- _apply_link_category_filters: create/reuse + color + enable/visible ---
@@ -319,7 +346,7 @@ def test_apply_link_category_filters_creates_view_scoped_filter_and_sets_color()
     view = _FakeView()
 
     with _install_fake_revit_db({10}):
-        link_category_color_map, created_ids, reused_ids = color_id_buffer._apply_link_category_filters(
+        link_category_color_map, created_ids, reused_ids, failed_cats = color_id_buffer._apply_link_category_filters(
             doc, view, 1234, [(cat_walls, (10, 20, 30))], solid_pattern_id=object()
         )
 
@@ -332,6 +359,7 @@ def test_apply_link_category_filters_creates_view_scoped_filter_and_sets_color()
     )
     assert created_ids == [pfe.Id.IntegerValue], "freshly created -- safe for restore to doc.Delete"
     assert reused_ids == []
+    assert failed_cats == []
     assert view.add_filter_calls == [pfe.Id]
     assert (pfe.Id, True) in view.enable_calls
     assert (pfe.Id, True) in view.visibility_calls
@@ -345,6 +373,10 @@ def test_apply_link_category_filters_creates_filter_records_it_even_if_addfilter
     orphan the freshly created ParameterFilterElement: it has to land in
     created_filter_ids (tracked for restore's doc.Delete()) before AddFilter
     is even attempted, not only after the whole per-category block succeeds.
+    The category itself must also come back in failed_categories so the
+    caller hides it -- its LINK elements are left with no color at all, and
+    rendering with their uncontrolled native color risks aliasing a HOST
+    element's palette id in the decoder.
     """
     cat_walls = _FakeCategory("Walls", 10)
     doc = types.SimpleNamespace(parameter_filters=[])
@@ -356,7 +388,7 @@ def test_apply_link_category_filters_creates_filter_records_it_even_if_addfilter
 
     diag = _FakeDiag()
     with _install_fake_revit_db({10}):
-        link_category_color_map, created_ids, reused_ids = color_id_buffer._apply_link_category_filters(
+        link_category_color_map, created_ids, reused_ids, failed_cats = color_id_buffer._apply_link_category_filters(
             doc, view, 1234, [(cat_walls, (10, 20, 30))], solid_pattern_id=object(), diag=diag
         )
 
@@ -367,6 +399,7 @@ def test_apply_link_category_filters_creates_filter_records_it_even_if_addfilter
         "restore can never doc.Delete() it and it orphans permanently"
     )
     assert reused_ids == []
+    assert failed_cats == [cat_walls], "caller must hide this category -- it has no color at all now"
     assert link_category_color_map == {}, "the category never got colored since AddFilter failed"
     assert diag.warnings, "the AddFilter failure must still be recorded"
 
@@ -387,13 +420,14 @@ def test_apply_link_category_filters_reuses_same_view_crash_leftover_without_del
         existing = _FakeParameterFilterElement(doc, "VOP_Color_1234_Walls", [cat_walls.Id])
         view = _FakeView(applied_ids=[existing.Id.IntegerValue])
 
-        link_category_color_map, created_ids, reused_ids = color_id_buffer._apply_link_category_filters(
+        link_category_color_map, created_ids, reused_ids, failed_cats = color_id_buffer._apply_link_category_filters(
             doc, view, 1234, [(cat_walls, (40, 50, 60))], solid_pattern_id=object()
         )
 
     assert len(doc.parameter_filters) == 1, "must reuse, not recreate, the same-named filter"
     assert view.add_filter_calls == [], "already-applied filter does not need AddFilter again"
     assert created_ids == []
+    assert failed_cats == []
     assert reused_ids == [existing.Id.IntegerValue], (
         "a reused filter is tracked separately -- restore may only RemoveFilter "
         "it from this view, never doc.Delete the document-global definition"
@@ -428,7 +462,7 @@ def test_host_element_override_and_link_category_filter_are_independent_calls():
     view = _FakeView()
 
     with _install_fake_revit_db({10}):
-        link_category_color_map, _created_ids, _reused_ids = color_id_buffer._apply_link_category_filters(
+        link_category_color_map, _created_ids, _reused_ids, _failed_cats = color_id_buffer._apply_link_category_filters(
             doc, view, 1234, [(cat_walls, (10, 20, 30))], solid_pattern_id=object()
         )
 
