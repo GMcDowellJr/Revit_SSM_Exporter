@@ -366,5 +366,204 @@ class TestDecodeStageAColorId(unittest.TestCase):
                 self.assertEqual(confidence, "MEDIUM", overrides)
 
 
+    def test_grid_bounds_uv_reconstructs_raster_bounds_xy_from_offset(self):
+        # color_id_buffer.py's compute_model_crop() promises: ADDING
+        # model_crop_offset_uv to raster.bounds_xy's own corners recovers
+        # the sidecar's "bounds_xy" (the rectangle actually rendered).
+        # Equivalently, grid_bounds_uv (this tool's reconstruction of
+        # raster.bounds_xy) = bounds_xy - offset, componentwise.
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sidecar_path, tiff_path, arr = self._make_fixture(tmp_dir)
+            sidecar = json.load(open(sidecar_path))
+            # Simulate a narrowed capture: this fixture's TIFF/bounds_xy
+            # (0,0,40,30) stands in for the narrower model-only crop that
+            # was actually rendered; raster.bounds_xy (wider, annotation-
+            # expanded) was (-5, -5, 45, 35).
+            offset = (5.0, 5.0, -5.0, -5.0)  # bounds_xy=(0,0,40,30) = raster.bounds_xy + offset
+            doc = dsc.build_decoded_document(
+                Path(tiff_path), sidecar, Path(sidecar_path),
+                bounds_uv=(0.0, 0.0, 40.0, 30.0),
+                model_crop_offset_uv=offset,
+            )
+            self.assertEqual(doc["model_crop_offset_uv"], list(offset))
+            self.assertEqual(doc["grid_bounds_uv"], [-5.0, -5.0, 45.0, 35.0])
+
+    def test_grid_bounds_uv_absent_without_offset(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sidecar_path, tiff_path, arr = self._make_fixture(tmp_dir)
+            sidecar = json.load(open(sidecar_path))
+            doc = dsc.build_decoded_document(
+                Path(tiff_path), sidecar, Path(sidecar_path), bounds_uv=(0.0, 0.0, 40.0, 30.0)
+            )
+            self.assertIsNone(doc["model_crop_offset_uv"])
+            self.assertIsNone(doc["grid_bounds_uv"])
+
+    def test_feet_per_pixel_uses_actual_crop_width_when_bounds_known(self):
+        # Regression guard for the narrowed-crop case: feet_per_pixel must
+        # be derived from the ACTUAL rendered rectangle's width (bounds_uv),
+        # not from raster.W/cell_size_ft/scale (which, after color_id_
+        # buffer.py's compute_model_crop() change, can now describe a wider
+        # rectangle than what this particular TIFF was actually cropped to).
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sidecar_path, tiff_path, arr = self._make_fixture(tmp_dir)
+            sidecar = json.load(open(sidecar_path))
+            # resolution block still describes the WIDE raster (as color_id_
+            # buffer.py's pixel_size computation is unchanged), but this
+            # capture's TIFF (40px wide, per the fixture) was actually
+            # cropped to a narrower 20ft-wide rectangle, not the 96ft-wide
+            # estimate the resolution block alone would produce
+            # ((150/150)*96/12 = 96.0 ft).
+            sidecar["resolution"]["requested_pixel_size"] = 150
+            sidecar["resolution"]["pixel_size"] = 40
+            doc = dsc.build_decoded_document(
+                Path(tiff_path), sidecar, Path(sidecar_path), bounds_uv=(0.0, 0.0, 20.0, 30.0)
+            )
+            # Correct: 20ft crop width / 40px actual width.
+            self.assertAlmostEqual(doc["feet_per_pixel"], 20.0 / 40.0, places=9)
+            # The stale, estimate-based value this would have been before
+            # the fix ((150/150)*96/12/40 = 2.4) must NOT be what's reported.
+            self.assertNotAlmostEqual(doc["feet_per_pixel"], 2.4, places=6)
+
+    def test_round_trip_narrow_crop_decodes_to_same_uv_as_wide_crop(self):
+        # The correctness proof for the whole crop-narrowing change: a
+        # synthetic element at a fixed physical view-local UV position,
+        # captured (a) the old way -- rendered across the full, wide
+        # bounds_xy -- and (b) the new way -- rendered only across a
+        # narrower model-only crop entirely inside bounds_xy -- must decode
+        # to the IDENTICAL final UV position either way. This is a genuine
+        # rectangle-to-rectangle relationship (a fixed offset PLUS a
+        # different scale, since narrowing means the same element occupies
+        # more pixels within a smaller crop), not a simple additive point
+        # shift on top of a naive wide-crop decode -- see this tool's own
+        # module docstring (MODEL_CROP_OFFSET_UV section) for why.
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # Element 501 occupies view-local UV rect u:[12,16], v:[8,11]
+            # (4ft x 3ft), comfortably inside both crops below.
+            color = (7, 8, 9)
+
+            # (a) OLD: rendered across the full wide bounds_xy=(0,0,40,30)
+            # at 1 ft/px (40x30 image) -- same convention as _make_fixture.
+            wide_w, wide_h = 40, 30
+            arr_wide = np.full((wide_h, wide_w, 3), 255, dtype=np.uint8)
+            arr_wide[19:22, 12:16] = color  # v:[8,11]->rows[19,22), u:[12,16]->cols[12,16)
+            wide_tiff = os.path.join(tmp_dir, "wide.tiff")
+            Image.fromarray(arr_wide, mode="RGB").save(wide_tiff)
+            wide_sidecar = {
+                "view_id": 1,
+                "resolution": {"pixel_size": wide_w, "requested_pixel_size": wide_w,
+                                "export_dpi": 150.0, "view_scale": 96.0},
+                "color_assignment_map": {"501": list(color)},
+                "applied_display_style": "FlatColors",
+                "applied_smooth_edges": False,
+            }
+            wide_sidecar_path = os.path.join(tmp_dir, "wide.json")
+            with open(wide_sidecar_path, "w") as f:
+                json.dump(wide_sidecar, f)
+
+            # (b) NEW: rendered across a narrower model-only crop entirely
+            # inside the wide bounds_xy, at the same 1 ft/px scale.
+            # render_bounds=(10,5,20,15); offset = render_bounds - bounds_xy
+            # = (10-0, 5-0, 20-40, 15-30) = (10, 5, -20, -15).
+            narrow_w, narrow_h = 10, 10
+            arr_narrow = np.full((narrow_h, narrow_w, 3), 255, dtype=np.uint8)
+            # u:[12,16]-10 -> cols[2,6); v:[8,11], ymax=15 -> rows[15-11,15-8)=[4,7)
+            arr_narrow[4:7, 2:6] = color
+            narrow_tiff = os.path.join(tmp_dir, "narrow.tiff")
+            Image.fromarray(arr_narrow, mode="RGB").save(narrow_tiff)
+            narrow_sidecar = {
+                "view_id": 1,
+                "resolution": {"pixel_size": narrow_w, "requested_pixel_size": narrow_w,
+                                "export_dpi": 150.0, "view_scale": 96.0},
+                "color_assignment_map": {"501": list(color)},
+                "applied_display_style": "FlatColors",
+                "applied_smooth_edges": False,
+                "bounds_xy": [10.0, 5.0, 20.0, 15.0],
+                "model_crop_offset_uv": [10.0, 5.0, -20.0, -15.0],
+            }
+            narrow_sidecar_path = os.path.join(tmp_dir, "narrow.json")
+            with open(narrow_sidecar_path, "w") as f:
+                json.dump(narrow_sidecar, f)
+
+            doc_wide = dsc.build_decoded_document(
+                Path(wide_tiff), wide_sidecar, Path(wide_sidecar_path), bounds_uv=(0.0, 0.0, 40.0, 30.0)
+            )
+            # decode_one() end-to-end for the narrow capture, exactly as a
+            # real caller would invoke it (reads "bounds_xy" and
+            # "model_crop_offset_uv" from the sidecar automatically).
+            out_path = dsc.decode_one(Path(narrow_sidecar_path))
+            doc_narrow = json.loads(out_path.read_text())
+
+            self.assertEqual(doc_narrow["grid_bounds_uv"], [0.0, 0.0, 40.0, 30.0])
+
+            def _bbox(doc):
+                pts = [p for loop in doc["elements"]["501"]["loops"] for p in loop["points"]]
+                xs = [p[0] for p in pts]
+                ys = [p[1] for p in pts]
+                return (min(xs), min(ys), max(xs), max(ys))
+
+            bbox_wide = _bbox(doc_wide)
+            bbox_narrow = _bbox(doc_narrow)
+            for a, b in zip(bbox_wide, bbox_narrow):
+                self.assertAlmostEqual(a, b, places=6)
+            # Sanity: the shared position really is the (12,8)-(16,11) rect
+            # this test set out to place, on both sides.
+            for a, expected in zip(bbox_wide, (12.0, 8.0, 16.0, 11.0)):
+                self.assertAlmostEqual(a, expected, places=6)
+
+    def test_decode_one_ignores_sidecar_offset_when_bounds_overridden(self):
+        # An explicit --bounds override means the caller is asserting a
+        # crop rectangle other than what color_id_buffer.py recorded; the
+        # sidecar's own offset (computed against ITS recorded bounds_xy)
+        # must not be applied against a different, caller-supplied rectangle.
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sidecar_path, tiff_path, arr = self._make_fixture(tmp_dir)
+            sidecar = json.load(open(sidecar_path))
+            sidecar["bounds_xy"] = [0.0, 0.0, 40.0, 30.0]
+            sidecar["model_crop_offset_uv"] = [5.0, 5.0, -5.0, -5.0]
+            with open(sidecar_path, "w") as f:
+                json.dump(sidecar, f)
+
+            out_path = dsc.decode_one(Path(sidecar_path), bounds_uv=(100.0, 200.0, 140.0, 230.0))
+            doc = json.loads(out_path.read_text())
+            self.assertEqual(doc["view_bounds_uv"], [100.0, 200.0, 140.0, 230.0])
+            self.assertIsNone(doc["model_crop_offset_uv"])
+            self.assertIsNone(doc["grid_bounds_uv"])
+
+    def test_older_sidecar_without_offset_field_still_decodes(self):
+        # Backward compatibility: a sidecar written before this field
+        # existed has no "model_crop_offset_uv" key at all.
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sidecar_path, tiff_path, arr = self._make_fixture(tmp_dir)
+            sidecar = json.load(open(sidecar_path))
+            sidecar["bounds_xy"] = [0.0, 0.0, 40.0, 30.0]
+            self.assertNotIn("model_crop_offset_uv", sidecar)
+            with open(sidecar_path, "w") as f:
+                json.dump(sidecar, f)
+
+            out_path = dsc.decode_one(Path(sidecar_path))
+            doc = json.loads(out_path.read_text())
+            self.assertEqual(doc["coordinate_space"], "view_uv")
+            self.assertIsNone(doc["model_crop_offset_uv"])
+            self.assertIsNone(doc["grid_bounds_uv"])
+
+
 if __name__ == "__main__":
     unittest.main()

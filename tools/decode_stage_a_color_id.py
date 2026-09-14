@@ -48,6 +48,8 @@ For input sidecar ``<name>.json``, this tool writes a sibling
       "image_dimensions_px": [width, height],
       "coordinate_space": "view_uv" | "pixel",
       "view_bounds_uv": [xmin, ymin, xmax, ymax] | null,
+      "model_crop_offset_uv": [dxmin, dymin, dxmax, dymax] | null,
+      "grid_bounds_uv": [xmin, ymin, xmax, ymax] | null,
       "feet_per_pixel": <float> | null,
       "feet_per_pixel_unreliable_reason": <str> | null,
       "background_element_id": 0,
@@ -110,13 +112,20 @@ output rather than a fabricated depth value.
 
 KNOWN LIMITATION -- crop not guaranteed on every capture
 ---------------------------------------------------------
-export_color_id_buffer_view() sets view.CropBox/CropBoxActive to
-raster.bounds_xy before export (color_id_buffer.py, "crop_box_set") and
-ExportImage's ZoomFitType.FitToPage then fits to that explicit crop rather
-than an auto-computed visible-geometry extent, so on a normal capture the
-TIFF's pixel grid corresponds exactly to raster.bounds_xy and the sidecar's
+export_color_id_buffer_view() sets view.CropBox/CropBoxActive to a rectangle
+it computes before export (color_id_buffer.py's compute_model_crop() --
+raster.model_clip_bounds, the narrower model-only crop, when available,
+else raster.bounds_xy unchanged) and ExportImage's ZoomFitType.FitToPage
+then fits to that explicit crop rather than an auto-computed visible-
+geometry extent, so on a normal capture the TIFF's pixel grid corresponds
+exactly to whichever rectangle was actually used and the sidecar's
 "bounds_xy" field records that same rectangle (not recomputed -- the exact
-tuple that was set). This tool reads it automatically (see USAGE above).
+tuple that was set). This tool reads it automatically (see USAGE above) and
+uses it directly for pixel<->UV conversion: that rectangle, not raster.
+bounds_xy, is what the TIFF's pixel grid actually spans, and pixel->UV
+conversion is a scale relationship (feet-per-pixel), not just an origin --
+using the wrong-sized rectangle would misscale every decoded point, not
+merely offset it.
 
 The crop can still fail to apply on a given capture -- no raster/bounds_xy
 was passed to export_color_id_buffer_view(), the view has no CropBox (some
@@ -127,6 +136,33 @@ recover a view-space origin for that case from the sidecar alone, so it
 falls back to pixel-corner space (coordinate_space="pixel") rather than
 silently guessing an origin. An explicit --bounds argument can still be
 supplied by a caller who otherwise knows the true crop for such a capture.
+
+MODEL_CROP_OFFSET_UV -- reconstructing raster.bounds_xy, not a point shift
+----------------------------------------------------------------------------
+When color_id_buffer.py narrows the crop to raster.model_clip_bounds, its
+sidecar also records "model_crop_offset_uv": (dxmin, dymin, dxmax, dymax),
+the four-corner relationship between that narrower crop (the sidecar's own
+"bounds_xy" field) and the raster's own, possibly wider, bounds_xy:
+
+    raster.bounds_xy.xmin == bounds_xy.xmin - dxmin   (equivalently:
+    raster.bounds_xy.ymin == bounds_xy.ymin - dymin    bounds_xy.CORNER ==
+    raster.bounds_xy.xmax == bounds_xy.xmax - dxmax    raster.bounds_xy.CORNER
+    raster.bounds_xy.ymax == bounds_xy.ymax - dymax    + offset.CORNER)
+
+This tool reconstructs raster.bounds_xy from it as "grid_bounds_uv" in the
+output (informational -- e.g. for a future consumer that needs to know the
+full shared cell grid this capture's narrower crop sits within, not just
+this capture's own extent). It is NOT added to decoded pixel/UV coordinates
+anywhere in this tool: "view_bounds_uv" (and therefore every decoded point)
+is already computed against the sidecar's own "bounds_xy" -- the rectangle
+this specific TIFF was actually cropped to -- which is already the correct,
+final, shared view-local UV coordinate frame (the same one raster.bounds_xy
+is expressed in; narrowing which rectangle gets rendered does not change
+that frame, only how much of it this one capture covers). Adding the offset
+to those already-correct points would shift them a second time and corrupt
+them. The offset is reconstruction/provenance data about the RECTANGLES
+only, applied by grid_bounds_uv's corner arithmetic above -- never a
+per-point translation.
 """
 from __future__ import annotations
 
@@ -500,6 +536,7 @@ def build_decoded_document(
     sidecar: dict[str, Any],
     sidecar_path: Path,
     bounds_uv: tuple[float, float, float, float] | None,
+    model_crop_offset_uv: tuple[float, float, float, float] | None = None,
 ) -> dict[str, Any]:
     t0 = time.time()
     rgb = _load_rgb_array(tiff_path)
@@ -512,46 +549,85 @@ def build_decoded_document(
     resolution = sidecar.get("resolution") or {}
     try:
         actual_px = float(resolution.get("pixel_size"))
-        # requested_pixel_size (not the possibly-backed-off actual pixel_size)
-        # is what raster.W/cell_size_ft/scale was originally sized to
-        # (color_id_buffer.py:384-399): it's the model width, in pixels, the
-        # export was SUPPOSED to be. Deriving model_width_ft from actual_px
-        # instead would make it cancel out of feet_per_pixel entirely
-        # (model_width_ft/actual_px == (actual_px/export_dpi*view_scale/12)/actual_px,
-        # independent of actual_px), silently reporting the pre-backoff scale
-        # even when Revit's PixelSize backoff (color_id_buffer.py:285-316)
-        # actually shrank the export -- wrong by requested_px/actual_px on any
-        # degraded-resolution export.
-        requested_px = resolution.get("requested_pixel_size")
-        requested_px = float(requested_px) if requested_px else actual_px
-        export_dpi = float(resolution.get("export_dpi"))
-        view_scale = float(resolution.get("view_scale"))
-        if actual_px and export_dpi:
-            if requested_px >= MAX_STAGE_A_PIXEL_SIZE:
-                # color_id_buffer.py:398-399 clamps its own `pixel_size` to
-                # MAX_STAGE_A_PIXEL_SIZE *before* writing it as
-                # "requested_pixel_size" (color_id_buffer.py:930-933) -- the
-                # true pre-clamp desired width (from raster.W/cell_size_ft) is
-                # never persisted anywhere in the sidecar once clamping
-                # occurs. requested_px here is then the clamp value, not the
-                # model's real paper extent, so model_width_ft/feet_per_pixel
-                # would be silently wrong (underestimated) even when Revit
-                # accepted this exact pixel count with no further backoff.
-                # There is no way to recover the true value from the sidecar
-                # alone -- report the gap rather than a wrong number.
-                feet_per_pixel_unreliable_reason = (
-                    "requested_pixel_size ({0}) is at or above MAX_STAGE_A_PIXEL_SIZE "
-                    "({1}); color_id_buffer.py clamps before persisting this field, so "
-                    "the true pre-clamp desired width is not recoverable from the "
-                    "sidecar".format(int(requested_px), MAX_STAGE_A_PIXEL_SIZE)
-                )
-            else:
-                model_width_ft = (requested_px / export_dpi) * view_scale / 12.0
-                feet_per_pixel = model_width_ft / actual_px
+        if bounds_uv is not None:
+            # The rectangle this TIFF was actually cropped to is known
+            # directly (bounds_uv, from the sidecar's own "bounds_xy" --
+            # see decode_one()): its width in feet divided by the actual
+            # pixel width IS feet-per-pixel exactly, regardless of any
+            # PixelSize backoff (color_id_buffer.py:285-316) or crop
+            # narrowing (color_id_buffer.py's compute_model_crop() can crop
+            # to raster.model_clip_bounds, narrower than the raster.W/cell_
+            # size_ft/scale math the estimate below is derived from) --
+            # unlike that estimate, this needs no MAX_STAGE_A_PIXEL_SIZE
+            # clamp caveat at all, since it never goes through requested_
+            # pixel_size.
+            crop_width_ft = float(bounds_uv[2]) - float(bounds_uv[0])
+            if actual_px and crop_width_ft:
+                feet_per_pixel = crop_width_ft / actual_px
+        else:
+            # No known crop rectangle (coordinate_space="pixel" fallback) --
+            # estimate physical width from raster.W/cell_size_ft/scale via
+            # requested_pixel_size (not the possibly-backed-off actual
+            # pixel_size, which is what raster.W/cell_size_ft/scale was
+            # originally sized to, color_id_buffer.py:384-399: the model
+            # width, in pixels, the export was SUPPOSED to be. Deriving
+            # model_width_ft from actual_px instead would make it cancel out
+            # of feet_per_pixel entirely, independent of actual_px, silently
+            # reporting the pre-backoff scale even when Revit's PixelSize
+            # backoff actually shrank the export -- wrong by requested_px/
+            # actual_px on any degraded-resolution export). This estimate is
+            # only as good as FitToPage's own auto-computed extent matching
+            # it, since there is no known crop rectangle to measure directly.
+            requested_px = resolution.get("requested_pixel_size")
+            requested_px = float(requested_px) if requested_px else actual_px
+            export_dpi = float(resolution.get("export_dpi"))
+            view_scale = float(resolution.get("view_scale"))
+            if actual_px and export_dpi:
+                if requested_px >= MAX_STAGE_A_PIXEL_SIZE:
+                    # color_id_buffer.py:398-399 clamps its own `pixel_size`
+                    # to MAX_STAGE_A_PIXEL_SIZE *before* writing it as
+                    # "requested_pixel_size" (color_id_buffer.py:930-933) --
+                    # the true pre-clamp desired width (from raster.W/cell_
+                    # size_ft) is never persisted anywhere in the sidecar
+                    # once clamping occurs. requested_px here is then the
+                    # clamp value, not the model's real paper extent, so
+                    # model_width_ft/feet_per_pixel would be silently wrong
+                    # (underestimated) even when Revit accepted this exact
+                    # pixel count with no further backoff. There is no way
+                    # to recover the true value from the sidecar alone --
+                    # report the gap rather than a wrong number.
+                    feet_per_pixel_unreliable_reason = (
+                        "requested_pixel_size ({0}) is at or above MAX_STAGE_A_PIXEL_SIZE "
+                        "({1}); color_id_buffer.py clamps before persisting this field, so "
+                        "the true pre-clamp desired width is not recoverable from the "
+                        "sidecar".format(int(requested_px), MAX_STAGE_A_PIXEL_SIZE)
+                    )
+                else:
+                    model_width_ft = (requested_px / export_dpi) * view_scale / 12.0
+                    feet_per_pixel = model_width_ft / actual_px
     except (TypeError, ValueError):
         feet_per_pixel = None
 
     coordinate_space = "view_uv" if bounds_uv is not None else "pixel"
+
+    grid_bounds_uv = None
+    if bounds_uv is not None and model_crop_offset_uv is not None:
+        # Reconstruct raster.bounds_xy (the shared cell grid's own rectangle,
+        # possibly wider than this capture's own crop) from bounds_uv (this
+        # capture's actual crop) + the offset color_id_buffer.py recorded
+        # between them. See compute_model_crop()'s docstring (color_id_
+        # buffer.py) and this module's own MODEL_CROP_OFFSET_UV section
+        # above for the exact convention -- informational only, never
+        # applied to the decoded points themselves (those are already
+        # correct in the shared view-local UV frame once decoded against
+        # bounds_uv, above).
+        dxmin, dymin, dxmax, dymax = model_crop_offset_uv
+        grid_bounds_uv = [
+            float(bounds_uv[0]) - float(dxmin),
+            float(bounds_uv[1]) - float(dymin),
+            float(bounds_uv[2]) - float(dxmax),
+            float(bounds_uv[3]) - float(dymax),
+        ]
 
     capture_reliable, capture_unreliable_reason = _capture_reliability(sidecar)
     # AREAL occlusion authority requires HIGH specifically (pipeline.py:2443-
@@ -608,6 +684,8 @@ def build_decoded_document(
         "image_dimensions_px": [int(w), int(h)],
         "coordinate_space": coordinate_space,
         "view_bounds_uv": list(bounds_uv) if bounds_uv is not None else None,
+        "model_crop_offset_uv": list(model_crop_offset_uv) if model_crop_offset_uv is not None else None,
+        "grid_bounds_uv": grid_bounds_uv,
         "feet_per_pixel": feet_per_pixel,
         "feet_per_pixel_unreliable_reason": feet_per_pixel_unreliable_reason,
         "background_element_id": BACKGROUND_ELEMENT_ID,
@@ -655,12 +733,22 @@ def _resolve_tiff_path(sidecar_path: Path, sidecar: dict[str, Any]) -> Path:
 
 def decode_one(sidecar_path: Path, bounds_uv=None) -> Path:
     sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    model_crop_offset_uv = None
     if bounds_uv is None:
         sidecar_bounds = sidecar.get("bounds_xy")
         if sidecar_bounds is not None and len(sidecar_bounds) == 4:
             bounds_uv = tuple(float(x) for x in sidecar_bounds)
+            # Only trust the sidecar's own offset when bounds_uv also came
+            # from the sidecar: an explicit --bounds override means the
+            # caller is asserting a crop rectangle other than what
+            # color_id_buffer.py recorded, and the offset (computed against
+            # THAT recorded rectangle) would no longer describe the
+            # override's relationship to raster.bounds_xy.
+            sidecar_offset = sidecar.get("model_crop_offset_uv")
+            if sidecar_offset is not None and len(sidecar_offset) == 4:
+                model_crop_offset_uv = tuple(float(x) for x in sidecar_offset)
     tiff_path = _resolve_tiff_path(sidecar_path, sidecar)
-    doc = build_decoded_document(tiff_path, sidecar, sidecar_path, bounds_uv)
+    doc = build_decoded_document(tiff_path, sidecar, sidecar_path, bounds_uv, model_crop_offset_uv)
     out_path = sidecar_path.with_name(sidecar_path.stem + ".decoded.json")
     out_path.write_text(json.dumps(doc, indent=2, sort_keys=True), encoding="utf-8")
     return out_path

@@ -1739,7 +1739,7 @@ def get_core_csv_header():
         "SheetNumber", "IsOnSheet", "Scale", "Discipline", "Phase",
         "ViewTemplate_Name", "IsTemplate", "ExporterVersion", "ConfigHash",
         "ViewFrameHash", "FromCache", "ElapsedSec",
-        "CellSize_ft", "CellSizeRequested_ft", "CellSizeEffective_ft", "ResolutionMode", "CapTriggered",
+        "CellSize_ft", "CellSizeRequested_ft", "CellSizeEffective_ft", "ResolutionMode", "CapTriggered", "AnnoExpanded",
     ]
 
 
@@ -1980,8 +1980,9 @@ def view_result_to_core_row(view_result, config, doc, date_override=None, run_id
         "CellSizeEffective_ft": _round6((raster_dict.get("bounds_meta") or {}).get("cell_size_ft_effective", raster_dict.get("cell_size_ft", 0.0))),
         "ResolutionMode": (raster_dict.get("bounds_meta") or {}).get("resolution_mode", "canonical"),
         "CapTriggered": bool((raster_dict.get("bounds_meta") or {}).get("cap_triggered", (raster_dict.get("bounds_meta") or {}).get("capped", False))),
+        "AnnoExpanded": bool((raster_dict.get("bounds_meta") or {}).get("anno_expanded", False)),
     }
-    
+
     return row
 
 
