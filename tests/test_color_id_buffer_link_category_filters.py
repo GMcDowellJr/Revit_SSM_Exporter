@@ -319,7 +319,7 @@ def test_apply_link_category_filters_creates_view_scoped_filter_and_sets_color()
     view = _FakeView()
 
     with _install_fake_revit_db({10}):
-        link_category_color_map, applied_ids = color_id_buffer._apply_link_category_filters(
+        link_category_color_map, created_ids, reused_ids = color_id_buffer._apply_link_category_filters(
             doc, view, 1234, [(cat_walls, (10, 20, 30))], solid_pattern_id=object()
         )
 
@@ -330,7 +330,8 @@ def test_apply_link_category_filters_creates_view_scoped_filter_and_sets_color()
         "filter name must be scoped to this view's id -- a stable shared name "
         "could collide with a filter the user applied to some other view"
     )
-    assert applied_ids == [pfe.Id.IntegerValue]
+    assert created_ids == [pfe.Id.IntegerValue], "freshly created -- safe for restore to doc.Delete"
+    assert reused_ids == []
     assert view.add_filter_calls == [pfe.Id]
     assert (pfe.Id, True) in view.enable_calls
     assert (pfe.Id, True) in view.visibility_calls
@@ -339,16 +340,46 @@ def test_apply_link_category_filters_creates_view_scoped_filter_and_sets_color()
     assert ogs.calls["SetProjectionLineColor"][0] == _FakeColor(10, 20, 30)
 
 
-def test_apply_link_category_filters_reuses_same_view_crash_leftover_and_force_enables_it():
+def test_apply_link_category_filters_creates_filter_records_it_even_if_addfilter_then_raises():
+    """A Create() that succeeds but a later AddFilter() that raises must not
+    orphan the freshly created ParameterFilterElement: it has to land in
+    created_filter_ids (tracked for restore's doc.Delete()) before AddFilter
+    is even attempted, not only after the whole per-category block succeeds.
+    """
+    cat_walls = _FakeCategory("Walls", 10)
+    doc = types.SimpleNamespace(parameter_filters=[])
+    view = _FakeView()
+
+    def _raising_add_filter(_filter_id):
+        raise RuntimeError("view rejected this filter")
+    view.AddFilter = _raising_add_filter
+
+    diag = _FakeDiag()
+    with _install_fake_revit_db({10}):
+        link_category_color_map, created_ids, reused_ids = color_id_buffer._apply_link_category_filters(
+            doc, view, 1234, [(cat_walls, (10, 20, 30))], solid_pattern_id=object(), diag=diag
+        )
+
+    assert len(doc.parameter_filters) == 1, "Create() itself succeeded"
+    pfe = doc.parameter_filters[0]
+    assert created_ids == [pfe.Id.IntegerValue], (
+        "must be tracked for cleanup despite AddFilter failing afterward, or "
+        "restore can never doc.Delete() it and it orphans permanently"
+    )
+    assert reused_ids == []
+    assert link_category_color_map == {}, "the category never got colored since AddFilter failed"
+    assert diag.warnings, "the AddFilter failure must still be recorded"
+
+
+def test_apply_link_category_filters_reuses_same_view_crash_leftover_without_deleting_it():
     """A filter named "VOP_Color_<view_id>_Walls" already existing and
-    already applied to THIS view can only mean one thing (view-id scoping
-    rules out a real user filter or a different view's Stage A run): this
-    same view's own Stage A run left it behind after a crash before
-    reaching restore. Reusing it, rather than failing on the Create() name
-    collision, is correct -- but it must still be force-enabled and
-    force-visible, and it is returned for full cleanup exactly like a
-    freshly created one (never restored to some "prior" state, since there
-    is no other legitimate prior state for a view-scoped name to have had).
+    already applied to THIS view is, in practice, this same view's own
+    Stage A run having left it behind after a crash before reaching
+    restore. Reusing it, rather than failing on the Create() name
+    collision, is correct -- it must still be force-enabled and
+    force-visible -- but ParameterFilterElement objects are document-global,
+    so restore may only RemoveFilter it from this view, never doc.Delete
+    the shared definition (some other view/template could reference it).
     """
     cat_walls = _FakeCategory("Walls", 10)
     doc = types.SimpleNamespace(parameter_filters=[])
@@ -356,15 +387,16 @@ def test_apply_link_category_filters_reuses_same_view_crash_leftover_and_force_e
         existing = _FakeParameterFilterElement(doc, "VOP_Color_1234_Walls", [cat_walls.Id])
         view = _FakeView(applied_ids=[existing.Id.IntegerValue])
 
-        link_category_color_map, applied_ids = color_id_buffer._apply_link_category_filters(
+        link_category_color_map, created_ids, reused_ids = color_id_buffer._apply_link_category_filters(
             doc, view, 1234, [(cat_walls, (40, 50, 60))], solid_pattern_id=object()
         )
 
     assert len(doc.parameter_filters) == 1, "must reuse, not recreate, the same-named filter"
     assert view.add_filter_calls == [], "already-applied filter does not need AddFilter again"
-    assert applied_ids == [existing.Id.IntegerValue], (
-        "a reused filter is still returned for cleanup -- it gets fully removed "
-        "and deleted on restore exactly like a freshly created one"
+    assert created_ids == []
+    assert reused_ids == [existing.Id.IntegerValue], (
+        "a reused filter is tracked separately -- restore may only RemoveFilter "
+        "it from this view, never doc.Delete the document-global definition"
     )
     assert (existing.Id, True) in view.enable_calls, (
         "a reused filter must still be force-enabled: the suppress step disables "
@@ -396,7 +428,7 @@ def test_host_element_override_and_link_category_filter_are_independent_calls():
     view = _FakeView()
 
     with _install_fake_revit_db({10}):
-        link_category_color_map, _applied_ids = color_id_buffer._apply_link_category_filters(
+        link_category_color_map, _created_ids, _reused_ids = color_id_buffer._apply_link_category_filters(
             doc, view, 1234, [(cat_walls, (10, 20, 30))], solid_pattern_id=object()
         )
 
