@@ -1064,6 +1064,7 @@ def build_core_csv_row(view, doc, metrics, config, run_info, view_metadata=None)
         _round6(run_info.get("cell_size_ft_effective", run_info.get("cell_size_ft", 0.0))),
         run_info.get("resolution_mode", "canonical"),
         bool(run_info.get("cap_triggered", False)),
+        bool(run_info.get("anno_expanded", False)),
     ]
 
     return row
@@ -1475,7 +1476,7 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
         "SheetNumber", "IsOnSheet", "Scale", "Discipline", "Phase",
         "ViewTemplate_Name", "IsTemplate", "ExporterVersion", "ConfigHash",
         "ViewFrameHash", "FromCache", "ElapsedSec",
-        "CellSize_ft", "CellSizeRequested_ft", "CellSizeEffective_ft", "ResolutionMode", "CapTriggered",
+        "CellSize_ft", "CellSizeRequested_ft", "CellSizeEffective_ft", "ResolutionMode", "CapTriggered", "AnnoExpanded",
     ]
 
     vop_headers = get_vop_csv_header(config)
@@ -1631,6 +1632,7 @@ def export_pipeline_to_csv(pipeline_result, output_dir, config, doc=None, diag=N
             "cell_size_ft_effective": cell_size_eff_meta,
             "resolution_mode": bounds_meta.get("resolution_mode", "canonical"),
             "cap_triggered": bool(bounds_meta.get("cap_triggered", bounds_meta.get("capped", False))),
+            "anno_expanded": bool(bounds_meta.get("anno_expanded", False)),
         }
 
         view_metadata = {}
@@ -1980,7 +1982,17 @@ def view_result_to_core_row(view_result, config, doc, date_override=None, run_id
         "CellSizeEffective_ft": _round6((raster_dict.get("bounds_meta") or {}).get("cell_size_ft_effective", raster_dict.get("cell_size_ft", 0.0))),
         "ResolutionMode": (raster_dict.get("bounds_meta") or {}).get("resolution_mode", "canonical"),
         "CapTriggered": bool((raster_dict.get("bounds_meta") or {}).get("cap_triggered", (raster_dict.get("bounds_meta") or {}).get("capped", False))),
-        "AnnoExpanded": bool((raster_dict.get("bounds_meta") or {}).get("anno_expanded", False)),
+        # On a metrics-only root-cache hit there is no raster/bounds_meta to
+        # read this from directly (raster_dict is {}); extract_metrics_from_
+        # view_result() (root_cache.py) persists the same value into
+        # row_payload at cache-write time specifically so it survives a
+        # later cache-hit read here, rather than silently reporting False
+        # just because this run happened to be served from cache.
+        "AnnoExpanded": bool(
+            (raster_dict.get("bounds_meta") or {}).get(
+                "anno_expanded", (view_result.get("row_payload") or {}).get("AnnoExpanded", False)
+            )
+        ),
     }
 
     return row

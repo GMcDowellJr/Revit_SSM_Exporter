@@ -467,6 +467,7 @@ def extract_metrics_from_view_result(view_result, cfg):
         "CellSizeEffective_ft": _round6(cell_size_eff),
         "ResolutionMode": bounds_meta.get("resolution_mode", "canonical"),
         "CapTriggered": bool(bounds_meta.get("cap_triggered", bounds_meta.get("capped", False))),
+        "AnnoExpanded": bool(bounds_meta.get("anno_expanded", False)),
 
         # Keep bounds as before
         "bounds": raster_dict.get("bounds_xy", {}),
