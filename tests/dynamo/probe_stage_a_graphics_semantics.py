@@ -656,7 +656,7 @@ def _hide_annotation_categories(doc, view, diagnostics):
 
 
 def _paint(doc, view, identities, diagnostics):
-    from vop_interwoven.color_id_buffer import _try_color_link_element
+    from vop_interwoven.color_id_buffer import _try_color_link_element_detailed
     palette, step = _palette(len(identities))
     assigned, failures = {}, []
     for i, item in enumerate(identities):
@@ -665,7 +665,7 @@ def _paint(doc, view, identities, diagnostics):
         try:
             ogs = _ogs_for(doc, rgb)
             if item.get("source_type") == "LINK" and item.get("link_tuple"):
-                ok = _try_color_link_element(view, item["link_tuple"][0], item["link_tuple"][1], ogs)
+                ok, _ex = _try_color_link_element_detailed(view, item["link_tuple"][0], item["link_tuple"][1], ogs)
                 if not ok:
                     failures.append({"key": item["key"], "reason": "LinkElementId override unsupported"})
             else:

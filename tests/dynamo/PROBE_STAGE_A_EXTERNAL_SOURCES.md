@@ -84,7 +84,7 @@ editing them:
 - `LinkedElementProxy` identity fields: `source_type`, `source_id`,
   `source_label`, `LinkInstanceId`, and linked/import element `Id`.
 - `_build_flat_color_ogs()` for Stage A-style solid color overrides.
-- `_try_color_link_element()` for Revit `LinkElementId` overrides.
+- `_try_color_link_element_detailed()` for Revit `LinkElementId` overrides.
 - `build_palette()` / `choose_step()` for deterministic non-background RGB
   assignment.
 - Revit `ImageExportOptions` settings matching Stage A diagnostics:
