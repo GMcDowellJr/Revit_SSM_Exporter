@@ -357,6 +357,86 @@ def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None):
     return output_path, actual_pixel_size
 
 
+def compute_model_crop(model_clip_bounds, bounds_xy):
+    """Resolve the rectangle this view's color-ID export should be cropped to.
+
+    Prefers ``model_clip_bounds`` (the pre-annotation-expansion, model-only
+    crop threaded onto the raster by pipeline.py -- raster.model_clip_bounds,
+    sourced from view_basis.py's resolve_view_bounds()) over ``bounds_xy``
+    (the possibly annotation-expanded rectangle the rest of the grid/cell
+    math is sized against). Cropping the render to the wider, annotation-
+    expanded bounds_xy makes HOST elements that sit only in the annotation
+    margin -- never part of the view's real model extent -- get collected
+    and painted by the neutral-phase re-collection call downstream, which
+    disagrees with LINK/DWG's narrower, unmodified view-crop-scoped
+    collection for the same view. Falls back to ``bounds_xy`` unchanged
+    (zero offset) when no model-only bounds is available -- e.g. bounds_
+    result's reason != "crop" (extents/fallback bounds path) or an
+    annotation-only view; see resolve_view_bounds's "model_bounds_uv" for
+    exactly when it's populated.
+
+    Pure Python, no Revit API dependency -- unit-testable directly, unlike
+    the rest of this module.
+
+    Defensively intersects the candidate crop with bounds_xy on all four
+    sides rather than trusting model_clip_bounds's raw corners: resolve_
+    view_bounds() normally guarantees model_clip_bounds is a strict subset
+    of bounds_xy, but its post-annotation cap-envelope (view_basis.py:
+    1038-1068) can, in rare cases, shrink bounds_xy back down below model_
+    clip_bounds, which would otherwise make this crop wider than bounds_xy
+    on that side. Intersecting keeps the render crop always inside bounds_xy
+    regardless -- the "clamp to non-negative" safety net requested for the
+    cap_triggered case, applied unconditionally since it is a no-op whenever
+    the normal subset guarantee already holds.
+
+    Returns:
+        (render_bounds, offset) where:
+            render_bounds: Bounds2D actually used for the view crop (may be
+                bounds_xy itself, unchanged, if no narrower crop applies).
+            offset: 4-tuple (dxmin, dymin, dxmax, dymax) such that
+                    render_bounds.xmin == bounds_xy.xmin + dxmin
+                    render_bounds.ymin == bounds_xy.ymin + dymin
+                    render_bounds.xmax == bounds_xy.xmax + dxmax
+                    render_bounds.ymax == bounds_xy.ymax + dymax
+                i.e. ADD offset to bounds_xy's own corners to reconstruct
+                the exact rectangle this capture was actually cropped to.
+                This is a rectangle-to-rectangle relationship for
+                reconstructing/auditing the render crop from bounds_xy --
+                it is NOT meant to be added a second time to UV points
+                already decoded against the correct render rectangle (see
+                tools/decode_stage_a_color_id.py's module docstring for why
+                that would double-count and corrupt otherwise-correct
+                coordinates). (0.0, 0.0, 0.0, 0.0) when render_bounds is
+                bounds_xy itself.
+    """
+    if bounds_xy is None:
+        return model_clip_bounds, (0.0, 0.0, 0.0, 0.0)
+    if model_clip_bounds is None:
+        return bounds_xy, (0.0, 0.0, 0.0, 0.0)
+
+    from .core.math_utils import Bounds2D
+
+    eff_xmin = max(float(model_clip_bounds.xmin), float(bounds_xy.xmin))
+    eff_ymin = max(float(model_clip_bounds.ymin), float(bounds_xy.ymin))
+    eff_xmax = min(float(model_clip_bounds.xmax), float(bounds_xy.xmax))
+    eff_ymax = min(float(model_clip_bounds.ymax), float(bounds_xy.ymax))
+
+    if eff_xmax <= eff_xmin or eff_ymax <= eff_ymin:
+        # model_clip_bounds does not meaningfully overlap bounds_xy (a
+        # degenerate/empty intersection) -- fall back to bounds_xy unchanged
+        # rather than force a zero/negative-area crop onto the view.
+        return bounds_xy, (0.0, 0.0, 0.0, 0.0)
+
+    render_bounds = Bounds2D(eff_xmin, eff_ymin, eff_xmax, eff_ymax)
+    offset = (
+        eff_xmin - float(bounds_xy.xmin),
+        eff_ymin - float(bounds_xy.ymin),
+        eff_xmax - float(bounds_xy.xmax),
+        eff_ymax - float(bounds_xy.ymax),
+    )
+    return render_bounds, offset
+
+
 def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None, elem_cache=None):
     """Export one view as a streamed Stage-A color ID buffer and sidecar.
 
@@ -559,23 +639,38 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         for cat_id_int, hstate in category_hidden_state.items():
             view.SetCategoryHidden(ElementId(int(cat_id_int)), True)
 
-        # Force the view's crop to raster.bounds_xy -- the same view-local UV
-        # rectangle the rest of the pipeline indexes cells against -- so the
-        # exported TIFF's pixel grid is, by construction, in that same
-        # coordinate frame instead of whatever extent ExportImage's
-        # ZoomFitType.FitToPage would auto-compute from visible geometry.
-        # MUST run before the re-collection call immediately below: that
-        # collection has to see the new crop, not the view's original one,
-        # or elements outside the new crop but inside the old one would
-        # still be collected/painted even though they will fall outside the
-        # exported image. crop_bounds_xy is recorded as-is into the JSON
-        # sidecar's "bounds_xy" field further down (not recomputed there),
-        # so the sidecar always reflects exactly what was set here (or None
-        # when it wasn't).
+        # Force the view's crop to a narrower, model-only rectangle when one
+        # is available (raster.model_clip_bounds -- the pre-annotation-
+        # expansion crop bounds computed by view_basis.py's resolve_view_
+        # bounds() and threaded onto the raster at pipeline.py's model_clip_
+        # bounds assignment) instead of raster.bounds_xy (the possibly
+        # annotation-expanded rectangle the rest of the grid is sized
+        # against) -- see compute_model_crop() above for why. This MUST run
+        # before the re-collection call further below: that collection has
+        # to see the new crop, not the view's original one, or elements
+        # outside the new crop but inside the old one would still be
+        # collected/painted even though they will fall outside the exported
+        # image.
+        #
+        # raster.bounds_xy itself is left untouched everywhere else (cell-
+        # grid sizing, the annotation pass, LINK/DWG collection) -- this only
+        # narrows what gets rendered/re-collected for the color-ID buffer.
+        # The sidecar's "bounds_xy" field keeps its existing contract
+        # (records exactly the rectangle the view was actually cropped to,
+        # or None if no crop could be applied); model_crop_offset_uv is a
+        # new, separate field recording that rectangle's relationship to
+        # raster.bounds_xy -- see compute_model_crop()'s docstring for the
+        # exact reconstruction convention, and tools/decode_stage_a_color_
+        # id.py for why it is provenance/reconstruction data, not something
+        # applied a second time to already-decoded UV points.
         crop_bounds_xy = None
+        model_crop_offset_uv = (0.0, 0.0, 0.0, 0.0)
         try:
             if raster is not None and getattr(raster, "bounds_xy", None) is not None:
-                b = raster.bounds_xy
+                render_bounds, model_crop_offset_uv = compute_model_crop(
+                    getattr(raster, "model_clip_bounds", None), raster.bounds_xy
+                )
+                b = render_bounds
                 basis = getattr(raster, "view_basis", None)
                 if basis is None:
                     from .revit.view_basis import make_view_basis as _make_view_basis
@@ -586,14 +681,17 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                     view.CropBox = new_crop_box
                     view.CropBoxActive = True
                     crop_bounds_xy = (float(b.xmin), float(b.ymin), float(b.xmax), float(b.ymax))
-                elif diag is not None:
-                    diag.warn(
-                        phase="color_id_buffer",
-                        callsite="crop_box_set",
-                        message="View has no CropBox; Stage A export falls back to "
-                                "FitToPage's auto-computed extent instead of raster.bounds_xy",
-                        view_id=view_id,
-                    )
+                else:
+                    model_crop_offset_uv = (0.0, 0.0, 0.0, 0.0)
+                    if diag is not None:
+                        diag.warn(
+                            phase="color_id_buffer",
+                            callsite="crop_box_set",
+                            message="View has no CropBox; Stage A export falls back to "
+                                    "FitToPage's auto-computed extent instead of an "
+                                    "explicit crop",
+                            view_id=view_id,
+                        )
             elif diag is not None:
                 diag.warn(
                     phase="color_id_buffer",
@@ -605,6 +703,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 )
         except Exception as ex:
             crop_bounds_xy = None
+            model_crop_offset_uv = (0.0, 0.0, 0.0, 0.0)
             if diag is not None:
                 diag.warn(
                     phase="color_id_buffer",
@@ -999,8 +1098,21 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # recomputed here. None when the crop could not be applied (no
         # raster/bounds_xy provided, or the view has no CropBox), in which
         # case the TIFF's extent is whatever FitToPage auto-computed and a
-        # decode step cannot assume this field describes it.
+        # decode step cannot assume this field describes it. May now be
+        # narrower than the raster's own bounds_xy (see compute_model_crop()
+        # above) -- model_crop_offset_uv below records that relationship.
         "bounds_xy": list(crop_bounds_xy) if crop_bounds_xy is not None else None,
+        # (dxmin, dymin, dxmax, dymax) such that ADDING this to raster.
+        # bounds_xy's own corners reconstructs this capture's actual crop
+        # (the "bounds_xy" rectangle above): render.xmin = raster.bounds_xy.
+        # xmin + dxmin, etc. Always (0.0, 0.0, 0.0, 0.0) when this capture's
+        # crop IS raster.bounds_xy unchanged (no narrower model_clip_bounds
+        # was available, or the crop could not be applied at all -- in which
+        # case "bounds_xy" above is also None). Diagnostic/reconstruction
+        # data only -- see compute_model_crop()'s docstring and tools/
+        # decode_stage_a_color_id.py for why decoded UV points must not be
+        # shifted by this a second time.
+        "model_crop_offset_uv": [float(v) for v in model_crop_offset_uv],
         "color_assignment_map": {str(k): list(v) for k, v in color_map.items()},
         "paint_failures": paint_failures,
         "paint_failed_element_ids": list(paint_failed_element_ids),
