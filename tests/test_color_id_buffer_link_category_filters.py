@@ -224,7 +224,7 @@ def _install_fake_revit_db(filterable_category_ids):
     fake_db.ElementId = _FakeElementId
     fake_db.Color = _FakeColor
     fake_db.OverrideGraphicSettings = _FakeOGS
-    fake_db.LinkedViewDisplayMode = _FakeLinkedViewDisplayMode
+    fake_db.LinkVisibility = _FakeLinkVisibility
 
     fake_system = types.ModuleType("System")
     fake_system_collections = types.ModuleType("System.Collections")
@@ -361,15 +361,15 @@ def test_collect_link_category_filters_returns_empty_when_no_links_in_view():
 # --- Non-"By Host View" link instances: always hidden, never touched by ----
 # --- category-level coloring at all -----------------------------------------
 
-class _FakeLinkedViewDisplayMode(object):
+class _FakeLinkVisibility(object):
     ByHostView = "ByHostView"
     ByLinkView = "ByLinkView"
     Custom = "Custom"
 
 
 class _FakeLinkGraphicsSettings(object):
-    def __init__(self, mode):
-        self.CategoryOverridesDisplaySettings = mode
+    def __init__(self, visibility_type):
+        self.LinkVisibilityType = visibility_type
 
 
 class _FakeViewWithLinkOverrides(object):
@@ -396,8 +396,8 @@ def test_collect_link_category_filters_always_hides_non_by_host_view_instance():
         link_instances=[inst_compliant, inst_custom], parameter_filters=[]
     )
     fake_view = _FakeViewWithLinkOverrides(1, {
-        501: _FakeLinkGraphicsSettings(_FakeLinkedViewDisplayMode.ByHostView),
-        502: _FakeLinkGraphicsSettings(_FakeLinkedViewDisplayMode.Custom),
+        501: _FakeLinkGraphicsSettings(_FakeLinkVisibility.ByHostView),
+        502: _FakeLinkGraphicsSettings(_FakeLinkVisibility.Custom),
     })
     diag = _FakeDiag()
 

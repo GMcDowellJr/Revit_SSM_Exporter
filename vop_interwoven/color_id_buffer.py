@@ -326,21 +326,32 @@ def _link_instance_respects_host_view_filters(view, link_inst, diag=None, view_i
     built and colored -- the same HOST-palette-ID-aliasing risk as an
     uncolorable/failed category, just from a different cause.
 
+    Uses view.GetLinkOverrides(link_inst.Id).LinkVisibilityType against the
+    Autodesk.Revit.DB.LinkVisibility enum (ByHostView / ByLinkView /
+    Custom) -- the same API this project's own legacy reference
+    implementation reads for this exact purpose (legacy/SSM_Exporter_v4_
+    A21_baseline_f00af7d.py's Link3D collection, ~line 4281), confirming
+    it's the correct surface for this project's actual target Revit
+    version rather than a newer/different RevitLinkGraphicsSettings shape.
+    That legacy code deliberately stopped at diagnostics-only logging for
+    Custom/ByLinkView ("FUTURE stubs (no behavior change today)"); this is
+    the first place in this codebase that acts on the signal instead of
+    only logging it.
+
     Returns True (treat as compliant, i.e. colorable via filters) whenever
-    the check cannot be completed -- nothing in this codebase has verified
-    the exact RevitLinkGraphicsSettings/LinkedViewDisplayMode API surface
-    against a live Revit install, and "By Host View" is Revit's overwhelming
+    the check cannot be completed -- "By Host View" is Revit's overwhelming
     default, so a defensive False-by-default here would risk hiding every
-    link in every capture on an API mismatch alone: a far worse regression
-    than the narrow non-default-display-mode case this defends against.
-    Only a POSITIVE confirmation of a non-"By Host View" mode returns False.
+    link in every capture on an unexpected API/version gap alone: a far
+    worse regression than the narrow non-default-visibility-type case this
+    defends against. Only a POSITIVE confirmation of a non-"By Host View"
+    type returns False.
     """
     try:
-        from Autodesk.Revit.DB import LinkedViewDisplayMode
+        from Autodesk.Revit.DB import LinkVisibility
         overrides = view.GetLinkOverrides(link_inst.Id)
         if overrides is None:
             return True
-        return overrides.CategoryOverridesDisplaySettings == LinkedViewDisplayMode.ByHostView
+        return overrides.LinkVisibilityType == LinkVisibility.ByHostView
     except Exception as ex:
         if diag is not None:
             diag.warn(
