@@ -794,6 +794,68 @@ def test_no_uncolorable_categories_hides_nothing_and_needs_no_proxies():
     ) == set()
 
 
+def test_collect_view_scoped_link_proxies_reports_partial_scan_as_not_ok():
+    """collect_all_linked_elements swallows a failed link enumeration, a
+    placement with no transform, and a mid-loop element error -- each comes
+    back as a quietly SHORT list, not an exception. A short list must not
+    read as 'ok', or the hide decision proves absence from a scan that never
+    looked (the exact fail-open Codex flagged on PR #196)."""
+    import vop_interwoven.revit.linked_documents as linked_documents
+
+    def _partial(_doc, _view, _cfg, diag=None, status=None):
+        # Mirrors the real collectors: log, mark, skip -- never raise.
+        if status is not None:
+            status.mark_incomplete(
+                "_collect_from_revit_links.per_link_instance", "boom on placement 2"
+            )
+        return [_FakeLinkProxy(_FakeCategory("Walls", 10), 5001)]
+
+    original = linked_documents.collect_all_linked_elements
+    linked_documents.collect_all_linked_elements = _partial
+    diag = _FakeDiag()
+    try:
+        proxies, ok = color_id_buffer._collect_view_scoped_link_proxies(
+            object(), object(), object(), diag=diag, view_id=1
+        )
+    finally:
+        linked_documents.collect_all_linked_elements = original
+
+    assert len(proxies) == 1, "the partial list is still returned for near-face-W's use"
+    assert ok is False, "but it cannot prove any category absent"
+    assert any("incomplete" in w["message"] for w in diag.warnings)
+
+
+def test_partial_scan_falls_back_to_document_wide_hide():
+    """End of the same chain: an incomplete scan reaches the hide decision as
+    link_scan_ok=False, so the conservative document-wide hide applies rather
+    than leaving an uncolorable category's placement visible."""
+    cat_odd = _FakeCategory("OddModelCategory", 15)
+    inst = _FakeLinkInstanceWithId("exam room 1", 5001)
+    # A proxy list that does NOT mention OddModelCategory -- under a COMPLETE
+    # scan this would spare the placement; under an incomplete one it must not.
+    link_proxies = [_FakeLinkProxy(_FakeCategory("Walls", 10), 5001)]
+
+    hidden = color_id_buffer._instances_to_hide_for_uncolorable_categories(
+        [cat_odd], {cat_odd.Id.IntegerValue: {inst}}, link_proxies, False
+    )
+
+    assert hidden == {inst}
+
+
+def test_link_collection_status_starts_complete_and_records_failures():
+    from vop_interwoven.revit.linked_documents import LinkCollectionStatus
+
+    status = LinkCollectionStatus()
+    assert status.rvt_complete is True
+    assert status.failures == []
+
+    status.mark_incomplete("_collect_from_revit_links.transform", "link 'core shell'")
+    assert status.rvt_complete is False
+    assert status.failures == [
+        ("_collect_from_revit_links.transform", "link 'core shell'")
+    ], "a False must carry WHAT was incomplete -- CLAUDE.md's no-silent-failure rule"
+
+
 def test_collect_view_scoped_link_proxies_reports_scan_failure_instead_of_empty():
     """_collect_view_scoped_link_proxies must distinguish 'scan failed' from
     'this view genuinely has no LINK elements' -- the hide decision above
@@ -822,7 +884,7 @@ def test_collect_view_scoped_link_proxies_reports_empty_success_as_ok():
     import vop_interwoven.revit.linked_documents as linked_documents
 
     original = linked_documents.collect_all_linked_elements
-    linked_documents.collect_all_linked_elements = lambda *_a, **_k: []
+    linked_documents.collect_all_linked_elements = lambda *_a, **_k: []  # no failures marked
     try:
         proxies, ok = color_id_buffer._collect_view_scoped_link_proxies(
             object(), object(), object()

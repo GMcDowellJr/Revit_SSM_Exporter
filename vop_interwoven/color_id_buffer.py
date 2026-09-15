@@ -693,17 +693,27 @@ def _collect_view_scoped_link_proxies(doc, view, cfg, diag=None, view_id=None):
     collection_policy inclusion rules _model_categories_in_linked_doc() applies
     during category discovery.
 
-    Returns ``(proxies, ok)``. ``ok`` is False when the scan itself raised:
-    callers must NOT read an empty-because-it-failed list as "nothing is
-    present in this view" and relax a safety decision on that basis (see
+    Returns ``(proxies, ok)``. ``ok`` is False whenever the returned list may
+    be SHORT of what this view really contains -- not merely when the call
+    raised. collect_all_linked_elements and the collectors beneath it are
+    deliberately resilient: a link whose document fails to enumerate, a
+    placement with no resolvable transform, and an element that raises
+    mid-loop are each logged and skipped rather than propagated, so they come
+    back as a quietly truncated (or empty) list, indistinguishable by
+    inspection from a complete one. A LinkCollectionStatus passed down the
+    call chain is what makes that difference visible here.
+
+    Callers must NOT read a possibly-short list as "nothing is present in
+    this view" and relax a safety decision on that basis (see
     _instances_to_hide_for_uncolorable_categories, which falls back to the
-    conservative document-wide hide in that case). An empty list with
-    ``ok`` True is a real answer: this view genuinely resolves no LINK
+    conservative document-wide hide whenever ``ok`` is False). An empty list
+    with ``ok`` True is a real answer: this view genuinely resolves no LINK
     elements.
     """
-    from .revit.linked_documents import collect_all_linked_elements
+    from .revit.linked_documents import collect_all_linked_elements, LinkCollectionStatus
+    status = LinkCollectionStatus()
     try:
-        return list(collect_all_linked_elements(doc, view, cfg, diag=diag)), True
+        proxies = list(collect_all_linked_elements(doc, view, cfg, diag=diag, status=status))
     except Exception as ex:
         if diag is not None:
             diag.warn(
@@ -713,6 +723,19 @@ def _collect_view_scoped_link_proxies(doc, view, cfg, diag=None, view_id=None):
                 view_id=view_id,
             )
         return [], False
+
+    if not status.rvt_complete:
+        if diag is not None:
+            diag.warn(
+                phase="collection",
+                callsite="view_scoped_link_collect",
+                message="View-scoped LINK collection completed but is incomplete; the "
+                        "element list may be short of what this view contains and cannot "
+                        "prove a category absent: {0}".format(status.failures),
+                view_id=view_id,
+            )
+        return proxies, False
+    return proxies, True
 
 
 def _instances_to_hide_for_uncolorable_categories(
