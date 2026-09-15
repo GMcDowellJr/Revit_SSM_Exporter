@@ -127,11 +127,18 @@ def collect_all_linked_elements(doc, view, cfg, diag=None):
     # Collect from RVT links
     if getattr(cfg, 'include_linked_rvt', False):
         try:
-            rvt_elements = _collect_from_revit_links(doc, view, cfg)
+            rvt_elements = _collect_from_revit_links(doc, view, cfg, diag=diag)
             elements.extend(rvt_elements)
             _log("INFO", "Collected {0} elements from RVT links".format(len(rvt_elements)))
         except Exception as e:
             _log("ERROR", "Error collecting from RVT links: {0}".format(e))
+            if diag is not None:
+                diag.error(
+                    phase="linked_documents",
+                    callsite="collect_all_linked_elements.rvt_links",
+                    message="Error collecting from RVT links: {0}".format(e),
+                    exc=e,
+                )
 
     # Collect from DWG/DXF imports
     if getattr(cfg, 'include_dwg_imports', False):
@@ -501,13 +508,16 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
     return proxies, source_key, source_label
 
 
-def _collect_from_revit_links(doc, view, cfg):
+def _collect_from_revit_links(doc, view, cfg, diag=None):
     """Collect elements from linked Revit files.
 
     Args:
         doc: Host Revit Document
         view: Host View
         cfg: Config object
+        diag: Optional Diagnostics instance -- collector/transform/per-link
+            failures are recorded here (in addition to _log) rather than
+            only printed, per CLAUDE.md's no-silent-failure rule.
 
     Returns:
         List of LinkedElementProxy objects
@@ -542,6 +552,12 @@ def _collect_from_revit_links(doc, view, cfg):
         link_instances = collector.OfClass(RevitLinkInstance).ToElements()
     except Exception as e:
         _log("WARN", "Failed to collect RevitLinkInstance elements: {0}".format(e))
+        if diag is not None:
+            diag.warn(
+                phase="linked_documents",
+                callsite="_collect_from_revit_links.link_instance_collector",
+                message="Failed to collect RevitLinkInstance elements: {0}".format(e),
+            )
         return proxies
 
     if not link_instances:
@@ -567,6 +583,13 @@ def _collect_from_revit_links(doc, view, cfg):
             link_doc = link_inst.GetLinkDocument()
             if link_doc is None:
                 _log("WARN", "Link instance {0} has no linked document (unloaded?)".format(link_inst.Id))
+                if diag is not None:
+                    diag.warn(
+                        phase="linked_documents",
+                        callsite="_collect_from_revit_links.link_document",
+                        message="Link instance has no linked document (unloaded?)",
+                        elem_id=link_inst.Id.IntegerValue,
+                    )
                 continue
 
             link_title = link_doc.Title
@@ -576,16 +599,30 @@ def _collect_from_revit_links(doc, view, cfg):
             try:
                 link_trf = link_inst.GetTotalTransform()
             except Exception as e:
+                if diag is not None:
+                    diag.warn(
+                        phase="linked_documents",
+                        callsite="_collect_from_revit_links.transform_fallback",
+                        message="GetTotalTransform() failed; falling back to GetTransform(): {0}".format(e),
+                        elem_id=link_inst.Id.IntegerValue,
+                    )
                 link_trf = link_inst.GetTransform()
             if link_trf is None:
                 _log("WARN", "Link {0} has no transform".format(link_title))
+                if diag is not None:
+                    diag.warn(
+                        phase="linked_documents",
+                        callsite="_collect_from_revit_links.transform",
+                        message="Link '{0}' has no transform; skipping".format(link_title),
+                        elem_id=link_inst.Id.IntegerValue,
+                    )
                 continue
 
             # Try Revit 2024+ collector first
             link_proxies = []
             if use_2024_collector:
                 link_proxies, source_key, source_label = _collect_visible_link_elements_2024_plus(
-                    doc, view, link_inst, link_doc, link_trf, cfg
+                    doc, view, link_inst, link_doc, link_trf, cfg, diag=diag
                 )
             else:
                 # Fallback: Use clip volume approach for Revit < 2024
@@ -608,7 +645,8 @@ def _collect_from_revit_links(doc, view, cfg):
                     host_visible_cats=host_visible_cats,
                     doc_key=source_key,
                     doc_label=source_label,
-                    cfg=cfg
+                    cfg=cfg,
+                    diag=diag,
                 )
 
             proxies.extend(link_proxies)
@@ -616,6 +654,14 @@ def _collect_from_revit_links(doc, view, cfg):
 
         except Exception as e:
             _log("ERROR", "Error processing RVT link instance {0}: {1}".format(link_inst.Id, e))
+            if diag is not None:
+                diag.error(
+                    phase="linked_documents",
+                    callsite="_collect_from_revit_links.per_link_instance",
+                    message="Error processing RVT link instance: {0}".format(e),
+                    exc=e,
+                    elem_id=getattr(getattr(link_inst, "Id", None), "IntegerValue", None),
+                )
             continue
 
     return proxies
@@ -719,7 +765,8 @@ def _collect_from_dwg_imports(doc, view, cfg):
 
 
 def _collect_link_elements_with_clipping(link_inst, link_doc, link_trf, view,
-                                          clip_volume, host_visible_cats, doc_key, doc_label, cfg):
+                                          clip_volume, host_visible_cats, doc_key, doc_label, cfg,
+                                          diag=None):
     """Collect elements from a link document with spatial clipping.
 
     Args:
@@ -732,6 +779,10 @@ def _collect_link_elements_with_clipping(link_inst, link_doc, link_trf, view,
         doc_key: Unique document key for metadata indexing
         doc_label: Human-friendly document label for logging
         cfg: Config object
+        diag: Optional Diagnostics instance -- collection-level failures
+            (collector/spatial-filter creation, transform inversion) are
+            recorded here (in addition to _log), per CLAUDE.md's
+            no-silent-failure rule.
 
     Returns:
         List of LinkedElementProxy objects
@@ -749,6 +800,12 @@ def _collect_link_elements_with_clipping(link_inst, link_doc, link_trf, view,
     # Check if we have a valid clip volume
     if clip_volume is None or not clip_volume.get("is_valid", False):
         _log("WARN", "No valid clip volume; skipping spatial filtering")
+        if diag is not None:
+            diag.warn(
+                phase="linked_documents",
+                callsite="_collect_link_elements_with_clipping.clip_volume",
+                message="No valid clip volume; skipping spatial filtering for link '{0}'".format(doc_label),
+            )
         # Fall back to simple view-scoped collection
         try:
             collector = (
@@ -757,12 +814,25 @@ def _collect_link_elements_with_clipping(link_inst, link_doc, link_trf, view,
             )
         except Exception as e:
             _log("ERROR", "Failed to create collector for link doc: {0}".format(e))
+            if diag is not None:
+                diag.error(
+                    phase="linked_documents",
+                    callsite="_collect_link_elements_with_clipping.collector",
+                    message="Failed to create collector for link '{0}': {1}".format(doc_label, e),
+                    exc=e,
+                )
             return proxies
     else:
         # Build spatial filter in link coordinates
         corners_host = clip_volume.get("corners_host")
         if not corners_host or len(corners_host) < 8:
             _log("WARN", "Clip volume missing corners")
+            if diag is not None:
+                diag.warn(
+                    phase="linked_documents",
+                    callsite="_collect_link_elements_with_clipping.clip_volume",
+                    message="Clip volume missing corners for link '{0}'".format(doc_label),
+                )
             return proxies
 
         # Transform clip volume corners to link space
@@ -770,6 +840,13 @@ def _collect_link_elements_with_clipping(link_inst, link_doc, link_trf, view,
             inv_trf = link_trf.Inverse
         except Exception as e:
             _log("ERROR", "Failed to invert link transform: {0}".format(e))
+            if diag is not None:
+                diag.error(
+                    phase="linked_documents",
+                    callsite="_collect_link_elements_with_clipping.invert_transform",
+                    message="Failed to invert link transform for link '{0}': {1}".format(doc_label, e),
+                    exc=e,
+                )
             return proxies
 
         corners_link = [inv_trf.OfPoint(p) for p in corners_host]
@@ -793,6 +870,13 @@ def _collect_link_elements_with_clipping(link_inst, link_doc, link_trf, view,
             )
         except Exception as e:
             _log("ERROR", "Failed to create spatial filter: {0}".format(e))
+            if diag is not None:
+                diag.warn(
+                    phase="linked_documents",
+                    callsite="_collect_link_elements_with_clipping.spatial_filter",
+                    message="Failed to create spatial filter for link '{0}'; falling back to "
+                            "unfiltered collection: {1}".format(doc_label, e),
+                )
             # Fall back to unfiltered collection
             collector = (
                 FilteredElementCollector(link_doc)

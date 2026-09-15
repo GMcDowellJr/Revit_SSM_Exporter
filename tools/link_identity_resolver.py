@@ -151,30 +151,35 @@ def connected_components_with_pixels(mask: np.ndarray) -> list[dict[str, Any]] |
     needs pixel-level intersection with the candidate's own footprint
     rectangle, not just a component size.
 
-    Returns None (skip) if the mask's own foreground extent is too large for
-    this inexpensive, single-threaded flood fill.
+    Returns None (skip) if the mask's own foreground PIXEL COUNT is too
+    large for this inexpensive, single-threaded flood fill.
 
-    The size cap is applied to the foreground's own bounding box, not the
-    full mask/image dimensions: a LINK category's colored region is
-    typically a small fraction of a full sheet-sized capture (an ordinary
-    3600x2700 TIFF at the producer's default 150 DPI already exceeds
-    MAX_MASK_PIXELS_FOR_COMPONENTS on image area alone), so gating on raw
-    image size would mark nearly every real capture "skipped" regardless of
-    how sparse the actual foreground is. Cropping to the foreground's own
-    AABB first (same one tools/analyze_stage_a_probe.py's connected_
-    components() would compute if it tracked one) keeps the cap meaningful:
-    it still protects against a mask that is genuinely large and dense,
-    just not against a small foreground sitting inside a large image.
+    The size cap is applied to the foreground's actual pixel count, not any
+    bounding-box area (full image OR the foreground's own union AABB): the
+    flood fill's real cost is the per-pixel Python-level loop below
+    (`for x, y in zip(...)`), which is O(foreground pixel count) regardless
+    of how those pixels are laid out spatially -- gating on the full image's
+    dimensions would mark nearly every real, sheet-sized capture "skipped"
+    outright (an ordinary 3600x2700 TIFF at the producer's default 150 DPI
+    already exceeds MAX_MASK_PIXELS_FOR_COMPONENTS on image area alone), and
+    gating on the foreground's own union bounding-box area is hardly better:
+    a LINK category's elements scattered across a sheet (e.g. walls spread
+    over a whole floor plan) can still produce a union AABB spanning nearly
+    the entire image even though the foreground itself is a tiny fraction of
+    it. Only the actual pixel count reflects the loop's real workload.
+    Cropping to the foreground's own AABB is still done below, but purely as
+    a memory-locality optimization for the `seen`/`cropped` arrays -- it
+    plays no part in the pass/skip decision.
     """
     ys_full, xs_full = np.nonzero(mask)
     if ys_full.size == 0:
         return []
+    if ys_full.size > MAX_MASK_PIXELS_FOR_COMPONENTS:
+        return None
     y0, y1 = int(ys_full.min()), int(ys_full.max())
     x0, x1 = int(xs_full.min()), int(xs_full.max())
     cropped = mask[y0:y1 + 1, x0:x1 + 1]
     ch, cw = cropped.shape
-    if ch * cw > MAX_MASK_PIXELS_FOR_COMPONENTS:
-        return None
 
     seen = np.zeros_like(cropped, dtype=bool)
     blobs: list[dict[str, Any]] = []
@@ -272,6 +277,17 @@ def _score_candidates_for_blob(blob: dict[str, Any], candidates: list[dict[str, 
             (blob["ys"] >= y0) & (blob["ys"] <= y1)
         )
         overlap_px = int(np.count_nonzero(inside))
+        if overlap_px == 0:
+            # The candidate's footprint rectangle intersects the blob's
+            # bounding box but not a single one of its actual pixels -- e.g.
+            # it sits in the concave notch of an L-shaped blob, or the hole
+            # of a ring-shaped one. A bbox-only test cannot see that; this
+            # candidate has zero pixel evidence and must not be scored or
+            # emitted as an assignment, or a blob with no real candidates at
+            # all would silently report one anyway (falsely, at whatever
+            # near_face_w tie-break happens to apply) instead of falling
+            # through to the null-assignment path below.
+            continue
         coverage = overlap_px / float(footprint_area)
         scored.append({
             "key": cand["key"],

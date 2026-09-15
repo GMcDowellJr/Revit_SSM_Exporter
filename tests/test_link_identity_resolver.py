@@ -62,6 +62,22 @@ def test_connected_components_with_pixels_returns_empty_list_for_blank_mask():
     assert lir.connected_components_with_pixels(mask) == []
 
 
+def test_connected_components_with_pixels_gate_uses_pixel_count_not_union_bbox_area():
+    """Two tiny, far-apart foreground regions (e.g. LINK elements scattered
+    across a sheet) produce a union bounding box spanning nearly the whole
+    image, even though the actual foreground pixel count is tiny. The size
+    cap must gate on pixel count, not that union bbox's area -- gating on
+    the bbox would always skip this realistic scattered-elements case."""
+    large_h, large_w = 3000, 3000  # union bbox area alone would be ~9,000,000 px
+    mask = np.zeros((large_h, large_w), dtype=bool)
+    mask[10:12, 10:12] = True          # blob A: 4 px, near the top-left corner
+    mask[2990:2992, 2990:2992] = True  # blob B: 4 px, near the bottom-right corner
+    blobs = lir.connected_components_with_pixels(mask)
+    assert blobs is not None
+    assert len(blobs) == 2
+    assert {b["pixel_count"] for b in blobs} == {4}
+
+
 # --- _uv_rect_to_pixel_bbox ---------------------------------------------------
 
 def test_uv_rect_to_pixel_bbox_maps_into_pixel_space():
@@ -197,6 +213,42 @@ def test_resolve_category_adjoining_elements_merged_into_one_blob_are_flagged_am
     other = assignment["other_plausible_elem_ids"]
     assert set([winner] + other) == {"1:401", "1:402"}
     assert len(other) == 1
+
+
+def test_score_candidates_rejects_footprint_in_the_concave_notch_of_an_l_shaped_blob():
+    """A candidate whose footprint rectangle intersects the blob's overall
+    AABB but overlaps none of the blob's actual (non-rectangular) pixels
+    must be rejected outright, not scored with coverage_fraction=0.0 and
+    reported as a zero-evidence assignment."""
+    size = 20
+    arr = np.zeros((size, size, 3), dtype=np.uint8)
+    arr[:, :] = (255, 255, 255)
+    # L-shaped blob: a vertical arm (rows 2-10, cols 2-4) and a horizontal
+    # arm (rows 8-10, cols 2-10), joined at their shared corner -- the
+    # blob's own AABB (rows 2-10, cols 2-10) includes the empty concave
+    # region at rows 2-7, cols 5-10 that neither arm actually paints.
+    arr[2:11, 2:5] = (9, 9, 9)
+    arr[8:11, 2:11] = (9, 9, 9)
+    bounds_uv = (0.0, 0.0, float(size), float(size))
+
+    # This candidate's footprint (pixel rows ~2-4, cols ~6-9, verified below)
+    # sits entirely in that empty concave region -- inside the blob's AABB,
+    # touching none of its real pixels.
+    cand = _candidate("1:501", 1, 501, near_face_w=1.0,
+                       bbox_corners_uv=[[6, 15], [10, 15], [10, 18], [6, 18]])
+    pixel_bbox = lir._uv_rect_to_pixel_bbox(cand["bbox_corners_uv"], bounds_uv, size, size)
+    x0, y0, x1, y1 = pixel_bbox
+    footprint = arr[y0:y1 + 1, x0:x1 + 1]
+    assert not (footprint == (9, 9, 9)).all(axis=-1).any(), (
+        "test setup: candidate footprint must not touch the blob's own color"
+    )
+
+    result = lir.resolve_category([9, 9, 9], [cand], arr, bounds_uv, image_w=size, image_h=size)
+
+    assert result["skipped"] is False
+    blob = next(iter(result["blobs"].values()))
+    assert blob["assignment"] is None
+    assert blob["reason"] == "no_candidate_footprint_intersects_blob_bbox"
 
 
 def test_resolve_category_no_candidates_intersecting_blob_reports_null_assignment():
