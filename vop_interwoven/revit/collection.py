@@ -743,6 +743,219 @@ def estimate_depth_range_from_bbox(elem, transform, view, raster, bbox=None, dia
     return (min_depth, max_depth)
 
 
+def _bbox_world_corners(bbox, transform=None, bbox_is_link_space=False, diag=None, view_id=None, elem_id=None):
+    """Return a bounding box's 8 corners in final host/world space, after
+    applying bbox.Transform (bbox-local -> the space bbox_is_link_space
+    describes) and then, when bbox_is_link_space is True, ``transform``
+    (link -> host).
+
+    Shared by project_bbox_corners_uv() and project_bbox_uv_and_near_face_w()
+    so a UV footprint and its near_face_w are always derived from the
+    IDENTICAL transformed corner set -- computing them via two independent
+    code paths (one applying bbox.Transform, one not) could otherwise put
+    them in different coordinate spaces for an element whose BoundingBoxXYZ
+    carries a non-identity Transform (e.g. a rotated family instance),
+    silently pairing a correct UV footprint with a near_face_w computed from
+    un-transformed, bbox-local corners.
+
+    Returns a list of 8 (x, y, z) tuples, or None if a required transform is
+    missing or a Revit API failure prevents completing it.
+    """
+    if bbox is None:
+        return None
+
+    min_x, min_y, min_z = bbox.Min.X, bbox.Min.Y, bbox.Min.Z
+    max_x, max_y, max_z = bbox.Max.X, bbox.Max.Y, bbox.Max.Z
+    corners = [
+        (min_x, min_y, min_z), (min_x, min_y, max_z),
+        (min_x, max_y, min_z), (min_x, max_y, max_z),
+        (max_x, min_y, min_z), (max_x, min_y, max_z),
+        (max_x, max_y, min_z), (max_x, max_y, max_z),
+    ]
+
+    # BoundingBoxXYZ.Min/Max are in bbox-local space; bbox.Transform maps
+    # local -> the space bbox_is_link_space describes (host, or link-local
+    # when bbox_is_link_space=True) -- must be applied before any link
+    # transform below, mirroring _project_element_bbox_to_cell_rect.
+    bbox_trf = getattr(bbox, "Transform", None)
+    if bbox_trf is not None:
+        try:
+            # Real Revit Transform.OfPoint requires an XYZ, not a tuple, and
+            # raises TypeError here -- the except branch below is the path
+            # real Revit always takes. Trying the raw tuple first (mirroring
+            # estimate_nearest_depth_from_bbox's own bbox_is_link_space
+            # handling) lets a test stub whose OfPoint already accepts/
+            # returns plain tuples skip the Autodesk.Revit.DB import entirely.
+            corners = [tuple(bbox_trf.OfPoint(c)) for c in corners]
+        except Exception:
+            try:
+                from Autodesk.Revit.DB import XYZ
+                xyzs = [XYZ(c[0], c[1], c[2]) for c in corners]
+                corners = [(p.X, p.Y, p.Z) for p in [bbox_trf.OfPoint(p) for p in xyzs]]
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="collection",
+                        callsite="_bbox_world_corners",
+                        message="Exception applying bbox.Transform: {}".format(e),
+                        exc=e,
+                        view_id=view_id,
+                        elem_id=elem_id,
+                    )
+                # Both attempts failed: corners are still in bbox-local space,
+                # not the space this function promises to return. Returning
+                # them anyway would silently produce plausible-looking but
+                # wrong data -- honor the documented "None on failure"
+                # contract instead of continuing with untransformed corners.
+                return None
+
+    if bbox_is_link_space:
+        if transform is None:
+            return None
+        try:
+            corners = [tuple(transform.OfPoint(c)) for c in corners]
+        except Exception:
+            try:
+                from Autodesk.Revit.DB import XYZ
+                xyzs = [XYZ(c[0], c[1], c[2]) for c in corners]
+                corners = [(p.X, p.Y, p.Z) for p in [transform.OfPoint(p) for p in xyzs]]
+            except Exception as e:
+                if diag is not None:
+                    diag.error(
+                        phase="collection",
+                        callsite="_bbox_world_corners",
+                        message="Exception applying link transform: {}".format(e),
+                        exc=e,
+                        view_id=view_id,
+                        elem_id=elem_id,
+                    )
+                return None
+
+    return corners
+
+
+def project_bbox_corners_uv(bbox, vb, transform=None, bbox_is_link_space=False, diag=None, view_id=None, elem_id=None):
+    """Project a bounding box's 8 corners into view UV and return the axis-
+    aligned rectangle they span, as its 4 corners in UV (min-min, max-min,
+    max-max, min-max order).
+
+    Used by color_id_buffer.py's near-face-W sidecar collection (Phase 1b)
+    to persist a per-element UV footprint alongside near_face_w --
+    tools/link_identity_resolver.py later maps this rectangle into the
+    Stage A TIFF's pixel space to score candidate LINK elements against a
+    connected-component color blob.
+
+    Args:
+        bbox: BoundingBoxXYZ. Host-space unless bbox_is_link_space is True.
+        vb: ViewBasis for world_to_view projection.
+        transform: Link instance transform (link -> host), required when
+            bbox_is_link_space is True.
+        bbox_is_link_space: True when bbox.Min/Max are in the linked
+            document's own local space and must be mapped through
+            ``transform`` before projection -- mirrors
+            _project_element_bbox_to_cell_rect's own convention.
+
+    Returns:
+        [[u_min, v_min], [u_max, v_min], [u_max, v_max], [u_min, v_max]],
+        or None if projection cannot be completed (missing bbox/view basis,
+        a link-space bbox with no transform, or a Revit API failure).
+    """
+    from .view_basis import world_to_view
+
+    if bbox is None or vb is None:
+        return None
+
+    corners = _bbox_world_corners(
+        bbox, transform=transform, bbox_is_link_space=bbox_is_link_space,
+        diag=diag, view_id=view_id, elem_id=elem_id,
+    )
+    if corners is None:
+        return None
+
+    try:
+        uvs = [world_to_view(corner, vb) for corner in corners]
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="collection",
+                callsite="project_bbox_corners_uv",
+                message="Exception in world_to_view: {}".format(e),
+                exc=e,
+                view_id=view_id,
+                elem_id=elem_id,
+            )
+        return None
+
+    u_min = min(uv[0] for uv in uvs)
+    u_max = max(uv[0] for uv in uvs)
+    v_min = min(uv[1] for uv in uvs)
+    v_max = max(uv[1] for uv in uvs)
+    return [[u_min, v_min], [u_max, v_min], [u_max, v_max], [u_min, v_max]]
+
+
+def project_bbox_uv_and_near_face_w(bbox, vb, transform=None, bbox_is_link_space=False, diag=None, view_id=None, elem_id=None):
+    """Project a bounding box to its UV footprint rectangle AND its
+    near-face depth (nearest w across the same transformed 8 corners) in
+    one pass, guaranteeing both values come from the identical corner set.
+
+    color_id_buffer.py's near-face-W sidecar collection (Phase 1b) uses
+    this instead of calling project_bbox_corners_uv() and
+    estimate_nearest_depth_from_bbox() separately: that function pair can
+    silently disagree on coordinate space, since estimate_nearest_depth_
+    from_bbox() never applies bbox.Transform (only the bbox_is_link_space
+    ``transform`` parameter) while project_bbox_corners_uv() always does --
+    for an element whose BoundingBoxXYZ carries a non-identity Transform
+    (e.g. a rotated family instance), that mismatch would pair a correctly
+    transformed UV footprint with a near_face_w computed from un-transformed,
+    bbox-local corners. Deliberately does not call estimate_nearest_depth_
+    from_bbox() at all, to avoid depending on (or risking any behavior
+    change to) that shared function, which the core occlusion pipeline
+    (render_model_front_to_back) also relies on.
+
+    Args:
+        Same as project_bbox_corners_uv().
+
+    Returns:
+        (bbox_corners_uv, near_face_w) -- both None if projection cannot be
+        completed; otherwise bbox_corners_uv is the same 4-corner UV
+        rectangle project_bbox_corners_uv() would return and near_face_w is
+        the minimum w (nearest depth) among the 8 transformed corners.
+    """
+    from .view_basis import world_to_view
+
+    if bbox is None or vb is None:
+        return None, None
+
+    corners = _bbox_world_corners(
+        bbox, transform=transform, bbox_is_link_space=bbox_is_link_space,
+        diag=diag, view_id=view_id, elem_id=elem_id,
+    )
+    if corners is None:
+        return None, None
+
+    try:
+        uvws = [world_to_view(corner, vb) for corner in corners]
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="collection",
+                callsite="project_bbox_uv_and_near_face_w",
+                message="Exception in world_to_view: {}".format(e),
+                exc=e,
+                view_id=view_id,
+                elem_id=elem_id,
+            )
+        return None, None
+
+    u_min = min(p[0] for p in uvws)
+    u_max = max(p[0] for p in uvws)
+    v_min = min(p[1] for p in uvws)
+    v_max = max(p[1] for p in uvws)
+    near_face_w = min(p[2] for p in uvws)
+    rect = [[u_min, v_min], [u_max, v_min], [u_max, v_max], [u_min, v_max]]
+    return rect, near_face_w
+
+
 def _project_element_bbox_to_cell_rect(elem, vb, raster, bbox=None, diag=None, view=None, transform=None, bbox_is_link_space=False):
     """Project element bounding box to cell rectangle using OBB (oriented bounds).
 
