@@ -1221,6 +1221,54 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 view_id=view_id,
             )
 
+    # Shadows were confirmed (empirically) to shift assigned colors in the
+    # exported TIFF, the same class of per-pixel color drift SmoothEdges/
+    # DisplayStyle above exist to eliminate -- same live-API-object-across-
+    # transaction-boundary caution as orig_smooth_edges. Unlike orig_smooth_
+    # edges's bool(getattr(..., None)), a missing ShowShadows attribute
+    # (unsupported on this Revit host) is kept as None rather than coerced
+    # to False: coercing it would make suppression below silently skip AND
+    # the sidecar report "unchanged" as if nothing needed doing, when the
+    # real state is actually unknown and the export may still carry shadow
+    # tinting.
+    _MISSING_SHOW_SHADOWS = object()
+    orig_show_shadows = None
+    try:
+        _dm = view.GetViewDisplayModel()
+        try:
+            _raw_show_shadows = getattr(_dm, "ShowShadows", _MISSING_SHOW_SHADOWS)
+            if _raw_show_shadows is _MISSING_SHOW_SHADOWS:
+                if diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite="show_shadows_capture",
+                        message="ViewDisplayModel has no ShowShadows attribute on this "
+                                "Revit host; shadow suppression will be skipped and the "
+                                "exported TIFF may still carry shadow tinting",
+                        view_id=view_id,
+                    )
+            else:
+                orig_show_shadows = bool(_raw_show_shadows)
+        finally:
+            try:
+                _dm.Dispose()
+            except Exception as ex:
+                if diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite="show_shadows_capture_dispose",
+                        message=str(ex),
+                        view_id=view_id,
+                    )
+    except Exception as ex:
+        if diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="show_shadows_capture",
+                message=str(ex),
+                view_id=view_id,
+            )
+
     # Captured only as (BoundingBoxXYZ, bool) -- same live-API-object-across-
     # transaction-boundary caution as orig_display_style/orig_smooth_edges
     # above -- rather than re-derived at restore time.
@@ -1407,6 +1455,41 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                     diag.warn(
                         phase="color_id_buffer",
                         callsite="smooth_edges",
+                        message=str(ex),
+                        view_id=view_id,
+                    )
+
+        # Suppress shadow tinting for the same reason AA is disabled above --
+        # shadows shift a painted flat color's exported RGB, which a decoder
+        # can't distinguish from a genuine palette color. Skip the mutation
+        # (and the transaction write it would cost) when shadows are already
+        # off: nothing to suppress, and restore would otherwise have nothing
+        # meaningful to undo either.
+        applied_show_shadows = "unchanged"
+        if orig_show_shadows is not None and orig_show_shadows is not False:
+            try:
+                dm = view.GetViewDisplayModel()
+                try:
+                    dm.ShowShadows = False
+                    view.SetViewDisplayModel(dm)
+                    applied_show_shadows = False
+                finally:
+                    try:
+                        dm.Dispose()
+                    except Exception as ex:
+                        if diag is not None:
+                            diag.warn(
+                                phase="color_id_buffer",
+                                callsite="show_shadows_dispose",
+                                message=str(ex),
+                                view_id=view_id,
+                            )
+            except Exception as ex:
+                applied_show_shadows = "unchanged (failed)"
+                if diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite="show_shadows",
                         message=str(ex),
                         view_id=view_id,
                     )
@@ -1694,6 +1777,25 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                         pass
             _restore_step("restore_smooth_edges", _restore_smooth_edges)
 
+        if orig_show_shadows is not None:
+            def _restore_show_shadows():
+                dm = view.GetViewDisplayModel()
+                try:
+                    dm.ShowShadows = orig_show_shadows
+                    view.SetViewDisplayModel(dm)
+                finally:
+                    try:
+                        dm.Dispose()
+                    except Exception as ex:
+                        if diag is not None:
+                            diag.warn(
+                                phase="color_id_buffer",
+                                callsite="restore_show_shadows_dispose",
+                                message=str(ex),
+                                view_id=view_id,
+                            )
+            _restore_step("restore_show_shadows", _restore_show_shadows)
+
         if orig_crop_box is not None:
             def _restore_crop_box():
                 view.CropBox = orig_crop_box
@@ -1854,6 +1956,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "near_face_w_map": near_face_w_map,
         "applied_display_style": applied_display_style,
         "applied_smooth_edges": applied_smooth_edges,
+        "applied_show_shadows": applied_show_shadows,
         "categories_hidden": category_hidden_state,
         "filter_state": filter_state,
         "phase_filter_state": phase_filter_state,
