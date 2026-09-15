@@ -158,9 +158,18 @@ _FALLBACK_EXCLUDED_CATEGORY_NAMES = {
     # in _EXCLUDED_BIC_NAMES_GLOBAL for why they are excluded.  Each one
     # previously reached color_id_buffer.py's _model_categories_in_linked_doc
     # "uncolorable" branch and could trigger whole-link-instance hiding for an
-    # unrelated, genuinely colorable category sharing the same instance -- the
-    # second half of that failure mode is fixed in color_id_buffer.py by
-    # scoping the hide decision to categories actually present in the view.
+    # unrelated, genuinely colorable category sharing the same instance.  That
+    # hide mechanism is retired, and so is the category-level force-white
+    # override that briefly replaced it, which prompted a re-examination of
+    # whether these eight still need excluding from POLICY at all.
+    #
+    # DECISION: keep them excluded.  They carry no visible model geometry, so
+    # excluding them means the collection pass never enumerates, resolves or
+    # bbox-tests their elements -- pure saved work, with nothing downstream
+    # that wants them.  Removing the entries would not simplify anything
+    # either: the list has to stay for the other twenty-odd categories
+    # regardless, so these eight would be a special case carved out of a list
+    # that still exists rather than a list deleted.
     "Internal Origin",
     "Project Base Point",
     "Survey Point",

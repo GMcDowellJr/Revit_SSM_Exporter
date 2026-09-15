@@ -109,14 +109,16 @@ class LinkCollectionStatus(object):
     right default for occupancy rasterization, where a missing element costs
     coverage and nothing else.
 
-    It is NOT safe for a caller deciding to LEAVE SOMETHING VISIBLE on the
-    strength of an element's absence from the returned list (see
-    color_id_buffer._instances_to_hide_for_uncolorable_categories): there,
-    "absent because the scan skipped it" and "absent because it genuinely
-    isn't in this view" have opposite correct outcomes, and a partial list is
-    indistinguishable from a complete one by inspection alone. Such a caller
-    passes a LinkCollectionStatus and treats ``rvt_complete is False`` as "no
-    answer", not as "absent".
+    It is NOT safe for a caller that would act on an element's ABSENCE from
+    the returned list -- for instance to leave something visible, or to
+    conclude a category is not in this view: "absent because the scan skipped
+    it" and "absent because it genuinely isn't in this view" have opposite
+    correct outcomes, and a partial list is indistinguishable from a complete
+    one by inspection alone. Such a caller passes a LinkCollectionStatus and
+    treats ``rvt_complete is False`` as "no answer", not as "absent".
+    (color_id_buffer.py had exactly such a caller until its hide-instance
+    mechanism was retired; the signal is kept because the hazard is a
+    property of these collectors, not of that one caller.)
 
     Scoped to the RVT link path only: DWG import failures never affect it,
     because every consumer of this signal filters to source_type == "LINK"

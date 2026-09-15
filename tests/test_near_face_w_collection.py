@@ -86,13 +86,6 @@ class _FakeLinkedElementProxy:
         return self._bbox
 
 
-class _FakeLinkInstanceRef:
-    """Minimal stand-in for a RevitLinkInstance as it appears in
-    instances_to_hide -- only .Id is read."""
-    def __init__(self, inst_id):
-        self.Id = _FakeElementId(inst_id)
-
-
 class _FakeDoc:
     def __init__(self, elements):
         self._by_id = {e.Id.IntegerValue: e for e in elements}
@@ -170,8 +163,7 @@ def test_collects_host_and_link_entries_with_bbox_and_near_face_w(monkeypatch):
     with _install_fake_revit_db():
         result = color_id_buffer._collect_near_face_w_data(
             doc, view=object(), raster=_raster(), cfg=object(), resolved_ids=[host_elem.Id],
-            link_category_color_map={"Walls": [10, 20, 30]},
-            instances_to_hide=set(), diag=diag, view_id=42,
+            link_category_color_map={"Walls": [10, 20, 30]}, diag=diag, view_id=42,
         )
 
     assert set(result.keys()) == {"host", "link"}
@@ -204,7 +196,7 @@ def test_host_element_with_no_bbox_still_gets_an_entry_recorded_as_none():
     with _install_fake_revit_db():
         result = color_id_buffer._collect_near_face_w_data(
             doc, view=object(), raster=_raster(), cfg=object(), resolved_ids=[host_elem.Id],
-            link_category_color_map={}, instances_to_hide=set(), diag=diag, view_id=1,
+            link_category_color_map={}, diag=diag, view_id=1,
         )
 
     entry = result["host"]["1001"]
@@ -227,8 +219,7 @@ def test_near_face_w_is_normalized_to_none_when_non_finite():
     with _install_fake_revit_db():
         result = color_id_buffer._collect_near_face_w_data(
             doc, view=object(), raster=raster_without_basis, cfg=object(),
-            resolved_ids=[host_elem.Id], link_category_color_map={},
-            instances_to_hide=set(), diag=None, view_id=1,
+            resolved_ids=[host_elem.Id], link_category_color_map={}, diag=None, view_id=1,
         )
 
     assert result["host"]["1001"]["near_face_w"] is None
@@ -247,7 +238,7 @@ def test_link_collection_skipped_entirely_when_no_category_was_colored(monkeypat
     with _install_fake_revit_db():
         result = color_id_buffer._collect_near_face_w_data(
             _FakeDoc([]), view=object(), raster=_raster(), cfg=object(), resolved_ids=[],
-            link_category_color_map={}, instances_to_hide=set(), diag=None, view_id=1,
+            link_category_color_map={}, diag=None, view_id=1,
         )
 
     assert result["link"] == {}
@@ -271,27 +262,10 @@ def test_link_category_whose_filter_failed_is_excluded_from_link_collection(monk
     with _install_fake_revit_db():
         result = color_id_buffer._collect_near_face_w_data(
             _FakeDoc([]), view=object(), raster=_raster(), cfg=object(), resolved_ids=[],
-            link_category_color_map={"Walls": [1, 2, 3]},  # Doors absent -- its filter failed
-            instances_to_hide=set(), diag=None, view_id=1,
+            link_category_color_map={"Walls": [1, 2, 3]},  # Doors absent -- its filter failed diag=None, view_id=1,
         )
 
     assert set(result["link"].keys()) == {"9002:702"}
-
-
-def test_hidden_link_instance_is_excluded_from_link_collection(monkeypatch):
-    cat_walls = _FakeCategory("Walls", 10)
-    proxy = _FakeLinkedElementProxy(801, 9003, cat_walls, _FakeBBox((0, 0, 0), (1, 1, 1)))
-    _patch_link_proxies(monkeypatch, [proxy])
-    hidden_instance = _FakeLinkInstanceRef(9003)
-
-    with _install_fake_revit_db():
-        result = color_id_buffer._collect_near_face_w_data(
-            _FakeDoc([]), view=object(), raster=_raster(), cfg=object(), resolved_ids=[],
-            link_category_color_map={"Walls": [1, 2, 3]},
-            instances_to_hide={hidden_instance}, diag=None, view_id=1,
-        )
-
-    assert result["link"] == {}
 
 
 def test_dwg_import_proxies_are_excluded_from_link_collection(monkeypatch):
@@ -309,8 +283,7 @@ def test_dwg_import_proxies_are_excluded_from_link_collection(monkeypatch):
     with _install_fake_revit_db():
         result = color_id_buffer._collect_near_face_w_data(
             _FakeDoc([]), view=object(), raster=_raster(), cfg=object(), resolved_ids=[],
-            link_category_color_map={"Walls": [1, 2, 3]},
-            instances_to_hide=set(), diag=None, view_id=1,
+            link_category_color_map={"Walls": [1, 2, 3]}, diag=None, view_id=1,
         )
 
     assert result["link"] == {}
@@ -329,8 +302,7 @@ def test_two_overlapping_same_category_link_elements_get_distinct_bboxes(monkeyp
     with _install_fake_revit_db():
         result = color_id_buffer._collect_near_face_w_data(
             _FakeDoc([]), view=object(), raster=_raster(), cfg=object(), resolved_ids=[],
-            link_category_color_map={"Walls": [1, 2, 3]},
-            instances_to_hide=set(), diag=None, view_id=1,
+            link_category_color_map={"Walls": [1, 2, 3]}, diag=None, view_id=1,
         )
 
     link_entries = result["link"]

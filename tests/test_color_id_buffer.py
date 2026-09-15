@@ -19,6 +19,7 @@ from vop_interwoven.color_id_buffer import (
     choose_step,
     build_palette,
     compute_model_crop,
+    _reserved_corner_count,
     NEAR_BLACK_RESERVED_THRESHOLD,
     NEAR_WHITE_RESERVED_THRESHOLD,
 )
@@ -85,6 +86,146 @@ class TestPaletteCapacityConsistency(unittest.TestCase):
 
     def test_deterministic_ordering(self):
         self.assertEqual(build_palette(500, step=8), build_palette(500, step=8))
+
+
+def _hue_degrees(rgb):
+    """Hue of an RGB triple in degrees, without importing colorsys.
+
+    Kept local and explicit so this assertion does not depend on the same
+    conversion helper build_palette() itself uses -- a bug shared by both
+    would otherwise cancel out and the hue-spread test would pass on a
+    palette that is not actually spread.
+    """
+    r, g, b = [c / 255.0 for c in rgb]
+    hi, lo = max(r, g, b), min(r, g, b)
+    span = hi - lo
+    if span == 0:
+        return None  # achromatic: no hue
+    if hi == r:
+        hue = 60.0 * (((g - b) / span) % 6.0)
+    elif hi == g:
+        hue = 60.0 * (((b - r) / span) + 2.0)
+    else:
+        hue = 60.0 * (((r - g) / span) + 4.0)
+    return hue % 360.0
+
+
+class TestPaletteHueSpread(unittest.TestCase):
+    """The hue-primary traversal's reason for existing.
+
+    The previous RGB-nested-loop implementation (r outer, g middle, b inner,
+    returning as soon as element_count was reached) meant a real capture only
+    ever sampled the low-R/low-G corner: every element got a shade of blue.
+    These assert the spread statistically rather than by eye.
+    """
+
+    def _occupied_bins(self, palette, bin_count=12):
+        bin_width = 360.0 / bin_count
+        occupied = set()
+        for rgb in palette:
+            hue = _hue_degrees(rgb)
+            if hue is not None:
+                occupied.add(min(bin_count - 1, int(hue / bin_width)))
+        return occupied
+
+    def test_typical_view_element_count_spans_the_whole_hue_circle(self):
+        # ~6500 elements is a real production view, far below the 32640
+        # capacity at step 8 -- exactly the regime the old implementation
+        # never escaped the blue corner in.
+        occupied = self._occupied_bins(build_palette(6489, step=8))
+        self.assertEqual(
+            len(occupied), 12,
+            "a typical view's palette must reach every 30-degree hue bin; "
+            "occupied bins were {0}".format(sorted(occupied)),
+        )
+
+    def test_small_view_still_gets_distinct_hues(self):
+        # The stride within a band matters here: without it the first ten
+        # colors walk a single edge of the RGB cube and are all near-identical
+        # reds, which is the same failure as the blue bias at a smaller scale.
+        occupied = self._occupied_bins(build_palette(10, step=8))
+        self.assertGreaterEqual(
+            len(occupied), 8,
+            "ten elements must get ten clearly distinct hues; occupied bins "
+            "were {0}".format(sorted(occupied)),
+        )
+
+    def test_no_hue_bin_dominates_a_mid_size_palette(self):
+        palette = build_palette(500, step=8)
+        bin_counts = {}
+        for rgb in palette:
+            hue = _hue_degrees(rgb)
+            if hue is not None:
+                idx = min(11, int(hue / 30.0))
+                bin_counts[idx] = bin_counts.get(idx, 0) + 1
+        self.assertEqual(len(bin_counts), 12)
+        # Perfectly even would be ~8.3%; the old implementation put ~100% in
+        # one bin. Anything under a quarter in a single bin is comfortably
+        # "spread" without over-fitting to the exact traversal.
+        worst = max(bin_counts.values()) / float(len(palette))
+        self.assertLess(worst, 0.25, "hue bin counts: {0}".format(sorted(bin_counts.items())))
+
+
+class TestPaletteCapacityUnderHuePrimaryTraversal(unittest.TestCase):
+    """choose_step()'s capacity promise must survive the reimplementation.
+
+    build_palette() now generates in HSV, snaps onto the step lattice, and
+    only then falls back to a lattice-order completion pass. The claim that
+    capacity is unchanged rests on that completion pass reaching every valid
+    lattice point, so it is asserted directly here rather than argued.
+    """
+
+    def _capacity(self, step):
+        levels = (255 // step) + 1
+        return (levels ** 3) - _reserved_corner_count(step)
+
+    def test_full_capacity_is_deliverable_at_every_practical_step(self):
+        # Steps 3, 2 and 1 are omitted only because exhausting a 2M-plus
+        # lattice is slow, not because they differ in kind; choose_step never
+        # reaches them below ~261k elements.
+        for step in (8, 6, 5, 4):
+            capacity = self._capacity(step)
+            palette = build_palette(capacity, step=step)
+            self.assertEqual(
+                len(palette), capacity,
+                "step {0} promised {1} colors but build_palette produced "
+                "{2}".format(step, capacity, len(palette)),
+            )
+            self.assertEqual(len(set(palette)), capacity, "step {0} palette has duplicates".format(step))
+
+    def test_choose_step_guarantee_holds_across_lattice_boundaries(self):
+        capacity_at_8 = self._capacity(8)
+        edge_cases = [
+            1, 2, 3,
+            capacity_at_8 - 1, capacity_at_8, capacity_at_8 + 1,  # the step 8 -> 6 boundary
+            self._capacity(6),
+        ]
+        for n in edge_cases + [10, 500, 6489, 20000]:
+            step = choose_step(n)
+            palette = build_palette(n, step=step)
+            self.assertEqual(
+                len(palette), n,
+                "choose_step({0}) picked step={1} but build_palette produced "
+                "{2}".format(n, step, len(palette)),
+            )
+            self.assertEqual(len(set(palette)), n, "duplicate colors for n={0}".format(n))
+
+    def test_every_palette_color_lies_on_the_step_lattice(self):
+        # The snap-to-lattice step is what preserves the previous
+        # implementation's guarantee that two palette colors differ by at
+        # least `step` in some channel -- without it, neighboring HSV samples
+        # at low value convert to RGB values a unit or two apart, inside
+        # export noise and indistinguishable to a decoder.
+        for rgb in build_palette(6489, step=8):
+            for channel in rgb:
+                self.assertEqual(channel % 8, 0, "{0} is off the step-8 lattice".format(rgb))
+
+    def test_shorter_request_is_a_prefix_of_a_longer_one(self):
+        long_palette = build_palette(5000, step=8)
+        self.assertEqual(build_palette(500, step=8), long_palette[:500])
+
+    def test_zero_element_count_yields_an_empty_palette(self):
+        self.assertEqual(build_palette(0, step=8), [])
 
 
 class TestComputeModelCrop(unittest.TestCase):
