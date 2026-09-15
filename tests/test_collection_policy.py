@@ -393,6 +393,26 @@ class TestExclusionLists:
             "missing stable-id coverage: {}".format(missing_bic)
         )
 
+    def test_sketch_and_system_definition_categories_excluded_by_both_paths(self):
+        """Second, lower-confidence exclusion block -- same both-paths
+        requirement as the block above, since Category.Name is localized."""
+        by_name = {
+            "Pipe Segments", "Insulation Batting Lines", "Sketch",
+            "Primary Contours", "Rectangular Straight Wall Opening",
+        }
+        by_bic = {
+            "OST_PipeSegments", "OST_InsulationLines", "OST_Sketch",
+            "OST_TopographyContours", "OST_SWallRectOpening",
+        }
+        assert by_name.issubset(_FALLBACK_EXCLUDED_CATEGORY_NAMES), (
+            "missing name coverage: {}".format(by_name - _FALLBACK_EXCLUDED_CATEGORY_NAMES)
+        )
+        missing_bic = by_bic - set(excluded_bic_names_global())
+        assert not missing_bic, (
+            "name-only exclusion is not enough on a localized Revit; "
+            "missing stable-id coverage: {}".format(missing_bic)
+        )
+
     def test_fallback_names_and_bic_list_are_the_same_length(self):
         """One human-readable name per BuiltInCategory name -- the two lists
         are the same exclusion set expressed twice, and drift between them is

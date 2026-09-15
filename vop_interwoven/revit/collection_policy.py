@@ -110,6 +110,17 @@ _EXCLUDED_BIC_NAMES_GLOBAL: Tuple[str, ...] = (
     "OST_MaterialAssets",
     "OST_Materials",
     "OST_LegendComponents",
+    # Sketch/annotation-adjacent and system-definition categories that likewise
+    # report CategoryType.Model.  Added at the maintainer's direction after the
+    # first live diagnostic; unlike the block above these were not individually
+    # confirmed against a real uncolorable-category capture, and Pipe Segments
+    # and Primary Contours in particular describe content some projects may
+    # consider genuine.  Revisit if a view turns out to need them.
+    "OST_PipeSegments",
+    "OST_InsulationLines",
+    "OST_Sketch",
+    "OST_TopographyContours",
+    "OST_SWallRectOpening",
 )
 
 # Human-readable category names excluded by should_include_element's name check.
@@ -158,6 +169,13 @@ _FALLBACK_EXCLUDED_CATEGORY_NAMES = {
     "Material Assets",
     "Materials",
     "Legend Components",
+    # See the matching OST_ block in _EXCLUDED_BIC_NAMES_GLOBAL for the weaker
+    # confidence behind these five.
+    "Pipe Segments",
+    "Insulation Batting Lines",
+    "Sketch",
+    "Primary Contours",
+    "Rectangular Straight Wall Opening",
 }
 
 
