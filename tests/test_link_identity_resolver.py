@@ -95,6 +95,37 @@ def test_uv_rect_to_pixel_bbox_returns_none_without_bounds_or_corners():
     assert lir._uv_rect_to_pixel_bbox([[0, 0]], None, 10, 10) is None
 
 
+def test_uv_rect_to_pixel_bbox_rejects_rect_wholly_off_the_left_edge():
+    """A candidate rectangle entirely to the left of the image (x1_raw < 0)
+    must return None, not a fabricated one-pixel sliver at x=0 -- clamping
+    x0 and x1 independently to [0, image_w-1] would otherwise collapse a
+    wholly off-image rectangle into (0, ..., 0, ...), which could
+    spuriously overlap a real blob sitting at that edge."""
+    bounds_uv = (0.0, 0.0, 20.0, 20.0)
+    rect = [[-10.0, 10.0], [-5.0, 10.0], [-5.0, 15.0], [-10.0, 15.0]]
+    assert lir._uv_rect_to_pixel_bbox(rect, bounds_uv, image_w=20, image_h=20) is None
+
+
+def test_uv_rect_to_pixel_bbox_rejects_rect_wholly_off_the_bottom_edge():
+    bounds_uv = (0.0, 0.0, 20.0, 20.0)
+    # v > ymax maps to negative y (past the top after the v-flip)... use v
+    # far below ymin instead, which maps to y far beyond image_h (bottom).
+    rect = [[5.0, -30.0], [10.0, -30.0], [10.0, -25.0], [5.0, -25.0]]
+    assert lir._uv_rect_to_pixel_bbox(rect, bounds_uv, image_w=20, image_h=20) is None
+
+
+def test_uv_rect_to_pixel_bbox_keeps_rect_partially_overlapping_the_image():
+    """A rectangle that only partially overlaps the image (not wholly
+    outside it) must still be clamped and returned, not rejected."""
+    bounds_uv = (0.0, 0.0, 20.0, 20.0)
+    rect = [[-5.0, 5.0], [5.0, 5.0], [5.0, 15.0], [-5.0, 15.0]]
+    px = lir._uv_rect_to_pixel_bbox(rect, bounds_uv, image_w=20, image_h=20)
+    assert px is not None
+    x0, y0, x1, y1 = px
+    assert x0 == 0
+    assert x1 >= 0
+
+
 # --- resolve_category: scoring, distinct confidence, nearest-W tie-break ----
 
 def _rgb_array_with_two_squares(size=40):

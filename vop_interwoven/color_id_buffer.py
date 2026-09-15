@@ -713,16 +713,10 @@ def _collect_near_face_w_data(
     as None rather than omitting the element entirely -- CLAUDE.md's "no
     silent failure": every element in the resolved set gets an entry.
     """
-    from .revit.collection import (
-        resolve_element_bbox,
-        estimate_nearest_depth_from_bbox,
-        project_bbox_corners_uv,
-    )
+    from .revit.collection import resolve_element_bbox, project_bbox_uv_and_near_face_w
     from .revit.linked_documents import collect_all_linked_elements
-    from Autodesk.Revit.DB import Transform
 
     vb = getattr(raster, "view_basis", None) if raster is not None else None
-    identity_trf = Transform.Identity
 
     host_out = {}
     for eid in resolved_ids:
@@ -739,12 +733,16 @@ def _collect_near_face_w_data(
         near_face_w = None
         bbox_corners_uv = None
         if bbox is not None:
-            near_face_w = _finite_or_none(estimate_nearest_depth_from_bbox(
-                elem, identity_trf, view, raster, bbox=bbox, diag=diag,
-            ))
-            bbox_corners_uv = project_bbox_corners_uv(
+            # Computed together (not via a separate estimate_nearest_depth_
+            # from_bbox() call) so near_face_w and bbox_corners_uv are always
+            # derived from the identical transformed corner set -- see
+            # project_bbox_uv_and_near_face_w()'s docstring for why calling
+            # them separately can silently disagree on coordinate space for
+            # a bbox with a non-identity Transform (e.g. a rotated instance).
+            bbox_corners_uv, near_face_w = project_bbox_uv_and_near_face_w(
                 bbox, vb, diag=diag, view_id=view_id, elem_id=elem_id_int,
             )
+            near_face_w = _finite_or_none(near_face_w)
         elif diag is not None:
             diag.warn(
                 phase="collection",
@@ -817,12 +815,10 @@ def _collect_near_face_w_data(
             near_face_w = None
             bbox_corners_uv = None
             if bbox_host is not None:
-                near_face_w = _finite_or_none(estimate_nearest_depth_from_bbox(
-                    proxy, identity_trf, view, raster, bbox=bbox_host, diag=diag,
-                ))
-                bbox_corners_uv = project_bbox_corners_uv(
+                bbox_corners_uv, near_face_w = project_bbox_uv_and_near_face_w(
                     bbox_host, vb, diag=diag, view_id=view_id, elem_id=link_elem_id_int,
                 )
+                near_face_w = _finite_or_none(near_face_w)
             elif diag is not None:
                 diag.warn(
                     phase="collection",

@@ -231,14 +231,24 @@ def _uv_rect_to_pixel_bbox(bbox_corners_uv, bounds_uv, image_w, image_h):
     for u, v in bbox_corners_uv:
         xs_px.append((u - xmin) / (xmax - xmin) * image_w)
         ys_px.append((ymax - v) / (ymax - ymin) * image_h)
-    x0 = int(math.floor(min(xs_px)))
-    x1 = int(math.ceil(max(xs_px))) - 1
-    y0 = int(math.floor(min(ys_px)))
-    y1 = int(math.ceil(max(ys_px))) - 1
-    x0 = max(0, min(x0, image_w - 1))
-    x1 = max(0, min(x1, image_w - 1))
-    y0 = max(0, min(y0, image_h - 1))
-    y1 = max(0, min(y1, image_h - 1))
+    x0_raw = math.floor(min(xs_px))
+    x1_raw = math.ceil(max(xs_px)) - 1
+    y0_raw = math.floor(min(ys_px))
+    y1_raw = math.ceil(max(ys_px)) - 1
+    # Reject a candidate whose rectangle doesn't overlap the image at all
+    # BEFORE clamping: clamping x0/x1 (or y0/y1) independently to
+    # [0, dim-1] would otherwise collapse a wholly off-image rectangle
+    # (e.g. x1_raw < 0, entirely past the left edge) into a fabricated
+    # one-pixel sliver AT the image edge (x0=x1=0) instead of correctly
+    # reporting "no evidence at all" -- and that sliver could spuriously
+    # overlap a real blob sitting at that edge, handing an off-view element
+    # fabricated pixel evidence it never actually earned.
+    if x1_raw < 0 or x0_raw > image_w - 1 or y1_raw < 0 or y0_raw > image_h - 1:
+        return None
+    x0 = max(0, min(int(x0_raw), image_w - 1))
+    x1 = max(0, min(int(x1_raw), image_w - 1))
+    y0 = max(0, min(int(y0_raw), image_h - 1))
+    y1 = max(0, min(int(y1_raw), image_h - 1))
     if x1 < x0 or y1 < y0:
         return None
     return (x0, y0, x1, y1)

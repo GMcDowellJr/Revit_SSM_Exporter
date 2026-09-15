@@ -1,5 +1,6 @@
 """Unit tests for vop_interwoven/revit/collection.py's project_bbox_corners_uv
-(Phase 1b: near-face-W collection prerequisite).
+and project_bbox_uv_and_near_face_w (Phase 1b: near-face-W collection
+prerequisites).
 
 Pure-Python: uses the same plan-view ViewBasis convention as
 tests/test_color_id_buffer_link_category_filters.py's _PLAN_BASIS, so world
@@ -7,8 +8,8 @@ tests/test_color_id_buffer_link_category_filters.py's _PLAN_BASIS, so world
 the same lightweight bbox stub tests/test_bbox_policy.py already uses (no
 Transform attribute), so no Autodesk.Revit.DB import is ever reached.
 """
-from vop_interwoven.revit.collection import project_bbox_corners_uv
-from vop_interwoven.revit.view_basis import ViewBasis
+from vop_interwoven.revit.collection import project_bbox_corners_uv, project_bbox_uv_and_near_face_w
+from vop_interwoven.revit.view_basis import ViewBasis, world_to_view
 
 
 class _P:
@@ -103,3 +104,45 @@ def test_project_bbox_corners_uv_returns_none_when_bbox_transform_fails():
     diag = _Diag()
     assert project_bbox_corners_uv(bbox, _PLAN_BASIS, diag=diag) is None
     assert diag.errors
+
+
+# --- project_bbox_uv_and_near_face_w: UV footprint and depth from the SAME
+# --- transformed corners -----------------------------------------------------
+
+def test_project_bbox_uv_and_near_face_w_agrees_with_project_bbox_corners_uv():
+    bbox = _BBox((0, 0, 0), (10, 4, 3))
+    rect, near_face_w = project_bbox_uv_and_near_face_w(bbox, _PLAN_BASIS)
+    assert rect == project_bbox_corners_uv(bbox, _PLAN_BASIS)
+    # forward=(0,0,-1), origin=(0,0,0) -> w = -z; nearest (min w) corner is
+    # the one with the largest z (3).
+    assert near_face_w == world_to_view((0, 0, 3), _PLAN_BASIS)[2]
+
+
+def test_project_bbox_uv_and_near_face_w_uses_bbox_transform_for_both_values():
+    """A HOST bbox with a non-identity Transform must have its UV footprint
+    AND its near_face_w computed from the SAME transformed corners -- not a
+    footprint from transformed corners paired with a depth from the
+    original, un-transformed ones (which estimate_nearest_depth_from_bbox()
+    would silently do, since it never applies bbox.Transform at all)."""
+    class _BBoxWithTransform(_BBox):
+        def __init__(self, mn, mx, transform):
+            super().__init__(mn, mx)
+            self.Transform = transform
+
+    # Bbox-local Z is [0, 2]; the transform shifts everything by +100 in Z,
+    # simulating a family instance placed high above its type's local origin.
+    bbox = _BBoxWithTransform((0, 0, 0), (2, 2, 2), _FakeTransform(dx=0, dy=0, dz=100))
+    rect, near_face_w = project_bbox_uv_and_near_face_w(bbox, _PLAN_BASIS)
+
+    assert rect == [[0, 0], [2, 0], [2, 2], [0, 2]]
+    # Transformed Z range is [100, 102] -> w range is [-100, -102]; nearest
+    # (min w) is -102, from the transformed corner at z=102, NOT from the
+    # untransformed local z=2 (which would incorrectly give w=-2).
+    assert near_face_w == world_to_view((0, 0, 102), _PLAN_BASIS)[2]
+    assert near_face_w != world_to_view((0, 0, 2), _PLAN_BASIS)[2]
+
+
+def test_project_bbox_uv_and_near_face_w_returns_none_tuple_without_bbox_or_basis():
+    bbox = _BBox((0, 0, 0), (1, 1, 1))
+    assert project_bbox_uv_and_near_face_w(None, _PLAN_BASIS) == (None, None)
+    assert project_bbox_uv_and_near_face_w(bbox, None) == (None, None)
