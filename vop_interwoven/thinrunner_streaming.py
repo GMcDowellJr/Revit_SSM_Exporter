@@ -325,6 +325,24 @@ def _run_gc_between_chunks():
             pass
 
 
+def _describe_suppression(applied_value):
+    """Translate an applied_show_shadows/applied_smooth_edges sidecar value
+    into a human-readable yes/no status.
+
+    The raw sidecar value names the value ASSIGNED to the Revit property
+    (False means "we set it to False", i.e. suppression succeeded) -- not
+    whether suppression happened. Printing it directly reads backwards
+    (e.g. "Shadows suppressed: False" when shadows WERE suppressed).
+    """
+    if applied_value is False:
+        return "yes"
+    if applied_value == "unchanged (failed)":
+        return "no (suppression attempt failed)"
+    if applied_value == "unchanged":
+        return "no (already off, or unsupported on this Revit host)"
+    return str(applied_value)
+
+
 def _summarize_stage_a_sidecar(sidecar_path):
     """Read one Stage A view's JSON sidecar and return printable summary lines.
 
@@ -347,8 +365,12 @@ def _summarize_stage_a_sidecar(sidecar_path):
         return ["    Sidecar: unreadable ({}: {})".format(type(e).__name__, e)]
 
     lines = []
-    lines.append("    Shadows suppressed: {}".format(meta.get("applied_show_shadows")))
-    lines.append("    Smooth edges suppressed: {}".format(meta.get("applied_smooth_edges")))
+    lines.append("    Shadows suppressed: {}".format(
+        _describe_suppression(meta.get("applied_show_shadows"))
+    ))
+    lines.append("    Smooth edges suppressed: {}".format(
+        _describe_suppression(meta.get("applied_smooth_edges"))
+    ))
 
     link_map = meta.get("link_category_color_map") or {}
     lines.append("    LINK categories colored: {}".format(len(link_map)))
@@ -363,6 +385,39 @@ def _summarize_stage_a_sidecar(sidecar_path):
         lines.append("    HOST paint failures: {}".format(paint_failures))
 
     return lines
+
+
+def _relocate_batch_stage_a_outputs(batch_output_dir, output_dir, batch_view_summaries):
+    """Move one batch's Stage A TIFF/sidecar files out of its temp dir and
+    into the final output tree, then rewrite the tiff_path/sidecar_path
+    already recorded in batch_view_summaries so they point at the new
+    location instead of the now-empty batch temp dir.
+
+    batch_view_summaries entries are mutated in place (and are the same
+    dict objects the caller already extended merged["view_summaries"]
+    with), so this must run before anything downstream reads those paths.
+    No-op if this batch produced no color_id_buffer/ directory (Stage A
+    disabled, or nothing exported).
+    """
+    batch_stage_a_dir = os.path.join(batch_output_dir, "color_id_buffer")
+    if not os.path.isdir(batch_stage_a_dir):
+        return
+
+    final_stage_a_dir = os.path.join(output_dir, "color_id_buffer")
+    os.makedirs(final_stage_a_dir, exist_ok=True)
+    for fname in os.listdir(batch_stage_a_dir):
+        shutil.move(
+            os.path.join(batch_stage_a_dir, fname),
+            os.path.join(final_stage_a_dir, fname),
+        )
+
+    for view_data in batch_view_summaries:
+        if view_data.get("stage") != "color_id_buffer_stage_a":
+            continue
+        for path_key in ("tiff_path", "sidecar_path"):
+            old_path = view_data.get(path_key)
+            if old_path:
+                view_data[path_key] = os.path.join(final_stage_a_dir, os.path.basename(old_path))
 
 # ============================================================================
 # RUN PIPELINE
@@ -512,17 +567,12 @@ try:
                 # Stage A writes TIFF/sidecar files directly under
                 # batch_output_dir/color_id_buffer/ (there is no CSV row to merge them
                 # through); move them into the requested output tree so batched runs
-                # don't strand the only copies under a temp batch folder.
+                # don't strand the only copies under a temp batch folder, and keep
+                # this batch's view_summaries entries pointed at the moved files.
                 if getattr(cfg, "enable_color_id_buffer_stage_a", False):
-                    batch_stage_a_dir = os.path.join(batch_output_dir, "color_id_buffer")
-                    if os.path.isdir(batch_stage_a_dir):
-                        final_stage_a_dir = os.path.join(output_dir, "color_id_buffer")
-                        os.makedirs(final_stage_a_dir, exist_ok=True)
-                        for fname in os.listdir(batch_stage_a_dir):
-                            shutil.move(
-                                os.path.join(batch_stage_a_dir, fname),
-                                os.path.join(final_stage_a_dir, fname),
-                            )
+                    _relocate_batch_stage_a_outputs(
+                        batch_output_dir, output_dir, batch_result.get("view_summaries", [])
+                    )
 
                 _run_gc_between_chunks()
 

@@ -388,3 +388,44 @@ def test_show_shadows_suppression_skipped_when_already_off(tmp_path):
     # Already off: no mutation attempted, reported as "unchanged".
     assert result["metadata"]["applied_show_shadows"] == "unchanged"
     assert view._show_shadows is False
+
+
+class _FakeDisplayModelNoShadows(object):
+    """A ViewDisplayModel with SmoothEdges but no ShowShadows attribute at
+    all, standing in for an older Revit host where that member doesn't
+    exist yet."""
+    def __init__(self, smooth_edges):
+        self.SmoothEdges = smooth_edges
+        self.disposed = False
+
+    def Dispose(self):
+        self.disposed = True
+
+
+class _FakeViewNoShadowsAttr(_FakeView):
+    def GetViewDisplayModel(self):
+        return _FakeDisplayModelNoShadows(self._smooth_edges)
+
+    def SetViewDisplayModel(self, dm):
+        self._smooth_edges = dm.SmoothEdges
+        self.display_model_writes.append((dm.SmoothEdges, None))
+
+
+def test_show_shadows_capture_preserves_unsupported_state_as_none(tmp_path):
+    with _install_fake_revit_db():
+        doc = _FakeDoc()
+        view = _FakeViewNoShadowsAttr(view_id=44)
+        cfg = Config()
+        cfg.include_linked_rvt = False
+        cfg.debug_dump_path = str(tmp_path)
+        diag = _FakeDiag()
+
+        result = color_id_buffer.export_color_id_buffer_view(
+            doc, view, elements=[], cfg=cfg, diag=diag, raster=None, elem_cache=None,
+        )
+
+    # Unsupported (attribute missing entirely), not coerced to "already
+    # off" -- must not be reported as an inspected, confirmed "unchanged"
+    # the same way a real False would be silently indistinguishable from.
+    assert result["metadata"]["applied_show_shadows"] == "unchanged"
+    assert any(w.get("callsite") == "show_shadows_capture" for w in diag.warnings)

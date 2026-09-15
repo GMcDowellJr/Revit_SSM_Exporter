@@ -1223,18 +1223,43 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
 
     # Shadows were confirmed (empirically) to shift assigned colors in the
     # exported TIFF, the same class of per-pixel color drift SmoothEdges/
-    # DisplayStyle above exist to eliminate -- same plain-bool-only capture
-    # caution as orig_smooth_edges.
+    # DisplayStyle above exist to eliminate -- same live-API-object-across-
+    # transaction-boundary caution as orig_smooth_edges. Unlike orig_smooth_
+    # edges's bool(getattr(..., None)), a missing ShowShadows attribute
+    # (unsupported on this Revit host) is kept as None rather than coerced
+    # to False: coercing it would make suppression below silently skip AND
+    # the sidecar report "unchanged" as if nothing needed doing, when the
+    # real state is actually unknown and the export may still carry shadow
+    # tinting.
+    _MISSING_SHOW_SHADOWS = object()
     orig_show_shadows = None
     try:
         _dm = view.GetViewDisplayModel()
         try:
-            orig_show_shadows = bool(getattr(_dm, "ShowShadows", None))
+            _raw_show_shadows = getattr(_dm, "ShowShadows", _MISSING_SHOW_SHADOWS)
+            if _raw_show_shadows is _MISSING_SHOW_SHADOWS:
+                if diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite="show_shadows_capture",
+                        message="ViewDisplayModel has no ShowShadows attribute on this "
+                                "Revit host; shadow suppression will be skipped and the "
+                                "exported TIFF may still carry shadow tinting",
+                        view_id=view_id,
+                    )
+            else:
+                orig_show_shadows = bool(_raw_show_shadows)
         finally:
             try:
                 _dm.Dispose()
-            except Exception:
-                pass
+            except Exception as ex:
+                if diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite="show_shadows_capture_dispose",
+                        message=str(ex),
+                        view_id=view_id,
+                    )
     except Exception as ex:
         if diag is not None:
             diag.warn(
@@ -1451,8 +1476,14 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 finally:
                     try:
                         dm.Dispose()
-                    except Exception:
-                        pass
+                    except Exception as ex:
+                        if diag is not None:
+                            diag.warn(
+                                phase="color_id_buffer",
+                                callsite="show_shadows_dispose",
+                                message=str(ex),
+                                view_id=view_id,
+                            )
             except Exception as ex:
                 applied_show_shadows = "unchanged (failed)"
                 if diag is not None:
@@ -1755,8 +1786,14 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 finally:
                     try:
                         dm.Dispose()
-                    except Exception:
-                        pass
+                    except Exception as ex:
+                        if diag is not None:
+                            diag.warn(
+                                phase="color_id_buffer",
+                                callsite="restore_show_shadows_dispose",
+                                message=str(ex),
+                                view_id=view_id,
+                            )
             _restore_step("restore_show_shadows", _restore_show_shadows)
 
         if orig_crop_box is not None:
