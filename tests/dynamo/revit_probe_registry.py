@@ -3,6 +3,13 @@ from __future__ import absolute_import
 
 
 PROBE_MODULES = {
+    # Diagnostic probes for the Stage A color-ID buffer anomaly investigation.
+    # They go through the generic passthrough adapter and are analyzed by
+    # `analyze_stage_a_probe.py --export-metrics`, not by the campaign
+    # acceptance path, so they are deliberately absent from that analyzer's
+    # SUPPORTED_PROBES map.
+    "stage_a_drift_onset": "tests.dynamo.probe_stage_a_drift_onset",
+    "stage_a_white_blend": "tests.dynamo.probe_stage_a_white_blend",
     "stage_a_external_sources": "tests.dynamo.probe_stage_a_external_sources",
     "stage_a_graphics_semantics": "tests.dynamo.probe_stage_a_graphics_semantics",
     "stage_a_image_alignment": "tests.dynamo.probe_stage_a_image_alignment",

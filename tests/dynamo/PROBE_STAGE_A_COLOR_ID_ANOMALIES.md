@@ -1,0 +1,253 @@
+# Stage A color-ID buffer anomalies — drift onset (D) and 0.67 white blend (B)
+
+Diagnostic instrumentation for two anomalies observed in the 2026-09-15 Stage A
+run (54 views, no links loaded). **This is an investigation, not a fix.** Nothing
+here changes palette generation, export defaults, the paint step, or any
+analysis-side snapping or recovery, and nothing here certifies a result.
+
+Everything below is either (a) instrumentation to be run by Greg in Revit, or
+(b) a hypothesis stated against the evidence that would confirm or contradict
+it. **No experiment in this document has been run.** Every per-experiment metric
+table in this repository is empty until a run fills it.
+
+## What was added
+
+| Piece | Purpose |
+|---|---|
+| `tests/dynamo/probe_stage_a_drift_onset.py` | Extraction for D1–D5 |
+| `tests/dynamo/probe_stage_a_white_blend.py` | Extraction for B1 and B3 |
+| `tools/analyze_stage_a_probe.py --export-metrics` | All pixel analysis, incl. B2 |
+| `tests/test_stage_a_export_metrics.py` | 28 tests for the metric set |
+| `tests/test_stage_a_drift_onset_probe.py` | 29 tests for the D-probe planners |
+| `tests/test_stage_a_white_blend_probe.py` | 22 tests for the B-probe helpers |
+
+Both probes are registered in `revit_probe_registry.py` and go through the
+generic passthrough adapter. They are deliberately **absent** from the
+analyzer's `SUPPORTED_PROBES` campaign-acceptance map: they emit metrics for a
+human to read, not an acceptance verdict.
+
+## Architecture boundaries honoured
+
+- Dynamo side does extraction only: transaction, export, sidecar JSON. No probe
+  reads a pixel.
+- All pixel analysis is in `tools/analyze_stage_a_probe.py` (Pillow + NumPy),
+  outside Dynamo.
+- Existing files were patched, never rewritten: the analyzer gained an additive
+  metrics section and one CLI flag; the registry gained two dictionary entries.
+- The production palette (`build_palette`/`choose_step`) and the production
+  paint step (`_build_flat_color_ogs`) are **imported**, not reimplemented, so a
+  probe capture is painted exactly the way production paints one.
+
+## Required per-export metrics
+
+`analyze_stage_a_probe.py --export-metrics` emits all of these per export, and
+`--metrics-table` renders them as one markdown table:
+
+| Metric | Where |
+|---|---|
+| `W`, `H`, `requested_pixel_size`, `accepted_pixel_size` | `resolution` |
+| `native_px` = `extent_ft * dpi * 12 / view_scale`, `scale_factor` | `resolution` |
+| `hard_edge_count`, `blended_edge_count`, `hard_edge_ratio` | `edges` |
+| `off_palette_px`, distinct off-palette colors | `pixels` |
+| overshoot rate + normalized magnitude percentiles (sampled) | `transitions.overshoot` |
+| transition-width histogram and percentiles | `transitions` |
+| out-of-bbox assigned px, with the 10:1 frame correction | `pixels`, `frame` |
+| `fraction_3x3_solid` | `solidity` |
+| pastel element count and unblended alpha distribution | `white_blend` |
+
+Definitions that matter for reading the numbers:
+
+- **hard edge** — an adjacent pixel pair where one pixel is *exactly* a palette
+  color and the other is *exactly* white. `hard_edge_ratio` is
+  `hard / (hard + blended)`.
+- **transition width** — the run length of consecutive off-palette pixels along
+  a row. A hard edge has width 0; the baseline's drifted views show ≥3.
+- **overshoot** — for a run anchored by two *different* exact colors A and B,
+  the largest per-channel excursion *beyond* `[min(A,B), max(A,B)]`, normalized
+  by the transition's overall endpoint separation. A box or bilinear resample
+  cannot produce any; a negative-lobe kernel or a sharpening pass can. White
+  anchors clip at 255, so the measurable side is almost always the darker
+  endpoint.
+
+  Two populations are excluded from the rate and counted separately, because
+  including either reports a hard-edged capture as resampled:
+  `degenerate_runs` (anchors the same colour on both sides — a region
+  interior, not a transition, which is exactly what a composited element looks
+  like) and `wide_region_runs` (wider than `max_width_scored_px`, default 32 —
+  resampling spreads an edge over a kernel's support, a handful of pixels, not
+  hundreds). Read `overshoot_rate` together with `n_trans`: a rate over four
+  transitions is noise.
+- **10:1 frame correction** — Revit clamps export aspect to 10:1 by padding the
+  short axis, and `bounds_xy` does not reflect that padding, so out-of-bbox
+  counts are taken against the corrected content rectangle.
+  `frame.clamp_matches_actual_height` reports whether that correction actually
+  predicted the exported height — if it is `false`, the clamp model is wrong for
+  that capture and the out-of-bbox number should not be trusted.
+- **`fraction_3x3_solid`** — the share of palette pixels whose entire 3×3
+  neighbourhood is the same exact color.
+
+- **`matched_color_count` vs `composited_color_count`** — solving the alpha is
+  not sufficient on its own. A colour-to-white edge produced by resampling
+  lands *exactly* on the alpha ray from the palette colour to white, so it
+  unblends just as cleanly as a deliberately composited element does; a
+  Lanczos-resampled synthetic scene produces 16 perfect unblend matches and
+  zero real pastels. `matched_color_count` counts every colour that solves;
+  **`composited_color_count` is the "pastel element count"** — it counts only
+  matches that also have a solid interior (`solid_3x3_fraction ≥ 0.5`), and it
+  is what the `pastel_colors` table column reports. Each match also carries
+  `neighbor_palette_rgb`, which answers B2 directly: a pastel that unblends
+  against white while sitting next to another element's colour has white as
+  its blend target, not that element.
+
+- **reading `hard_edge_ratio`** — a composited element lowers it without any
+  resampling at all, because its pastel pixels are off-palette and so every
+  edge it forms with white counts as blended. In the synthetic check a
+  hard-edged pastel capture scores 0.47. `hard_edge_ratio` is only evidence of
+  drift when read together with the transition-width distribution and the
+  overshoot population counts.
+
+### Validated against synthetic archetypes
+
+The metric set was checked end to end on five constructed captures whose ground
+truth is known (this is a check of the *instrumentation*, not of any Revit
+behaviour):
+
+| Capture | hard_ratio | overshoot (n) | trans p50 | pastel |
+|---|---|---|---|---|
+| hard-edged | 1.00 | — (0) | — | 0 |
+| Lanczos resample | 0.00 | 0.997 (971) | 2 | 0 |
+| bilinear resample | 0.00 | 0.005 (1041) | 3 | 0 |
+| composited at α=0.67 | 0.47 | 1.00 (4) | 320 | 2 @ 0.67 |
+| both at once | 0.00 | 0.995 (571) | 2 | 2 @ 0.67 |
+
+The two resampled rows are the important pair: both are unambiguously
+resampled, and only the negative-lobe kernel rings. The last row confirms the
+two anomalies are detected independently when a single capture has both, which
+matters because a SITE PLAN view could exhibit both at once.
+
+Memory note: a 15000×12356 export is ~556 MB as RGB. The scan is stripe-wise
+with a one-row halo (`_METRIC_STRIPE_ROWS`, default 512) and is verified
+stripe-invariant by test, but the decoded image itself is held whole.
+
+## Running it
+
+```bash
+# Dynamo node (drift block)
+#   IN[0] view, IN[1] output dir, IN[2] "all" or a case subset,
+#   IN[3] repetitions, IN[4] pixel sizes, IN[5] dpi, IN[6] D2 steps,
+#   IN[7] tile grid, IN[8] max elements, IN[9] repo root
+OUT = dynamo_main(IN)
+
+# Analysis (outside Dynamo)
+python tools/analyze_stage_a_probe.py \
+    ~/Documents/_metrics/drift_onset_probe \
+    --export-metrics --metrics-table drift_table.md
+```
+
+## Experiments — drift
+
+| Case | What it varies | What it holds fixed |
+|---|---|---|
+| `d1_determinism` | nothing — N repeat exports | everything |
+| `d2_category_load` | visible model categories, one bucket at a time | pixel size, crop, view |
+| `d3_size_sweep` | requested pixel size | content |
+| `d4_dpi_vs_pixel_size` | DPI lowered until native ≤ 15000, then native requested exactly | view, content, crop |
+| `d5_crop_tiles` | crop rectangle: N×N tiles cut on the native pixel lattice | density |
+
+D2 hides every hideable model category first (step 0 is the zero-content
+control) then unhides buckets ordered by descending painted-element count, so
+load rises monotonically. D5's interior seams are snapped to whole native
+pixels; `seam_residual_px` reports any that are not, so a misaligned seam is
+visible rather than confused with resampling.
+
+D6 (hardware acceleration off) is manual and stays with Greg — no API for it is
+confirmed to exist. See UNCONFIRMED below.
+
+## Experiments — white blend
+
+`b1_query` is strictly read-only: underlay configuration, the view's phase
+filter and its per-status presentation, and per-element level, overrides,
+category overrides, design option, and phase created/demolished.
+
+`b3_underlay_off` and `b3_halftone_cleared` each run **only if B1 found that
+mechanism configured on this view**, and record why they were skipped otherwise.
+`b3_baseline` gives the unmodified comparison export.
+
+B2 is entirely analyzer-side: `white_blend.matches` unblends each off-palette
+color against the palette over white and reports the solved alpha, and
+`fraction_3x3_solid` distinguishes a composited element from a resampled edge.
+
+## Hypotheses
+
+Stated against the baseline evidence. **Every one is currently open** — no
+experiment has run.
+
+### Drift
+
+| # | Hypothesis | Status | Evidence that would settle it |
+|---|---|---|---|
+| D-H1 | Drift is non-deterministic (a render-path race) | open | D1: byte-identical repeats contradict it |
+| D-H2 | Drift is a hard absolute pixel threshold near 10000 | **contradicted by baseline** | `SEA LEVEL_49370` is clean at 15000×12356. A threshold alone cannot explain it |
+| D-H3 | Drift is triggered by a *combination* of raster size and scene load | open, leading | D2: if unhiding categories in 49370 flips `hard_edge_ratio` at fixed size, supported; if it never flips, contradicted |
+| D-H4 | Drift is caused by the request exceeding what Revit will render, followed by an upscale | open | D3+D4: if lowering DPI so native ≤ 15000 and requesting native exactly gives hard edges, supported. `_N_ HOSPITAL - LEVEL 2` drifting at scale 1.00 already weighs against it |
+| D-H5 | Drift is a resample, not anti-aliasing | **supported by baseline** | AA already ruled out by stair-stepped curves in clean views; 34–60% overshoot is a negative-lobe kernel or a sharpening pass, which AA does not produce |
+| D-H6 | Drift is avoidable by tiling at native density | open | D5: per-tile `hard_edge_ratio` of 1.0 with zero seam residual supports it |
+
+Note on D-H5: 34–60% normalized overshoot is large for Lanczos (typically under
+20%) and very large for bicubic. That magnitude is more consistent with a
+sharpening pass applied after a downscale than with a plain resample kernel.
+The metric set reports the magnitude distribution, not just a rate, so this can
+be checked rather than argued.
+
+### 0.67 white blend
+
+| # | Hypothesis | Status | Evidence that would settle it |
+|---|---|---|---|
+| B-H1 | Element-level halftone or surface transparency | **contradicted by code** | `color_id_buffer._build_flat_color_ogs` already calls `SetHalftone(False)` and `SetSurfaceTransparency(0)` on every painted element, and element overrides outrank category, filter, and template overrides. B1 confirms empirically |
+| B-H2 | View underlay | open, leading | Consistent with every baseline fact: the affected categories (Walls, Generic Models, Roofs, Doors, Windows) are exactly what an underlay from an adjacent level shows; the blend is uniform over the whole element; and pastels unblend to the *palette* color, so the override applied and something composited afterwards. B1's `elements_on_an_underlay_level`, then B3's `underlay_off` export |
+| B-H3 | Phase filter "Overridden" graphics | open, weaker | Phase overrides sit below element overrides in Revit's precedence, so they should have been beaten by the paint step. B1 records the phase filter and its per-status presentation anyway |
+| B-H4 | Design option graphics | open, weak | B1 records each element's design option |
+| B-H5 | The blend target is another element, not white | open | B2: every pastel color unblends *exactly* against white in the baseline, which already weighs against it. `white_blend.matches[].neighbor_palette_rgb` names the palette colours actually adjacent to each pastel region, so a pastel that unblends against white while touching another element settles it |
+
+## UNCONFIRMED API assumptions
+
+None of these has been verified by a run. Each is probed by reflection and
+reported present/absent with its value rather than assumed; each probe also
+emits its own `unconfirmed_api_assumptions` list.
+
+**Export / drift**
+
+1. `ZoomFitType.FitToPage` + `FitDirectionType.Horizontal` makes `PixelSize` the
+   output *width*. (Production depends on this today.)
+2. `ImageExportOptions` exposes no DPI concept independent of `PixelSize`, so
+   "lowering DPI" is request-side arithmetic only.
+3. Revit clamps export aspect to 10:1 by *symmetric* padding of the short axis.
+   Checked per capture by `frame.clamp_matches_actual_height`.
+4. Revit's `PixelSize` ceiling is a fixed value rather than install- or
+   version-dependent. `_set_pixel_size` halves on rejection rather than
+   assuming a constant; `resolution.pixel_size_backoff` reports when it fired.
+5. No API access to hardware acceleration is known, which is why D6 is manual.
+
+**Underlay / blend**
+
+6. `ViewPlan.GetUnderlayBaseLevel` / `GetUnderlayTopLevel` /
+   `GetUnderlayOrientation` exist on this install.
+7. `ViewPlan.SetUnderlayRange(InvalidElementId, InvalidElementId)` disables the
+   underlay.
+8. `BuiltInParameter.VIEW_UNDERLAY_ID` / `_BOTTOM_ID` / `_TOP_ID` are the
+   pre-2018 fallback.
+9. A document-level halftone/underlay brightness is reachable from the API at
+   all. If it is, its numeric value against the observed alpha of 0.67 is the
+   single most direct piece of evidence for B-H2.
+10. `View.GetPhaseFilterOverrides` exists and returns the phase graphic
+    override.
+11. Underlay graphics compose over the element's *resolved override colour*
+    rather than replacing it. The baseline's exact unblend to palette colours
+    is consistent with this but does not establish it.
+
+## Stop conditions
+
+- D2 or D3 identifying a reproducible onset condition → stop and report.
+- Any experiment that would need a pipeline default changed → stop and ask.
+  Nothing in this instrumentation changes a default; D4 lowers DPI for the
+  probe's own exports only, inside a rolled-back TransactionGroup.

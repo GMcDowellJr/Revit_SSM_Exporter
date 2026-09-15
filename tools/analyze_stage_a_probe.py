@@ -1120,6 +1120,742 @@ def analyze_json(json_path: Path) -> tuple[Path, str]:
     return out, '; '.join(summary) or 'analyzed {0}: {1}'.format(json_path.name, record['acceptance_status'])
 
 
+# ---------------------------------------------------------------------------
+# Stage A color-ID export metrics (edge-drift + white-blend diagnosis)
+#
+# Diagnostic-only. Nothing here is consumed by the Stage A pipeline, by the
+# acceptance records above, or by decode_stage_a_color_id.py; it exists so the
+# drift and blend investigations have one measurement implementation instead of
+# per-experiment ad-hoc scripts. All of it is pure post-hoc pixel analysis of an
+# already-exported TIFF plus its sidecar -- it never snaps, repairs, or
+# re-quantizes a capture, and it makes no readiness or correctness claim.
+# ---------------------------------------------------------------------------
+
+WHITE_CODE = 0xFFFFFF
+_METRIC_STRIPE_ROWS = 512          # rows per pass; bounds peak working set
+_OVERSHOOT_MIN_NORM = 0.02         # >2% beyond an endpoint counts as ringing
+_ALPHA_CHANNEL_TOL = 3.0           # 8-bit units of per-channel unblend disagreement
+_ALPHA_MIN, _ALPHA_MAX = 0.02, 0.995
+_MAX_OFF_COLOR_KEYS = 500000       # dict cap; new keys dropped past it (flagged)
+_MAX_TRANSITION_SAMPLES = 20000
+_MAX_PASTEL_PROFILED = 16
+_PASTEL_SOLID_MIN = 0.5    # a composited element has a solid interior; an edge does not
+_MIN_TRANSITION_SPAN = 8   # 8-bit units between anchors below which a run is not a transition
+_MAX_TRANSITION_FOR_OVERSHOOT = 32  # px; wider runs are regions, not resampled edges
+_TRANSITION_HIST_CAP = 64
+
+
+def _rgb_to_code(arr: np.ndarray) -> np.ndarray:
+    """Pack an (h, w, 3) uint8 RGB block into an (h, w) uint32 color code."""
+    a = arr.astype(np.uint32)
+    return (a[..., 0] << 16) | (a[..., 1] << 8) | a[..., 2]
+
+
+def _code_to_rgb(code: int) -> list[int]:
+    code = int(code)
+    return [(code >> 16) & 0xFF, (code >> 8) & 0xFF, code & 0xFF]
+
+
+def _palette_from_sidecar(sidecar: dict[str, Any]) -> tuple[np.ndarray, dict[int, list[str]]]:
+    """Every color Stage A deliberately assigned in this capture.
+
+    HOST element colors (``color_assignment_map``) and LINK per-category colors
+    (``link_category_color_map``) are the only "on-palette" colors; white is
+    tracked separately as the background. Two labels can legitimately share a
+    code only if the capture had a palette collision, so labels are a list.
+    """
+    labels: dict[int, list[str]] = {}
+    for key, rgb in (sidecar.get('color_assignment_map') or {}).items():
+        if not rgb or len(rgb) < 3:
+            continue
+        code = (int(rgb[0]) << 16) | (int(rgb[1]) << 8) | int(rgb[2])
+        labels.setdefault(code, []).append('element:{0}'.format(key))
+    for name, rgb in (sidecar.get('link_category_color_map') or {}).items():
+        if not rgb or len(rgb) < 3:
+            continue
+        code = (int(rgb[0]) << 16) | (int(rgb[1]) << 8) | int(rgb[2])
+        labels.setdefault(code, []).append('link_category:{0}'.format(name))
+    codes = np.array(sorted(labels.keys()), dtype=np.uint32)
+    return codes, labels
+
+
+def _is_palette(code: np.ndarray, palette_sorted: np.ndarray) -> np.ndarray:
+    """Membership test that stays O(n log p) instead of np.isin's O(n*p)."""
+    if palette_sorted.size == 0:
+        return np.zeros(code.shape, dtype=bool)
+    idx = np.searchsorted(palette_sorted, code)
+    np.clip(idx, 0, palette_sorted.size - 1, out=idx)
+    return palette_sorted[idx] == code
+
+
+def _percentiles(values: np.ndarray, points=(50, 75, 90, 99, 100)) -> dict[str, float]:
+    if values.size == 0:
+        return {}
+    return {'p{0}'.format(p): float(np.percentile(values, p)) for p in points}
+
+
+def _native_resolution(sidecar: dict[str, Any], width_px: int, height_px: int) -> dict[str, Any]:
+    """native_px = extent_ft * dpi * 12 / view_scale, and the realized scale factor.
+
+    ``bounds_xy`` is the view-local rectangle in feet the export was cropped to
+    (see color_id_buffer.compute_model_crop). When the sidecar records it as
+    null the crop never applied, so native density is not derivable and every
+    field below stays None rather than being guessed from pixel dimensions.
+    """
+    res = sidecar.get('resolution') or {}
+    bounds = sidecar.get('bounds_xy')
+    out: dict[str, Any] = {
+        'width_px': int(width_px),
+        'height_px': int(height_px),
+        'max_axis_px': int(max(width_px, height_px)),
+        'requested_pixel_size': res.get('requested_pixel_size'),
+        'accepted_pixel_size': res.get('pixel_size'),
+        'export_dpi': res.get('export_dpi'),
+        'view_scale': res.get('view_scale'),
+        'extent_u_ft': None, 'extent_v_ft': None,
+        'native_width_px': None, 'native_height_px': None,
+        'scale_factor': None, 'pixel_size_backoff': None,
+    }
+    requested, accepted = res.get('requested_pixel_size'), res.get('pixel_size')
+    if requested is not None and accepted is not None:
+        out['pixel_size_backoff'] = int(accepted) != int(requested)
+    dpi, scale = res.get('export_dpi'), res.get('view_scale')
+    if not bounds or len(bounds) < 4 or not dpi or not scale:
+        return out
+    extent_u = float(bounds[2]) - float(bounds[0])
+    extent_v = float(bounds[3]) - float(bounds[1])
+    out['extent_u_ft'], out['extent_v_ft'] = extent_u, extent_v
+    if extent_u <= 0 or extent_v <= 0 or float(scale) <= 0:
+        return out
+    per_ft = float(dpi) * 12.0 / float(scale)
+    out['native_width_px'] = extent_u * per_ft
+    out['native_height_px'] = extent_v * per_ft
+    if out['native_width_px'] > 0:
+        out['scale_factor'] = float(width_px) / out['native_width_px']
+    return out
+
+
+def _frame_geometry(sidecar: dict[str, Any], width_px: int, height_px: int) -> dict[str, Any]:
+    """Where the model content sits inside the canvas after Revit's 10:1 clamp.
+
+    Revit refuses to export an image whose aspect exceeds 10:1 and pads the
+    short axis symmetrically instead; ``bounds_xy`` does not reflect that
+    padding, so a naive "assigned pixel outside bounds_xy" count is wrong by
+    the pad on a clamped view. UNCONFIRMED: the 10:1 figure and the symmetric-
+    padding behaviour come from the 2026-09-15 run, not from documented API
+    behaviour -- ``clamp_matches_actual_height`` is the field that says whether
+    the correction predicted this capture's real height.
+    """
+    bounds = sidecar.get('bounds_xy')
+    out: dict[str, Any] = {'aspect': None, 'clamped_aspect': None, 'clamp_applied': None,
+                           'pad_x_px': 0.0, 'pad_y_px': 0.0,
+                           'content_rect_px': [0, 0, int(width_px), int(height_px)],
+                           'predicted_height_px': None, 'clamp_matches_actual_height': None}
+    if not bounds or len(bounds) < 4:
+        return out
+    extent_u = float(bounds[2]) - float(bounds[0])
+    extent_v = float(bounds[3]) - float(bounds[1])
+    if extent_u <= 0 or extent_v <= 0:
+        return out
+    aspect = extent_u / extent_v
+    clamped = min(max(aspect, 0.1), 10.0)
+    out['aspect'], out['clamped_aspect'] = aspect, clamped
+    out['clamp_applied'] = abs(clamped - aspect) > 1e-9
+    out['predicted_height_px'] = float(width_px) / clamped
+    out['clamp_matches_actual_height'] = abs(out['predicted_height_px'] - float(height_px)) <= 2.0
+    pad_x = pad_y = 0.0
+    if aspect > clamped:          # too wide: short axis is V, so height is padded
+        pad_y = max(0.0, (float(height_px) - float(width_px) / aspect) / 2.0)
+    elif aspect < clamped:        # too tall: short axis is U, so width is padded
+        pad_x = max(0.0, (float(width_px) - float(height_px) * aspect) / 2.0)
+    out['pad_x_px'], out['pad_y_px'] = pad_x, pad_y
+    out['content_rect_px'] = [int(math.floor(pad_x)), int(math.floor(pad_y)),
+                              int(math.ceil(width_px - pad_x)), int(math.ceil(height_px - pad_y))]
+    return out
+
+
+def _scan_export(arr: np.ndarray, palette_sorted: np.ndarray,
+                 content_rect: list[int]) -> dict[str, Any]:
+    """One stripe-wise pass collecting every edge/run/solidity/color statistic.
+
+    Stripes carry a one-row halo so vertical adjacency and 3x3 solidity are
+    computed across stripe seams rather than silently truncated at them.
+    """
+    h, w = arr.shape[:2]
+    acc = {
+        'palette_px': 0, 'white_px': 0, 'off_palette_px': 0,
+        'hard_color_white_edges': 0, 'hard_color_color_edges': 0,
+        'blended_palette_edges': 0, 'blended_white_edges': 0,
+        'solid_3x3_palette_px': 0, 'interior_palette_px': 0,
+        'out_of_bbox_palette_px': 0,
+    }
+    off_counts: dict[int, int] = {}
+    off_truncated = False
+    run_lengths: list[np.ndarray] = []
+    samples: list[tuple[int, int, int, int]] = []   # (abs_row, col_start, col_end, stripe_base)
+    sample_rgb: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    cx0, cy0, cx1, cy1 = content_rect
+
+    y = 0
+    while y < h:
+        y1 = min(h, y + _METRIC_STRIPE_ROWS)
+        top, bot = max(0, y - 1), min(h, y1 + 1)
+        block = arr[top:bot]
+        code = _rgb_to_code(block)
+        is_pal = _is_palette(code, palette_sorted)
+        is_white = code == WHITE_CODE
+        is_off = ~(is_pal | is_white)
+
+        lo, hi = y - top, y - top + (y1 - y)          # rows owned by this stripe
+        own_pal, own_white, own_off = is_pal[lo:hi], is_white[lo:hi], is_off[lo:hi]
+        acc['palette_px'] += int(own_pal.sum())
+        acc['white_px'] += int(own_white.sum())
+        acc['off_palette_px'] += int(own_off.sum())
+
+        # Assigned pixels outside the 10:1-corrected content rectangle.
+        outside = own_pal.copy()
+        rows = np.arange(y, y1)
+        row_inside = (rows >= cy0) & (rows < cy1)
+        col_inside = np.zeros(w, dtype=bool)
+        col_inside[max(0, cx0):max(0, cx1)] = True
+        outside &= ~(row_inside[:, None] & col_inside[None, :])
+        acc['out_of_bbox_palette_px'] += int(outside.sum())
+
+        # Horizontal adjacency inside owned rows; vertical adjacency reaches one
+        # row into the halo so the pair straddling a stripe seam is counted
+        # exactly once, by the stripe above it. On the last stripe there is no
+        # row below the image, so `vhi` stops one short instead of dropping the
+        # whole vertical pass (which would undercount every horizontal edge in
+        # a single-stripe image by half).
+        vhi = min(hi + 1, bot - top)
+        for a_pal, a_white, a_off, b_pal, b_white, b_off, a_code, b_code in (
+            (own_pal[:, :-1], own_white[:, :-1], own_off[:, :-1],
+             own_pal[:, 1:], own_white[:, 1:], own_off[:, 1:],
+             code[lo:hi, :-1], code[lo:hi, 1:]),
+            (is_pal[lo:vhi - 1], is_white[lo:vhi - 1], is_off[lo:vhi - 1],
+             is_pal[lo + 1:vhi], is_white[lo + 1:vhi], is_off[lo + 1:vhi],
+             code[lo:vhi - 1], code[lo + 1:vhi]),
+        ):
+            if a_pal.shape != b_pal.shape or a_pal.size == 0:
+                continue
+            acc['hard_color_white_edges'] += int(((a_pal & b_white) | (a_white & b_pal)).sum())
+            acc['hard_color_color_edges'] += int((a_pal & b_pal & (a_code != b_code)).sum())
+            acc['blended_palette_edges'] += int(((a_pal & b_off) | (a_off & b_pal)).sum())
+            acc['blended_white_edges'] += int(((a_white & b_off) | (a_off & b_white)).sum())
+
+        # 3x3 solidity for owned rows that have a full neighbourhood.
+        s0, s1 = max(lo, 1), min(hi, bot - top - 1)
+        if s1 > s0 and w > 2:
+            centre = code[s0:s1, 1:-1]
+            same = np.ones(centre.shape, dtype=bool)
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    if dy == 0 and dx == 0:
+                        continue
+                    same &= code[s0 + dy:s1 + dy, 1 + dx:w - 1 + dx] == centre
+            centre_pal = is_pal[s0:s1, 1:-1]
+            acc['interior_palette_px'] += int(centre_pal.sum())
+            acc['solid_3x3_palette_px'] += int((same & centre_pal).sum())
+
+        # Row-wise runs of off-palette pixels = transition widths. Sentinel
+        # columns keep runs from wrapping across row boundaries.
+        oh = own_off.shape[0]
+        if oh:
+            sent = np.zeros((oh, w + 2), dtype=bool)
+            sent[:, 1:-1] = own_off
+            d = np.diff(sent.ravel().astype(np.int8))
+            starts = np.flatnonzero(d == 1) + 1
+            ends = np.flatnonzero(d == -1) + 1
+            if starts.size:
+                run_lengths.append((ends - starts).astype(np.int64))
+                stride = w + 2
+                srow = (starts // stride).astype(np.int64)
+                scol = (starts % stride).astype(np.int64) - 1
+                ecol = (ends % stride).astype(np.int64) - 1
+                # Only runs anchored by a real pixel on both sides are
+                # transitions; a run touching a row edge has no second endpoint.
+                anchored = np.flatnonzero((scol > 0) & (ecol < w))
+                if anchored.size and len(samples) < _MAX_TRANSITION_SAMPLES:
+                    want = min(anchored.size, _MAX_TRANSITION_SAMPLES - len(samples))
+                    pick = anchored[np.linspace(0, anchored.size - 1, want).astype(np.int64)]
+                    for k in pick:
+                        r, c0, c1 = int(srow[k]), int(scol[k]), int(ecol[k])
+                        sample_rgb.append((block[lo + r, c0 - 1].copy(),
+                                           block[lo + r, c0:c1].copy(),
+                                           block[lo + r, c1].copy()))
+                        samples.append((y + r, c0, c1, 0))
+
+        # Off-palette color census, for the pastel/unblend stage.
+        if not off_truncated and own_off.any():
+            vals, cnts = np.unique(code[lo:hi][own_off], return_counts=True)
+            for v, c in zip(vals.tolist(), cnts.tolist()):
+                if v in off_counts:
+                    off_counts[v] += c
+                elif len(off_counts) < _MAX_OFF_COLOR_KEYS:
+                    off_counts[v] = c
+                else:
+                    off_truncated = True
+        y = y1
+
+    lengths = np.concatenate(run_lengths) if run_lengths else np.zeros(0, dtype=np.int64)
+    acc['off_color_counts'] = off_counts
+    acc['off_color_census_truncated'] = off_truncated
+    acc['transition_lengths'] = lengths
+    acc['transition_samples'] = sample_rgb
+    return acc
+
+
+def _anchor_kind(left: np.ndarray, right: np.ndarray, palette_sorted: np.ndarray,
+                 span: int, width: int) -> str:
+    """Classify a run by what sits on each side of it and how wide it is.
+
+    Only ``color_white`` and ``color_color`` are real transitions.
+
+    A run whose two anchors are the same color is not a transition at all --
+    it is the interior of an off-palette region, which is exactly what a whole
+    element composited over white looks like -- and normalizing an excursion
+    by its zero endpoint separation would report an arbitrarily large
+    "overshoot" for a capture with no resampling in it.
+
+    A very wide run is excluded for the same reason even when its anchors do
+    differ. Resampling spreads an edge across the kernel's support, a handful
+    of pixels; a 300-pixel span of one off-palette color bounded by white on
+    one side and another element on the other is a third region, and scoring
+    its distance from the line between those two anchors as "ringing" would
+    report a hard-edged composited capture as resampled.
+    """
+    if span < _MIN_TRANSITION_SPAN:
+        return 'degenerate'
+    if width > _MAX_TRANSITION_FOR_OVERSHOOT:
+        return 'wide_region'
+    kinds = []
+    for value in (left, right):
+        code = (int(value[0]) << 16) | (int(value[1]) << 8) | int(value[2])
+        if code == WHITE_CODE:
+            kinds.append('white')
+        elif bool(_is_palette(np.array([code], dtype=np.uint32), palette_sorted)[0]):
+            kinds.append('palette')
+        else:
+            kinds.append('other')
+    if 'other' in kinds:
+        return 'other'
+    if kinds == ['white', 'white']:
+        return 'degenerate'
+    return 'color_white' if 'white' in kinds else 'color_color'
+
+
+def _overshoot(sample_rgb, palette_sorted: np.ndarray) -> dict[str, Any]:
+    """Ringing magnitude across sampled 1-D transitions.
+
+    For a run of off-palette pixels anchored by two different exact colors, a
+    monotone (box/bilinear) resample keeps every run pixel inside
+    ``[min, max]`` per channel. A negative-lobe kernel or a sharpening pass
+    pushes pixels beyond an endpoint; that excess is the overshoot.
+
+    Two normalizations are deliberately avoided. Dividing a channel's
+    excursion by that channel's own endpoint gap turns a small wobble on a
+    near-equal channel into a huge ratio, so the excess is divided by the
+    transition's *overall* endpoint separation instead. And a run whose
+    anchors match is dropped entirely rather than divided by zero -- see
+    ``_anchor_kind``.
+
+    The headline rate covers color-to-white transitions, the population the
+    34-60% baseline figure was measured on. Every other population is
+    reported beside it with its own count, never folded into it.
+    """
+    buckets: dict[str, list[float]] = {
+        'color_white': [], 'color_color': [], 'other': [], 'degenerate': [], 'wide_region': []}
+    for left, run, right in sample_rgb or []:
+        a, b, r = left.astype(np.int16), right.astype(np.int16), run.astype(np.int16)
+        lo, hi = np.minimum(a, b), np.maximum(a, b)
+        span = int((hi - lo).max())
+        kind = _anchor_kind(left, right, palette_sorted, span, int(r.shape[0]))
+        if kind in ('degenerate', 'wide_region'):
+            buckets[kind].append(0.0)
+            continue
+        excess = np.maximum(np.maximum(lo[None, :] - r, r - hi[None, :]), 0)
+        buckets[kind].append(float(excess.max()) / max(span, 1))
+
+    def summarize(values: list[float]) -> dict[str, Any]:
+        arr = np.asarray(values, dtype=float)
+        if arr.size == 0:
+            return {'count': 0, 'rate': None, 'normalized': {}}
+        return {'count': int(arr.size),
+                'rate': float((arr > _OVERSHOOT_MIN_NORM).mean()),
+                'normalized': _percentiles(arr)}
+
+    color_white = summarize(buckets['color_white'])
+    color_color = summarize(buckets['color_color'])
+    measurable = summarize(buckets['color_white'] + buckets['color_color'])
+    headline = color_white if color_white['count'] else measurable
+    return {
+        'sampled_transitions': sum(len(v) for v in buckets.values()),
+        'measurable_transitions': measurable['count'],
+        'overshoot_rate': headline['rate'],
+        'normalized_overshoot': headline['normalized'],
+        'overshoot_population': ('color_white' if color_white['count']
+                                 else ('color_color' if color_color['count'] else None)),
+        'color_white_transitions': color_white['count'],
+        'color_color_transitions': color_color['count'],
+        # Runs bounded by the same color on both sides: region interiors, not
+        # transitions. A high count here with a low hard_edge_ratio is the
+        # signature of composited whole elements, not of resampling.
+        'degenerate_runs': len(buckets['degenerate']),
+        # Runs too wide to be a resampled edge: a third region, not a
+        # transition. Counted so their exclusion is visible, never scored.
+        'wide_region_runs': len(buckets['wide_region']),
+        'max_width_scored_px': _MAX_TRANSITION_FOR_OVERSHOOT,
+        'by_anchor_kind': {kind: summarize(values) for kind, values in buckets.items()
+                           if kind not in ('degenerate', 'wide_region')},
+        'measurable': measurable,
+    }
+
+
+def _unblend_over_white(off_code: int, palette_sorted: np.ndarray) -> dict[str, Any] | None:
+    """Solve off == alpha*P + (1-alpha)*white for some palette color P.
+
+    Per channel, alpha = (255 - off) / (255 - P). A real constant-alpha
+    composite over white gives the same alpha on every channel where P differs
+    from white; an anti-aliased or resampled edge pixel generally does not.
+    Channels where P is already 255 carry no information and are skipped, but
+    the off pixel must still be 255 there.
+    """
+    if palette_sorted.size == 0:
+        return None
+    off = np.array(_code_to_rgb(off_code), dtype=np.float64)
+    pal = palette_sorted.astype(np.uint32)
+    p = np.stack([(pal >> 16) & 0xFF, (pal >> 8) & 0xFF, pal & 0xFF], axis=1).astype(np.float64)
+    denom = 255.0 - p
+    usable = denom > 0.5
+    with np.errstate(divide='ignore', invalid='ignore'):
+        alphas = np.where(usable, (255.0 - off[None, :]) / np.where(usable, denom, 1.0), np.nan)
+    n_usable = usable.sum(axis=1)
+    valid = n_usable > 0
+    # Saturated channels of P must be (near-)saturated in the off color too.
+    valid &= np.all(usable | (np.abs(off[None, :] - 255.0) <= _ALPHA_CHANNEL_TOL), axis=1)
+    if not valid.any():
+        return None
+    mean_alpha = np.nanmean(np.where(usable, alphas, np.nan), axis=1)
+    valid &= (mean_alpha > _ALPHA_MIN) & (mean_alpha < _ALPHA_MAX)
+    if not valid.any():
+        return None
+    recon = mean_alpha[:, None] * p + (1.0 - mean_alpha[:, None]) * 255.0
+    err = np.max(np.abs(recon - off[None, :]), axis=1)
+    err = np.where(valid, err, np.inf)
+    best = int(np.argmin(err))
+    if not np.isfinite(err[best]) or err[best] > _ALPHA_CHANNEL_TOL:
+        return None
+    return {'palette_rgb': _code_to_rgb(int(pal[best])), 'palette_code': int(pal[best]),
+            'alpha': float(mean_alpha[best]), 'max_channel_error': float(err[best])}
+
+
+def _pastel_profile(arr: np.ndarray, palette_sorted: np.ndarray,
+                    codes: list[int]) -> dict[int, dict[str, Any]]:
+    """Per-pastel-color solidity and palette neighbours -- the B2 discriminator.
+
+    A color-to-white edge produced by resampling lands *exactly* on the alpha
+    ray from the palette color to white, so it unblends just as cleanly as a
+    deliberately composited element does. Solving the alpha is therefore not
+    enough on its own. What separates them is shape: a whole element drawn at
+    constant alpha has a large interior where every 3x3 neighbourhood is that
+    same pastel color, while a resampled edge has essentially none.
+
+    The palette colors found adjacent to each pastel color answer the other
+    half of B2: if a pastel region unblends against white while sitting next
+    to another element's color, white is the blend target, not that element.
+    """
+    if not codes:
+        return {}
+    h, w = arr.shape[:2]
+    wanted = np.array(sorted(set(int(c) for c in codes)), dtype=np.uint32)
+    profile = {int(c): {'total_px': 0, 'solid_3x3_px': 0, 'neighbor_palette_codes': set()}
+               for c in wanted.tolist()}
+    y = 0
+    while y < h:
+        y1 = min(h, y + _METRIC_STRIPE_ROWS)
+        top, bot = max(0, y - 1), min(h, y1 + 1)
+        code = _rgb_to_code(arr[top:bot])
+        lo, hi = y - top, y - top + (y1 - y)
+        s0, s1 = max(lo, 1), min(hi, bot - top - 1)
+        for target in wanted.tolist():
+            own = code[lo:hi] == target
+            profile[target]['total_px'] += int(own.sum())
+            if s1 <= s0 or w <= 2:
+                continue
+            centre = code[s0:s1, 1:-1] == target
+            if not centre.any():
+                continue
+            same = centre.copy()
+            neighbours = set()
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    if dy == 0 and dx == 0:
+                        continue
+                    shifted = code[s0 + dy:s1 + dy, 1 + dx:w - 1 + dx]
+                    same &= shifted == target
+                    around = shifted[centre]
+                    if around.size:
+                        values = np.unique(around)
+                        values = values[_is_palette(values, palette_sorted)]
+                        neighbours.update(int(v) for v in values.tolist())
+            profile[target]['solid_3x3_px'] += int(same.sum())
+            profile[target]['neighbor_palette_codes'].update(neighbours)
+        y = y1
+    for record in profile.values():
+        record['neighbor_palette_codes'] = sorted(record['neighbor_palette_codes'])[:32]
+        record['solid_3x3_fraction'] = (record['solid_3x3_px'] / record['total_px']
+                                        if record['total_px'] else None)
+    return profile
+
+
+def _pastel_analysis(off_counts: dict[int, int], palette_sorted: np.ndarray,
+                     labels: dict[int, list[str]], total_px: int) -> dict[str, Any]:
+    """Which off-palette colors are whole-element composites over white."""
+    ranked = sorted(off_counts.items(), key=lambda kv: kv[1], reverse=True)
+    matches = []
+    for code, count in ranked[:_MAX_PASTEL_PROFILED * 8]:
+        solved = _unblend_over_white(code, palette_sorted)
+        if solved is None:
+            continue
+        solved.update({'off_rgb': _code_to_rgb(code), 'off_code': int(code),
+                       'pixel_count': int(count),
+                       'pixel_fraction': (count / total_px) if total_px else None,
+                       'palette_labels': labels.get(solved['palette_code'], [])})
+        matches.append(solved)
+        if len(matches) >= _MAX_PASTEL_PROFILED:
+            break
+    alphas = np.asarray([m['alpha'] for m in matches], dtype=float)
+    hist: dict[str, int] = {}
+    for m in matches:
+        key = '{0:.2f}'.format(round(m['alpha'], 2))
+        hist[key] = hist.get(key, 0) + 1
+    return {
+        'matched_color_count': len(matches),
+        'matched_pixel_count': int(sum(m['pixel_count'] for m in matches)),
+        'distinct_palette_colors_blended': len({m['palette_code'] for m in matches}),
+        'alpha_histogram': hist,
+        'alpha_percentiles': _percentiles(alphas) if alphas.size else {},
+        'matches': matches,
+    }
+
+
+def _apply_pastel_profile(blend: dict[str, Any], profile: dict[int, dict[str, Any]]) -> None:
+    """Split unblend matches into composited elements and resample residue.
+
+    ``matched_color_count`` counts every color that solves cleanly against the
+    palette over white, which on a resampled export is mostly edge residue.
+    ``composited_color_count`` counts only the ones that also have a solid
+    interior, and is the number to read as "pastel element count".
+    """
+    composited = 0
+    for match in blend['matches']:
+        record = profile.get(match['off_code'])
+        if not record:
+            continue
+        match['solid_3x3_px'] = record['solid_3x3_px']
+        match['solid_3x3_fraction'] = record['solid_3x3_fraction']
+        match['neighbor_palette_rgb'] = [_code_to_rgb(c) for c in record['neighbor_palette_codes']]
+        match['is_composited_region'] = bool(
+            record['solid_3x3_fraction'] is not None
+            and record['solid_3x3_fraction'] >= _PASTEL_SOLID_MIN)
+        if match['is_composited_region']:
+            composited += 1
+    blend['composited_color_count'] = composited
+    blend['composited_pixel_count'] = int(sum(
+        m['pixel_count'] for m in blend['matches'] if m.get('is_composited_region')))
+    composited_alphas = np.asarray(
+        [m['alpha'] for m in blend['matches'] if m.get('is_composited_region')], dtype=float)
+    blend['composited_alpha_percentiles'] = (_percentiles(composited_alphas)
+                                             if composited_alphas.size else {})
+    blend['composited_alpha_histogram'] = {}
+    for match in blend['matches']:
+        if not match.get('is_composited_region'):
+            continue
+        key = '{0:.2f}'.format(round(match['alpha'], 2))
+        blend['composited_alpha_histogram'][key] = \
+            blend['composited_alpha_histogram'].get(key, 0) + 1
+
+
+def stage_a_export_metrics(tiff_path: Path, sidecar: dict[str, Any]) -> dict[str, Any]:
+    """Every metric the drift/blend investigation requires, for one export.
+
+    ``sidecar`` is a Stage A color-ID sidecar (color_id_buffer.py) or any probe
+    record carrying the same keys: ``resolution``, ``bounds_xy``,
+    ``color_assignment_map``, ``link_category_color_map``.
+    """
+    if Image is None or np is None:
+        raise RuntimeError('Pillow and NumPy are required for stage_a_export_metrics')
+    tiff_path = Path(tiff_path)
+    arr = load_rgb(tiff_path)
+    h, w = arr.shape[:2]
+    palette_sorted, labels = _palette_from_sidecar(sidecar)
+    resolution = _native_resolution(sidecar, w, h)
+    frame = _frame_geometry(sidecar, w, h)
+    scan = _scan_export(arr, palette_sorted, frame['content_rect_px'])
+
+    blend = _pastel_analysis(scan['off_color_counts'], palette_sorted, labels, h * w)
+    _apply_pastel_profile(blend, _pastel_profile(
+        arr, palette_sorted, [m['off_code'] for m in blend['matches']]))
+
+    total_px = h * w
+    hard = scan['hard_color_white_edges']
+    blended = scan['blended_palette_edges'] + scan['blended_white_edges']
+    lengths = scan['transition_lengths']
+    hist: dict[str, int] = {}
+    if lengths.size:
+        capped = np.minimum(lengths, _TRANSITION_HIST_CAP)
+        vals, cnts = np.unique(capped, return_counts=True)
+        hist = {('>={0}'.format(_TRANSITION_HIST_CAP) if int(v) >= _TRANSITION_HIST_CAP else str(int(v))): int(c)
+                for v, c in zip(vals.tolist(), cnts.tolist())}
+
+    return {
+        'image': base_info(tiff_path),
+        'palette_color_count': int(palette_sorted.size),
+        'resolution': resolution,
+        'frame': frame,
+        'pixels': {
+            'total_px': int(total_px),
+            'palette_px': scan['palette_px'],
+            'white_px': scan['white_px'],
+            'off_palette_px': scan['off_palette_px'],
+            'off_palette_fraction': (scan['off_palette_px'] / total_px) if total_px else None,
+            'off_palette_distinct_colors': len(scan['off_color_counts']),
+            'off_palette_census_truncated': scan['off_color_census_truncated'],
+            'out_of_bbox_palette_px': scan['out_of_bbox_palette_px'],
+        },
+        'edges': {
+            'hard_edge_count': hard,
+            'blended_edge_count': blended,
+            'hard_edge_ratio': (hard / (hard + blended)) if (hard + blended) else None,
+            'hard_color_color_edge_count': scan['hard_color_color_edges'],
+            'blended_palette_edge_count': scan['blended_palette_edges'],
+            'blended_white_edge_count': scan['blended_white_edges'],
+        },
+        'transitions': {
+            'count': int(lengths.size),
+            'width_histogram': hist,
+            'width_percentiles': _percentiles(lengths.astype(float)) if lengths.size else {},
+            'mean_width': float(lengths.mean()) if lengths.size else None,
+            'overshoot': _overshoot(scan['transition_samples'], palette_sorted),
+        },
+        'solidity': {
+            'interior_palette_px': scan['interior_palette_px'],
+            'solid_3x3_palette_px': scan['solid_3x3_palette_px'],
+            'fraction_3x3_solid': (scan['solid_3x3_palette_px'] / scan['interior_palette_px'])
+                                   if scan['interior_palette_px'] else None,
+        },
+        'white_blend': blend,
+    }
+
+
+def _metrics_export_records(json_path: Path, data: dict[str, Any]) -> list[tuple[str, Path, dict[str, Any]]]:
+    """Every (label, tiff, sidecar) triple a metrics input file describes.
+
+    Accepts a bare Stage A color-ID sidecar, or a probe envelope/native report
+    carrying an ``exports`` list whose entries repeat the sidecar's keys. No
+    other shape is inferred: an unrecognized file raises rather than silently
+    measuring nothing.
+    """
+    def _records_from(node: dict[str, Any]) -> list[tuple[str, Path, dict[str, Any]]]:
+        found = []
+        exports = node.get('exports')
+        if isinstance(exports, list):
+            for i, rec in enumerate(exports):
+                if not isinstance(rec, dict):
+                    continue
+                tiff = resolve_path(json_path, rec.get('tiff_path'))
+                if tiff is None:
+                    continue
+                merged = dict(rec)
+                for key in ('color_assignment_map', 'link_category_color_map'):
+                    merged.setdefault(key, node.get(key) or {})
+                found.append((str(rec.get('label') or rec.get('case') or i), tiff, merged))
+        return found
+
+    records = _records_from(data)
+    native = data.get('native_report')
+    if not records and isinstance(native, dict):
+        records = _records_from(native)
+    if not records and data.get('tiff_path'):
+        tiff = resolve_path(json_path, data.get('tiff_path'))
+        if tiff is not None:
+            records = [(str(data.get('view_id') or json_path.stem), tiff, data)]
+    if not records:
+        raise ValueError('NO_EXPORT_RECORDS: {0} has neither "tiff_path" nor an "exports" list'.format(json_path.name))
+    return records
+
+
+_METRIC_TABLE_COLUMNS = (
+    ('label', lambda m: None),
+    ('W', lambda m: m['resolution']['width_px']),
+    ('H', lambda m: m['resolution']['height_px']),
+    ('req_px', lambda m: m['resolution']['requested_pixel_size']),
+    ('native_px', lambda m: m['resolution']['native_width_px']),
+    ('scale', lambda m: m['resolution']['scale_factor']),
+    ('hard_edges', lambda m: m['edges']['hard_edge_count']),
+    ('blend_edges', lambda m: m['edges']['blended_edge_count']),
+    ('hard_ratio', lambda m: m['edges']['hard_edge_ratio']),
+    ('off_px', lambda m: m['pixels']['off_palette_px']),
+    ('overshoot', lambda m: m['transitions']['overshoot']['overshoot_rate']),
+    # The sample count behind that rate. A rate over a handful of transitions
+    # is noise, and without this column it reads identically to one over
+    # hundreds.
+    ('n_trans', lambda m: m['transitions']['overshoot']['measurable_transitions']),
+    ('trans_p50', lambda m: m['transitions']['width_percentiles'].get('p50')),
+    ('trans_p90', lambda m: m['transitions']['width_percentiles'].get('p90')),
+    ('oob_px', lambda m: m['pixels']['out_of_bbox_palette_px']),
+    ('solid3x3', lambda m: m['solidity']['fraction_3x3_solid']),
+    ('pastel_colors', lambda m: m['white_blend']['composited_color_count']),
+    ('pastel_alpha_p50', lambda m: m['white_blend']['composited_alpha_percentiles'].get('p50')),
+)
+
+
+def _fmt_cell(value: Any) -> str:
+    if value is None:
+        return '-'
+    if isinstance(value, float):
+        return '{0:.4g}'.format(value)
+    return str(value)
+
+
+def format_metrics_table(rows: list[tuple[str, dict[str, Any]]]) -> str:
+    """Markdown table of the required per-export metrics, one row per export."""
+    header = [name for name, _ in _METRIC_TABLE_COLUMNS]
+    lines = ['| ' + ' | '.join(header) + ' |',
+             '| ' + ' | '.join('---' for _ in header) + ' |']
+    for label, metrics in rows:
+        cells = [label] + [_fmt_cell(getter(metrics)) for name, getter in _METRIC_TABLE_COLUMNS[1:]]
+        lines.append('| ' + ' | '.join(cells) + ' |')
+    return '\n'.join(lines)
+
+
+def analyze_metrics_json(json_path: Path) -> tuple[Path, list[tuple[str, dict[str, Any]]]]:
+    """Write ``<stem>.metrics.json`` beside a probe/sidecar file and return its rows."""
+    json_path = Path(json_path)
+    data = json.loads(json_path.read_text(encoding='utf-8'))
+    if not isinstance(data, dict):
+        raise ValueError('MALFORMED_RAW_REPORT: top-level JSON must be an object')
+    rows, errors = [], []
+    for label, tiff, sidecar in _metrics_export_records(json_path, data):
+        if not tiff.exists():
+            errors.append({'label': label, 'code': 'TIFF_MISSING', 'path': str(tiff)})
+            continue
+        try:
+            rows.append((label, stage_a_export_metrics(tiff, sidecar)))
+        except Exception as exc:
+            errors.append({'label': label, 'code': 'METRICS_EXCEPTION',
+                           'type': type(exc).__name__, 'message': str(exc)})
+    out = json_path.with_name(json_path.stem + '.metrics.json')
+    out.write_text(json.dumps({'analysis_schema_version': ANALYSIS_SCHEMA_VERSION,
+                               'analyzer_version': ANALYZER_VERSION,
+                               'source': str(json_path),
+                               'generated_at': datetime.now(timezone.utc).isoformat(),
+                               'errors': errors,
+                               'exports': {label: metrics for label, metrics in rows}},
+                              indent=2, sort_keys=True), encoding='utf-8')
+    return out, rows
+
+
 def collect(paths):
     out=[]
     for arg in paths:
@@ -1132,13 +1868,46 @@ def collect(paths):
 def main(argv=None):
     ap=argparse.ArgumentParser(description='Analyze Stage A Dynamo probe JSON/TIFF outputs externally with Pillow + NumPy')
     ap.add_argument('paths', nargs='+', help='Probe output directories or JSON files')
+    ap.add_argument('--export-metrics', action='store_true',
+                    help='Diagnostic mode: emit the per-export edge-drift/white-blend metric set for each '
+                         'Stage A color-ID sidecar (or probe record carrying an "exports" list) instead of '
+                         'running probe acceptance. Writes <stem>.metrics.json beside each input.')
+    ap.add_argument('--metrics-table', metavar='PATH', default=None,
+                    help='With --export-metrics, also write one markdown table of every measured export here '
+                         '(use "-" for stdout).')
     ns=ap.parse_args(argv)
+    if ns.export_metrics:
+        return _main_export_metrics(ns)
     failures=0
     for jp in collect(ns.paths):
         try:
             out, msg=analyze_json(jp); print(f"✓ {jp} -> {out}: {msg}")
         except Exception as e:
             failures+=1; print(f"✗ {jp}: {type(e).__name__}: {e}")
+    return 1 if failures else 0
+
+
+def _main_export_metrics(ns) -> int:
+    if Image is None or np is None:
+        print('✗ Pillow and NumPy are required for --export-metrics'); return 1
+    failures, table_rows = 0, []
+    for jp in collect(ns.paths):
+        if jp.name.endswith(('.metrics.json', '.analyzed.json')):
+            continue
+        try:
+            out, rows = analyze_metrics_json(jp)
+        except Exception as e:
+            failures += 1; print(f"✗ {jp}: {type(e).__name__}: {e}"); continue
+        for label, metrics in rows:
+            table_rows.append((f"{jp.stem}:{label}", metrics))
+        print(f"✓ {jp} -> {out}: {len(rows)} export(s) measured")
+    if ns.metrics_table and table_rows:
+        table = format_metrics_table(table_rows)
+        if ns.metrics_table == '-':
+            print(table)
+        else:
+            Path(ns.metrics_table).write_text(table + '\n', encoding='utf-8')
+            print(f"✓ metrics table -> {ns.metrics_table}")
     return 1 if failures else 0
 
 if __name__ == '__main__':
