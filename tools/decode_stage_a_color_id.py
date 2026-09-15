@@ -7,10 +7,12 @@ probe.py (Dynamo exports, external Python analyzes). Assumes Pillow and
 NumPy are present in the invoking Python environment; no CLR/System.Drawing
 fallback (this never runs inside the Dynamo/Python.NET process).
 
-Only HOST elements (color_assignment_map) are decoded. link_color_assignment_
-map is deliberately never read: LINK elements stay on the existing in-process
-geometry-extraction method per the Sept 11 decision; decoding LINK colors
-here would produce output nothing consumes.
+Only HOST elements (color_assignment_map) are decoded. link_category_color_
+map is deliberately never read: LINK elements are colored per-category via
+view filters (one shared color per category, not a unique per-element ID),
+so decoding them here would only ever reconstruct category-level blobs, not
+individual elements -- LINK elements stay on the existing in-process
+geometry-extraction method per the Sept 11 decision.
 
 USAGE
 -----

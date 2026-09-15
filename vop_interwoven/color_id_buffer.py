@@ -7,6 +7,7 @@ colors, exports a TIFF immediately, writes a JSON sidecar, and restores view
 state before returning to the next view.
 """
 
+import copy
 import json
 import os
 import time
@@ -202,38 +203,486 @@ def _build_flat_color_ogs(solid_pattern_id, color):
     return ogs
 
 
-def _try_color_link_element(view, link_inst_id, link_elem_id, ogs):
-    """Attempt a Revit 2022+ LinkElementId-based override for a linked element.
+def _dedupe_link_instances_by_document(link_instances):
+    """Group placed RevitLinkInstance objects by underlying document identity
+    (PathName), so a link type placed many times in a view (e.g. a "typical
+    exam room" link placed dozens of times) is only scanned once — ported
+    from the tested standalone filter-creation script, where scanning each
+    placement separately was the dominant cost (15.9s of 34s total for 152
+    instances resolving to a much smaller set of unique documents).
 
-    Returns True on success. LinkElementId/overload support varies by Revit
-    version, so failure is expected on older hosts and must not be treated as
-    fatal — the caller falls back to hiding the owning link instance so
-    uncolored linked geometry never contaminates the ID buffer. Restore always
-    resets to a freshly-constructed blank override rather than a captured
-    "prior" object — see export_color_id_buffer_view's painted_link_entries
-    note for why.
-
-    Thin wrapper over ``_try_color_link_element_detailed`` that discards the
-    exception detail — this function's boolean-only contract and swallow-all
-    behavior are relied on by ``export_color_id_buffer_view`` below exactly as
-    before. A caller that needs to distinguish an environment/API-support gap
-    from a genuine unexpected failure (e.g. the Stage A external-source probe)
-    must call the detailed variant instead of trying to recover that
-    distinction from this function's return value, which cannot carry it.
+    Returns ``(unique_docs, unresolved_names)``:
+      unique_docs: path_name -> {"instance": link_inst, "linked_doc": Document,
+        "instances": [link_inst, ...]}. "instance" is one representative
+        placement (enough to scan the document's own elements/categories);
+        "instances" is EVERY placement of that document in this view --
+        needed when a category discovered in the document must be
+        suppressed, since every placement could carry that category's
+        geometry, not just the representative one.
+      unresolved_names: link instance Names whose document could not be
+        resolved (unloaded/missing link) — reported, never silently dropped.
     """
-    success, _ = _try_color_link_element_detailed(view, link_inst_id, link_elem_id, ogs)
-    return success
+    unique_docs = {}
+    unresolved_names = []
+    for link_inst in link_instances:
+        linked_doc = link_inst.GetLinkDocument()
+        if linked_doc is None:
+            unresolved_names.append(link_inst.Name)
+            continue
+        path_name = linked_doc.PathName or link_inst.Name
+        if path_name not in unique_docs:
+            unique_docs[path_name] = {"instance": link_inst, "linked_doc": linked_doc, "instances": [link_inst]}
+        else:
+            unique_docs[path_name]["instances"].append(link_inst)
+    return unique_docs, unresolved_names
+
+
+def _model_categories_in_linked_doc(linked_doc, filterable_ids):
+    """Distinct categories among elements in ONE linked document that the
+    project's authoritative LINK category policy (revit/collection_policy.
+    py's should_include_element(), "single source of truth" per CLAUDE.md)
+    would include -- split by whether Revit's ParameterFilterElement API can
+    actually filter on that category
+    (ParameterFilterUtilities.GetAllFilterableCategories()). Both checks
+    must run for every category now (unlike an earlier revision that
+    treated filterable_ids as a cheap first gate and skipped the policy
+    call otherwise): a policy-included-but-unfilterable category still
+    needs to be identified and returned, not silently dropped, or its LINK
+    elements end up neither colored nor suppressed.
+
+    Returns ``(colorable, uncolorable)``: ``colorable`` categories are both
+    policy-included AND filterable -- callable code can color their LINK
+    elements via a category filter. ``uncolorable`` categories are
+    policy-included but NOT filterable -- Stage A has no way to color their
+    LINK elements at all, and the caller must suppress them (hide the
+    category) rather than let them render with an uncontrolled native
+    color a decoder could alias onto some unrelated HOST element's palette
+    ID (see _apply_link_category_filters's docstring and the retired
+    per-element path's "hide what can't be colored" precedent this
+    restores). Policy-EXCLUDED categories (Rooms, Areas, Lines, ...) are in
+    neither list -- the rest of the pipeline already never collects their
+    LINK elements at all (linked_documents.py's own should_include_element
+    call), so their native rendering is an existing, out-of-scope
+    characteristic of the whole system, not something this function
+    introduces or needs to suppress.
+
+    Deliberately unscoped by host-view visibility: a category can be hidden
+    in the host view while still visible via the link's own Custom
+    category-visibility settings, and no API exposes that per-link state
+    directly, so narrowing here would silently drop categories that are
+    genuinely visible. Overinclusion from that alone only costs a spare
+    filter/palette slot, never wrong output -- but skipping the policy call
+    would not be mere overinclusion, it would recolor categories (Rooms,
+    Areas, Lines, ...) the rest of the pipeline treats as non-physical/
+    non-model, and since a category filter paints HOST elements of that
+    category too, it would contaminate HOST content as well.
+    """
+    from Autodesk.Revit.DB import FilteredElementCollector
+    from .revit.collection_policy import should_include_element
+    seen_cat_ids = set()
+    colorable = []
+    uncolorable = []
+    for elem in FilteredElementCollector(linked_doc).WhereElementIsNotElementType():
+        cat = elem.Category
+        if cat is None:
+            continue
+        cid_int = cat.Id.IntegerValue
+        if cid_int in seen_cat_ids:
+            continue
+        seen_cat_ids.add(cid_int)
+        include, _reason, _cat_name = should_include_element(
+            elem=elem, doc=linked_doc, source_type="LINK"
+        )
+        if not include:
+            continue
+        if cid_int in filterable_ids:
+            colorable.append(cat)
+        else:
+            uncolorable.append(cat)
+    return colorable, uncolorable
+
+
+def _find_existing_parameter_filter(doc, name):
+    from Autodesk.Revit.DB import FilteredElementCollector, ParameterFilterElement
+    for pfe in FilteredElementCollector(doc).OfClass(ParameterFilterElement):
+        if pfe.Name == name:
+            return pfe
+    return None
+
+
+def _reused_filter_matches_category(pfe, cat):
+    """True only if ``pfe`` is exactly what this module itself would have
+    created for ``cat``: an accept-all filter on cat's single category id,
+    with no additional element-parameter rule narrowing which of that
+    category's elements it actually matches.
+
+    A filter found by name (see _apply_link_category_filters's docstring
+    for why a match on the view-id-scoped name should, in practice, only
+    ever be this same view's own Stage A crash leftover) is still just a
+    name match -- Revit enforces no reservation on that naming pattern, so
+    nothing guarantees the found filter's actual definition is the one
+    this function is about to assume it is. Reusing an unverified filter
+    could silently leave cat's elements native-colored (if the filter
+    doesn't actually catch them) while link_category_color_map still
+    reports the category as successfully colored -- the same
+    HOST-palette-ID-aliasing risk this whole mechanism exists to prevent,
+    just from a mismatched filter definition instead of a missing one.
+    """
+    try:
+        cat_ids = set(c.IntegerValue for c in pfe.GetCategories())
+        if cat_ids != {cat.Id.IntegerValue}:
+            return False
+        return pfe.GetElementFilter() is None
+    except Exception:
+        return False
+
+
+def _link_instance_respects_host_view_filters(view, link_inst, diag=None, view_id=None):
+    """Best-effort check for whether this HOST view's SetFilterOverrides can
+    actually control link_inst's rendering at all.
+
+    Each RevitLinkInstance has its own per-instance Display Settings mode
+    (Visibility/Graphics Overrides > Revit Links > this link's row > Display
+    Settings): "By Host View" (Revit's default -- the host view's filters
+    and category overrides govern it) versus "By Linked View" or "Custom"
+    (the link's own view, or its own per-instance overrides, govern it
+    instead, and the host view's filters have NO effect on it whatsoever).
+    _apply_link_category_filters's whole mechanism is host-view filters, so
+    a link in either non-default mode would silently render with an
+    uncontrolled native color no matter how correctly a category filter was
+    built and colored -- the same HOST-palette-ID-aliasing risk as an
+    uncolorable/failed category, just from a different cause.
+
+    Uses view.GetLinkOverrides(link_inst.Id).LinkVisibilityType against the
+    Autodesk.Revit.DB.LinkVisibility enum (ByHostView / ByLinkView /
+    Custom) -- the same API this project's own legacy reference
+    implementation reads for this exact purpose (legacy/SSM_Exporter_v4_
+    A21_baseline_f00af7d.py's Link3D collection, ~line 4281), confirming
+    it's the correct surface for this project's actual target Revit
+    version rather than a newer/different RevitLinkGraphicsSettings shape.
+    That legacy code deliberately stopped at diagnostics-only logging for
+    Custom/ByLinkView ("FUTURE stubs (no behavior change today)"); this is
+    the first place in this codebase that acts on the signal instead of
+    only logging it.
+
+    Returns True (treat as compliant, i.e. colorable via filters) whenever
+    the check cannot be completed -- "By Host View" is Revit's overwhelming
+    default, so a defensive False-by-default here would risk hiding every
+    link in every capture on an unexpected API/version gap alone: a far
+    worse regression than the narrow non-default-visibility-type case this
+    defends against. Only a POSITIVE confirmation of a non-"By Host View"
+    type returns False.
+    """
+    try:
+        from Autodesk.Revit.DB import LinkVisibility
+        overrides = view.GetLinkOverrides(link_inst.Id)
+        if overrides is None:
+            return True
+        return overrides.LinkVisibilityType == LinkVisibility.ByHostView
+    except Exception as ex:
+        if diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="link_display_mode_check",
+                message="Could not verify link instance '{0}'s Display Settings mode; "
+                        "assuming By Host View (colorable via category filters) rather "
+                        "than hiding by default: {1}".format(getattr(link_inst, "Name", "?"), ex),
+                view_id=view_id,
+            )
+        return True
+
+
+def _link_instance_may_be_visible_in_view(link_inst, raster):
+    """Cheap pre-check: does this link instance's own bounding box even
+    project into the view's UV bounds at all?
+
+    _model_categories_in_linked_doc scans an entire linked document
+    unscoped by view visibility (deliberately -- see its docstring), so an
+    "uncolorable"/failed category it finds could exist only in a part of
+    the document nowhere near this view -- e.g. a different building wing
+    referenced by the same linked model. Hiding the whole instance for a
+    category that was never going to render here anyway would be a pure
+    loss: it removes that instance's OTHER, valid geometry (which a HOST
+    element could be relying on for real 3D occlusion truth) for no
+    benefit at all. Skipping the hide decision entirely when the instance
+    doesn't even reach this view's bounds costs nothing, since none of its
+    geometry would have rendered here regardless.
+
+    This is a coarse, INSTANCE-level approximation, not a full fix: it
+    does not verify that the SPECIFIC problem category's own elements are
+    within bounds while the instance's other categories are outside them
+    (or vice versa) -- an instance that is partly visible still passes
+    this check even if the exact elements causing the failure are outside
+    the crop. Catching that precisely would mean transforming and checking
+    every element of the failing category individually, which this
+    defensive fallback path does not currently do. Reuses the same
+    world_to_view/ViewBasis projection resolve_view_bounds() and
+    compute_model_crop() already rely on elsewhere in this module, rather
+    than comparing raw view.CropBox coordinates directly -- CropBox is in
+    the view's own (possibly rotated) local frame, and comparing it
+    against host-space coordinates without that transform would be wrong
+    for any non-axis-aligned view.
+
+    Returns True (treat as potentially visible, i.e. still a hide
+    candidate) whenever the check cannot be completed -- raster/its
+    bounds_xy/view_basis may not be available in every caller, and an
+    unverifiable bbox must never silently exempt an instance that
+    genuinely needs hiding.
+    """
+    if raster is None:
+        return True
+    view_basis = getattr(raster, "view_basis", None)
+    bounds_xy = getattr(raster, "bounds_xy", None)
+    if view_basis is None or bounds_xy is None:
+        return True
+    try:
+        from .revit.view_basis import world_to_view
+        bbox = link_inst.get_BoundingBox(None)
+        if bbox is None or bbox.Min is None or bbox.Max is None:
+            return True
+        us = []
+        vs = []
+        for x in (bbox.Min.X, bbox.Max.X):
+            for y in (bbox.Min.Y, bbox.Max.Y):
+                for z in (bbox.Min.Z, bbox.Max.Z):
+                    u, v, _w = world_to_view((x, y, z), view_basis)
+                    us.append(u)
+                    vs.append(v)
+        inst_umin, inst_umax = min(us), max(us)
+        inst_vmin, inst_vmax = min(vs), max(vs)
+        return not (
+            inst_umax < bounds_xy.xmin or inst_umin > bounds_xy.xmax or
+            inst_vmax < bounds_xy.ymin or inst_vmin > bounds_xy.ymax
+        )
+    except Exception:
+        return True
+
+
+def _collect_link_category_filters(doc, view, diag=None, view_id=None):
+    """Discover the union of policy-included, CategoryType.Model categories
+    across every UNIQUE linked document referenced in this view.
+
+    Ported from the tested standalone filter-creation script: deduplicates
+    RevitLinkInstance placements by underlying document identity (PathName)
+    before scanning, then unions each unique document's model categories.
+
+    Returns ``(colorable, uncolorable, category_to_instances, always_hide_instances)``:
+      colorable / uncolorable: ordered lists of Category objects, sorted by
+        Name for a deterministic, reproducible palette-slot assignment
+        order. ``colorable`` categories get a ParameterFilterElement (see
+        _apply_link_category_filters); ``uncolorable`` ones are
+        policy-included but not filterable at all, so the caller must
+        suppress them instead -- see _model_categories_in_linked_doc's
+        docstring for why leaving them uncontrolled is not an option.
+      category_to_instances: {category_id_int: set(RevitLinkInstance)} --
+        every placement of every document that contains that category (not
+        just a representative one). The caller needs this to know exactly
+        which link instances to hide for an uncolorable category, and later
+        for any category _apply_link_category_filters reports as failed.
+      always_hide_instances: set(RevitLinkInstance) that must be hidden
+        regardless of any category's outcome, because the instance itself
+        doesn't honor host-view filters at all (see
+        _link_instance_respects_host_view_filters). Category-filter colors
+        for THIS instance's elements would never take effect even if every
+        category it contains got a perfectly good filter.
+    """
+    from Autodesk.Revit.DB import FilteredElementCollector, RevitLinkInstance, ParameterFilterUtilities
+    link_instances = list(FilteredElementCollector(doc, view.Id).OfClass(RevitLinkInstance))
+    if not link_instances:
+        return [], [], {}, set()
+
+    unique_docs, unresolved_names = _dedupe_link_instances_by_document(link_instances)
+    if unresolved_names and diag is not None:
+        diag.warn(
+            phase="color_id_buffer",
+            callsite="link_category_filter_discovery",
+            message="{0} linked instance(s) could not resolve their document "
+                    "(unloaded/missing link); excluded from category-filter "
+                    "coloring: {1}".format(len(unresolved_names), unresolved_names),
+            view_id=view_id,
+        )
+
+    filterable_ids = set(
+        cid.IntegerValue for cid in ParameterFilterUtilities.GetAllFilterableCategories()
+    )
+
+    combined_colorable = {}
+    combined_uncolorable = {}
+    category_to_instances = {}
+    always_hide_instances = set()
+    for path_name, info in unique_docs.items():
+        colorable, uncolorable = _model_categories_in_linked_doc(info["linked_doc"], filterable_ids)
+        doc_instances = info["instances"]
+
+        for cat in colorable + uncolorable:
+            category_to_instances.setdefault(cat.Id.IntegerValue, set()).update(doc_instances)
+        for cat in colorable:
+            cid_int = cat.Id.IntegerValue
+            if cid_int not in combined_colorable:
+                combined_colorable[cid_int] = cat
+        for cat in uncolorable:
+            cid_int = cat.Id.IntegerValue
+            if cid_int not in combined_uncolorable:
+                combined_uncolorable[cid_int] = cat
+
+        for link_inst in doc_instances:
+            if not _link_instance_respects_host_view_filters(view, link_inst, diag=diag, view_id=view_id):
+                always_hide_instances.add(link_inst)
+
+    return (
+        sorted(combined_colorable.values(), key=lambda cat: cat.Name),
+        sorted(combined_uncolorable.values(), key=lambda cat: cat.Name),
+        category_to_instances,
+        always_hide_instances,
+    )
+
+
+def _apply_link_category_filters(doc, view, view_id, categories_with_colors, solid_pattern_id, diag=None):
+    """Create one ParameterFilterElement per category and color it via
+    SetFilterOverrides, ported from the tested standalone filter-creation
+    script (random per-run colors there are replaced with this call's
+    caller-supplied palette slice — see export_color_id_buffer_view).
+
+    Same "filter colors the category, a later per-element HOST override
+    wins" precedence Revit documents natively (Instance/Element > Filter >
+    Category): LINK elements have no individual override, so they fall
+    through to the filter's flat category color; a HOST element painted
+    per-element still wins over any filter.
+
+    Filter names are scoped to this view's id ("VOP_Color_<view_id>_
+    <category>"), NOT shared across views/runs the way the ported script's
+    find-or-create-by-fixed-name did. That script was a manual Dynamo tool
+    a human re-ran on the same view during iterative testing, where leaving
+    a stable-named filter behind was the point; this module's whole
+    contract is the opposite -- suppress, capture, and restore the view to
+    exactly how it was, with nothing left behind (see the module docstring
+    and the extensive suppress/restore machinery below). A stable shared
+    name risks colliding with a filter the *user* already has applied to
+    this view for their own reasons: overwriting its color with no
+    prior-state capture would permanently corrupt their view graphics, and
+    capturing/restoring a live OverrideGraphicSettings object across the
+    suppress_tx/export/restore_tx boundary is exactly the pattern this
+    module's history warns against (see the "Deliberately NOT capturing/
+    reusing prior OverrideGraphicSettings" comment above painted_link_
+    entries in export_color_id_buffer_view -- the curtain-panel restore bug
+    was caused by exactly that). View-scoping makes a name collision on
+    THIS view mean only one thing: this same view's own Stage A run left a
+    filter behind after a crash before reaching restore -- safe to reuse.
+
+    ParameterFilterElement objects are document-global, though, not
+    view-scoped: even a Stage-A-named leftover could since have been
+    applied by a user (or another process) to some OTHER view or view
+    template, which a name match on THIS view can't rule out. So a filter
+    found via _find_existing_parameter_filter() is only ever reused, never
+    deleted -- deleting a document element that some other view/template
+    also references would corrupt those too. Only a filter this call
+    freshly creates is guaranteed unreferenced anywhere else (nothing
+    could have a reference to it before it exists), and only those are
+    safe for the caller to doc.Delete() outright during restore.
+
+    A category whose filter creation/application fails here is NOT left to
+    render with its native, uncontrolled color: the decoder matches every
+    TIFF pixel against color_assignment_map's deterministic HOST palette,
+    and an unrelated native LINK color that happens to coincide with a HOST
+    element's assigned RGB would silently corrupt that HOST element's
+    decoded silhouette. The retired per-element path avoided exactly this
+    by hiding a link instance whose override failed; failed_categories
+    below is this function's equivalent -- the caller must hide these
+    categories view-wide (see _model_categories_in_linked_doc's docstring
+    for the matching "uncolorable" case discovery finds up front).
+
+    Returns ``(link_category_color_map, created_filter_ids, reused_filter_ids,
+    failed_categories)``:
+      link_category_color_map: {category_name: [r, g, b]}
+      created_filter_ids: ElementId ints of filters this call created fresh
+        this run -- restore may RemoveFilter AND doc.Delete these.
+      reused_filter_ids: ElementId ints of filters this call found already
+        existing by name and recolored -- restore may only RemoveFilter
+        these from THIS view, never doc.Delete the shared definition.
+      failed_categories: Category objects whose filter could not be
+        created/applied -- the caller must suppress (hide) these.
+    """
+    from Autodesk.Revit.DB import ElementId, ParameterFilterElement, Color
+    import System.Collections.Generic as SCG
+
+    link_category_color_map = {}
+    created_filter_ids = []
+    reused_filter_ids = []
+    failed_categories = []
+    for cat, rgb in categories_with_colors:
+        cat_name = cat.Name
+        filter_name = "VOP_Color_{0}_{1}".format(view_id, cat_name)
+        try:
+            pfe = _find_existing_parameter_filter(doc, filter_name)
+            if pfe is None:
+                cat_id_list = SCG.List[ElementId]()
+                cat_id_list.Add(cat.Id)
+                pfe = ParameterFilterElement.Create(doc, filter_name, cat_id_list)
+                # Recorded immediately on success, before AddFilter/enable/
+                # visibility/color below get any chance to raise -- a
+                # Create() that succeeds but a later step that fails must
+                # still leave this freshly created element tracked for
+                # restore's doc.Delete(), or it orphans permanently.
+                created_filter_ids.append(pfe.Id.IntegerValue)
+            else:
+                if not _reused_filter_matches_category(pfe, cat):
+                    raise RuntimeError(
+                        "Existing filter '{0}' does not match category '{1}' (wrong "
+                        "category set or an element-parameter rule) -- refusing to "
+                        "reuse it".format(filter_name, cat_name)
+                    )
+                reused_filter_ids.append(pfe.Id.IntegerValue)
+
+            if not view.IsFilterApplied(pfe.Id):
+                view.AddFilter(pfe.Id)
+            # Force both enabled AND visible: the suppress step above
+            # unconditionally disables every pre-existing filter on this
+            # view, and a filter's visibility (separate from its enabled
+            # state -- view.GetFilterVisibility/SetFilterVisibility, used
+            # the same way by export_color_id_buffer_view's own filter_
+            # state capture below) could independently be false on a
+            # same-view crash leftover. Either would leave this category's
+            # LINK elements invisible or uncolored in the export even
+            # though link_category_color_map reports them assigned.
+            view.SetIsFilterEnabled(pfe.Id, True)
+            view.SetFilterVisibility(pfe.Id, True)
+
+            color = Color(int(rgb[0]), int(rgb[1]), int(rgb[2]))
+            ogs = _build_flat_color_ogs(solid_pattern_id, color)
+            view.SetFilterOverrides(pfe.Id, ogs)
+
+            link_category_color_map[cat_name] = [int(rgb[0]), int(rgb[1]), int(rgb[2])]
+        except Exception as ex:
+            failed_categories.append(cat)
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="apply_link_category_filter",
+                    message="Category '{0}' filter could not be created/applied; this "
+                            "category will be hidden for this view's capture instead of "
+                            "rendering with an uncontrolled native color: {1}".format(cat_name, ex),
+                    view_id=view_id,
+                )
+    return link_category_color_map, created_filter_ids, reused_filter_ids, failed_categories
 
 
 def _try_color_link_element_detailed(view, link_inst_id, link_elem_id, ogs):
-    """Same attempt as ``_try_color_link_element``, but returns
-    ``(success, exception)`` instead of swallowing the exception.
+    """Attempt a Revit 2022+ LinkElementId-based override for a linked element.
 
-    ``exception`` is the caught ``Exception`` instance on failure, or
-    ``None`` on success — callers that need to know *why* the LinkElementId
-    override failed (as opposed to just that it did) must record the actual
-    exception rather than losing it, so a real bug is never silently
-    reported the same way as a version/environment capability gap.
+    Returns ``(success, exception)``: ``exception`` is the caught
+    ``Exception`` instance on failure, or ``None`` on success — callers that
+    need to know *why* the LinkElementId override failed (as opposed to just
+    that it did) must record the actual exception rather than losing it, so
+    a real bug is never silently reported the same way as a version/
+    environment capability gap. LinkElementId/overload support varies by
+    Revit version, so failure here is expected on older hosts and must not
+    be treated as fatal by callers.
+
+    Not used by export_color_id_buffer_view's main Stage A path (see
+    ``_apply_link_category_filters`` for how LINK elements are colored) —
+    kept for the Stage A external-source diagnostic probes
+    (tests/dynamo/probe_stage_a_external_sources.py) that still exercise
+    the per-element LinkElementId override path directly.
     """
     try:
         from Autodesk.Revit.DB import LinkElementId
@@ -554,11 +1003,23 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     # bookkeeping below exists only to know what to reset, not to remember
     # what it looked like before. Host elements are always reset via
     # resolved_ids directly (the full painted set, matching the reference
-    # script); only link entries need their own success-tracking set since
-    # LinkElementId overrides may not be supported on this Revit version.
-    painted_link_entries = set()
-    hidden_link_instance_ids = []
-    unresolved_link_instance_ids = set()
+    # script); LINK elements get no individual override to reset at all --
+    # created_link_category_filter_ids / reused_link_category_filter_ids
+    # instead track every view-id-scoped category filter this run touched,
+    # split by whether restore may doc.Delete it outright (freshly created,
+    # nothing else could reference it yet) or must only RemoveFilter it from
+    # THIS view (found already existing by name -- ParameterFilterElement
+    # objects are document-global, so some other view/template could
+    # reference the same one; see _apply_link_category_filters's docstring).
+    created_link_category_filter_ids = []
+    reused_link_category_filter_ids = []
+    # Populated only if a LINK category can't be colored at all (not
+    # filterable, filter application failed, or the instance doesn't honor
+    # host-view filters) -- see the instances_to_hide block below. Tracks
+    # "was_hidden" (state before we touched it) exactly like
+    # category_hidden_state, so restore only un-hides instances THIS run
+    # hid, never one that started out hidden for some unrelated reason.
+    hidden_link_instance_state = {}
     category_hidden_state = _hidden_category_state(doc, view)
     solid_pattern_id = _get_solid_pattern_id(doc)
     if solid_pattern_id is None:
@@ -806,7 +1267,19 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
 
         try:
             from .revit.collection import expand_host_link_import_model_elements as _expand_elements
-            expanded = _expand_elements(doc, view, recollected, cfg, diag=diag, elem_cache=elem_cache)
+            # LINK proxies this expansion would build (via linked_documents.py's
+            # collect_all_linked_elements -> _collect_from_revit_links, one scan
+            # per PLACEMENT, not deduped by document) are never consumed below --
+            # LINK coloring now comes entirely from _collect_link_category_filters/
+            # _apply_link_category_filters, which already dedupe by unique linked
+            # document. Forcing include_linked_rvt off on a local Config copy (the
+            # two include_* flags are the only cfg this expansion reads, and they
+            # gate independent branches) skips that redundant per-placement work
+            # without touching DWG import expansion, which HOST-paints exactly as
+            # before.
+            host_only_cfg = copy.copy(cfg)
+            host_only_cfg.include_linked_rvt = False
+            expanded = _expand_elements(doc, view, recollected, host_only_cfg, diag=diag, elem_cache=elem_cache)
         except Exception as ex:
             if diag is not None:
                 diag.warn(
@@ -817,21 +1290,40 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 )
             expanded = [{"element": e, "source_type": "HOST"} for e in recollected]
 
-        host_elements, link_entries = _split_expanded_elements(expanded)
+        host_elements, _link_entries = _split_expanded_elements(expanded)
         resolved_ids = resolve_all(doc, host_elements)
         count_host = len(resolved_ids)
-        count_link = len(link_entries)
-        total_count = count_host + count_link
+
+        # Respect the same include_linked_rvt opt-out collect_all_linked_elements()
+        # always honored for the retired per-element path: discovery scans every
+        # RevitLinkInstance in the view regardless of config, so skipping it
+        # entirely when the user has disabled linked-RVT processing is the only
+        # way an opted-out capture reports zero LINK assignments and applies no
+        # category filters, matching prior behavior.
+        if getattr(cfg, "include_linked_rvt", False):
+            (
+                link_categories,
+                uncolorable_link_categories,
+                link_category_to_instances,
+                always_hide_link_instances,
+            ) = _collect_link_category_filters(doc, view, diag=diag, view_id=view_id)
+        else:
+            link_categories, uncolorable_link_categories = [], []
+            link_category_to_instances, always_hide_link_instances = {}, set()
+        count_link_categories = len(link_categories)
+        total_count = count_host + count_link_categories
 
         global_threshold = int(getattr(cfg, "color_id_buffer_global_assignment_threshold", 32767))
         step = choose_step(global_threshold if total_count <= global_threshold else total_count)
         # TODO(Stage B+): add bbox pre-filter / multi-pass color batching if one view exceeds palette capacity.
         palette = build_palette(total_count, step=step)
         color_map = {resolved_ids[i].IntegerValue: palette[i] for i in range(count_host)}
-        link_color_map = {
-            (link_inst_id.IntegerValue, link_elem_id.IntegerValue): palette[count_host + j]
-            for j, (link_inst_id, link_elem_id, _proxy) in enumerate(link_entries)
-        }
+        # Shared stepped allocation: link-category filter colors are sliced from
+        # the same palette as HOST element colors (no independent RNG), so no
+        # color_map/link_category_color_map RGB value can collide with another.
+        categories_with_colors = [
+            (cat, palette[count_host + idx]) for idx, cat in enumerate(link_categories)
+        ]
 
         categories_touched = set()
         for eid in resolved_ids:
@@ -839,10 +1331,8 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             cat = elem.Category if elem is not None else None
             if cat is not None:
                 categories_touched.add(cat.Id.IntegerValue)
-        for (_li, _le, proxy) in link_entries:
-            cat = getattr(proxy, "Category", None)
-            if cat is not None and getattr(cat, "Id", None) is not None:
-                categories_touched.add(cat.Id.IntegerValue)
+        for cat in link_categories:
+            categories_touched.add(cat.Id.IntegerValue)
         for cat_id_int in categories_touched:
             try:
                 cat_id = ElementId(int(cat_id_int))
@@ -856,6 +1346,76 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                         phase="color_id_buffer",
                         callsite="category_halftone",
                         message=str(ex),
+                        view_id=view_id,
+                    )
+
+        # LINK elements are colored via one ParameterFilterElement per category
+        # applied to the view (SetFilterOverrides), not per-element — Revit's
+        # documented override precedence (Instance/Element > Filter > Category)
+        # means a HOST element's later per-element override below still wins;
+        # LINK elements, which never get an individual override, fall through
+        # to the filter's flat category color. Must run before the HOST paint
+        # loop so the filters are in place before ExportImage.
+        (
+            link_category_color_map,
+            created_link_category_filter_ids,
+            reused_link_category_filter_ids,
+            failed_link_categories,
+        ) = _apply_link_category_filters(
+            doc, view, view_id, categories_with_colors, solid_pattern_id, diag=diag
+        )
+
+        # Categories that are policy-included but couldn't be colored at all
+        # (not Revit-filterable -- uncolorable_link_categories), whose filter
+        # creation/application failed (failed_link_categories), or whose
+        # link instance doesn't honor host-view filters at all regardless of
+        # category outcome (always_hide_link_instances) must not render with
+        # an uncontrolled native color: that color could coincidentally
+        # match a HOST element's deterministic palette RGB and the decoder
+        # would silently attribute those pixels to the wrong element.
+        #
+        # Hidden at the LINK INSTANCE level (view.HideElements), never at
+        # the category level (view.SetCategoryHidden): a category like
+        # "Walls" is typically present in BOTH host and linked content, and
+        # hiding it view-wide would take every HOST wall down with it even
+        # though color_map/the HOST paint loop already gave them real
+        # element-level overrides. Mirrors the retired per-element path's
+        # own "hide the instance whose override failed" precedent exactly.
+        instances_to_hide = set(always_hide_link_instances)
+        for cat in list(uncolorable_link_categories) + list(failed_link_categories):
+            instances_to_hide.update(link_category_to_instances.get(cat.Id.IntegerValue, ()))
+        # Drop instances that don't even reach this view's bounds -- see
+        # _link_instance_may_be_visible_in_view's docstring for exactly what
+        # this does and does not catch (instance-level, not per-category).
+        instances_to_hide = {
+            link_inst for link_inst in instances_to_hide
+            if _link_instance_may_be_visible_in_view(link_inst, raster)
+        }
+
+        for link_inst in instances_to_hide:
+            try:
+                link_inst_id_int = link_inst.Id.IntegerValue
+                if link_inst_id_int in hidden_link_instance_state:
+                    continue
+                already_hidden = bool(link_inst.IsHidden(view))
+                hidden_link_instance_state[link_inst_id_int] = {
+                    "name": getattr(link_inst, "Name", None),
+                    "was_hidden": already_hidden,
+                }
+                if not already_hidden:
+                    import System.Collections.Generic as SCG
+                    ids_to_hide = SCG.List[ElementId]()
+                    ids_to_hide.Add(link_inst.Id)
+                    view.HideElements(ids_to_hide)
+            except Exception as ex:
+                if diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite="hide_uncolorable_link_instance",
+                        message="Link instance '{0}' could not be hidden after failing to be "
+                                "colored via category filter; its native LINK color(s) may "
+                                "alias a HOST element's palette ID in this view's ID "
+                                "buffer: {1}".format(getattr(link_inst, "Name", link_inst_id_int), ex),
                         view_id=view_id,
                     )
 
@@ -890,58 +1450,6 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                         "pixels will be unassigned in the ID buffer".format(paint_failures, count_host),
                 view_id=view_id,
             )
-
-        # Linked RVT elements: attempt a per-element LinkElementId override (Revit
-        # 2022+). Elements whose link instance can't be colored this way are hidden
-        # for the export instead of left uncolored, so they never contaminate the
-        # ID buffer with unassigned pixels.
-        for (link_inst_id, link_elem_id, _proxy) in link_entries:
-            try:
-                rgb = link_color_map[(link_inst_id.IntegerValue, link_elem_id.IntegerValue)]
-                color = Color(int(rgb[0]), int(rgb[1]), int(rgb[2]))
-                ogs = _build_flat_color_ogs(solid_pattern_id, color)
-                ok = _try_color_link_element(view, link_inst_id, link_elem_id, ogs)
-                if ok:
-                    painted_link_entries.add((link_inst_id.IntegerValue, link_elem_id.IntegerValue))
-                else:
-                    unresolved_link_instance_ids.add(link_inst_id.IntegerValue)
-            except Exception as ex:
-                unresolved_link_instance_ids.add(link_inst_id.IntegerValue)
-                if diag is not None:
-                    diag.warn(
-                        phase="color_id_buffer",
-                        callsite="paint_link_element_override",
-                        message=str(ex),
-                        view_id=view_id,
-                    )
-
-        if unresolved_link_instance_ids:
-            import System.Collections.Generic as SCG
-            ids_to_hide = SCG.List[ElementId]()
-            for iid in sorted(unresolved_link_instance_ids):
-                link_eid = ElementId(int(iid))
-                link_elem = doc.GetElement(link_eid)
-                if link_elem is None:
-                    continue
-                try:
-                    already_hidden = bool(link_elem.IsHidden(view))
-                except Exception:
-                    already_hidden = False
-                if not already_hidden:
-                    ids_to_hide.Add(link_eid)
-            if ids_to_hide.Count > 0:
-                view.HideElements(ids_to_hide)
-                for i in range(ids_to_hide.Count):
-                    hidden_link_instance_ids.append(ids_to_hide[i].IntegerValue)
-            if diag is not None:
-                diag.warn(
-                    phase="color_id_buffer",
-                    callsite="unresolved_link_elements",
-                    message="LinkElementId overrides unavailable; hid link instance(s) "
-                            "instead of exporting uncolored linked geometry",
-                    view_id=view_id,
-                    extra={"link_instance_ids": sorted(unresolved_link_instance_ids)},
-                )
 
         suppress_tx.Commit()
     except Exception:
@@ -1032,30 +1540,69 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 view.SetElementOverrides(ElementId(int(eid.IntegerValue)), OverrideGraphicSettings())
             _restore_step("restore_element_overrides", _restore_element_override)
 
-        if painted_link_entries:
-            from Autodesk.Revit.DB import LinkElementId, OverrideGraphicSettings
-            for (link_inst_int, link_elem_int) in painted_link_entries:
-                def _restore_link_override(link_inst_int=link_inst_int, link_elem_int=link_elem_int):
-                    lek = LinkElementId(ElementId(int(link_inst_int)), ElementId(int(link_elem_int)))
-                    view.SetElementOverrides(lek, OverrideGraphicSettings())
-                _restore_step("restore_link_element_overrides", _restore_link_override)
-
-        if hidden_link_instance_ids:
-            def _restore_unhide():
+        # Unhide link instances this run hid because a category couldn't be
+        # colored at all (see instances_to_hide above) -- only ones this run
+        # actually changed (was_hidden False before we touched it), matching
+        # the retired per-element path's own restore logic exactly.
+        for link_inst_id_int, hstate in hidden_link_instance_state.items():
+            if hstate["was_hidden"]:
+                continue
+            def _restore_unhide_link_instance(link_inst_id_int=link_inst_id_int):
                 import System.Collections.Generic as SCG
                 unhide_list = SCG.List[ElementId]()
-                for iid in hidden_link_instance_ids:
-                    unhide_list.Add(ElementId(int(iid)))
+                unhide_list.Add(ElementId(int(link_inst_id_int)))
                 view.UnhideElements(unhide_list)
-            _restore_step("restore_unhide_link_instances", _restore_unhide)
+            _restore_step("restore_unhide_link_instance", _restore_unhide_link_instance)
 
         # Filters and the phase filter are restored last (see note above) —
         # reverting the phase filter can trigger regeneration of curtain-grid
         # sub-elements, so nothing element-level should still depend on the
         # current identities of those elements by this point.
+        #
+        # Created filters: RemoveFilter (view's active filter list) AND
+        # doc.Delete (the ParameterFilterElement itself) -- nothing else in
+        # the document could reference something this call only just
+        # created, so full cleanup is safe. Each half is its own isolated
+        # step so a RemoveFilter failure (e.g. it was never actually applied
+        # because AddFilter itself raised) never blocks the doc.Delete that
+        # matters more for not orphaning a document element.
+        for fid_int in created_link_category_filter_ids:
+            def _restore_remove_created_filter(fid_int=fid_int):
+                view.RemoveFilter(ElementId(int(fid_int)))
+            _restore_step("restore_remove_created_link_category_filter", _restore_remove_created_filter)
+            def _restore_delete_created_filter(fid_int=fid_int):
+                doc.Delete(ElementId(int(fid_int)))
+            _restore_step("restore_delete_created_link_category_filter", _restore_delete_created_filter)
+
+        # Reused filters (found already existing by name -- see
+        # _apply_link_category_filters's docstring): RemoveFilter from THIS
+        # view only, never doc.Delete -- the ParameterFilterElement is
+        # document-global and some other view or view template could
+        # reference the very same one.
+        for fid_int in reused_link_category_filter_ids:
+            def _restore_remove_reused_filter(fid_int=fid_int):
+                view.RemoveFilter(ElementId(int(fid_int)))
+            _restore_step("restore_remove_reused_link_category_filter", _restore_remove_reused_filter)
+
         def _restore_filters():
+            already_cleaned_up = set(created_link_category_filter_ids) | set(reused_link_category_filter_ids)
             for fid_int, fstate in filter_state.items():
+                if fid_int in already_cleaned_up:
+                    # A same-view Stage A crash leftover reused above and just
+                    # removed (and, if freshly created, deleted) by the
+                    # per-filter loops -- touching its ElementId here would
+                    # raise and abort this loop before it reaches any later,
+                    # unrelated pre-existing filter's own restore.
+                    continue
                 view.SetIsFilterEnabled(ElementId(int(fid_int)), fstate["was_enabled"])
+                # was_visible is captured above alongside was_enabled but was
+                # never restored here -- a latent gap that only matters once
+                # something actively calls SetFilterVisibility, which
+                # _apply_link_category_filters now does (a same-view crash
+                # leftover could have been left non-visible); for every other,
+                # untouched filter this is a no-op (nothing else in this
+                # module ever changes filter visibility).
+                view.SetFilterVisibility(ElementId(int(fid_int)), fstate["was_visible"])
         _restore_step("restore_filters", _restore_filters)
 
         def _restore_phase_filter():
@@ -1116,10 +1663,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "color_assignment_map": {str(k): list(v) for k, v in color_map.items()},
         "paint_failures": paint_failures,
         "paint_failed_element_ids": list(paint_failed_element_ids),
-        "link_color_assignment_map": {
-            "{0}:{1}".format(li, le): list(rgb) for (li, le), rgb in link_color_map.items()
-        },
-        "unresolved_link_instance_hidden_ids": list(hidden_link_instance_ids),
+        "link_category_color_map": dict(link_category_color_map),
         "applied_display_style": applied_display_style,
         "applied_smooth_edges": applied_smooth_edges,
         "categories_hidden": category_hidden_state,
@@ -1147,7 +1691,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "sidecar_path": json_path,
         "output_dir": out_dir,
         "resolution": state_out["resolution"],
-        "color_assignment_count": count_host + count_link,
+        "color_assignment_count": count_host + count_link_categories,
         "timings": {"color_id_buffer_ms": round((time.time() - t0) * 1000.0, 3)},
         "metadata": state_out,
     }

@@ -64,7 +64,7 @@ class TestDecodeStageAColorId(unittest.TestCase):
                 "view_scale": 96.0,
             },
             "color_assignment_map": {"101": [10, 20, 30], "102": [40, 50, 60]},
-            "link_color_assignment_map": {},
+            "link_category_color_map": {},
             "tiff_path": tiff_path,
             # The clean/nominal case: Stage A confirmed a flat-color,
             # anti-aliasing-off capture (color_id_buffer.py:560-624) --

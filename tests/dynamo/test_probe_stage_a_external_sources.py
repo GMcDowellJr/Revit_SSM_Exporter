@@ -173,20 +173,6 @@ def test_classify_link_override_exception_real_bug_is_failed():
     assert probe._classify_link_override_exception(ValueError("invalid element id")) == "FAILED"
 
 
-# --- _try_color_link_element / _try_color_link_element_detailed wiring ---
-
-def test_try_color_link_element_wrapper_delegates_to_detailed(monkeypatch):
-    monkeypatch.setattr(color_id_buffer, "_try_color_link_element_detailed",
-                        lambda *a, **k: (True, None))
-    assert color_id_buffer._try_color_link_element(None, None, None, None) is True
-
-
-def test_try_color_link_element_wrapper_discards_exception_on_failure(monkeypatch):
-    monkeypatch.setattr(color_id_buffer, "_try_color_link_element_detailed",
-                        lambda *a, **k: (False, RuntimeError("boom")))
-    assert color_id_buffer._try_color_link_element(None, None, None, None) is False
-
-
 def test_apply_assignments_host_items_unaffected_by_link_capability_field(stub_paint):
     result = probe._apply_assignments(_FakeDoc(), _FakeView(), "host_reference_coloring", [_host_item(0)])
     assert len(result["assignments"]) == 1
