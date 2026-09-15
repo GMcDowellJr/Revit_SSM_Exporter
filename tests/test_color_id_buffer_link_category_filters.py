@@ -259,9 +259,8 @@ def _install_fake_revit_db(filterable_category_ids=()):
 #
 # Colorability is supplied by the caller as an ``is_colorable(category)``
 # predicate (production resolves it once per capture via
-# _resolve_colorable_category_predicate, so category-filter discovery and the
-# force-white safety net can never disagree). These tests pass an explicit
-# name whitelist, mirroring the frozen VETTED_COLORABLE_CATEGORY_NAMES.
+# _resolve_colorable_category_predicate). These tests pass an explicit name
+# whitelist, mirroring the frozen VETTED_COLORABLE_CATEGORY_NAMES.
 
 def _whitelist(*names):
     allowed = set(names)
@@ -329,10 +328,11 @@ def test_collect_link_category_filters_dedupes_and_applies_authoritative_policy(
 
 def test_collect_link_category_filters_splits_out_policy_included_but_unwhitelisted_categories():
     """A category the policy would include but the vetted whitelist does not
-    cover must come back as "uncolorable", not silently dropped. The caller no
-    longer suppresses it -- the category-level force-white override does -- but
-    it still has to be reported, or a whitelist that quietly lost an entry
-    would look identical to one that never needed it."""
+    cover must come back as "uncolorable", not silently dropped. Nothing
+    suppresses it at capture time -- it renders with an uncontrolled native
+    color, a known accepted gap -- so reporting it is the whole job: a
+    whitelist that quietly lost an entry would otherwise look identical to one
+    that never needed it."""
     cat_walls = _FakeCategory("Walls", 10)
     cat_odd = _FakeCategory("OddModelCategory", 15)  # Model, policy-included, NOT whitelisted
     doc_a = _FakeLinkedDoc("Z:\\typical_exam_room.rvt", [
@@ -537,13 +537,13 @@ def test_host_element_override_and_link_category_filter_are_independent_calls():
 # --- LinkCollectionStatus / _collect_view_scoped_link_proxies --------------
 #
 # The hide-instance mechanism these once served
-# (_instances_to_hide_for_uncolorable_categories and friends) is retired: a
-# category Stage A cannot color is now covered passively by the category-level
-# force-white override, so nothing decides whether to leave a link placement
-# visible on the strength of an absence any more. The status itself is still
-# exercised because near-face-W consumes the same scan, and because the
-# "a short list is indistinguishable from a complete one" hazard is a property
-# of the collectors rather than of that one retired caller.
+# (_instances_to_hide_for_uncolorable_categories and friends) is retired, and
+# nothing replaced it: Stage A hides no link instances, so nothing decides
+# whether to leave a placement visible on the strength of an absence any more.
+# The status itself is still exercised because near-face-W consumes the same
+# scan, and because the "a short list is indistinguishable from a complete
+# one" hazard is a property of the collectors rather than of that one retired
+# caller.
 
 
 def test_link_collection_status_starts_complete_and_records_failures():

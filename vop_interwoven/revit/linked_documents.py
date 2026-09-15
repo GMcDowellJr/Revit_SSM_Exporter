@@ -116,10 +116,9 @@ class LinkCollectionStatus(object):
     correct outcomes, and a partial list is indistinguishable from a complete
     one by inspection alone. Such a caller passes a LinkCollectionStatus and
     treats ``rvt_complete is False`` as "no answer", not as "absent".
-    (color_id_buffer.py had exactly such a caller until the hide-instance
-    mechanism it served was retired for the force-white safety net; the
-    signal is kept because the hazard is a property of these collectors, not
-    of that one caller.)
+    (color_id_buffer.py had exactly such a caller until its hide-instance
+    mechanism was retired; the signal is kept because the hazard is a
+    property of these collectors, not of that one caller.)
 
     Scoped to the RVT link path only: DWG import failures never affect it,
     because every consumer of this signal filters to source_type == "LINK"

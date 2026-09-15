@@ -18,8 +18,8 @@ What it emits
 -------------
 PRIMARY category names only. ``GetAllFilterableCategories()`` returns category
 ids; a subcategory resolves through ``doc.Settings.Categories`` with a
-non-None ``Parent``, and those are dropped -- Stage A's category filters and
-its force-white safety net both operate on primary categories.
+non-None ``Parent``, and those are dropped -- Stage A's LINK category filters
+operate on primary categories.
 
 Usage in Dynamo
 ---------------

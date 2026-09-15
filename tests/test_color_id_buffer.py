@@ -20,10 +20,8 @@ from vop_interwoven.color_id_buffer import (
     build_palette,
     compute_model_crop,
     _reserved_corner_count,
-    BACKGROUND_SENTINEL_RGB,
     NEAR_BLACK_RESERVED_THRESHOLD,
     NEAR_WHITE_RESERVED_THRESHOLD,
-    UNCOLORABLE_SENTINEL_RGB,
 )
 from vop_interwoven.core.math_utils import Bounds2D
 
@@ -166,38 +164,6 @@ class TestPaletteHueSpread(unittest.TestCase):
         # "spread" without over-fitting to the exact traversal.
         worst = max(bin_counts.values()) / float(len(palette))
         self.assertLess(worst, 0.25, "hue bin counts: {0}".format(sorted(bin_counts.items())))
-
-
-class TestPaletteSentinels(unittest.TestCase):
-    """Neither sentinel may ever be handed out as an element ID color."""
-
-    def test_sentinels_are_inside_the_near_white_reservation(self):
-        for name, rgb in (("uncolorable", UNCOLORABLE_SENTINEL_RGB),
-                          ("background", BACKGROUND_SENTINEL_RGB)):
-            for channel in rgb:
-                self.assertGreaterEqual(
-                    channel, NEAR_WHITE_RESERVED_THRESHOLD,
-                    "{0} sentinel {1} must sit inside the near-white reservation, "
-                    "or build_palette could assign it".format(name, rgb),
-                )
-
-    def test_background_sentinel_is_clearly_distinguishable_from_pure_white(self):
-        # 240 vs 255 is 15 units per channel -- an order of magnitude above
-        # the couple of RGB units of export noise measured with AA and shadows
-        # suppressed, so the canvas never reads as a force-whited element.
-        for channel, white_channel in zip(BACKGROUND_SENTINEL_RGB, UNCOLORABLE_SENTINEL_RGB):
-            self.assertGreaterEqual(abs(white_channel - channel), 8)
-        self.assertNotEqual(tuple(BACKGROUND_SENTINEL_RGB), tuple(UNCOLORABLE_SENTINEL_RGB))
-
-    def test_neither_sentinel_is_producible_at_full_capacity(self):
-        # Exhausting the palette is the only way to prove "for any
-        # element_count up to capacity": a shorter request is a prefix of it.
-        step = 8
-        levels = (255 // step) + 1
-        capacity = (levels ** 3) - _reserved_corner_count(step)
-        palette = set(build_palette(capacity, step=step))
-        self.assertNotIn(tuple(UNCOLORABLE_SENTINEL_RGB), palette)
-        self.assertNotIn(tuple(BACKGROUND_SENTINEL_RGB), palette)
 
 
 class TestPaletteCapacityUnderHuePrimaryTraversal(unittest.TestCase):

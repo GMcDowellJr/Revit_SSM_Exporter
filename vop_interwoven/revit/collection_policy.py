@@ -159,21 +159,17 @@ _FALLBACK_EXCLUDED_CATEGORY_NAMES = {
     # previously reached color_id_buffer.py's _model_categories_in_linked_doc
     # "uncolorable" branch and could trigger whole-link-instance hiding for an
     # unrelated, genuinely colorable category sharing the same instance.  That
-    # hide mechanism is now retired entirely in favor of a category-level
-    # force-white safety net, which re-opened the question of whether these
-    # eight still need to be excluded from POLICY at all: a force-white net
-    # that covers every CategoryType.Model category not receiving a real
-    # assigned color reaches them either way, whether they are excluded here
-    # (and so never collected) or included-but-unwhitelisted.
+    # hide mechanism is retired, and so is the category-level force-white
+    # override that briefly replaced it, which prompted a re-examination of
+    # whether these eight still need excluding from POLICY at all.
     #
-    # DECISION: keep them excluded.  The outcome is identical, so the tie
-    # breaks on cost -- excluding them means the collection pass never
-    # enumerates, resolves or bbox-tests elements of categories known to carry
-    # no geometry, instead of doing all of that work only to paint the result
-    # white.  Removing the entries would not simplify anything either: the
-    # list has to stay for the other twenty-odd categories regardless, so
-    # these eight would be a special case carved out of a list that still
-    # exists rather than a list deleted.
+    # DECISION: keep them excluded.  They carry no visible model geometry, so
+    # excluding them means the collection pass never enumerates, resolves or
+    # bbox-tests their elements -- pure saved work, with nothing downstream
+    # that wants them.  Removing the entries would not simplify anything
+    # either: the list has to stay for the other twenty-odd categories
+    # regardless, so these eight would be a special case carved out of a list
+    # that still exists rather than a list deleted.
     "Internal Origin",
     "Project Base Point",
     "Survey Point",
