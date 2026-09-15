@@ -123,17 +123,45 @@ class LinkCollectionStatus(object):
     anyway. ``failures`` keeps the (callsite, detail) pairs behind a False so
     a diagnostic can say WHAT was incomplete, per CLAUDE.md's no-silent-
     failure rule.
+
+    ``link_presence`` answers the presence question directly, as a set of
+    (category_id, link_instance_id) pairs recorded the moment an enumerated
+    element passes the LINK inclusion policy -- BEFORE any bounding-box or
+    proxy construction. That ordering is the point: an element whose bbox is
+    missing, malformed, or untransformable is dropped from the returned
+    proxies (skip_no_bbox / skip_bad_bbox / skip_transform_failed) even
+    though it is genuinely present and visible in this view. Deriving
+    presence from the proxy list would read those geometric drops as
+    "category absent" and leave an uncolorable placement visible; marking the
+    whole scan incomplete for each of them would instead force the
+    conservative document-wide hide so often that view scoping would stop
+    meaning anything. Recording presence upstream of the geometry step keeps
+    both answers right, because a bbox failure is not a presence fact.
     """
 
-    __slots__ = ("rvt_complete", "failures")
+    __slots__ = ("rvt_complete", "failures", "link_presence")
 
     def __init__(self):
         self.rvt_complete = True
         self.failures = []
+        self.link_presence = set()
 
     def mark_incomplete(self, callsite, detail=""):
         self.rvt_complete = False
         self.failures.append((callsite, detail))
+
+    def record_presence(self, category_id_int, link_instance_id_int):
+        """Note that this category has an element under this placement in view."""
+        try:
+            self.link_presence.add((int(category_id_int), int(link_instance_id_int)))
+        except (TypeError, ValueError):
+            # Unreadable identity is not provable absence -- degrade to the
+            # conservative answer rather than recording a pair that cannot be
+            # matched against.
+            self.mark_incomplete(
+                "LinkCollectionStatus.record_presence",
+                "unreadable category/instance id pair",
+            )
 
 
 def collect_all_linked_elements(doc, view, cfg, diag=None, status=None):
@@ -376,6 +404,15 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
                     continue
 
                 candidates += 1
+
+                # Presence is recorded HERE, before any bbox/proxy work: this
+                # element passed the LINK inclusion policy and the view-scoped
+                # collector already resolved it as visible in this view, which
+                # is the entire presence question. Every skip below this line
+                # discards a genuinely present element for a geometric reason
+                # (see LinkCollectionStatus.link_presence).
+                if status is not None:
+                    status.record_presence(cat.Id.IntegerValue, link_inst_id)
 
                 # Get element bbox in link space
                 bbox_link = elem.get_BoundingBox(None)
@@ -1002,6 +1039,11 @@ def _collect_link_elements_with_clipping(link_inst, link_doc, link_trf, view,
             if host_visible_cats is not None:
                 if cat_id_val not in host_visible_cats:
                     continue
+
+            # Presence recorded before bbox work, for the same reason as the
+            # Revit 2024+ path above (see LinkCollectionStatus.link_presence).
+            if status is not None:
+                status.record_presence(cat_id_val, link_inst.Id.IntegerValue)
 
             # Get bbox in link coordinates (legacy clip-volume path collects from link_doc).
             bbox_link = elem.get_BoundingBox(None)

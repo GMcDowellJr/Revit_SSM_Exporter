@@ -693,28 +693,35 @@ def _collect_view_scoped_link_proxies(doc, view, cfg, diag=None, view_id=None):
     collection_policy inclusion rules _model_categories_in_linked_doc() applies
     during category discovery.
 
-    Returns ``(proxies, ok)``. ``ok`` is False whenever the returned list may
-    be SHORT of what this view really contains -- not merely when the call
-    raised. collect_all_linked_elements and the collectors beneath it are
-    deliberately resilient: a link whose document fails to enumerate, a
-    placement with no resolvable transform, and an element that raises
-    mid-loop are each logged and skipped rather than propagated, so they come
-    back as a quietly truncated (or empty) list, indistinguishable by
-    inspection from a complete one. A LinkCollectionStatus passed down the
-    call chain is what makes that difference visible here.
+    Returns ``(proxies, status)``. The proxy list is what near-face-W
+    consumes; the LinkCollectionStatus is what any PRESENCE question must be
+    asked of, and the two deliberately do not agree.
 
-    Callers must NOT read a possibly-short list as "nothing is present in
-    this view" and relax a safety decision on that basis (see
+    The proxy list cannot answer presence. collect_all_linked_elements and
+    the collectors beneath it are resilient by design: a link whose document
+    fails to enumerate, a placement with no resolvable transform, and an
+    element that raises mid-loop are logged and skipped rather than
+    propagated, and -- separately -- an element whose bbox is missing,
+    malformed, or untransformable is dropped after it has already been
+    resolved as visible in this view. All of those come back as a quietly
+    short list, indistinguishable by inspection from a complete one.
+
+    So the status carries the presence answer directly
+    (``status.link_presence``, recorded upstream of all bbox work) and a
+    completeness flag (``status.rvt_complete``) for the failures that
+    happen before presence can be recorded at all. A caller deciding to
+    LEAVE SOMETHING VISIBLE on the strength of an absence reads both -- see
     _instances_to_hide_for_uncolorable_categories, which falls back to the
-    conservative document-wide hide whenever ``ok`` is False). An empty list
-    with ``ok`` True is a real answer: this view genuinely resolves no LINK
-    elements.
+    conservative document-wide hide whenever the scan is incomplete. An
+    empty presence set on a complete scan is a real answer: this view
+    genuinely resolves no LINK elements.
     """
     from .revit.linked_documents import collect_all_linked_elements, LinkCollectionStatus
     status = LinkCollectionStatus()
     try:
         proxies = list(collect_all_linked_elements(doc, view, cfg, diag=diag, status=status))
     except Exception as ex:
+        status.mark_incomplete("view_scoped_link_collect", str(ex))
         if diag is not None:
             diag.warn(
                 phase="collection",
@@ -722,24 +729,21 @@ def _collect_view_scoped_link_proxies(doc, view, cfg, diag=None, view_id=None):
                 message="Failed to collect view-scoped LINK elements: {0}".format(ex),
                 view_id=view_id,
             )
-        return [], False
+        return [], status
 
-    if not status.rvt_complete:
-        if diag is not None:
-            diag.warn(
-                phase="collection",
-                callsite="view_scoped_link_collect",
-                message="View-scoped LINK collection completed but is incomplete; the "
-                        "element list may be short of what this view contains and cannot "
-                        "prove a category absent: {0}".format(status.failures),
-                view_id=view_id,
-            )
-        return proxies, False
-    return proxies, True
+    if not status.rvt_complete and diag is not None:
+        diag.warn(
+            phase="collection",
+            callsite="view_scoped_link_collect",
+            message="View-scoped LINK collection completed but is incomplete; it cannot "
+                    "prove a category absent from this view: {0}".format(status.failures),
+            view_id=view_id,
+        )
+    return proxies, status
 
 
 def _instances_to_hide_for_uncolorable_categories(
-    categories, link_category_to_instances, link_proxies, link_scan_ok,
+    categories, link_category_to_instances, link_status,
     diag=None, view_id=None,
 ):
     """Link instances that must be hidden on account of an uncolorable or
@@ -759,25 +763,31 @@ def _instances_to_hide_for_uncolorable_categories(
     it only asks whether the INSTANCE as a whole reaches the view's bounds,
     never whether the specific problem category's elements do.
 
-    So a category only justifies hiding a placement when the view-scoped
-    proxy list actually contains one of that category's elements under that
-    placement. The cost is the same full per-placement scan near-face-W
-    already pays for correctness (see _collect_near_face_w_data's docstring),
-    and it is paid once per capture: export_color_id_buffer_view collects the
-    proxies up front via _collect_view_scoped_link_proxies() and hands the
-    same list to both consumers.
+    So a category only justifies hiding a placement when the view-scoped scan
+    actually saw one of that category's elements under that placement. That
+    answer comes from ``link_status.link_presence``, NOT from the returned
+    proxy list: the collectors drop an element whose bbox is missing,
+    malformed, or untransformable AFTER having already resolved it as visible
+    here, so a proxy-derived answer would read a geometry failure as "category
+    absent" and leave the placement visible. Presence is recorded upstream of
+    all bbox work for exactly that reason (see LinkCollectionStatus). The
+    scan itself is the same full per-placement pass near-face-W already pays
+    for correctness (see _collect_near_face_w_data's docstring), paid once
+    per capture and shared.
 
-    Fails safe, never open: if the view-scoped scan did not succeed
-    (``link_scan_ok`` False) the original document-wide behavior is used
-    unchanged, because an unknown presence answer must not be read as
-    "absent" -- rendering an uncontrolled native LINK color is the outcome
-    this whole hide path exists to prevent.
+    Fails safe, never open: if the scan is incomplete
+    (``link_status.rvt_complete`` False -- a link that never enumerated, a
+    placement with no transform, an element that raised before its category
+    could be read) the original document-wide behavior is used unchanged,
+    because an unknown presence answer must not be read as "absent" --
+    rendering an uncontrolled native LINK color is the outcome this whole
+    hide path exists to prevent.
     """
     categories = list(categories)
     if not categories:
         return set()
 
-    if not link_scan_ok:
+    if link_status is None or not getattr(link_status, "rvt_complete", False):
         fallback = set()
         for cat in categories:
             fallback.update(link_category_to_instances.get(cat.Id.IntegerValue, ()))
@@ -785,27 +795,22 @@ def _instances_to_hide_for_uncolorable_categories(
             diag.warn(
                 phase="color_id_buffer",
                 callsite="uncolorable_hide_scope",
-                message="View-scoped LINK collection unavailable; falling back to "
-                        "document-wide category presence for {0} uncolorable/failed "
-                        "categor(ies), which may hide link instance(s) whose "
-                        "colorable categories are visible in this "
-                        "view".format(len(categories)),
+                message="View-scoped LINK presence is unavailable or incomplete; "
+                        "falling back to document-wide category presence for {0} "
+                        "uncolorable/failed categor(ies), which may hide link "
+                        "instance(s) whose colorable categories are visible in this "
+                        "view: {1}".format(
+                            len(categories),
+                            getattr(link_status, "failures", "no status"),
+                        ),
                 view_id=view_id,
             )
         return fallback
 
-    present_pairs = set()
-    for proxy in link_proxies or ():
-        if getattr(proxy, "source_type", None) != "LINK":
-            continue
-        cat = getattr(proxy, "Category", None)
-        link_inst_id = getattr(proxy, "LinkInstanceId", None)
-        if cat is None or link_inst_id is None:
-            continue
-        try:
-            present_pairs.add((int(cat.Id.IntegerValue), int(link_inst_id.IntegerValue)))
-        except (AttributeError, TypeError, ValueError):
-            continue
+    # DWG imports never enter link_presence: only the RVT link collectors
+    # record into it, so an import carrying the same category id can never
+    # keep an RVT placement hidden on its behalf.
+    present_pairs = link_status.link_presence
 
     out = set()
     spared = 0
@@ -937,7 +942,7 @@ def _collect_near_face_w_data(
         # once even though the uncolorable-category hide decision needs the
         # same view-scoped answer earlier in the capture.
         if link_proxies is None:
-            link_proxies, _ok = _collect_view_scoped_link_proxies(
+            link_proxies, _status = _collect_view_scoped_link_proxies(
                 doc, view, cfg, diag=diag, view_id=view_id,
             )
 
@@ -1806,9 +1811,9 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # once, keeping this module's "deliberate, view-local cost for
         # correctness, only when needed" bargain rather than doubling it.
         uncolorable_or_failed = list(uncolorable_link_categories) + list(failed_link_categories)
-        link_proxies, link_scan_ok = [], True
+        link_proxies, link_status = [], None
         if uncolorable_or_failed or link_category_color_map:
-            link_proxies, link_scan_ok = _collect_view_scoped_link_proxies(
+            link_proxies, link_status = _collect_view_scoped_link_proxies(
                 doc, view, cfg, diag=diag, view_id=view_id,
             )
 
@@ -1816,7 +1821,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         instances_to_hide.update(
             _instances_to_hide_for_uncolorable_categories(
                 uncolorable_or_failed, link_category_to_instances,
-                link_proxies, link_scan_ok, diag=diag, view_id=view_id,
+                link_status, diag=diag, view_id=view_id,
             )
         )
         # Drop instances that don't even reach this view's bounds -- see
