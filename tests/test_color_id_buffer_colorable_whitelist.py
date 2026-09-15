@@ -83,18 +83,20 @@ def _install_fake_revit_db(filterable_category_ids=(), with_filter_utilities=Tru
 
 
 @contextlib.contextmanager
-def _frozen_whitelist(*names):
-    """Temporarily populate VETTED_COLORABLE_CATEGORY_NAMES.
+def _frozen_whitelist(*category_ids):
+    """Temporarily populate VETTED_COLORABLE_CATEGORY_IDS.
 
     The shipped constant is empty until the live Dynamo capture is frozen
     into it, so a test that wants the post-freeze behavior has to supply one.
+    Ids, not names -- see the constant's own comment for why the key is the
+    BuiltInCategory id.
     """
-    original = color_id_buffer.VETTED_COLORABLE_CATEGORY_NAMES
-    color_id_buffer.VETTED_COLORABLE_CATEGORY_NAMES = frozenset(names)
+    original = color_id_buffer.VETTED_COLORABLE_CATEGORY_IDS
+    color_id_buffer.VETTED_COLORABLE_CATEGORY_IDS = frozenset(category_ids)
     try:
         yield
     finally:
-        color_id_buffer.VETTED_COLORABLE_CATEGORY_NAMES = original
+        color_id_buffer.VETTED_COLORABLE_CATEGORY_IDS = original
 
 
 # --- _resolve_colorable_category_predicate ----------------------------------
@@ -105,7 +107,7 @@ def test_frozen_whitelist_is_preferred_over_the_live_lookup():
     diag = _FakeDiag()
 
     # The live lookup would call BOTH colorable; the frozen whitelist must win.
-    with _install_fake_revit_db({10, 15}), _frozen_whitelist("Walls"):
+    with _install_fake_revit_db({10, 15}), _frozen_whitelist(10):
         is_colorable, source = color_id_buffer._resolve_colorable_category_predicate(
             diag=diag, view_id=1
         )
@@ -114,6 +116,51 @@ def test_frozen_whitelist_is_preferred_over_the_live_lookup():
     assert is_colorable(cat_walls) is True
     assert is_colorable(cat_odd) is False
     assert diag.warnings == [], "the frozen path is the intended one and is not noisy"
+
+
+def test_frozen_whitelist_survives_a_localized_category_name():
+    """Regression guard for the localization P1 on PR #197.
+
+    Category.Name is localized. A whitelist captured on an English Revit and
+    keyed on display names would match nothing on a French or German host:
+    every category judged uncolorable, every LINK category stripped of its
+    filter, and a capture indistinguishable from one run against a stale
+    whitelist. collection_policy.py hit this first and keys on stable ids for
+    the same reason.
+
+    Same category id, translated display name -- must still be colorable.
+    """
+    cat_walls_en = _FakeCategory("Walls", 10)
+    cat_walls_fr = _FakeCategory("Murs", 10)
+    cat_other = _FakeCategory("Floors", 11)
+
+    with _install_fake_revit_db(), _frozen_whitelist(10):
+        is_colorable, source = color_id_buffer._resolve_colorable_category_predicate()
+
+    assert source == "frozen_whitelist"
+    assert is_colorable(cat_walls_en) is True
+    assert is_colorable(cat_walls_fr) is True, (
+        "a whitelist keyed on display names would fail exactly here, on every "
+        "non-English Revit"
+    )
+    assert is_colorable(cat_other) is False, "the id check must still discriminate"
+
+
+def test_frozen_whitelist_ignores_a_category_whose_id_is_unreadable():
+    """A category that cannot produce an id is not colorable. Falling back to
+    a name comparison for it would reintroduce the localized-name key through
+    a side door."""
+    class _NoIdCategory(object):
+        Name = "Walls"
+
+        @property
+        def Id(self):
+            raise RuntimeError("category is in a bad state")
+
+    with _install_fake_revit_db(), _frozen_whitelist(10):
+        is_colorable, _source = color_id_buffer._resolve_colorable_category_predicate()
+
+    assert is_colorable(_NoIdCategory()) is False
 
 
 def test_empty_whitelist_falls_back_to_the_live_lookup_and_says_so():

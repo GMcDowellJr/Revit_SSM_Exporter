@@ -260,7 +260,9 @@ def _install_fake_revit_db(filterable_category_ids=()):
 # Colorability is supplied by the caller as an ``is_colorable(category)``
 # predicate (production resolves it once per capture via
 # _resolve_colorable_category_predicate). These tests pass an explicit name
-# whitelist, mirroring the frozen VETTED_COLORABLE_CATEGORY_NAMES.
+# whitelist. (Production keys the frozen whitelist on stable category ids,
+# not names -- see VETTED_COLORABLE_CATEGORY_IDS; these tests only need a
+# predicate, and names keep the fixtures readable.)
 
 def _whitelist(*names):
     allowed = set(names)

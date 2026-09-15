@@ -42,8 +42,23 @@ VIEW_ONLY_MODEL_BIC_NAMES = (
 )
 
 # Vetted colorable categories -- the FROZEN capture of
-# ParameterFilterUtilities.GetAllFilterableCategories(), by primary category
-# name only (no subcategories).
+# ParameterFilterUtilities.GetAllFilterableCategories(), as primary-category
+# ElementId integers (no subcategories).
+#
+# KEYED BY ID, NOT BY NAME. Category.Name is LOCALIZED, so a whitelist keyed
+# on display names and captured on an English Revit matches nothing on a
+# French or German one: every category would be judged uncolorable, every
+# LINK category would lose its filter, and the capture would look exactly
+# like one run against a stale whitelist. collection_policy.py hit the same
+# hazard first and documents it in those terms; the stable identifier is what
+# it relies on. A built-in category's id is its BuiltInCategory enum value --
+# a negative integer, identical across locales and across Revit versions --
+# which makes it both the portable key and, unlike an OST_ name, one that
+# needs no API resolution to compare against.
+#
+# Auditability is preserved by the capture tool writing each entry with its
+# display name as a trailing comment, so the frozen block still reads as a
+# list of categories in review rather than as a wall of integers.
 #
 # Regenerate with tools/capture_vetted_colorable_categories.py, run inside a
 # live Dynamo/Revit session; it prints this exact literal block for pasting.
@@ -53,23 +68,24 @@ VIEW_ONLY_MODEL_BIC_NAMES = (
 # would show up only as a category quietly losing its color in a capture.
 #
 # TRADEOFF (deliberate): freezing the list trades a small amount of
-# Revit-version drift risk -- a category added or renamed in a newer Revit
-# than the capture will not be recognized as colorable until the list is
-# recaptured -- for full determinism and auditability. Two captures of the
-# same view on the same Revit now assign the same categories the same way
-# regardless of what the host's live API happens to report, and a reviewer
-# can see the exact set in the diff instead of having to run Revit to know
-# it. Drift is also visible rather than silent: an unrecognized category is
-# reported as "uncolorable" in the diagnostics and in the sidecar's
-# uncolorable_link_categories field, so a stale whitelist shows up as a named
-# category rather than as content that quietly stopped being identified.
+# Revit-version drift risk -- a category ADDED in a newer Revit than the
+# capture will not be recognized as colorable until the list is recaptured --
+# for full determinism and auditability. (Renaming is no longer a drift risk
+# now that the key is the id.) Two captures of the same view now assign the
+# same categories the same way regardless of what the host's live API happens
+# to report, and a reviewer can see the exact set in the diff instead of
+# having to run Revit to know it. Drift is also visible rather than silent:
+# an unrecognized category is reported as "uncolorable" in the diagnostics
+# and in the sidecar's uncolorable_link_categories field, so a stale
+# whitelist shows up as a named category rather than as content that quietly
+# stopped being identified.
 #
 # EMPTY UNTIL CAPTURED. While this set is empty,
 # _resolve_colorable_category_predicate() falls back to the live
 # GetAllFilterableCategories() lookup and records a loud diagnostic saying so
 # on every capture -- the pre-freeze behavior, kept working but never silent.
 # Populating this set retires that fallback permanently.
-VETTED_COLORABLE_CATEGORY_NAMES = frozenset()
+VETTED_COLORABLE_CATEGORY_IDS = frozenset()
 
 # Hue samples per (saturation, value) band in build_palette()'s hue-primary
 # traversal. 186 = 6 * (32 - 1): at the production step of 8 there are 32
@@ -400,20 +416,20 @@ def _resolve_colorable_category_predicate(diag=None, view_id=None):
     rather than inlined at the one call site so there is a single place the
     answer comes from if Stage A ever grows a second consumer of it.
 
-    Prefers the frozen VETTED_COLORABLE_CATEGORY_NAMES capture. While that set
+    Prefers the frozen VETTED_COLORABLE_CATEGORY_IDS capture. While that set
     is still empty it falls back to the live
     ParameterFilterUtilities.GetAllFilterableCategories() lookup this replaced,
     and says so loudly on every capture: the fallback keeps pre-freeze captures
     working exactly as before, but an unfrozen whitelist is a state the
     operator has to be able to see, not a silent default.
     """
-    if VETTED_COLORABLE_CATEGORY_NAMES:
-        names = VETTED_COLORABLE_CATEGORY_NAMES
+    if VETTED_COLORABLE_CATEGORY_IDS:
+        ids = VETTED_COLORABLE_CATEGORY_IDS
 
-        def _by_frozen_name(cat):
-            return getattr(cat, "Name", None) in names
+        def _by_frozen_id(cat):
+            return _category_id_int(cat) in ids
 
-        return _by_frozen_name, "frozen_whitelist"
+        return _by_frozen_id, "frozen_whitelist"
 
     try:
         from Autodesk.Revit.DB import ParameterFilterUtilities
@@ -439,13 +455,13 @@ def _resolve_colorable_category_predicate(diag=None, view_id=None):
         # Recorded at ERROR, above the live-lookup fallback's warning: this
         # capture consulted no colorability source at all, so its LINK
         # coloring is neither reproducible nor auditable, and neither cause --
-        # an unfrozen VETTED_COLORABLE_CATEGORY_NAMES, an unavailable
+        # an unfrozen VETTED_COLORABLE_CATEGORY_IDS, an unavailable
         # ParameterFilterUtilities -- is something a retry can change.
         if diag is not None:
             diag.error(
                 phase="color_id_buffer",
                 callsite="colorable_category_whitelist",
-                message="VETTED_COLORABLE_CATEGORY_NAMES is empty AND the live "
+                message="VETTED_COLORABLE_CATEGORY_IDS is empty AND the live "
                         "ParameterFilterUtilities fallback failed; attempting a filter "
                         "for every policy-included LINK category instead. Categories "
                         "Revit cannot filter on will fail and are reported in "
@@ -459,7 +475,7 @@ def _resolve_colorable_category_predicate(diag=None, view_id=None):
         diag.warn(
             phase="color_id_buffer",
             callsite="colorable_category_whitelist",
-            message="VETTED_COLORABLE_CATEGORY_NAMES is empty; falling back to the live "
+            message="VETTED_COLORABLE_CATEGORY_IDS is empty; falling back to the live "
                     "ParameterFilterUtilities.GetAllFilterableCategories() lookup for "
                     "this capture. Colorability is therefore host-dependent and not "
                     "reproducible from the source tree -- run "
@@ -513,7 +529,7 @@ def _model_categories_in_linked_doc(linked_doc, is_colorable):
     project's authoritative LINK category policy (revit/collection_policy.
     py's should_include_element(), "single source of truth" per CLAUDE.md)
     would include -- split by whether Stage A can actually color them, which
-    is the frozen VETTED_COLORABLE_CATEGORY_NAMES whitelist rather than a
+    is the frozen VETTED_COLORABLE_CATEGORY_IDS whitelist rather than a
     live ParameterFilterUtilities.GetAllFilterableCategories() lookup (see
     _resolve_colorable_category_predicate). Both checks must run for every
     category: a policy-included-but-uncolorable category still needs to be
@@ -2142,7 +2158,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "applied_smooth_edges": applied_smooth_edges,
         "applied_show_shadows": applied_show_shadows,
         # Where the "can Stage A color this category?" answer came from:
-        # "frozen_whitelist" (VETTED_COLORABLE_CATEGORY_NAMES) or
+        # "frozen_whitelist" (VETTED_COLORABLE_CATEGORY_IDS) or
         # "live_filterable_lookup" (the pre-freeze fallback -- a capture
         # recording this is NOT reproducible from the source tree alone).
         "colorable_category_source": colorable_source,
