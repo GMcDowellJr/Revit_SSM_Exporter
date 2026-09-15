@@ -224,6 +224,7 @@ def _install_fake_revit_db(filterable_category_ids):
     fake_db.ElementId = _FakeElementId
     fake_db.Color = _FakeColor
     fake_db.OverrideGraphicSettings = _FakeOGS
+    fake_db.LinkedViewDisplayMode = _FakeLinkedViewDisplayMode
 
     fake_system = types.ModuleType("System")
     fake_system_collections = types.ModuleType("System.Collections")
@@ -283,7 +284,7 @@ def test_collect_link_category_filters_dedupes_and_applies_authoritative_policy(
     diag = _FakeDiag()
 
     with _install_fake_revit_db({10, 11, 12, 13, 14}):
-        colorable, uncolorable = color_id_buffer._collect_link_category_filters(
+        colorable, uncolorable, category_to_instances, always_hide = color_id_buffer._collect_link_category_filters(
             view_doc, fake_view, diag=diag, view_id=1
         )
 
@@ -302,6 +303,15 @@ def test_collect_link_category_filters_dedupes_and_applies_authoritative_policy(
         "Tags (Annotation) and Rooms fail the POLICY check, landing in neither list -- "
         "only a policy-included-but-unfilterable category becomes 'uncolorable'"
     )
+    assert always_hide == [] or always_hide == set(), (
+        "fake_view has no GetLinkOverrides -- detection fails closed to 'compliant', not hidden"
+    )
+
+    # Both placements of doc_a map back to the Walls/Floors categories --
+    # needed so the caller can hide EVERY placement, not just the
+    # representative one, if that category later turns out uncolorable.
+    walls_instances = category_to_instances[cat_walls.Id.IntegerValue]
+    assert walls_instances == {inst_a1, inst_a2}
 
     assert any(w["callsite"] == "link_category_filter_discovery" for w in diag.warnings)
     assert "unloaded link" in diag.warnings[0]["message"]
@@ -323,19 +333,106 @@ def test_collect_link_category_filters_splits_out_policy_included_but_unfilterab
     fake_view = types.SimpleNamespace(Id=_FakeElementId(1))
 
     with _install_fake_revit_db({10}):  # 15 deliberately absent -- not filterable
-        colorable, uncolorable = color_id_buffer._collect_link_category_filters(view_doc, fake_view)
+        colorable, uncolorable, category_to_instances, _always_hide = color_id_buffer._collect_link_category_filters(
+            view_doc, fake_view
+        )
 
     assert [cat.Name for cat in colorable] == ["Walls"]
     assert [cat.Name for cat in uncolorable] == ["OddModelCategory"]
+    assert category_to_instances[cat_odd.Id.IntegerValue] == {inst_a}, (
+        "the caller looks up instances to hide by category id -- OddModelCategory's "
+        "single placement must be findable here"
+    )
 
 
 def test_collect_link_category_filters_returns_empty_when_no_links_in_view():
     view_doc = types.SimpleNamespace(link_instances=[], parameter_filters=[])
     fake_view = types.SimpleNamespace(Id=_FakeElementId(1))
     with _install_fake_revit_db({10}):
-        colorable, uncolorable = color_id_buffer._collect_link_category_filters(view_doc, fake_view)
+        colorable, uncolorable, category_to_instances, always_hide = color_id_buffer._collect_link_category_filters(
+            view_doc, fake_view
+        )
     assert colorable == []
     assert uncolorable == []
+    assert category_to_instances == {}
+    assert always_hide == set()
+
+
+# --- Non-"By Host View" link instances: always hidden, never touched by ----
+# --- category-level coloring at all -----------------------------------------
+
+class _FakeLinkedViewDisplayMode(object):
+    ByHostView = "ByHostView"
+    ByLinkView = "ByLinkView"
+    Custom = "Custom"
+
+
+class _FakeLinkGraphicsSettings(object):
+    def __init__(self, mode):
+        self.CategoryOverridesDisplaySettings = mode
+
+
+class _FakeViewWithLinkOverrides(object):
+    """Extends the plain SimpleNamespace fake views used elsewhere with
+    GetLinkOverrides, so _link_instance_respects_host_view_filters has
+    something real to inspect instead of always hitting its except branch."""
+    def __init__(self, view_id, overrides_by_instance_id):
+        self.Id = _FakeElementId(view_id)
+        self._overrides_by_instance_id = overrides_by_instance_id
+
+    def GetLinkOverrides(self, link_instance_id):
+        return self._overrides_by_instance_id.get(link_instance_id.IntegerValue)
+
+
+def test_collect_link_category_filters_always_hides_non_by_host_view_instance():
+    cat_walls = _FakeCategory("Walls", 10)
+    doc_a = _FakeLinkedDoc("Z:\\typical_exam_room.rvt", [_FakeElement(cat_walls)])
+    inst_compliant = _FakeLinkInstance("compliant placement", doc_a)
+    inst_compliant.Id = _FakeElementId(501)
+    inst_custom = _FakeLinkInstance("custom-display placement", doc_a)
+    inst_custom.Id = _FakeElementId(502)
+
+    view_doc = types.SimpleNamespace(
+        link_instances=[inst_compliant, inst_custom], parameter_filters=[]
+    )
+    fake_view = _FakeViewWithLinkOverrides(1, {
+        501: _FakeLinkGraphicsSettings(_FakeLinkedViewDisplayMode.ByHostView),
+        502: _FakeLinkGraphicsSettings(_FakeLinkedViewDisplayMode.Custom),
+    })
+    diag = _FakeDiag()
+
+    with _install_fake_revit_db({10}):
+        colorable, uncolorable, _category_to_instances, always_hide = color_id_buffer._collect_link_category_filters(
+            view_doc, fake_view, diag=diag, view_id=1
+        )
+
+    assert [cat.Name for cat in colorable] == ["Walls"], (
+        "Walls is still colorable overall -- the compliant placement can still "
+        "use the category filter; only the non-compliant placement is hidden"
+    )
+    assert always_hide == {inst_custom}
+    assert inst_compliant not in always_hide
+
+
+def test_link_instance_respects_host_view_filters_defaults_to_true_when_undetectable():
+    """A missing/incompatible GetLinkOverrides API surface must never make
+    every link hide by default -- that would be a far worse regression than
+    the narrow non-"By Host View" case this whole mechanism defends
+    against. Only a POSITIVE confirmation of non-compliance returns False."""
+    link_inst = _FakeLinkInstance("some link", None)
+    link_inst.Id = _FakeElementId(999)
+
+    class _ViewWithoutGetLinkOverrides(object):
+        pass  # no GetLinkOverrides at all -> AttributeError inside the try
+
+    diag = _FakeDiag()
+    with _install_fake_revit_db({10}):
+        result = color_id_buffer._link_instance_respects_host_view_filters(
+            _ViewWithoutGetLinkOverrides(), link_inst, diag=diag, view_id=1
+        )
+
+    assert result is True
+    assert any(w["callsite"] == "link_display_mode_check" for w in diag.warnings)
 
 
 # --- _apply_link_category_filters: create/reuse + color + enable/visible ---

@@ -212,7 +212,13 @@ def _dedupe_link_instances_by_document(link_instances):
     instances resolving to a much smaller set of unique documents).
 
     Returns ``(unique_docs, unresolved_names)``:
-      unique_docs: path_name -> {"instance": link_inst, "linked_doc": Document}
+      unique_docs: path_name -> {"instance": link_inst, "linked_doc": Document,
+        "instances": [link_inst, ...]}. "instance" is one representative
+        placement (enough to scan the document's own elements/categories);
+        "instances" is EVERY placement of that document in this view --
+        needed when a category discovered in the document must be
+        suppressed, since every placement could carry that category's
+        geometry, not just the representative one.
       unresolved_names: link instance Names whose document could not be
         resolved (unloaded/missing link) — reported, never silently dropped.
     """
@@ -225,7 +231,9 @@ def _dedupe_link_instances_by_document(link_instances):
             continue
         path_name = linked_doc.PathName or link_inst.Name
         if path_name not in unique_docs:
-            unique_docs[path_name] = {"instance": link_inst, "linked_doc": linked_doc}
+            unique_docs[path_name] = {"instance": link_inst, "linked_doc": linked_doc, "instances": [link_inst]}
+        else:
+            unique_docs[path_name]["instances"].append(link_inst)
     return unique_docs, unresolved_names
 
 
@@ -302,6 +310,50 @@ def _find_existing_parameter_filter(doc, name):
     return None
 
 
+def _link_instance_respects_host_view_filters(view, link_inst, diag=None, view_id=None):
+    """Best-effort check for whether this HOST view's SetFilterOverrides can
+    actually control link_inst's rendering at all.
+
+    Each RevitLinkInstance has its own per-instance Display Settings mode
+    (Visibility/Graphics Overrides > Revit Links > this link's row > Display
+    Settings): "By Host View" (Revit's default -- the host view's filters
+    and category overrides govern it) versus "By Linked View" or "Custom"
+    (the link's own view, or its own per-instance overrides, govern it
+    instead, and the host view's filters have NO effect on it whatsoever).
+    _apply_link_category_filters's whole mechanism is host-view filters, so
+    a link in either non-default mode would silently render with an
+    uncontrolled native color no matter how correctly a category filter was
+    built and colored -- the same HOST-palette-ID-aliasing risk as an
+    uncolorable/failed category, just from a different cause.
+
+    Returns True (treat as compliant, i.e. colorable via filters) whenever
+    the check cannot be completed -- nothing in this codebase has verified
+    the exact RevitLinkGraphicsSettings/LinkedViewDisplayMode API surface
+    against a live Revit install, and "By Host View" is Revit's overwhelming
+    default, so a defensive False-by-default here would risk hiding every
+    link in every capture on an API mismatch alone: a far worse regression
+    than the narrow non-default-display-mode case this defends against.
+    Only a POSITIVE confirmation of a non-"By Host View" mode returns False.
+    """
+    try:
+        from Autodesk.Revit.DB import LinkedViewDisplayMode
+        overrides = view.GetLinkOverrides(link_inst.Id)
+        if overrides is None:
+            return True
+        return overrides.CategoryOverridesDisplaySettings == LinkedViewDisplayMode.ByHostView
+    except Exception as ex:
+        if diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="link_display_mode_check",
+                message="Could not verify link instance '{0}'s Display Settings mode; "
+                        "assuming By Host View (colorable via category filters) rather "
+                        "than hiding by default: {1}".format(getattr(link_inst, "Name", "?"), ex),
+                view_id=view_id,
+            )
+        return True
+
+
 def _collect_link_category_filters(doc, view, diag=None, view_id=None):
     """Discover the union of policy-included, CategoryType.Model categories
     across every UNIQUE linked document referenced in this view.
@@ -310,19 +362,30 @@ def _collect_link_category_filters(doc, view, diag=None, view_id=None):
     RevitLinkInstance placements by underlying document identity (PathName)
     before scanning, then unions each unique document's model categories.
 
-    Returns ``(colorable, uncolorable)``, each an ordered list of Category
-    objects sorted by category Name for a deterministic, reproducible
-    palette-slot assignment order. ``colorable`` categories get a
-    ParameterFilterElement (see _apply_link_category_filters);
-    ``uncolorable`` ones are policy-included but not filterable at all, so
-    the caller must suppress (hide) them instead -- see
-    _model_categories_in_linked_doc's docstring for why leaving them
-    uncontrolled is not an option.
+    Returns ``(colorable, uncolorable, category_to_instances, always_hide_instances)``:
+      colorable / uncolorable: ordered lists of Category objects, sorted by
+        Name for a deterministic, reproducible palette-slot assignment
+        order. ``colorable`` categories get a ParameterFilterElement (see
+        _apply_link_category_filters); ``uncolorable`` ones are
+        policy-included but not filterable at all, so the caller must
+        suppress them instead -- see _model_categories_in_linked_doc's
+        docstring for why leaving them uncontrolled is not an option.
+      category_to_instances: {category_id_int: set(RevitLinkInstance)} --
+        every placement of every document that contains that category (not
+        just a representative one). The caller needs this to know exactly
+        which link instances to hide for an uncolorable category, and later
+        for any category _apply_link_category_filters reports as failed.
+      always_hide_instances: set(RevitLinkInstance) that must be hidden
+        regardless of any category's outcome, because the instance itself
+        doesn't honor host-view filters at all (see
+        _link_instance_respects_host_view_filters). Category-filter colors
+        for THIS instance's elements would never take effect even if every
+        category it contains got a perfectly good filter.
     """
     from Autodesk.Revit.DB import FilteredElementCollector, RevitLinkInstance, ParameterFilterUtilities
     link_instances = list(FilteredElementCollector(doc, view.Id).OfClass(RevitLinkInstance))
     if not link_instances:
-        return [], []
+        return [], [], {}, set()
 
     unique_docs, unresolved_names = _dedupe_link_instances_by_document(link_instances)
     if unresolved_names and diag is not None:
@@ -341,8 +404,14 @@ def _collect_link_category_filters(doc, view, diag=None, view_id=None):
 
     combined_colorable = {}
     combined_uncolorable = {}
+    category_to_instances = {}
+    always_hide_instances = set()
     for path_name, info in unique_docs.items():
         colorable, uncolorable = _model_categories_in_linked_doc(info["linked_doc"], filterable_ids)
+        doc_instances = info["instances"]
+
+        for cat in colorable + uncolorable:
+            category_to_instances.setdefault(cat.Id.IntegerValue, set()).update(doc_instances)
         for cat in colorable:
             cid_int = cat.Id.IntegerValue
             if cid_int not in combined_colorable:
@@ -352,9 +421,15 @@ def _collect_link_category_filters(doc, view, diag=None, view_id=None):
             if cid_int not in combined_uncolorable:
                 combined_uncolorable[cid_int] = cat
 
+        for link_inst in doc_instances:
+            if not _link_instance_respects_host_view_filters(view, link_inst, diag=diag, view_id=view_id):
+                always_hide_instances.add(link_inst)
+
     return (
         sorted(combined_colorable.values(), key=lambda cat: cat.Name),
         sorted(combined_uncolorable.values(), key=lambda cat: cat.Name),
+        category_to_instances,
+        always_hide_instances,
     )
 
 
@@ -828,6 +903,13 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     # reference the same one; see _apply_link_category_filters's docstring).
     created_link_category_filter_ids = []
     reused_link_category_filter_ids = []
+    # Populated only if a LINK category can't be colored at all (not
+    # filterable, filter application failed, or the instance doesn't honor
+    # host-view filters) -- see the instances_to_hide block below. Tracks
+    # "was_hidden" (state before we touched it) exactly like
+    # category_hidden_state, so restore only un-hides instances THIS run
+    # hid, never one that started out hidden for some unrelated reason.
+    hidden_link_instance_state = {}
     category_hidden_state = _hidden_category_state(doc, view)
     solid_pattern_id = _get_solid_pattern_id(doc)
     if solid_pattern_id is None:
@@ -1109,11 +1191,15 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # way an opted-out capture reports zero LINK assignments and applies no
         # category filters, matching prior behavior.
         if getattr(cfg, "include_linked_rvt", False):
-            link_categories, uncolorable_link_categories = _collect_link_category_filters(
-                doc, view, diag=diag, view_id=view_id
-            )
+            (
+                link_categories,
+                uncolorable_link_categories,
+                link_category_to_instances,
+                always_hide_link_instances,
+            ) = _collect_link_category_filters(doc, view, diag=diag, view_id=view_id)
         else:
             link_categories, uncolorable_link_categories = [], []
+            link_category_to_instances, always_hide_link_instances = {}, set()
         count_link_categories = len(link_categories)
         total_count = count_host + count_link_categories
 
@@ -1170,46 +1256,49 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         )
 
         # Categories that are policy-included but couldn't be colored at all
-        # (not Revit-filterable -- uncolorable_link_categories) or whose
-        # filter creation/application failed (failed_link_categories) must
-        # not render with their uncontrolled native color: that color could
-        # coincidentally match a HOST element's deterministic palette RGB
-        # and the decoder would silently attribute those pixels to the
-        # wrong element. Hidden instead, mirroring the retired per-element
-        # path's "hide what can't be colored" precedent. Reuses
-        # category_hidden_state/the existing restore_category_hidden step
-        # (populated dynamically here, mid-transaction, rather than
-        # up-front like _hidden_category_state()'s sweep -- the dict is a
-        # plain Python object, restore just iterates whatever is in it when
-        # restore_tx runs later).
+        # (not Revit-filterable -- uncolorable_link_categories), whose filter
+        # creation/application failed (failed_link_categories), or whose
+        # link instance doesn't honor host-view filters at all regardless of
+        # category outcome (always_hide_link_instances) must not render with
+        # an uncontrolled native color: that color could coincidentally
+        # match a HOST element's deterministic palette RGB and the decoder
+        # would silently attribute those pixels to the wrong element.
+        #
+        # Hidden at the LINK INSTANCE level (view.HideElements), never at
+        # the category level (view.SetCategoryHidden): a category like
+        # "Walls" is typically present in BOTH host and linked content, and
+        # hiding it view-wide would take every HOST wall down with it even
+        # though color_map/the HOST paint loop already gave them real
+        # element-level overrides. Mirrors the retired per-element path's
+        # own "hide the instance whose override failed" precedent exactly.
+        instances_to_hide = set(always_hide_link_instances)
         for cat in list(uncolorable_link_categories) + list(failed_link_categories):
-            cat_id_int = cat.Id.IntegerValue
-            if cat_id_int in category_hidden_state:
-                continue
+            instances_to_hide.update(link_category_to_instances.get(cat.Id.IntegerValue, ()))
+
+        for link_inst in instances_to_hide:
             try:
-                cat_id = ElementId(int(cat_id_int))
-                if view.CanCategoryBeHidden(cat_id):
-                    category_hidden_state[cat_id_int] = {
-                        "name": getattr(cat, "Name", None),
-                        "was_hidden": bool(view.GetCategoryHidden(cat_id)),
-                    }
-                    view.SetCategoryHidden(cat_id, True)
-                elif diag is not None:
-                    diag.warn(
-                        phase="color_id_buffer",
-                        callsite="hide_uncolorable_link_category",
-                        message="Category '{0}' cannot be colored (not filterable, or filter "
-                                "application failed) and CANNOT be hidden either; its native "
-                                "LINK color may alias a HOST element's palette ID in this "
-                                "view's ID buffer".format(getattr(cat, "Name", cat_id_int)),
-                        view_id=view_id,
-                    )
+                link_inst_id_int = link_inst.Id.IntegerValue
+                if link_inst_id_int in hidden_link_instance_state:
+                    continue
+                already_hidden = bool(link_inst.IsHidden(view))
+                hidden_link_instance_state[link_inst_id_int] = {
+                    "name": getattr(link_inst, "Name", None),
+                    "was_hidden": already_hidden,
+                }
+                if not already_hidden:
+                    import System.Collections.Generic as SCG
+                    ids_to_hide = SCG.List[ElementId]()
+                    ids_to_hide.Add(link_inst.Id)
+                    view.HideElements(ids_to_hide)
             except Exception as ex:
                 if diag is not None:
                     diag.warn(
                         phase="color_id_buffer",
-                        callsite="hide_uncolorable_link_category",
-                        message=str(ex),
+                        callsite="hide_uncolorable_link_instance",
+                        message="Link instance '{0}' could not be hidden after failing to be "
+                                "colored via category filter; its native LINK color(s) may "
+                                "alias a HOST element's palette ID in this view's ID "
+                                "buffer: {1}".format(getattr(link_inst, "Name", link_inst_id_int), ex),
                         view_id=view_id,
                     )
 
@@ -1333,6 +1422,20 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 from Autodesk.Revit.DB import OverrideGraphicSettings
                 view.SetElementOverrides(ElementId(int(eid.IntegerValue)), OverrideGraphicSettings())
             _restore_step("restore_element_overrides", _restore_element_override)
+
+        # Unhide link instances this run hid because a category couldn't be
+        # colored at all (see instances_to_hide above) -- only ones this run
+        # actually changed (was_hidden False before we touched it), matching
+        # the retired per-element path's own restore logic exactly.
+        for link_inst_id_int, hstate in hidden_link_instance_state.items():
+            if hstate["was_hidden"]:
+                continue
+            def _restore_unhide_link_instance(link_inst_id_int=link_inst_id_int):
+                import System.Collections.Generic as SCG
+                unhide_list = SCG.List[ElementId]()
+                unhide_list.Add(ElementId(int(link_inst_id_int)))
+                view.UnhideElements(unhide_list)
+            _restore_step("restore_unhide_link_instance", _restore_unhide_link_instance)
 
         # Filters and the phase filter are restored last (see note above) —
         # reverting the phase filter can trigger regeneration of curtain-grid
