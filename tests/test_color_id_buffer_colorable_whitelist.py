@@ -163,6 +163,63 @@ def test_frozen_whitelist_ignores_a_category_whose_id_is_unreadable():
     assert is_colorable(_NoIdCategory()) is False
 
 
+def test_unreadable_category_id_is_recorded_not_swallowed():
+    """Regression guard for the P2 on PR #197.
+
+    "Could not read this category's id" and "this category is not on the
+    whitelist" both come out of the predicate as False. Without a diagnostic
+    carrying the exception, a Revit API failure is indistinguishable from a
+    legitimate negative lookup -- AGENTS.md requires the error be recorded.
+    """
+    class _NoIdCategory(object):
+        Name = "Walls"
+
+        @property
+        def Id(self):
+            raise RuntimeError("category is in a bad state")
+
+    diag = _FakeDiag()
+    with _install_fake_revit_db(), _frozen_whitelist(10):
+        is_colorable, _source = color_id_buffer._resolve_colorable_category_predicate(
+            diag=diag, view_id=7
+        )
+        assert is_colorable(_NoIdCategory()) is False
+
+    recorded = [w for w in diag.warnings if w["callsite"] == "colorable_category_whitelist"]
+    assert recorded, "the id-read failure must reach Diagnostics"
+    message = recorded[-1]["message"]
+    assert "RuntimeError" in message and "category is in a bad state" in message, (
+        "the exception type and message are the whole point -- a bare 'could "
+        "not read' line would not distinguish an API failure from a miss"
+    )
+    assert "Walls" in message, "name the category so the failure is actionable"
+    assert recorded[-1]["view_id"] == 7
+
+
+def test_unreadable_category_id_is_recorded_on_the_live_lookup_path_too():
+    """Both predicates share _category_id_int, so both must report. The live
+    path is the one in use until the whitelist is frozen."""
+    class _NoIdCategory(object):
+        Name = "Doors"
+
+        @property
+        def Id(self):
+            raise RuntimeError("boom")
+
+    diag = _FakeDiag()
+    with _install_fake_revit_db({10}):
+        is_colorable, source = color_id_buffer._resolve_colorable_category_predicate(
+            diag=diag, view_id=7
+        )
+        assert source == "live_filterable_lookup"
+        assert is_colorable(_NoIdCategory()) is False
+
+    assert any(
+        w["callsite"] == "colorable_category_whitelist" and "RuntimeError" in w["message"]
+        for w in diag.warnings
+    )
+
+
 def test_empty_whitelist_falls_back_to_the_live_lookup_and_says_so():
     """The pre-freeze state has to keep working -- dropping every LINK
     category filter because a constant has not been populated yet would be a

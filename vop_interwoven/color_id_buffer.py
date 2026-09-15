@@ -401,10 +401,38 @@ def _build_flat_color_ogs(solid_pattern_id, color):
     return ogs
 
 
-def _category_id_int(cat):
+def _category_id_int(cat, diag=None, view_id=None, callsite="category_id"):
+    """A Category's id as a plain int, or None when it cannot be read.
+
+    Returning None is not the same fact as "this category is not in the set",
+    and every caller below uses the result in a membership test where the two
+    are indistinguishable by inspection. So the exception is RECORDED rather
+    than swallowed (AGENTS.md: "all errors must be recorded in Diagnostics"):
+    without it, a stale or broken Revit Category and a category that simply is
+    not on the whitelist produce the same downstream outcome with no way to
+    tell which happened.
+
+    The category name is reported best-effort. It is read in its own guard
+    because a Category whose Id access raises may well fail on Name too, and
+    losing the diagnostic to a second exception would defeat the point.
+    """
     try:
         return int(cat.Id.IntegerValue)
-    except Exception:
+    except Exception as ex:
+        if diag is not None:
+            try:
+                cat_name = getattr(cat, "Name", None) or "<unreadable>"
+            except Exception:
+                cat_name = "<unreadable>"
+            diag.warn(
+                phase="color_id_buffer",
+                callsite=callsite,
+                message="Could not read the category id for '{0}'; it is treated as not "
+                        "colorable for this capture, which is NOT the same as it being "
+                        "absent from the whitelist: {1}: {2}".format(
+                            cat_name, type(ex).__name__, ex),
+                view_id=view_id,
+            )
         return None
 
 
@@ -427,7 +455,9 @@ def _resolve_colorable_category_predicate(diag=None, view_id=None):
         ids = VETTED_COLORABLE_CATEGORY_IDS
 
         def _by_frozen_id(cat):
-            return _category_id_int(cat) in ids
+            return _category_id_int(
+                cat, diag=diag, view_id=view_id, callsite="colorable_category_whitelist",
+            ) in ids
 
         return _by_frozen_id, "frozen_whitelist"
 
@@ -485,7 +515,9 @@ def _resolve_colorable_category_predicate(diag=None, view_id=None):
         )
 
     def _by_live_lookup(cat):
-        return _category_id_int(cat) in filterable_ids
+        return _category_id_int(
+            cat, diag=diag, view_id=view_id, callsite="colorable_category_whitelist",
+        ) in filterable_ids
 
     return _by_live_lookup, "live_filterable_lookup"
 
