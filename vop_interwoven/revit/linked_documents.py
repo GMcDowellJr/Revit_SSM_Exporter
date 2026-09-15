@@ -337,6 +337,10 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
 
     by_category = {}
 
+    # Per-element failures that happened BEFORE the element's presence could be
+    # recorded -- the only ones that cost the presence scan an answer.
+    pre_presence_failures = 0
+
     try:
         # Revit 2024+ overload: collect visible elements from link instance in view
         fec = FilteredElementCollector(doc, view.Id, link_inst.Id)
@@ -347,6 +351,11 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
 
         for elem in fec:
             fec_total += 1
+            # Reset per element: an exception AFTER presence was recorded has
+            # already contributed its presence fact and must not invalidate the
+            # scan, while one BEFORE that point loses an element the collector
+            # had resolved as visible and must.
+            presence_recorded = False
             try:
                 
                 # Defensive: Revit 2024+ 3-arg FEC is intended to enumerate link-owned elements.
@@ -413,6 +422,7 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
                 # (see LinkCollectionStatus.link_presence).
                 if status is not None:
                     status.record_presence(cat.Id.IntegerValue, link_inst_id)
+                    presence_recorded = True
 
                 # Get element bbox in link space
                 bbox_link = elem.get_BoundingBox(None)
@@ -533,6 +543,8 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
 
             except Exception as e:
                 skip["skip_exception"] += 1
+                if not presence_recorded:
+                    pre_presence_failures += 1
                 _log("DEBUG", "Error processing link element {0}: {1}".format(getattr(elem, 'Id', '?'), e))
                 continue
 
@@ -545,16 +557,16 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
             )
         return [], source_key, source_label
 
-    if skip["skip_exception"] and status is not None:
-        # Per-element failures are swallowed above so one bad element never
-        # costs the placement; the list they produce is still short of the
-        # truth, which a presence/absence caller must not mistake for a
-        # complete answer.
+    if pre_presence_failures and status is not None:
+        # Only failures upstream of record_presence invalidate the presence
+        # scan. A later throw (bbox read, proxy construction) costs a proxy,
+        # not a presence fact -- marking the scan incomplete for those would
+        # force the conservative document-wide hide over a geometry error,
+        # which is the over-hiding this whole path exists to avoid.
         status.mark_incomplete(
             "_collect_visible_link_elements_2024_plus.per_element",
-            "{0} element(s) raised during collection from link '{1}'".format(
-                skip["skip_exception"], link_doc.Title
-            ),
+            "{0} element(s) raised before their presence could be recorded, "
+            "collecting from link '{1}'".format(pre_presence_failures, link_doc.Title),
         )
 
     # Summarize collection outcome (high signal, low spam)
@@ -1015,6 +1027,9 @@ def _collect_link_elements_with_clipping(link_inst, link_doc, link_trf, view,
 
     # Collect and build proxies
     for elem in collector:
+        # See the Revit 2024+ path: only a failure upstream of record_presence
+        # costs the presence scan an answer.
+        presence_recorded = False
         try:
             # Skip nested links and imports
             from Autodesk.Revit.DB import RevitLinkInstance, ImportInstance
@@ -1044,6 +1059,7 @@ def _collect_link_elements_with_clipping(link_inst, link_doc, link_trf, view,
             # Revit 2024+ path above (see LinkCollectionStatus.link_presence).
             if status is not None:
                 status.record_presence(cat_id_val, link_inst.Id.IntegerValue)
+                presence_recorded = True
 
             # Get bbox in link coordinates (legacy clip-volume path collects from link_doc).
             bbox_link = elem.get_BoundingBox(None)
@@ -1073,10 +1089,11 @@ def _collect_link_elements_with_clipping(link_inst, link_doc, link_trf, view,
 
         except Exception as e:
             _log("DEBUG", "Error processing link element {0}: {1}".format(getattr(elem, 'Id', '?'), e))
-            if status is not None:
+            if status is not None and not presence_recorded:
                 status.mark_incomplete(
                     "_collect_link_elements_with_clipping.per_element",
-                    "element {0} raised during collection from link '{1}': {2}".format(
+                    "element {0} raised before its presence could be recorded, "
+                    "collecting from link '{1}': {2}".format(
                         getattr(elem, 'Id', '?'), doc_label, e
                     ),
                 )

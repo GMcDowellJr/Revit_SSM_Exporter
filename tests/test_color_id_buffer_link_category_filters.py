@@ -782,6 +782,44 @@ def test_bbox_failure_does_not_make_a_present_category_look_absent():
     assert hidden == {inst}
 
 
+def test_post_presence_failure_does_not_invalidate_the_presence_scan():
+    """Regression guard for the third Codex finding on PR #196.
+
+    An element can be recorded in link_presence and THEN throw while reading
+    its bbox or constructing its proxy. That costs a proxy, not a presence
+    fact: the category is still present and its placement must still be
+    hidden, but every OTHER problem category must keep its view-scoped
+    answer. Marking the whole scan incomplete for a post-presence throw would
+    force the document-wide fallback over a geometry error -- the over-hiding
+    this path exists to avoid.
+    """
+    from vop_interwoven.revit.linked_documents import LinkCollectionStatus
+
+    cat_odd = _FakeCategory("OddModelCategory", 15)
+    cat_other = _FakeCategory("AnotherUncolorable", 16)
+    inst = _FakeLinkInstanceWithId("exam room 1", 5001)
+
+    status = LinkCollectionStatus()
+    status.record_presence(15, 5001)  # recorded, then the element threw downstream
+
+    assert status.rvt_complete is True, (
+        "a post-presence throw is not a completeness failure"
+    )
+    hidden = color_id_buffer._instances_to_hide_for_uncolorable_categories(
+        [cat_odd, cat_other],
+        {cat_odd.Id.IntegerValue: {inst}, cat_other.Id.IntegerValue: {inst}},
+        status,
+    )
+    assert hidden == {inst}, "the present category still hides its placement"
+
+    # ...and the unrelated category is still judged on the view-scoped answer,
+    # not swept into a document-wide fallback by the other element's failure.
+    hidden_other_only = color_id_buffer._instances_to_hide_for_uncolorable_categories(
+        [cat_other], {cat_other.Id.IntegerValue: {inst}}, status
+    )
+    assert hidden_other_only == set()
+
+
 def test_incomplete_scan_falls_back_to_document_wide_hide():
     """Fails safe, never open: an unknown presence answer (a link that never
     enumerated, a placement with no transform, an element that raised before
