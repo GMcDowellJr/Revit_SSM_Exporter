@@ -75,3 +75,31 @@ def test_project_bbox_corners_uv_uses_bbox_transform_when_present():
     bbox = _BBoxWithTransform((0, 0, 0), (10, 4, 3), _FakeTransform(dx=5, dy=5, dz=0))
     corners = project_bbox_corners_uv(bbox, _PLAN_BASIS)
     assert corners == [[5, 5], [15, 5], [15, 9], [5, 9]]
+
+
+def test_project_bbox_corners_uv_returns_none_when_bbox_transform_fails():
+    """A bbox.Transform that raises on every attempt must never fall through
+    to projecting the still-untransformed, bbox-local corners as if they
+    were host-space -- that would silently produce a plausible but wrong
+    UV rectangle. Must honor the documented None-on-failure contract."""
+    class _RaisingTransform:
+        def OfPoint(self, _pt):
+            raise RuntimeError("boom")
+
+    class _BBoxWithTransform(_BBox):
+        def __init__(self, mn, mx, transform):
+            super().__init__(mn, mx)
+            self.Transform = transform
+
+    bbox = _BBoxWithTransform((0, 0, 0), (10, 4, 3), _RaisingTransform())
+
+    class _Diag:
+        def __init__(self):
+            self.errors = []
+
+        def error(self, **kwargs):
+            self.errors.append(kwargs)
+
+    diag = _Diag()
+    assert project_bbox_corners_uv(bbox, _PLAN_BASIS, diag=diag) is None
+    assert diag.errors

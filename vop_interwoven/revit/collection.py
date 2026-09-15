@@ -812,6 +812,13 @@ def project_bbox_corners_uv(bbox, vb, transform=None, bbox_is_link_space=False, 
                         view_id=view_id,
                         elem_id=elem_id,
                     )
+                # Both attempts failed: corners are still in bbox-local space,
+                # not the space this function promises to project from.
+                # Projecting them anyway would silently produce a plausible-
+                # looking but wrong UV rectangle -- honor the documented
+                # "None if projection cannot be completed" contract instead
+                # of continuing with untransformed data.
+                return None
 
     if bbox_is_link_space:
         if transform is None:

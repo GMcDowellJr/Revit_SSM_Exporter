@@ -87,6 +87,18 @@ MAX_MASK_PIXELS_FOR_COMPONENTS = 4_000_000
 # CLAUDE.md's refactor rule #2 (Explicit Semantics).
 CONFIDENCE_HIGH_THRESHOLD = 0.75
 
+# Two (or more) candidates each explaining at least this fraction of one
+# blob's own pixels mark that blob as a plausible MERGER of several
+# touching/overlapping same-color elements (e.g. adjoining walls of the
+# same category) rather than a single element -- connected-component
+# segmentation cannot see the seam between them by color alone. When this
+# fires, the blob's assignment is never reported HIGH confidence and lists
+# every qualifying candidate, not just the top-ranked one, so a downstream
+# consumer knows to treat that single blob as ambiguous instead of trusting
+# a single silently-chosen winner. Explicit, not implicit -- CLAUDE.md's
+# refactor rule #2 (Explicit Semantics).
+_MULTI_CANDIDATE_BLOB_SHARE_THRESHOLD = 0.3
+
 # Strictly-decreasing tie-break step applied by rank after sorting candidates
 # by (coverage desc, near_face_w asc): guarantees every candidate for the
 # same blob gets a numerically DISTINCT confidence_score (never a uniform
@@ -139,16 +151,34 @@ def connected_components_with_pixels(mask: np.ndarray) -> list[dict[str, Any]] |
     needs pixel-level intersection with the candidate's own footprint
     rectangle, not just a component size.
 
-    Returns None (skip) if the mask is too large for this inexpensive,
-    single-threaded flood fill (same size cap as tools/analyze_stage_a_
-    probe.py's connected_components()).
+    Returns None (skip) if the mask's own foreground extent is too large for
+    this inexpensive, single-threaded flood fill.
+
+    The size cap is applied to the foreground's own bounding box, not the
+    full mask/image dimensions: a LINK category's colored region is
+    typically a small fraction of a full sheet-sized capture (an ordinary
+    3600x2700 TIFF at the producer's default 150 DPI already exceeds
+    MAX_MASK_PIXELS_FOR_COMPONENTS on image area alone), so gating on raw
+    image size would mark nearly every real capture "skipped" regardless of
+    how sparse the actual foreground is. Cropping to the foreground's own
+    AABB first (same one tools/analyze_stage_a_probe.py's connected_
+    components() would compute if it tracked one) keeps the cap meaningful:
+    it still protects against a mask that is genuinely large and dense,
+    just not against a small foreground sitting inside a large image.
     """
-    h, w = mask.shape
-    if h * w > MAX_MASK_PIXELS_FOR_COMPONENTS:
+    ys_full, xs_full = np.nonzero(mask)
+    if ys_full.size == 0:
+        return []
+    y0, y1 = int(ys_full.min()), int(ys_full.max())
+    x0, x1 = int(xs_full.min()), int(xs_full.max())
+    cropped = mask[y0:y1 + 1, x0:x1 + 1]
+    ch, cw = cropped.shape
+    if ch * cw > MAX_MASK_PIXELS_FOR_COMPONENTS:
         return None
-    seen = np.zeros_like(mask, dtype=bool)
+
+    seen = np.zeros_like(cropped, dtype=bool)
     blobs: list[dict[str, Any]] = []
-    ys, xs = np.nonzero(mask)
+    ys, xs = np.nonzero(cropped)
     for x, y in zip(xs.tolist(), ys.tolist()):
         if seen[y, x]:
             continue
@@ -159,11 +189,13 @@ def connected_components_with_pixels(mask: np.ndarray) -> list[dict[str, Any]] |
             px, py = stack.pop()
             pixels.append((px, py))
             for nx, ny in ((px + 1, py), (px - 1, py), (px, py + 1), (px, py - 1)):
-                if 0 <= nx < w and 0 <= ny < h and mask[ny, nx] and not seen[ny, nx]:
+                if 0 <= nx < cw and 0 <= ny < ch and cropped[ny, nx] and not seen[ny, nx]:
                     seen[ny, nx] = True
                     stack.append((nx, ny))
-        pxs = np.asarray([p[0] for p in pixels], dtype=np.int64)
-        pys = np.asarray([p[1] for p in pixels], dtype=np.int64)
+        # Shift back from the cropped sub-array's local coordinates to the
+        # original (full mask/image) pixel-corner space.
+        pxs = np.asarray([p[0] for p in pixels], dtype=np.int64) + x0
+        pys = np.asarray([p[1] for p in pixels], dtype=np.int64) + y0
         blobs.append({
             "pixel_count": len(pixels),
             "bbox_px": [int(pxs.min()), int(pys.min()), int(pxs.max()), int(pys.max())],
@@ -249,6 +281,14 @@ def _score_candidates_for_blob(blob: dict[str, Any], candidates: list[dict[str, 
             "footprint_pixel_area": footprint_area,
             "overlap_pixel_count": overlap_px,
             "coverage_fraction": coverage,
+            # How much of the BLOB itself (not the candidate's own footprint)
+            # this candidate explains -- used to detect a blob that is
+            # plausibly a MERGER of several touching/overlapping same-color
+            # elements (see _MULTI_CANDIDATE_BLOB_SHARE_THRESHOLD below),
+            # which coverage_fraction alone cannot see (two adjoining walls
+            # can each have coverage_fraction close to 1.0 while jointly
+            # filling one connected-component blob).
+            "blob_share": overlap_px / float(blob["pixel_count"]) if blob["pixel_count"] else 0.0,
         })
 
     # Rank by coverage (desc), tie-broken by nearest near_face_w (asc, None
@@ -314,18 +354,36 @@ def resolve_category(rgb, link_candidates, rgb_array, bounds_uv, image_w, image_
             }
             continue
         best = scored[0]
+        # A blob is a plausible multi-element merger when two or more
+        # candidates each independently explain a substantial share of its
+        # own pixels -- not just of their own footprint (see blob_share's
+        # docstring in _score_candidates_for_blob). Order-independent: any
+        # qualifying candidate counts, not only the top-ranked one, since a
+        # merger can have its largest contributor still be a clean winner by
+        # coverage_fraction while a second element quietly shares the blob.
+        multi_candidates = [c for c in scored if c["blob_share"] >= _MULTI_CANDIDATE_BLOB_SHARE_THRESHOLD]
+        is_multi_candidate_region = len(multi_candidates) >= 2
+        assignment = {
+            "elem_id": best["key"],
+            "link_inst_id": best["link_inst_id"],
+            "link_elem_id": best["link_elem_id"],
+            "confidence_score": best["confidence_score"],
+            # Never HIGH when the blob is plausibly several elements merged
+            # into one connected component: a single-winner HIGH label would
+            # misrepresent an ambiguous region as a confidently resolved one.
+            "confidence_label": "LOW" if is_multi_candidate_region else best["confidence_label"],
+            "coverage_fraction": best["coverage_fraction"],
+            "near_face_w": best["near_face_w"],
+            "multi_candidate_region": is_multi_candidate_region,
+            "other_plausible_elem_ids": (
+                [c["key"] for c in multi_candidates if c["key"] != best["key"]]
+                if is_multi_candidate_region else []
+            ),
+        }
         blobs_out[str(blob["blob_id"])] = {
             "pixel_count": blob["pixel_count"],
             "bbox_px": blob["bbox_px"],
-            "assignment": {
-                "elem_id": best["key"],
-                "link_inst_id": best["link_inst_id"],
-                "link_elem_id": best["link_elem_id"],
-                "confidence_score": best["confidence_score"],
-                "confidence_label": best["confidence_label"],
-                "coverage_fraction": best["coverage_fraction"],
-                "near_face_w": best["near_face_w"],
-            },
+            "assignment": assignment,
             "candidates_considered": len(scored),
             "candidate_scores": [
                 {
@@ -333,6 +391,7 @@ def resolve_category(rgb, link_candidates, rgb_array, bounds_uv, image_w, image_
                     "link_inst_id": c["link_inst_id"],
                     "link_elem_id": c["link_elem_id"],
                     "coverage_fraction": c["coverage_fraction"],
+                    "blob_share": c["blob_share"],
                     "near_face_w": c["near_face_w"],
                     "confidence_score": c["confidence_score"],
                     "confidence_label": c["confidence_label"],

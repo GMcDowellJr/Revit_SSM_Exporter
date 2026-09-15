@@ -666,9 +666,24 @@ def _apply_link_category_filters(doc, view, view_id, categories_with_colors, sol
     return link_category_color_map, created_filter_ids, reused_filter_ids, failed_categories
 
 
+def _finite_or_none(value):
+    """Normalize a depth value for JSON serialization: json.dump()'s default
+    allow_nan=True emits the non-standard tokens Infinity/-Infinity/NaN for
+    non-finite floats, which a strict JSON consumer rejects outright --
+    estimate_nearest_depth_from_bbox() returns float("inf") whenever a view
+    basis or bbox corner is unavailable, and that must never reach the
+    sidecar as anything but the documented float | None contract."""
+    import math
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) else None
+
+
 def _collect_near_face_w_data(
-    doc, view, raster, resolved_ids, categories_with_colors, link_category_color_map,
-    link_category_to_instances, instances_to_hide, diag=None, view_id=None,
+    doc, view, raster, cfg, resolved_ids, link_category_color_map, instances_to_hide,
+    diag=None, view_id=None,
 ):
     """Collect near-face-W (nearest projected depth) and a UV bbox footprint
     for every HOST and LINK element resolved by export_color_id_buffer_view,
@@ -679,10 +694,16 @@ def _collect_near_face_w_data(
     resolved_ids exactly (the same element set color_assignment_map keys
     off of). LINK identity is scoped to exactly link_category_color_map's
     underlying element set: categories that actually got colored (present
-    in link_category_color_map), restricted to the placements that are
-    actually colorable via that filter (link_category_to_instances, minus
-    instances_to_hide -- the same instances export_color_id_buffer_view
-    itself hides for failing to be colorable at all).
+    in link_category_color_map), restricted to elements revit/linked_
+    documents.collect_all_linked_elements() itself resolves as visible in
+    THIS host view (the same view-scoped Revit 2024+ FilteredElementCollector
+    (doc, view.Id, link_inst.Id) overload -- or the legacy clip-volume
+    fallback -- the rest of the pipeline already relies on for LINK
+    visibility), minus instances_to_hide -- the same placements export_
+    color_id_buffer_view itself hides for failing to be colorable at all.
+    A document-wide, unscoped category scan would otherwise let an element
+    hidden in this view (or simply out of the crop) compete as a candidate
+    even though it painted zero TIFF pixels.
 
     Returns {"host": {"<elem_id>": entry}, "link": {"<link_inst_id>:<link_elem_id>": entry}}
     where entry is {"bbox_corners_uv": [[u,v],...] | None, "near_face_w": float | None,
@@ -697,8 +718,8 @@ def _collect_near_face_w_data(
         estimate_nearest_depth_from_bbox,
         project_bbox_corners_uv,
     )
-    from .revit.collection_policy import should_include_element
-    from Autodesk.Revit.DB import FilteredElementCollector, Transform
+    from .revit.linked_documents import collect_all_linked_elements
+    from Autodesk.Revit.DB import Transform
 
     vb = getattr(raster, "view_basis", None) if raster is not None else None
     identity_trf = Transform.Identity
@@ -718,9 +739,9 @@ def _collect_near_face_w_data(
         near_face_w = None
         bbox_corners_uv = None
         if bbox is not None:
-            near_face_w = estimate_nearest_depth_from_bbox(
+            near_face_w = _finite_or_none(estimate_nearest_depth_from_bbox(
                 elem, identity_trf, view, raster, bbox=bbox, diag=diag,
-            )
+            ))
             bbox_corners_uv = project_bbox_corners_uv(
                 bbox, vb, diag=diag, view_id=view_id, elem_id=elem_id_int,
             )
@@ -740,97 +761,84 @@ def _collect_near_face_w_data(
 
     link_out = {}
     colored_cat_names = set(link_category_color_map.keys())
-    for cat, _rgb in categories_with_colors:
-        if cat.Name not in colored_cat_names:
-            continue  # this category's filter failed; no colored pixels exist to identify
-        instances = link_category_to_instances.get(cat.Id.IntegerValue, ())
-        for link_inst in instances:
-            if link_inst in instances_to_hide:
+    if colored_cat_names:
+        hidden_inst_ids = {li.Id.IntegerValue for li in instances_to_hide}
+        # NOTE: this is the same full, per-placement RVT link scan export_
+        # color_id_buffer_view's own host_only_cfg deliberately skips
+        # elsewhere in this function (see the comment above its
+        # _expand_elements call) because LINK painting only needs category-
+        # level filters, not individual proxies. Near-face-W identity has no
+        # such shortcut -- it needs each element's own host-space bbox, and
+        # only a view-scoped collector (this call, same one the rest of the
+        # pipeline uses for LINK visibility) can guarantee a candidate
+        # actually rendered in this view. Re-paying that scan here is a
+        # deliberate, view-local cost for correctness, only when this view
+        # actually has a colored LINK category to identify.
+        try:
+            link_proxies = collect_all_linked_elements(doc, view, cfg, diag=diag)
+        except Exception as ex:
+            link_proxies = []
+            if diag is not None:
+                diag.warn(
+                    phase="collection",
+                    callsite="near_face_w.link_collect",
+                    message="Failed to collect view-scoped LINK elements for near_face_w "
+                            "collection: {0}".format(ex),
+                    view_id=view_id,
+                )
+
+        for proxy in link_proxies:
+            # DWG imports are explicitly out of scope for Phase 1b (see this
+            # module's docstring); only real RVT LINK elements are candidates.
+            if getattr(proxy, "source_type", None) != "LINK":
+                continue
+            cat = getattr(proxy, "Category", None)
+            cat_name = getattr(cat, "Name", None) if cat is not None else None
+            if cat_name not in colored_cat_names:
+                continue  # this category's filter failed; no colored pixels exist to identify
+            link_inst_id = getattr(proxy, "LinkInstanceId", None)
+            link_elem_id = getattr(proxy, "Id", None)
+            if link_inst_id is None or link_elem_id is None:
+                continue
+            if link_inst_id.IntegerValue in hidden_inst_ids:
                 continue  # this placement is hidden entirely; none of its elements render
-            try:
-                linked_doc = link_inst.GetLinkDocument()
-            except Exception as ex:
-                if diag is not None:
-                    diag.warn(
-                        phase="collection",
-                        callsite="near_face_w.link_doc",
-                        message="Could not resolve linked document for near_face_w collection: {0}".format(ex),
-                        view_id=view_id,
-                    )
-                continue
-            if linked_doc is None:
-                continue
-            try:
-                link_trf = link_inst.GetTotalTransform()
-            except Exception:
-                try:
-                    link_trf = link_inst.GetTransform()
-                except Exception as ex:
-                    if diag is not None:
-                        diag.warn(
-                            phase="collection",
-                            callsite="near_face_w.link_transform",
-                            message="Could not resolve link instance transform for near_face_w "
-                                    "collection: {0}".format(ex),
-                            view_id=view_id,
-                        )
-                    continue
-            link_inst_id_int = link_inst.Id.IntegerValue
+            link_inst_id_int = link_inst_id.IntegerValue
+            link_elem_id_int = link_elem_id.IntegerValue
 
-            try:
-                collector = FilteredElementCollector(linked_doc).OfCategoryId(cat.Id).WhereElementIsNotElementType()
-            except Exception as ex:
-                if diag is not None:
-                    diag.warn(
-                        phase="collection",
-                        callsite="near_face_w.link_collect",
-                        message="Failed to collect '{0}' elements in linked document for near_face_w "
-                                "collection: {1}".format(cat.Name, ex),
-                        view_id=view_id,
-                    )
-                continue
-
-            for link_elem in collector:
-                include, _reason, _cat_name = should_include_element(
-                    elem=link_elem, doc=linked_doc, source_type="LINK",
+            # LinkedElementProxy.get_BoundingBox() already returns a host-
+            # space bbox (built from the link transform at collection time,
+            # see linked_documents.py's _transform_bbox_to_host) -- no
+            # further link-space handling needed here, unlike a raw element
+            # pulled straight from the linked document.
+            bbox_host, _src = resolve_element_bbox(
+                proxy, view=None, diag=diag,
+                context={"view_id": view_id, "elem_id": link_elem_id_int, "source_type": "LINK"},
+            )
+            near_face_w = None
+            bbox_corners_uv = None
+            if bbox_host is not None:
+                near_face_w = _finite_or_none(estimate_nearest_depth_from_bbox(
+                    proxy, identity_trf, view, raster, bbox=bbox_host, diag=diag,
+                ))
+                bbox_corners_uv = project_bbox_corners_uv(
+                    bbox_host, vb, diag=diag, view_id=view_id, elem_id=link_elem_id_int,
                 )
-                if not include:
-                    continue
-                link_elem_id = getattr(link_elem, "Id", None)
-                if link_elem_id is None:
-                    continue
-                link_elem_id_int = link_elem_id.IntegerValue
-                bbox_local, _src = resolve_element_bbox(
-                    link_elem, view=None, diag=diag,
-                    context={"view_id": view_id, "elem_id": link_elem_id_int, "source_type": "LINK"},
+            elif diag is not None:
+                diag.warn(
+                    phase="collection",
+                    callsite="near_face_w.link",
+                    message="No bbox resolvable; near_face_w/bbox_corners_uv recorded as None",
+                    view_id=view_id,
+                    elem_id=link_elem_id_int,
                 )
-                near_face_w = None
-                bbox_corners_uv = None
-                if bbox_local is not None:
-                    near_face_w = estimate_nearest_depth_from_bbox(
-                        link_elem, link_trf, view, raster, bbox=bbox_local, diag=diag,
-                        bbox_is_link_space=True,
-                    )
-                    bbox_corners_uv = project_bbox_corners_uv(
-                        bbox_local, vb, transform=link_trf, bbox_is_link_space=True,
-                        diag=diag, view_id=view_id, elem_id=link_elem_id_int,
-                    )
-                elif diag is not None:
-                    diag.warn(
-                        phase="collection",
-                        callsite="near_face_w.link",
-                        message="No bbox resolvable; near_face_w/bbox_corners_uv recorded as None",
-                        view_id=view_id,
-                        elem_id=link_elem_id_int,
-                    )
-                key = "{0}:{1}".format(link_inst_id_int, link_elem_id_int)
-                link_out[key] = {
-                    "bbox_corners_uv": bbox_corners_uv,
-                    "near_face_w": near_face_w,
-                    "category": cat.Name,
-                    "link_inst_id": link_inst_id_int,
-                    "link_elem_id": link_elem_id_int,
-                }
+            key = "{0}:{1}".format(link_inst_id_int, link_elem_id_int)
+            link_out[key] = {
+                "bbox_corners_uv": bbox_corners_uv,
+                "near_face_w": near_face_w,
+                "category": cat_name,
+                "link_inst_id": link_inst_id_int,
+                "link_elem_id": link_elem_id_int,
+            }
     return {"host": host_out, "link": link_out}
 
 
@@ -1566,8 +1574,8 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # anything painted/exported below. Additive-only sidecar data; never
         # touches color_assignment_map or link_category_color_map.
         near_face_w_map = _collect_near_face_w_data(
-            doc, view, raster, resolved_ids, categories_with_colors, link_category_color_map,
-            link_category_to_instances, instances_to_hide, diag=diag, view_id=view_id,
+            doc, view, raster, cfg, resolved_ids, link_category_color_map,
+            instances_to_hide, diag=diag, view_id=view_id,
         )
 
         for link_inst in instances_to_hide:
