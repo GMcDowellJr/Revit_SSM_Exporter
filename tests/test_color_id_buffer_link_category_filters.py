@@ -42,8 +42,6 @@ import sys
 import types
 
 import vop_interwoven.color_id_buffer as color_id_buffer
-from vop_interwoven.core.math_utils import Bounds2D
-from vop_interwoven.revit.view_basis import ViewBasis
 
 
 # --- Fake Autodesk.Revit.DB surface -----------------------------------------
@@ -223,7 +221,7 @@ class _FakeDiag(object):
 
 
 @contextlib.contextmanager
-def _install_fake_revit_db(filterable_category_ids):
+def _install_fake_revit_db(filterable_category_ids=()):
     fake_db = types.ModuleType("Autodesk.Revit.DB")
     fake_db.FilteredElementCollector = _FakeCollector
     fake_db.RevitLinkInstance = _FakeLinkInstanceMarker
@@ -233,7 +231,6 @@ def _install_fake_revit_db(filterable_category_ids):
     fake_db.ElementId = _FakeElementId
     fake_db.Color = _FakeColor
     fake_db.OverrideGraphicSettings = _FakeOGS
-    fake_db.LinkVisibility = _FakeLinkVisibility
 
     fake_system = types.ModuleType("System")
     fake_system_collections = types.ModuleType("System.Collections")
@@ -259,16 +256,27 @@ def _install_fake_revit_db(filterable_category_ids):
 
 
 # --- _collect_link_category_filters: dedup + category union + policy -------
+#
+# Colorability is supplied by the caller as an ``is_colorable(category)``
+# predicate (production resolves it once per capture via
+# _resolve_colorable_category_predicate, so category-filter discovery and the
+# force-white safety net can never disagree). These tests pass an explicit
+# name whitelist, mirroring the frozen VETTED_COLORABLE_CATEGORY_NAMES.
+
+def _whitelist(*names):
+    allowed = set(names)
+    return lambda cat: getattr(cat, "Name", None) in allowed
+
 
 def test_collect_link_category_filters_dedupes_and_applies_authoritative_policy():
     cat_walls = _FakeCategory("Walls", 10)
     cat_floors = _FakeCategory("Floors", 11)
     cat_anno = _FakeCategory("Tags", 12, cat_type=_FakeCategoryType.Annotation)
-    # "Rooms" is CategoryType.Model and (deliberately, in this test) Revit-
-    # filterable, but the real collection_policy.py excludes it by name --
-    # this is the exact scenario the LINK-policy review finding was about:
-    # a non-physical category must never get a filter just because it is
-    # filterable and CategoryType.Model.
+    # "Rooms" is CategoryType.Model and (deliberately, in this test) on the
+    # colorable whitelist, but the real collection_policy.py excludes it by
+    # name -- this is the exact scenario the LINK-policy review finding was
+    # about: a non-physical category must never get a filter just because it
+    # is colorable and CategoryType.Model.
     cat_rooms = _FakeCategory("Rooms", 14)
     doc_a = _FakeLinkedDoc("Z:\\typical_exam_room.rvt", [
         _FakeElement(cat_walls),
@@ -292,9 +300,11 @@ def test_collect_link_category_filters_dedupes_and_applies_authoritative_policy(
     fake_view = types.SimpleNamespace(Id=_FakeElementId(1))
     diag = _FakeDiag()
 
-    with _install_fake_revit_db({10, 11, 12, 13, 14}):
-        colorable, uncolorable, category_to_instances, always_hide = color_id_buffer._collect_link_category_filters(
-            view_doc, fake_view, diag=diag, view_id=1
+    with _install_fake_revit_db():
+        colorable, uncolorable = color_id_buffer._collect_link_category_filters(
+            view_doc, fake_view,
+            _whitelist("Walls", "Floors", "Tags", "Doors", "Rooms"),
+            diag=diag, view_id=1,
         )
 
     assert doc_a.scan_count == 1, (
@@ -305,34 +315,26 @@ def test_collect_link_category_filters_dedupes_and_applies_authoritative_policy(
 
     names = [cat.Name for cat in colorable]
     assert names == ["Doors", "Floors", "Walls"], (
-        "expected only policy-included, filterable Model categories, sorted by name -- "
-        "Rooms must be excluded despite being CategoryType.Model and filterable"
+        "expected only policy-included, whitelisted Model categories, sorted by name -- "
+        "Rooms must be excluded despite being CategoryType.Model and whitelisted"
     )
     assert uncolorable == [], (
         "Tags (Annotation) and Rooms fail the POLICY check, landing in neither list -- "
-        "only a policy-included-but-unfilterable category becomes 'uncolorable'"
+        "only a policy-included-but-unwhitelisted category becomes 'uncolorable'"
     )
-    assert always_hide == [] or always_hide == set(), (
-        "fake_view has no GetLinkOverrides -- detection fails closed to 'compliant', not hidden"
-    )
-
-    # Both placements of doc_a map back to the Walls/Floors categories --
-    # needed so the caller can hide EVERY placement, not just the
-    # representative one, if that category later turns out uncolorable.
-    walls_instances = category_to_instances[cat_walls.Id.IntegerValue]
-    assert walls_instances == {inst_a1, inst_a2}
 
     assert any(w["callsite"] == "link_category_filter_discovery" for w in diag.warnings)
     assert "unloaded link" in diag.warnings[0]["message"]
 
 
-def test_collect_link_category_filters_splits_out_policy_included_but_unfilterable_categories():
-    """A category the policy would include but Revit's ParameterFilterUtilities
-    won't filter on at all must come back as "uncolorable", not silently
-    dropped -- the caller has to suppress (hide) it instead of leaving its
-    LINK elements rendering with an uncontrolled native color."""
+def test_collect_link_category_filters_splits_out_policy_included_but_unwhitelisted_categories():
+    """A category the policy would include but the vetted whitelist does not
+    cover must come back as "uncolorable", not silently dropped. The caller no
+    longer suppresses it -- the category-level force-white override does -- but
+    it still has to be reported, or a whitelist that quietly lost an entry
+    would look identical to one that never needed it."""
     cat_walls = _FakeCategory("Walls", 10)
-    cat_odd = _FakeCategory("OddModelCategory", 15)  # Model, policy-included, NOT filterable
+    cat_odd = _FakeCategory("OddModelCategory", 15)  # Model, policy-included, NOT whitelisted
     doc_a = _FakeLinkedDoc("Z:\\typical_exam_room.rvt", [
         _FakeElement(cat_walls),
         _FakeElement(cat_odd),
@@ -341,157 +343,24 @@ def test_collect_link_category_filters_splits_out_policy_included_but_unfilterab
     view_doc = types.SimpleNamespace(link_instances=[inst_a], parameter_filters=[])
     fake_view = types.SimpleNamespace(Id=_FakeElementId(1))
 
-    with _install_fake_revit_db({10}):  # 15 deliberately absent -- not filterable
-        colorable, uncolorable, category_to_instances, _always_hide = color_id_buffer._collect_link_category_filters(
-            view_doc, fake_view
+    with _install_fake_revit_db():
+        colorable, uncolorable = color_id_buffer._collect_link_category_filters(
+            view_doc, fake_view, _whitelist("Walls"),
         )
 
     assert [cat.Name for cat in colorable] == ["Walls"]
     assert [cat.Name for cat in uncolorable] == ["OddModelCategory"]
-    assert category_to_instances[cat_odd.Id.IntegerValue] == {inst_a}, (
-        "the caller looks up instances to hide by category id -- OddModelCategory's "
-        "single placement must be findable here"
-    )
 
 
 def test_collect_link_category_filters_returns_empty_when_no_links_in_view():
     view_doc = types.SimpleNamespace(link_instances=[], parameter_filters=[])
     fake_view = types.SimpleNamespace(Id=_FakeElementId(1))
-    with _install_fake_revit_db({10}):
-        colorable, uncolorable, category_to_instances, always_hide = color_id_buffer._collect_link_category_filters(
-            view_doc, fake_view
+    with _install_fake_revit_db():
+        colorable, uncolorable = color_id_buffer._collect_link_category_filters(
+            view_doc, fake_view, _whitelist("Walls"),
         )
     assert colorable == []
     assert uncolorable == []
-    assert category_to_instances == {}
-    assert always_hide == set()
-
-
-# --- Non-"By Host View" link instances: always hidden, never touched by ----
-# --- category-level coloring at all -----------------------------------------
-
-class _FakeLinkVisibility(object):
-    ByHostView = "ByHostView"
-    ByLinkView = "ByLinkView"
-    Custom = "Custom"
-
-
-class _FakeLinkGraphicsSettings(object):
-    def __init__(self, visibility_type):
-        self.LinkVisibilityType = visibility_type
-
-
-class _FakeViewWithLinkOverrides(object):
-    """Extends the plain SimpleNamespace fake views used elsewhere with
-    GetLinkOverrides, so _link_instance_respects_host_view_filters has
-    something real to inspect instead of always hitting its except branch."""
-    def __init__(self, view_id, overrides_by_instance_id):
-        self.Id = _FakeElementId(view_id)
-        self._overrides_by_instance_id = overrides_by_instance_id
-
-    def GetLinkOverrides(self, link_instance_id):
-        return self._overrides_by_instance_id.get(link_instance_id.IntegerValue)
-
-
-def test_collect_link_category_filters_always_hides_non_by_host_view_instance():
-    cat_walls = _FakeCategory("Walls", 10)
-    doc_a = _FakeLinkedDoc("Z:\\typical_exam_room.rvt", [_FakeElement(cat_walls)])
-    inst_compliant = _FakeLinkInstance("compliant placement", doc_a)
-    inst_compliant.Id = _FakeElementId(501)
-    inst_custom = _FakeLinkInstance("custom-display placement", doc_a)
-    inst_custom.Id = _FakeElementId(502)
-
-    view_doc = types.SimpleNamespace(
-        link_instances=[inst_compliant, inst_custom], parameter_filters=[]
-    )
-    fake_view = _FakeViewWithLinkOverrides(1, {
-        501: _FakeLinkGraphicsSettings(_FakeLinkVisibility.ByHostView),
-        502: _FakeLinkGraphicsSettings(_FakeLinkVisibility.Custom),
-    })
-    diag = _FakeDiag()
-
-    with _install_fake_revit_db({10}):
-        colorable, uncolorable, _category_to_instances, always_hide = color_id_buffer._collect_link_category_filters(
-            view_doc, fake_view, diag=diag, view_id=1
-        )
-
-    assert [cat.Name for cat in colorable] == ["Walls"], (
-        "Walls is still colorable overall -- the compliant placement can still "
-        "use the category filter; only the non-compliant placement is hidden"
-    )
-    assert always_hide == {inst_custom}
-    assert inst_compliant not in always_hide
-
-
-def test_link_instance_respects_host_view_filters_defaults_to_true_when_undetectable():
-    """A missing/incompatible GetLinkOverrides API surface must never make
-    every link hide by default -- that would be a far worse regression than
-    the narrow non-"By Host View" case this whole mechanism defends
-    against. Only a POSITIVE confirmation of non-compliance returns False."""
-    link_inst = _FakeLinkInstance("some link", None)
-    link_inst.Id = _FakeElementId(999)
-
-    class _ViewWithoutGetLinkOverrides(object):
-        pass  # no GetLinkOverrides at all -> AttributeError inside the try
-
-    diag = _FakeDiag()
-    with _install_fake_revit_db({10}):
-        result = color_id_buffer._link_instance_respects_host_view_filters(
-            _ViewWithoutGetLinkOverrides(), link_inst, diag=diag, view_id=1
-        )
-
-    assert result is True
-    assert any(w["callsite"] == "link_display_mode_check" for w in diag.warnings)
-
-
-# --- _link_instance_may_be_visible_in_view: coarse off-view hide guard -----
-
-class _FakeXYZ(object):
-    def __init__(self, x, y, z):
-        self.X, self.Y, self.Z = x, y, z
-
-
-class _FakeBBox(object):
-    def __init__(self, min_pt, max_pt):
-        self.Min = min_pt
-        self.Max = max_pt
-
-
-class _FakeLinkInstanceWithBBox(_FakeLinkInstance):
-    def __init__(self, name, bbox):
-        super().__init__(name, None)
-        self._bbox = bbox
-
-    def get_BoundingBox(self, _view):
-        return self._bbox
-
-
-# Plan view looking down +Z with the view basis aligned to world XY, so
-# world (x, y) maps directly to view (u, v) -- keeps the test's numbers
-# simple without weakening what's being exercised (the real ViewBasis
-# projection code path, not a stand-in for it).
-_PLAN_BASIS = ViewBasis(origin=(0, 0, 0), right=(1, 0, 0), up=(0, 1, 0), forward=(0, 0, -1))
-
-
-def test_link_instance_may_be_visible_in_view_true_when_bbox_intersects_bounds():
-    raster = types.SimpleNamespace(view_basis=_PLAN_BASIS, bounds_xy=Bounds2D(0, 0, 100, 100))
-    inst = _FakeLinkInstanceWithBBox(
-        "in view", _FakeBBox(_FakeXYZ(50, 50, 0), _FakeXYZ(150, 150, 10))
-    )
-    assert color_id_buffer._link_instance_may_be_visible_in_view(inst, raster) is True
-
-
-def test_link_instance_may_be_visible_in_view_false_when_bbox_entirely_outside_bounds():
-    raster = types.SimpleNamespace(view_basis=_PLAN_BASIS, bounds_xy=Bounds2D(0, 0, 100, 100))
-    inst = _FakeLinkInstanceWithBBox(
-        "different wing", _FakeBBox(_FakeXYZ(500, 500, 0), _FakeXYZ(600, 600, 10))
-    )
-    assert color_id_buffer._link_instance_may_be_visible_in_view(inst, raster) is False
-
-
-def test_link_instance_may_be_visible_in_view_defaults_to_true_without_raster():
-    inst = _FakeLinkInstanceWithBBox("whatever", _FakeBBox(_FakeXYZ(0, 0, 0), _FakeXYZ(1, 1, 1)))
-    assert color_id_buffer._link_instance_may_be_visible_in_view(inst, None) is True
 
 
 # --- _apply_link_category_filters: create/reuse + color + enable/visible ---
@@ -665,205 +534,16 @@ def test_host_element_override_and_link_category_filter_are_independent_calls():
     assert view.element_override_calls[0][1].calls["SetProjectionLineColor"][0] == host_color
 
 
-# --- _instances_to_hide_for_uncolorable_categories: hide only for a --------
-# --- category actually present in THIS view ---------------------------------
-
-class _FakeLinkInstanceWithId(_FakeLinkInstance):
-    """A placement the hide decision can identify by ElementId -- the real
-    _collect_link_category_filters hands back live RevitLinkInstance objects
-    whose .Id is what the collectors record presence against."""
-
-    def __init__(self, name, inst_id):
-        super().__init__(name, None)
-        self.Id = _FakeElementId(inst_id)
-
-
-def _status(present=(), complete=True):
-    """A real LinkCollectionStatus seeded with the given (cat_id, inst_id)
-    presence pairs -- the actual class the collectors populate, not a
-    stand-in, so these tests break if its contract changes."""
-    from vop_interwoven.revit.linked_documents import LinkCollectionStatus
-    status = LinkCollectionStatus()
-    for cat_id, inst_id in present:
-        status.record_presence(cat_id, inst_id)
-    if not complete:
-        status.mark_incomplete("test", "deliberately incomplete")
-    return status
-
-
-def test_uncolorable_category_absent_from_view_does_not_hide_its_placement():
-    """The bug this fixes: an uncolorable category present document-wide but
-    with ZERO elements in this view took the whole placement down via
-    view.HideElements, killing the colorable, correctly-filtered categories
-    (Walls) rendering from that same instance."""
-    cat_odd = _FakeCategory("OddModelCategory", 15)
-    inst = _FakeLinkInstanceWithId("exam room 1", 5001)
-    # Discovery's document-wide scan found OddModelCategory in this
-    # placement's underlying document...
-    link_category_to_instances = {cat_odd.Id.IntegerValue: {inst}}
-    # ...but the view-scoped scan only ever saw Walls under it.
-    diag = _FakeDiag()
-
-    hidden = color_id_buffer._instances_to_hide_for_uncolorable_categories(
-        [cat_odd], link_category_to_instances, _status(present=[(10, 5001)]),
-        diag=diag, view_id=1,
-    )
-
-    assert hidden == set(), (
-        "document-wide presence alone must not hide a placement -- no "
-        "OddModelCategory element is in this view, so nothing of it can "
-        "render an uncontrolled native color here"
-    )
-    assert any(w["callsite"] == "uncolorable_hide_scope" for w in diag.warnings), (
-        "sparing a placement is a real decision, not a silent one (CLAUDE.md "
-        "'no silent failure')"
-    )
-
-
-def test_uncolorable_category_present_in_view_still_hides_its_placement():
-    """The original safety intent, preserved: when the uncolorable category
-    really does have elements in this view, its placement is still hidden --
-    those elements would otherwise render with an uncontrolled native color
-    the decoder could alias onto a HOST element's palette ID."""
-    cat_odd = _FakeCategory("OddModelCategory", 15)
-    inst = _FakeLinkInstanceWithId("exam room 1", 5001)
-
-    hidden = color_id_buffer._instances_to_hide_for_uncolorable_categories(
-        [cat_odd], {cat_odd.Id.IntegerValue: {inst}},
-        _status(present=[(10, 5001), (15, 5001)]),
-    )
-
-    assert hidden == {inst}
-
-
-def test_uncolorable_category_hide_is_scoped_per_placement_not_per_document():
-    """Two placements of the same document: only the one whose view-scoped
-    elements actually include the uncolorable category is hidden."""
-    cat_odd = _FakeCategory("OddModelCategory", 15)
-    inst_a = _FakeLinkInstanceWithId("exam room 1", 5001)
-    inst_b = _FakeLinkInstanceWithId("exam room 2", 5002)
-
-    hidden = color_id_buffer._instances_to_hide_for_uncolorable_categories(
-        [cat_odd], {cat_odd.Id.IntegerValue: {inst_a, inst_b}},
-        _status(present=[(15, 5002), (10, 5001)]),
-    )
-
-    assert hidden == {inst_b}
-
-
-def test_bbox_failure_does_not_make_a_present_category_look_absent():
-    """Regression guard for the second Codex P1 on PR #196.
-
-    An element whose bbox is missing/malformed/untransformable is dropped
-    from the returned proxy list AFTER the collector already resolved it as
-    visible in this view (skip_no_bbox / skip_bad_bbox /
-    skip_transform_failed). Presence is therefore recorded upstream of all
-    bbox work: the category is still present, the placement must still be
-    hidden, and the scan must NOT be degraded to incomplete over it -- doing
-    that would force the document-wide fallback so often that view scoping
-    would stop meaning anything.
-    """
-    from vop_interwoven.revit.linked_documents import LinkCollectionStatus
-
-    cat_odd = _FakeCategory("OddModelCategory", 15)
-    inst = _FakeLinkInstanceWithId("exam room 1", 5001)
-
-    status = LinkCollectionStatus()
-    status.record_presence(15, 5001)  # recorded at the candidate site...
-    # ...and then the element is dropped: no proxy is ever produced for it.
-
-    assert status.rvt_complete is True, (
-        "a geometry failure is not a completeness failure -- presence was "
-        "already recorded when it happened"
-    )
-    hidden = color_id_buffer._instances_to_hide_for_uncolorable_categories(
-        [cat_odd], {cat_odd.Id.IntegerValue: {inst}}, status
-    )
-    assert hidden == {inst}
-
-
-def test_post_presence_failure_does_not_invalidate_the_presence_scan():
-    """Regression guard for the third Codex finding on PR #196.
-
-    An element can be recorded in link_presence and THEN throw while reading
-    its bbox or constructing its proxy. That costs a proxy, not a presence
-    fact: the category is still present and its placement must still be
-    hidden, but every OTHER problem category must keep its view-scoped
-    answer. Marking the whole scan incomplete for a post-presence throw would
-    force the document-wide fallback over a geometry error -- the over-hiding
-    this path exists to avoid.
-    """
-    from vop_interwoven.revit.linked_documents import LinkCollectionStatus
-
-    cat_odd = _FakeCategory("OddModelCategory", 15)
-    cat_other = _FakeCategory("AnotherUncolorable", 16)
-    inst = _FakeLinkInstanceWithId("exam room 1", 5001)
-
-    status = LinkCollectionStatus()
-    status.record_presence(15, 5001)  # recorded, then the element threw downstream
-
-    assert status.rvt_complete is True, (
-        "a post-presence throw is not a completeness failure"
-    )
-    hidden = color_id_buffer._instances_to_hide_for_uncolorable_categories(
-        [cat_odd, cat_other],
-        {cat_odd.Id.IntegerValue: {inst}, cat_other.Id.IntegerValue: {inst}},
-        status,
-    )
-    assert hidden == {inst}, "the present category still hides its placement"
-
-    # ...and the unrelated category is still judged on the view-scoped answer,
-    # not swept into a document-wide fallback by the other element's failure.
-    hidden_other_only = color_id_buffer._instances_to_hide_for_uncolorable_categories(
-        [cat_other], {cat_other.Id.IntegerValue: {inst}}, status
-    )
-    assert hidden_other_only == set()
-
-
-def test_incomplete_scan_falls_back_to_document_wide_hide():
-    """Fails safe, never open: an unknown presence answer (a link that never
-    enumerated, a placement with no transform, an element that raised before
-    its category could be read) must not be read as 'absent'."""
-    cat_odd = _FakeCategory("OddModelCategory", 15)
-    inst = _FakeLinkInstanceWithId("exam room 1", 5001)
-    diag = _FakeDiag()
-
-    hidden = color_id_buffer._instances_to_hide_for_uncolorable_categories(
-        [cat_odd], {cat_odd.Id.IntegerValue: {inst}},
-        _status(present=[(10, 5001)], complete=False), diag=diag, view_id=1,
-    )
-
-    assert hidden == {inst}, (
-        "an incomplete scan cannot spare a placement, even though "
-        "OddModelCategory is absent from what it did see"
-    )
-    assert any(w["callsite"] == "uncolorable_hide_scope" for w in diag.warnings)
-
-
-def test_missing_status_falls_back_to_document_wide_hide():
-    cat_odd = _FakeCategory("OddModelCategory", 15)
-    inst = _FakeLinkInstanceWithId("exam room 1", 5001)
-    assert color_id_buffer._instances_to_hide_for_uncolorable_categories(
-        [cat_odd], {cat_odd.Id.IntegerValue: {inst}}, None
-    ) == {inst}
-
-
-def test_no_uncolorable_categories_hides_nothing_and_needs_no_scan():
-    assert color_id_buffer._instances_to_hide_for_uncolorable_categories(
-        [], {15: {_FakeLinkInstanceWithId("exam room 1", 5001)}}, None
-    ) == set()
-
-
-def test_unreadable_identity_degrades_to_incomplete_not_to_absent():
-    """record_presence cannot record an unreadable id pair; it must mark the
-    scan incomplete rather than silently record nothing, which would read as
-    absence downstream."""
-    from vop_interwoven.revit.linked_documents import LinkCollectionStatus
-
-    status = LinkCollectionStatus()
-    status.record_presence("not-an-id", 5001)
-    assert status.rvt_complete is False
-    assert status.link_presence == set()
+# --- LinkCollectionStatus / _collect_view_scoped_link_proxies --------------
+#
+# The hide-instance mechanism these once served
+# (_instances_to_hide_for_uncolorable_categories and friends) is retired: a
+# category Stage A cannot color is now covered passively by the category-level
+# force-white override, so nothing decides whether to leave a link placement
+# visible on the strength of an absence any more. The status itself is still
+# exercised because near-face-W consumes the same scan, and because the
+# "a short list is indistinguishable from a complete one" hazard is a property
+# of the collectors rather than of that one retired caller.
 
 
 def test_link_collection_status_starts_complete_and_records_failures():

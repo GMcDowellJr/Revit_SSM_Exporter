@@ -41,6 +41,115 @@ VIEW_ONLY_MODEL_BIC_NAMES = (
     "OST_Lines",             # Model Lines & Detail Lines share this category; neither has fill/area
 )
 
+# Document-envelope categories the force-white safety net must NOT touch,
+# even though both are CategoryType.Model and both are policy-excluded (they
+# are in collection_policy._EXCLUDED_BIC_NAMES_GLOBAL), which would otherwise
+# make them textbook force-white targets.
+#
+# "RVT Links" is the category of the RevitLinkInstance element itself, sitting
+# above every category inside the linked document. A flat-color override there
+# is at best a no-op and at worst tints the very LINK geometry the category
+# filters exist to color correctly -- it would risk breaking the mechanism
+# this change is built around.
+#
+# "Imports" is the same shape for DWG: DWG layers are SUBCATEGORIES of it, and
+# Revit applies a parent category's override to a subcategory that has none of
+# its own. DWG ImportInstances are painted per-element (element overrides
+# outrank category ones, so painted content is unaffected either way), but
+# DWG handling is explicitly out of scope for this pass and a category-level
+# override reaching into every DWG layer is not "untouched".
+#
+# Both are exempt from the safety net, not from the architecture: whatever
+# renders from them keeps today's behavior, which is the same residual
+# uncontrolled-color risk this change deliberately accepts elsewhere.
+FORCE_WHITE_EXEMPT_BIC_NAMES = (
+    "OST_RVT_Links",
+    "OST_ImportObjectStyles",
+)
+# Human-readable counterpart, checked alongside the BIC ids above for the same
+# belt-and-suspenders reason collection_policy.py pairs
+# _FALLBACK_EXCLUDED_CATEGORY_NAMES with _EXCLUDED_BIC_NAMES_GLOBAL: a BIC name
+# that does not resolve on the running Revit version leaves the id check
+# matching nothing, and Category.Name is localized so the name check matches
+# nothing on a non-English Revit. Each covers the other's gap. Must stay in
+# sync with FORCE_WHITE_EXEMPT_BIC_NAMES, one entry per BIC name.
+FORCE_WHITE_EXEMPT_CATEGORY_NAMES = frozenset((
+    "RVT Links",
+    "Imports",
+))
+
+# Sentinel colors. Both sit inside the near-white reservation declared above
+# (every channel >= NEAR_WHITE_RESERVED_THRESHOLD), so build_palette() can
+# never hand either one to a real element -- the reservation logic itself is
+# unchanged; these two values simply occupy space it already refused to
+# assign. tests/test_color_id_buffer.py enforces that guarantee directly.
+#
+# UNCOLORABLE_SENTINEL_RGB is pure white and means "deliberately uncontrolled":
+# it is what a category-level force-white override paints for every
+# CategoryType.Model category Stage A does not hand a real assigned color --
+# HOST and LINK alike (see _category_force_white_targets). A decoder must read
+# it the same way it reads the (0,0,0) "no element painted" sentinel: as an
+# absence of element identity, never as a palette ID.
+UNCOLORABLE_SENTINEL_RGB = (255, 255, 255)
+# BACKGROUND_SENTINEL_RGB marks the view canvas itself, so an empty region of
+# the export stays distinguishable from a force-whited element. 240 is not an
+# arbitrary "light grey": the reservation floor is 224 and the uncolorable
+# sentinel is 255, so 240 is the midpoint that maximizes the margin to BOTH
+# (16 units either way) while still sitting inside the reservation. Anything
+# below 224 would leave the reservation and could be assigned to a real
+# element; 224 or 255 themselves would sit flush against the reservation
+# boundary or against the uncolorable sentinel. 16 units is comfortably clear
+# of the couple of RGB units of TIFF-export/rendering noise the
+# graphics_semantics_probe measured with AA and shadows suppressed.
+BACKGROUND_SENTINEL_RGB = (240, 240, 240)
+
+# Vetted colorable categories -- the FROZEN capture of
+# ParameterFilterUtilities.GetAllFilterableCategories(), by primary category
+# name only (no subcategories).
+#
+# Regenerate with tools/capture_vetted_colorable_categories.py, run inside a
+# live Dynamo/Revit session; it prints this exact literal block for pasting.
+# Do not hand-transcribe it from a screenshot or from a description of the
+# Filter dialog: the live API call is the same source the dialog itself reads
+# from, and transcription of a ~150-200 entry list risks silent errors that
+# would show up only as a category quietly losing its color in a capture.
+#
+# TRADEOFF (deliberate): freezing the list trades a small amount of
+# Revit-version drift risk -- a category added or renamed in a newer Revit
+# than the capture will not be recognized as colorable until the list is
+# recaptured -- for full determinism and auditability. Two captures of the
+# same view on the same Revit now assign the same categories the same way
+# regardless of what the host's live API happens to report, and a reviewer
+# can see the exact set in the diff instead of having to run Revit to know
+# it. The drift failure mode is also the safe direction: an unrecognized
+# category is not colored, so it falls through to the force-white safety net
+# rather than rendering an uncontrolled native color.
+#
+# EMPTY UNTIL CAPTURED. While this set is empty,
+# _resolve_colorable_category_predicate() falls back to the live
+# GetAllFilterableCategories() lookup and records a loud diagnostic saying so
+# on every capture -- the pre-freeze behavior, kept working but never silent.
+# Populating this set retires that fallback permanently.
+VETTED_COLORABLE_CATEGORY_NAMES = frozenset()
+
+# Hue samples per (saturation, value) band in build_palette()'s hue-primary
+# traversal. 186 = 6 * (32 - 1): at the production step of 8 there are 32
+# levels per RGB channel, and a fully saturated hue sweep traces the six
+# edges of the RGB cube's outer hexagon, hitting 6 * (levels - 1) distinct
+# lattice points. Fixed rather than scaled to the step so the traversal stays
+# bounded for the very dense lattices choose_step() falls back to for
+# pathologically large views; the deterministic completion pass in
+# build_palette() picks up whatever those denser lattices leave unreached.
+HUE_SAMPLES_PER_BAND = 186
+# Stride applied to the hue index within a band, so CONSECUTIVELY ASSIGNED
+# colors land far apart on the hue circle instead of walking one cube edge at
+# a time. 115 ~= 186 / the golden ratio, and gcd(115, 186) == 1 (186 = 2*3*31,
+# 115 = 5*23), so multiplying modulo 186 is a full-period permutation: every
+# hue sample is still visited exactly once per band, just in
+# near-golden-angle order. Without this a 10-element view would receive ten
+# near-identical reds even though the band as a whole spans 0-360.
+HUE_TRAVERSAL_STRIDE = 115
+
 
 def _reserved_corner_count(step):
     """Count lattice points excluded by the near-black and near-white corner reservations.
@@ -57,12 +166,20 @@ def _reserved_corner_count(step):
 
 
 def choose_step(element_count):
-    """Choose an RGB lattice step with capacity for ``element_count`` IDs.
+    """Choose a color-lattice step with capacity for ``element_count`` IDs.
 
-    Capacity excludes the near-black and near-white corners reserved by
-    build_palette(). The default Stage-A global threshold is conservative
-    enough to use a global 8-step palette for current model sizes, while
-    permitting denser per-view palettes when needed.
+    ``step`` is the spacing of the RGB lattice every palette color is snapped
+    onto (see build_palette). Capacity excludes the near-black and near-white
+    corners reserved by build_palette(). The default Stage-A global threshold
+    is conservative enough to use a global 8-step palette for current model
+    sizes, while permitting denser per-view palettes when needed.
+
+    Unchanged by the move to a hue-primary traversal: build_palette() still
+    emits colors drawn from exactly this lattice, and its completion pass
+    guarantees it can reach every valid point on it, so the capacity this
+    function promises is still the capacity build_palette() can deliver. See
+    build_palette()'s docstring for the derivation, and
+    tests/test_color_id_buffer.py for the enforced round-trip.
     """
     n = max(1, int(element_count or 1))
     for step in (8, 6, 5, 4, 3, 2, 1):
@@ -73,23 +190,149 @@ def choose_step(element_count):
     return 1
 
 
+def _hsv_to_rgb255(hue_deg, sat, val):
+    """HSV -> 0-255 RGB, implemented inline rather than via colorsys.
+
+    Two reasons, both about this module's IronPython 2.x / CPython 3.x dual
+    target: colorsys is not guaranteed present in every IronPython deployment
+    this ships into, and rounding must be bit-identical across both or the
+    palette stops being reproducible. ``int(x + 0.5)`` is used instead of
+    ``round()`` precisely because round() is half-away-from-zero on Python 2
+    and banker's rounding on Python 3 -- the same float would otherwise
+    quantize to different colors on the two hosts.
+    """
+    h = (float(hue_deg) % 360.0) / 60.0
+    sector = int(h) % 6
+    f = h - int(h)
+    p = val * (1.0 - sat)
+    q = val * (1.0 - sat * f)
+    t = val * (1.0 - sat * (1.0 - f))
+    if sector == 0:
+        r, g, b = val, t, p
+    elif sector == 1:
+        r, g, b = q, val, p
+    elif sector == 2:
+        r, g, b = p, val, t
+    elif sector == 3:
+        r, g, b = p, q, val
+    elif sector == 4:
+        r, g, b = t, p, val
+    else:
+        r, g, b = val, p, q
+    return (int(r * 255.0 + 0.5), int(g * 255.0 + 0.5), int(b * 255.0 + 0.5))
+
+
+def _snap_to_lattice(channel, step, max_level):
+    """Snap one 0-255 channel onto the ``step`` lattice choose_step() sized."""
+    q = int(float(channel) / step + 0.5)
+    if q > max_level:
+        q = max_level
+    elif q < 0:
+        q = 0
+    return q * step
+
+
+def _is_reserved_corner(rgb):
+    """True for the near-black and near-white corners build_palette() refuses."""
+    r, g, b = rgb
+    if r < NEAR_BLACK_RESERVED_THRESHOLD and g < NEAR_BLACK_RESERVED_THRESHOLD and b < NEAR_BLACK_RESERVED_THRESHOLD:
+        return True
+    if r >= NEAR_WHITE_RESERVED_THRESHOLD and g >= NEAR_WHITE_RESERVED_THRESHOLD and b >= NEAR_WHITE_RESERVED_THRESHOLD:
+        return True
+    return False
+
+
 def build_palette(element_count, step=None):
-    """Build deterministic non-near-black, non-near-white RGB colors on the chosen lattice."""
+    """Build deterministic non-near-black, non-near-white colors, hue first.
+
+    Generation is HSV-based with HUE as the primary, fastest-spanning
+    dimension: saturation is the outer loop, value the middle one, and a full
+    0-360 hue sweep is the inner one, so the first colors handed out are
+    maximally separated in hue instead of maximally similar. That is the fix
+    for the confirmed blue bias of the previous RGB-nested-loop version
+    (r outer, g middle, b inner, returning as soon as element_count was
+    reached): a real capture only ever sampled the low-R/low-G corner, so
+    essentially every element in every production view got a shade of blue.
+    HUE_TRAVERSAL_STRIDE spreads the sweep within each band as well, so even
+    a ten-element view gets ten clearly distinct hues rather than ten reds.
+
+    Each generated color is then SNAPPED onto the same ``step`` RGB lattice
+    the previous implementation enumerated directly, and duplicates are
+    dropped. This is a deliberate deviation from a pure HSV lattice: two
+    neighboring HSV samples at low value/low saturation convert to RGB
+    values only one or two units apart, which is inside the TIFF-export and
+    rendering noise this module's reserved corners already exist to defend
+    against, and a decoder could not tell those two element IDs apart.
+    Snapping preserves the previous implementation's guarantee that any two
+    palette colors differ by at least ``step`` in at least one channel.
+
+    The near-black/near-white rejection is applied after conversion and
+    snapping (the previous version could test it before conversion because it
+    generated in RGB directly), so the reserved corners exclude exactly the
+    same set of colors as before.
+
+    CAPACITY. The hue sweep alone cannot reach every point of the lattice, so
+    a completion pass walks the lattice in the old deterministic RGB order and
+    appends whatever the sweep did not emit. The palette is therefore a
+    permutation of exactly the valid-lattice set the old implementation drew
+    from -- same set, different order -- which is why choose_step() and
+    _reserved_corner_count() need no re-derivation to stay correct: capacity
+    is still (levels ** 3) - _reserved_corner_count(step), and build_palette
+    can still always deliver it. That equality is asserted directly at every
+    practically reachable step in tests/test_color_id_buffer.py rather than
+    left as a claim. The completion pass is unreachable for any realistic
+    view (it only begins once the hue sweep has exhausted what it can reach,
+    far past any real element count at the production step of 8).
+
+    Reproducibility: same (element_count, step) always yields the same list,
+    and a shorter request is always a prefix of a longer one at the same step.
+    """
     step = int(step if step is not None else choose_step(element_count))
+    target = int(element_count or 0)
+    if target <= 0:
+        return []
+
+    n_levels = (255 // step) + 1
+    max_level = n_levels - 1
     colors = []
+    seen = set()
+
+    # Saturation outer, value middle, hue inner. Both outer dimensions run
+    # high-to-low so the first bands are the fully saturated, full-brightness
+    # ones -- the hues that separate most cleanly in RGB and survive export
+    # noise best go to the elements most likely to exist at all.
+    for sat_idx in range(n_levels, 0, -1):
+        sat = float(sat_idx) / n_levels
+        for val_idx in range(n_levels, 0, -1):
+            val = float(val_idx) / n_levels
+            for i in range(HUE_SAMPLES_PER_BAND):
+                hue_idx = (i * HUE_TRAVERSAL_STRIDE) % HUE_SAMPLES_PER_BAND
+                hue = 360.0 * hue_idx / HUE_SAMPLES_PER_BAND
+                r, g, b = _hsv_to_rgb255(hue, sat, val)
+                rgb = (
+                    _snap_to_lattice(r, step, max_level),
+                    _snap_to_lattice(g, step, max_level),
+                    _snap_to_lattice(b, step, max_level),
+                )
+                if rgb in seen or _is_reserved_corner(rgb):
+                    continue
+                seen.add(rgb)
+                colors.append(rgb)
+                if len(colors) >= target:
+                    return colors
+
+    # Completion pass -- see CAPACITY above. Same lattice order the previous
+    # implementation used, so the tail of a maximally-full palette is exactly
+    # the old palette's content, minus whatever the hue sweep already took.
     for r in range(0, 256, step):
         for g in range(0, 256, step):
             for b in range(0, 256, step):
-                if r < NEAR_BLACK_RESERVED_THRESHOLD and g < NEAR_BLACK_RESERVED_THRESHOLD and b < NEAR_BLACK_RESERVED_THRESHOLD:
+                rgb = (r, g, b)
+                if rgb in seen or _is_reserved_corner(rgb):
                     continue
-                if (
-                    r >= NEAR_WHITE_RESERVED_THRESHOLD
-                    and g >= NEAR_WHITE_RESERVED_THRESHOLD
-                    and b >= NEAR_WHITE_RESERVED_THRESHOLD
-                ):
-                    continue
-                colors.append((min(r, 255), min(g, 255), min(b, 255)))
-                if len(colors) >= int(element_count or 0):
+                seen.add(rgb)
+                colors.append(rgb)
+                if len(colors) >= target:
                     return colors
     return colors
 
@@ -187,9 +430,18 @@ def _get_solid_pattern_id(doc):
     return None
 
 
-def _build_flat_color_ogs(solid_pattern_id, color):
-    from Autodesk.Revit.DB import OverrideGraphicSettings
-    ogs = OverrideGraphicSettings()
+def _apply_flat_color_to_ogs(ogs, solid_pattern_id, color):
+    """Write the flat-color paint onto an existing OverrideGraphicSettings.
+
+    Factored out of _build_flat_color_ogs() so the per-element paint, the
+    LINK category filter, and the category-level force-white override all
+    write the SAME set of fields -- and so _CATEGORY_OGS_FIELDS below has one
+    definition to mirror when it snapshots what force-white is about to
+    overwrite. Mutating a caller-supplied ogs (rather than always starting
+    from a blank one) lets the category-level path preserve unrelated
+    override state on that category, such as line weights or line patterns,
+    which it never touches and therefore never has to restore.
+    """
     ogs.SetSurfaceForegroundPatternId(solid_pattern_id)
     ogs.SetSurfaceForegroundPatternColor(color)
     ogs.SetSurfaceForegroundPatternVisible(True)
@@ -201,6 +453,362 @@ def _build_flat_color_ogs(solid_pattern_id, color):
     ogs.SetSurfaceTransparency(0)
     ogs.SetHalftone(False)
     return ogs
+
+
+def _build_flat_color_ogs(solid_pattern_id, color):
+    from Autodesk.Revit.DB import OverrideGraphicSettings
+    return _apply_flat_color_to_ogs(OverrideGraphicSettings(), solid_pattern_id, color)
+
+
+_MISSING_OGS_FIELD = object()
+
+# Exactly the OverrideGraphicSettings fields _apply_flat_color_to_ogs() writes,
+# as (property to read, setter to write, kind). The category-level force-white
+# override is applied on top of a category's existing overrides, so restore has
+# to put these -- and only these -- back. Captured as plain data (ints, RGB
+# tuples, bools), never as live Revit objects: this module's curtain-panel
+# restore bug came from holding an OverrideGraphicSettings across the
+# suppress/export/restore transaction boundary and reapplying it afterward.
+_CATEGORY_OGS_FIELDS = (
+    ("SurfaceForegroundPatternId", "SetSurfaceForegroundPatternId", "element_id"),
+    ("SurfaceForegroundPatternColor", "SetSurfaceForegroundPatternColor", "color"),
+    ("IsSurfaceForegroundPatternVisible", "SetSurfaceForegroundPatternVisible", "bool"),
+    ("CutForegroundPatternId", "SetCutForegroundPatternId", "element_id"),
+    ("CutForegroundPatternColor", "SetCutForegroundPatternColor", "color"),
+    ("IsCutForegroundPatternVisible", "SetCutForegroundPatternVisible", "bool"),
+    ("ProjectionLineColor", "SetProjectionLineColor", "color"),
+    ("CutLineColor", "SetCutLineColor", "color"),
+    ("Transparency", "SetSurfaceTransparency", "int"),
+    ("Halftone", "SetHalftone", "bool"),
+)
+
+
+def _color_to_rgb_or_none(color):
+    """A Revit Color as a plain (r, g, b), or None for "no color set"."""
+    if color is None:
+        return None
+    try:
+        if not bool(getattr(color, "IsValid", True)):
+            return None
+        return (int(color.Red), int(color.Green), int(color.Blue))
+    except Exception:
+        return None
+
+
+def _capture_category_ogs_fields(ogs):
+    """Plain-data snapshot of the _CATEGORY_OGS_FIELDS on ``ogs``.
+
+    A field whose property does not exist on this Revit host is recorded as
+    _MISSING_OGS_FIELD rather than as a guessed default, so restore can skip
+    it instead of writing a value that was never there. Property names have
+    shifted across Revit versions (the Surface*Pattern* family gained its
+    Foreground/Background split in 2019), and inventing a value for one that
+    cannot be read would silently rewrite a user's category graphics.
+    """
+    snapshot = {}
+    for prop, _setter, kind in _CATEGORY_OGS_FIELDS:
+        raw = getattr(ogs, prop, _MISSING_OGS_FIELD)
+        if raw is _MISSING_OGS_FIELD:
+            snapshot[prop] = _MISSING_OGS_FIELD
+            continue
+        try:
+            if kind == "color":
+                snapshot[prop] = _color_to_rgb_or_none(raw)
+            elif kind == "element_id":
+                snapshot[prop] = int(raw.IntegerValue)
+            elif kind == "bool":
+                snapshot[prop] = bool(raw)
+            else:
+                snapshot[prop] = int(raw)
+        except Exception:
+            snapshot[prop] = _MISSING_OGS_FIELD
+    return snapshot
+
+
+def _restore_category_ogs_fields(ogs, snapshot):
+    """Write a _capture_category_ogs_fields() snapshot back onto ``ogs``.
+
+    Returns the list of property names that could not be restored (either
+    unreadable at capture time or rejected on write) so the caller can report
+    them -- CLAUDE.md's no-silent-failure rule applies to restore too.
+    """
+    from Autodesk.Revit.DB import Color, ElementId
+    unrestored = []
+    for prop, setter_name, kind in _CATEGORY_OGS_FIELDS:
+        value = snapshot.get(prop, _MISSING_OGS_FIELD)
+        if value is _MISSING_OGS_FIELD:
+            unrestored.append(prop)
+            continue
+        setter = getattr(ogs, setter_name, None)
+        if setter is None:
+            unrestored.append(prop)
+            continue
+        try:
+            if kind == "color":
+                if value is None:
+                    setter(Color.InvalidColorValue)
+                else:
+                    setter(Color(int(value[0]), int(value[1]), int(value[2])))
+            elif kind == "element_id":
+                setter(ElementId(int(value)))
+            elif kind == "bool":
+                setter(bool(value))
+            else:
+                setter(int(value))
+        except Exception:
+            unrestored.append(prop)
+    return unrestored
+
+
+class _CategoryOnlyProbe(object):
+    """Minimal stand-in element for asking collection_policy a CATEGORY-level
+    question.
+
+    should_include_element() is element-shaped by design, but the only
+    element-level facts it reads are ``Category``, ``ViewSpecific`` and the
+    element's own type name (its ImportInstance belt-and-suspenders check).
+    Pinning ViewSpecific to False and presenting a type name that is not
+    ImportInstance reduces it to exactly the category decision -- which is
+    what "is this category a policy-included model candidate?" means -- while
+    still routing through the single authoritative policy rather than
+    re-deriving a second, drift-prone copy of it here (CLAUDE.md's "single
+    source of truth").
+    """
+
+    ViewSpecific = False
+
+    def __init__(self, category):
+        self.Category = category
+
+
+def _category_id_int(cat):
+    try:
+        return int(cat.Id.IntegerValue)
+    except Exception:
+        return None
+
+
+def _resolve_colorable_category_predicate(diag=None, view_id=None):
+    """Resolve the single "can Stage A give this category a real color?" test.
+
+    Returns ``(predicate, source)`` where predicate takes a Category and
+    ``source`` names where the answer came from, for the sidecar. Centralized
+    so LINK category-filter discovery and the HOST+LINK force-white safety net
+    are never asked to agree about colorability by two separate code paths --
+    a category the two disagreed about would be both colored and force-whited,
+    or neither.
+
+    Prefers the frozen VETTED_COLORABLE_CATEGORY_NAMES capture. While that set
+    is still empty it falls back to the live
+    ParameterFilterUtilities.GetAllFilterableCategories() lookup this replaced,
+    and says so loudly on every capture: the fallback keeps pre-freeze captures
+    working exactly as before instead of force-whiting every category in the
+    model, but an unfrozen whitelist is a state the operator has to be able to
+    see, not a silent default.
+    """
+    if VETTED_COLORABLE_CATEGORY_NAMES:
+        names = VETTED_COLORABLE_CATEGORY_NAMES
+
+        def _by_frozen_name(cat):
+            return getattr(cat, "Name", None) in names
+
+        return _by_frozen_name, "frozen_whitelist"
+
+    try:
+        from Autodesk.Revit.DB import ParameterFilterUtilities
+        filterable_ids = set(
+            cid.IntegerValue for cid in ParameterFilterUtilities.GetAllFilterableCategories()
+        )
+    except Exception as ex:
+        # Fail CLOSED: with no colorability answer at all, treat nothing as
+        # colorable. That assigns no LINK category filters and force-whites
+        # every CategoryType.Model category, so the capture is degraded (LINK
+        # content carries no identity) but never WRONG -- no uncontrolled
+        # native color can alias an assigned palette ID. Failing open would
+        # invert exactly that. Recorded as an error, not a warning: a capture
+        # that hits this needs the whitelist frozen, not a retry.
+        if diag is not None:
+            diag.error(
+                phase="color_id_buffer",
+                callsite="colorable_category_whitelist",
+                message="VETTED_COLORABLE_CATEGORY_NAMES is empty AND the live "
+                        "ParameterFilterUtilities fallback failed; treating every "
+                        "category as uncolorable for this capture. LINK content will "
+                        "carry no identity and every model category renders the "
+                        "uncolorable sentinel: {0}".format(ex),
+                view_id=view_id,
+                exc=ex,
+            )
+        return (lambda cat: False), "unavailable"
+
+    if diag is not None:
+        diag.warn(
+            phase="color_id_buffer",
+            callsite="colorable_category_whitelist",
+            message="VETTED_COLORABLE_CATEGORY_NAMES is empty; falling back to the live "
+                    "ParameterFilterUtilities.GetAllFilterableCategories() lookup for "
+                    "this capture. Colorability is therefore host-dependent and not "
+                    "reproducible from the source tree -- run "
+                    "tools/capture_vetted_colorable_categories.py in Dynamo and freeze "
+                    "the result to retire this fallback.",
+            view_id=view_id,
+        )
+
+    def _by_live_lookup(cat):
+        return _category_id_int(cat) in filterable_ids
+
+    return _by_live_lookup, "live_filterable_lookup"
+
+
+def _category_force_white_targets(doc, is_colorable, already_hidden_ids=(), diag=None, view_id=None):
+    """Category ids to force-paint UNCOLORABLE_SENTINEL_RGB for this capture.
+
+    The rule is the safety net's whole point, stated once: force-white every
+    CategoryType.Model category that Stage A will NOT hand a real assigned
+    color. A category gets a real color only when it is both policy-included
+    (a genuine model candidate) AND colorable (on the vetted whitelist, so a
+    LINK category filter can carry it). Everything else CategoryType.Model
+    renders the "deliberately uncontrolled" sentinel instead of its native
+    color.
+
+    NOTE -- this is deliberately WIDER than "policy-included but not
+    whitelisted". That narrower reading would not cover the HOST-side gap this
+    exists to close: _hidden_category_state() hides only CategoryType.
+    Annotation plus the two VIEW_ONLY_MODEL_BIC_NAMES entries, so the
+    policy-EXCLUDED but CategoryType.Model categories -- Rooms, Areas, MEP
+    Spaces and Point Clouds are all in _EXCLUDED_BIC_NAMES_GLOBAL and all
+    report CategoryType.Model -- are collected by nothing, painted by nothing,
+    and today render with whatever native color Revit gives them. They are
+    excluded from policy, so a "policy-included" filter would skip exactly the
+    categories that need this most.
+
+    HOST elements of a force-whited category are unaffected when they have
+    their own per-element override: Revit resolves Instance/Element > Filter >
+    Category, so the category-level white sits underneath both the HOST paint
+    loop's SetElementOverrides and any colored LINK category filter. Only
+    content with no override above it -- which is precisely the uncontrolled
+    content -- actually renders white.
+
+    Categories already hidden for this capture (``already_hidden_ids``, from
+    _hidden_category_state) are skipped: they render nothing at all, so an
+    override on them would be a no-op, and VIEW_ONLY_MODEL_BIC_NAMES stays
+    untouched by this pass as intended. FORCE_WHITE_EXEMPT_BIC_NAMES is
+    skipped too -- see that constant for why the two document-envelope
+    categories are carved out.
+
+    Returns a sorted list of category id ints -- sorted so a capture's
+    force-white set is deterministic and diffable in the sidecar. Whether a
+    given category will actually accept a view-level override is not
+    pre-checked here: no Revit API surface reports that for overrides the way
+    View.CanCategoryBeHidden() does for visibility, so _force_white_category()
+    attempts the write and reports the ones that refuse it, rather than this
+    pass guessing at an availability rule.
+    """
+    from Autodesk.Revit.DB import CategoryType
+    from .revit.collection_policy import resolve_category_ids, should_include_element
+
+    already_hidden = set(int(cid) for cid in already_hidden_ids)
+    already_hidden.update(resolve_category_ids(doc, FORCE_WHITE_EXEMPT_BIC_NAMES))
+    target_ids = []
+    for cat in doc.Settings.Categories:
+        try:
+            if cat.CategoryType != CategoryType.Model:
+                continue
+            cat_id_int = _category_id_int(cat)
+            if cat_id_int is None or cat_id_int in already_hidden:
+                continue
+            if getattr(cat, "Name", None) in FORCE_WHITE_EXEMPT_CATEGORY_NAMES:
+                continue
+            include, _reason, _cname = should_include_element(
+                elem=_CategoryOnlyProbe(cat), doc=doc, source_type="HOST"
+            )
+            if include and is_colorable(cat):
+                continue  # gets a real assigned color; nothing to force
+            target_ids.append(cat_id_int)
+        except Exception as ex:
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="force_white_target_scan",
+                    message="Category could not be evaluated for the force-white safety "
+                            "net; it may render with an uncontrolled native color in this "
+                            "capture: {0}".format(ex),
+                    view_id=view_id,
+                )
+    return sorted(target_ids)
+
+
+def _force_white_category(view, cat_id_int, solid_pattern_id, snapshots, diag=None, view_id=None):
+    """Paint one category UNCOLORABLE_SENTINEL_RGB, snapshotting what it replaces.
+
+    ``snapshots`` is the shared {cat_id_int: field snapshot} dict restore reads
+    back. A category already present in it keeps its FIRST snapshot: by the
+    time a LINK category filter fails and lands here, the halftone
+    neutralization pass may already have rewritten that category's overrides,
+    and re-snapshotting would capture Stage A's own mutation as if it were the
+    user's original state.
+
+    Returns True when the override was applied.
+    """
+    from Autodesk.Revit.DB import Color, ElementId
+    try:
+        cat_id = ElementId(int(cat_id_int))
+        cat_ogs = view.GetCategoryOverrides(cat_id)
+        if cat_id_int not in snapshots:
+            snapshots[cat_id_int] = _capture_category_ogs_fields(cat_ogs)
+        _apply_flat_color_to_ogs(
+            cat_ogs, solid_pattern_id,
+            Color(*[int(c) for c in UNCOLORABLE_SENTINEL_RGB]),
+        )
+        view.SetCategoryOverrides(cat_id, cat_ogs)
+        return True
+    except Exception as ex:
+        if diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="force_white_category",
+                message="Category {0} could not be force-whited; its uncontrolled content "
+                        "may render a native color that aliases an assigned palette "
+                        "ID: {1}".format(cat_id_int, ex),
+                view_id=view_id,
+            )
+        return False
+
+
+def _force_white_after_halftone(
+    view, cat_id_int, solid_pattern_id, snapshots, halftone_state,
+    diag=None, view_id=None,
+):
+    """Force-white a category the halftone neutralization pass already touched.
+
+    Only one category can be in this position: a colorable LINK category whose
+    filter turned out to fail. It was in categories_touched, so the halftone
+    pass set its Halftone False before _apply_link_category_filters revealed
+    it needed the safety net after all -- and a snapshot taken now would
+    record Stage A's own mutation as the user's original state.
+
+    Resolves it by ownership rather than by restore ordering: the true
+    original halftone moves OUT of ``halftone_state`` and INTO the force-white
+    snapshot, so exactly one restore path writes this category back. Two paths
+    that both write it would have to run in the right order to agree, which is
+    the kind of implicit coupling this module's restore block has been bitten
+    by before.
+
+    Returns True when the override was applied.
+    """
+    pre_halftone = halftone_state.pop(cat_id_int, _MISSING_OGS_FIELD)
+    applied = _force_white_category(
+        view, cat_id_int, solid_pattern_id, snapshots, diag=diag, view_id=view_id
+    )
+    if pre_halftone is not _MISSING_OGS_FIELD:
+        if cat_id_int in snapshots:
+            snapshots[cat_id_int]["Halftone"] = bool(pre_halftone)
+        else:
+            # No snapshot was taken (reading the overrides failed outright),
+            # so the halftone restore is the only one left that can put this
+            # category back -- give it back rather than dropping it.
+            halftone_state[cat_id_int] = pre_halftone
+    return applied
 
 
 def _dedupe_link_instances_by_document(link_instances):
@@ -237,34 +845,30 @@ def _dedupe_link_instances_by_document(link_instances):
     return unique_docs, unresolved_names
 
 
-def _model_categories_in_linked_doc(linked_doc, filterable_ids):
+def _model_categories_in_linked_doc(linked_doc, is_colorable):
     """Distinct categories among elements in ONE linked document that the
     project's authoritative LINK category policy (revit/collection_policy.
     py's should_include_element(), "single source of truth" per CLAUDE.md)
-    would include -- split by whether Revit's ParameterFilterElement API can
-    actually filter on that category
-    (ParameterFilterUtilities.GetAllFilterableCategories()). Both checks
-    must run for every category now (unlike an earlier revision that
-    treated filterable_ids as a cheap first gate and skipped the policy
-    call otherwise): a policy-included-but-unfilterable category still
-    needs to be identified and returned, not silently dropped, or its LINK
-    elements end up neither colored nor suppressed.
+    would include -- split by whether Stage A can actually color them, which
+    is now the frozen VETTED_COLORABLE_CATEGORY_NAMES whitelist rather than a
+    live ParameterFilterUtilities.GetAllFilterableCategories() lookup (see
+    _resolve_colorable_category_predicate, which owns that decision for both
+    this scan and the force-white safety net). Both checks must run for every
+    category: a policy-included-but-uncolorable category still needs to be
+    identified and returned, not silently dropped.
 
     Returns ``(colorable, uncolorable)``: ``colorable`` categories are both
-    policy-included AND filterable -- callable code can color their LINK
-    elements via a category filter. ``uncolorable`` categories are
-    policy-included but NOT filterable -- Stage A has no way to color their
-    LINK elements at all, and the caller must suppress them (hide the
-    category) rather than let them render with an uncontrolled native
-    color a decoder could alias onto some unrelated HOST element's palette
-    ID (see _apply_link_category_filters's docstring and the retired
-    per-element path's "hide what can't be colored" precedent this
-    restores). Policy-EXCLUDED categories (Rooms, Areas, Lines, ...) are in
-    neither list -- the rest of the pipeline already never collects their
-    LINK elements at all (linked_documents.py's own should_include_element
-    call), so their native rendering is an existing, out-of-scope
-    characteristic of the whole system, not something this function
-    introduces or needs to suppress.
+    policy-included AND on the vetted whitelist -- callable code can color
+    their LINK elements via a category filter. ``uncolorable`` categories are
+    policy-included but not colorable; they are returned for reporting only.
+    Suppressing them is no longer this function's caller's job: the
+    category-level force-white safety net
+    (_category_force_white_targets/_force_white_category) already covers every
+    CategoryType.Model category that does not receive a real assigned color,
+    which is exactly this set plus the policy-excluded ones. That replaces the
+    retired "hide the whole link instance" mechanism, and with it the
+    whole-instance collateral damage it caused when one uncolorable category
+    took down every colorable category sharing a placement.
 
     Deliberately unscoped by host-view visibility: a category can be hidden
     in the host view while still visible via the link's own Custom
@@ -295,7 +899,7 @@ def _model_categories_in_linked_doc(linked_doc, filterable_ids):
         )
         if not include:
             continue
-        if cid_int in filterable_ids:
+        if is_colorable(cat):
             colorable.append(cat)
         else:
             uncolorable.append(cat)
@@ -337,128 +941,7 @@ def _reused_filter_matches_category(pfe, cat):
         return False
 
 
-def _link_instance_respects_host_view_filters(view, link_inst, diag=None, view_id=None):
-    """Best-effort check for whether this HOST view's SetFilterOverrides can
-    actually control link_inst's rendering at all.
-
-    Each RevitLinkInstance has its own per-instance Display Settings mode
-    (Visibility/Graphics Overrides > Revit Links > this link's row > Display
-    Settings): "By Host View" (Revit's default -- the host view's filters
-    and category overrides govern it) versus "By Linked View" or "Custom"
-    (the link's own view, or its own per-instance overrides, govern it
-    instead, and the host view's filters have NO effect on it whatsoever).
-    _apply_link_category_filters's whole mechanism is host-view filters, so
-    a link in either non-default mode would silently render with an
-    uncontrolled native color no matter how correctly a category filter was
-    built and colored -- the same HOST-palette-ID-aliasing risk as an
-    uncolorable/failed category, just from a different cause.
-
-    Uses view.GetLinkOverrides(link_inst.Id).LinkVisibilityType against the
-    Autodesk.Revit.DB.LinkVisibility enum (ByHostView / ByLinkView /
-    Custom) -- the same API this project's own legacy reference
-    implementation reads for this exact purpose (legacy/SSM_Exporter_v4_
-    A21_baseline_f00af7d.py's Link3D collection, ~line 4281), confirming
-    it's the correct surface for this project's actual target Revit
-    version rather than a newer/different RevitLinkGraphicsSettings shape.
-    That legacy code deliberately stopped at diagnostics-only logging for
-    Custom/ByLinkView ("FUTURE stubs (no behavior change today)"); this is
-    the first place in this codebase that acts on the signal instead of
-    only logging it.
-
-    Returns True (treat as compliant, i.e. colorable via filters) whenever
-    the check cannot be completed -- "By Host View" is Revit's overwhelming
-    default, so a defensive False-by-default here would risk hiding every
-    link in every capture on an unexpected API/version gap alone: a far
-    worse regression than the narrow non-default-visibility-type case this
-    defends against. Only a POSITIVE confirmation of a non-"By Host View"
-    type returns False.
-    """
-    try:
-        from Autodesk.Revit.DB import LinkVisibility
-        overrides = view.GetLinkOverrides(link_inst.Id)
-        if overrides is None:
-            return True
-        return overrides.LinkVisibilityType == LinkVisibility.ByHostView
-    except Exception as ex:
-        if diag is not None:
-            diag.warn(
-                phase="color_id_buffer",
-                callsite="link_display_mode_check",
-                message="Could not verify link instance '{0}'s Display Settings mode; "
-                        "assuming By Host View (colorable via category filters) rather "
-                        "than hiding by default: {1}".format(getattr(link_inst, "Name", "?"), ex),
-                view_id=view_id,
-            )
-        return True
-
-
-def _link_instance_may_be_visible_in_view(link_inst, raster):
-    """Cheap pre-check: does this link instance's own bounding box even
-    project into the view's UV bounds at all?
-
-    _model_categories_in_linked_doc scans an entire linked document
-    unscoped by view visibility (deliberately -- see its docstring), so an
-    "uncolorable"/failed category it finds could exist only in a part of
-    the document nowhere near this view -- e.g. a different building wing
-    referenced by the same linked model. Hiding the whole instance for a
-    category that was never going to render here anyway would be a pure
-    loss: it removes that instance's OTHER, valid geometry (which a HOST
-    element could be relying on for real 3D occlusion truth) for no
-    benefit at all. Skipping the hide decision entirely when the instance
-    doesn't even reach this view's bounds costs nothing, since none of its
-    geometry would have rendered here regardless.
-
-    This is a coarse, INSTANCE-level approximation, not a full fix: it
-    does not verify that the SPECIFIC problem category's own elements are
-    within bounds while the instance's other categories are outside them
-    (or vice versa) -- an instance that is partly visible still passes
-    this check even if the exact elements causing the failure are outside
-    the crop. Catching that precisely would mean transforming and checking
-    every element of the failing category individually, which this
-    defensive fallback path does not currently do. Reuses the same
-    world_to_view/ViewBasis projection resolve_view_bounds() and
-    compute_model_crop() already rely on elsewhere in this module, rather
-    than comparing raw view.CropBox coordinates directly -- CropBox is in
-    the view's own (possibly rotated) local frame, and comparing it
-    against host-space coordinates without that transform would be wrong
-    for any non-axis-aligned view.
-
-    Returns True (treat as potentially visible, i.e. still a hide
-    candidate) whenever the check cannot be completed -- raster/its
-    bounds_xy/view_basis may not be available in every caller, and an
-    unverifiable bbox must never silently exempt an instance that
-    genuinely needs hiding.
-    """
-    if raster is None:
-        return True
-    view_basis = getattr(raster, "view_basis", None)
-    bounds_xy = getattr(raster, "bounds_xy", None)
-    if view_basis is None or bounds_xy is None:
-        return True
-    try:
-        from .revit.view_basis import world_to_view
-        bbox = link_inst.get_BoundingBox(None)
-        if bbox is None or bbox.Min is None or bbox.Max is None:
-            return True
-        us = []
-        vs = []
-        for x in (bbox.Min.X, bbox.Max.X):
-            for y in (bbox.Min.Y, bbox.Max.Y):
-                for z in (bbox.Min.Z, bbox.Max.Z):
-                    u, v, _w = world_to_view((x, y, z), view_basis)
-                    us.append(u)
-                    vs.append(v)
-        inst_umin, inst_umax = min(us), max(us)
-        inst_vmin, inst_vmax = min(vs), max(vs)
-        return not (
-            inst_umax < bounds_xy.xmin or inst_umin > bounds_xy.xmax or
-            inst_vmax < bounds_xy.ymin or inst_vmin > bounds_xy.ymax
-        )
-    except Exception:
-        return True
-
-
-def _collect_link_category_filters(doc, view, diag=None, view_id=None):
+def _collect_link_category_filters(doc, view, is_colorable, diag=None, view_id=None):
     """Discover the union of policy-included, CategoryType.Model categories
     across every UNIQUE linked document referenced in this view.
 
@@ -466,30 +949,24 @@ def _collect_link_category_filters(doc, view, diag=None, view_id=None):
     RevitLinkInstance placements by underlying document identity (PathName)
     before scanning, then unions each unique document's model categories.
 
-    Returns ``(colorable, uncolorable, category_to_instances, always_hide_instances)``:
-      colorable / uncolorable: ordered lists of Category objects, sorted by
-        Name for a deterministic, reproducible palette-slot assignment
-        order. ``colorable`` categories get a ParameterFilterElement (see
-        _apply_link_category_filters); ``uncolorable`` ones are
-        policy-included but not filterable at all, so the caller must
-        suppress them instead -- see _model_categories_in_linked_doc's
-        docstring for why leaving them uncontrolled is not an option.
-      category_to_instances: {category_id_int: set(RevitLinkInstance)} --
-        every placement of every document that contains that category (not
-        just a representative one). The caller needs this to know exactly
-        which link instances to hide for an uncolorable category, and later
-        for any category _apply_link_category_filters reports as failed.
-      always_hide_instances: set(RevitLinkInstance) that must be hidden
-        regardless of any category's outcome, because the instance itself
-        doesn't honor host-view filters at all (see
-        _link_instance_respects_host_view_filters). Category-filter colors
-        for THIS instance's elements would never take effect even if every
-        category it contains got a perfectly good filter.
+    ``is_colorable`` is the shared predicate from
+    _resolve_colorable_category_predicate() -- passed in rather than resolved
+    here so this scan and the force-white safety net can never disagree about
+    a category (a category both of them claimed would be colored and whited;
+    one neither claimed would render uncontrolled).
+
+    Returns ``(colorable, uncolorable)``: ordered lists of Category objects,
+    sorted by Name for a deterministic, reproducible palette-slot assignment
+    order. ``colorable`` categories get a ParameterFilterElement (see
+    _apply_link_category_filters). ``uncolorable`` ones are returned for
+    reporting only -- the category-level force-white override already covers
+    them, so unlike the retired hide-instance mechanism the caller has nothing
+    further to do about them.
     """
-    from Autodesk.Revit.DB import FilteredElementCollector, RevitLinkInstance, ParameterFilterUtilities
+    from Autodesk.Revit.DB import FilteredElementCollector, RevitLinkInstance
     link_instances = list(FilteredElementCollector(doc, view.Id).OfClass(RevitLinkInstance))
     if not link_instances:
-        return [], [], {}, set()
+        return [], []
 
     unique_docs, unresolved_names = _dedupe_link_instances_by_document(link_instances)
     if unresolved_names and diag is not None:
@@ -502,38 +979,18 @@ def _collect_link_category_filters(doc, view, diag=None, view_id=None):
             view_id=view_id,
         )
 
-    filterable_ids = set(
-        cid.IntegerValue for cid in ParameterFilterUtilities.GetAllFilterableCategories()
-    )
-
     combined_colorable = {}
     combined_uncolorable = {}
-    category_to_instances = {}
-    always_hide_instances = set()
-    for path_name, info in unique_docs.items():
-        colorable, uncolorable = _model_categories_in_linked_doc(info["linked_doc"], filterable_ids)
-        doc_instances = info["instances"]
-
-        for cat in colorable + uncolorable:
-            category_to_instances.setdefault(cat.Id.IntegerValue, set()).update(doc_instances)
+    for _path_name, info in unique_docs.items():
+        colorable, uncolorable = _model_categories_in_linked_doc(info["linked_doc"], is_colorable)
         for cat in colorable:
-            cid_int = cat.Id.IntegerValue
-            if cid_int not in combined_colorable:
-                combined_colorable[cid_int] = cat
+            combined_colorable.setdefault(cat.Id.IntegerValue, cat)
         for cat in uncolorable:
-            cid_int = cat.Id.IntegerValue
-            if cid_int not in combined_uncolorable:
-                combined_uncolorable[cid_int] = cat
-
-        for link_inst in doc_instances:
-            if not _link_instance_respects_host_view_filters(view, link_inst, diag=diag, view_id=view_id):
-                always_hide_instances.add(link_inst)
+            combined_uncolorable.setdefault(cat.Id.IntegerValue, cat)
 
     return (
         sorted(combined_colorable.values(), key=lambda cat: cat.Name),
         sorted(combined_uncolorable.values(), key=lambda cat: cat.Name),
-        category_to_instances,
-        always_hide_instances,
     )
 
 
@@ -709,12 +1166,10 @@ def _collect_view_scoped_link_proxies(doc, view, cfg, diag=None, view_id=None):
     So the status carries the presence answer directly
     (``status.link_presence``, recorded upstream of all bbox work) and a
     completeness flag (``status.rvt_complete``) for the failures that
-    happen before presence can be recorded at all. A caller deciding to
-    LEAVE SOMETHING VISIBLE on the strength of an absence reads both -- see
-    _instances_to_hide_for_uncolorable_categories, which falls back to the
-    conservative document-wide hide whenever the scan is incomplete. An
-    empty presence set on a complete scan is a real answer: this view
-    genuinely resolves no LINK elements.
+    happen before presence can be recorded at all. Any caller reasoning about
+    an ABSENCE has to read both. An empty presence set on a complete scan is
+    a real answer: this view genuinely resolves no LINK elements. An empty
+    one on an incomplete scan says nothing at all.
     """
     from .revit.linked_documents import collect_all_linked_elements, LinkCollectionStatus
     status = LinkCollectionStatus()
@@ -742,107 +1197,8 @@ def _collect_view_scoped_link_proxies(doc, view, cfg, diag=None, view_id=None):
     return proxies, status
 
 
-def _instances_to_hide_for_uncolorable_categories(
-    categories, link_category_to_instances, link_status,
-    diag=None, view_id=None,
-):
-    """Link instances that must be hidden on account of an uncolorable or
-    failed-filter category, scoped to categories actually present in THIS
-    view rather than merely present somewhere in the linked document.
-
-    link_category_to_instances comes from _collect_link_category_filters(),
-    whose per-document category scan is deliberately document-wide and
-    unscoped (see _model_categories_in_linked_doc's docstring for why that is
-    right for DISCOVERY -- overinclusion there only costs a spare filter/
-    palette slot). Carrying that same unscoped mapping straight into a hide
-    decision is not equally harmless: view.HideElements() hides the ENTIRE
-    link instance, so one uncolorable category present anywhere in the
-    underlying document -- with zero elements in this view -- would take down
-    every genuinely colorable, correctly filtered category sharing that
-    placement. _link_instance_may_be_visible_in_view() does not catch this:
-    it only asks whether the INSTANCE as a whole reaches the view's bounds,
-    never whether the specific problem category's elements do.
-
-    So a category only justifies hiding a placement when the view-scoped scan
-    actually saw one of that category's elements under that placement. That
-    answer comes from ``link_status.link_presence``, NOT from the returned
-    proxy list: the collectors drop an element whose bbox is missing,
-    malformed, or untransformable AFTER having already resolved it as visible
-    here, so a proxy-derived answer would read a geometry failure as "category
-    absent" and leave the placement visible. Presence is recorded upstream of
-    all bbox work for exactly that reason (see LinkCollectionStatus). The
-    scan itself is the same full per-placement pass near-face-W already pays
-    for correctness (see _collect_near_face_w_data's docstring), paid once
-    per capture and shared.
-
-    Fails safe, never open: if the scan is incomplete
-    (``link_status.rvt_complete`` False -- a link that never enumerated, a
-    placement with no transform, an element that raised before its category
-    could be read) the original document-wide behavior is used unchanged,
-    because an unknown presence answer must not be read as "absent" --
-    rendering an uncontrolled native LINK color is the outcome this whole
-    hide path exists to prevent.
-    """
-    categories = list(categories)
-    if not categories:
-        return set()
-
-    if link_status is None or not getattr(link_status, "rvt_complete", False):
-        fallback = set()
-        for cat in categories:
-            fallback.update(link_category_to_instances.get(cat.Id.IntegerValue, ()))
-        if fallback and diag is not None:
-            diag.warn(
-                phase="color_id_buffer",
-                callsite="uncolorable_hide_scope",
-                message="View-scoped LINK presence is unavailable or incomplete; "
-                        "falling back to document-wide category presence for {0} "
-                        "uncolorable/failed categor(ies), which may hide link "
-                        "instance(s) whose colorable categories are visible in this "
-                        "view: {1}".format(
-                            len(categories),
-                            getattr(link_status, "failures", "no status"),
-                        ),
-                view_id=view_id,
-            )
-        return fallback
-
-    # DWG imports never enter link_presence: only the RVT link collectors
-    # record into it, so an import carrying the same category id can never
-    # keep an RVT placement hidden on its behalf.
-    present_pairs = link_status.link_presence
-
-    out = set()
-    spared = 0
-    for cat in categories:
-        cat_id_int = cat.Id.IntegerValue
-        for link_inst in link_category_to_instances.get(cat_id_int, ()):
-            try:
-                inst_id_int = int(link_inst.Id.IntegerValue)
-            except (AttributeError, TypeError, ValueError):
-                # Identity unreadable -- cannot prove absence, so keep the
-                # original conservative hide for this placement.
-                out.add(link_inst)
-                continue
-            if (int(cat_id_int), inst_id_int) in present_pairs:
-                out.add(link_inst)
-            else:
-                spared += 1
-    if spared and diag is not None:
-        diag.warn(
-            phase="color_id_buffer",
-            callsite="uncolorable_hide_scope",
-            message="{0} uncolorable/failed category-placement pairing(s) had no "
-                    "element present in this view; those link instances were NOT "
-                    "hidden on their account (document-wide presence alone is not "
-                    "grounds to hide a placement)".format(spared),
-            view_id=view_id,
-        )
-    return out
-
-
 def _collect_near_face_w_data(
-    doc, view, raster, cfg, resolved_ids, link_category_color_map, instances_to_hide,
+    doc, view, raster, cfg, resolved_ids, link_category_color_map,
     diag=None, view_id=None, link_proxies=None,
 ):
     """Collect near-face-W (nearest projected depth) and a UV bbox footprint
@@ -859,11 +1215,11 @@ def _collect_near_face_w_data(
     THIS host view (the same view-scoped Revit 2024+ FilteredElementCollector
     (doc, view.Id, link_inst.Id) overload -- or the legacy clip-volume
     fallback -- the rest of the pipeline already relies on for LINK
-    visibility), minus instances_to_hide -- the same placements export_
-    color_id_buffer_view itself hides for failing to be colorable at all.
-    A document-wide, unscoped category scan would otherwise let an element
-    hidden in this view (or simply out of the crop) compete as a candidate
-    even though it painted zero TIFF pixels.
+    visibility). A document-wide, unscoped category scan would otherwise let
+    an element hidden in this view (or simply out of the crop) compete as a
+    candidate even though it painted zero TIFF pixels. There is no longer a
+    hidden-placement exclusion to apply on top of that: Stage A hides no link
+    instances at all now (see _category_force_white_targets).
 
     Returns {"host": {"<elem_id>": entry}, "link": {"<link_inst_id>:<link_elem_id>": entry}}
     where entry is {"bbox_corners_uv": [[u,v],...] | None, "near_face_w": float | None,
@@ -875,10 +1231,8 @@ def _collect_near_face_w_data(
 
     ``link_proxies`` lets the caller hand in an already-collected view-scoped
     proxy list (export_color_id_buffer_view collects one per capture via
-    _collect_view_scoped_link_proxies and shares it with the uncolorable-
-    category hide decision, which must be made before this runs). Left None,
-    this function collects its own -- the standalone behavior its own tests
-    exercise.
+    _collect_view_scoped_link_proxies). Left None, this function collects its
+    own -- the standalone behavior its own tests exercise.
     """
     from .revit.collection import resolve_element_bbox, project_bbox_uv_and_near_face_w
 
@@ -926,7 +1280,6 @@ def _collect_near_face_w_data(
     link_out = {}
     colored_cat_names = set(link_category_color_map.keys())
     if colored_cat_names:
-        hidden_inst_ids = {li.Id.IntegerValue for li in instances_to_hide}
         # NOTE: this is the same full, per-placement RVT link scan export_
         # color_id_buffer_view's own host_only_cfg deliberately skips
         # elsewhere in this function (see the comment above its
@@ -937,10 +1290,8 @@ def _collect_near_face_w_data(
         # pipeline uses for LINK visibility) can guarantee a candidate
         # actually rendered in this view. Re-paying that scan here is a
         # deliberate, view-local cost for correctness, only when this view
-        # actually has a colored LINK category to identify. The caller shares
-        # its single per-capture scan via link_proxies so that cost is paid
-        # once even though the uncolorable-category hide decision needs the
-        # same view-scoped answer earlier in the capture.
+        # actually has a colored LINK category to identify. The caller passes
+        # its single per-capture scan in via link_proxies so it is paid once.
         if link_proxies is None:
             link_proxies, _status = _collect_view_scoped_link_proxies(
                 doc, view, cfg, diag=diag, view_id=view_id,
@@ -959,8 +1310,6 @@ def _collect_near_face_w_data(
             link_elem_id = getattr(proxy, "Id", None)
             if link_inst_id is None or link_elem_id is None:
                 continue
-            if link_inst_id.IntegerValue in hidden_inst_ids:
-                continue  # this placement is hidden entirely; none of its elements render
             link_inst_id_int = link_inst_id.IntegerValue
             link_elem_id_int = link_elem_id.IntegerValue
 
@@ -1346,13 +1695,14 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     # reference the same one; see _apply_link_category_filters's docstring).
     created_link_category_filter_ids = []
     reused_link_category_filter_ids = []
-    # Populated only if a LINK category can't be colored at all (not
-    # filterable, filter application failed, or the instance doesn't honor
-    # host-view filters) -- see the instances_to_hide block below. Tracks
-    # "was_hidden" (state before we touched it) exactly like
-    # category_hidden_state, so restore only un-hides instances THIS run
-    # hid, never one that started out hidden for some unrelated reason.
-    hidden_link_instance_state = {}
+    # {category_id_int: _capture_category_ogs_fields() snapshot} for every
+    # category the force-white safety net paints UNCOLORABLE_SENTINEL_RGB.
+    # Plain data only, captured before the first mutation of that category and
+    # never re-captured afterward -- same live-API-object-across-transaction
+    # caution as orig_smooth_edges/orig_crop_box below.
+    category_force_white_state = {}
+    force_white_category_ids = []
+    force_white_failures = 0
     category_hidden_state = _hidden_category_state(doc, view)
     solid_pattern_id = _get_solid_pattern_id(doc)
     if solid_pattern_id is None:
@@ -1427,6 +1777,45 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 phase="color_id_buffer",
                 callsite="show_shadows_capture",
                 message=str(ex),
+                view_id=view_id,
+            )
+
+    # Background (Graphic Display Options > Background). Revit exposes this as
+    # View.GetBackground()/SetBackground(ViewDisplayBackground) since 2014, and
+    # SetBackground is only accepted on 3D, section and elevation views -- a
+    # plan view's canvas color is an application-level Options setting with no
+    # API surface at all, so BACKGROUND_SENTINEL_RGB simply cannot be applied
+    # there and the attempt below records "unchanged (unsupported)" rather than
+    # pretending otherwise.
+    #
+    # Captured as three plain RGB triples (sky/horizon/ground) plus ImagePath,
+    # never as the live ViewDisplayBackground object -- same caution as
+    # orig_smooth_edges/orig_crop_box. ViewDisplayBackground exposes no public
+    # constructor, only ViewDisplayBackground.CreateGradient(sky, horizon,
+    # ground) and the image variant, so an IMAGE background cannot be faithfully
+    # rebuilt from a gradient capture. When one is in use the suppression is
+    # skipped entirely rather than risk replacing the user's image background
+    # with a flat grey permanently: an unsuppressed background costs this
+    # capture a sentinel, a bad restore costs the user their view.
+    orig_background_rgbs = None
+    orig_background_image_path = None
+    try:
+        _bg = view.GetBackground()
+        if _bg is not None:
+            orig_background_image_path = getattr(_bg, "ImagePath", None) or None
+            _sky = _color_to_rgb_or_none(getattr(_bg, "SkyColor", None))
+            _horizon = _color_to_rgb_or_none(getattr(_bg, "HorizonColor", None))
+            _ground = _color_to_rgb_or_none(getattr(_bg, "GroundColor", None))
+            if None not in (_sky, _horizon, _ground):
+                orig_background_rgbs = (_sky, _horizon, _ground)
+    except Exception as ex:
+        if diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="background_capture",
+                message="Could not read this view's background; the background sentinel "
+                        "will not be applied and the export keeps Revit's default "
+                        "canvas: {0}".format(ex),
                 view_id=view_id,
             )
 
@@ -1655,6 +2044,41 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                         view_id=view_id,
                     )
 
+        # Force the canvas to BACKGROUND_SENTINEL_RGB, following the same
+        # capture/apply/restore shape as shadows and smooth edges above.
+        # A solid color is expressed as a gradient with all three stops equal
+        # -- ViewDisplayBackground has no solid-color creator, and Revit
+        # renders an all-equal gradient as a flat fill. Skipped outright when
+        # the capture above could not produce a restorable gradient (an image
+        # background, or an unreadable one), since restoring is the part that
+        # must not fail.
+        applied_background = "unchanged"
+        if orig_background_image_path:
+            applied_background = "unchanged (image background)"
+        elif orig_background_rgbs is None:
+            applied_background = "unchanged (not captured)"
+        else:
+            try:
+                from Autodesk.Revit.DB import ViewDisplayBackground
+                sentinel = Color(*[int(c) for c in BACKGROUND_SENTINEL_RGB])
+                view.SetBackground(
+                    ViewDisplayBackground.CreateGradient(sentinel, sentinel, sentinel)
+                )
+                applied_background = list(BACKGROUND_SENTINEL_RGB)
+            except Exception as ex:
+                # Expected on plan views, which reject SetBackground outright.
+                applied_background = "unchanged (failed)"
+                if diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite="background",
+                        message="Could not apply the background sentinel (expected on view "
+                                "types Revit does not allow a background on, e.g. plan "
+                                "views); the export keeps Revit's default canvas "
+                                "color: {0}".format(ex),
+                        view_id=view_id,
+                    )
+
         # Re-collect under the neutral phase state: elements the view's original
         # phase filter hid (e.g. demolished/temporary) but the neutral filter shows
         # would otherwise be rendered by ExportImage without a color assignment.
@@ -1710,6 +2134,14 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         resolved_ids = resolve_all(doc, host_elements)
         count_host = len(resolved_ids)
 
+        # One colorability answer for this whole capture: LINK category-filter
+        # discovery below and the force-white safety net further down both read
+        # the SAME predicate, so no category can be claimed by both or by
+        # neither. See _resolve_colorable_category_predicate.
+        is_colorable, colorable_source = _resolve_colorable_category_predicate(
+            diag=diag, view_id=view_id
+        )
+
         # Respect the same include_linked_rvt opt-out collect_all_linked_elements()
         # always honored for the retired per-element path: discovery scans every
         # RevitLinkInstance in the view regardless of config, so skipping it
@@ -1717,15 +2149,23 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # way an opted-out capture reports zero LINK assignments and applies no
         # category filters, matching prior behavior.
         if getattr(cfg, "include_linked_rvt", False):
-            (
-                link_categories,
-                uncolorable_link_categories,
-                link_category_to_instances,
-                always_hide_link_instances,
-            ) = _collect_link_category_filters(doc, view, diag=diag, view_id=view_id)
+            link_categories, uncolorable_link_categories = _collect_link_category_filters(
+                doc, view, is_colorable, diag=diag, view_id=view_id
+            )
         else:
             link_categories, uncolorable_link_categories = [], []
-            link_category_to_instances, always_hide_link_instances = {}, set()
+        if uncolorable_link_categories and diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="link_category_filter_discovery",
+                message="{0} policy-included LINK categor(ies) are not on the vetted "
+                        "colorable whitelist and get no assigned color; they are covered "
+                        "by the category-level force-white safety net instead of hiding "
+                        "their link instances: {1}".format(
+                            len(uncolorable_link_categories),
+                            sorted(cat.Name for cat in uncolorable_link_categories)),
+                view_id=view_id,
+            )
         count_link_categories = len(link_categories)
         total_count = count_host + count_link_categories
 
@@ -1749,7 +2189,32 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 categories_touched.add(cat.Id.IntegerValue)
         for cat in link_categories:
             categories_touched.add(cat.Id.IntegerValue)
+
+        # Force-white safety net: every CategoryType.Model category this
+        # capture will NOT hand a real assigned color gets a category-level
+        # UNCOLORABLE_SENTINEL_RGB override -- HOST and LINK alike. This
+        # replaces the retired hide-instance mechanism entirely, and closes
+        # the separate HOST-side gap where policy-EXCLUDED but
+        # CategoryType.Model categories (Rooms, Areas, MEP Spaces, Point
+        # Clouds) rendered with native, uncontrolled color because
+        # _hidden_category_state only covers CategoryType.Annotation plus
+        # VIEW_ONLY_MODEL_BIC_NAMES. See _category_force_white_targets.
+        force_white_category_ids = _category_force_white_targets(
+            doc, is_colorable, already_hidden_ids=category_hidden_state.keys(),
+            diag=diag, view_id=view_id,
+        )
+        force_white_ids_set = set(force_white_category_ids)
+
+        # Halftone neutralization runs only for categories that are NOT
+        # force-whited: a force-whited category's override already sets
+        # Halftone False as part of the flat-color paint, and its full field
+        # snapshot (taken inside _force_white_category, before any mutation)
+        # is what restores its halftone. Running both on one category would
+        # let the halftone pass mutate it first and the force-white snapshot
+        # then capture Stage A's own mutation as the user's original state.
         for cat_id_int in categories_touched:
+            if cat_id_int in force_white_ids_set:
+                continue
             try:
                 cat_id = ElementId(int(cat_id_int))
                 cat_ogs = view.GetCategoryOverrides(cat_id)
@@ -1764,6 +2229,13 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                         message=str(ex),
                         view_id=view_id,
                     )
+
+        for cat_id_int in force_white_category_ids:
+            if not _force_white_category(
+                view, cat_id_int, solid_pattern_id, category_force_white_state,
+                diag=diag, view_id=view_id,
+            ):
+                force_white_failures += 1
 
         # LINK elements are colored via one ParameterFilterElement per category
         # applied to the view (SetFilterOverrides), not per-element — Revit's
@@ -1781,94 +2253,45 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             doc, view, view_id, categories_with_colors, solid_pattern_id, diag=diag
         )
 
-        # Categories that are policy-included but couldn't be colored at all
-        # (not Revit-filterable -- uncolorable_link_categories), whose filter
-        # creation/application failed (failed_link_categories), or whose
-        # link instance doesn't honor host-view filters at all regardless of
-        # category outcome (always_hide_link_instances) must not render with
-        # an uncontrolled native color: that color could coincidentally
-        # match a HOST element's deterministic palette RGB and the decoder
-        # would silently attribute those pixels to the wrong element.
-        #
-        # Hidden at the LINK INSTANCE level (view.HideElements), never at
-        # the category level (view.SetCategoryHidden): a category like
-        # "Walls" is typically present in BOTH host and linked content, and
-        # hiding it view-wide would take every HOST wall down with it even
-        # though color_map/the HOST paint loop already gave them real
-        # element-level overrides. Mirrors the retired per-element path's
-        # own "hide the instance whose override failed" precedent exactly.
-        #
-        # Scoped to view presence, not document-wide presence: link_category_
-        # to_instances comes from a deliberately unscoped per-document scan,
-        # and feeding that straight into a whole-instance hide let a category
-        # present ANYWHERE in a linked document -- with zero elements in this
-        # view -- take down every colorable category sharing that placement.
-        # The view-scoped answer comes from one collect_all_linked_elements()
-        # scan per capture, collected here rather than inside _collect_near_
-        # face_w_data (which used to own the only such call) because the hide
-        # decision below has to be final before near-face-W runs; the same
-        # list is then handed to near-face-W so the scan is still paid exactly
-        # once, keeping this module's "deliberate, view-local cost for
-        # correctness, only when needed" bargain rather than doubling it.
-        uncolorable_or_failed = list(uncolorable_link_categories) + list(failed_link_categories)
-        link_proxies, link_status = [], None
-        if uncolorable_or_failed or link_category_color_map:
-            link_proxies, link_status = _collect_view_scoped_link_proxies(
-                doc, view, cfg, diag=diag, view_id=view_id,
-            )
-
-        instances_to_hide = set(always_hide_link_instances)
-        instances_to_hide.update(
-            _instances_to_hide_for_uncolorable_categories(
-                uncolorable_or_failed, link_category_to_instances,
-                link_status, diag=diag, view_id=view_id,
-            )
-        )
-        # Drop instances that don't even reach this view's bounds -- see
-        # _link_instance_may_be_visible_in_view's docstring for exactly what
-        # this does and does not catch (instance-level, not per-category).
-        instances_to_hide = {
-            link_inst for link_inst in instances_to_hide
-            if _link_instance_may_be_visible_in_view(link_inst, raster)
-        }
+        # A colorable category whose filter could not actually be created or
+        # applied is the one gap the force-white target scan cannot see in
+        # advance: it IS on the vetted whitelist, so the scan correctly
+        # excluded it as "gets a real assigned color", and only
+        # _apply_link_category_filters knows it did not. Force-white it now,
+        # with the same override mechanism, so it falls back into the safety
+        # net rather than out of it. The snapshot dict is shared, and
+        # _force_white_category keeps the FIRST snapshot per category, so a
+        # category the halftone pass already touched restores correctly.
+        for cat in failed_link_categories:
+            failed_cat_id = _category_id_int(cat)
+            if failed_cat_id is None or failed_cat_id in force_white_ids_set:
+                continue
+            force_white_ids_set.add(failed_cat_id)
+            force_white_category_ids.append(failed_cat_id)
+            # The halftone pass above already touched this category (it is a
+            # colorable LINK category, so it was in categories_touched) --
+            # see _force_white_after_halftone for why that needs handling.
+            if not _force_white_after_halftone(
+                view, failed_cat_id, solid_pattern_id, category_force_white_state,
+                category_halftone_state, diag=diag, view_id=view_id,
+            ):
+                force_white_failures += 1
 
         # Phase 1b: near-face-W + UV bbox footprint collection for every HOST
         # and LINK element resolved above -- a pure read, so it runs here
-        # (identity/instance sets are all finalized) rather than depending on
-        # anything painted/exported below. Additive-only sidecar data; never
-        # touches color_assignment_map or link_category_color_map.
+        # (the identity set is finalized) rather than depending on anything
+        # painted/exported below. Additive-only sidecar data; never touches
+        # color_assignment_map or link_category_color_map. The view-scoped
+        # LINK scan it needs is collected once here and handed in.
+        link_proxies = []
+        if link_category_color_map:
+            link_proxies, _link_status = _collect_view_scoped_link_proxies(
+                doc, view, cfg, diag=diag, view_id=view_id,
+            )
         near_face_w_map = _collect_near_face_w_data(
             doc, view, raster, cfg, resolved_ids, link_category_color_map,
-            instances_to_hide, diag=diag, view_id=view_id,
-            link_proxies=link_proxies,
+            diag=diag, view_id=view_id, link_proxies=link_proxies,
         )
-
-        for link_inst in instances_to_hide:
-            try:
-                link_inst_id_int = link_inst.Id.IntegerValue
-                if link_inst_id_int in hidden_link_instance_state:
-                    continue
-                already_hidden = bool(link_inst.IsHidden(view))
-                hidden_link_instance_state[link_inst_id_int] = {
-                    "name": getattr(link_inst, "Name", None),
-                    "was_hidden": already_hidden,
-                }
-                if not already_hidden:
-                    import System.Collections.Generic as SCG
-                    ids_to_hide = SCG.List[ElementId]()
-                    ids_to_hide.Add(link_inst.Id)
-                    view.HideElements(ids_to_hide)
-            except Exception as ex:
-                if diag is not None:
-                    diag.warn(
-                        phase="color_id_buffer",
-                        callsite="hide_uncolorable_link_instance",
-                        message="Link instance '{0}' could not be hidden after failing to be "
-                                "colored via category filter; its native LINK color(s) may "
-                                "alias a HOST element's palette ID in this view's ID "
-                                "buffer: {1}".format(getattr(link_inst, "Name", link_inst_id_int), ex),
-                        view_id=view_id,
-                    )
 
         # Paint per-element, but never let one element's failure (some categories/
         # nested sub-components legitimately reject graphic overrides) roll back
@@ -1918,10 +2341,11 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
 
         # Best-effort restore: every step below is independently guarded. Revit
         # transactions are all-or-nothing on RollBack, so a single failing step
-        # (a stale ElementId, an UnhideElements refusal, ...) must never be able
-        # to roll back every other restore step that already succeeded — that
-        # would leave the document sitting in the suppressed/colored Stage A
-        # state permanently instead of just missing the one failed piece.
+        # (a stale ElementId, a category that refuses an override, ...) must
+        # never be able to roll back every other restore step that already
+        # succeeded — that would leave the document sitting in the suppressed/
+        # colored Stage A state permanently instead of just missing the one
+        # failed piece.
         def _restore_step(callsite, fn):
             try:
                 fn()
@@ -1982,6 +2406,21 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                             )
             _restore_step("restore_show_shadows", _restore_show_shadows)
 
+        # Gated on the sentinel actually having been applied, not merely on a
+        # capture existing: a plain view rejects SetBackground outright, and
+        # attempting the restore there would log a restore ERROR on every such
+        # view for a mutation that never happened.
+        if isinstance(applied_background, list):
+            def _restore_background():
+                from Autodesk.Revit.DB import ViewDisplayBackground
+                sky, horizon, ground = orig_background_rgbs
+                view.SetBackground(ViewDisplayBackground.CreateGradient(
+                    Color(int(sky[0]), int(sky[1]), int(sky[2])),
+                    Color(int(horizon[0]), int(horizon[1]), int(horizon[2])),
+                    Color(int(ground[0]), int(ground[1]), int(ground[2])),
+                ))
+            _restore_step("restore_background", _restore_background)
+
         if orig_crop_box is not None:
             def _restore_crop_box():
                 view.CropBox = orig_crop_box
@@ -2010,19 +2449,30 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 view.SetElementOverrides(ElementId(int(eid.IntegerValue)), OverrideGraphicSettings())
             _restore_step("restore_element_overrides", _restore_element_override)
 
-        # Unhide link instances this run hid because a category couldn't be
-        # colored at all (see instances_to_hide above) -- only ones this run
-        # actually changed (was_hidden False before we touched it), matching
-        # the retired per-element path's own restore logic exactly.
-        for link_inst_id_int, hstate in hidden_link_instance_state.items():
-            if hstate["was_hidden"]:
-                continue
-            def _restore_unhide_link_instance(link_inst_id_int=link_inst_id_int):
-                import System.Collections.Generic as SCG
-                unhide_list = SCG.List[ElementId]()
-                unhide_list.Add(ElementId(int(link_inst_id_int)))
-                view.UnhideElements(unhide_list)
-            _restore_step("restore_unhide_link_instance", _restore_unhide_link_instance)
+        # Put back exactly the category-override fields the force-white safety
+        # net overwrote, from the plain-data snapshot taken before the first
+        # mutation of each category. Disjoint from category_halftone_state
+        # above by construction (the halftone pass skips force-white targets,
+        # and _force_white_after_halftone moves the one category that can end
+        # up in both), so these two loops never write the same category and
+        # their relative order does not matter. Every other field on that category's
+        # overrides (line weights, line patterns, ...) was never touched, so
+        # nothing else needs restoring -- which is why this is a field-level
+        # write-back rather than the blank-OverrideGraphicSettings() reset the
+        # element-level restore above can safely use.
+        for cat_id_int, snapshot in category_force_white_state.items():
+            def _restore_force_white(cat_id_int=cat_id_int, snapshot=snapshot):
+                cat_id = ElementId(int(cat_id_int))
+                cat_ogs = view.GetCategoryOverrides(cat_id)
+                unrestored = _restore_category_ogs_fields(cat_ogs, snapshot)
+                view.SetCategoryOverrides(cat_id, cat_ogs)
+                if unrestored:
+                    raise RuntimeError(
+                        "Category {0}: force-white override restored, but these fields "
+                        "could not be written back and keep Stage A's values: "
+                        "{1}".format(cat_id_int, unrestored)
+                    )
+            _restore_step("restore_category_force_white", _restore_force_white)
 
         # Filters and the phase filter are restored last (see note above) —
         # reverting the phase filter can trigger regeneration of curtain-grid
@@ -2143,6 +2593,34 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "applied_display_style": applied_display_style,
         "applied_smooth_edges": applied_smooth_edges,
         "applied_show_shadows": applied_show_shadows,
+        # The two reserved sentinel colors this capture used, recorded so a
+        # decoder reads them from the sidecar rather than hardcoding them.
+        # "uncolorable" is what every force-whited category renders;
+        # "background" is the canvas, and is only meaningful when
+        # applied_background below is a list (the value was actually applied).
+        "sentinel_colors": {
+            "uncolorable": list(UNCOLORABLE_SENTINEL_RGB),
+            "background": list(BACKGROUND_SENTINEL_RGB),
+        },
+        "applied_background": applied_background,
+        # Where the "can Stage A color this category?" answer came from:
+        # "frozen_whitelist" (VETTED_COLORABLE_CATEGORY_NAMES) or
+        # "live_filterable_lookup" (the pre-freeze fallback -- a capture
+        # recording this is NOT reproducible from the source tree alone).
+        "colorable_category_source": colorable_source,
+        # Categories painted UNCOLORABLE_SENTINEL_RGB at the category level,
+        # and how many of those overrides Revit refused. A non-zero failure
+        # count means some uncontrolled content may still render a native
+        # color in this capture.
+        "force_white_category_ids": sorted(force_white_category_ids),
+        "force_white_failures": force_white_failures,
+        # Policy-included LINK categories that are not on the vetted colorable
+        # whitelist. They receive no assigned color; the force-white net above
+        # covers them. Reported for auditability -- a category showing up here
+        # that should be colorable means the whitelist needs recapturing.
+        "uncolorable_link_categories": sorted(
+            cat.Name for cat in uncolorable_link_categories
+        ),
         "categories_hidden": category_hidden_state,
         "filter_state": filter_state,
         "phase_filter_state": phase_filter_state,
