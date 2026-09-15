@@ -681,9 +681,141 @@ def _finite_or_none(value):
     return value if math.isfinite(value) else None
 
 
+def _collect_view_scoped_link_proxies(doc, view, cfg, diag=None, view_id=None):
+    """View-scoped LINK/DWG element collection, done ONCE per Stage A capture
+    and shared by every consumer in export_color_id_buffer_view that needs to
+    know what a linked document actually contributes to THIS view.
+
+    Delegates entirely to revit/linked_documents.collect_all_linked_elements()
+    -- the same view-scoped Revit 2024+ FilteredElementCollector(doc, view.Id,
+    link_inst.Id) overload (or the legacy clip-volume fallback) the rest of the
+    pipeline already relies on for LINK visibility, and the same authoritative
+    collection_policy inclusion rules _model_categories_in_linked_doc() applies
+    during category discovery.
+
+    Returns ``(proxies, ok)``. ``ok`` is False when the scan itself raised:
+    callers must NOT read an empty-because-it-failed list as "nothing is
+    present in this view" and relax a safety decision on that basis (see
+    _instances_to_hide_for_uncolorable_categories, which falls back to the
+    conservative document-wide hide in that case). An empty list with
+    ``ok`` True is a real answer: this view genuinely resolves no LINK
+    elements.
+    """
+    from .revit.linked_documents import collect_all_linked_elements
+    try:
+        return list(collect_all_linked_elements(doc, view, cfg, diag=diag)), True
+    except Exception as ex:
+        if diag is not None:
+            diag.warn(
+                phase="collection",
+                callsite="view_scoped_link_collect",
+                message="Failed to collect view-scoped LINK elements: {0}".format(ex),
+                view_id=view_id,
+            )
+        return [], False
+
+
+def _instances_to_hide_for_uncolorable_categories(
+    categories, link_category_to_instances, link_proxies, link_scan_ok,
+    diag=None, view_id=None,
+):
+    """Link instances that must be hidden on account of an uncolorable or
+    failed-filter category, scoped to categories actually present in THIS
+    view rather than merely present somewhere in the linked document.
+
+    link_category_to_instances comes from _collect_link_category_filters(),
+    whose per-document category scan is deliberately document-wide and
+    unscoped (see _model_categories_in_linked_doc's docstring for why that is
+    right for DISCOVERY -- overinclusion there only costs a spare filter/
+    palette slot). Carrying that same unscoped mapping straight into a hide
+    decision is not equally harmless: view.HideElements() hides the ENTIRE
+    link instance, so one uncolorable category present anywhere in the
+    underlying document -- with zero elements in this view -- would take down
+    every genuinely colorable, correctly filtered category sharing that
+    placement. _link_instance_may_be_visible_in_view() does not catch this:
+    it only asks whether the INSTANCE as a whole reaches the view's bounds,
+    never whether the specific problem category's elements do.
+
+    So a category only justifies hiding a placement when the view-scoped
+    proxy list actually contains one of that category's elements under that
+    placement. The cost is the same full per-placement scan near-face-W
+    already pays for correctness (see _collect_near_face_w_data's docstring),
+    and it is paid once per capture: export_color_id_buffer_view collects the
+    proxies up front via _collect_view_scoped_link_proxies() and hands the
+    same list to both consumers.
+
+    Fails safe, never open: if the view-scoped scan did not succeed
+    (``link_scan_ok`` False) the original document-wide behavior is used
+    unchanged, because an unknown presence answer must not be read as
+    "absent" -- rendering an uncontrolled native LINK color is the outcome
+    this whole hide path exists to prevent.
+    """
+    categories = list(categories)
+    if not categories:
+        return set()
+
+    if not link_scan_ok:
+        fallback = set()
+        for cat in categories:
+            fallback.update(link_category_to_instances.get(cat.Id.IntegerValue, ()))
+        if fallback and diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="uncolorable_hide_scope",
+                message="View-scoped LINK collection unavailable; falling back to "
+                        "document-wide category presence for {0} uncolorable/failed "
+                        "categor(ies), which may hide link instance(s) whose "
+                        "colorable categories are visible in this "
+                        "view".format(len(categories)),
+                view_id=view_id,
+            )
+        return fallback
+
+    present_pairs = set()
+    for proxy in link_proxies or ():
+        if getattr(proxy, "source_type", None) != "LINK":
+            continue
+        cat = getattr(proxy, "Category", None)
+        link_inst_id = getattr(proxy, "LinkInstanceId", None)
+        if cat is None or link_inst_id is None:
+            continue
+        try:
+            present_pairs.add((int(cat.Id.IntegerValue), int(link_inst_id.IntegerValue)))
+        except (AttributeError, TypeError, ValueError):
+            continue
+
+    out = set()
+    spared = 0
+    for cat in categories:
+        cat_id_int = cat.Id.IntegerValue
+        for link_inst in link_category_to_instances.get(cat_id_int, ()):
+            try:
+                inst_id_int = int(link_inst.Id.IntegerValue)
+            except (AttributeError, TypeError, ValueError):
+                # Identity unreadable -- cannot prove absence, so keep the
+                # original conservative hide for this placement.
+                out.add(link_inst)
+                continue
+            if (int(cat_id_int), inst_id_int) in present_pairs:
+                out.add(link_inst)
+            else:
+                spared += 1
+    if spared and diag is not None:
+        diag.warn(
+            phase="color_id_buffer",
+            callsite="uncolorable_hide_scope",
+            message="{0} uncolorable/failed category-placement pairing(s) had no "
+                    "element present in this view; those link instances were NOT "
+                    "hidden on their account (document-wide presence alone is not "
+                    "grounds to hide a placement)".format(spared),
+            view_id=view_id,
+        )
+    return out
+
+
 def _collect_near_face_w_data(
     doc, view, raster, cfg, resolved_ids, link_category_color_map, instances_to_hide,
-    diag=None, view_id=None,
+    diag=None, view_id=None, link_proxies=None,
 ):
     """Collect near-face-W (nearest projected depth) and a UV bbox footprint
     for every HOST and LINK element resolved by export_color_id_buffer_view,
@@ -712,9 +844,15 @@ def _collect_near_face_w_data(
     view basis that cannot be resolved records near_face_w/bbox_corners_uv
     as None rather than omitting the element entirely -- CLAUDE.md's "no
     silent failure": every element in the resolved set gets an entry.
+
+    ``link_proxies`` lets the caller hand in an already-collected view-scoped
+    proxy list (export_color_id_buffer_view collects one per capture via
+    _collect_view_scoped_link_proxies and shares it with the uncolorable-
+    category hide decision, which must be made before this runs). Left None,
+    this function collects its own -- the standalone behavior its own tests
+    exercise.
     """
     from .revit.collection import resolve_element_bbox, project_bbox_uv_and_near_face_w
-    from .revit.linked_documents import collect_all_linked_elements
 
     vb = getattr(raster, "view_basis", None) if raster is not None else None
 
@@ -771,19 +909,14 @@ def _collect_near_face_w_data(
         # pipeline uses for LINK visibility) can guarantee a candidate
         # actually rendered in this view. Re-paying that scan here is a
         # deliberate, view-local cost for correctness, only when this view
-        # actually has a colored LINK category to identify.
-        try:
-            link_proxies = collect_all_linked_elements(doc, view, cfg, diag=diag)
-        except Exception as ex:
-            link_proxies = []
-            if diag is not None:
-                diag.warn(
-                    phase="collection",
-                    callsite="near_face_w.link_collect",
-                    message="Failed to collect view-scoped LINK elements for near_face_w "
-                            "collection: {0}".format(ex),
-                    view_id=view_id,
-                )
+        # actually has a colored LINK category to identify. The caller shares
+        # its single per-capture scan via link_proxies so that cost is paid
+        # once even though the uncolorable-category hide decision needs the
+        # same view-scoped answer earlier in the capture.
+        if link_proxies is None:
+            link_proxies, _ok = _collect_view_scoped_link_proxies(
+                doc, view, cfg, diag=diag, view_id=view_id,
+            )
 
         for proxy in link_proxies:
             # DWG imports are explicitly out of scope for Phase 1b (see this
@@ -1636,9 +1769,33 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # though color_map/the HOST paint loop already gave them real
         # element-level overrides. Mirrors the retired per-element path's
         # own "hide the instance whose override failed" precedent exactly.
+        #
+        # Scoped to view presence, not document-wide presence: link_category_
+        # to_instances comes from a deliberately unscoped per-document scan,
+        # and feeding that straight into a whole-instance hide let a category
+        # present ANYWHERE in a linked document -- with zero elements in this
+        # view -- take down every colorable category sharing that placement.
+        # The view-scoped answer comes from one collect_all_linked_elements()
+        # scan per capture, collected here rather than inside _collect_near_
+        # face_w_data (which used to own the only such call) because the hide
+        # decision below has to be final before near-face-W runs; the same
+        # list is then handed to near-face-W so the scan is still paid exactly
+        # once, keeping this module's "deliberate, view-local cost for
+        # correctness, only when needed" bargain rather than doubling it.
+        uncolorable_or_failed = list(uncolorable_link_categories) + list(failed_link_categories)
+        link_proxies, link_scan_ok = [], True
+        if uncolorable_or_failed or link_category_color_map:
+            link_proxies, link_scan_ok = _collect_view_scoped_link_proxies(
+                doc, view, cfg, diag=diag, view_id=view_id,
+            )
+
         instances_to_hide = set(always_hide_link_instances)
-        for cat in list(uncolorable_link_categories) + list(failed_link_categories):
-            instances_to_hide.update(link_category_to_instances.get(cat.Id.IntegerValue, ()))
+        instances_to_hide.update(
+            _instances_to_hide_for_uncolorable_categories(
+                uncolorable_or_failed, link_category_to_instances,
+                link_proxies, link_scan_ok, diag=diag, view_id=view_id,
+            )
+        )
         # Drop instances that don't even reach this view's bounds -- see
         # _link_instance_may_be_visible_in_view's docstring for exactly what
         # this does and does not catch (instance-level, not per-category).
@@ -1655,6 +1812,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         near_face_w_map = _collect_near_face_w_data(
             doc, view, raster, cfg, resolved_ids, link_category_color_map,
             instances_to_hide, diag=diag, view_id=view_id,
+            link_proxies=link_proxies,
         )
 
         for link_inst in instances_to_hide:

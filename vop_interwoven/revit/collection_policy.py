@@ -95,8 +95,12 @@ _EXCLUDED_BIC_NAMES_GLOBAL: Tuple[str, ...] = (
     "OST_ImportObjectStyles",
 )
 
-# Fallback excluded names used only when doc.Settings resolution is unavailable (pytest).
-# Must stay in sync with _EXCLUDED_BIC_NAMES_GLOBAL human-readable names.
+# Human-readable category names excluded by should_include_element's name check.
+# That check runs unconditionally and FIRST (inside and outside Revit alike), so
+# this set is not merely a pytest fallback for _EXCLUDED_BIC_NAMES_GLOBAL: the
+# first block below mirrors that tuple's names one-for-one and must stay in sync
+# with it, while the second block holds names with no BuiltInCategory counterpart
+# in that tuple, excluded by name only.
 _FALLBACK_EXCLUDED_CATEGORY_NAMES = {
     "Grids",
     "Grid Heads",
@@ -120,6 +124,23 @@ _FALLBACK_EXCLUDED_CATEGORY_NAMES = {
     "Point Clouds",
     "RVT Links",
     "Imports",
+    # Non-physical reference/metadata categories confirmed (empirically, via a
+    # real LINK uncolorable-category diagnostic, not assumed) to report
+    # CategoryType.Model in Revit's API despite carrying no visible model
+    # geometry.  Each one previously reached color_id_buffer.py's
+    # _model_categories_in_linked_doc "uncolorable" branch and could trigger
+    # whole-link-instance hiding for an unrelated, genuinely colorable
+    # category sharing the same instance -- the second half of that failure
+    # mode is fixed in color_id_buffer.py by scoping the hide decision to
+    # categories actually present in the view.
+    "Internal Origin",
+    "Project Base Point",
+    "Survey Point",
+    "Sheets",
+    "Project Information",
+    "Material Assets",
+    "Materials",
+    "Legend Components",
 }
 
 

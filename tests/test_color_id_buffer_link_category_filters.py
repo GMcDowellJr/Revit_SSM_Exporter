@@ -663,3 +663,172 @@ def test_host_element_override_and_link_category_filter_are_independent_calls():
     assert len(view.element_override_calls) == 1, "HOST element still gets its own override"
     assert view.element_override_calls[0][0] is host_eid
     assert view.element_override_calls[0][1].calls["SetProjectionLineColor"][0] == host_color
+
+
+# --- _instances_to_hide_for_uncolorable_categories: hide only for a --------
+# --- category actually present in THIS view ---------------------------------
+
+class _FakeLinkInstanceWithId(_FakeLinkInstance):
+    """A placement the hide decision can identify by ElementId -- the real
+    _collect_link_category_filters hands back live RevitLinkInstance objects
+    whose .Id is what LinkedElementProxy.LinkInstanceId points back at."""
+
+    def __init__(self, name, inst_id):
+        super().__init__(name, None)
+        self.Id = _FakeElementId(inst_id)
+
+
+class _FakeLinkProxy(object):
+    """Stands in for revit/linked_documents.LinkedElementProxy: only the
+    source_type / Category / LinkInstanceId surface the hide decision reads."""
+
+    def __init__(self, category, link_inst_id, source_type="LINK"):
+        self.Category = category
+        self.LinkInstanceId = _FakeElementId(link_inst_id)
+        self.source_type = source_type
+
+
+def test_uncolorable_category_absent_from_view_does_not_hide_its_placement():
+    """The bug this fixes: an uncolorable category present document-wide but
+    with ZERO elements in this view took the whole placement down via
+    view.HideElements, killing the colorable, correctly-filtered categories
+    (Walls) rendering from that same instance."""
+    cat_odd = _FakeCategory("OddModelCategory", 15)
+    inst = _FakeLinkInstanceWithId("exam room 1", 5001)
+    # Discovery's document-wide scan found OddModelCategory in this
+    # placement's underlying document...
+    link_category_to_instances = {cat_odd.Id.IntegerValue: {inst}}
+    # ...but the view-scoped collection resolves only Walls elements from it.
+    link_proxies = [_FakeLinkProxy(_FakeCategory("Walls", 10), 5001)]
+    diag = _FakeDiag()
+
+    hidden = color_id_buffer._instances_to_hide_for_uncolorable_categories(
+        [cat_odd], link_category_to_instances, link_proxies, True, diag=diag, view_id=1
+    )
+
+    assert hidden == set(), (
+        "document-wide presence alone must not hide a placement -- no "
+        "OddModelCategory element is in this view, so nothing of it can "
+        "render an uncontrolled native color here"
+    )
+    assert any(w["callsite"] == "uncolorable_hide_scope" for w in diag.warnings), (
+        "sparing a placement is a real decision, not a silent one (CLAUDE.md "
+        "'no silent failure')"
+    )
+
+
+def test_uncolorable_category_present_in_view_still_hides_its_placement():
+    """The original safety intent, preserved: when the uncolorable category
+    really does have elements in this view, its placement is still hidden --
+    those elements would otherwise render with an uncontrolled native color
+    the decoder could alias onto a HOST element's palette ID."""
+    cat_odd = _FakeCategory("OddModelCategory", 15)
+    inst = _FakeLinkInstanceWithId("exam room 1", 5001)
+    link_category_to_instances = {cat_odd.Id.IntegerValue: {inst}}
+    link_proxies = [
+        _FakeLinkProxy(_FakeCategory("Walls", 10), 5001),
+        _FakeLinkProxy(_FakeCategory("OddModelCategory", 15), 5001),
+    ]
+
+    hidden = color_id_buffer._instances_to_hide_for_uncolorable_categories(
+        [cat_odd], link_category_to_instances, link_proxies, True
+    )
+
+    assert hidden == {inst}
+
+
+def test_uncolorable_category_hide_is_scoped_per_placement_not_per_document():
+    """Two placements of the same document: only the one whose view-scoped
+    elements actually include the uncolorable category is hidden."""
+    cat_odd = _FakeCategory("OddModelCategory", 15)
+    inst_a = _FakeLinkInstanceWithId("exam room 1", 5001)
+    inst_b = _FakeLinkInstanceWithId("exam room 2", 5002)
+    link_category_to_instances = {cat_odd.Id.IntegerValue: {inst_a, inst_b}}
+    link_proxies = [
+        _FakeLinkProxy(_FakeCategory("OddModelCategory", 15), 5002),
+        _FakeLinkProxy(_FakeCategory("Walls", 10), 5001),
+    ]
+
+    hidden = color_id_buffer._instances_to_hide_for_uncolorable_categories(
+        [cat_odd], link_category_to_instances, link_proxies, True
+    )
+
+    assert hidden == {inst_b}
+
+
+def test_dwg_proxies_never_count_as_link_presence():
+    """A DWG import proxy carrying the same category id is not an RVT LINK
+    element and must not keep a link placement hidden on its behalf."""
+    cat_odd = _FakeCategory("OddModelCategory", 15)
+    inst = _FakeLinkInstanceWithId("exam room 1", 5001)
+    link_category_to_instances = {cat_odd.Id.IntegerValue: {inst}}
+    link_proxies = [_FakeLinkProxy(_FakeCategory("OddModelCategory", 15), 5001, source_type="DWG")]
+
+    hidden = color_id_buffer._instances_to_hide_for_uncolorable_categories(
+        [cat_odd], link_category_to_instances, link_proxies, True
+    )
+
+    assert hidden == set()
+
+
+def test_failed_view_scoped_scan_falls_back_to_document_wide_hide():
+    """Fails safe, never open: an unknown presence answer (the scan itself
+    raised) must not be read as 'absent'. Rendering an uncontrolled native
+    LINK color is the outcome this hide path exists to prevent."""
+    cat_odd = _FakeCategory("OddModelCategory", 15)
+    inst = _FakeLinkInstanceWithId("exam room 1", 5001)
+    link_category_to_instances = {cat_odd.Id.IntegerValue: {inst}}
+    diag = _FakeDiag()
+
+    hidden = color_id_buffer._instances_to_hide_for_uncolorable_categories(
+        [cat_odd], link_category_to_instances, [], False, diag=diag, view_id=1
+    )
+
+    assert hidden == {inst}
+    assert any(w["callsite"] == "uncolorable_hide_scope" for w in diag.warnings)
+
+
+def test_no_uncolorable_categories_hides_nothing_and_needs_no_proxies():
+    assert color_id_buffer._instances_to_hide_for_uncolorable_categories(
+        [], {15: {_FakeLinkInstanceWithId("exam room 1", 5001)}}, None, True
+    ) == set()
+
+
+def test_collect_view_scoped_link_proxies_reports_scan_failure_instead_of_empty():
+    """_collect_view_scoped_link_proxies must distinguish 'scan failed' from
+    'this view genuinely has no LINK elements' -- the hide decision above
+    branches on exactly that."""
+    import vop_interwoven.revit.linked_documents as linked_documents
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("link doc unavailable")
+
+    original = linked_documents.collect_all_linked_elements
+    linked_documents.collect_all_linked_elements = _boom
+    diag = _FakeDiag()
+    try:
+        proxies, ok = color_id_buffer._collect_view_scoped_link_proxies(
+            object(), object(), object(), diag=diag, view_id=1
+        )
+    finally:
+        linked_documents.collect_all_linked_elements = original
+
+    assert proxies == []
+    assert ok is False
+    assert any(w["callsite"] == "view_scoped_link_collect" for w in diag.warnings)
+
+
+def test_collect_view_scoped_link_proxies_reports_empty_success_as_ok():
+    import vop_interwoven.revit.linked_documents as linked_documents
+
+    original = linked_documents.collect_all_linked_elements
+    linked_documents.collect_all_linked_elements = lambda *_a, **_k: []
+    try:
+        proxies, ok = color_id_buffer._collect_view_scoped_link_proxies(
+            object(), object(), object()
+        )
+    finally:
+        linked_documents.collect_all_linked_elements = original
+
+    assert proxies == []
+    assert ok is True
