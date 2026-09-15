@@ -93,10 +93,44 @@ _EXCLUDED_BIC_NAMES_GLOBAL: Tuple[str, ...] = (
     # from the HOST pass causes full-grid bbox proxy floods.
     "OST_RVT_Links",
     "OST_ImportObjectStyles",
+    # Non-physical reference/metadata categories confirmed (empirically, via a
+    # real LINK uncolorable-category diagnostic, not assumed) to report
+    # CategoryType.Model despite carrying no visible model geometry.  Listed
+    # here as well as by name below because Category.Name is LOCALIZED: on a
+    # non-English Revit the English literals in
+    # _FALLBACK_EXCLUDED_CATEGORY_NAMES match nothing, and only this stable-id
+    # path excludes them.  A name that does not resolve on a given Revit
+    # version is skipped by _try_get_category_id (same already-documented
+    # tolerance as OST_RVT_Links above), leaving the name check as coverage.
+    "OST_InternalOrigin",
+    "OST_ProjectBasePoint",
+    "OST_SharedBasePoint",
+    "OST_Sheets",
+    "OST_ProjectInformation",
+    "OST_MaterialAssets",
+    "OST_Materials",
+    "OST_LegendComponents",
+    # Sketch/annotation-adjacent and system-definition categories that likewise
+    # report CategoryType.Model.  Added at the maintainer's direction after the
+    # first live diagnostic; unlike the block above these were not individually
+    # confirmed against a real uncolorable-category capture, and Pipe Segments
+    # and Primary Contours in particular describe content some projects may
+    # consider genuine.  Revisit if a view turns out to need them.
+    "OST_PipeSegments",
+    "OST_InsulationLines",
+    "OST_Sketch",
+    "OST_TopographyContours",
+    "OST_SWallRectOpening",
 )
 
-# Fallback excluded names used only when doc.Settings resolution is unavailable (pytest).
-# Must stay in sync with _EXCLUDED_BIC_NAMES_GLOBAL human-readable names.
+# Human-readable category names excluded by should_include_element's name check.
+# That check runs unconditionally and FIRST (inside and outside Revit alike), so
+# this set is not merely a pytest fallback for _EXCLUDED_BIC_NAMES_GLOBAL -- it is
+# the coverage that still works when a BuiltInCategory name does not resolve on
+# the running Revit version.  It is NOT sufficient on its own: Category.Name is
+# localized, so on a non-English Revit these English literals match nothing and
+# the stable-id check on _EXCLUDED_BIC_NAMES_GLOBAL is what excludes the category.
+# Must stay in sync with that tuple, one entry per BIC name.
 _FALLBACK_EXCLUDED_CATEGORY_NAMES = {
     "Grids",
     "Grid Heads",
@@ -120,6 +154,28 @@ _FALLBACK_EXCLUDED_CATEGORY_NAMES = {
     "Point Clouds",
     "RVT Links",
     "Imports",
+    # Non-physical reference/metadata categories -- see the matching OST_ block
+    # in _EXCLUDED_BIC_NAMES_GLOBAL for why they are excluded.  Each one
+    # previously reached color_id_buffer.py's _model_categories_in_linked_doc
+    # "uncolorable" branch and could trigger whole-link-instance hiding for an
+    # unrelated, genuinely colorable category sharing the same instance -- the
+    # second half of that failure mode is fixed in color_id_buffer.py by
+    # scoping the hide decision to categories actually present in the view.
+    "Internal Origin",
+    "Project Base Point",
+    "Survey Point",
+    "Sheets",
+    "Project Information",
+    "Material Assets",
+    "Materials",
+    "Legend Components",
+    # See the matching OST_ block in _EXCLUDED_BIC_NAMES_GLOBAL for the weaker
+    # confidence behind these five.
+    "Pipe Segments",
+    "Insulation Batting Lines",
+    "Sketch",
+    "Primary Contours",
+    "Rectangular Straight Wall Opening",
 }
 
 

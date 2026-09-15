@@ -99,13 +99,83 @@ class LinkedElementProxy:
             return None
 
 
-def collect_all_linked_elements(doc, view, cfg, diag=None):
+class LinkCollectionStatus(object):
+    """Completeness signal for one LINK collection pass.
+
+    The collectors below are deliberately resilient: a link instance whose
+    document fails to enumerate, a placement whose transform cannot be
+    resolved, and an individual element that raises mid-loop are all logged
+    and skipped so one bad link never costs the whole capture. That is the
+    right default for occupancy rasterization, where a missing element costs
+    coverage and nothing else.
+
+    It is NOT safe for a caller deciding to LEAVE SOMETHING VISIBLE on the
+    strength of an element's absence from the returned list (see
+    color_id_buffer._instances_to_hide_for_uncolorable_categories): there,
+    "absent because the scan skipped it" and "absent because it genuinely
+    isn't in this view" have opposite correct outcomes, and a partial list is
+    indistinguishable from a complete one by inspection alone. Such a caller
+    passes a LinkCollectionStatus and treats ``rvt_complete is False`` as "no
+    answer", not as "absent".
+
+    Scoped to the RVT link path only: DWG import failures never affect it,
+    because every consumer of this signal filters to source_type == "LINK"
+    anyway. ``failures`` keeps the (callsite, detail) pairs behind a False so
+    a diagnostic can say WHAT was incomplete, per CLAUDE.md's no-silent-
+    failure rule.
+
+    ``link_presence`` answers the presence question directly, as a set of
+    (category_id, link_instance_id) pairs recorded the moment an enumerated
+    element passes the LINK inclusion policy -- BEFORE any bounding-box or
+    proxy construction. That ordering is the point: an element whose bbox is
+    missing, malformed, or untransformable is dropped from the returned
+    proxies (skip_no_bbox / skip_bad_bbox / skip_transform_failed) even
+    though it is genuinely present and visible in this view. Deriving
+    presence from the proxy list would read those geometric drops as
+    "category absent" and leave an uncolorable placement visible; marking the
+    whole scan incomplete for each of them would instead force the
+    conservative document-wide hide so often that view scoping would stop
+    meaning anything. Recording presence upstream of the geometry step keeps
+    both answers right, because a bbox failure is not a presence fact.
+    """
+
+    __slots__ = ("rvt_complete", "failures", "link_presence")
+
+    def __init__(self):
+        self.rvt_complete = True
+        self.failures = []
+        self.link_presence = set()
+
+    def mark_incomplete(self, callsite, detail=""):
+        self.rvt_complete = False
+        self.failures.append((callsite, detail))
+
+    def record_presence(self, category_id_int, link_instance_id_int):
+        """Note that this category has an element under this placement in view."""
+        try:
+            self.link_presence.add((int(category_id_int), int(link_instance_id_int)))
+        except (TypeError, ValueError):
+            # Unreadable identity is not provable absence -- degrade to the
+            # conservative answer rather than recording a pair that cannot be
+            # matched against.
+            self.mark_incomplete(
+                "LinkCollectionStatus.record_presence",
+                "unreadable category/instance id pair",
+            )
+
+
+def collect_all_linked_elements(doc, view, cfg, diag=None, status=None):
     """Collect all elements from linked RVT files and DWG imports.
 
     Args:
         doc: Revit Document
         view: Revit View
         cfg: Config object with linked document settings
+        diag: Optional Diagnostics instance
+        status: Optional LinkCollectionStatus. When supplied, any RVT
+            collection failure that silently shortens the returned list marks
+            it incomplete -- required by callers that would otherwise read a
+            truncated list as proof of absence. See LinkCollectionStatus.
 
     Returns:
         List of LinkedElementProxy objects in host-space coordinates
@@ -127,11 +197,13 @@ def collect_all_linked_elements(doc, view, cfg, diag=None):
     # Collect from RVT links
     if getattr(cfg, 'include_linked_rvt', False):
         try:
-            rvt_elements = _collect_from_revit_links(doc, view, cfg, diag=diag)
+            rvt_elements = _collect_from_revit_links(doc, view, cfg, diag=diag, status=status)
             elements.extend(rvt_elements)
             _log("INFO", "Collected {0} elements from RVT links".format(len(rvt_elements)))
         except Exception as e:
             _log("ERROR", "Error collecting from RVT links: {0}".format(e))
+            if status is not None:
+                status.mark_incomplete("collect_all_linked_elements.rvt_links", str(e))
             if diag is not None:
                 diag.error(
                     phase="linked_documents",
@@ -195,7 +267,7 @@ def _has_revit_2024_link_collector(doc, view):
         return False
 
 
-def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, link_trf, cfg, diag=None):
+def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, link_trf, cfg, diag=None, status=None):
     """Collect visible elements from link using Revit 2024+ collector.
 
     Args:
@@ -265,6 +337,10 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
 
     by_category = {}
 
+    # Per-element failures that happened BEFORE the element's presence could be
+    # recorded -- the only ones that cost the presence scan an answer.
+    pre_presence_failures = 0
+
     try:
         # Revit 2024+ overload: collect visible elements from link instance in view
         fec = FilteredElementCollector(doc, view.Id, link_inst.Id)
@@ -275,6 +351,11 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
 
         for elem in fec:
             fec_total += 1
+            # Reset per element: an exception AFTER presence was recorded has
+            # already contributed its presence fact and must not invalidate the
+            # scan, while one BEFORE that point loses an element the collector
+            # had resolved as visible and must.
+            presence_recorded = False
             try:
                 
                 # Defensive: Revit 2024+ 3-arg FEC is intended to enumerate link-owned elements.
@@ -332,6 +413,16 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
                     continue
 
                 candidates += 1
+
+                # Presence is recorded HERE, before any bbox/proxy work: this
+                # element passed the LINK inclusion policy and the view-scoped
+                # collector already resolved it as visible in this view, which
+                # is the entire presence question. Every skip below this line
+                # discards a genuinely present element for a geometric reason
+                # (see LinkCollectionStatus.link_presence).
+                if status is not None:
+                    status.record_presence(cat.Id.IntegerValue, link_inst_id)
+                    presence_recorded = True
 
                 # Get element bbox in link space
                 bbox_link = elem.get_BoundingBox(None)
@@ -452,12 +543,31 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
 
             except Exception as e:
                 skip["skip_exception"] += 1
+                if not presence_recorded:
+                    pre_presence_failures += 1
                 _log("DEBUG", "Error processing link element {0}: {1}".format(getattr(elem, 'Id', '?'), e))
                 continue
 
     except Exception as e:
         _log("ERROR", "Revit 2024+ collector failed for link '{0}': {1}".format(link_doc.Title, e))
+        if status is not None:
+            status.mark_incomplete(
+                "_collect_visible_link_elements_2024_plus.collector",
+                "link '{0}': {1}".format(link_doc.Title, e),
+            )
         return [], source_key, source_label
+
+    if pre_presence_failures and status is not None:
+        # Only failures upstream of record_presence invalidate the presence
+        # scan. A later throw (bbox read, proxy construction) costs a proxy,
+        # not a presence fact -- marking the scan incomplete for those would
+        # force the conservative document-wide hide over a geometry error,
+        # which is the over-hiding this whole path exists to avoid.
+        status.mark_incomplete(
+            "_collect_visible_link_elements_2024_plus.per_element",
+            "{0} element(s) raised before their presence could be recorded, "
+            "collecting from link '{1}'".format(pre_presence_failures, link_doc.Title),
+        )
 
     # Summarize collection outcome (high signal, low spam)
     _log(
@@ -508,7 +618,7 @@ def _collect_visible_link_elements_2024_plus(doc, view, link_inst, link_doc, lin
     return proxies, source_key, source_label
 
 
-def _collect_from_revit_links(doc, view, cfg, diag=None):
+def _collect_from_revit_links(doc, view, cfg, diag=None, status=None):
     """Collect elements from linked Revit files.
 
     Args:
@@ -552,6 +662,8 @@ def _collect_from_revit_links(doc, view, cfg, diag=None):
         link_instances = collector.OfClass(RevitLinkInstance).ToElements()
     except Exception as e:
         _log("WARN", "Failed to collect RevitLinkInstance elements: {0}".format(e))
+        if status is not None:
+            status.mark_incomplete("_collect_from_revit_links.link_instance_collector", str(e))
         if diag is not None:
             diag.warn(
                 phase="linked_documents",
@@ -609,6 +721,11 @@ def _collect_from_revit_links(doc, view, cfg, diag=None):
                 link_trf = link_inst.GetTransform()
             if link_trf is None:
                 _log("WARN", "Link {0} has no transform".format(link_title))
+                if status is not None:
+                    status.mark_incomplete(
+                        "_collect_from_revit_links.transform",
+                        "link '{0}' has no transform".format(link_title),
+                    )
                 if diag is not None:
                     diag.warn(
                         phase="linked_documents",
@@ -622,7 +739,7 @@ def _collect_from_revit_links(doc, view, cfg, diag=None):
             link_proxies = []
             if use_2024_collector:
                 link_proxies, source_key, source_label = _collect_visible_link_elements_2024_plus(
-                    doc, view, link_inst, link_doc, link_trf, cfg, diag=diag
+                    doc, view, link_inst, link_doc, link_trf, cfg, diag=diag, status=status
                 )
             else:
                 # Fallback: Use clip volume approach for Revit < 2024
@@ -647,6 +764,7 @@ def _collect_from_revit_links(doc, view, cfg, diag=None):
                     doc_label=source_label,
                     cfg=cfg,
                     diag=diag,
+                    status=status,
                 )
 
             proxies.extend(link_proxies)
@@ -654,6 +772,8 @@ def _collect_from_revit_links(doc, view, cfg, diag=None):
 
         except Exception as e:
             _log("ERROR", "Error processing RVT link instance {0}: {1}".format(link_inst.Id, e))
+            if status is not None:
+                status.mark_incomplete("_collect_from_revit_links.per_link_instance", str(e))
             if diag is not None:
                 diag.error(
                     phase="linked_documents",
@@ -766,7 +886,7 @@ def _collect_from_dwg_imports(doc, view, cfg):
 
 def _collect_link_elements_with_clipping(link_inst, link_doc, link_trf, view,
                                           clip_volume, host_visible_cats, doc_key, doc_label, cfg,
-                                          diag=None):
+                                          diag=None, status=None):
     """Collect elements from a link document with spatial clipping.
 
     Args:
@@ -783,6 +903,10 @@ def _collect_link_elements_with_clipping(link_inst, link_doc, link_trf, view,
             (collector/spatial-filter creation, transform inversion) are
             recorded here (in addition to _log), per CLAUDE.md's
             no-silent-failure rule.
+        status: Optional LinkCollectionStatus -- marked incomplete by every
+            path below that returns a short or empty list, so a caller
+            reasoning from an element's ABSENCE can tell that apart from a
+            complete scan. See LinkCollectionStatus.
 
     Returns:
         List of LinkedElementProxy objects
@@ -814,6 +938,11 @@ def _collect_link_elements_with_clipping(link_inst, link_doc, link_trf, view,
             )
         except Exception as e:
             _log("ERROR", "Failed to create collector for link doc: {0}".format(e))
+            if status is not None:
+                status.mark_incomplete(
+                    "_collect_link_elements_with_clipping.collector",
+                    "link '{0}': {1}".format(doc_label, e),
+                )
             if diag is not None:
                 diag.error(
                     phase="linked_documents",
@@ -827,6 +956,11 @@ def _collect_link_elements_with_clipping(link_inst, link_doc, link_trf, view,
         corners_host = clip_volume.get("corners_host")
         if not corners_host or len(corners_host) < 8:
             _log("WARN", "Clip volume missing corners")
+            if status is not None:
+                status.mark_incomplete(
+                    "_collect_link_elements_with_clipping.clip_volume",
+                    "clip volume missing corners for link '{0}'".format(doc_label),
+                )
             if diag is not None:
                 diag.warn(
                     phase="linked_documents",
@@ -840,6 +974,11 @@ def _collect_link_elements_with_clipping(link_inst, link_doc, link_trf, view,
             inv_trf = link_trf.Inverse
         except Exception as e:
             _log("ERROR", "Failed to invert link transform: {0}".format(e))
+            if status is not None:
+                status.mark_incomplete(
+                    "_collect_link_elements_with_clipping.invert_transform",
+                    "link '{0}': {1}".format(doc_label, e),
+                )
             if diag is not None:
                 diag.error(
                     phase="linked_documents",
@@ -888,6 +1027,9 @@ def _collect_link_elements_with_clipping(link_inst, link_doc, link_trf, view,
 
     # Collect and build proxies
     for elem in collector:
+        # See the Revit 2024+ path: only a failure upstream of record_presence
+        # costs the presence scan an answer.
+        presence_recorded = False
         try:
             # Skip nested links and imports
             from Autodesk.Revit.DB import RevitLinkInstance, ImportInstance
@@ -912,6 +1054,12 @@ def _collect_link_elements_with_clipping(link_inst, link_doc, link_trf, view,
             if host_visible_cats is not None:
                 if cat_id_val not in host_visible_cats:
                     continue
+
+            # Presence recorded before bbox work, for the same reason as the
+            # Revit 2024+ path above (see LinkCollectionStatus.link_presence).
+            if status is not None:
+                status.record_presence(cat_id_val, link_inst.Id.IntegerValue)
+                presence_recorded = True
 
             # Get bbox in link coordinates (legacy clip-volume path collects from link_doc).
             bbox_link = elem.get_BoundingBox(None)
@@ -941,6 +1089,14 @@ def _collect_link_elements_with_clipping(link_inst, link_doc, link_trf, view,
 
         except Exception as e:
             _log("DEBUG", "Error processing link element {0}: {1}".format(getattr(elem, 'Id', '?'), e))
+            if status is not None and not presence_recorded:
+                status.mark_incomplete(
+                    "_collect_link_elements_with_clipping.per_element",
+                    "element {0} raised before its presence could be recorded, "
+                    "collecting from link '{1}': {2}".format(
+                        getattr(elem, 'Id', '?'), doc_label, e
+                    ),
+                )
             continue
 
     return proxies

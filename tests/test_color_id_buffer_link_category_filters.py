@@ -663,3 +663,293 @@ def test_host_element_override_and_link_category_filter_are_independent_calls():
     assert len(view.element_override_calls) == 1, "HOST element still gets its own override"
     assert view.element_override_calls[0][0] is host_eid
     assert view.element_override_calls[0][1].calls["SetProjectionLineColor"][0] == host_color
+
+
+# --- _instances_to_hide_for_uncolorable_categories: hide only for a --------
+# --- category actually present in THIS view ---------------------------------
+
+class _FakeLinkInstanceWithId(_FakeLinkInstance):
+    """A placement the hide decision can identify by ElementId -- the real
+    _collect_link_category_filters hands back live RevitLinkInstance objects
+    whose .Id is what the collectors record presence against."""
+
+    def __init__(self, name, inst_id):
+        super().__init__(name, None)
+        self.Id = _FakeElementId(inst_id)
+
+
+def _status(present=(), complete=True):
+    """A real LinkCollectionStatus seeded with the given (cat_id, inst_id)
+    presence pairs -- the actual class the collectors populate, not a
+    stand-in, so these tests break if its contract changes."""
+    from vop_interwoven.revit.linked_documents import LinkCollectionStatus
+    status = LinkCollectionStatus()
+    for cat_id, inst_id in present:
+        status.record_presence(cat_id, inst_id)
+    if not complete:
+        status.mark_incomplete("test", "deliberately incomplete")
+    return status
+
+
+def test_uncolorable_category_absent_from_view_does_not_hide_its_placement():
+    """The bug this fixes: an uncolorable category present document-wide but
+    with ZERO elements in this view took the whole placement down via
+    view.HideElements, killing the colorable, correctly-filtered categories
+    (Walls) rendering from that same instance."""
+    cat_odd = _FakeCategory("OddModelCategory", 15)
+    inst = _FakeLinkInstanceWithId("exam room 1", 5001)
+    # Discovery's document-wide scan found OddModelCategory in this
+    # placement's underlying document...
+    link_category_to_instances = {cat_odd.Id.IntegerValue: {inst}}
+    # ...but the view-scoped scan only ever saw Walls under it.
+    diag = _FakeDiag()
+
+    hidden = color_id_buffer._instances_to_hide_for_uncolorable_categories(
+        [cat_odd], link_category_to_instances, _status(present=[(10, 5001)]),
+        diag=diag, view_id=1,
+    )
+
+    assert hidden == set(), (
+        "document-wide presence alone must not hide a placement -- no "
+        "OddModelCategory element is in this view, so nothing of it can "
+        "render an uncontrolled native color here"
+    )
+    assert any(w["callsite"] == "uncolorable_hide_scope" for w in diag.warnings), (
+        "sparing a placement is a real decision, not a silent one (CLAUDE.md "
+        "'no silent failure')"
+    )
+
+
+def test_uncolorable_category_present_in_view_still_hides_its_placement():
+    """The original safety intent, preserved: when the uncolorable category
+    really does have elements in this view, its placement is still hidden --
+    those elements would otherwise render with an uncontrolled native color
+    the decoder could alias onto a HOST element's palette ID."""
+    cat_odd = _FakeCategory("OddModelCategory", 15)
+    inst = _FakeLinkInstanceWithId("exam room 1", 5001)
+
+    hidden = color_id_buffer._instances_to_hide_for_uncolorable_categories(
+        [cat_odd], {cat_odd.Id.IntegerValue: {inst}},
+        _status(present=[(10, 5001), (15, 5001)]),
+    )
+
+    assert hidden == {inst}
+
+
+def test_uncolorable_category_hide_is_scoped_per_placement_not_per_document():
+    """Two placements of the same document: only the one whose view-scoped
+    elements actually include the uncolorable category is hidden."""
+    cat_odd = _FakeCategory("OddModelCategory", 15)
+    inst_a = _FakeLinkInstanceWithId("exam room 1", 5001)
+    inst_b = _FakeLinkInstanceWithId("exam room 2", 5002)
+
+    hidden = color_id_buffer._instances_to_hide_for_uncolorable_categories(
+        [cat_odd], {cat_odd.Id.IntegerValue: {inst_a, inst_b}},
+        _status(present=[(15, 5002), (10, 5001)]),
+    )
+
+    assert hidden == {inst_b}
+
+
+def test_bbox_failure_does_not_make_a_present_category_look_absent():
+    """Regression guard for the second Codex P1 on PR #196.
+
+    An element whose bbox is missing/malformed/untransformable is dropped
+    from the returned proxy list AFTER the collector already resolved it as
+    visible in this view (skip_no_bbox / skip_bad_bbox /
+    skip_transform_failed). Presence is therefore recorded upstream of all
+    bbox work: the category is still present, the placement must still be
+    hidden, and the scan must NOT be degraded to incomplete over it -- doing
+    that would force the document-wide fallback so often that view scoping
+    would stop meaning anything.
+    """
+    from vop_interwoven.revit.linked_documents import LinkCollectionStatus
+
+    cat_odd = _FakeCategory("OddModelCategory", 15)
+    inst = _FakeLinkInstanceWithId("exam room 1", 5001)
+
+    status = LinkCollectionStatus()
+    status.record_presence(15, 5001)  # recorded at the candidate site...
+    # ...and then the element is dropped: no proxy is ever produced for it.
+
+    assert status.rvt_complete is True, (
+        "a geometry failure is not a completeness failure -- presence was "
+        "already recorded when it happened"
+    )
+    hidden = color_id_buffer._instances_to_hide_for_uncolorable_categories(
+        [cat_odd], {cat_odd.Id.IntegerValue: {inst}}, status
+    )
+    assert hidden == {inst}
+
+
+def test_post_presence_failure_does_not_invalidate_the_presence_scan():
+    """Regression guard for the third Codex finding on PR #196.
+
+    An element can be recorded in link_presence and THEN throw while reading
+    its bbox or constructing its proxy. That costs a proxy, not a presence
+    fact: the category is still present and its placement must still be
+    hidden, but every OTHER problem category must keep its view-scoped
+    answer. Marking the whole scan incomplete for a post-presence throw would
+    force the document-wide fallback over a geometry error -- the over-hiding
+    this path exists to avoid.
+    """
+    from vop_interwoven.revit.linked_documents import LinkCollectionStatus
+
+    cat_odd = _FakeCategory("OddModelCategory", 15)
+    cat_other = _FakeCategory("AnotherUncolorable", 16)
+    inst = _FakeLinkInstanceWithId("exam room 1", 5001)
+
+    status = LinkCollectionStatus()
+    status.record_presence(15, 5001)  # recorded, then the element threw downstream
+
+    assert status.rvt_complete is True, (
+        "a post-presence throw is not a completeness failure"
+    )
+    hidden = color_id_buffer._instances_to_hide_for_uncolorable_categories(
+        [cat_odd, cat_other],
+        {cat_odd.Id.IntegerValue: {inst}, cat_other.Id.IntegerValue: {inst}},
+        status,
+    )
+    assert hidden == {inst}, "the present category still hides its placement"
+
+    # ...and the unrelated category is still judged on the view-scoped answer,
+    # not swept into a document-wide fallback by the other element's failure.
+    hidden_other_only = color_id_buffer._instances_to_hide_for_uncolorable_categories(
+        [cat_other], {cat_other.Id.IntegerValue: {inst}}, status
+    )
+    assert hidden_other_only == set()
+
+
+def test_incomplete_scan_falls_back_to_document_wide_hide():
+    """Fails safe, never open: an unknown presence answer (a link that never
+    enumerated, a placement with no transform, an element that raised before
+    its category could be read) must not be read as 'absent'."""
+    cat_odd = _FakeCategory("OddModelCategory", 15)
+    inst = _FakeLinkInstanceWithId("exam room 1", 5001)
+    diag = _FakeDiag()
+
+    hidden = color_id_buffer._instances_to_hide_for_uncolorable_categories(
+        [cat_odd], {cat_odd.Id.IntegerValue: {inst}},
+        _status(present=[(10, 5001)], complete=False), diag=diag, view_id=1,
+    )
+
+    assert hidden == {inst}, (
+        "an incomplete scan cannot spare a placement, even though "
+        "OddModelCategory is absent from what it did see"
+    )
+    assert any(w["callsite"] == "uncolorable_hide_scope" for w in diag.warnings)
+
+
+def test_missing_status_falls_back_to_document_wide_hide():
+    cat_odd = _FakeCategory("OddModelCategory", 15)
+    inst = _FakeLinkInstanceWithId("exam room 1", 5001)
+    assert color_id_buffer._instances_to_hide_for_uncolorable_categories(
+        [cat_odd], {cat_odd.Id.IntegerValue: {inst}}, None
+    ) == {inst}
+
+
+def test_no_uncolorable_categories_hides_nothing_and_needs_no_scan():
+    assert color_id_buffer._instances_to_hide_for_uncolorable_categories(
+        [], {15: {_FakeLinkInstanceWithId("exam room 1", 5001)}}, None
+    ) == set()
+
+
+def test_unreadable_identity_degrades_to_incomplete_not_to_absent():
+    """record_presence cannot record an unreadable id pair; it must mark the
+    scan incomplete rather than silently record nothing, which would read as
+    absence downstream."""
+    from vop_interwoven.revit.linked_documents import LinkCollectionStatus
+
+    status = LinkCollectionStatus()
+    status.record_presence("not-an-id", 5001)
+    assert status.rvt_complete is False
+    assert status.link_presence == set()
+
+
+def test_link_collection_status_starts_complete_and_records_failures():
+    from vop_interwoven.revit.linked_documents import LinkCollectionStatus
+
+    status = LinkCollectionStatus()
+    assert status.rvt_complete is True
+    assert status.failures == []
+    assert status.link_presence == set()
+
+    status.mark_incomplete("_collect_from_revit_links.transform", "link 'core shell'")
+    assert status.rvt_complete is False
+    assert status.failures == [
+        ("_collect_from_revit_links.transform", "link 'core shell'")
+    ], "a False must carry WHAT was incomplete -- CLAUDE.md's no-silent-failure rule"
+
+
+def test_collect_view_scoped_link_proxies_returns_status_marked_by_a_partial_scan():
+    """collect_all_linked_elements swallows a failed link enumeration, a
+    placement with no transform, and a mid-loop element error -- each comes
+    back as a quietly SHORT list, not an exception. The status is what makes
+    that visible; the proxy list alone cannot."""
+    import vop_interwoven.revit.linked_documents as linked_documents
+
+    def _partial(_doc, _view, _cfg, diag=None, status=None):
+        # Mirrors the real collectors: log, mark, skip -- never raise.
+        if status is not None:
+            status.record_presence(10, 5001)
+            status.mark_incomplete(
+                "_collect_from_revit_links.per_link_instance", "boom on placement 2"
+            )
+        return [_FakeLinkProxyStub()]
+
+    original = linked_documents.collect_all_linked_elements
+    linked_documents.collect_all_linked_elements = _partial
+    diag = _FakeDiag()
+    try:
+        proxies, status = color_id_buffer._collect_view_scoped_link_proxies(
+            object(), object(), object(), diag=diag, view_id=1
+        )
+    finally:
+        linked_documents.collect_all_linked_elements = original
+
+    assert len(proxies) == 1, "the partial list is still returned for near-face-W's use"
+    assert status.rvt_complete is False, "but it cannot prove any category absent"
+    assert any("incomplete" in w["message"] for w in diag.warnings)
+
+
+class _FakeLinkProxyStub(object):
+    """Near-face-W consumes proxies; the hide decision no longer does."""
+    source_type = "LINK"
+
+
+def test_collect_view_scoped_link_proxies_marks_status_when_the_scan_raises():
+    import vop_interwoven.revit.linked_documents as linked_documents
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("link doc unavailable")
+
+    original = linked_documents.collect_all_linked_elements
+    linked_documents.collect_all_linked_elements = _boom
+    diag = _FakeDiag()
+    try:
+        proxies, status = color_id_buffer._collect_view_scoped_link_proxies(
+            object(), object(), object(), diag=diag, view_id=1
+        )
+    finally:
+        linked_documents.collect_all_linked_elements = original
+
+    assert proxies == []
+    assert status.rvt_complete is False
+    assert any(w["callsite"] == "view_scoped_link_collect" for w in diag.warnings)
+
+
+def test_collect_view_scoped_link_proxies_reports_empty_success_as_complete():
+    import vop_interwoven.revit.linked_documents as linked_documents
+
+    original = linked_documents.collect_all_linked_elements
+    linked_documents.collect_all_linked_elements = lambda *_a, **_k: []  # no failures marked
+    try:
+        proxies, status = color_id_buffer._collect_view_scoped_link_proxies(
+            object(), object(), object()
+        )
+    finally:
+        linked_documents.collect_all_linked_elements = original
+
+    assert proxies == []
+    assert status.rvt_complete is True
+    assert status.link_presence == set()
