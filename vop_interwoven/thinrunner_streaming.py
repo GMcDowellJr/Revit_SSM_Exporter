@@ -19,6 +19,7 @@ Output:
 import sys
 import os
 import ctypes
+import json
 import shutil
 
 # Add project to path
@@ -323,6 +324,46 @@ def _run_gc_between_chunks():
         except Exception:
             pass
 
+
+def _summarize_stage_a_sidecar(sidecar_path):
+    """Read one Stage A view's JSON sidecar and return printable summary lines.
+
+    The sidecar (written by export_color_id_buffer_view) is the only place
+    shadow/smooth-edges suppression status, LINK category-filter coloring
+    (PR #193), and near-face-W collection (PR #194) are recorded --
+    view_summaries only carries view_id/view_name/success/stage/tiff_path/
+    sidecar_path for Stage A views, and this runner disables export_json,
+    so nothing richer ever reaches the in-memory result. Reading the
+    sidecar back here is the only way to surface that data without
+    changing streaming.py's or color_id_buffer.py's return shapes.
+    """
+    if not sidecar_path or not os.path.exists(sidecar_path):
+        return ["    Sidecar: (not found: {})".format(sidecar_path)]
+
+    try:
+        with open(sidecar_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+    except Exception as e:
+        return ["    Sidecar: unreadable ({}: {})".format(type(e).__name__, e)]
+
+    lines = []
+    lines.append("    Shadows suppressed: {}".format(meta.get("applied_show_shadows")))
+    lines.append("    Smooth edges suppressed: {}".format(meta.get("applied_smooth_edges")))
+
+    link_map = meta.get("link_category_color_map") or {}
+    lines.append("    LINK categories colored: {}".format(len(link_map)))
+
+    near_face_w = meta.get("near_face_w_map") or {}
+    host_count = len((near_face_w.get("host") or {}))
+    link_count = len((near_face_w.get("link") or {}))
+    lines.append("    Near-face-W collected: host={} link={}".format(host_count, link_count))
+
+    paint_failures = meta.get("paint_failures")
+    if paint_failures:
+        lines.append("    HOST paint failures: {}".format(paint_failures))
+
+    return lines
+
 # ============================================================================
 # RUN PIPELINE
 # ============================================================================
@@ -518,10 +559,17 @@ try:
     # Per-view summary (limited info from lightweight summaries)
     for view_data in view_summaries:
         view_name = view_data.get('view_name', 'Unknown')
+
+        if view_data.get('stage') == 'color_id_buffer_stage_a':
+            lines.append("  {} (Stage A color ID buffer):".format(view_name))
+            lines.append("    TIFF: {}".format(view_data.get('tiff_path')))
+            lines.extend(_summarize_stage_a_sidecar(view_data.get('sidecar_path')))
+            continue
+
         width = view_data.get('width', 0)
         height = view_data.get('height', 0)
         filled = view_data.get('filled_cells', 0)
-        
+
         lines.append("  {}:".format(view_name))
         lines.append("    Grid: {}×{}".format(width, height))
         lines.append("    Filled cells: {}".format(filled))
