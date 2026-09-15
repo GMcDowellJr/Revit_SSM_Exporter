@@ -421,33 +421,39 @@ def _resolve_colorable_category_predicate(diag=None, view_id=None):
             cid.IntegerValue for cid in ParameterFilterUtilities.GetAllFilterableCategories()
         )
     except Exception as ex:
-        # Colorability is unknown, so the predicate reports nothing colorable:
-        # no LINK category filter is created, and every LINK element renders
-        # with its native color, carrying no identity in this capture.
+        # Colorability is unknown, so assume every policy-included category IS
+        # colorable and let Revit adjudicate: _apply_link_category_filters
+        # attempts one ParameterFilterElement per category, which succeeds for
+        # the categories Revit can actually filter on and raises for the rest,
+        # landing those in failed_categories. The attempt is the lookup.
         #
-        # Withholding color here protects nothing. Nothing downstream hides or
-        # marks what goes uncolored (see _model_categories_in_linked_doc's
-        # ACCEPTED GAP note), so the uncolored content renders exactly as it
-        # would have either way -- this branch costs identity coverage without
-        # buying safety in exchange for it. What the branch is actually for is
-        # the diagnostic below, not its return value: the loss is total rather
-        # than per-category, and both ways of reaching it -- an unfrozen
-        # VETTED_COLORABLE_CATEGORY_NAMES and an unavailable
-        # ParameterFilterUtilities -- are states of the build and of the Revit
-        # host that a retry cannot change. Hence error, not warning.
+        # Assuming the opposite would withhold color from every LINK category,
+        # including the ones a filter would have worked on, and buy nothing for
+        # it: nothing downstream hides or marks what goes uncolored (see
+        # _model_categories_in_linked_doc's ACCEPTED GAP note), so a category
+        # denied a filter here renders exactly like one whose filter failed.
+        # The conservative answer costs identity coverage without reducing
+        # risk. It was the right call only while a category-level force-white
+        # override covered whatever went uncolored, and that override is gone.
+        #
+        # Recorded at ERROR, above the live-lookup fallback's warning: this
+        # capture consulted no colorability source at all, so its LINK
+        # coloring is neither reproducible nor auditable, and neither cause --
+        # an unfrozen VETTED_COLORABLE_CATEGORY_NAMES, an unavailable
+        # ParameterFilterUtilities -- is something a retry can change.
         if diag is not None:
             diag.error(
                 phase="color_id_buffer",
                 callsite="colorable_category_whitelist",
                 message="VETTED_COLORABLE_CATEGORY_NAMES is empty AND the live "
-                        "ParameterFilterUtilities fallback failed; treating every "
-                        "category as uncolorable for this capture. No LINK category "
-                        "filter will be applied and LINK content will carry no "
-                        "identity: {0}".format(ex),
+                        "ParameterFilterUtilities fallback failed; attempting a filter "
+                        "for every policy-included LINK category instead. Categories "
+                        "Revit cannot filter on will fail and are reported in "
+                        "failed_link_categories: {0}".format(ex),
                 view_id=view_id,
                 exc=ex,
             )
-        return (lambda cat: False), "unavailable"
+        return (lambda cat: True), "unavailable"
 
     if diag is not None:
         diag.warn(

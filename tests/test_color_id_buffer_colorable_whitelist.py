@@ -136,23 +136,31 @@ def test_empty_whitelist_falls_back_to_the_live_lookup_and_says_so():
     assert any(w["callsite"] == "colorable_category_whitelist" for w in diag.warnings)
 
 
-def test_unresolvable_colorability_resolves_to_nothing_colorable():
-    """With colorability unknown, nothing is reported as colorable: no LINK
-    category filter is created, so LINK content renders with its native color
-    and carries no identity in this capture.
+def test_unresolvable_colorability_lets_revit_adjudicate():
+    """With colorability unknown, every category is reported colorable and the
+    filter attempt itself becomes the lookup: Revit accepts a
+    ParameterFilterElement for the categories it can filter on and rejects the
+    rest into failed_categories.
 
-    The error-level diagnostic is the real product of this branch -- the loss
-    is total rather than per-category, and both ways of reaching it are states
-    of the build and of the Revit host that a retry cannot change."""
+    Answering the other way would withhold color from every LINK category,
+    including the ones a filter would have worked on, and buy nothing for it --
+    nothing downstream hides or marks uncolored content, so a category denied a
+    filter here renders exactly like one whose filter failed. (That answer was
+    correct only while a category-level force-white override covered whatever
+    went uncolored.)"""
     diag = _FakeDiag()
     with _install_fake_revit_db(with_filter_utilities=False):
         is_colorable, source = color_id_buffer._resolve_colorable_category_predicate(
             diag=diag, view_id=1
         )
 
-    assert source == "unavailable"
-    assert is_colorable(_FakeCategory("Walls", 10)) is False
+    assert source == "unavailable", (
+        "the sidecar must still record that no colorability source was "
+        "consulted -- this capture's LINK coloring is not reproducible"
+    )
+    assert is_colorable(_FakeCategory("Walls", 10)) is True
+    assert is_colorable(_FakeCategory("OddModelCategory", 15)) is True
     assert any(e["callsite"] == "colorable_category_whitelist" for e in diag.errors), (
-        "an unresolvable whitelist is an error, not a warning -- the capture "
-        "needs the whitelist frozen, not a retry"
+        "consulting no colorability source at all is an error, not a warning -- "
+        "the capture needs the whitelist frozen, not a retry"
     )
