@@ -42,6 +42,8 @@ import sys
 import types
 
 import vop_interwoven.color_id_buffer as color_id_buffer
+from vop_interwoven.core.math_utils import Bounds2D
+from vop_interwoven.revit.view_basis import ViewBasis
 
 
 # --- Fake Autodesk.Revit.DB surface -----------------------------------------
@@ -117,12 +119,19 @@ class _FakeColor(object):
 class _FakeParameterFilterElement(object):
     _next_id = 900
 
-    def __init__(self, doc, name, cat_id_list):
+    def __init__(self, doc, name, cat_id_list, element_filter=None):
         self.Name = name
         self.Id = _FakeElementId(_FakeParameterFilterElement._next_id)
         _FakeParameterFilterElement._next_id += 1
         self.category_ids = list(cat_id_list)
+        self._element_filter = element_filter
         doc.parameter_filters.append(self)
+
+    def GetCategories(self):
+        return list(self.category_ids)
+
+    def GetElementFilter(self):
+        return self._element_filter
 
     @classmethod
     def Create(cls, doc, name, cat_id_list):
@@ -435,6 +444,56 @@ def test_link_instance_respects_host_view_filters_defaults_to_true_when_undetect
     assert any(w["callsite"] == "link_display_mode_check" for w in diag.warnings)
 
 
+# --- _link_instance_may_be_visible_in_view: coarse off-view hide guard -----
+
+class _FakeXYZ(object):
+    def __init__(self, x, y, z):
+        self.X, self.Y, self.Z = x, y, z
+
+
+class _FakeBBox(object):
+    def __init__(self, min_pt, max_pt):
+        self.Min = min_pt
+        self.Max = max_pt
+
+
+class _FakeLinkInstanceWithBBox(_FakeLinkInstance):
+    def __init__(self, name, bbox):
+        super().__init__(name, None)
+        self._bbox = bbox
+
+    def get_BoundingBox(self, _view):
+        return self._bbox
+
+
+# Plan view looking down +Z with the view basis aligned to world XY, so
+# world (x, y) maps directly to view (u, v) -- keeps the test's numbers
+# simple without weakening what's being exercised (the real ViewBasis
+# projection code path, not a stand-in for it).
+_PLAN_BASIS = ViewBasis(origin=(0, 0, 0), right=(1, 0, 0), up=(0, 1, 0), forward=(0, 0, -1))
+
+
+def test_link_instance_may_be_visible_in_view_true_when_bbox_intersects_bounds():
+    raster = types.SimpleNamespace(view_basis=_PLAN_BASIS, bounds_xy=Bounds2D(0, 0, 100, 100))
+    inst = _FakeLinkInstanceWithBBox(
+        "in view", _FakeBBox(_FakeXYZ(50, 50, 0), _FakeXYZ(150, 150, 10))
+    )
+    assert color_id_buffer._link_instance_may_be_visible_in_view(inst, raster) is True
+
+
+def test_link_instance_may_be_visible_in_view_false_when_bbox_entirely_outside_bounds():
+    raster = types.SimpleNamespace(view_basis=_PLAN_BASIS, bounds_xy=Bounds2D(0, 0, 100, 100))
+    inst = _FakeLinkInstanceWithBBox(
+        "different wing", _FakeBBox(_FakeXYZ(500, 500, 0), _FakeXYZ(600, 600, 10))
+    )
+    assert color_id_buffer._link_instance_may_be_visible_in_view(inst, raster) is False
+
+
+def test_link_instance_may_be_visible_in_view_defaults_to_true_without_raster():
+    inst = _FakeLinkInstanceWithBBox("whatever", _FakeBBox(_FakeXYZ(0, 0, 0), _FakeXYZ(1, 1, 1)))
+    assert color_id_buffer._link_instance_may_be_visible_in_view(inst, None) is True
+
+
 # --- _apply_link_category_filters: create/reuse + color + enable/visible ---
 
 def test_apply_link_category_filters_creates_view_scoped_filter_and_sets_color():
@@ -538,6 +597,37 @@ def test_apply_link_category_filters_reuses_same_view_crash_leftover_without_del
         "separate gate from enabled, and a crash leftover could have it false"
     )
     assert link_category_color_map == {"Walls": [40, 50, 60]}
+
+
+def test_apply_link_category_filters_rejects_reused_filter_with_wrong_categories():
+    """A same-named filter found in the document that doesn't actually
+    filter on exactly cat's category (wrong category set here; a non-None
+    element-parameter rule is the other disqualifying case) must not be
+    silently trusted and recolored -- that would report the category as
+    successfully colored while its LINK elements keep rendering with
+    whatever native color they already had, the exact HOST-palette-ID-
+    aliasing risk this whole mechanism exists to prevent.
+    """
+    cat_walls = _FakeCategory("Walls", 10)
+    cat_floors = _FakeCategory("Floors", 11)
+    doc = types.SimpleNamespace(parameter_filters=[])
+    diag = _FakeDiag()
+    with _install_fake_revit_db({10, 11}):
+        # Same name Stage A would generate for Walls in view 1234, but its
+        # actual category list is Floors -- a mismatched definition.
+        mismatched = _FakeParameterFilterElement(doc, "VOP_Color_1234_Walls", [cat_floors.Id])
+        view = _FakeView(applied_ids=[mismatched.Id.IntegerValue])
+
+        link_category_color_map, created_ids, reused_ids, failed_cats = color_id_buffer._apply_link_category_filters(
+            doc, view, 1234, [(cat_walls, (40, 50, 60))], solid_pattern_id=object(), diag=diag
+        )
+
+    assert link_category_color_map == {}, "must not report Walls as colored"
+    assert created_ids == []
+    assert reused_ids == [], "a rejected filter is neither reused nor tracked for cleanup"
+    assert failed_cats == [cat_walls]
+    assert view.filter_override_calls == [], "must never recolor a filter that doesn't match"
+    assert diag.warnings
 
 
 # --- Structural precedence: HOST gets a per-element override, LINK relies --

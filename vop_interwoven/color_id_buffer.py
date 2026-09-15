@@ -310,6 +310,33 @@ def _find_existing_parameter_filter(doc, name):
     return None
 
 
+def _reused_filter_matches_category(pfe, cat):
+    """True only if ``pfe`` is exactly what this module itself would have
+    created for ``cat``: an accept-all filter on cat's single category id,
+    with no additional element-parameter rule narrowing which of that
+    category's elements it actually matches.
+
+    A filter found by name (see _apply_link_category_filters's docstring
+    for why a match on the view-id-scoped name should, in practice, only
+    ever be this same view's own Stage A crash leftover) is still just a
+    name match -- Revit enforces no reservation on that naming pattern, so
+    nothing guarantees the found filter's actual definition is the one
+    this function is about to assume it is. Reusing an unverified filter
+    could silently leave cat's elements native-colored (if the filter
+    doesn't actually catch them) while link_category_color_map still
+    reports the category as successfully colored -- the same
+    HOST-palette-ID-aliasing risk this whole mechanism exists to prevent,
+    just from a mismatched filter definition instead of a missing one.
+    """
+    try:
+        cat_ids = set(c.IntegerValue for c in pfe.GetCategories())
+        if cat_ids != {cat.Id.IntegerValue}:
+            return False
+        return pfe.GetElementFilter() is None
+    except Exception:
+        return False
+
+
 def _link_instance_respects_host_view_filters(view, link_inst, diag=None, view_id=None):
     """Best-effort check for whether this HOST view's SetFilterOverrides can
     actually control link_inst's rendering at all.
@@ -362,6 +389,72 @@ def _link_instance_respects_host_view_filters(view, link_inst, diag=None, view_i
                         "than hiding by default: {1}".format(getattr(link_inst, "Name", "?"), ex),
                 view_id=view_id,
             )
+        return True
+
+
+def _link_instance_may_be_visible_in_view(link_inst, raster):
+    """Cheap pre-check: does this link instance's own bounding box even
+    project into the view's UV bounds at all?
+
+    _model_categories_in_linked_doc scans an entire linked document
+    unscoped by view visibility (deliberately -- see its docstring), so an
+    "uncolorable"/failed category it finds could exist only in a part of
+    the document nowhere near this view -- e.g. a different building wing
+    referenced by the same linked model. Hiding the whole instance for a
+    category that was never going to render here anyway would be a pure
+    loss: it removes that instance's OTHER, valid geometry (which a HOST
+    element could be relying on for real 3D occlusion truth) for no
+    benefit at all. Skipping the hide decision entirely when the instance
+    doesn't even reach this view's bounds costs nothing, since none of its
+    geometry would have rendered here regardless.
+
+    This is a coarse, INSTANCE-level approximation, not a full fix: it
+    does not verify that the SPECIFIC problem category's own elements are
+    within bounds while the instance's other categories are outside them
+    (or vice versa) -- an instance that is partly visible still passes
+    this check even if the exact elements causing the failure are outside
+    the crop. Catching that precisely would mean transforming and checking
+    every element of the failing category individually, which this
+    defensive fallback path does not currently do. Reuses the same
+    world_to_view/ViewBasis projection resolve_view_bounds() and
+    compute_model_crop() already rely on elsewhere in this module, rather
+    than comparing raw view.CropBox coordinates directly -- CropBox is in
+    the view's own (possibly rotated) local frame, and comparing it
+    against host-space coordinates without that transform would be wrong
+    for any non-axis-aligned view.
+
+    Returns True (treat as potentially visible, i.e. still a hide
+    candidate) whenever the check cannot be completed -- raster/its
+    bounds_xy/view_basis may not be available in every caller, and an
+    unverifiable bbox must never silently exempt an instance that
+    genuinely needs hiding.
+    """
+    if raster is None:
+        return True
+    view_basis = getattr(raster, "view_basis", None)
+    bounds_xy = getattr(raster, "bounds_xy", None)
+    if view_basis is None or bounds_xy is None:
+        return True
+    try:
+        from .revit.view_basis import world_to_view
+        bbox = link_inst.get_BoundingBox(None)
+        if bbox is None or bbox.Min is None or bbox.Max is None:
+            return True
+        us = []
+        vs = []
+        for x in (bbox.Min.X, bbox.Max.X):
+            for y in (bbox.Min.Y, bbox.Max.Y):
+                for z in (bbox.Min.Z, bbox.Max.Z):
+                    u, v, _w = world_to_view((x, y, z), view_basis)
+                    us.append(u)
+                    vs.append(v)
+        inst_umin, inst_umax = min(us), max(us)
+        inst_vmin, inst_vmax = min(vs), max(vs)
+        return not (
+            inst_umax < bounds_xy.xmin or inst_umin > bounds_xy.xmax or
+            inst_vmax < bounds_xy.ymin or inst_vmin > bounds_xy.ymax
+        )
+    except Exception:
         return True
 
 
@@ -532,6 +625,12 @@ def _apply_link_category_filters(doc, view, view_id, categories_with_colors, sol
                 # restore's doc.Delete(), or it orphans permanently.
                 created_filter_ids.append(pfe.Id.IntegerValue)
             else:
+                if not _reused_filter_matches_category(pfe, cat):
+                    raise RuntimeError(
+                        "Existing filter '{0}' does not match category '{1}' (wrong "
+                        "category set or an element-parameter rule) -- refusing to "
+                        "reuse it".format(filter_name, cat_name)
+                    )
                 reused_filter_ids.append(pfe.Id.IntegerValue)
 
             if not view.IsFilterApplied(pfe.Id):
@@ -1285,6 +1384,13 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         instances_to_hide = set(always_hide_link_instances)
         for cat in list(uncolorable_link_categories) + list(failed_link_categories):
             instances_to_hide.update(link_category_to_instances.get(cat.Id.IntegerValue, ()))
+        # Drop instances that don't even reach this view's bounds -- see
+        # _link_instance_may_be_visible_in_view's docstring for exactly what
+        # this does and does not catch (instance-level, not per-category).
+        instances_to_hide = {
+            link_inst for link_inst in instances_to_hide
+            if _link_instance_may_be_visible_in_view(link_inst, raster)
+        }
 
         for link_inst in instances_to_hide:
             try:
