@@ -137,14 +137,13 @@ def test_empty_whitelist_falls_back_to_the_live_lookup_and_says_so():
 
 
 def test_unresolvable_colorability_resolves_to_nothing_colorable():
-    """With no colorability answer at all, nothing is treated as colorable:
-    no LINK category gets a filter, so LINK content renders with its native
-    color and carries no identity in this capture.
+    """With colorability unknown, nothing is reported as colorable: no LINK
+    category filter is created, so LINK content renders with its native color
+    and carries no identity in this capture.
 
-    That is the same outcome any non-whitelisted content already has (see
-    _model_categories_in_linked_doc's ACCEPTED GAP note) rather than a new
-    class of failure -- but it is total rather than partial, which is why it
-    is recorded as an error."""
+    The error-level diagnostic is the real product of this branch -- the loss
+    is total rather than per-category, and both ways of reaching it are states
+    of the build and of the Revit host that a retry cannot change."""
     diag = _FakeDiag()
     with _install_fake_revit_db(with_filter_utilities=False):
         is_colorable, source = color_id_buffer._resolve_colorable_category_predicate(

@@ -421,15 +421,20 @@ def _resolve_colorable_category_predicate(diag=None, view_id=None):
             cid.IntegerValue for cid in ParameterFilterUtilities.GetAllFilterableCategories()
         )
     except Exception as ex:
-        # With no colorability answer at all, treat nothing as colorable: no
-        # LINK category gets a filter, so LINK content renders with its native
-        # color and carries no identity in this capture. That is the same
-        # outcome any non-whitelisted content already has (see
-        # _model_categories_in_linked_doc's note on the accepted
-        # uncontrolled-color gap), not a new class of failure -- but it is
-        # total rather than partial, so it is recorded as an error, not a
-        # warning: a capture that hits this needs the whitelist frozen, not a
-        # retry.
+        # Colorability is unknown, so the predicate reports nothing colorable:
+        # no LINK category filter is created, and every LINK element renders
+        # with its native color, carrying no identity in this capture.
+        #
+        # Withholding color here protects nothing. Nothing downstream hides or
+        # marks what goes uncolored (see _model_categories_in_linked_doc's
+        # ACCEPTED GAP note), so the uncolored content renders exactly as it
+        # would have either way -- this branch costs identity coverage without
+        # buying safety in exchange for it. What the branch is actually for is
+        # the diagnostic below, not its return value: the loss is total rather
+        # than per-category, and both ways of reaching it -- an unfrozen
+        # VETTED_COLORABLE_CATEGORY_NAMES and an unavailable
+        # ParameterFilterUtilities -- are states of the build and of the Revit
+        # host that a retry cannot change. Hence error, not warning.
         if diag is not None:
             diag.error(
                 phase="color_id_buffer",
