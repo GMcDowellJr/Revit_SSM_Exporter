@@ -41,6 +41,18 @@ human to read, not an acceptance verdict.
   assignment count fits under the configured threshold, not
   `choose_step(count)`, which would give step 8 instead of 6 for any realistic
   view and therefore a different set of assigned colours.
+- Both probes **apply production's crop** before exporting, via
+  `view_basis.crop_box_from_uv_bounds` and `CropBoxActive = True`, the way
+  `export_color_id_buffer_view` does (`color_id_buffer.py:1592-1596`).
+  Computing the bounds without applying them would hand `ExportImage` a
+  different extent — FitToPage fits whatever the view happens to show, so
+  visible content and realized pixels-per-foot can both differ from
+  production. Each export record follows the Stage A sidecar's own
+  `bounds_xy` contract: the rectangle actually cropped to, or **null** when
+  the view has no CropBox and FitToPage's auto-computed extent is what the
+  TIFF spans. On a null, no bounds-derived metric (`native_px`, the 10:1
+  frame correction, out-of-bbox counts) is computed at all, rather than being
+  computed against a rectangle the image does not cover.
 - Both probes put the view into **production's export state** before any
   export, using `PRODUCTION_SUPPRESSION_MUTATIONS` dispatched through
   `probe_stage_a_minimum_id_mutations._apply_mutation` — the repo's own tested
@@ -77,8 +89,19 @@ Definitions that matter for reading the numbers:
 - **hard edge** — an adjacent pixel pair where one pixel is *exactly* a palette
   color and the other is *exactly* white. `hard_edge_ratio` is
   `hard / (hard + blended)`.
-- **transition width** — the run length of consecutive off-palette pixels along
-  a row. A hard edge has width 0; the baseline's drifted views show ≥3.
+- **transition width** — the run length of consecutive off-palette pixels
+  across a boundary. A hard edge has width 0; the baseline's drifted views
+  show ≥3.
+
+  Runs are scanned along **both axes** and pooled. A boundary's transition
+  runs perpendicular to it, so a row-only scan measures a horizontal edge
+  along its length instead of across its width: three blended rows spanning
+  the canvas come back as runs the width of the image, are then discarded as
+  regions, and yield no overshoot samples at all. Plans are full of
+  horizontal walls and linework, so a one-axis metric would depend on which
+  way the drawing happens to be oriented. `row_runs` / `column_runs` and
+  `row_samples` / `column_samples` report the split; a horizontal and a
+  vertical edge of the same width now measure identically.
 - **overshoot** — for a run anchored by two *different* exact colors A and B,
   the largest per-channel excursion *beyond* `[min(A,B), max(A,B)]`, normalized
   by the transition's overall endpoint separation. A box or bilinear resample

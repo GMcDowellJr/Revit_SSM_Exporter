@@ -1138,6 +1138,7 @@ _ALPHA_CHANNEL_TOL = 3.0           # 8-bit units of per-channel unblend disagree
 _ALPHA_MIN, _ALPHA_MAX = 0.02, 0.995
 _MAX_OFF_COLOR_KEYS = 500000       # dict cap; new keys dropped past it (flagged)
 _MAX_TRANSITION_SAMPLES = 20000
+_ROW_SAMPLE_BUDGET = _MAX_TRANSITION_SAMPLES // 2  # leave room for the column pass
 _MAX_PASTEL_PROFILED = 16
 _PASTEL_SOLID_MIN = 0.5    # a composited element has a solid interior; an edge does not
 _MIN_TRANSITION_SPAN = 8   # 8-bit units between anchors below which a run is not a transition
@@ -1274,6 +1275,76 @@ def _frame_geometry(sidecar: dict[str, Any], width_px: int, height_px: int) -> d
     return out
 
 
+def _off_runs_along_axis1(off: np.ndarray, rgb: np.ndarray,
+                          max_samples: int) -> tuple[np.ndarray, list]:
+    """Maximal runs of off-palette pixels along axis 1 of a block.
+
+    Sentinel columns keep a run from wrapping past the end of one line into
+    the start of the next. Only runs with a real pixel on both sides are
+    sampled for overshoot -- one touching the block edge has no second
+    anchor, so there is no transition to measure across it.
+    """
+    h, w = off.shape
+    if h == 0 or w == 0:
+        return np.zeros(0, dtype=np.int64), []
+    sent = np.zeros((h, w + 2), dtype=bool)
+    sent[:, 1:-1] = off
+    d = np.diff(sent.ravel().astype(np.int8))
+    starts = np.flatnonzero(d == 1) + 1
+    ends = np.flatnonzero(d == -1) + 1
+    if not starts.size:
+        return np.zeros(0, dtype=np.int64), []
+    lengths = (ends - starts).astype(np.int64)
+    stride = w + 2
+    line = (starts // stride).astype(np.int64)
+    lo_col = (starts % stride).astype(np.int64) - 1
+    hi_col = (ends % stride).astype(np.int64) - 1
+    samples = []
+    anchored = np.flatnonzero((lo_col > 0) & (hi_col < w))
+    if anchored.size and max_samples > 0:
+        want = min(int(anchored.size), int(max_samples))
+        pick = anchored[np.linspace(0, anchored.size - 1, want).astype(np.int64)]
+        for k in pick:
+            r, c0, c1 = int(line[k]), int(lo_col[k]), int(hi_col[k])
+            samples.append((rgb[r, c0 - 1].copy(), rgb[r, c0:c1].copy(), rgb[r, c1].copy()))
+    return lengths, samples
+
+
+def _scan_columns(arr: np.ndarray, palette_sorted: np.ndarray,
+                  max_samples: int) -> tuple[np.ndarray, list]:
+    """The same run scan, down columns instead of across rows.
+
+    A boundary's transition runs perpendicular to it, so a row-only scan
+    measures horizontal edges along their length rather than across their
+    width: three blended rows spanning the canvas come back as runs the width
+    of the image, which are then discarded as regions and yield no overshoot
+    samples at all. Plans are full of horizontal walls and linework, so
+    without this pass the width percentiles and the ringing rate would both
+    depend on which way the drawing happens to be oriented.
+
+    Columns are taken in full-height slices so a vertical run is never cut by
+    a stripe seam.
+    """
+    h, w = arr.shape[:2]
+    lengths_all, samples_all = [], []
+    x = 0
+    while x < w:
+        x1 = min(w, x + _METRIC_STRIPE_ROWS)
+        block = arr[:, x:x1]
+        code = _rgb_to_code(block)
+        off = ~(_is_palette(code, palette_sorted) | (code == WHITE_CODE))
+        lengths, samples = _off_runs_along_axis1(
+            np.ascontiguousarray(off.T),
+            np.ascontiguousarray(block.transpose(1, 0, 2)),
+            max(0, max_samples - len(samples_all)))
+        if lengths.size:
+            lengths_all.append(lengths)
+        samples_all.extend(samples)
+        x = x1
+    pooled = np.concatenate(lengths_all) if lengths_all else np.zeros(0, dtype=np.int64)
+    return pooled, samples_all
+
+
 def _scan_export(arr: np.ndarray, palette_sorted: np.ndarray,
                  content_rect: list[int]) -> dict[str, Any]:
     """One stripe-wise pass collecting every edge/run/solidity/color statistic.
@@ -1292,7 +1363,6 @@ def _scan_export(arr: np.ndarray, palette_sorted: np.ndarray,
     off_counts: dict[int, int] = {}
     off_truncated = False
     run_lengths: list[np.ndarray] = []
-    samples: list[tuple[int, int, int, int]] = []   # (abs_row, col_start, col_end, stripe_base)
     sample_rgb: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
     cx0, cy0, cx1, cy1 = content_rect
 
@@ -1357,33 +1427,14 @@ def _scan_export(arr: np.ndarray, palette_sorted: np.ndarray,
             acc['interior_palette_px'] += int(centre_pal.sum())
             acc['solid_3x3_palette_px'] += int((same & centre_pal).sum())
 
-        # Row-wise runs of off-palette pixels = transition widths. Sentinel
-        # columns keep runs from wrapping across row boundaries.
-        oh = own_off.shape[0]
-        if oh:
-            sent = np.zeros((oh, w + 2), dtype=bool)
-            sent[:, 1:-1] = own_off
-            d = np.diff(sent.ravel().astype(np.int8))
-            starts = np.flatnonzero(d == 1) + 1
-            ends = np.flatnonzero(d == -1) + 1
-            if starts.size:
-                run_lengths.append((ends - starts).astype(np.int64))
-                stride = w + 2
-                srow = (starts // stride).astype(np.int64)
-                scol = (starts % stride).astype(np.int64) - 1
-                ecol = (ends % stride).astype(np.int64) - 1
-                # Only runs anchored by a real pixel on both sides are
-                # transitions; a run touching a row edge has no second endpoint.
-                anchored = np.flatnonzero((scol > 0) & (ecol < w))
-                if anchored.size and len(samples) < _MAX_TRANSITION_SAMPLES:
-                    want = min(anchored.size, _MAX_TRANSITION_SAMPLES - len(samples))
-                    pick = anchored[np.linspace(0, anchored.size - 1, want).astype(np.int64)]
-                    for k in pick:
-                        r, c0, c1 = int(srow[k]), int(scol[k]), int(ecol[k])
-                        sample_rgb.append((block[lo + r, c0 - 1].copy(),
-                                           block[lo + r, c0:c1].copy(),
-                                           block[lo + r, c1].copy()))
-                        samples.append((y + r, c0, c1, 0))
+        # Row-wise runs of off-palette pixels. The column pass below covers
+        # the other orientation; the two are pooled.
+        if own_off.shape[0]:
+            lengths, row_samples = _off_runs_along_axis1(
+                own_off, block[lo:hi], _ROW_SAMPLE_BUDGET - len(sample_rgb))
+            if lengths.size:
+                run_lengths.append(lengths)
+            sample_rgb.extend(row_samples)
 
         # Off-palette color census, for the pastel/unblend stage.
         if not off_truncated and own_off.any():
@@ -1397,11 +1448,20 @@ def _scan_export(arr: np.ndarray, palette_sorted: np.ndarray,
                     off_truncated = True
         y = y1
 
-    lengths = np.concatenate(run_lengths) if run_lengths else np.zeros(0, dtype=np.int64)
+    row_lengths = np.concatenate(run_lengths) if run_lengths else np.zeros(0, dtype=np.int64)
+    row_samples = len(sample_rgb)
+    col_lengths, col_samples = _scan_columns(
+        arr, palette_sorted, _MAX_TRANSITION_SAMPLES - row_samples)
+    sample_rgb.extend(col_samples)
+
     acc['off_color_counts'] = off_counts
     acc['off_color_census_truncated'] = off_truncated
-    acc['transition_lengths'] = lengths
+    acc['transition_lengths'] = np.concatenate([row_lengths, col_lengths])
+    acc['transition_row_runs'] = int(row_lengths.size)
+    acc['transition_column_runs'] = int(col_lengths.size)
     acc['transition_samples'] = sample_rgb
+    acc['transition_row_samples'] = row_samples
+    acc['transition_column_samples'] = len(col_samples)
     return acc
 
 
@@ -1733,6 +1793,13 @@ def stage_a_export_metrics(tiff_path: Path, sidecar: dict[str, Any]) -> dict[str
         },
         'transitions': {
             'count': int(lengths.size),
+            # Both orientations are scanned and pooled. A boundary's
+            # transition runs perpendicular to it, so a row-only scan measures
+            # horizontal edges along their length instead of across them.
+            'row_runs': scan['transition_row_runs'],
+            'column_runs': scan['transition_column_runs'],
+            'row_samples': scan['transition_row_samples'],
+            'column_samples': scan['transition_column_samples'],
             'width_histogram': hist,
             'width_percentiles': _percentiles(lengths.astype(float)) if lengths.size else {},
             'mean_width': float(lengths.mean()) if lengths.size else None,

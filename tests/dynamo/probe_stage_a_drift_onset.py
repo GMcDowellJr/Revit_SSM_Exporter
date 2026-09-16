@@ -417,6 +417,38 @@ def _resolution_bounds(view):
     raise RuntimeError("Could not resolve any export bounds for this view")
 
 
+def apply_production_crop(view, bounds_xy):
+    """Crop the view to ``bounds_xy`` the way production crops it.
+
+    export_color_id_buffer_view builds the crop box with
+    view_basis.crop_box_from_uv_bounds and sets CropBoxActive before
+    exporting (color_id_buffer.py:1592-1596). A probe that only *computes*
+    those bounds and leaves the crop inactive hands ExportImage a different
+    extent: FitToPage then fits whatever the view happens to show, so visible
+    content and realized pixels-per-foot can both differ from production --
+    and the sidecar would be claiming a rectangle the TIFF does not span,
+    which every bounds-derived metric (native_px, the 10:1 frame correction,
+    out-of-bbox counts) is computed against.
+
+    Uses the production helper rather than building a BoundingBoxXYZ here, so
+    the UV-to-crop-local projection cannot drift from production's.
+
+    Returns the rectangle actually cropped to, or None when the view has no
+    CropBox -- matching the sidecar's own "bounds_xy" contract, where None
+    means the export fell back to FitToPage's auto-computed extent.
+    """
+    from vop_interwoven.revit.view_basis import make_view_basis, crop_box_from_uv_bounds
+    u0, v0, u1, v1 = [float(value) for value in bounds_xy]
+    basis = make_view_basis(view)
+    crop_box = crop_box_from_uv_bounds(view, basis, u0, v0, u1, v1)
+    if crop_box is None:
+        return None
+    view.CropBox = crop_box
+    view.CropBoxActive = True
+    view.CropBoxVisible = False
+    return (u0, v0, u1, v1)
+
+
 def _collect_host_elements(doc, view, max_count=None):
     """Host elements to paint, resolved exactly the way production resolves them."""
     from vop_interwoven.config import Config
@@ -641,7 +673,12 @@ def _record_export(doc, view, out_dir, base, case, label, requested_pixel_size,
         "case": case,
         "label": "{0}/{1}".format(case, label),
         "tiff_path": path,
-        "bounds_xy": [float(v) for v in bounds_xy],
+        # Same contract as the Stage A sidecar's own field: the rectangle the
+        # view was actually cropped to, or None when no crop could be applied
+        # and FitToPage's auto-computed extent is what the TIFF spans. The
+        # caller passes None for the latter so no bounds-derived metric is
+        # computed against a rectangle the image does not cover.
+        "bounds_xy": ([float(v) for v in bounds_xy] if bounds_xy is not None else None),
         "resolution": {
             "requested_pixel_size": int(requested_pixel_size),
             "pixel_size": None,
@@ -662,9 +699,12 @@ def _record_export(doc, view, out_dir, base, case, label, requested_pixel_size,
     # survives even if the analyzer never runs.
     record["sha256"] = _sha256_file(exported)
     record["dimensions_px"] = _image_dimensions(exported)
-    native_w, native_h = native_pixel_size(bounds_xy, export_dpi, view_scale)
-    record["native_width_px"] = native_w
-    record["native_height_px"] = native_h
+    if bounds_xy is not None:
+        native_w, native_h = native_pixel_size(bounds_xy, export_dpi, view_scale)
+        record["native_width_px"] = native_w
+        record["native_height_px"] = native_h
+    else:
+        record["native_width_px"] = record["native_height_px"] = None
     return record
 
 
@@ -803,7 +843,6 @@ def _case_d4(ctx):
 
 def _case_d5(ctx, grid):
     """D5: re-tile the same rectangle into NxN crops cut on the pixel lattice."""
-    from Autodesk.Revit.DB import BoundingBoxXYZ, XYZ
     doc, view = ctx["doc"], ctx["view"]
     tiles = snap_to_pixel_lattice(ctx["bounds_xy"], ctx["export_dpi"], ctx["view_scale"], grid)
     original_box = getattr(view, "CropBox", None)
@@ -814,24 +853,20 @@ def _case_d5(ctx, grid):
         u0, v0, u1, v1 = tile["bounds_xy"]
         label = "r{0}c{1}".format(tile["row"], tile["col"])
 
-        def apply_crop(u0=u0, v0=v0, u1=u1, v1=v1):
-            box = BoundingBoxXYZ()
-            box.Transform = original_box.Transform if original_box is not None else box.Transform
-            zmin = original_box.Min.Z if original_box is not None else -1.0e6
-            zmax = original_box.Max.Z if original_box is not None else 1.0e6
-            box.Min = XYZ(u0, v0, zmin)
-            box.Max = XYZ(u1, v1, zmax)
-            view.CropBox = box
-            view.CropBoxActive = True
-            view.CropBoxVisible = False
-
-        _mutate(doc, "d5_crop_{0}".format(label), apply_crop)
+        # Same UV-to-crop-local projection production uses; a hand-built box
+        # would have to re-derive it and could drift from view_basis's.
+        applied = {}
+        _mutate(doc, "d5_crop_{0}".format(label),
+                lambda t=tile: applied.__setitem__(
+                    "bounds", apply_production_crop(view, t["bounds_xy"])))
         record = _record_export(
             doc, view, ctx["out_dir"], ctx["base"], "d5_crop_tiles", label,
-            tile["requested_pixel_size"], tile["bounds_xy"],
+            tile["requested_pixel_size"], applied.get("bounds"),
             ctx["export_dpi"], ctx["view_scale"],
             extra={"tile_row": tile["row"], "tile_col": tile["col"],
-                   "seam_residual_px": tile["seam_residual_px"]})
+                   "seam_residual_px": tile["seam_residual_px"],
+                   "requested_tile_bounds_xy": tile["bounds_xy"],
+                   "crop_applied": applied.get("bounds") is not None})
         exports.append(record)
         tile_records.append({
             "row": tile["row"], "col": tile["col"],
@@ -1020,8 +1055,27 @@ def _run_native(raw_view, output_dir, selection="all", repetitions=DEFAULT_REPET
                            "than from rasterization.".format(", ".join(shortfall)),
             })
 
+        # Production crops the view to these bounds before exporting; without
+        # it FitToPage fits whatever the view happens to show and the sidecar
+        # would describe a rectangle the TIFF does not span.
+        cropped = {}
+        _mutate(doc, "apply_production_crop",
+                lambda: cropped.__setitem__(
+                    "bounds", apply_production_crop(view, bounds_xy)))
+        crop_bounds = cropped.get("bounds")
+        report["view"]["crop_applied"] = crop_bounds is not None
+        report["view"]["crop_bounds_xy"] = list(crop_bounds) if crop_bounds else None
+        if crop_bounds is None:
+            report.setdefault("warnings", []).append({
+                "stage": "apply_production_crop",
+                "message": "This view has no CropBox, so the export falls back to "
+                           "FitToPage's auto-computed extent. bounds_xy is recorded as "
+                           "null and no bounds-derived metric (native_px, the 10:1 frame "
+                           "correction, out-of-bbox counts) can be computed for it.",
+            })
+
         ctx = {"doc": doc, "view": view, "out_dir": out_dir, "base": base,
-               "bounds_xy": bounds_xy, "export_dpi": export_dpi, "view_scale": view_scale,
+               "bounds_xy": crop_bounds, "export_dpi": export_dpi, "view_scale": view_scale,
                "native_width_px": native_w, "element_ids": element_ids}
 
         runners = {

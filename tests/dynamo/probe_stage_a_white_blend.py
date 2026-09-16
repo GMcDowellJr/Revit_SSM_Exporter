@@ -154,13 +154,39 @@ def _reflect(obj, names):
     return found
 
 
+def _element_id_int(value):
+    """Read an ElementId-like object's integer, or None if it is not one.
+
+    Deliberately has no ``int(value)`` fallback: this decides *whether* a
+    value is an id, so anything merely int-convertible (a string, an enum)
+    must not qualify. ``Value`` first, each access in its own try, for the
+    same Revit 2025 reason as _safe_int_id.
+    """
+    for attr in ("Value", "IntegerValue"):
+        try:
+            inner = getattr(value, attr, None)
+        except Exception:
+            continue
+        if inner is None:
+            continue
+        try:
+            return int(inner)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 def _stringify(value):
     if value is None:
         return None
     if isinstance(value, (bool, int, float)):
         return value
-    as_id = _safe_int_id(value)
-    if as_id is not None and hasattr(value, "IntegerValue"):
+    # A second `hasattr(value, "IntegerValue")` here would re-invoke the
+    # deprecated getter that _element_id_int already handled, and on a
+    # 64-bit-range id that getter can raise -- failing B1 while stringifying
+    # a large underlay id despite the safe read having just succeeded.
+    as_id = _element_id_int(value)
+    if as_id is not None:
         return as_id
     return str(value)
 
@@ -685,9 +711,26 @@ def _run_native(raw_view, output_dir, selection="all", element_ids=None,
                            "apply.".format(", ".join(shortfall)),
             })
 
+        # Production crops the view to these bounds before exporting. Without
+        # it, FitToPage fits whatever the view shows and the B3 baseline is
+        # not the capture the 0.67 blend was observed in.
+        cropped = {}
+        _mutate(doc, "apply_production_crop",
+                lambda: cropped.__setitem__(
+                    "bounds", _drift.apply_production_crop(view, bounds_xy)))
+        crop_bounds = cropped.get("bounds")
+        report["view"]["crop_applied"] = crop_bounds is not None
+        report["view"]["crop_bounds_xy"] = list(crop_bounds) if crop_bounds else None
+        if crop_bounds is None:
+            report.setdefault("warnings", []).append({
+                "stage": "apply_production_crop",
+                "message": "This view has no CropBox, so the B3 exports fall back to "
+                           "FitToPage's auto-computed extent and bounds_xy is null.",
+            })
+
         def export(label, extra=None):
             return _record_export(doc, view, out_dir, base, "b3", label, requested_px,
-                                  bounds_xy, export_dpi, view_scale, extra=extra)
+                                  crop_bounds, export_dpi, view_scale, extra=extra)
 
         for case in export_cases:
             started = time.time()

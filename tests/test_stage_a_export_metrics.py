@@ -451,3 +451,91 @@ def test_neighbouring_palette_colors_are_recorded_for_the_blend_target_question(
     match = [m for m in blend["matches"] if m["is_composited_region"]][0]
     assert match["palette_rgb"] == list(RED)
     assert list(BLUE) in match["neighbor_palette_rgb"]
+
+
+# --- orientation independence (Codex round 2) -------------------------------
+
+def edge(length=400, thickness=60, horizontal=True):
+    """A single straight boundary with a known 3-pixel blended transition."""
+    arr = (np.full((thickness, length, 3), 255, dtype=np.uint8) if horizontal
+           else np.full((length, thickness, 3), 255, dtype=np.uint8))
+    half = thickness // 2
+    if horizontal:
+        arr[half:, :] = RED
+        for i, t in enumerate((0.25, 0.5, 0.75)):
+            arr[half - 3 + i, :] = np.round(np.array(WHITE) * (1 - t) + np.array(RED) * t)
+    else:
+        arr[:, half:] = RED
+        for i, t in enumerate((0.25, 0.5, 0.75)):
+            arr[:, half - 3 + i] = np.round(np.array(WHITE) * (1 - t) + np.array(RED) * t)
+    return arr
+
+
+def test_a_horizontal_transition_is_measured_across_it_not_along_it(tmp_path):
+    """Row-only scanning reported this 3-px edge as 400 px wide with no samples."""
+    m = measure(tmp_path, edge(horizontal=True))
+    t = m["transitions"]
+    assert t["width_percentiles"]["p50"] == 3.0
+    assert t["width_histogram"]["3"] == 400
+    assert t["overshoot"]["measurable_transitions"] == 400
+
+
+def test_a_vertical_transition_measures_the_same_as_a_horizontal_one(tmp_path):
+    horizontal = analyzer.stage_a_export_metrics(
+        write_tiff(tmp_path, edge(horizontal=True), "h.tiff"), sidecar())["transitions"]
+    vertical = analyzer.stage_a_export_metrics(
+        write_tiff(tmp_path, edge(horizontal=False), "v.tiff"), sidecar())["transitions"]
+    assert horizontal["width_percentiles"] == vertical["width_percentiles"]
+    assert horizontal["width_histogram"] == vertical["width_histogram"]
+    assert horizontal["overshoot"]["measurable_transitions"] == \
+        vertical["overshoot"]["measurable_transitions"]
+    # The two axes swap roles between the orientations, as they must.
+    assert horizontal["row_runs"] == vertical["column_runs"]
+    assert horizontal["column_runs"] == vertical["row_runs"]
+
+
+def test_ringing_on_a_horizontal_edge_is_detected(tmp_path):
+    arr = np.full((60, 200, 3), 255, dtype=np.uint8)
+    arr[30:, :] = RED
+    arr[27, :] = (240, 150, 150)
+    arr[28, :] = (120, 20, 20)        # undershoots past RED
+    arr[29, :] = (200, 30, 30)
+    over = measure(tmp_path, arr)["transitions"]["overshoot"]
+    assert over["measurable_transitions"] > 0
+    assert over["overshoot_rate"] == 1.0
+
+
+def test_both_axes_are_scanned_on_a_rectangle(tmp_path):
+    m = measure(tmp_path, solid_square(size=64, inset=16))
+    t = m["transitions"]
+    assert t["row_runs"] == 0 and t["column_runs"] == 0   # hard edges, no off-runs
+
+
+def test_stripe_height_still_does_not_change_the_pooled_transition_counts(tmp_path, monkeypatch):
+    arr = edge(horizontal=True)
+    path = write_tiff(tmp_path, arr, "seam.tiff")
+    monkeypatch.setattr(analyzer, "_METRIC_STRIPE_ROWS", 4096)
+    reference = analyzer.stage_a_export_metrics(path, sidecar())["transitions"]
+    monkeypatch.setattr(analyzer, "_METRIC_STRIPE_ROWS", 7)
+    got = analyzer.stage_a_export_metrics(path, sidecar())["transitions"]
+    assert got["width_histogram"] == reference["width_histogram"]
+    assert got["row_runs"] == reference["row_runs"]
+    assert got["column_runs"] == reference["column_runs"]
+
+
+# --- a capture with no applied crop ----------------------------------------
+
+def test_a_null_bounds_capture_still_measures_without_inventing_a_rectangle(tmp_path):
+    """bounds_xy is null when no crop could be applied; nothing may be derived from it."""
+    side = sidecar()
+    side["bounds_xy"] = None
+    m = analyzer.stage_a_export_metrics(
+        write_tiff(tmp_path, solid_square(), "nocrop.tiff"), side)
+    assert m["resolution"]["native_width_px"] is None
+    assert m["resolution"]["scale_factor"] is None
+    assert m["frame"]["aspect"] is None
+    assert m["frame"]["clamp_applied"] is None
+    # No bounds means nothing can be called out-of-bounds.
+    assert m["pixels"]["out_of_bbox_palette_px"] == 0
+    # Edge and blend metrics are bounds-independent and must still be reported.
+    assert m["edges"]["hard_edge_ratio"] == 1.0

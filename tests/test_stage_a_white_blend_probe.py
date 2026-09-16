@@ -277,3 +277,56 @@ def test_restoring_skips_a_null_snapshot_rather_than_writing_none():
     view = _View({})
     assert probe._restore_category_overrides(view, [(1, "Walls", None)]) == []
     assert view.set_calls == []
+
+
+# --- id stringification must not re-probe IntegerValue (Codex round 2) ------
+
+class _LargeId(object):
+    """Revit 2025: Value carries the id; the deprecated getter throws."""
+    Value = 2 ** 40
+
+    @property
+    def IntegerValue(self):
+        raise OverflowError("id exceeds the legacy 32-bit range")
+
+
+def test_a_large_underlay_id_stringifies_without_touching_integervalue():
+    assert probe._stringify(_LargeId()) == 2 ** 40
+
+
+def test_element_id_int_reads_value_first():
+    assert probe._element_id_int(_LargeId()) == 2 ** 40
+
+    class Legacy(object):
+        IntegerValue = 587278
+    assert probe._element_id_int(Legacy()) == 587278
+
+
+def test_element_id_int_has_no_int_fallback_so_non_ids_stay_non_ids():
+    """It decides *whether* a value is an id, so int-convertible is not enough."""
+    assert probe._element_id_int("587278") is None
+    assert probe._element_id_int(587278) is None
+    assert probe._element_id_int(object()) is None
+
+
+def test_a_non_id_object_still_stringifies_to_its_text():
+    class Orientation(object):
+        def __str__(self):
+            return "UnderlayOrientation.LookingDown"
+    assert probe._stringify(Orientation()) == "UnderlayOrientation.LookingDown"
+
+
+def test_scalars_and_none_are_passed_through_untouched():
+    assert probe._stringify(None) is None
+    assert probe._stringify(True) is True
+    assert probe._stringify(50) == 50
+    assert probe._stringify(0.5) == 0.5
+
+
+def test_reflection_of_a_large_id_property_does_not_raise():
+    """_reflect stringifies whatever it reads, so it inherits the same hazard."""
+    class View(object):
+        def GetUnderlayBaseLevel(self):
+            return _LargeId()
+    found = probe._reflect(View(), ("GetUnderlayBaseLevel",))
+    assert found["GetUnderlayBaseLevel"]["value"] == 2 ** 40
