@@ -516,8 +516,12 @@ tiles, each 5038–10px tall, gives `hard_edge_ratio` 1.0 on all four tiles.
   nonetheless answered, by D3's sub-native sweep: lowering DPI until the height
   clears the threshold does give hard edges. The constant needs to be the
   height threshold, not the width ceiling.
-- **D2** — **invalid, see below.** It swept one category (`Point Clouds`) with
-  zero painted elements and wrote two identical blank captures.
+- **D2** — **invalid, see below**, and **no longer needed**. It swept one
+  category (`Point Clouds`) with zero painted elements and wrote two identical
+  blank captures. Its question was whether drift depends on scene load; D3
+  answered that at fixed load, and the baseline's `SEA LEVEL_49370`
+  counter-example dissolves once the axis is read as height rather than
+  longest. There is nothing left for a load sweep to decide.
 
 ### 0.67 white blend: it is the underlay
 
@@ -546,8 +550,48 @@ appear in pure colour. That is the baseline observation, exactly.
 capture as thin linework, which has no solid 3×3 interior — the discriminator
 that keeps resample residue from being counted as a composited element also
 excludes blended linework. The `blend_colors` / `blend_alpha_p50` columns were
-added for this; **the 0.67 figure itself is not yet confirmed on this run** and
-needs the two `.metrics.json` files for the B3 pair.
+added for this, and they settle the alpha:
+
+**All 120 off-palette colours unblend at α = 0.6666666666666666, every one of
+them, with a maximum per-channel reconstruction error of 1.4e-14** — machine
+zero. Not "about 0.67": exactly two thirds. Each solves against a distinct
+palette colour (`distinct_palette_colors_blended: 120`), each labelled with the
+element it was assigned to. That is a compositing constant applied uniformly,
+not a rendering artefact, and it is what B-H5 needed: a residue colour from
+resampling would scatter across the alpha ray, not land 120 times on one value.
+
+No API for reading or setting that constant turned up: B1 probed
+`GetHalftoneBrightness`, `GetUnderlayBrightness`, `HalftoneBrightness` and
+`UnderlayBrightness` on the Document and all four are **absent** on this
+install. So the brightness is settable in the UI per project and not reachable
+from the API — which is the argument for turning the underlay off rather than
+compensating for whatever value it holds.
+
+### The width cap does not bound the image
+
+`MAX_STAGE_A_PIXEL_SIZE = 15000` clamps `pixel_size`, and with
+`FitDirectionType.Horizontal` that is the **width**. The height is derived from
+the view's extents and is bounded by nothing:
+
+    height_px ≈ pixel_size × extent_v_ft / extent_u_ft
+
+(5427 × 1178.1/1155.0 = 5535.5 → 5535, exactly the exported height.) So the
+existing cap cannot prevent drift, and `(N) HOSPITAL - LEVEL 2` proves it: 8739
+px wide, far under 15000, and drifted at 10079 tall. What has to be bounded is
+the derived height:
+
+    pixel_size ≤ 9900 × extent_u_ft / extent_v_ft
+
+On `(N) HOSPITAL - LEVEL 2` that gives 8583 px against a native 8739 — **98% of
+native density** for hard edges. On `MOB 1 - LEVEL 2` it gives 12016 against
+the 15000 the width cap allows today, trading 20% linear density for an
+export whose every edge is exact. Where that trade is not acceptable, D5's
+tiling holds native density: four tiles, `hard_edge_ratio` 1.0 on all four.
+
+`D4_NATIVE_CEILING` was this same confusion inside the probe — it compared the
+longest axis against the width ceiling, which is why D4 lowered no DPI and
+duplicated D1. It is now `D4_WIDTH_CEILING` (15000, production's) and
+`D4_HEIGHT_CEILING` (9900, Run 1's), applied per axis.
 
 ### The run's own defect: a stale probe module
 
@@ -579,7 +623,7 @@ table; everything else is still open.
 |---|---|---|---|
 | D-H1 | Drift is non-deterministic (a render-path race) | **contradicted by run** | D1: byte-identical repeats contradict it |
 | D-H2 | Drift is a hard absolute pixel threshold near 10000 | **supported by run, on HEIGHT** | Every capture splits on exported height at a threshold in (9927, 10079]; width up to 15000 is clean. The baseline's counter-example measured the long axis, not the height |
-| D-H3 | Drift is triggered by a *combination* of raster size and scene load | **not needed** | D2: if unhiding categories in 49370 flips `hard_edge_ratio` at fixed size, supported; if it never flips, contradicted |
+| D-H3 | Drift is triggered by a *combination* of raster size and scene load | **not needed** — height alone separates every capture, at fixed load | D2: if unhiding categories in 49370 flips `hard_edge_ratio` at fixed size, supported; if it never flips, contradicted |
 | D-H4 | Drift is caused by the request exceeding what Revit will render, followed by an upscale | **supported by run** | D3+D4: if lowering DPI so native ≤ 15000 and requesting native exactly gives hard edges, supported. `(N) HOSPITAL - LEVEL 2` drifting at scale 1.00 already weighs against it |
 | D-H5 | Drift is a resample, not anti-aliasing | **supported by baseline** | AA already ruled out by stair-stepped curves in clean views; 34–60% overshoot is a negative-lobe kernel or a sharpening pass, which AA does not produce |
 | D-H6 | Drift is avoidable by tiling at native density | **supported by run** | D5: per-tile `hard_edge_ratio` of 1.0 with zero seam residual supports it |
@@ -598,7 +642,7 @@ be checked rather than argued.
 | B-H2 | View underlay | **confirmed by run** | Consistent with every baseline fact: the affected categories (Walls, Generic Models, Roofs, Doors, Windows) are exactly what an underlay from an adjacent level shows; the blend is uniform over the whole element; and pastels unblend to the *palette* color, so the override applied and something composited afterwards. B1's `elements_on_an_underlay_level`, then B3's `underlay_off` export |
 | B-H3 | Phase filter "Overridden" graphics | **not needed** | Phase overrides sit below element overrides in Revit's precedence, so they should have been beaten by the paint step. B1 records the phase filter and its per-status presentation anyway |
 | B-H4 | Design option graphics | **contradicted by run** | B1 records each element's design option |
-| B-H5 | The blend target is another element, not white | **contradicted by run** | B2: every pastel color unblends *exactly* against white in the baseline, which already weighs against it. `white_blend.matches[].neighbor_palette_rgb` names the palette colours actually adjacent to each pastel region, so a pastel that unblends against white while touching another element settles it |
+| B-H5 | The blend target is another element, not white | **contradicted by run** — 120/120 colours unblend against white at α=2/3 with 1.4e-14 error | B2: every pastel color unblends *exactly* against white in the baseline, which already weighs against it. `white_blend.matches[].neighbor_palette_rgb` names the palette colours actually adjacent to each pastel region, so a pastel that unblends against white while touching another element settles it |
 
 ## UNCONFIRMED API assumptions
 
@@ -618,13 +662,23 @@ emits its own `unconfirmed_api_assumptions` list.
    version-dependent. `_set_pixel_size` halves on rejection rather than
    assuming a constant; `resolution.pixel_size_backoff` reports when it fired.
 5. No API access to hardware acceleration is known, which is why D6 is manual.
+   **Now the highest-value remaining test**: if the ~10,000 px height cap is a
+   renderer/GPU limit, disabling hardware acceleration may move or remove it.
+6. **Untested**: whether the cap is on the *height* or on *the axis Revit does
+   not fit to*. Every capture in Run 1 used `FitDirectionType.Horizontal`, so
+   PixelSize set the width exactly (5427, 10000, 12000, 15000 all accepted
+   verbatim) and the height was always the derived one. If the cap belongs to
+   the derived axis rather than to height, exporting a tall view with
+   `FitDirectionType.Vertical` would move it to the width and allow the full
+   height — which would change the recommended fix entirely. One capture of
+   871863 at native with Vertical fit decides it.
 
 **Underlay / blend**
 
-6. `ViewPlan.GetUnderlayBaseLevel` / `GetUnderlayTopLevel` /
+7. `ViewPlan.GetUnderlayBaseLevel` / `GetUnderlayTopLevel` /
    `GetUnderlayOrientation` exist on this install. **CONFIRMED by Run 1** on
    Revit 2025 build 25.4.41.14: B1 read the underlay range through them.
-7. `ViewPlan.SetUnderlayRange(InvalidElementId, InvalidElementId)` disables the
+8. `ViewPlan.SetUnderlayRange(InvalidElementId, InvalidElementId)` disables the
    underlay. **CONFIRMED by Run 1**: `api_used: "SetUnderlayRange"`, and the
    resulting capture has zero off-palette pixels.
 8. `BuiltInParameter.VIEW_UNDERLAY_ID` / `_BOTTOM_ID` / `_TOP_ID` are the

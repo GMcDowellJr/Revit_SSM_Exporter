@@ -55,20 +55,42 @@ def test_dpi_is_left_alone_when_native_already_fits():
     assert probe.dpi_for_native_ceiling(BOUNDS, SCALE, DPI) == pytest.approx(DPI)
 
 
-def test_dpi_is_lowered_until_the_long_axis_hits_the_ceiling():
-    big = (0.0, 0.0, 2000.0, 400.0)   # 37500 x 7500 px at 150 dpi
-    lowered = probe.dpi_for_native_ceiling(big, SCALE, DPI)
+def test_a_wide_view_is_lowered_until_its_width_hits_the_width_ceiling():
+    wide = (0.0, 0.0, 2000.0, 400.0)   # 37500 x 7500 px at 150 dpi
+    lowered = probe.dpi_for_native_ceiling(wide, SCALE, DPI)
     assert lowered < DPI
-    width, height = probe.native_pixel_size(big, lowered, SCALE)
-    assert max(width, height) == pytest.approx(probe.D4_NATIVE_CEILING)
+    width, height = probe.native_pixel_size(wide, lowered, SCALE)
+    assert width == pytest.approx(probe.D4_WIDTH_CEILING)
+    assert height <= probe.D4_HEIGHT_CEILING
 
 
-def test_the_ceiling_is_applied_to_the_long_axis_even_when_it_is_vertical():
-    tall = (0.0, 0.0, 400.0, 2000.0)
+def test_a_tall_view_is_lowered_until_its_height_hits_the_height_ceiling():
+    """Run 1: the drift threshold is on the exported height, and the two axes
+    do not share a ceiling. Comparing the longest axis against the width
+    ceiling -- what this did before -- passes a view already over the height
+    line, which is why D4 lowered nothing and duplicated D1."""
+    tall = (0.0, 0.0, 400.0, 2000.0)   # 7500 x 37500 px at 150 dpi
     lowered = probe.dpi_for_native_ceiling(tall, SCALE, DPI)
     width, height = probe.native_pixel_size(tall, lowered, SCALE)
-    assert height == pytest.approx(probe.D4_NATIVE_CEILING)
-    assert width < probe.D4_NATIVE_CEILING
+    assert height == pytest.approx(probe.D4_HEIGHT_CEILING)
+    assert width < probe.D4_WIDTH_CEILING
+
+
+def test_a_view_under_the_width_ceiling_is_still_lowered_for_its_height():
+    """The Run 1 case: 8739x10079 is far under 15000 wide and still drifts."""
+    hospital = (0.0, 0.0, 466.1, 537.5)   # ~8739 x 10078 px at 150 dpi
+    lowered = probe.dpi_for_native_ceiling(hospital, SCALE, DPI)
+    assert lowered < DPI
+    width, height = probe.native_pixel_size(hospital, lowered, SCALE)
+    assert height == pytest.approx(probe.D4_HEIGHT_CEILING)
+    # And the density cost of staying under it is small on this view.
+    assert width / 8739.0 > 0.97
+
+
+def test_the_height_ceiling_sits_below_the_measured_bracket():
+    """(9927, 10079] is where Run 1 puts the threshold; 9900 is safe wherever
+    in that bracket it actually falls."""
+    assert probe.D4_HEIGHT_CEILING < 9927
 
 
 # --- D5: pixel-lattice tiling ----------------------------------------------

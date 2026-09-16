@@ -118,9 +118,19 @@ DEFAULT_REPETITIONS = 2
 DEFAULT_SIZE_SWEEP = ("native", 10000, 12000, 15000)
 DEFAULT_D2_STEPS = 8
 DEFAULT_TILE_GRID = 2
-# The ceiling production already applies (color_id_buffer.MAX_STAGE_A_PIXEL_SIZE);
-# D4 lowers DPI until native density fits under it instead of clamping.
-D4_NATIVE_CEILING = 15000
+# The ceiling production already applies (color_id_buffer.MAX_STAGE_A_PIXEL_SIZE),
+# which with FitDirectionType.Horizontal bounds the WIDTH only.
+D4_WIDTH_CEILING = 15000
+# The height ceiling is Run 1's finding, not a production constant. Every
+# capture in that run split on exported height at a threshold in (9927, 10079],
+# with widths up to 15000 perfectly hard-edged. 9900 sits under the low end of
+# that bracket, so it is safe wherever in it the real limit falls; a follow-up
+# sweep at 0.98x/0.99x/1.00x on 871863 would pin it exactly.
+D4_HEIGHT_CEILING = 9900
+# Kept as the old name so an existing caller does not break. It was the width
+# ceiling all along, which is why D4 lowered no DPI in Run 1: it compared the
+# LONGEST axis against 15000 on a view whose height problem started at 10079.
+D4_NATIVE_CEILING = D4_WIDTH_CEILING
 
 _PROBE_CONTRACT = None
 
@@ -325,18 +335,27 @@ def native_pixel_size(bounds_xy, export_dpi, view_scale):
     return (u1 - u0) * ppf, (v1 - v0) * ppf
 
 
-def dpi_for_native_ceiling(bounds_xy, view_scale, export_dpi, ceiling=D4_NATIVE_CEILING):
-    """The highest DPI <= ``export_dpi`` whose native size fits under ``ceiling``.
+def dpi_for_native_ceiling(bounds_xy, view_scale, export_dpi,
+                           ceiling=None, height_ceiling=None):
+    """The highest DPI <= ``export_dpi`` that fits both export ceilings.
 
     D4 separates "Revit was asked for more pixels than it will render" from
     "this raster is simply large": lowering DPI shrinks the *request* without
     changing the view, its content, or its crop.
+
+    The two axes have different limits and they are not interchangeable. Width
+    is what PixelSize sets, capped by production at MAX_STAGE_A_PIXEL_SIZE.
+    Height is derived from the view's extents and is where the drift threshold
+    sits. Comparing the longest axis against the width ceiling -- what this did
+    before Run 1 -- passes a view whose height is already over the line, which
+    is exactly why D4 lowered nothing and duplicated D1.
     """
+    ceiling = float(D4_WIDTH_CEILING if ceiling is None else ceiling)
+    height_ceiling = float(D4_HEIGHT_CEILING if height_ceiling is None else height_ceiling)
     width, height = native_pixel_size(bounds_xy, export_dpi, view_scale)
-    longest = max(width, height)
-    if longest <= ceiling:
-        return float(export_dpi)
-    return float(export_dpi) * float(ceiling) / longest
+    factor = min(ceiling / width if width > ceiling else 1.0,
+                 height_ceiling / height if height > height_ceiling else 1.0)
+    return float(export_dpi) * factor
 
 
 def snap_to_pixel_lattice(bounds_xy, export_dpi, view_scale, grid):
@@ -916,7 +935,9 @@ def _case_d4(ctx):
     return [record], {
         "original_export_dpi": ctx["export_dpi"],
         "lowered_export_dpi": lowered,
-        "native_ceiling_px": D4_NATIVE_CEILING,
+        "width_ceiling_px": D4_WIDTH_CEILING,
+        "height_ceiling_px": D4_HEIGHT_CEILING,
+        "native_ceiling_px": D4_WIDTH_CEILING,
         "pixel_size_at_lowered_dpi": int(round(lowered * ctx["paper_width_in"])),
         "accepted": (record.get("resolution") or {}).get("pixel_size"),
         # UNCONFIRMED: ImageExportOptions is driven purely through PixelSize.
