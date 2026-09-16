@@ -238,6 +238,94 @@ class TestDecodeStageAColorId(unittest.TestCase):
             buggy_value = 96.0 / (150.0 * 12.0)
             self.assertNotAlmostEqual(doc["feet_per_pixel"], buggy_value, places=6)
 
+    def test_feet_per_pixel_uses_actual_dims_on_a_capped_export(self):
+        """G5: pre_cap 12000 capped to 10000, exported 10000 wide.
+
+        The physical extent the view covers is set by the UNCAPPED request
+        (capping changes density, not extent); the denominator is what the
+        file measured. Getting either side from the other number is a
+        silently wrong scale on every capped export.
+        """
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sidecar_path, tiff_path, arr = self._make_fixture(tmp_dir)
+            sidecar = json.load(open(sidecar_path))
+            sidecar["resolution"].update({
+                "pre_cap_px": 12000,
+                "requested_px": 10000,
+                "requested_pixel_size": 10000,
+                "pixel_size": 10000,
+                "requested_axis": "width",
+                "cap_applied": True,
+                "actual_w": 10000,
+                "actual_h": 8000,
+                "dim_check": "pass",
+            })
+            doc = dsc.build_decoded_document(
+                Path(tiff_path), sidecar, Path(sidecar_path), bounds_uv=None)
+
+            expected = ((12000.0 / 150.0) * 96.0 / 12.0) / 10000.0
+            self.assertAlmostEqual(doc["feet_per_pixel"], expected, places=12)
+            self.assertEqual(doc["feet_per_pixel_basis"], "sidecar_actual_dims")
+            self.assertIsNone(doc["feet_per_pixel_unreliable_reason"])
+            # Not the pre-cap count as denominator...
+            self.assertNotAlmostEqual(
+                doc["feet_per_pixel"], ((12000.0 / 150.0) * 96.0 / 12.0) / 12000.0, places=9)
+            # ...and not the post-cap request as the extent.
+            self.assertNotAlmostEqual(
+                doc["feet_per_pixel"], ((10000.0 / 150.0) * 96.0 / 12.0) / 10000.0, places=9)
+
+    def test_feet_per_pixel_falls_back_to_the_decoded_image_dims(self):
+        """A sidecar with no actual_w/actual_h (predates the check, or its
+        read failed) still measures -- from this decode's own read of the
+        file, never from the request."""
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sidecar_path, tiff_path, arr = self._make_fixture(tmp_dir)
+            sidecar = json.load(open(sidecar_path))
+            sidecar["resolution"].update({
+                "pre_cap_px": 80, "requested_pixel_size": 80, "pixel_size": 80,
+            })
+            doc = dsc.build_decoded_document(
+                Path(tiff_path), sidecar, Path(sidecar_path), bounds_uv=None)
+            # The fixture image is genuinely 40 px wide.
+            expected = ((80.0 / 150.0) * 96.0 / 12.0) / 40.0
+            self.assertAlmostEqual(doc["feet_per_pixel"], expected, places=12)
+            self.assertEqual(doc["feet_per_pixel_basis"], "decoded_image_dims")
+
+    def test_feet_per_pixel_from_crop_uses_measured_width(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sidecar_path, tiff_path, arr = self._make_fixture(tmp_dir)
+            sidecar = json.load(open(sidecar_path))
+            # The request claims 80 px; the file is 40 px. The crop is known,
+            # so neither number matters except the measured one.
+            sidecar["resolution"]["requested_pixel_size"] = 80
+            sidecar["resolution"]["pixel_size"] = 80
+            doc = dsc.build_decoded_document(
+                Path(tiff_path), sidecar, Path(sidecar_path), bounds_uv=(0.0, 0.0, 20.0, 15.0))
+            self.assertAlmostEqual(doc["feet_per_pixel"], 20.0 / 40.0, places=12)
+            self.assertEqual(doc["feet_per_pixel_basis"], "decoded_image_dims")
+
+    def test_feet_per_pixel_uses_the_fitted_axis_under_vertical_fit(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sidecar_path, tiff_path, arr = self._make_fixture(tmp_dir)
+            sidecar = json.load(open(sidecar_path))
+            sidecar["resolution"].update({
+                "pre_cap_px": 9000, "pixel_size": 9000, "requested_axis": "height",
+                "actual_w": 6000, "actual_h": 9000,
+            })
+            doc = dsc.build_decoded_document(
+                Path(tiff_path), sidecar, Path(sidecar_path), bounds_uv=None)
+            # pre_cap_px sized the HEIGHT, so it divides by the height.
+            expected = ((9000.0 / 150.0) * 96.0 / 12.0) / 9000.0
+            self.assertAlmostEqual(doc["feet_per_pixel"], expected, places=12)
+
     def test_pixel_space_output_when_bounds_omitted(self):
         import tempfile
         with tempfile.TemporaryDirectory() as tmp_dir:

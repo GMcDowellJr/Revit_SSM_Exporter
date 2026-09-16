@@ -52,8 +52,9 @@ For input sidecar ``<name>.json``, this tool writes a sibling
       "view_bounds_uv": [xmin, ymin, xmax, ymax] | null,
       "model_crop_offset_uv": [dxmin, dymin, dxmax, dymax] | null,
       "grid_bounds_uv": [xmin, ymin, xmax, ymax] | null,
-      "feet_per_pixel": <float> | null,
+      "feet_per_pixel": <float> | null,   # from MEASURED export dimensions
       "feet_per_pixel_unreliable_reason": <str> | null,
+      "feet_per_pixel_basis": "sidecar_actual_dims" | "decoded_image_dims" | null,
       "background_element_id": 0,
       "off_palette_foreground_pixel_count": <int>,
       "background_pixel_count": <int>,
@@ -564,73 +565,76 @@ def build_decoded_document(
 
     feet_per_pixel = None
     feet_per_pixel_unreliable_reason = None
+    feet_per_pixel_basis = None
     resolution = sidecar.get("resolution") or {}
     try:
-        actual_px = float(resolution.get("pixel_size"))
+        # feet_per_pixel describes the image that EXISTS, so its denominator
+        # is the image's measured size -- never the pixel count that was
+        # requested. Those were the same number only as long as nothing
+        # checked; the dimension check exists precisely because they came
+        # apart (a 8695 px request exporting 10028 px tall). The sidecar's
+        # actual_w/actual_h are the producer's own measurement; `w`/`h` here
+        # are this decode's measurement of the same file and are used when
+        # the sidecar has none (it predates the check, or its read failed).
+        fitted_axis = resolution.get("requested_axis") or "width"
+        sidecar_w = resolution.get("actual_w")
+        sidecar_h = resolution.get("actual_h")
+        if sidecar_w and sidecar_h:
+            measured_w, measured_h = float(sidecar_w), float(sidecar_h)
+            feet_per_pixel_basis = "sidecar_actual_dims"
+        else:
+            measured_w, measured_h = float(w), float(h)
+            feet_per_pixel_basis = "decoded_image_dims"
+        measured_fit_px = measured_h if fitted_axis == "height" else measured_w
+
         if bounds_uv is not None:
             # The rectangle this TIFF was actually cropped to is known
             # directly (bounds_uv, from the sidecar's own "bounds_xy" --
-            # see decode_one()): its width in feet divided by the actual
-            # pixel width IS feet-per-pixel exactly, regardless of any
-            # PixelSize backoff (color_id_buffer.py:285-316) or crop
-            # narrowing (color_id_buffer.py's compute_model_crop() can crop
-            # to raster.model_clip_bounds, narrower than the raster.W/cell_
-            # size_ft/scale math the estimate below is derived from) --
-            # unlike that estimate, this needs no MAX_STAGE_A_PIXEL_SIZE
-            # clamp caveat at all, since it never goes through requested_
-            # pixel_size.
+            # see decode_one()): its width in feet divided by the image's
+            # measured pixel width IS feet-per-pixel exactly. No caveat
+            # about PixelSize backoff, crop narrowing or the axis cap
+            # applies, because no requested quantity enters it at all.
             crop_width_ft = float(bounds_uv[2]) - float(bounds_uv[0])
-            if actual_px and crop_width_ft:
-                feet_per_pixel = crop_width_ft / actual_px
+            if measured_w and crop_width_ft:
+                feet_per_pixel = crop_width_ft / measured_w
         else:
-            # No known crop rectangle (coordinate_space="pixel" fallback) --
-            # estimate physical width from raster.W/cell_size_ft/scale via
-            # requested_pixel_size (not the possibly-backed-off actual
-            # pixel_size, which is what raster.W/cell_size_ft/scale was
-            # originally sized to, color_id_buffer.py:384-399: the model
-            # width, in pixels, the export was SUPPOSED to be. Deriving
-            # model_width_ft from actual_px instead would make it cancel out
-            # of feet_per_pixel entirely, independent of actual_px, silently
-            # reporting the pre-backoff scale even when Revit's PixelSize
-            # backoff actually shrank the export -- wrong by requested_px/
-            # actual_px on any degraded-resolution export). This estimate is
-            # only as good as FitToPage's own auto-computed extent matching
-            # it, since there is no known crop rectangle to measure directly.
-            # "pre_cap_px" is the UNCAPPED request, written since the
-            # two-axis cap landed, and it is the only field that still means
-            # "the model's real paper extent in pixels" once a cap fires.
-            # "requested_pixel_size" is post-cap, so preferring it on a
-            # capped export would understate model_width_ft below.
+            # No known crop rectangle (coordinate_space="pixel" fallback),
+            # so the physical extent has to be reconstructed from what was
+            # asked for: pre_cap_px paper-inches at export_dpi, in feet.
+            # This is the one place a REQUESTED value belongs, and it must
+            # be the UNCAPPED one -- capping changes pixel density, not the
+            # model extent the view covers, so "requested_pixel_size"
+            # (post-cap) would understate the extent on any capped export.
+            # The measured pixel count is still what it is divided by.
             requested_px = resolution.get("pre_cap_px")
             if not requested_px:
                 requested_px = resolution.get("requested_pixel_size")
-            requested_px = float(requested_px) if requested_px else actual_px
-            export_dpi = float(resolution.get("export_dpi"))
-            view_scale = float(resolution.get("view_scale"))
-            if actual_px and export_dpi:
+            export_dpi = resolution.get("export_dpi")
+            view_scale = resolution.get("view_scale")
+            if requested_px and export_dpi and view_scale and measured_fit_px:
+                requested_px = float(requested_px)
                 if not resolution.get("pre_cap_px") and requested_px >= MAX_STAGE_A_PIXEL_SIZE:
-                    # Sidecars written before the two-axis cap landed carry
-                    # only the post-cap "requested_pixel_size": the true
-                    # pre-cap desired width (from raster.W/cell_size_ft) was
-                    # never persisted, so requested_px here is the cap value,
-                    # not the model's real paper extent, and model_width_ft/
-                    # feet_per_pixel would be silently wrong (underestimated)
-                    # even when Revit accepted this exact pixel count with no
-                    # further backoff. Current sidecars record "pre_cap_px"
-                    # and take the branch above instead; for the older ones
-                    # there is no way to recover the true value, so report
-                    # the gap rather than a wrong number.
+                    # A sidecar predating the cap carries only the post-cap
+                    # "requested_pixel_size": the true pre-cap extent was
+                    # never persisted, so model_fit_ft would be silently
+                    # understated. Current sidecars record "pre_cap_px" and
+                    # take the branch below; for the older ones there is no
+                    # way to recover it, so report the gap rather than a
+                    # wrong number.
                     feet_per_pixel_unreliable_reason = (
                         "requested_pixel_size ({0}) is at or above MAX_STAGE_A_PIXEL_SIZE "
                         "({1}) and this sidecar carries no pre_cap_px, so it predates the "
-                        "two-axis cap and the true pre-cap desired width is not "
+                        "two-axis cap and the true pre-cap desired extent is not "
                         "recoverable from it".format(int(requested_px), MAX_STAGE_A_PIXEL_SIZE)
                     )
                 else:
-                    model_width_ft = (requested_px / export_dpi) * view_scale / 12.0
-                    feet_per_pixel = model_width_ft / actual_px
+                    model_fit_ft = (requested_px / float(export_dpi)) * float(view_scale) / 12.0
+                    feet_per_pixel = model_fit_ft / measured_fit_px
     except (TypeError, ValueError):
         feet_per_pixel = None
+
+    if feet_per_pixel is None:
+        feet_per_pixel_basis = None
 
     coordinate_space = "view_uv" if bounds_uv is not None else "pixel"
 
@@ -712,6 +716,10 @@ def build_decoded_document(
         "grid_bounds_uv": grid_bounds_uv,
         "feet_per_pixel": feet_per_pixel,
         "feet_per_pixel_unreliable_reason": feet_per_pixel_unreliable_reason,
+        # Which measurement the denominator came from: the producer's own
+        # recorded export dimensions, or this decode's measurement of the
+        # file. Never a requested pixel count.
+        "feet_per_pixel_basis": feet_per_pixel_basis,
         "background_element_id": BACKGROUND_ELEMENT_ID,
         "off_palette_foreground_pixel_count": stats["off_palette_foreground_pixel_count"],
         "background_pixel_count": stats["background_pixel_count"],
