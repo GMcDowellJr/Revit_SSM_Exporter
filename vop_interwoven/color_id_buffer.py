@@ -10,10 +10,18 @@ state before returning to the next view.
 import copy
 import json
 import os
+import struct
 import time
 
+from .resolution_contract import MAX_STAGE_A_AXIS_PX, cap_axes
+
 NEUTRAL_PHASE_FILTER_NAME = "VOP_NeutralPhaseFilter"
-MAX_STAGE_A_PIXEL_SIZE = 15000
+# Kept as a name so existing readers (tools/decode_stage_a_color_id.py) keep
+# importing one symbol, but it is no longer a ceiling of this module's own
+# invention sitting above the measured limit: it IS the measured limit, and
+# it now bounds BOTH exported axes rather than only the one FitDirection
+# sets. See resolution_contract.MAX_STAGE_A_AXIS_PX for the evidence.
+MAX_STAGE_A_PIXEL_SIZE = MAX_STAGE_A_AXIS_PX
 # Near-white and near-black corners of the RGB cube are reserved as invalid so
 # a decoder can draw a clean boundary against two distinct noise sources:
 # (a) AA/export halos at the page background, which is white outside the
@@ -1383,14 +1391,82 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                         "sizing from the paper width instead",
                 view_id=view_id,
             )
-    pixel_size = int(round(export_dpi * paper_fit_in))
-    pixel_size = max(64, min(pixel_size, MAX_STAGE_A_PIXEL_SIZE))
-    if pixel_size >= MAX_STAGE_A_PIXEL_SIZE and diag is not None:
+    pre_cap_px = max(64, int(round(export_dpi * paper_fit_in)))
+    requested_axis = "height" if fit_direction == "vertical" else "width"
+
+    # PixelSize bounds the fitted axis ONLY: FitToPage derives the other axis
+    # from the view's extents and bounds it by nothing. Capping the request
+    # therefore needs the ratio between the two axes of the rectangle the
+    # export is actually fitted to -- and that rectangle is the model-only
+    # crop applied further below (compute_model_crop), not raster.bounds_xy,
+    # whenever a narrower model_clip_bounds exists. Using the grid's own
+    # aspect here would understate the derived axis by exactly the amount
+    # the crop narrows. compute_model_crop is pure, so resolving it twice
+    # costs nothing and keeps the cap honest about what will be rendered.
+    aspect_derived_over_fit = None
+    if raster is not None and getattr(raster, "bounds_xy", None) is not None:
+        try:
+            _render_bounds, _unused_offset = compute_model_crop(
+                getattr(raster, "model_clip_bounds", None), raster.bounds_xy
+            )
+            _u = float(_render_bounds.xmax) - float(_render_bounds.xmin)
+            _v = float(_render_bounds.ymax) - float(_render_bounds.ymin)
+            if _u > 0.0 and _v > 0.0:
+                aspect_derived_over_fit = (_u / _v) if fit_direction == "vertical" else (_v / _u)
+        except Exception as ex:
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="pixel_size_aspect",
+                    message="could not resolve the export crop's aspect ratio from the "
+                            "raster ({0}); falling back to the grid's own paper "
+                            "extents for the two-axis cap".format(ex),
+                    view_id=view_id,
+                )
+    if aspect_derived_over_fit is None and paper_fit_in > 0:
+        _paper_derived_in = paper_width_in if fit_direction == "vertical" else paper_height_in
+        if _paper_derived_in > 0:
+            aspect_derived_over_fit = float(_paper_derived_in) / float(paper_fit_in)
+    if aspect_derived_over_fit is None:
+        # Nothing to derive the other axis from, so the cap can only bound
+        # the fitted one. Say so rather than implying both axes are covered:
+        # the post-export dimension check is then the only thing between this
+        # view and an over-limit export.
+        aspect_derived_over_fit = 1.0
+        if diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="pixel_size_aspect",
+                message="no usable view extents; the two-axis cap can bound only the "
+                        "fitted axis for this view, leaving the derived axis "
+                        "unverified until the post-export dimension check",
+                view_id=view_id,
+            )
+
+    # A caller may raise the SIZING cap to prove the post-export check fires
+    # (see _export_tiff: the verification ceiling stays at the measured
+    # limit regardless). None/0/absent means the shipped limit.
+    cap_axis_px = getattr(cfg, "color_id_buffer_cap_axis_px", None) or MAX_STAGE_A_AXIS_PX
+    cap = cap_axes(pre_cap_px, pre_cap_px * aspect_derived_over_fit, cap_axis_px)
+    pixel_size = max(64, cap["accepted_px"])
+    if pixel_size != cap["accepted_px"] and diag is not None:
         diag.warn(
             phase="color_id_buffer",
             callsite="pixel_size",
-            message="Requested Stage A pixel size clamped to {0}; export DPI may "
-                    "not be met for this view".format(MAX_STAGE_A_PIXEL_SIZE),
+            message="two-axis cap wanted {0} px but the 64 px floor overrides it; the "
+                    "derived axis may exceed {1} px for this view".format(
+                        cap["accepted_px"], cap["max_axis_px"]),
+            view_id=view_id,
+        )
+    if cap["cap_applied"] and diag is not None:
+        diag.warn(
+            phase="color_id_buffer",
+            callsite="pixel_size",
+            message="Stage A export capped from {0} to {1} px on the {2} axis so BOTH "
+                    "axes stay within {3} px (derived axis predicted at {4} px); the "
+                    "requested export DPI is not met for this view".format(
+                        cap["pre_cap_px"], pixel_size, requested_axis,
+                        cap["max_axis_px"], cap["accepted_derived_px"]),
             view_id=view_id,
         )
 
@@ -2211,6 +2287,16 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             # The paper dimension pixel_size was derived from, so a reader can
             # reproduce the request instead of assuming it came from the width.
             "paper_fit_in": paper_fit_in,
+            # The two-axis cap. pre_cap_px is the uncapped request, which is
+            # what makes a capped export reconstructable: before this field
+            # existed the pre-cap value was discarded and no consumer could
+            # recover the view's real paper extent from the sidecar.
+            "requested_axis": requested_axis,
+            "requested_px": pixel_size,
+            "pre_cap_px": cap["pre_cap_px"],
+            "cap_applied": bool(cap["cap_applied"]),
+            "max_axis_px": cap["max_axis_px"],
+            "predicted_derived_px": cap["accepted_derived_px"],
         },
         # View-local UV rectangle (min_u, min_v, max_u, max_v) the export
         # was cropped to -- the same tuple set as view.CropBox above, not
