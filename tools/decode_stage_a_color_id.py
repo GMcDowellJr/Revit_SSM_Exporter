@@ -84,11 +84,11 @@ element in this decode is "MEDIUM", since the render is not a guaranteed
 exact-match, anti-aliasing-off capture and must not be handed AREAL+HIGH
 occlusion authority (pipeline.py:2443-2444) it hasn't earned. Similarly,
 "feet_per_pixel" is null (with "feet_per_pixel_unreliable_reason" set) when
-color_id_buffer.py's own MAX_STAGE_A_PIXEL_SIZE clamp (color_id_buffer.py:
-398-399) makes the sidecar's "requested_pixel_size" the clamp value rather
-than the model's true desired width -- see _capture_reliability() and the
-feet_per_pixel computation in build_decoded_document() for exactly what is
-checked.
+color_id_buffer.py capped the request and the sidecar predates the
+"pre_cap_px" field, so "requested_pixel_size" is the capped value rather
+than the model's true desired width and nothing records the latter -- see
+_capture_reliability() and the feet_per_pixel computation in
+build_decoded_document() for exactly what is checked.
 
 An element present in color_assignment_map but with zero visible pixels
 (fully occluded, or a paint failure recorded in the sidecar) is simply
@@ -405,7 +405,7 @@ def _shoelace_area(loop: list[tuple[int, int]]) -> float:
 # Row-chunk budget for _element_bounding_boxes: bounds the several full-chunk
 # int64 temporaries (order/row-index/col-index arrays, each 8 bytes/pixel) to
 # roughly this many pixels at once. At the producer's documented ceiling
-# (MAX_STAGE_A_PIXEL_SIZE=15000, a 15000x15000 image), sorting the WHOLE
+# (MAX_STAGE_A_PIXEL_SIZE, a square image at that per-axis limit), sorting the WHOLE
 # flattened image in one pass -- as an earlier version of this function did --
 # allocates several such int64 arrays simultaneously (order, unravelled row/
 # col indices, their sorted copies) for ~1.8GB each, ~10GB+ peak; verified by
@@ -580,29 +580,35 @@ def build_decoded_document(
             # actual_px on any degraded-resolution export). This estimate is
             # only as good as FitToPage's own auto-computed extent matching
             # it, since there is no known crop rectangle to measure directly.
-            requested_px = resolution.get("requested_pixel_size")
+            # "pre_cap_px" is the UNCAPPED request, written since the
+            # two-axis cap landed, and it is the only field that still means
+            # "the model's real paper extent in pixels" once a cap fires.
+            # "requested_pixel_size" is post-cap, so preferring it on a
+            # capped export would understate model_width_ft below.
+            requested_px = resolution.get("pre_cap_px")
+            if not requested_px:
+                requested_px = resolution.get("requested_pixel_size")
             requested_px = float(requested_px) if requested_px else actual_px
             export_dpi = float(resolution.get("export_dpi"))
             view_scale = float(resolution.get("view_scale"))
             if actual_px and export_dpi:
-                if requested_px >= MAX_STAGE_A_PIXEL_SIZE:
-                    # color_id_buffer.py:398-399 clamps its own `pixel_size`
-                    # to MAX_STAGE_A_PIXEL_SIZE *before* writing it as
-                    # "requested_pixel_size" (color_id_buffer.py:930-933) --
-                    # the true pre-clamp desired width (from raster.W/cell_
-                    # size_ft) is never persisted anywhere in the sidecar
-                    # once clamping occurs. requested_px here is then the
-                    # clamp value, not the model's real paper extent, so
-                    # model_width_ft/feet_per_pixel would be silently wrong
-                    # (underestimated) even when Revit accepted this exact
-                    # pixel count with no further backoff. There is no way
-                    # to recover the true value from the sidecar alone --
-                    # report the gap rather than a wrong number.
+                if not resolution.get("pre_cap_px") and requested_px >= MAX_STAGE_A_PIXEL_SIZE:
+                    # Sidecars written before the two-axis cap landed carry
+                    # only the post-cap "requested_pixel_size": the true
+                    # pre-cap desired width (from raster.W/cell_size_ft) was
+                    # never persisted, so requested_px here is the cap value,
+                    # not the model's real paper extent, and model_width_ft/
+                    # feet_per_pixel would be silently wrong (underestimated)
+                    # even when Revit accepted this exact pixel count with no
+                    # further backoff. Current sidecars record "pre_cap_px"
+                    # and take the branch above instead; for the older ones
+                    # there is no way to recover the true value, so report
+                    # the gap rather than a wrong number.
                     feet_per_pixel_unreliable_reason = (
                         "requested_pixel_size ({0}) is at or above MAX_STAGE_A_PIXEL_SIZE "
-                        "({1}); color_id_buffer.py clamps before persisting this field, so "
-                        "the true pre-clamp desired width is not recoverable from the "
-                        "sidecar".format(int(requested_px), MAX_STAGE_A_PIXEL_SIZE)
+                        "({1}) and this sidecar carries no pre_cap_px, so it predates the "
+                        "two-axis cap and the true pre-cap desired width is not "
+                        "recoverable from it".format(int(requested_px), MAX_STAGE_A_PIXEL_SIZE)
                     )
                 else:
                     model_width_ft = (requested_px / export_dpi) * view_scale / 12.0
