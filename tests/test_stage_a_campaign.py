@@ -80,6 +80,20 @@ def test_the_d2_pair_is_captured_together(batch):
     assert views["d1-sea-level-drifted"] == 146925
 
 
+def test_every_view_is_pinned_by_element_id(batch):
+    """A name alone can be ambiguous and needs a lookup; the id is what makes
+    the campaign reproducible without one."""
+    for job in batch["jobs"]:
+        assert job["view"].get("element_id") is not None, job["job_id"]
+
+
+def test_a_pinned_id_still_carries_its_name_as_an_assertion(batch):
+    """resolve_view checks the name against the resolved view, so an id that
+    has drifted onto a different or renamed view fails loudly."""
+    for job in batch["jobs"]:
+        assert job["view"].get("name"), job["job_id"]
+
+
 def test_ambiguous_named_views_carry_their_element_id(batch):
     """Two views are both called "SEA LEVEL"; a name alone cannot resolve them
     and resolve_view would refuse rather than guess."""
@@ -93,10 +107,14 @@ def test_ambiguous_named_views_carry_their_element_id(batch):
 
 
 def test_no_element_id_is_invented(batch):
-    """Only ids stated in the 2026-09-15 baseline may appear. A wrong id
-    silently probes the wrong view, which is the error this campaign exists to
-    remove."""
-    stated = {49370, 146925, 871863, 587278}
+    """Every id must have a stated source. A wrong id silently probes the
+    wrong view, which is the error this campaign exists to remove.
+
+    49370, 146925, 871863 and 587278 come from the 2026-09-15 baseline;
+    528698 (MOB 1 - LEVEL 2) and 871864 (_N_ HOSPITAL - LEVEL 3) were supplied
+    directly by Greg on 2026-09-16 for the two views the baseline never named.
+    """
+    stated = {49370, 146925, 871863, 587278, 528698, 871864}
     for job in batch["jobs"]:
         element_id = job["view"].get("element_id")
         if element_id is not None:

@@ -266,10 +266,28 @@ def execute_batch(batch_or_path, doc, registry, all_views=None, manifest_root=No
     _atomic_json(path, manifest)
     executed = [j["job_id"] for j in manifest["jobs"] if j["execution_status"] in ("completed", "failed", "inconclusive")]
     failed = [j["job_id"] for j in manifest["jobs"] if j["execution_status"] == "failed"]
-    return {"campaign_id": manifest["campaign_id"], "batch_id": manifest["batch_id"], "run_id": run_id,
-            "validation_only": bool(validation_only), "jobs_executed": executed, "jobs_failed": failed,
+    # execution_status and errors are part of the summary, not just the
+    # manifest. A run that fails in the configuration phase -- a document title
+    # that does not match, a view that will not resolve, a setting a probe
+    # rejects -- never populates any of the lists below, so without these two
+    # fields it returns empty lists and another_invocation_needed=false, which
+    # is indistinguishable from a clean run with nothing left to do. That is
+    # precisely the case a validation-only run exists to surface, and it was
+    # the one the summary hid.
+    summary = {"campaign_id": manifest["campaign_id"], "batch_id": manifest["batch_id"], "run_id": run_id,
+            "validation_only": bool(validation_only), "execution_status": manifest["execution_status"],
+            "jobs_validated": [j["job_id"] for j in manifest["jobs"] if j["execution_status"] == "validated_only"],
+            "jobs_executed": executed, "jobs_failed": failed,
             "jobs_deferred": [j["job_id"] for j in manifest["jobs_not_attempted"] if j["reason"] == "execution_limit"],
+            "errors": list(manifest["errors"]),
             "manifest_path": path, "another_invocation_needed": bool(manifest["jobs_not_attempted"])}
+    if manifest["execution_status"] == "configuration_failed":
+        # Say it in a field a person reads first, not only in an errors array
+        # they have to notice is non-empty.
+        summary["configuration_error"] = (manifest["errors"][0]["message"]
+                                          if manifest["errors"] else "unknown configuration error")
+        summary["another_invocation_needed"] = False
+    return summary
 
 
 def _job_record(job, resolved_identity, fingerprint, status, resolved_output_directory=None):

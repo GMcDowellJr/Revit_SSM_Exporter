@@ -579,3 +579,71 @@ def test_view_type_stable_name_passes_through_unchanged():
         ViewType = "Elevation"
 
     assert _view_type_name(RawView()) == "Elevation"
+
+
+# --- a configuration failure must be visible in the returned summary --------
+
+def _failing_doc(title="SOMETHING ELSE"):
+    class _App(object):
+        VersionNumber = "2025"
+        VersionBuild = "x"
+
+    class _Doc(object):
+        Title = title
+        PathName = "C:\\models\\other.rvt"
+        Application = _App()
+    return _Doc()
+
+
+def _two_job_batch(tmp_path, expected_title):
+    return {
+        "schema_version": "1.0", "campaign_id": "c", "batch_id": "b",
+        "created_at": "2026-09-16T00:00:00Z",
+        "document": {"expected_title": expected_title},
+        "execution_policy": {"max_jobs_per_run": 1, "on_job_error": "continue", "resume": False},
+        "jobs": [
+            {"job_id": "one", "probe_id": "p", "view": {"name": "V"},
+             "settings": {}, "output_directory": str(tmp_path / "one")},
+            {"job_id": "two", "probe_id": "p", "view": {"name": "V"},
+             "settings": {}, "output_directory": str(tmp_path / "two")},
+        ],
+    }
+
+
+def test_a_document_title_mismatch_is_named_in_the_summary(tmp_path):
+    """A configuration failure populates none of the job lists, so without an
+    explicit status it is indistinguishable from a clean run with nothing to
+    do -- which is exactly what a validation-only run exists to surface."""
+    from tests.dynamo.revit_batch_executor import execute_batch
+    summary = execute_batch(_two_job_batch(tmp_path, "EXPECTED TITLE"), _failing_doc(),
+                            registry={"p": lambda *a, **k: {}},
+                            manifest_root=str(tmp_path / "runs"), validation_only=True)
+    assert summary["execution_status"] == "configuration_failed"
+    assert "configuration_error" in summary
+    assert "title mismatch" in summary["configuration_error"]
+    assert summary["errors"]
+    assert summary["another_invocation_needed"] is False
+
+
+def test_a_clean_validation_run_reports_what_it_validated(tmp_path):
+    from tests.dynamo.revit_batch_executor import execute_batch
+
+    class _View(object):
+        UniqueId = "u"
+        Name = "V"
+        ViewType = "FloorPlan"
+        CropBoxActive = True
+        IsTemplate = False
+
+    summary = execute_batch(_two_job_batch(tmp_path, "SOMETHING ELSE"), _failing_doc(),
+                            registry={"p": lambda *a, **k: {}},
+                            all_views=lambda doc: [_View()],
+                            is_view=lambda value: True,
+                            manifest_root=str(tmp_path / "runs"), validation_only=True)
+    assert summary["execution_status"] == "validation_only"
+    assert "configuration_error" not in summary
+    assert sorted(summary["jobs_validated"]) == ["one", "two"]
+    # max_jobs_per_run is 1, so the second job is deferred and another
+    # invocation IS needed -- the signal that distinguishes this from a failure.
+    assert summary["jobs_deferred"] == ["two"]
+    assert summary["another_invocation_needed"] is True

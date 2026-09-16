@@ -41,7 +41,8 @@
       "job_id": "d1-mob-1-level-2",
       "probe_id": "stage_a_drift_onset",
       "view": {
-        "name": "MOB 1 - LEVEL 2"
+        "name": "MOB 1 - LEVEL 2",
+        "element_id": 528698
       },
       "settings": {
         "selection": "d1_determinism",
@@ -79,7 +80,8 @@
       "job_id": "d3-hospital-level-3",
       "probe_id": "stage_a_drift_onset",
       "view": {
-        "name": "_N_ HOSPITAL - LEVEL 3"
+        "name": "_N_ HOSPITAL - LEVEL 3",
+        "element_id": 871864
       },
       "settings": {
         "selection": "d3_size_sweep"
