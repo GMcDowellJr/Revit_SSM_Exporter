@@ -1945,8 +1945,16 @@ def format_metrics_table(rows: list[tuple[str, dict[str, Any]]]) -> str:
     return '\n'.join(lines)
 
 
-def analyze_metrics_json(json_path: Path) -> tuple[Path, list[tuple[str, dict[str, Any]]]]:
-    """Write ``<stem>.metrics.json`` beside a probe/sidecar file and return its rows."""
+def analyze_metrics_json(json_path: Path, seen_tiffs=None
+                         ) -> tuple[Path, list[tuple[str, dict[str, Any]]]]:
+    """Write ``<stem>.metrics.json`` beside a probe/sidecar file and return its rows.
+
+    ``seen_tiffs`` carries resolved TIFF paths already measured in this run and
+    is added to as it goes. A probe directory holds both the probe report and
+    every capture's own sidecar, and the report's records point at those same
+    TIFFs, so measuring both would decode each image twice -- at roughly 550 MB
+    per Stage A capture, gigabytes of needless work.
+    """
     json_path = Path(json_path)
     data = json.loads(json_path.read_text(encoding='utf-8'))
     if not isinstance(data, dict):
@@ -1956,8 +1964,15 @@ def analyze_metrics_json(json_path: Path) -> tuple[Path, list[tuple[str, dict[st
         if not tiff.exists():
             errors.append({'label': label, 'code': 'TIFF_MISSING', 'path': str(tiff)})
             continue
+        key = str(tiff.resolve())
+        if seen_tiffs is not None and key in seen_tiffs:
+            errors.append({'label': label, 'code': 'DUPLICATE_TIFF', 'path': key,
+                           'message': 'already measured from another input in this run'})
+            continue
         try:
             rows.append((label, stage_a_export_metrics(tiff, sidecar)))
+            if seen_tiffs is not None:
+                seen_tiffs.add(key)
         except Exception as exc:
             errors.append({'label': label, 'code': 'METRICS_EXCEPTION',
                            'type': type(exc).__name__, 'message': str(exc)})
@@ -2007,11 +2022,27 @@ def _main_export_metrics(ns) -> int:
     if Image is None or np is None:
         print('✗ Pillow and NumPy are required for --export-metrics'); return 1
     failures, table_rows = 0, []
-    for jp in collect(ns.paths):
-        if jp.name.endswith(('.metrics.json', '.analyzed.json')):
-            continue
+    seen_tiffs: set[str] = set()
+    inputs = [jp for jp in collect(ns.paths)
+              if not jp.name.endswith(('.metrics.json', '.analyzed.json'))]
+
+    # Standalone capture sidecars first, probe reports second. A probe
+    # directory holds both, and the report's records point at the same TIFFs,
+    # so without this each capture is decoded twice -- at roughly 550 MB per
+    # Stage A capture that is gigabytes of needless work. The capture's own
+    # sidecar is production's, so it is the one worth keeping.
+    def _is_bare_sidecar(path: Path) -> bool:
         try:
-            out, rows = analyze_metrics_json(jp)
+            payload = json.loads(path.read_text(encoding='utf-8'))
+        except Exception:
+            return False
+        return isinstance(payload, dict) and bool(payload.get('tiff_path'))
+
+    inputs.sort(key=lambda path: (0 if _is_bare_sidecar(path) else 1, str(path)))
+
+    for jp in inputs:
+        try:
+            out, rows = analyze_metrics_json(jp, seen_tiffs=seen_tiffs)
         except Exception as e:
             failures += 1; print(f"✗ {jp}: {type(e).__name__}: {e}"); continue
         for label, metrics in rows:

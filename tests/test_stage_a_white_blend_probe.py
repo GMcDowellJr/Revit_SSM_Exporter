@@ -208,22 +208,38 @@ def test_an_unreadable_override_never_counts_as_halftone_set():
 
 def test_the_halftone_variant_is_redundant_when_production_cleared_it():
     """Production clears halftone itself, so re-clearing re-exports the baseline."""
-    assert probe.production_cleared_category_halftone({"events": []}) is True
+    assert probe.production_cleared_category_halftone({"events": []}, True) is True
     assert probe.production_cleared_category_halftone(
-        {"events": [{"callsite": "paint_element_override"}]}) is True
+        {"events": [{"callsite": "paint_element_override"}]}, True) is True
 
 
 def test_the_halftone_variant_runs_when_productions_own_step_failed():
     """That step is guarded and only warns, so a capture can reach export with
     category halftone still set -- and then the variant is a real experiment."""
     assert probe.production_cleared_category_halftone(
-        {"events": [{"callsite": "category_halftone", "message": "boom"}]}) is False
+        {"events": [{"callsite": "category_halftone", "message": "boom"}]}, True) is False
 
 
 @pytest.mark.parametrize("payload", [None, {}, {"events": None}, {"events": "nope"},
                                      {"events": [None, "junk"]}])
 def test_unreadable_diagnostics_assume_productions_normal_behaviour(payload):
-    assert probe.production_cleared_category_halftone(payload) is True
+    assert probe.production_cleared_category_halftone(payload, True) is True
+
+
+@pytest.mark.parametrize("payload", [None, {}, {"events": []},
+                                     {"events": [{"callsite": "category_halftone"}]}])
+def test_no_capture_yet_is_unknown_not_success(payload):
+    """A selection like b1_query,b3_halftone_cleared consults this before any
+    capture has run. Reading empty diagnostics as "no error, so production
+    cleared it" would skip the only export requested, on evidence that does
+    not exist. Unknown runs the variant: a redundant export costs disk, a
+    wrongly skipped one costs the answer."""
+    assert probe.production_cleared_category_halftone(payload, False) is False
+
+
+def test_the_gate_needs_both_a_capture_and_clean_diagnostics():
+    assert probe.production_cleared_category_halftone({"events": []}, True) is True
+    assert probe.production_cleared_category_halftone({"events": []}, False) is False
 
 
 def test_a_read_only_selection_is_recognised_as_needing_no_export():

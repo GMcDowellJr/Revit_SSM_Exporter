@@ -495,8 +495,8 @@ class _NoExportCasesRequested(Exception):
     paint, normalize, export, or roll back -- not an error."""
 
 
-def production_cleared_category_halftone(diagnostics):
-    """False only when production's own halftone neutralization errored.
+def production_cleared_category_halftone(diagnostics, captures_taken):
+    """True only when a capture actually ran AND its halftone step did not error.
 
     export_color_id_buffer_view clears category halftone before painting and
     sets Halftone(False) on every painted element, so a baseline capture is
@@ -506,9 +506,20 @@ def production_cleared_category_halftone(diagnostics):
     the variant is not redundant at all. Production's own diagnostics are the
     only way to tell the two apart.
 
-    ``diagnostics`` is a Diagnostics.to_dict() payload. When it cannot be read,
-    production's normal behaviour is assumed rather than guessed against.
+    ``captures_taken`` is why this takes two arguments. With a selection like
+    ``b1_query,b3_halftone_cleared`` no capture has run when this is consulted,
+    so the diagnostics are empty -- and reading that emptiness as "no error, so
+    production cleared it" would skip the only export the user asked for, on
+    evidence that does not exist. Absence of a capture is unknown, not success,
+    and unknown runs the variant: a redundant export costs disk, a wrongly
+    skipped one costs the answer.
+
+    ``diagnostics`` is a Diagnostics.to_dict() payload. When a capture ran but
+    its diagnostics cannot be read, production's normal behaviour is assumed
+    rather than guessed against.
     """
+    if not captures_taken:
+        return False
     events = (diagnostics or {}).get("events")
     if not isinstance(events, list):
         return True
@@ -721,8 +732,11 @@ def _run_native(raw_view, output_dir, selection="all", element_ids=None,
         if not group_started:
             raise RuntimeError("TransactionGroup.Start did not start")
 
+        captures_taken = []
+
         def capture(label, extra=None):
             record = production_capture(doc, view, cfg, "b3", label, capture_dir, diag=diag)
+            captures_taken.append(label)
             if extra:
                 record.update(extra)
             return record
@@ -781,7 +795,8 @@ def _run_native(raw_view, output_dir, selection="all", element_ids=None,
                             "elements_with_category_halftone":
                                 b1["summary"]["elements_with_category_halftone"]}
                     elif production_cleared_category_halftone(
-                            diag.to_dict() if diag is not None else None):
+                            diag.to_dict() if diag is not None else None,
+                            bool(captures_taken)):
                         # Production clears category halftone before painting
                         # and sets Halftone(False) on every painted element, so
                         # the baseline capture is already halftone-free and this
@@ -800,11 +815,13 @@ def _run_native(raw_view, output_dir, selection="all", element_ids=None,
                             "evidence": "read the baseline capture's pastel element count: "
                                         "still non-zero with halftone already off means "
                                         "halftone is not the mechanism",
+                            "captures_examined": list(captures_taken),
                         }
                     else:
-                        # Production's halftone step errored on this view, so
-                        # the baseline is NOT halftone-free and the variant is
-                        # a real experiment after all.
+                        # Either production's halftone step errored on this
+                        # view, or no capture has run yet to say either way
+                        # (a selection without b3_baseline). Both are reasons
+                        # to run the variant rather than skip it.
                         categories = _candidate_categories(doc, view, candidates)
                         before = _category_override_state(view, categories)
                         detail = {}
@@ -818,9 +835,14 @@ def _run_native(raw_view, output_dir, selection="all", element_ids=None,
                             report["cases"][case] = dict(detail,
                                                          tiff_path=record["tiff_path"],
                                                          sidecar_path=record["sidecar_path"],
-                                                         ran_because="production's own "
-                                                         "category-halftone step reported a "
-                                                         "failure for this view")
+                                                         ran_because=(
+                                                             "production's own category-halftone "
+                                                             "step reported a failure for this view"
+                                                             if captures_taken else
+                                                             "no capture had run yet to establish "
+                                                             "that production cleared halftone; "
+                                                             "unknown is not redundant"),
+                                                         captures_examined=list(captures_taken))
                         finally:
                             restored = {}
                             _mutate(doc, "halftone_restore",

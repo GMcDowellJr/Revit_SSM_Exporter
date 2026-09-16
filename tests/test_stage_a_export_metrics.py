@@ -687,3 +687,74 @@ def test_a_bare_production_sidecar_is_measured_directly(tmp_path):
     src.write_text(json.dumps(side), encoding="utf-8")
     _out, rows = analyzer.analyze_metrics_json(src)
     assert rows[0][1]["palette_color_count"] == 1
+
+
+# --- a probe directory must not measure each capture twice ------------------
+
+def _probe_dir(tmp_path):
+    """The layout a probe run produces: a report plus captures/ sidecars."""
+    probe = tmp_path / "drift_onset_probe"
+    captures = probe / "captures"
+    captures.mkdir(parents=True)
+    write_tiff(captures, solid_square(), "d1_determinism.rep0.tiff")
+    write_tiff(captures, solid_square(inset=8), "d1_determinism.rep1.tiff")
+    base = sidecar()
+    for label in ("rep0", "rep1"):
+        side = dict(base, tiff_path=f"d1_determinism.{label}.tiff", view_id=871863)
+        (captures / f"d1_determinism.{label}.json").write_text(
+            json.dumps(side), encoding="utf-8")
+    report = {
+        "view": {"id": 871863, "name": "MOB 1 - LEVEL 2"},
+        "exports": [
+            {"case": "d1_determinism", "label": f"d1_determinism/{label}",
+             "tiff_path": str(captures / f"d1_determinism.{label}.tiff"),
+             "sidecar_path": str(captures / f"d1_determinism.{label}.json")}
+            for label in ("rep0", "rep1")
+        ],
+    }
+    (probe / "MOB_1_-_LEVEL_2.871863.drift_onset.json").write_text(
+        json.dumps(report), encoding="utf-8")
+    return probe
+
+
+def test_targeting_a_whole_probe_directory_measures_each_capture_once(tmp_path, capsys):
+    probe = _probe_dir(tmp_path)
+    table = tmp_path / "t.md"
+    assert analyzer.main([str(probe), "--export-metrics", "--metrics-table", str(table)]) == 0
+    # Two captures exist; two data rows, not four.
+    body = [line for line in table.read_text(encoding="utf-8").strip().split("\n")]
+    assert len(body) == 2 + 2   # header, rule, two rows
+
+
+def test_the_duplicate_is_recorded_rather_than_silently_dropped(tmp_path):
+    probe = _probe_dir(tmp_path)
+    analyzer.main([str(probe), "--export-metrics"])
+    report_metrics = json.loads(
+        (probe / "MOB_1_-_LEVEL_2.871863.drift_onset.metrics.json").read_text(encoding="utf-8"))
+    codes = {err["code"] for err in report_metrics["errors"]}
+    assert codes == {"DUPLICATE_TIFF"}
+    assert report_metrics["exports"] == {}
+
+
+def test_the_standalone_capture_sidecar_is_the_one_kept(tmp_path):
+    """It is production's own file; the probe record merely points at it."""
+    probe = _probe_dir(tmp_path)
+    analyzer.main([str(probe), "--export-metrics"])
+    kept = json.loads(
+        (probe / "captures" / "d1_determinism.rep0.metrics.json").read_text(encoding="utf-8"))
+    assert kept["errors"] == []
+    assert list(kept["exports"]) == ["871863"]
+
+
+def test_dedupe_does_not_suppress_genuinely_distinct_captures(tmp_path):
+    probe = _probe_dir(tmp_path)
+    analyzer.main([str(probe), "--export-metrics"])
+    measured = set()
+    for label in ("rep0", "rep1"):
+        payload = json.loads(
+            (probe / "captures" / f"d1_determinism.{label}.metrics.json").read_text(
+                encoding="utf-8"))
+        assert payload["errors"] == []
+        measured.add(payload["exports"]["871863"]["image"]["sha256"])
+    # The two fixtures differ, so both were really measured.
+    assert len(measured) == 2
