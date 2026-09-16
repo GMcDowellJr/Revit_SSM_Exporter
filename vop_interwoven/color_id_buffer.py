@@ -1775,6 +1775,16 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     # restore transaction boundary). Fetch a fresh ViewDisplayModel whenever we
     # actually need to read or write it.
     orig_smooth_edges = None
+    # The exception TYPE when the read itself fails, which is the difference
+    # between "AA was already off, nothing to do" and "this capture never
+    # found out whether AA was on". Both used to be recorded as
+    # applied_smooth_edges = "unchanged" -- and because
+    # bool(getattr(dm, "SmoothEdges", None)) can never return None, a failed
+    # read was in fact the ONLY way "unchanged" was ever written. A reader
+    # (tools/decode_stage_a_color_id._capture_reliability) could not tell the
+    # two apart, so a view whose AA state was unknown was reported exactly
+    # like one that needed no change.
+    smooth_edges_read_error = None
     try:
         _dm = view.GetViewDisplayModel()
         try:
@@ -1785,11 +1795,15 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             except Exception:
                 pass
     except Exception as ex:
+        smooth_edges_read_error = type(ex).__name__
         if diag is not None:
             diag.warn(
                 phase="color_id_buffer",
                 callsite="smooth_edges_capture",
-                message=str(ex),
+                message="could not read the view's SmoothEdges state ({0}: {1}); the "
+                        "capture proceeds but anti-aliasing cannot be confirmed off "
+                        "and decoded edges may be blended".format(
+                            type(ex).__name__, ex),
                 view_id=view_id,
             )
 
@@ -2008,7 +2022,11 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # pixel colors right at element boundaries that a decoder can't tell
         # apart from a genuine third color — this is the specific setting the
         # original empirical Stage A testing confirmed as "AA-off is clean".
-        applied_smooth_edges = "unchanged"
+        # "unchanged" is reserved for a successful read that found nothing to
+        # do; a failed read is its own value so it can never be mistaken for
+        # a clean capture. Capture PROCEEDS either way -- an unconfirmed AA
+        # state costs decode confidence (MEDIUM, not HIGH), not the export.
+        applied_smooth_edges = "read_failed" if smooth_edges_read_error else "unchanged"
         if orig_smooth_edges is not None:
             try:
                 dm = view.GetViewDisplayModel()
@@ -2566,6 +2584,9 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "near_face_w_map": near_face_w_map,
         "applied_display_style": applied_display_style,
         "applied_smooth_edges": applied_smooth_edges,
+        # The exception type when the SmoothEdges read raised; None whenever
+        # the read succeeded, whatever it found.
+        "smooth_edges_read_error": smooth_edges_read_error,
         "applied_show_shadows": applied_show_shadows,
         # Where the "can Stage A color this category?" answer came from:
         # "frozen_whitelist" (VETTED_COLORABLE_CATEGORY_IDS) or
