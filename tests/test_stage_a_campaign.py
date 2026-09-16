@@ -222,3 +222,108 @@ def test_the_underlay_experiment_is_actually_in_the_campaign(batch):
         if job["probe_id"] == "stage_a_white_blend":
             cases.update(blend.select_cases(job["settings"]["selection"]))
     assert {"b3_baseline", "b3_underlay_off", "b3_halftone_cleared"} <= cases
+
+
+# --- Run 2: pin the threshold, and test the remedy --------------------------
+#
+# Run 1 put the drift onset on the exported HEIGHT, somewhere in (9927, 10079].
+# Run 2 narrows that and checks the remedy the finding implies, by predicting
+# each capture's outcome before it is taken. Every width below is chosen for
+# the height it derives, using the aspect each view actually exported at in
+# Run 1 -- so a wrong prediction falsifies the height rule rather than being
+# absorbed by it.
+
+RUN2 = Path("tests/dynamo/campaigns/stage_a_run2_threshold_and_remedy.json")
+
+# view id -> (native width px, exported height / exported width) from Run 1
+RUN1_GEOMETRY = {
+    871863: (8739, 10079 / 8739.0),
+    528698: (29890, 12356 / 15000.0),
+    929475: (8023, 11570 / 12000.0),
+}
+
+
+@pytest.fixture(scope="module")
+def run2():
+    return json.loads(RUN2.read_text(encoding="utf-8"))
+
+
+def implied_heights(job):
+    native, aspect = RUN1_GEOMETRY[job["view"]["element_id"]]
+    return [(entry["label"], entry["requested_pixel_size"],
+             round(entry["requested_pixel_size"] * aspect))
+            for entry in drift.resolve_size_sweep(job["settings"]["pixel_sizes"], native)]
+
+
+def job_by_id(batch, job_id):
+    return [job for job in batch["jobs"] if job["job_id"] == job_id][0]
+
+
+def test_run2_satisfies_the_batch_contract_and_its_probes_parsers(run2):
+    assert validate_batch(run2) is run2
+    registry = build_registry()
+    for job in run2["jobs"]:
+        registry[job["probe_id"]].validate_settings(dict(job["settings"]), "/tmp/out")
+
+
+def test_run2_does_not_reuse_run_1s_batch_id(run2):
+    """Same document, same manifest root. A shared batch_id would make Run 1's
+    completed jobs resume-skip Run 2's."""
+    first = json.loads(CAMPAIGN.read_text(encoding="utf-8"))
+    assert (run2["campaign_id"], run2["batch_id"]) != (first["campaign_id"], first["batch_id"])
+    assert run2["document"]["expected_title"] == first["document"]["expected_title"]
+
+
+def test_the_threshold_sweep_brackets_ten_thousand_from_both_sides(run2):
+    heights = [h for _, _, h in implied_heights(job_by_id(run2, "d3-threshold-pin-hosp-2"))]
+    assert min(heights) < 10000 < max(heights)
+    # Run 1 left (9927, 10079]; this has to cut it down, not re-measure it.
+    assert max(h for h in heights if h < 10000) > 9927
+    assert min(h for h in heights if h > 10000) < 10079
+
+
+def test_the_height_cap_jobs_pair_a_capped_capture_with_a_known_drifted_one(run2):
+    for job_id in ("d3-height-cap-mob-1", "d3-height-cap-hosp-3"):
+        heights = [h for _, _, h in implied_heights(job_by_id(run2, job_id))]
+        assert any(h <= drift.D4_HEIGHT_CEILING for h in heights), job_id
+        assert any(h > 10079 for h in heights), job_id
+
+
+def test_one_requested_width_is_predicted_clean_on_one_view_and_drifted_on_another(run2):
+    """The sharpest prediction in the run, and the one that falsifies the rule
+    fastest: 12000 px wide on MOB 1 derives 9885 px of height and on
+    (N) HOSPITAL - LEVEL 3 derives 11570. If width mattered they would agree."""
+    mob = dict((label, h) for label, _, h in implied_heights(job_by_id(run2, "d3-height-cap-mob-1")))
+    hosp = dict((label, h) for label, _, h in implied_heights(job_by_id(run2, "d3-height-cap-hosp-3")))
+    assert mob["12000px"] < drift.D4_HEIGHT_CEILING < hosp["12000px"]
+
+
+def test_the_underlay_job_is_pinned_under_the_height_ceiling(run2):
+    """(N) HOSPITAL - LEVEL 2 drifts at native, and a drifted capture's
+    off-palette pixels are resample residue as well as underlay blend. The
+    blend question needs a capture where they cannot be confused."""
+    job = job_by_id(run2, "b3-underlay-hosp-2")
+    native, aspect = RUN1_GEOMETRY[job["view"]["element_id"]]
+    assert round(job["settings"]["pixel_size"] * aspect) <= drift.D4_HEIGHT_CEILING
+
+
+def test_the_underlay_job_runs_b1_in_the_same_invocation(run2):
+    cases = blend.select_cases(job_by_id(run2, "b3-underlay-hosp-2")["settings"]["selection"])
+    assert "b1_query" in cases and "b3_underlay_off" in cases
+
+
+def test_run2_drops_the_category_load_sweep(run2):
+    """D2's question was whether drift depends on scene load. D3 answered it at
+    fixed load, and Run 1's counter-example dissolves once the axis is read as
+    height, so there is nothing left for it to decide."""
+    for job in run2["jobs"]:
+        if job["probe_id"] != "stage_a_drift_onset":
+            continue
+        assert "d2_category_load" not in drift.select_cases(job["settings"]["selection"])
+
+
+def test_every_run2_view_id_appeared_in_run_1(run2):
+    """No invented ids: every view here is one Run 1 actually resolved."""
+    first = json.loads(CAMPAIGN.read_text(encoding="utf-8"))
+    known = {job["view"]["element_id"] for job in first["jobs"]}
+    assert {job["view"]["element_id"] for job in run2["jobs"]} <= known

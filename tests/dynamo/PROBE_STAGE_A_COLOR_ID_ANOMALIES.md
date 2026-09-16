@@ -612,6 +612,51 @@ D1, D3, D4 and D5 are unaffected: nothing in those code paths or in
 re-run.** Both probes now record `probe.source` per module, and a dry run
 refuses a probe whose file has changed since it was imported.
 
+## Run 2 — planned: pin the threshold, test the remedy
+
+`campaigns/stage_a_run2_threshold_and_remedy.json`, four jobs, ten captures,
+3–10 MB each. Its own `batch_id`, so Run 1's completed jobs do not resume-skip
+it. **Restart Revit first** — Run 1's D2 was spoiled by a module the session
+was still holding from before an edit.
+
+Every width below is chosen for the *height* it derives, using the aspect each
+view actually exported at in Run 1, and each capture has a stated prediction. A
+wrong prediction falsifies the height rule instead of being absorbed by it.
+
+| job | view | requested width | derived height | prediction |
+|---|---|---|---|---|
+| `d3-threshold-pin-hosp-2` | 871863 | 8564 / 8652 / 8695 / 8739 | 9877 / 9979 / 10028 / 10079 | clean, clean, **drift**, drift |
+| `d3-height-cap-mob-1` | 528698 | 12000 / native (→15000) | 9885 / 12356 | clean, **drift** |
+| `d3-height-cap-hosp-3` | 929475 | 10268 / 12000 | 9900 / 11570 | clean, **drift** |
+| `b3-underlay-hosp-2` | 871863 | 8584 | 9877 | underlay → off-palette px → 0 |
+
+The threshold sweep cuts (9927, 10079] down to roughly ±25 px around 10,000.
+The two height-cap jobs test the remedy and carry the run's sharpest
+prediction: **12000 px wide is predicted clean on MOB 1 and drifted on
+(N) HOSPITAL - LEVEL 3** — same requested width, opposite outcome, differing
+only in derived height. If width mattered they would agree.
+
+`b3-underlay-hosp-2` is pinned under the height ceiling on purpose: 871863
+drifts at native, and in a drifted capture the off-palette pixels are resample
+residue as well as underlay blend. It also asks whether the α=2/3 blend appears
+outside the SITE PLAN family at all.
+
+D2 is dropped. **D6 needs no new campaign** — run this one twice, once with
+hardware acceleration on and once off, into different `artifact_root`s; a prior
+success only resume-skips when it landed where the current run writes, so the
+second pass re-runs everything by itself.
+
+Still not covered by any campaign, and both need input:
+
+- **Fit direction.** Every capture so far used `FitDirectionType.Horizontal`,
+  so PixelSize set the width exactly and the height was always the derived
+  axis. Nothing distinguishes "the cap is on height" from "the cap is on
+  whichever axis Revit does not fit to". Testing it means varying an
+  `ImageExportOptions` field that `export_color_id_buffer_view` sets, which is
+  a production edit rather than an experiment input — see the stop condition.
+- **Links.** A different document, so a separate campaign; it needs the model
+  and the view ids.
+
 ## Hypotheses
 
 Statuses below are from Run 1. Verdicts marked **by run** rest on the measured
