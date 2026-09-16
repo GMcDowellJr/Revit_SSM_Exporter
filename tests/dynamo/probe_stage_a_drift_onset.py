@@ -524,29 +524,44 @@ def _paint(doc, view, element_ids):
     return color_map, failures, step
 
 
-# Production's own suppression set, in the order export_color_id_buffer_view
-# applies it: detach the template first (it locks the display/VG properties
-# every later step writes), then the visibility and graphics mutations, then
-# the display-model flags. Every one of these exists to stop Revit blending
-# pixels for a reason unrelated to rasterization -- SmoothEdges is
-# anti-aliasing, ShowShadows and AmbientOcclusion shade surfaces, a non-flat
-# DisplayStyle shades them, and filter/phase/halftone graphics recolor them.
-# A capture taken without them measures those effects instead of the resample
-# the drift experiments are trying to isolate.
+# EXACTLY the mutations export_color_id_buffer_view performs, in its order,
+# and deliberately no others.
+#
+# An earlier revision of this probe borrowed stage_a_minimum_id_mutations'
+# "full suppression" list, which is a superset. Two entries in it are wrong
+# here:
+#
+#   visibility_off_filters_disabled -- production disables only filters that
+#     were enabled AND VISIBLE (color_id_buffer.py:1519-1521). A filter whose
+#     visibility is off stays enabled and keeps hiding its elements. Disabling
+#     it reveals elements production hides, and they are not in the painted
+#     set, so they render with uncontrolled colors and land in off_palette_px.
+#
+#   ambient_occlusion_off / sketchy_lines_off / depth_cueing_off -- production
+#     does not touch these. Suppressing them makes the probe capture CLEANER
+#     than production's, which for a drift investigation is the worse
+#     direction of error: the probe could come back clean on a view that
+#     drifts in production.
+#
+# Residual known divergence, recorded rather than papered over: production
+# calls SetIsFilterEnabled(fid, False) on an enabled+visible filter, while
+# visible_filter_graphics_neutralized clears its override and leaves it
+# enabled. Both end with no filter graphics applied and the elements visible,
+# but they are not the same API call.
 PRODUCTION_SUPPRESSION_MUTATIONS = (
     "detach_template",
     "hide_annotation_categories",
-    "visibility_off_filters_disabled",
     "visible_filter_graphics_neutralized",
     "phase_filter_neutralized",
-    "category_halftone_neutralized",
     "display_style_flat_colors",
     "smooth_edges_off",
     "shadows_off",
-    "ambient_occlusion_off",
-    "sketchy_lines_off",
-    "depth_cueing_off",
 )
+
+# Applied separately, after collection: production neutralizes category
+# halftone for the categories of the elements it actually resolved
+# (color_id_buffer.py:1862-1875), which is not knowable before the collect.
+POST_COLLECTION_MUTATIONS = ("category_halftone_neutralized",)
 
 
 def _minimum_id_mutations_module():
@@ -577,20 +592,22 @@ def normalization_shortfall(mutations):
     production state is itself a finding, not a crash.
     """
     ok = {"APPLIED", "ALREADY_MATCHED"}
-    return sorted(mutation_id for mutation_id, record in (mutations or {}).items()
-                  if (record or {}).get("status") not in ok)
+    expected = set(PRODUCTION_SUPPRESSION_MUTATIONS) | set(POST_COLLECTION_MUTATIONS)
+    mutations = mutations or {}
+    shortfall = [mutation_id for mutation_id, record in mutations.items()
+                 if (record or {}).get("status") not in ok]
+    # A mutation that never ran at all is as much a shortfall as one that
+    # failed; only counting the ones present would hide a skipped step.
+    shortfall.extend(name for name in expected if name not in mutations)
+    return sorted(set(shortfall))
 
 
-def _normalize_view_state(doc, view, element_ids):
-    """Put the view into the same graphic state production exports from.
-
-    Applied after painting and before any export, in one committed
-    transaction inside the caller's TransactionGroup, so the rollback that
-    already covers the paint covers this too.
-    """
+def _apply_mutations(doc, view, element_ids, mutation_ids, into=None):
+    """Run a suppression set, recording each mutation's own status."""
     module = _minimum_id_mutations_module()
-    result = {"mutations": {}}
-    for mutation_id in PRODUCTION_SUPPRESSION_MUTATIONS:
+    result = into if into is not None else {"mutations": {}}
+    result.setdefault("mutations", {})
+    for mutation_id in mutation_ids:
         try:
             module._apply_mutation(doc, view, element_ids, result, mutation_id)
         except Exception as ex:
@@ -598,6 +615,17 @@ def _normalize_view_state(doc, view, element_ids):
                 "mutation_id": mutation_id, "status": "FAILED",
                 "message": "{0}: {1}".format(type(ex).__name__, ex)}
     return result
+
+
+def _normalize_view_state(doc, view):
+    """Production's pre-collection suppression, in production's order.
+
+    Runs BEFORE the element collect, because the neutral phase filter it
+    installs changes what the collect returns -- see _run_native. Category
+    halftone is not part of this set; it needs the resolved element ids and
+    so runs after (POST_COLLECTION_MUTATIONS).
+    """
+    return _apply_mutations(doc, view, [], PRODUCTION_SUPPRESSION_MUTATIONS)
 
 
 def _set_pixel_size(opts, requested):
@@ -1020,44 +1048,18 @@ def _run_native(raw_view, output_dir, selection="all", repetitions=DEFAULT_REPET
         if not group_started:
             raise RuntimeError("TransactionGroup.Start did not start")
 
-        element_ids, collect_stats = _collect_host_elements(doc, view, max_elements)
-        paint_result = {}
-
-        def do_paint():
-            color_map, failures, step = _paint(doc, view, element_ids)
-            paint_result.update({"color_map": color_map, "failures": failures, "step": step})
-        _mutate(doc, "paint", do_paint)
-        report["paint"] = {"collection": collect_stats,
-                           "palette_step": paint_result.get("step"),
-                           "paint_failures": paint_result.get("failures", [])}
-        report["color_assignment_map"] = paint_result.get("color_map", {})
-
-        # Without this, a view with smooth edges, shadows, a non-flat display
-        # style, live filters, or a template exports those effects and the
-        # blended pixels they produce are indistinguishable from the drift
-        # D1-D5 exist to measure.
+        # Production's order, which is not incidental (color_id_buffer.py):
+        # suppress -> crop -> collect -> neutralize category halftone -> paint.
+        # Collecting first would paint a set gathered under the view's ORIGINAL
+        # phase filter; the neutral phase filter installed during suppression
+        # then reveals the elements that filter hid (demolished, temporary),
+        # and ExportImage renders them with no colour assigned. Production
+        # re-collects after the swap for exactly this reason (":1762"), and the
+        # crop goes in first because it narrows what the collect returns.
         normalization = {}
         _mutate(doc, "normalize_view_state",
-                lambda: normalization.update(
-                    _normalize_view_state(doc, view, element_ids)))
-        shortfall = normalization_shortfall(normalization.get("mutations"))
-        report["view_state_normalization"] = {
-            "requested": list(PRODUCTION_SUPPRESSION_MUTATIONS),
-            "mutations": normalization.get("mutations", {}),
-            "not_in_production_state": shortfall,
-            "matches_production_capture_state": not shortfall,
-        }
-        if shortfall:
-            report.setdefault("warnings", []).append({
-                "stage": "normalize_view_state",
-                "message": "This capture is NOT in production's export state; {0} did not "
-                           "apply. Blended pixels in it may come from those effects rather "
-                           "than from rasterization.".format(", ".join(shortfall)),
-            })
+                lambda: normalization.update(_normalize_view_state(doc, view)))
 
-        # Production crops the view to these bounds before exporting; without
-        # it FitToPage fits whatever the view happens to show and the sidecar
-        # would describe a rectangle the TIFF does not span.
         cropped = {}
         _mutate(doc, "apply_production_crop",
                 lambda: cropped.__setitem__(
@@ -1073,6 +1075,45 @@ def _run_native(raw_view, output_dir, selection="all", repetitions=DEFAULT_REPET
                            "null and no bounds-derived metric (native_px, the 10:1 frame "
                            "correction, out-of-bbox counts) can be computed for it.",
             })
+
+        element_ids, collect_stats = _collect_host_elements(doc, view, max_elements)
+
+        _mutate(doc, "neutralize_category_halftone",
+                lambda: _apply_mutations(doc, view, element_ids,
+                                         POST_COLLECTION_MUTATIONS, into=normalization))
+
+        shortfall = normalization_shortfall(normalization.get("mutations"))
+        report["view_state_normalization"] = {
+            "requested": list(PRODUCTION_SUPPRESSION_MUTATIONS) + list(POST_COLLECTION_MUTATIONS),
+            "mutations": normalization.get("mutations", {}),
+            "not_in_production_state": shortfall,
+            "matches_production_capture_state": not shortfall,
+            "known_divergences": [
+                "production disables an enabled+visible filter via SetIsFilterEnabled(False); "
+                "visible_filter_graphics_neutralized clears its override and leaves it enabled",
+                "LINK elements are not painted by this probe (brief non-goal); a view with "
+                "loaded links will carry uncontrolled LINK colours that production would "
+                "have given category colours",
+            ],
+        }
+        if shortfall:
+            report.setdefault("warnings", []).append({
+                "stage": "normalize_view_state",
+                "message": "This capture is NOT in production's export state; {0} did not "
+                           "apply. Blended pixels in it may come from those effects rather "
+                           "than from rasterization.".format(", ".join(shortfall)),
+            })
+
+        paint_result = {}
+
+        def do_paint():
+            color_map, failures, step = _paint(doc, view, element_ids)
+            paint_result.update({"color_map": color_map, "failures": failures, "step": step})
+        _mutate(doc, "paint", do_paint)
+        report["paint"] = {"collection": collect_stats,
+                           "palette_step": paint_result.get("step"),
+                           "paint_failures": paint_result.get("failures", [])}
+        report["color_assignment_map"] = paint_result.get("color_map", {})
 
         ctx = {"doc": doc, "view": view, "out_dir": out_dir, "base": base,
                "bounds_xy": crop_bounds, "export_dpi": export_dpi, "view_scale": view_scale,

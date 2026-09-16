@@ -264,15 +264,39 @@ def test_the_suppression_set_covers_every_blend_source_production_disables():
     required = {
         "detach_template",              # unlocks everything below
         "hide_annotation_categories",
-        "visibility_off_filters_disabled",
         "visible_filter_graphics_neutralized",
         "phase_filter_neutralized",
-        "category_halftone_neutralized",
         "display_style_flat_colors",    # non-flat styles shade surfaces
         "smooth_edges_off",             # anti-aliasing
         "shadows_off",
     }
-    assert required <= set(probe.PRODUCTION_SUPPRESSION_MUTATIONS)
+    assert required == set(probe.PRODUCTION_SUPPRESSION_MUTATIONS)
+
+
+def test_category_halftone_is_applied_after_collection_not_before():
+    """It needs the resolved element ids, so production runs it post-collect."""
+    assert probe.POST_COLLECTION_MUTATIONS == ("category_halftone_neutralized",)
+    assert "category_halftone_neutralized" not in probe.PRODUCTION_SUPPRESSION_MUTATIONS
+
+
+def test_visibility_off_filters_are_left_alone_as_production_leaves_them():
+    """Production disables only enabled+VISIBLE filters (color_id_buffer.py:1519-1521).
+
+    A visibility-off filter stays enabled and keeps hiding its elements.
+    Disabling it would reveal elements production hides, which are not in the
+    painted set and would render with uncontrolled colours.
+    """
+    assert "visibility_off_filters_disabled" not in probe.PRODUCTION_SUPPRESSION_MUTATIONS
+    assert "visibility_off_filters_disabled" not in probe.POST_COLLECTION_MUTATIONS
+
+
+@pytest.mark.parametrize("mutation", ["ambient_occlusion_off", "sketchy_lines_off",
+                                      "depth_cueing_off"])
+def test_mutations_production_does_not_perform_are_not_applied(mutation):
+    """Suppressing extra blend sources would make the probe cleaner than
+    production, so a view that drifts in production could come back clean."""
+    assert mutation not in probe.PRODUCTION_SUPPRESSION_MUTATIONS
+    assert mutation not in probe.POST_COLLECTION_MUTATIONS
 
 
 def test_the_template_is_detached_before_anything_it_would_block():
@@ -281,23 +305,36 @@ def test_the_template_is_detached_before_anything_it_would_block():
     assert order[0] == "detach_template"
 
 
+def _all_applied():
+    return {name: {"status": "APPLIED"} for name in
+            probe.PRODUCTION_SUPPRESSION_MUTATIONS + probe.POST_COLLECTION_MUTATIONS}
+
+
 def test_a_fully_applied_normalization_reports_no_shortfall():
-    mutations = {name: {"status": "APPLIED"} for name in probe.PRODUCTION_SUPPRESSION_MUTATIONS}
+    mutations = _all_applied()
     mutations["shadows_off"] = {"status": "ALREADY_MATCHED"}
     assert probe.normalization_shortfall(mutations) == []
+
+
+def test_a_mutation_that_never_ran_counts_as_a_shortfall():
+    """Only scoring the entries present would hide a step that was skipped."""
+    mutations = _all_applied()
+    del mutations["phase_filter_neutralized"]
+    assert probe.normalization_shortfall(mutations) == ["phase_filter_neutralized"]
+
+
+def test_an_empty_normalization_names_every_expected_mutation():
+    expected = sorted(set(probe.PRODUCTION_SUPPRESSION_MUTATIONS)
+                      | set(probe.POST_COLLECTION_MUTATIONS))
+    assert probe.normalization_shortfall({}) == expected
 
 
 @pytest.mark.parametrize("status", ["FAILED", "BLOCKED_BY_TEMPLATE", "UNSUPPORTED",
                                     "NOT_REQUESTED", None])
 def test_any_non_applied_status_is_named_as_a_shortfall(status):
-    mutations = {name: {"status": "APPLIED"} for name in probe.PRODUCTION_SUPPRESSION_MUTATIONS}
+    mutations = _all_applied()
     mutations["smooth_edges_off"] = {"status": status} if status else {}
     assert probe.normalization_shortfall(mutations) == ["smooth_edges_off"]
-
-
-def test_shortfall_of_an_empty_normalization_is_empty_not_an_error():
-    assert probe.normalization_shortfall(None) == []
-    assert probe.normalization_shortfall({}) == []
 
 
 def test_every_suppression_mutation_is_one_the_minimum_id_probe_implements():

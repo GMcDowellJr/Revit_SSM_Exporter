@@ -53,19 +53,50 @@ human to read, not an acceptance verdict.
   TIFF spans. On a null, no bounds-derived metric (`native_px`, the 10:1
   frame correction, out-of-bbox counts) is computed at all, rather than being
   computed against a rectangle the image does not cover.
-- Both probes put the view into **production's export state** before any
-  export, using `PRODUCTION_SUPPRESSION_MUTATIONS` dispatched through
-  `probe_stage_a_minimum_id_mutations._apply_mutation` — the repo's own tested
-  implementation of that set. This is not optional polish: `SmoothEdges` is
+- Both probes follow **production's capture order**, which is not incidental:
+  suppress → crop → collect → neutralize category halftone → paint → export.
+  Collecting first would paint a set gathered under the view's *original*
+  phase filter; the neutral phase filter installed during suppression then
+  reveals what that filter hid (demolished, temporary), and `ExportImage`
+  renders those with no colour assigned. Production re-collects after the swap
+  for exactly this reason (`color_id_buffer.py:1762`), and crops first because
+  the crop narrows what the collect returns.
+- `PRODUCTION_SUPPRESSION_MUTATIONS` is **exactly** what
+  `export_color_id_buffer_view` performs and deliberately nothing more,
+  dispatched through `probe_stage_a_minimum_id_mutations._apply_mutation` —
+  the repo's own tested implementation of each one. This is not optional polish: `SmoothEdges` is
   anti-aliasing, `ShowShadows` and `AmbientOcclusion` shade surfaces, a
   non-flat `DisplayStyle` shades them, and filter/phase/halftone graphics
   recolour them. A capture taken without those disabled measures *those*
   effects, and the blended pixels they produce are indistinguishable from the
   drift D1–D5 exist to isolate. Every report carries
   `view_state_normalization.matches_production_capture_state`; when a mutation
-  is blocked by a template or unsupported on that Revit, it is named in
-  `not_in_production_state` and raised as a warning rather than silently
-  degrading the capture.
+  is blocked by a template or unsupported on that Revit — or never ran at all —
+  it is named in `not_in_production_state` and raised as a warning rather than
+  silently degrading the capture.
+
+### Known residual divergences from production
+
+Recorded in every report under `view_state_normalization.known_divergences`,
+because a divergence that is written down can be reasoned about and one that
+is not cannot:
+
+| Divergence | Why it is left | Direction of error |
+|---|---|---|
+| Production calls `SetIsFilterEnabled(fid, False)` on an enabled+visible filter; the probe clears its override and leaves it enabled | No exact mutation exists in the reused set; both end with no filter graphics applied and the elements visible | Believed neutral |
+| LINK elements are not painted (brief non-goal: "No link handling") | Out of scope for this run; the baseline had no links loaded | A view **with** links carries uncontrolled LINK colours that production would have given category colours — inflates `off_palette_px` |
+
+Two things deliberately **not** suppressed, because production does not:
+
+- **Visibility-off filters.** Production disables only filters that were
+  enabled *and visible* (`color_id_buffer.py:1519-1521`); a filter whose
+  visibility is off stays enabled and keeps hiding its elements. Disabling it
+  would reveal elements production hides, which are not in the painted set and
+  would render with uncontrolled colours.
+- **Ambient occlusion, sketchy lines, depth cueing.** Suppressing these would
+  make the probe capture *cleaner* than production's — for a drift
+  investigation the worse direction of error, since a view that drifts in
+  production could come back clean.
 
 ## Required per-export metrics
 

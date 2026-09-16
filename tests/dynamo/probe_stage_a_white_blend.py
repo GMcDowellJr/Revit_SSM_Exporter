@@ -680,40 +680,13 @@ def _run_native(raw_view, output_dir, selection="all", element_ids=None,
         if not group_started:
             raise RuntimeError("TransactionGroup.Start did not start")
 
-        paint_result = {}
-
-        def do_paint():
-            color_map, failures, step = _paint(doc, view, painted_ids)
-            paint_result.update({"color_map": color_map, "failures": failures, "step": step})
-        _mutate(doc, "paint", do_paint)
-        report["paint"] = {"collection": collect_stats,
-                           "palette_step": paint_result.get("step"),
-                           "paint_failures": paint_result.get("failures", [])}
-        report["color_assignment_map"] = paint_result.get("color_map", {})
-
-        # The B3 exports must start from production's export state, or the
-        # baseline is not the capture the 0.67 blend was observed in.
+        # Production's order: suppress -> crop -> collect -> category halftone
+        # -> paint. B1 above already read the authored state, so nothing here
+        # can contaminate it.
         normalization = {}
         _mutate(doc, "normalize_view_state",
-                lambda: normalization.update(
-                    _drift._normalize_view_state(doc, view, painted_ids)))
-        shortfall = _drift.normalization_shortfall(normalization.get("mutations"))
-        report["view_state_normalization"] = {
-            "requested": list(_drift.PRODUCTION_SUPPRESSION_MUTATIONS),
-            "mutations": normalization.get("mutations", {}),
-            "not_in_production_state": shortfall,
-            "matches_production_capture_state": not shortfall,
-        }
-        if shortfall:
-            report.setdefault("warnings", []).append({
-                "stage": "normalize_view_state",
-                "message": "B3 exports are NOT in production's export state; {0} did not "
-                           "apply.".format(", ".join(shortfall)),
-            })
+                lambda: normalization.update(_drift._normalize_view_state(doc, view)))
 
-        # Production crops the view to these bounds before exporting. Without
-        # it, FitToPage fits whatever the view shows and the B3 baseline is
-        # not the capture the 0.67 blend was observed in.
         cropped = {}
         _mutate(doc, "apply_production_crop",
                 lambda: cropped.__setitem__(
@@ -727,6 +700,42 @@ def _run_native(raw_view, output_dir, selection="all", element_ids=None,
                 "message": "This view has no CropBox, so the B3 exports fall back to "
                            "FitToPage's auto-computed extent and bounds_xy is null.",
             })
+
+        # Re-collect under the neutral phase filter and the applied crop, the
+        # way production does; the pre-B1 collection was taken on the authored
+        # view and would miss phase-revealed elements.
+        painted_ids, collect_stats = _collect_host_elements(doc, view, max_elements)
+
+        _mutate(doc, "neutralize_category_halftone",
+                lambda: _drift._apply_mutations(doc, view, painted_ids,
+                                                _drift.POST_COLLECTION_MUTATIONS,
+                                                into=normalization))
+
+        shortfall = _drift.normalization_shortfall(normalization.get("mutations"))
+        report["view_state_normalization"] = {
+            "requested": (list(_drift.PRODUCTION_SUPPRESSION_MUTATIONS)
+                          + list(_drift.POST_COLLECTION_MUTATIONS)),
+            "mutations": normalization.get("mutations", {}),
+            "not_in_production_state": shortfall,
+            "matches_production_capture_state": not shortfall,
+        }
+        if shortfall:
+            report.setdefault("warnings", []).append({
+                "stage": "normalize_view_state",
+                "message": "B3 exports are NOT in production's export state; {0} did not "
+                           "apply.".format(", ".join(shortfall)),
+            })
+
+        paint_result = {}
+
+        def do_paint():
+            color_map, failures, step = _paint(doc, view, painted_ids)
+            paint_result.update({"color_map": color_map, "failures": failures, "step": step})
+        _mutate(doc, "paint", do_paint)
+        report["paint"] = {"collection": collect_stats,
+                           "palette_step": paint_result.get("step"),
+                           "paint_failures": paint_result.get("failures", [])}
+        report["color_assignment_map"] = paint_result.get("color_map", {})
 
         def export(label, extra=None):
             return _record_export(doc, view, out_dir, base, "b3", label, requested_px,
