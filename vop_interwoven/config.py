@@ -358,7 +358,12 @@ class Config:
         # apart. They imply different remedies: the first needs the request
         # bounded (and density given up on tall views), the second needs only
         # the fit axis swapped. One capture under vertical fit decides it.
-        # Overrides the per-axis SIZING cap on Stage A color-ID exports.
+        # TEST-ONLY. Overrides the per-axis SIZING cap on Stage A color-ID
+        # exports. Production runs leave this None; it exists so a run can
+        # deliberately request an over-limit export and observe the check
+        # reject it. Setting it above the verification ceiling logs a
+        # warning per view and guarantees every export enters the mismatch
+        # backoff, so it is not a way to get larger captures.
         # None means the measured limit (resolution_contract.
         # MAX_STAGE_A_AXIS_PX). Raising it does NOT raise the post-export
         # verification ceiling, which is fixed at the measured limit -- that

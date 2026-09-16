@@ -151,6 +151,8 @@ class _FakeExporter:
 
 
 def _run_export(monkeypatch, tmp_path, exporter, pixel_size, **kw):
+    """Drive _export_tiff against the fake exporter. ``kw`` passes through
+    fit_direction / grid_axis_px / max_axis_px."""
     monkeypatch.setattr(cib, "_export_one_tiff", exporter)
     diag = _FakeDiag()
     out = tmp_path / "out" / "v.tiff"
@@ -175,11 +177,40 @@ def test_half_size_export_is_a_mismatch_and_backs_off(monkeypatch, tmp_path):
     accepted, report, diag = _run_export(monkeypatch, tmp_path, exporter, 8000)
     assert report["dim_check"] == "mismatch"
     assert report.get("backoff_exhausted") is True
-    # It halved all the way to the floor rather than accepting any of them.
-    assert exporter.requests[0] == 8000
-    assert exporter.requests[-1] == 16
-    assert all(b == max(16, a // 2) for a, b in zip(exporter.requests, exporter.requests[1:]))
+    assert exporter.requests == [8000, 4000, 2000]
+    assert report["backoff_stop_reason"] == "retry_limit"
     assert diag.errors, "backoff exhaustion must be recorded as an error"
+
+
+def test_persistent_mismatch_never_exceeds_three_exports(monkeypatch, tmp_path):
+    """G2: at most 1 export + MAX_MISMATCH_RETRIES re-exports, ever."""
+    # x8 keeps the derived axis over the ceiling at every halving, so the
+    # loop can only be stopped by the retry bound, not by succeeding.
+    exporter = _FakeExporter(lambda px: (px, px * 8))
+    accepted, report, diag = _run_export(monkeypatch, tmp_path, exporter, 9000)
+    assert len(exporter.requests) == 1 + cib.MAX_MISMATCH_RETRIES == 3
+    assert report["dim_check"] == "mismatch"
+
+
+def test_backoff_never_requests_fewer_pixels_than_the_grid(monkeypatch, tmp_path):
+    """G2: no request below the grid axis size."""
+    exporter = _FakeExporter(lambda px: (px // 2, px // 2))
+    accepted, report, diag = _run_export(
+        monkeypatch, tmp_path, exporter, 9000, grid_axis_px=3000)
+    # 9000 -> 4500 is still >= 3000; 4500 -> 2250 is not, so it stops there
+    # rather than exporting a raster narrower than the grid it must fill.
+    assert exporter.requests == [9000, 4500]
+    assert all(r >= 3000 for r in exporter.requests)
+    assert report["backoff_stop_reason"] == "grid_floor"
+    assert report["dim_check"] == "mismatch"
+
+
+def test_grid_floor_above_the_request_stops_immediately(monkeypatch, tmp_path):
+    exporter = _FakeExporter(lambda px: (px // 2, px // 2))
+    accepted, report, diag = _run_export(
+        monkeypatch, tmp_path, exporter, 400, grid_axis_px=4000)
+    assert exporter.requests == [400]
+    assert report["backoff_stop_reason"] == "grid_floor"
 
 
 def test_over_limit_derived_axis_is_a_mismatch_then_recovers(monkeypatch, tmp_path):
@@ -314,9 +345,9 @@ def test_half_size_export_fails_the_view_with_export_dim_mismatch(tmp_path):
     assert result["success"] is False
     assert result["failure_reason"] == "export_dim_mismatch"
     # Backed off rather than accepting the first bad export, and never
-    # reported success on the way down.
-    assert len(doc.pixel_sizes) > 1
-    assert doc.pixel_sizes[-1] == 16
+    # reported success on the way down -- but bounded, not to a hard floor.
+    assert 1 < len(doc.pixel_sizes) <= 1 + cib.MAX_MISMATCH_RETRIES
+    assert res["backoff_stop_reason"] in ("retry_limit", "grid_floor")
     assert any(e.get("callsite") == "export_dim_check" for e in diag.errors)
 
 

@@ -1250,6 +1250,17 @@ def read_image_dimensions(path):
 # what it says. Readers must not treat those captures as clean.
 LEGACY_UNKNOWN_SMOOTH_EDGES = "unchanged"
 
+# Absolute lower bound for PixelSize backoff, used when Revit rejects a
+# value outright and as the dimension-mismatch floor only when the view's
+# own grid extent is unknown. It is a "this is not a pixel count" guard, not
+# a useful resolution -- the grid extent is what makes the mismatch floor
+# meaningful.
+_PIXEL_SIZE_BACKOFF_FLOOR = 16
+# Re-exports attempted after a dimension mismatch, on top of the first
+# export. Three total exports of a large view is already expensive; a fourth
+# halving has never turned a mismatch into a pass in any observed run.
+MAX_MISMATCH_RETRIES = 2
+
 
 def normalize_applied_smooth_edges(value):
     """Map a sidecar's applied_smooth_edges onto its true meaning.
@@ -1275,7 +1286,7 @@ def _set_pixel_size_with_backoff(opts, pixel_size, diag=None, view_id=None):
     """
     candidate = max(1, int(pixel_size))
     requested = candidate
-    floor = 16
+    floor = _PIXEL_SIZE_BACKOFF_FLOOR
     while True:
         try:
             opts.PixelSize = candidate
@@ -1367,7 +1378,8 @@ def _export_one_tiff(doc, view, out_dir, output_path, pixel_size, diag=None,
 
 
 def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None,
-                 fit_direction="horizontal", max_axis_px=MAX_STAGE_A_AXIS_PX):
+                 fit_direction="horizontal", max_axis_px=MAX_STAGE_A_AXIS_PX,
+                 grid_axis_px=None, max_mismatch_retries=MAX_MISMATCH_RETRIES):
     """Export the view, then MEASURE the file and refuse to trust the request.
 
     Everything upstream of this function -- the DPI math, the two-axis cap,
@@ -1380,12 +1392,27 @@ def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None,
     The export passes only when the axis PixelSize set came back within 1 px
     of what was asked AND neither axis exceeds ``max_axis_px``. A mismatch is
     routed into the same halving backoff Revit's PixelSize rejection uses:
-    halve, re-export, re-measure. Past the floor the view is reported as a
-    mismatch and the caller fails it -- the export never continues silently.
+    halve, re-export, re-measure.
+
+    That backoff is bounded on both ends, because an unbounded one is its own
+    failure mode: halving a 10000 px request to a hard floor of 16 is ten
+    full exports of a large view, and the last several ask Revit for fewer
+    pixels than the cell grid has cells, where a "successful" export can no
+    longer resolve the grid it exists to fill. So at most
+    ``max_mismatch_retries`` re-exports are attempted, and no request goes
+    below ``grid_axis_px`` -- the view's own grid extent along the fitted
+    axis. Hitting either bound reports the view as a mismatch and the caller
+    fails it. The export never continues silently and never grinds.
 
     Note ``max_axis_px`` is the VERIFICATION ceiling and stays at the
     measured limit even when a caller raises the sizing cap: a deliberately
     over-cap request is precisely the case this check has to catch.
+
+    Args:
+        grid_axis_px: the raster's own cell count along the fitted axis, used
+            as the backoff floor. None means no grid is known, and the floor
+            falls back to ``_PIXEL_SIZE_BACKOFF_FLOOR`` -- an absolute lower
+            bound, not a meaningful one.
 
     Returns ``(output_path, actual_pixel_size, dim_report)``.
     """
@@ -1395,7 +1422,11 @@ def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None,
 
     requested_axis = "height" if str(fit_direction).strip().lower() == "vertical" else "width"
     candidate = max(1, int(pixel_size))
-    floor = 16
+    if grid_axis_px:
+        floor = max(1, int(grid_axis_px))
+    else:
+        floor = _PIXEL_SIZE_BACKOFF_FLOOR
+    max_retries = max(0, int(max_mismatch_retries))
     attempts = []
 
     while True:
@@ -1467,20 +1498,33 @@ def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None,
                 view_id=view_id,
             )
 
-        if candidate <= floor:
+        next_candidate = candidate // 2
+        stop_reason = None
+        if len(attempts) > max_retries:
+            stop_reason = "retry_limit"
+        elif next_candidate < floor:
+            # Deliberately not clamped up to the floor and retried: the point
+            # of the floor is that a request under the grid's own cell count
+            # cannot produce a usable capture, so there is nothing below here
+            # worth spending an export on.
+            stop_reason = "grid_floor"
+        if stop_reason is not None:
             if diag is not None:
                 diag.error(
                     phase="color_id_buffer",
                     callsite="export_dim_check",
-                    message="exported dimensions still disagree with the request at the "
-                            "{0} px backoff floor after {1} attempt(s); last export was "
-                            "{2}x{3}".format(floor, len(attempts), actual_w, actual_h),
+                    message="exported dimensions still disagree with the request after "
+                            "{0} attempt(s) (stopped on {1}: retry limit {2}, floor {3} "
+                            "px); last export was {4}x{5}".format(
+                                len(attempts), stop_reason, max_retries, floor,
+                                actual_w, actual_h),
                     view_id=view_id,
                 )
             report["backoff_exhausted"] = True
+            report["backoff_stop_reason"] = stop_reason
             return output_path, actual_pixel_size, report
 
-        candidate = max(floor, candidate // 2)
+        candidate = next_candidate
 
 
 def compute_model_crop(model_clip_bounds, bounds_xy):
@@ -1678,10 +1722,32 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 view_id=view_id,
             )
 
-    # A caller may raise the SIZING cap to prove the post-export check fires
-    # (see _export_tiff: the verification ceiling stays at the measured
-    # limit regardless). None/0/absent means the shipped limit.
+    # The raster's own cell count along the fitted axis, which bounds how
+    # far a dimension mismatch may back off: an export narrower than the
+    # grid it feeds cannot resolve that grid, so there is nothing below it
+    # worth attempting. None when no raster was supplied.
+    if raster is not None:
+        grid_axis_px = getattr(raster, "H", None) if fit_direction == "vertical" else getattr(raster, "W", None)
+        grid_axis_px = int(grid_axis_px) if grid_axis_px else None
+    else:
+        grid_axis_px = None
+
+    # TEST-ONLY. A caller may raise the SIZING cap to prove the post-export
+    # check fires (see _export_tiff: the verification ceiling stays at the
+    # measured limit regardless). None/0/absent means the shipped limit,
+    # which is what every production run uses.
     cap_axis_px = getattr(cfg, "color_id_buffer_cap_axis_px", None) or MAX_STAGE_A_AXIS_PX
+    if cap_axis_px > MAX_STAGE_A_AXIS_PX and diag is not None:
+        diag.warn(
+            phase="color_id_buffer",
+            callsite="pixel_size",
+            message="color_id_buffer_cap_axis_px is {0}, above the {1} px verification "
+                    "ceiling: this is a test-only override and every export it lets "
+                    "through will be rejected by the post-export dimension check and "
+                    "driven into the mismatch backoff".format(
+                        cap_axis_px, MAX_STAGE_A_AXIS_PX),
+            view_id=view_id,
+        )
     cap = cap_axes(pre_cap_px, pre_cap_px * aspect_derived_over_fit, cap_axis_px)
     pixel_size = max(64, cap["accepted_px"])
     if pixel_size != cap["accepted_px"] and diag is not None:
@@ -2381,6 +2447,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         _tiff_path, actual_pixel_size, dim_report = _export_tiff(
             doc, view, tiff_path, pixel_size, diag=diag, view_id=view_id,
             fit_direction=fit_direction, max_axis_px=MAX_STAGE_A_AXIS_PX,
+            grid_axis_px=grid_axis_px,
         )
     finally:
         restore_tx = Transaction(doc, "VOP Stage A RESTORE color ID buffer")
@@ -2594,6 +2661,9 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             "dim_check_ceiling_px": dim_report.get("dim_check_ceiling_px"),
             "dim_read_error": dim_report.get("dim_read_error"),
             "dim_check_attempts": dim_report.get("attempts"),
+            "backoff_stop_reason": dim_report.get("backoff_stop_reason"),
+            "backoff_floor_px": grid_axis_px,
+            "backoff_max_retries": MAX_MISMATCH_RETRIES,
         },
         # View-local UV rectangle (min_u, min_v, max_u, max_v) the export
         # was cropped to -- the same tuple set as view.CropBox above, not
