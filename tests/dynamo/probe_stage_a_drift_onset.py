@@ -64,6 +64,47 @@ import traceback
 PROBE_NAME = "stage_a_drift_onset"
 PROBE_VERSION = 1
 
+
+def _file_mtime(path):
+    try:
+        return os.path.getmtime(path) if path else None
+    except OSError:
+        return None
+
+
+# Recorded at import, compared at run. Revit keeps one Python interpreter alive
+# for the whole session, so a module imported before an edit stays imported
+# after it: the campaign JSON is re-read from disk every run, but the probe
+# code is not. A run can therefore execute an old probe against a new campaign
+# and produce artifacts that look current and are not -- which is exactly what
+# happened on 2026-09-16, where a stale drift module swept the wrong D2
+# buckets while the white-blend module beside it was up to date.
+MODULE_FILE = os.path.abspath(__file__) if "__file__" in globals() else None
+MODULE_MTIME_AT_IMPORT = _file_mtime(MODULE_FILE)
+
+
+def source_record(module):
+    """Whether ``module``'s file on disk has changed since it was imported."""
+    path = getattr(module, "MODULE_FILE", None)
+    at_import = getattr(module, "MODULE_MTIME_AT_IMPORT", None)
+    now = _file_mtime(path)
+    return {"module": getattr(module, "__name__", None), "file": path,
+            "mtime_at_import": at_import, "mtime_now": now,
+            # Unknown is not stale: a module loaded from a zip or with no
+            # readable file cannot be checked, and refusing to run on that
+            # would block an install this probe is meant to work on.
+            "stale": bool(path and at_import is not None and now is not None
+                          and now != at_import)}
+
+
+def source_records():
+    return [source_record(sys.modules[__name__])]
+
+
+def stale_sources(records):
+    return [record for record in records if record.get("stale")]
+
+
 CASES = (
     "d1_determinism",
     "d2_category_load",
@@ -440,6 +481,15 @@ def _image_dimensions(path):
         from PIL import Image
     except Exception:
         return None
+    # The captures this probe exists to measure are exactly the ones Pillow
+    # refuses by default: its ~179 Mpx decompression-bomb guard rejects a
+    # 15000x14463 export, and the failure is silent here because the caller
+    # only records the dimensions. That is why the largest captures in the
+    # 2026-09-16 run came back with dimensions_px: null.
+    try:
+        Image.MAX_IMAGE_PIXELS = None
+    except Exception:
+        pass
     try:
         with Image.open(path) as img:
             return [int(img.size[0]), int(img.size[1])]
@@ -920,7 +970,7 @@ def _run_native(raw_view, output_dir, selection="all", repetitions=DEFAULT_REPET
                 pixel_sizes=None, export_dpi=DEFAULT_EXPORT_DPI, d2_steps=DEFAULT_D2_STEPS,
                 tile_grid=DEFAULT_TILE_GRID, max_elements=None, repo_root=None):
     report = {
-        "probe": {"name": PROBE_NAME, "version": PROBE_VERSION,
+        "probe": {"name": PROBE_NAME, "version": PROBE_VERSION, "source": source_records(),
                   "target": "Revit 2025 / Dynamo 3.3 CPython3"},
         "inputs": {}, "view": {}, "geometry": {}, "cases": {},
         "exports": [], "capture_directory": None,

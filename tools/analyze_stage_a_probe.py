@@ -2081,6 +2081,15 @@ _METRIC_TABLE_COLUMNS = (
     ('trans_p90', lambda m: m['transitions']['width_percentiles'].get('p90')),
     ('oob_px', lambda m: m['pixels']['out_of_bbox_palette_px']),
     ('solid3x3', lambda m: m['solidity']['fraction_3x3_solid']),
+    # Two populations, both reported. `pastel_*` counts only colors with a solid
+    # interior -- a whole element drawn at constant alpha. But a mechanism that
+    # blends thin LINEWORK toward white produces no solid interior at all, so
+    # those columns read 0 and '-' on a capture that plainly has blending: the
+    # 2026-09-16 SITE PLAN AT LEVEL 4 baseline had 24,632 off-palette pixels
+    # and reported no pastels and no alpha. `blend_*` is the whole unblend
+    # population, solid or not, and is what says at what alpha it blended.
+    ('blend_colors', lambda m: m['white_blend']['matched_color_count']),
+    ('blend_alpha_p50', lambda m: m['white_blend']['alpha_percentiles'].get('p50')),
     ('pastel_colors', lambda m: m['white_blend']['composited_color_count']),
     ('pastel_alpha_p50', lambda m: m['white_blend']['composited_alpha_percentiles'].get('p50')),
 )

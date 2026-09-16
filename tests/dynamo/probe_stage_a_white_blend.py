@@ -68,6 +68,20 @@ except ImportError:  # pasted Dynamo node: the sibling sits next to this file
 PROBE_NAME = "stage_a_white_blend"
 PROBE_VERSION = 1
 
+# See probe_stage_a_drift_onset.source_record. This probe takes its captures
+# through that module's production_capture, so BOTH have to be current: on
+# 2026-09-16 this module was up to date and the one it calls was not, and
+# nothing in the output said so.
+MODULE_FILE = os.path.abspath(__file__) if "__file__" in globals() else None
+MODULE_MTIME_AT_IMPORT = _drift._file_mtime(MODULE_FILE)
+
+
+def source_records():
+    import sys
+    return [_drift.source_record(sys.modules[__name__]),
+            _drift.source_record(_drift)]
+
+
 CASES = ("b1_query", "b3_baseline", "b3_underlay_off", "b3_halftone_cleared")
 # Variants that only run when B1 found the mechanism present in the AUTHORED
 # view. B1's result lives in a local of _run_native and does not survive
@@ -670,7 +684,7 @@ def _run_native(raw_view, output_dir, selection="all", element_ids=None,
                 export_dpi=DEFAULT_EXPORT_DPI, pixel_size=None, max_elements=None,
                 repo_root=None):
     report = {
-        "probe": {"name": PROBE_NAME, "version": PROBE_VERSION,
+        "probe": {"name": PROBE_NAME, "version": PROBE_VERSION, "source": source_records(),
                   "target": "Revit 2025 / Dynamo 3.3 CPython3"},
         "inputs": {}, "view": {}, "geometry": {}, "cases": {},
         "exports": [], "capture_directory": None,

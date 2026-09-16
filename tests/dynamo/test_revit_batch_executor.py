@@ -844,3 +844,21 @@ def test_changing_settings_alone_is_still_configuration_drift(tmp_path):
                       artifact_root=str(tmp_path / "same"))
     assert manifest["execution_status"] == "configuration_failed"
     assert "Configuration drift" in manifest["errors"][0]["message"]
+
+
+def test_a_dry_run_refuses_a_probe_whose_source_changed_since_import(monkeypatch):
+    """The dry run is where staleness belongs: cheap to refuse before the model
+    is open, expensive to discover after a campaign of captures."""
+    from tests.dynamo import probe_stage_a_drift_onset as drift
+    registry = build_registry()
+    monkeypatch.setattr(drift, "MODULE_MTIME_AT_IMPORT",
+                        (drift.MODULE_MTIME_AT_IMPORT or 0) - 3600.0)
+    with pytest.raises(ValueError, match="stale source"):
+        registry["stage_a_drift_onset"].validate_settings(
+            {"selection": "d1_determinism"}, "/tmp/out")
+
+
+def test_a_dry_run_passes_when_the_probe_source_is_current():
+    registry = build_registry()
+    assert registry["stage_a_drift_onset"].validate_settings(
+        {"selection": "d1_determinism"}, "/tmp/out")["selection"] == "d1_determinism"

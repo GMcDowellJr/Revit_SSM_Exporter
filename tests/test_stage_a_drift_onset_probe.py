@@ -508,3 +508,42 @@ def test_two_jobs_on_one_view_do_not_produce_the_same_capture_name():
 def test_a_stem_drops_an_empty_run_token_rather_than_leaving_a_dot():
     assert probe._stem("", 871863, "d1_determinism", "rep0") == \
         "871863.d1_determinism.rep0"
+
+
+# --- a stale module must be visible, not inferred three hours later ---------
+#
+# Revit holds one Python interpreter open for the whole session. The campaign
+# JSON is re-read from disk on every run and the probe code is not, so a module
+# imported before an edit stays imported after it. On 2026-09-16 that produced
+# a full set of artifacts from an old drift probe against a new campaign, with
+# nothing in the output saying so.
+
+def test_a_module_whose_file_has_not_changed_is_not_stale():
+    record = probe.source_record(probe)
+    assert record["module"] == "tests.dynamo.probe_stage_a_drift_onset"
+    assert record["stale"] is False
+
+
+def test_a_module_whose_file_changed_since_import_is_stale():
+    class Loaded(object):
+        __name__ = "probe_stage_a_drift_onset"
+        MODULE_FILE = probe.MODULE_FILE
+        MODULE_MTIME_AT_IMPORT = (probe.MODULE_MTIME_AT_IMPORT or 0) - 3600.0
+    record = probe.source_record(Loaded())
+    assert record["stale"] is True
+    assert record["mtime_now"] != record["mtime_at_import"]
+
+
+def test_an_uncheckable_module_is_unknown_rather_than_stale():
+    """A pasted Dynamo node has no __file__; refusing to run on that would
+    block an install the probe is meant to support."""
+    class Pasted(object):
+        __name__ = "pasted"
+        MODULE_FILE = None
+        MODULE_MTIME_AT_IMPORT = None
+    assert probe.source_record(Pasted())["stale"] is False
+
+
+def test_stale_sources_selects_only_the_stale_records():
+    records = [{"file": "a", "stale": False}, {"file": "b", "stale": True}]
+    assert probe.stale_sources(records) == [{"file": "b", "stale": True}]

@@ -461,21 +461,128 @@ B2 is entirely analyzer-side: `white_blend.matches` unblends each off-palette
 color against the palette over white and reports the solved alpha, and
 `fraction_3x3_solid` distinguishes a composited element from a resampled edge.
 
+## Run 1 — 2026-09-16, KSRF_Hosp_Interior_AR_V03_33 MB_2025-02-03
+
+Revit 2025 build 25.4.41.14, Dynamo CPython3, no links loaded. 21 captures over
+nine jobs. `drift_table.md` is the measured record; what follows is read off it.
+
+### Drift: the onset is the exported HEIGHT, at ~10,000 px
+
+Every capture in the run falls on one side of a single line, and it is not the
+one the baseline proposed:
+
+| exported height | captures | `hard_edge_ratio` |
+|---|---|---|
+| 5038, 5039, 5535, 7735, 9071, 9575, 9642, 9927 | 8 | **1.0** (no blended edge at all) |
+| 10079, 11570, 12356, 14463 | 4 | **0.0** (no hard edge at all) |
+
+Width does not predict it: 15000×9927 is perfectly hard-edged while 8739×10079
+is fully blurred. Neither does total pixel count (148.9 Mpx clean, 88.1 Mpx
+drifted), nor the requested-to-native scale factor (1.001 drifts; 0.73 does
+not). The threshold lies in **(9927, 10079]**.
+
+D3 is the controlled demonstration — one view, one content set, crop pinned,
+size driven through DPI so requested ≈ native throughout:
+
+| `(N) HOSPITAL - LEVEL 3` (929475) | W×H | scale | hard ratio | overshoot | width p50 |
+|---|---|---|---|---|---|
+| native | 8023×7735 | 1.001 | 1.0 | — | — |
+| 10000 px | 10000×9642 | 1.001 | 1.0 | — | — |
+| 12000 px | 12000×11570 | 1.001 | **0.0** | 0.249 | 3 |
+| 15000 px | 15000×14463 | 1.001 | **0.0** | 0.497 | 4 |
+
+and `(N) HOSPITAL - LEVEL 2` (871863) crosses the same line from the other
+side: native 8739×10079 drifts, 0.95× (8302×9575) and 0.9× (7865×9071) are
+clean.
+
+Overshoot rises monotonically with how far the height exceeds the threshold
+(0.114 at 10079, 0.249 at 11570, 0.497 at 14463), which is what an upscale from
+a fixed internal height produces and what a renderer-wide quality switch does
+not. The reading this supports: **Revit rasterizes at a capped height of about
+10,000 px and resamples to the requested height.** At 10079 that is a 1.008×
+upscale, which leaves almost no output pixel exactly aligned — hence a
+`hard_edge_ratio` of 0 from a resample of barely one percent.
+
+D5 confirms the consequence is avoidable: the same view cut into 2×2 crop
+tiles, each 5038–10px tall, gives `hard_edge_ratio` 1.0 on all four tiles.
+
+### What the other D experiments said
+
+- **D1** — rep0 and rep1 are **byte-identical** (same SHA-256) on all three
+  views. The export is deterministic; drift is not a race.
+- **D4** — did not test anything. `D4_NATIVE_CEILING` is 15000, taken from
+  production's `MAX_STAGE_A_PIXEL_SIZE`, so no DPI was lowered and the capture
+  is a byte-for-byte duplicate of D1's. The question it was asked is
+  nonetheless answered, by D3's sub-native sweep: lowering DPI until the height
+  clears the threshold does give hard edges. The constant needs to be the
+  height threshold, not the width ceiling.
+- **D2** — **invalid, see below.** It swept one category (`Point Clouds`) with
+  zero painted elements and wrote two identical blank captures.
+
+### 0.67 white blend: it is the underlay
+
+B1 on `SITE PLAN AT LEVEL 4` (587278), read before any mutation:
+`underlay_configured: true`, base level `(E) HOSPITAL - LEVEL 4`, range
+covering three levels, and **164 of 572 candidate elements sit on an underlay
+level**. No element halftone, no category halftone, no surface transparency
+anywhere in the candidate set.
+
+B3 turned the underlay off with `SetUnderlayRange` — one mechanism, crop
+pinned to the baseline, restored afterwards, transaction group rolled back and
+state verified restored:
+
+| | painted elements | off-palette px | hard | blended | `hard_edge_ratio` |
+|---|---|---|---|---|---|
+| `b3_baseline` | 658 | 24,632 | 65,653 | 66,596 | 0.496 |
+| `b3_underlay_off` | 381 | **0** | 67,098 | **0** | **1.0** |
+
+Every off-palette pixel in that view is the underlay's. 277 of the 658 painted
+elements — 42% — are underlay elements: Stage A paints them with their colour
+IDs, and Revit then draws them in the underlay's greyed presentation, so they
+reach the TIFF as a blend of their own palette colour toward white and never
+appear in pure colour. That is the baseline observation, exactly.
+
+`pastel_colors` reads 0 on the baseline because the underlay reaches this
+capture as thin linework, which has no solid 3×3 interior — the discriminator
+that keeps resample residue from being counted as a composited element also
+excludes blended linework. The `blend_colors` / `blend_alpha_p50` columns were
+added for this; **the 0.67 figure itself is not yet confirmed on this run** and
+needs the two `.metrics.json` files for the B3 pair.
+
+### The run's own defect: a stale probe module
+
+`probe_stage_a_white_blend` executed the current code; the
+`probe_stage_a_drift_onset` it captures through was the version from before
+`6594d1e`. The evidence is in the artifacts: the B3 captures carry the
+crop-pinning added in `ad5e48d` (later) but not the view id in their file names
+added in `6594d1e` (earlier), which no single checkout produces.
+
+Revit holds one Python interpreter open for a whole session. The campaign JSON
+is re-read from disk every run; the probe modules are not. So an edited probe
+stays unloaded until Revit restarts, and a run executes old code against a new
+campaign — producing a complete, unflagged set of artifacts, one experiment of
+which measured nothing.
+
+D1, D3, D4 and D5 are unaffected: nothing in those code paths or in
+`production_capture` changed between that version and now. **D2 must be
+re-run.** Both probes now record `probe.source` per module, and a dry run
+refuses a probe whose file has changed since it was imported.
+
 ## Hypotheses
 
-Stated against the baseline evidence. **Every one is currently open** — no
-experiment has run.
+Statuses below are from Run 1. Verdicts marked **by run** rest on the measured
+table; everything else is still open.
 
 ### Drift
 
 | # | Hypothesis | Status | Evidence that would settle it |
 |---|---|---|---|
-| D-H1 | Drift is non-deterministic (a render-path race) | open | D1: byte-identical repeats contradict it |
-| D-H2 | Drift is a hard absolute pixel threshold near 10000 | **contradicted by baseline** | `SEA LEVEL_49370` is clean at 15000×12356. A threshold alone cannot explain it |
-| D-H3 | Drift is triggered by a *combination* of raster size and scene load | open, leading | D2: if unhiding categories in 49370 flips `hard_edge_ratio` at fixed size, supported; if it never flips, contradicted |
-| D-H4 | Drift is caused by the request exceeding what Revit will render, followed by an upscale | open | D3+D4: if lowering DPI so native ≤ 15000 and requesting native exactly gives hard edges, supported. `(N) HOSPITAL - LEVEL 2` drifting at scale 1.00 already weighs against it |
+| D-H1 | Drift is non-deterministic (a render-path race) | **contradicted by run** | D1: byte-identical repeats contradict it |
+| D-H2 | Drift is a hard absolute pixel threshold near 10000 | **supported by run, on HEIGHT** | Every capture splits on exported height at a threshold in (9927, 10079]; width up to 15000 is clean. The baseline's counter-example measured the long axis, not the height |
+| D-H3 | Drift is triggered by a *combination* of raster size and scene load | **not needed** | D2: if unhiding categories in 49370 flips `hard_edge_ratio` at fixed size, supported; if it never flips, contradicted |
+| D-H4 | Drift is caused by the request exceeding what Revit will render, followed by an upscale | **supported by run** | D3+D4: if lowering DPI so native ≤ 15000 and requesting native exactly gives hard edges, supported. `(N) HOSPITAL - LEVEL 2` drifting at scale 1.00 already weighs against it |
 | D-H5 | Drift is a resample, not anti-aliasing | **supported by baseline** | AA already ruled out by stair-stepped curves in clean views; 34–60% overshoot is a negative-lobe kernel or a sharpening pass, which AA does not produce |
-| D-H6 | Drift is avoidable by tiling at native density | open | D5: per-tile `hard_edge_ratio` of 1.0 with zero seam residual supports it |
+| D-H6 | Drift is avoidable by tiling at native density | **supported by run** | D5: per-tile `hard_edge_ratio` of 1.0 with zero seam residual supports it |
 
 Note on D-H5: 34–60% normalized overshoot is large for Lanczos (typically under
 20%) and very large for bicubic. That magnitude is more consistent with a
@@ -488,10 +595,10 @@ be checked rather than argued.
 | # | Hypothesis | Status | Evidence that would settle it |
 |---|---|---|---|
 | B-H1 | Element-level halftone or surface transparency | **contradicted by code** | `color_id_buffer._build_flat_color_ogs` already calls `SetHalftone(False)` and `SetSurfaceTransparency(0)` on every painted element, and production clears category halftone in its capture setup; element overrides outrank category, filter, and template overrides. B1 reports the authored state, and `b3_halftone_cleared`'s redundancy skip confirms it on the run |
-| B-H2 | View underlay | open, leading | Consistent with every baseline fact: the affected categories (Walls, Generic Models, Roofs, Doors, Windows) are exactly what an underlay from an adjacent level shows; the blend is uniform over the whole element; and pastels unblend to the *palette* color, so the override applied and something composited afterwards. B1's `elements_on_an_underlay_level`, then B3's `underlay_off` export |
-| B-H3 | Phase filter "Overridden" graphics | open, weaker | Phase overrides sit below element overrides in Revit's precedence, so they should have been beaten by the paint step. B1 records the phase filter and its per-status presentation anyway |
-| B-H4 | Design option graphics | open, weak | B1 records each element's design option |
-| B-H5 | The blend target is another element, not white | open | B2: every pastel color unblends *exactly* against white in the baseline, which already weighs against it. `white_blend.matches[].neighbor_palette_rgb` names the palette colours actually adjacent to each pastel region, so a pastel that unblends against white while touching another element settles it |
+| B-H2 | View underlay | **confirmed by run** | Consistent with every baseline fact: the affected categories (Walls, Generic Models, Roofs, Doors, Windows) are exactly what an underlay from an adjacent level shows; the blend is uniform over the whole element; and pastels unblend to the *palette* color, so the override applied and something composited afterwards. B1's `elements_on_an_underlay_level`, then B3's `underlay_off` export |
+| B-H3 | Phase filter "Overridden" graphics | **not needed** | Phase overrides sit below element overrides in Revit's precedence, so they should have been beaten by the paint step. B1 records the phase filter and its per-status presentation anyway |
+| B-H4 | Design option graphics | **contradicted by run** | B1 records each element's design option |
+| B-H5 | The blend target is another element, not white | **contradicted by run** | B2: every pastel color unblends *exactly* against white in the baseline, which already weighs against it. `white_blend.matches[].neighbor_palette_rgb` names the palette colours actually adjacent to each pastel region, so a pastel that unblends against white while touching another element settles it |
 
 ## UNCONFIRMED API assumptions
 
@@ -515,9 +622,11 @@ emits its own `unconfirmed_api_assumptions` list.
 **Underlay / blend**
 
 6. `ViewPlan.GetUnderlayBaseLevel` / `GetUnderlayTopLevel` /
-   `GetUnderlayOrientation` exist on this install.
+   `GetUnderlayOrientation` exist on this install. **CONFIRMED by Run 1** on
+   Revit 2025 build 25.4.41.14: B1 read the underlay range through them.
 7. `ViewPlan.SetUnderlayRange(InvalidElementId, InvalidElementId)` disables the
-   underlay.
+   underlay. **CONFIRMED by Run 1**: `api_used: "SetUnderlayRange"`, and the
+   resulting capture has zero off-palette pixels.
 8. `BuiltInParameter.VIEW_UNDERLAY_ID` / `_BOTTOM_ID` / `_TOP_ID` are the
    pre-2018 fallback.
 9. A document-level halftone/underlay brightness is reachable from the API at

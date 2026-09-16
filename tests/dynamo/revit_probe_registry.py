@@ -436,6 +436,23 @@ def _anomaly_probe_adapter(module_name, allowed, probe_id):
         if not output_directory:
             raise ValueError("output_directory is required")
         module = __import__(module_name, fromlist=["run_probe"])
+        # Revit holds one Python interpreter open for the whole session, so a
+        # probe imported before an edit stays imported after it. The campaign
+        # JSON is re-read from disk every run and the probe code is not, which
+        # is how a run executed an old probe against a new campaign on
+        # 2026-09-16 -- producing a full set of artifacts, none of them
+        # flagged, one experiment of which was silently measuring nothing. The
+        # dry run is where this belongs: a stale module is cheap to refuse
+        # before the model is open and expensive to discover afterwards.
+        stale = [record for record in (module.source_records()
+                                       if hasattr(module, "source_records") else [])
+                 if record.get("stale")]
+        if stale:
+            raise ValueError(
+                "{0} loaded stale source: {1}. Restart Revit (or reset the Dynamo "
+                "CPython3 engine) so the edited file is re-imported; the running "
+                "interpreter is still holding the version from before the edit.".format(
+                    probe_id, ", ".join(str(record.get("file")) for record in stale)))
         arguments = dict(settings)
         unknown = sorted(set(arguments) - allowed)
         if unknown:

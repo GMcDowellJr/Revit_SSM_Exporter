@@ -538,3 +538,13 @@ def test_the_baseline_alone_needs_no_b1():
 
 def test_all_still_includes_b1_and_so_stays_valid():
     assert probe.select_cases("all")[0] == "b1_query"
+
+
+def test_the_white_blend_probe_checks_the_module_it_captures_through():
+    """This probe takes its captures through the drift probe's
+    production_capture, so a staleness check covering only itself would have
+    missed the 2026-09-16 case exactly: this module current, that one not."""
+    names = [record["module"] for record in probe.source_records()]
+    assert "probe_stage_a_white_blend" in names[0]
+    assert "probe_stage_a_drift_onset" in names[1]
+    assert all(record["stale"] is False for record in probe.source_records())
