@@ -598,7 +598,14 @@ def production_capture(doc, view, cfg, case, label, capture_dir, diag=None):
     if os.path.exists(sidecar_path):
         with open(sidecar_path) as handle:
             sidecar = json.load(handle)
-        sidecar["tiff_path"] = tiff_path
+        # Recorded as a bare file name, not an absolute path. The sidecar and
+        # its TIFF are written side by side and travel together; an absolute
+        # path is only correct while the capture set stays exactly where it was
+        # written, and a set of several-hundred-megabyte captures gets moved.
+        # Readers resolve a relative tiff_path against the sidecar's own
+        # directory, so a moved capture set stays analysable.
+        sidecar["tiff_path"] = os.path.basename(tiff_path)
+        sidecar["tiff_path_at_capture"] = tiff_path
         sidecar["probe_case"] = case
         sidecar["probe_label"] = label
         with open(sidecar_path, "w") as handle:

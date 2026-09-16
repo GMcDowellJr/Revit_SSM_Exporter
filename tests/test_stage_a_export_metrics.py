@@ -820,3 +820,56 @@ def test_an_image_past_the_default_bomb_limit_is_measured(tmp_path):
     assert _PILImage.MAX_IMAGE_PIXELS is None or _PILImage.MAX_IMAGE_PIXELS > default_limit
     m = measure(tmp_path, solid_square())
     assert m["edges"]["hard_edge_ratio"] == 1.0
+
+
+# --- a capture set that has been moved is still analysable ------------------
+
+def test_a_stale_absolute_tiff_path_falls_back_to_the_sibling(tmp_path):
+    """Captures get moved; at several hundred megabytes each, often. The
+    sidecar and its image travel together and share a stem, so the sibling is
+    the more reliable reference."""
+    write_tiff(tmp_path, solid_square(), "d1_determinism.rep0.tiff")
+    # Absolute on whatever platform the tests run on: a Windows path is not
+    # absolute to posixpath, so hard-coding one would silently skip the check.
+    stale = str(tmp_path / "written" / "somewhere" / "else" / "d1_determinism.rep0.tiff")
+    side = dict(sidecar(), view_id=871863, tiff_path=stale)
+    src = tmp_path / "d1_determinism.rep0.json"
+    src.write_text(json.dumps(side), encoding="utf-8")
+    _out, rows = analyzer.analyze_metrics_json(src)
+    assert len(rows) == 1
+    metrics = rows[0][1]
+    assert metrics["edges"]["hard_edge_ratio"] == 1.0
+    # Recorded, not silent: the reader must know a different file was measured.
+    assert metrics["image"]["resolved_beside_sidecar"] is True
+    assert metrics["image"]["recorded_path"] == stale
+
+
+def test_a_relative_tiff_path_resolves_against_the_sidecar(tmp_path):
+    """What the probe now writes, so a moved set needs no fallback at all."""
+    write_tiff(tmp_path, solid_square(), "d1_determinism.rep0.tiff")
+    side = dict(sidecar(), tiff_path="d1_determinism.rep0.tiff", view_id=871863)
+    src = tmp_path / "d1_determinism.rep0.json"
+    src.write_text(json.dumps(side), encoding="utf-8")
+    _out, rows = analyzer.analyze_metrics_json(src)
+    assert len(rows) == 1
+    # Nothing was overridden, so no relocation marker.
+    assert "resolved_beside_sidecar" not in rows[0][1]["image"]
+
+
+def test_a_genuinely_missing_tiff_is_still_reported_missing(tmp_path):
+    """The fallback must not turn an absent capture into a silent pass."""
+    side = dict(sidecar(), tiff_path="gone.tiff", view_id=1)
+    src = tmp_path / "d1_determinism.rep9.json"
+    src.write_text(json.dumps(side), encoding="utf-8")
+    out, rows = analyzer.analyze_metrics_json(src)
+    assert rows == []
+    assert json.loads(out.read_text(encoding="utf-8"))["errors"][0]["code"] == "TIFF_MISSING"
+
+
+def test_the_probe_records_a_relocatable_tiff_path():
+    """Root cause: an absolute path bakes the capture set's location in."""
+    import inspect
+    from tests.dynamo import probe_stage_a_drift_onset as drift
+    source = inspect.getsource(drift.production_capture)
+    assert 'sidecar["tiff_path"] = os.path.basename(tiff_path)' in source
+    assert 'tiff_path_at_capture' in source

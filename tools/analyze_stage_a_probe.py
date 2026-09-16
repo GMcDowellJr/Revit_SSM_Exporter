@@ -54,6 +54,34 @@ def resolve_path(json_path: Path, value: str | None) -> Path | None:
     return p if p.is_absolute() else (json_path.parent / p)
 
 
+def resolve_capture_tiff(json_path: Path, recorded: str | None) -> Path | None:
+    """Find a sidecar's TIFF, preferring the file that sits beside it.
+
+    A recorded absolute ``tiff_path`` is only valid while the capture stays
+    where it was written. Capture sets get moved -- onto a NAS, onto another
+    machine, out of a directory someone pointed at by mistake -- and at several
+    hundred megabytes per TIFF they get moved often. The sidecar and its image
+    travel together and share a stem, so the sibling is the more reliable
+    reference and is tried first.
+
+    Mirrors decode_stage_a_color_id._resolve_tiff_path, which already worked
+    this way; this analyzer did not, and followed the stale absolute path into
+    a TIFF_MISSING on a capture set that was entirely intact.
+    """
+    for candidate in (json_path.with_suffix('.tiff'), json_path.with_suffix('.tif')):
+        if candidate.exists():
+            return candidate
+    resolved = resolve_path(json_path, recorded)
+    if resolved is not None and resolved.exists():
+        return resolved
+    # Last resort: the recorded file name, in the sidecar's own directory.
+    if recorded:
+        beside = json_path.parent / Path(recorded).name
+        if beside.exists():
+            return beside
+    return resolved
+
+
 def load_rgb(path: Path) -> np.ndarray:
     with Image.open(path) as img:
         return np.asarray(img.convert('RGB'))
@@ -1854,7 +1882,7 @@ def _metrics_export_records(json_path: Path, data: dict[str, Any]) -> list[tuple
             for i, rec in enumerate(exports):
                 if not isinstance(rec, dict):
                     continue
-                tiff = resolve_path(json_path, rec.get('tiff_path'))
+                tiff = resolve_capture_tiff(json_path, rec.get('tiff_path'))
                 if tiff is None:
                     continue
                 # A probe record that names its own production sidecar defers
@@ -1863,6 +1891,11 @@ def _metrics_export_records(json_path: Path, data: dict[str, Any]) -> list[tuple
                 # palette would default to {} and every pixel would count as
                 # off-palette -- a full set of well-formed, meaningless numbers.
                 side = resolve_path(json_path, rec.get('sidecar_path'))
+                if side is not None and not side.exists():
+                    # Same relocation problem as the TIFF: prefer the sidecar
+                    # named beside the report when the recorded path is stale.
+                    beside = json_path.parent / Path(rec['sidecar_path']).name
+                    side = beside if beside.exists() else side
                 merged = dict(rec)
                 if side is not None and side.exists():
                     try:
@@ -1889,7 +1922,7 @@ def _metrics_export_records(json_path: Path, data: dict[str, Any]) -> list[tuple
     if not records and isinstance(native, dict):
         records = _records_from(native)
     if not records and data.get('tiff_path'):
-        tiff = resolve_path(json_path, data.get('tiff_path'))
+        tiff = resolve_capture_tiff(json_path, data.get('tiff_path'))
         if tiff is not None:
             # A capture written by a probe labels itself; a hand-run Stage A
             # sidecar falls back to its view id, then to the file name.
@@ -1992,7 +2025,18 @@ def analyze_metrics_json(json_path: Path, seen_tiffs=None
                            'message': 'already measured from another input in this run'})
             continue
         try:
-            rows.append((label, stage_a_export_metrics(tiff, sidecar)))
+            metrics = stage_a_export_metrics(tiff, sidecar)
+            recorded = sidecar.get('tiff_path')
+            # Only an ABSOLUTE recorded path can be stale. A relative one is
+            # resolved against the sidecar's directory by design, which is the
+            # intended case and not a relocation.
+            if (recorded and Path(recorded).is_absolute()
+                    and Path(recorded).resolve() != tiff.resolve()):
+                # Not silent: the capture set has been moved since it was
+                # written, and the reader should know which file was measured.
+                metrics['image']['recorded_path'] = recorded
+                metrics['image']['resolved_beside_sidecar'] = True
+            rows.append((label, metrics))
             if seen_tiffs is not None:
                 seen_tiffs.add(key)
         except Exception as exc:
