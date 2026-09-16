@@ -196,3 +196,29 @@ def test_allow_rerun_keeps_the_prior_run_lookup_that_resume_false_discards():
     assert 'not policy.get("allow_rerun", False)' in source
     guard = inspect.getsource(revit_batch_executor._prior_successes)
     assert "belongs to a different document" in guard
+
+
+def test_every_gated_b3_variant_is_selected_alongside_b1_in_the_same_job(batch):
+    """B1's finding does not cross job boundaries.
+
+    ``b1-site-plan-4`` running earlier in the campaign is the phase gate for a
+    person; it is not an input to a later job. Each job that asks for a gated
+    variant has to run B1 itself, or the variant is skipped and the run still
+    reports completed.
+    """
+    for job in batch["jobs"]:
+        if job["probe_id"] != "stage_a_white_blend":
+            continue
+        cases = blend.select_cases(job["settings"]["selection"])
+        gated = [case for case in cases if case in blend.B1_GATED_CASES]
+        assert not gated or "b1_query" in cases, job["job_id"]
+
+
+def test_the_underlay_experiment_is_actually_in_the_campaign(batch):
+    """B-H2 rests on this one capture; a campaign that never takes it is green
+    and answers nothing."""
+    cases = set()
+    for job in batch["jobs"]:
+        if job["probe_id"] == "stage_a_white_blend":
+            cases.update(blend.select_cases(job["settings"]["selection"]))
+    assert {"b3_baseline", "b3_underlay_off", "b3_halftone_cleared"} <= cases

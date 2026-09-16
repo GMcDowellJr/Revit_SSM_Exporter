@@ -345,3 +345,134 @@ def test_a_throwing_property_is_skipped_rather_than_propagated():
 def test_a_plain_int_is_still_accepted():
     assert probe._safe_int_id(587278) == 587278
     assert probe._safe_int_id(None) is None
+
+
+# --- D2: buckets come from production's collected load ----------------------
+#
+# D2 only localizes a drift onset if step N carries more drawn content than
+# step N-1. Enumerating doc.Settings.Categories instead put every category the
+# DOCUMENT defines into the sweep, ordered by category id -- so categories this
+# view draws nothing from consumed buckets, and the category carrying the load
+# could appear in an arbitrary late jump.
+
+class _Id(object):
+    def __init__(self, value):
+        self.Value = value
+
+
+class _Category(object):
+    def __init__(self, cid, name, model=True, hideable=True):
+        self.Id = _Id(cid)
+        self.Name = name
+        self.CategoryType = "Model" if model else "Annotation"
+        self.hideable = hideable
+
+
+class _Settings(object):
+    def __init__(self, categories):
+        self.Categories = categories
+
+
+class _Doc(object):
+    def __init__(self, categories):
+        self.Settings = _Settings(categories)
+
+
+class _View(object):
+    def __init__(self, categories):
+        self._by_id = dict((c.Id.Value, c) for c in categories)
+        self.hidden = {}
+
+    def CanCategoryBeHidden(self, cid):
+        return self._by_id[cid.Value].hideable
+
+    def GetCategoryHidden(self, cid):
+        return bool(self.hidden.get(cid.Value, False))
+
+    def SetCategoryHidden(self, cid, hidden):
+        self.hidden[cid.Value] = bool(hidden)
+
+
+class _FakeDB(object):
+    CategoryType = type("CategoryType", (), {"Model": "Model"})
+
+    @staticmethod
+    def ElementId(value):
+        return _Id(value)
+
+
+@pytest.fixture
+def d2(monkeypatch):
+    """A D2 context whose only Revit contact is the fake DB above."""
+    import sys
+    import types
+    module = types.ModuleType("Autodesk.Revit.DB")
+    module.CategoryType = _FakeDB.CategoryType
+    module.ElementId = _FakeDB.ElementId
+    monkeypatch.setitem(sys.modules, "Autodesk", types.ModuleType("Autodesk"))
+    monkeypatch.setitem(sys.modules, "Autodesk.Revit", types.ModuleType("Autodesk.Revit"))
+    monkeypatch.setitem(sys.modules, "Autodesk.Revit.DB", module)
+    monkeypatch.setattr(probe, "_mutate", lambda doc, name, fn: fn())
+    monkeypatch.setattr(probe, "_set_view_crop", lambda view, bounds: tuple(bounds))
+
+    def build(categories, load):
+        doc, view = _Doc(categories), _View(categories)
+        monkeypatch.setattr(probe, "production_category_load",
+                            lambda *a, **k: (dict(load), 0, sum(load.values())))
+        captured = []
+
+        def capture(cfg, case, label):
+            captured.append({"label": label,
+                             "visible": sorted(c.Name for c in categories
+                                               if not view.GetCategoryHidden(c.Id))})
+            return {"tiff_path": label + ".tiff", "label": label}
+
+        ctx = {"doc": doc, "view": view, "cfg": object(), "capture": capture,
+               "bounds_xy": BOUNDS, "diag": None}
+        return ctx, captured
+    return build
+
+
+def test_d2_buckets_are_ordered_by_production_load_not_category_id(d2):
+    # Ids ascending, load descending -- the two orders disagree on purpose.
+    categories = [_Category(10, "Walls"), _Category(20, "Roofs"), _Category(30, "Floors")]
+    ctx, _ = d2(categories, {10: 5, 20: 900, 30: 40})
+    _, detail = probe._case_d2(ctx, steps=3)
+    assert [c["name"] for c in detail["categories"]] == ["Roofs", "Floors", "Walls"]
+    assert [c["collected_element_count"] for c in detail["categories"]] == [900, 40, 5]
+
+
+def test_d2_leaves_out_categories_this_view_draws_nothing_from(d2):
+    categories = [_Category(10, "Walls"), _Category(20, "Casework"), _Category(30, "Floors")]
+    ctx, _ = d2(categories, {10: 7, 30: 3})
+    _, detail = probe._case_d2(ctx, steps=4)
+    assert [c["name"] for c in detail["categories"]] == ["Walls", "Floors"]
+    # Two loaded categories: the sweep is two buckets, not four.
+    assert len(detail["steps"]) == 3     # step0 (nothing) + one per bucket
+
+
+def test_d2_reports_how_much_content_each_step_revealed(d2):
+    categories = [_Category(10, "Walls"), _Category(20, "Roofs")]
+    ctx, captured = d2(categories, {10: 100, 20: 25})
+    _, detail = probe._case_d2(ctx, steps=2)
+    counts = [step["revealed_element_count"] for step in detail["steps"]]
+    assert counts == [0, 100, 125]
+    assert [c["label"] for c in captured] == ["step0", "step1", "step2"]
+
+
+def test_d2_counts_a_loaded_category_that_cannot_be_hidden_as_always_visible(d2):
+    categories = [_Category(10, "Walls"), _Category(20, "Levels", hideable=False)]
+    ctx, _ = d2(categories, {10: 100, 20: 8})
+    _, detail = probe._case_d2(ctx, steps=2)
+    assert [c["name"] for c in detail["always_visible_categories"]] == ["Levels"]
+    assert detail["always_visible_element_count"] == 8
+    # Step 0 is not empty: it still draws what cannot be hidden.
+    assert detail["steps"][0]["revealed_element_count"] == 8
+
+
+def test_d2_skips_rather_than_sweeping_a_view_with_no_hideable_load(d2):
+    categories = [_Category(10, "Levels", hideable=False)]
+    ctx, captured = d2(categories, {10: 8})
+    exports, detail = probe._case_d2(ctx, steps=8)
+    assert exports == [] and captured == []
+    assert "no category carrying any of them" in detail["skipped"]

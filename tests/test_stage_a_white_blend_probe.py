@@ -507,3 +507,34 @@ def test_the_probe_reports_whether_every_variant_matched_the_baseline():
     source = inspect.getsource(probe._run_native)
     assert "capture_geometry_matches_baseline" in source
     assert "not attributable to the mechanism" in source
+
+
+# --- B1 is a precondition of the gated B3 variants, not a separate errand ---
+#
+# Each gated variant only runs where B1 found the mechanism present in the
+# authored view, and B1's result lives in a local of _run_native. A selection
+# that omits b1_query therefore SKIPS them -- and a b3_baseline alongside is
+# enough for the run to be reported completed, so resume never retries the
+# captures that were quietly dropped.
+
+@pytest.mark.parametrize("selection", [
+    "b3_underlay_off",
+    "b3_halftone_cleared",
+    "b3_baseline,b3_underlay_off,b3_halftone_cleared",
+])
+def test_a_gated_b3_variant_without_b1_is_refused_not_silently_skipped(selection):
+    with pytest.raises(ValueError, match="b1_query"):
+        probe.select_cases(selection)
+
+
+def test_the_same_selection_is_accepted_once_b1_is_in_it():
+    assert probe.select_cases("b1_query,b3_baseline,b3_underlay_off") == \
+        ["b1_query", "b3_baseline", "b3_underlay_off"]
+
+
+def test_the_baseline_alone_needs_no_b1():
+    assert probe.select_cases("b3_baseline") == ["b3_baseline"]
+
+
+def test_all_still_includes_b1_and_so_stays_valid():
+    assert probe.select_cases("all")[0] == "b1_query"

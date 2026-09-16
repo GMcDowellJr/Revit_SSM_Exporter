@@ -69,6 +69,14 @@ PROBE_NAME = "stage_a_white_blend"
 PROBE_VERSION = 1
 
 CASES = ("b1_query", "b3_baseline", "b3_underlay_off", "b3_halftone_cleared")
+# Variants that only run when B1 found the mechanism present in the AUTHORED
+# view. B1's result lives in a local of _run_native and does not survive
+# across invocations, so a selection that omits b1_query turns each of these
+# into a skip -- and a b3_baseline in the same selection is enough for the run
+# to be reported completed, so resume never retries the captures that were
+# quietly dropped. That is how a campaign can run to green having never taken
+# the one export its leading hypothesis rests on.
+B1_GATED_CASES = ("b3_underlay_off", "b3_halftone_cleared")
 
 # The categories the 2026-09-15 run found rendering pastel in SITE PLAN AT
 # LEVEL 2-6. Used only to pick candidates when no explicit id list is given;
@@ -104,6 +112,13 @@ def select_cases(selection):
     for name in requested:
         if name not in out:
             out.append(name)
+    gated = [name for name in out if name in B1_GATED_CASES]
+    if gated and "b1_query" not in out:
+        raise ValueError(
+            "{0} require(s) b1_query in the same selection: each is applied only where B1 "
+            "found the mechanism present in the authored view, and B1 is read before any "
+            "mutation within a single run. Without it these cases are skipped, not run. "
+            "Requested: {1}".format(", ".join(gated), out))
     return out
 
 
@@ -1021,7 +1036,15 @@ def run_probe(raw_view, output_dir, selection="all", element_ids=None,
     read_only = bool(native.get("b1_only_run"))
     rollback_ok = bool(native["transaction_group"].get("rollback_succeeded"))
     restored = native["state"].get("restored")
-    artifacts = [rec["tiff_path"] for rec in native.get("exports", []) if rec.get("tiff_path")]
+    # The sidecar is listed beside its TIFF, not left out of the inventory. An
+    # artifact consumer that copies only artifact_paths would otherwise take
+    # the images and leave behind the palette, resolution and bounds that
+    # analyze_stage_a_probe.py reads them with -- a capture set that cannot be
+    # analysed. The drift probe already inventories both.
+    artifacts = []
+    for rec in native.get("exports", []):
+        artifacts.extend(path for path in (rec.get("tiff_path"), rec.get("sidecar_path"))
+                         if path)
     if native.get("json_report_path"):
         artifacts.append(native["json_report_path"])
     errors = list(native.get("exceptions", []))

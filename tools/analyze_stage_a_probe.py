@@ -1174,7 +1174,15 @@ _ALPHA_MIN, _ALPHA_MAX = 0.02, 0.995
 _MAX_OFF_COLOR_KEYS = 500000       # dict cap; new keys dropped past it (flagged)
 _MAX_TRANSITION_SAMPLES = 20000
 _ROW_SAMPLE_BUDGET = _MAX_TRANSITION_SAMPLES // 2  # leave room for the column pass
-_MAX_PASTEL_PROFILED = 16
+# Off-palette colors offered to the unblend solver, ranked by pixel count.
+# On a drifted export most of them are edge residue, so this window has to be
+# wide enough that a genuinely composited element is still inside it.
+_MAX_PASTEL_CANDIDATES = 4096
+# Per-target neighbour scan is a full image pass per color, so it is the one
+# bounded stage -- and it is spent on the COMPOSITED colors, which are what B2
+# asks about, never on residue that happened to rank high.
+_MAX_PASTEL_NEIGHBOR_TARGETS = 16
+_MAX_PASTEL_MATCHES_REPORTED = 64  # JSON payload cap; the counts are over all of them
 _PASTEL_SOLID_MIN = 0.5    # a composited element has a solid interior; an edge does not
 _MIN_TRANSITION_SPAN = 8   # 8-bit units between anchors below which a run is not a transition
 _MAX_TRANSITION_FOR_OVERSHOOT = 32  # px; wider runs are regions, not resampled edges
@@ -1659,9 +1667,26 @@ def _unblend_over_white(off_code: int, palette_sorted: np.ndarray) -> dict[str, 
             'alpha': float(mean_alpha[best]), 'max_channel_error': float(err[best])}
 
 
-def _pastel_profile(arr: np.ndarray, palette_sorted: np.ndarray,
-                    codes: list[int]) -> dict[int, dict[str, Any]]:
-    """Per-pastel-color solidity and palette neighbours -- the B2 discriminator.
+def _tally_codes(values: np.ndarray, wanted_sorted: np.ndarray, out: np.ndarray) -> None:
+    """Add the occurrences of each wanted code in ``values`` into ``out``.
+
+    searchsorted + bincount, so the cost is O(n log k) in one pass rather than
+    O(n*k) from comparing the image against each wanted code in turn. That is
+    what lets every unblend candidate be classified instead of an arbitrary
+    first sixteen.
+    """
+    if values.size == 0 or wanted_sorted.size == 0:
+        return
+    flat = values.reshape(-1)
+    idx = np.searchsorted(wanted_sorted, flat)
+    np.clip(idx, 0, wanted_sorted.size - 1, out=idx)
+    hit = wanted_sorted[idx] == flat
+    if hit.any():
+        out += np.bincount(idx[hit], minlength=wanted_sorted.size)
+
+
+def _pastel_solidity(arr: np.ndarray, codes: list[int]) -> dict[int, dict[str, Any]]:
+    """Per-pastel-color solidity -- the B2 discriminator, for every candidate.
 
     A color-to-white edge produced by resampling lands *exactly* on the alpha
     ray from the palette color to white, so it unblends just as cleanly as a
@@ -1670,16 +1695,59 @@ def _pastel_profile(arr: np.ndarray, palette_sorted: np.ndarray,
     constant alpha has a large interior where every 3x3 neighbourhood is that
     same pastel color, while a resampled edge has essentially none.
 
-    The palette colors found adjacent to each pastel color answer the other
-    half of B2: if a pastel region unblends against white while sitting next
-    to another element's color, white is the blend target, not that element.
+    Every candidate is measured. Capping the set before this point is what
+    made ``composited_color_count`` unreliable: on a drifted export the ranked
+    off-palette colors are dominated by edge residue, so a real composited
+    element could be crowded out of the profiled set and reported as absent.
     """
     if not codes:
         return {}
     h, w = arr.shape[:2]
     wanted = np.array(sorted(set(int(c) for c in codes)), dtype=np.uint32)
-    profile = {int(c): {'total_px': 0, 'solid_3x3_px': 0, 'neighbor_palette_codes': set()}
-               for c in wanted.tolist()}
+    total = np.zeros(wanted.size, dtype=np.int64)
+    solid = np.zeros(wanted.size, dtype=np.int64)
+    y = 0
+    while y < h:
+        y1 = min(h, y + _METRIC_STRIPE_ROWS)
+        top, bot = max(0, y - 1), min(h, y1 + 1)
+        code = _rgb_to_code(arr[top:bot])
+        lo, hi = y - top, y - top + (y1 - y)
+        _tally_codes(code[lo:hi], wanted, total)
+        s0, s1 = max(lo, 1), min(hi, bot - top - 1)
+        if s1 > s0 and w > 2:
+            centre = code[s0:s1, 1:-1]
+            same = np.ones(centre.shape, dtype=bool)
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    if dy == 0 and dx == 0:
+                        continue
+                    same &= code[s0 + dy:s1 + dy, 1 + dx:w - 1 + dx] == centre
+            if same.any():
+                _tally_codes(centre[same], wanted, solid)
+        y = y1
+    profile = {}
+    for index, value in enumerate(wanted.tolist()):
+        seen = int(total[index])
+        profile[int(value)] = {
+            'total_px': seen, 'solid_3x3_px': int(solid[index]),
+            'solid_3x3_fraction': (int(solid[index]) / seen) if seen else None}
+    return profile
+
+
+def _pastel_neighbors(arr: np.ndarray, palette_sorted: np.ndarray,
+                      codes: list[int]) -> dict[int, list[int]]:
+    """Palette colors found adjacent to each of ``codes``.
+
+    The other half of B2: if a pastel region unblends against white while
+    sitting next to another element's color, white is the blend target, not
+    that element. Unlike solidity this is per-target work, so it is spent only
+    on the colors already classified as composited.
+    """
+    if not codes:
+        return {}
+    h, w = arr.shape[:2]
+    wanted = sorted(set(int(c) for c in codes))
+    found = dict((code, set()) for code in wanted)
     y = 0
     while y < h:
         y1 = min(h, y + _METRIC_STRIPE_ROWS)
@@ -1687,43 +1755,37 @@ def _pastel_profile(arr: np.ndarray, palette_sorted: np.ndarray,
         code = _rgb_to_code(arr[top:bot])
         lo, hi = y - top, y - top + (y1 - y)
         s0, s1 = max(lo, 1), min(hi, bot - top - 1)
-        for target in wanted.tolist():
-            own = code[lo:hi] == target
-            profile[target]['total_px'] += int(own.sum())
-            if s1 <= s0 or w <= 2:
-                continue
+        y = y1
+        if s1 <= s0 or w <= 2:
+            continue
+        for target in wanted:
             centre = code[s0:s1, 1:-1] == target
             if not centre.any():
                 continue
-            same = centre.copy()
-            neighbours = set()
             for dy in (-1, 0, 1):
                 for dx in (-1, 0, 1):
                     if dy == 0 and dx == 0:
                         continue
-                    shifted = code[s0 + dy:s1 + dy, 1 + dx:w - 1 + dx]
-                    same &= shifted == target
-                    around = shifted[centre]
-                    if around.size:
-                        values = np.unique(around)
-                        values = values[_is_palette(values, palette_sorted)]
-                        neighbours.update(int(v) for v in values.tolist())
-            profile[target]['solid_3x3_px'] += int(same.sum())
-            profile[target]['neighbor_palette_codes'].update(neighbours)
-        y = y1
-    for record in profile.values():
-        record['neighbor_palette_codes'] = sorted(record['neighbor_palette_codes'])[:32]
-        record['solid_3x3_fraction'] = (record['solid_3x3_px'] / record['total_px']
-                                        if record['total_px'] else None)
-    return profile
+                    around = code[s0 + dy:s1 + dy, 1 + dx:w - 1 + dx][centre]
+                    if not around.size:
+                        continue
+                    values = np.unique(around)
+                    values = values[_is_palette(values, palette_sorted)]
+                    found[target].update(int(v) for v in values.tolist())
+    return dict((code, sorted(values)[:32]) for code, values in found.items())
 
 
 def _pastel_analysis(off_counts: dict[int, int], palette_sorted: np.ndarray,
                      labels: dict[int, list[str]], total_px: int) -> dict[str, Any]:
     """Which off-palette colors are whole-element composites over white."""
     ranked = sorted(off_counts.items(), key=lambda kv: kv[1], reverse=True)
+    window = ranked[:_MAX_PASTEL_CANDIDATES]
     matches = []
-    for code, count in ranked[:_MAX_PASTEL_PROFILED * 8]:
+    # No early stop. Every candidate that solves is kept and classified by
+    # solidity downstream; stopping at a fixed number of *matches* meant edge
+    # residue, which is what ranks high on a drifted export, could fill the
+    # quota before a composited element was ever looked at.
+    for code, count in window:
         solved = _unblend_over_white(code, palette_sorted)
         if solved is None:
             continue
@@ -1732,14 +1794,14 @@ def _pastel_analysis(off_counts: dict[int, int], palette_sorted: np.ndarray,
                        'pixel_fraction': (count / total_px) if total_px else None,
                        'palette_labels': labels.get(solved['palette_code'], [])})
         matches.append(solved)
-        if len(matches) >= _MAX_PASTEL_PROFILED:
-            break
     alphas = np.asarray([m['alpha'] for m in matches], dtype=float)
     hist: dict[str, int] = {}
     for m in matches:
         key = '{0:.2f}'.format(round(m['alpha'], 2))
         hist[key] = hist.get(key, 0) + 1
     return {
+        'candidate_colors_considered': len(window),
+        'candidate_window_truncated': len(ranked) > len(window),
         'matched_color_count': len(matches),
         'matched_pixel_count': int(sum(m['pixel_count'] for m in matches)),
         'distinct_palette_colors_blended': len({m['palette_code'] for m in matches}),
@@ -1755,7 +1817,9 @@ def _apply_pastel_profile(blend: dict[str, Any], profile: dict[int, dict[str, An
     ``matched_color_count`` counts every color that solves cleanly against the
     palette over white, which on a resampled export is mostly edge residue.
     ``composited_color_count`` counts only the ones that also have a solid
-    interior, and is the number to read as "pastel element count".
+    interior, and is the number to read as "pastel element count". Both are
+    computed over every candidate, before the reported ``matches`` list is
+    trimmed for payload size.
     """
     composited = 0
     for match in blend['matches']:
@@ -1764,7 +1828,6 @@ def _apply_pastel_profile(blend: dict[str, Any], profile: dict[int, dict[str, An
             continue
         match['solid_3x3_px'] = record['solid_3x3_px']
         match['solid_3x3_fraction'] = record['solid_3x3_fraction']
-        match['neighbor_palette_rgb'] = [_code_to_rgb(c) for c in record['neighbor_palette_codes']]
         match['is_composited_region'] = bool(
             record['solid_3x3_fraction'] is not None
             and record['solid_3x3_fraction'] >= _PASTEL_SOLID_MIN)
@@ -1784,6 +1847,41 @@ def _apply_pastel_profile(blend: dict[str, Any], profile: dict[int, dict[str, An
         key = '{0:.2f}'.format(round(match['alpha'], 2))
         blend['composited_alpha_histogram'][key] = \
             blend['composited_alpha_histogram'].get(key, 0) + 1
+
+
+def _apply_pastel_neighbors(blend: dict[str, Any], arr: np.ndarray,
+                            palette_sorted: np.ndarray) -> None:
+    """Record adjacent palette colors, for the composited regions only."""
+    composited = [m for m in blend['matches'] if m.get('is_composited_region')]
+    composited.sort(key=lambda m: m['pixel_count'], reverse=True)
+    targets = composited[:_MAX_PASTEL_NEIGHBOR_TARGETS]
+    blend['neighbor_scan_targets'] = len(targets)
+    blend['neighbor_scan_truncated'] = len(composited) > len(targets)
+    found = _pastel_neighbors(arr, palette_sorted, [m['off_code'] for m in targets])
+    for match in blend['matches']:
+        codes = found.get(match['off_code'])
+        match['neighbor_palette_rgb'] = ([_code_to_rgb(c) for c in codes]
+                                         if codes is not None else None)
+
+
+def _truncate_pastel_matches(blend: dict[str, Any]) -> None:
+    """Bound the reported match list without losing a composited region.
+
+    Every aggregate above is already computed over the full set; this only
+    decides what lands in the JSON. Composited regions are kept first because
+    they are the finding -- residue is only context.
+    """
+    matches = blend['matches']
+    if len(matches) <= _MAX_PASTEL_MATCHES_REPORTED:
+        blend['matches_truncated'] = False
+        return
+    composited = [m for m in matches if m.get('is_composited_region')]
+    residue = [m for m in matches if not m.get('is_composited_region')]
+    kept = composited[:_MAX_PASTEL_MATCHES_REPORTED]
+    kept.extend(residue[:_MAX_PASTEL_MATCHES_REPORTED - len(kept)])
+    kept.sort(key=lambda m: m['pixel_count'], reverse=True)
+    blend['matches'] = kept
+    blend['matches_truncated'] = True
 
 
 def stage_a_export_metrics(tiff_path: Path, sidecar: dict[str, Any]) -> dict[str, Any]:
@@ -1806,8 +1904,10 @@ def stage_a_export_metrics(tiff_path: Path, sidecar: dict[str, Any]) -> dict[str
     scan = _scan_export(arr, palette_sorted, frame['content_rect_px'])
 
     blend = _pastel_analysis(scan['off_color_counts'], palette_sorted, labels, h * w)
-    _apply_pastel_profile(blend, _pastel_profile(
-        arr, palette_sorted, [m['off_code'] for m in blend['matches']]))
+    _apply_pastel_profile(blend, _pastel_solidity(
+        arr, [m['off_code'] for m in blend['matches']]))
+    _apply_pastel_neighbors(blend, arr, palette_sorted)
+    _truncate_pastel_matches(blend)
 
     total_px = h * w
     hard = scan['hard_color_white_edges']

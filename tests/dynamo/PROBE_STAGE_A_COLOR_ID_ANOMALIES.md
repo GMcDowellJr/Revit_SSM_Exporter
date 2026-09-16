@@ -151,14 +151,25 @@ Definitions that matter for reading the numbers:
   not sufficient on its own. A colour-to-white edge produced by resampling
   lands *exactly* on the alpha ray from the palette colour to white, so it
   unblends just as cleanly as a deliberately composited element does; a
-  Lanczos-resampled synthetic scene produces 16 perfect unblend matches and
-  zero real pastels. `matched_color_count` counts every colour that solves;
+  Lanczos-resampled synthetic scene produces perfect unblend matches and zero
+  real pastels. Every candidate colour in the ranked window is classified —
+  capping the profiled set at the first N *matches* let that residue, which is
+  exactly what ranks high on a drifted export, fill the quota before a real
+  composited element was ever examined, reporting zero pastels on a capture
+  that plainly has one. `candidate_colors_considered` and
+  `candidate_window_truncated` say how wide the window was;
+  `matched_color_count` counts every colour that solves;
   **`composited_color_count` is the "pastel element count"** — it counts only
   matches that also have a solid interior (`solid_3x3_fraction ≥ 0.5`), and it
-  is what the `pastel_colors` table column reports. Each match also carries
-  `neighbor_palette_rgb`, which answers B2 directly: a pastel that unblends
-  against white while sitting next to another element's colour has white as
-  its blend target, not that element.
+  is what the `pastel_colors` table column reports. Composited matches also
+  carry `neighbor_palette_rgb`, which answers B2 directly: a pastel that
+  unblends against white while sitting next to another element's colour has
+  white as its blend target, not that element. That scan is one image pass per
+  colour, so it is the one bounded stage: it is spent on the composited
+  regions only, and `neighbor_scan_truncated` says when there were more than
+  the budget. The reported `matches` list is capped for payload size
+  (`matches_truncated`), with composited regions kept first — every count
+  above is computed over the full candidate set, before that trim.
 
 - **reading `hard_edge_ratio`** — a composited element lowers it without any
   resampling at all, because its pastel pixels are off-palette and so every
@@ -269,6 +280,15 @@ run cheap to continue. To deliberately re-capture everything, set:
                       "resume": true, "allow_rerun": true }
 ```
 
+**Moving the artifact root is not something you have to force.** A prior
+success only counts as "already done" if it landed in the directory this run
+writes to, so adding, changing, or dropping `IN[3]`/`artifact_root` re-runs the
+affected jobs by itself and records a `resume` warning naming the old and new
+destinations. A run in which every job was skipped reports
+`execution_status: "nothing_to_do"` with a `nothing_executed` line in the
+summary, rather than `completed` — a run that wrote nothing no longer reads
+like a successful one.
+
 `allow_rerun` is the right knob, not `resume: false`. Both re-execute every
 job, but `resume: false` skips the prior-run lookup entirely and with it the
 check that refuses to continue a campaign whose earlier run was against a
@@ -356,7 +376,17 @@ python tools/analyze_stage_a_probe.py \
 
 D2 hides every hideable model category first (step 0 is the zero-content
 control) then unhides buckets ordered by descending painted-element count, so
-load rises monotonically. D5's interior seams are snapped to whole native
+load rises monotonically. The counts come from **production's own collected
+element set** for this view (`init_view_raster` → `collect_view_elements`),
+taken after the crop is pinned, and a category this view draws nothing from is
+left out of the sweep entirely. Enumerating `doc.Settings.Categories` instead
+sweeps every category the *document* defines in category-id order, which lets
+empty categories consume buckets and puts the category carrying the load in an
+arbitrary late step — the eight-step sweep then cannot localize the onset.
+Each step records `revealed_element_count`, so the sweep is read against drawn
+content rather than category count. A loaded category the view refuses to hide
+is reported under `always_visible_categories` and is the non-zero floor that
+step 0 starts from. D5's interior seams are snapped to whole native
 pixels; `seam_residual_px` reports any that are not, so a misaligned seam is
 visible rather than confused with resampling.
 
@@ -378,7 +408,17 @@ design option, and phase created/demolished.
 `b3_baseline` is the production-normalized comparison export.
 `b3_underlay_off` and `b3_halftone_cleared` each run **only if B1 found that
 mechanism configured on this view**, and record why they were skipped
-otherwise. Each variant restores its own mutation before the next one runs —
+otherwise.
+
+**A gated variant therefore needs `b1_query` in its own selection.** B1's
+finding lives in a local of the run that took it and does not cross job
+boundaries, so `selection: "b3_baseline,b3_underlay_off"` skips the underlay
+export — and the baseline alone is enough for the job to be reported
+completed, so `resume` never retries it. `select_cases` refuses such a
+selection, which the campaign dry run catches before the model is opened. The
+campaign's `b3-site-plan-4` job runs B1 itself; the separate `b1-site-plan-4`
+job stays because it is the read-only phase gate that decides whether the
+expensive exports are worth taking at all. Each variant restores its own mutation before the next one runs —
 every mutation commits into the enclosing TransactionGroup, so without an
 explicit restore the underlay would stay off through the halftone export and
 that TIFF would carry two changes at once, which is exactly what makes a

@@ -964,3 +964,59 @@ def test_the_probe_stamps_every_capture():
     import inspect
     from tests.dynamo import probe_stage_a_drift_onset as drift
     assert 'sidecar["captured_at"]' in inspect.getsource(drift.production_capture)
+
+
+# --- a composited region is found behind the residue, not ranked out of it ---
+#
+# Every color on the alpha ray from a palette color to white unblends cleanly,
+# so a resampled edge produces a long tail of them. Capping the profiled set at
+# the first N matches by pixel count let that tail fill the quota and report
+# composited_color_count == 0 on a capture that plainly has one.
+
+def test_a_composited_element_is_found_behind_a_large_field_of_edge_residue(tmp_path):
+    arr = np.full((400, 400, 3), 255, dtype=np.uint8)
+    # Forty distinct residue colors, each a two-pixel band with white on both
+    # sides so it has no solid 3x3 interior, and each covering 800 px against
+    # the composited square's 400 -- so every one of them outranks the finding.
+    for i in range(40):
+        arr[i * 4:(i * 4) + 2, :] = blend_over_white(RED, 0.02 + i * 0.015)
+    arr[300:320, 300:320] = blend_over_white(BLUE, 0.67)
+    blend = measure(tmp_path, arr, colors=(RED, BLUE))["white_blend"]
+    composited = [m for m in blend["matches"] if m.get("is_composited_region")]
+    assert blend["composited_color_count"] == 1
+    assert blend["composited_alpha_histogram"] == {"0.67": 1}
+    assert [m["palette_rgb"] for m in composited] == [list(BLUE)]
+    # All of them were classified rather than a fixed quota being spent on the
+    # residue that ranks above the square.
+    assert blend["matched_color_count"] > 16
+
+
+def test_the_candidate_window_reports_whether_it_was_truncated(tmp_path):
+    blend = measure(tmp_path, solid_square())["white_blend"]
+    assert blend["candidate_window_truncated"] is False
+    assert blend["candidate_colors_considered"] >= 0
+
+
+def test_neighbour_scanning_is_bounded_and_says_so(tmp_path, monkeypatch):
+    monkeypatch.setattr(analyzer, "_MAX_PASTEL_NEIGHBOR_TARGETS", 1)
+    arr = np.full((200, 400, 3), 255, dtype=np.uint8)
+    arr[20:180, 20:180] = blend_over_white(RED, 0.67)
+    arr[20:180, 220:380] = blend_over_white(BLUE, 0.5)
+    blend = measure(tmp_path, arr, colors=(RED, BLUE))["white_blend"]
+    assert blend["composited_color_count"] == 2
+    assert blend["neighbor_scan_targets"] == 1
+    assert blend["neighbor_scan_truncated"] is True
+
+
+def test_the_reported_match_list_is_capped_without_dropping_a_composited_one(tmp_path, monkeypatch):
+    monkeypatch.setattr(analyzer, "_MAX_PASTEL_MATCHES_REPORTED", 4)
+    arr = np.full((400, 400, 3), 255, dtype=np.uint8)
+    for i in range(40):
+        arr[i * 4:(i * 4) + 2, :] = blend_over_white(RED, 0.02 + i * 0.015)
+    arr[300:320, 300:320] = blend_over_white(BLUE, 0.67)
+    blend = measure(tmp_path, arr, colors=(RED, BLUE))["white_blend"]
+    assert blend["matches_truncated"] is True
+    assert len(blend["matches"]) == 4
+    assert any(m.get("is_composited_region") for m in blend["matches"])
+    # The counts are over every candidate, not over the trimmed list.
+    assert blend["matched_color_count"] > len(blend["matches"])

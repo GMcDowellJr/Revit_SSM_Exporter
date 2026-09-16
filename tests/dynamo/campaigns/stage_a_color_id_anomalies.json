@@ -134,7 +134,7 @@
         "name": "SITE PLAN AT LEVEL 4"
       },
       "settings": {
-        "selection": "b3_baseline,b3_underlay_off,b3_halftone_cleared"
+        "selection": "b1_query,b3_baseline,b3_underlay_off,b3_halftone_cleared"
       },
       "output_directory": "captures/b3-site-plan-4"
     }

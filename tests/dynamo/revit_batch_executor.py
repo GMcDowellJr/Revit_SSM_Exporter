@@ -47,9 +47,33 @@ def _view_type_name(raw):
     return text  # last resort: never crash, but this remains an unresolved ordinal
 
 
+def element_id_value(value):
+    """Read an ElementId as an int, Revit 2025's 64-bit ``Value`` first.
+
+    ``IntegerValue`` is the legacy 32-bit property and is deprecated in Revit
+    2025. For an id outside the int32 range its getter can *raise* rather than
+    return, and ``getattr(obj, "IntegerValue", default)`` does not catch that:
+    a default only covers AttributeError. Reading it directly therefore turns
+    a valid campaign against a large-id document into a configuration failure
+    during view resolution -- before a single capture is taken.
+    """
+    for attr in ("Value", "IntegerValue"):
+        try:
+            inner = getattr(value, attr, None)
+        except Exception:
+            continue
+        if inner is None:
+            continue
+        try:
+            return int(inner)
+        except (TypeError, ValueError):
+            continue
+    return value
+
+
 def view_identity(view):
     raw = getattr(view, "InternalElement", view)
-    element_id = getattr(getattr(raw, "Id", None), "IntegerValue", getattr(raw, "Id", None))
+    element_id = element_id_value(getattr(raw, "Id", None))
     return {"unique_id": getattr(raw, "UniqueId", None), "element_id": element_id,
             "name": getattr(raw, "Name", None), "view_type": _view_type_name(raw),
             "crop_active": getattr(raw, "CropBoxActive", None), "is_template": getattr(raw, "IsTemplate", None)}
@@ -133,6 +157,18 @@ def resolve_output_directory(output_directory, batch_source_path=None, artifact_
     return os.path.normpath(os.path.join(base, output_directory))
 
 
+def _destination_moved(previous_directory, resolved_output_directory):
+    """True when a prior success landed somewhere other than this run's output.
+
+    A prior record written before output directories were resolved carries no
+    destination; that is unknown, not a move, so it is left to resume.
+    """
+    if not previous_directory:
+        return False
+    return os.path.normcase(os.path.normpath(previous_directory)) != \
+        os.path.normcase(os.path.normpath(resolved_output_directory))
+
+
 def _variant_kwargs(adapter, job):
     """Pass job["variant"] to adapters that declare a `variant` parameter
     (the explicit per-probe adapter boundary); older/generic adapters that
@@ -173,7 +209,14 @@ def _prior_successes(root, campaign_id, batch_id, current_document_identity):
             raise ContractError("Cannot resume campaign {0} batch {1}: prior run {2} belongs to a different document".format(
                 campaign_id, batch_id, prior.get("run_id", "unknown")))
         for record in completed:
-            successes[record["job_id"]] = record.get("configuration_fingerprint")
+            successes[record["job_id"]] = {
+                "fingerprint": record.get("configuration_fingerprint"),
+                # Where that prior run actually wrote. A completed job is only
+                # a reason to skip if its artifacts are where THIS run would
+                # put them; see the destination check in execute_batch.
+                "output_directory": record.get("output_directory_resolved"),
+                "run_id": prior.get("run_id"),
+            }
     return successes
 
 
@@ -214,12 +257,28 @@ def execute_batch(batch_or_path, doc, registry, all_views=None, manifest_root=No
         selected = []
         for job, view, identity, resolved_output_directory in resolved:
             fingerprint = job_fingerprint(job)
-            if job["job_id"] in prior and not policy.get("allow_rerun", False):
-                if prior[job["job_id"]] != fingerprint:
+            previous = prior.get(job["job_id"]) if not policy.get("allow_rerun", False) else None
+            if previous is not None:
+                if previous["fingerprint"] != fingerprint:
                     raise ContractError("Configuration drift for completed job {0}".format(job["job_id"]))
-                manifest["jobs"].append(_job_record(job, identity, fingerprint, "skipped_resume", resolved_output_directory))
-            else:
-                selected.append((job, view, identity, fingerprint, resolved_output_directory))
+                moved = _destination_moved(previous.get("output_directory"), resolved_output_directory)
+                if moved:
+                    # The job succeeded before, but into a different directory
+                    # -- an artifact_root was added, changed, or dropped. Its
+                    # outputs are not where this run is asked to put them, so
+                    # "already done" would hand back an empty capture set and
+                    # call the run completed. Re-run it, and say why.
+                    manifest["warnings"].append({
+                        "phase": "resume", "job_id": job["job_id"],
+                        "message": "Re-running: prior run {0} completed this job into {1}, "
+                                   "but this run writes to {2}.".format(
+                                       previous.get("run_id") or "unknown",
+                                       previous.get("output_directory"),
+                                       resolved_output_directory)})
+                else:
+                    manifest["jobs"].append(_job_record(job, identity, fingerprint, "skipped_resume", resolved_output_directory))
+                    continue
+            selected.append((job, view, identity, fingerprint, resolved_output_directory))
         limit = policy["max_jobs_per_run"]
         attempted, deferred = selected[:limit], selected[limit:]
         manifest["jobs_not_attempted"] = [{"job_id": item[0]["job_id"], "reason": "execution_limit"} for item in deferred]
@@ -256,7 +315,18 @@ def execute_batch(batch_or_path, doc, registry, all_views=None, manifest_root=No
                         break
                 record["completed_at"] = utc_now()
                 _atomic_json(path, manifest)
-        manifest["execution_status"] = "validation_only" if validation_only else ("failed" if any(j["execution_status"] == "failed" for j in manifest["jobs"]) else "completed")
+        if validation_only:
+            manifest["execution_status"] = "validation_only"
+        elif any(j["execution_status"] == "failed" for j in manifest["jobs"]):
+            manifest["execution_status"] = "failed"
+        elif not attempted and manifest["jobs"]:
+            # Every job was skipped by resume: nothing ran and nothing new was
+            # written. Reporting that as "completed" is how a run that produced
+            # no files reads like a successful one -- the reader goes looking
+            # for artifacts that this invocation never created.
+            manifest["execution_status"] = "nothing_to_do"
+        else:
+            manifest["execution_status"] = "completed"
     except Exception as error:
         manifest["execution_status"] = "configuration_failed"
         manifest["errors"].append({"phase": "configuration", "type": type(error).__name__,
@@ -279,8 +349,16 @@ def execute_batch(batch_or_path, doc, registry, all_views=None, manifest_root=No
             "jobs_validated": [j["job_id"] for j in manifest["jobs"] if j["execution_status"] == "validated_only"],
             "jobs_executed": executed, "jobs_failed": failed,
             "jobs_deferred": [j["job_id"] for j in manifest["jobs_not_attempted"] if j["reason"] == "execution_limit"],
-            "errors": list(manifest["errors"]),
+            "jobs_skipped_resume": [j["job_id"] for j in manifest["jobs"] if j["execution_status"] == "skipped_resume"],
+            "errors": list(manifest["errors"]), "warnings": list(manifest["warnings"]),
             "manifest_path": path, "another_invocation_needed": bool(manifest["jobs_not_attempted"])}
+    if manifest["execution_status"] == "nothing_to_do":
+        # Same reason as configuration_error below: said in a field a person
+        # reads first, not inferred from three empty lists.
+        summary["nothing_executed"] = (
+            "All {0} job(s) were skipped by resume, so this invocation wrote no artifacts. "
+            "Set execution_policy.allow_rerun to true to re-run them.".format(
+                len(summary["jobs_skipped_resume"])))
     if manifest["execution_status"] == "configuration_failed":
         # Say it in a field a person reads first, not only in an errors array
         # they have to notice is non-empty.

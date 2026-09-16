@@ -670,6 +670,36 @@ def _case_d1(ctx, repetitions):
                      "byte_identical": len(set(digests)) == 1 and None not in digests}
 
 
+def production_category_load(doc, view, cfg, diag=None):
+    """Per-category element counts, taken from production's own collection.
+
+    D2 grows visible content one bucket at a time and asks where drift starts.
+    That only localizes an onset if a bucket is a meaningful amount of drawn
+    content, which means the buckets have to be built from the element set the
+    capture actually paints -- production's -- and ordered by how much each
+    category contributes. Enumerating ``doc.Settings.Categories`` instead
+    includes every category the document defines whether or not this view
+    draws anything from it, so empty categories consume buckets and the
+    category carrying the load can land in an arbitrary late step.
+
+    Returns (counts_by_category_id, uncategorized_count, collected_count).
+    """
+    from vop_interwoven.pipeline import init_view_raster
+    from vop_interwoven.revit.collection import collect_view_elements
+
+    raster = init_view_raster(doc, view, cfg, diag=diag)
+    elements = collect_view_elements(doc, view, raster, diag=diag, cfg=cfg)
+    counts, uncategorized, collected = {}, 0, 0
+    for element in elements:
+        collected += 1
+        cid = _safe_int_id(getattr(getattr(element, "Category", None), "Id", None))
+        if cid is None:
+            uncategorized += 1
+            continue
+        counts[cid] = counts.get(cid, 0) + 1
+    return counts, uncategorized, collected
+
+
 def _case_d2(ctx, steps):
     """D2: hold size and density fixed, grow visible content one bucket at a time.
 
@@ -677,30 +707,58 @@ def _case_d2(ctx, steps):
     hiding model categories shrinks the model extents, resolve_view_bounds
     returns a smaller rectangle, and the export size changes with the content
     -- which is exactly the confound D2 exists to remove.
+
+    Buckets are built from production's collected element set, in descending
+    element count, so step N always carries more drawn content than step N-1
+    and the step where drift appears is the onset. The crop is pinned before
+    the count is taken, so the counts describe the captures rather than some
+    other extent.
     """
     from Autodesk.Revit.DB import CategoryType, ElementId
     doc, view = ctx["doc"], ctx["view"]
 
     _mutate(doc, "d2_pin_crop", lambda: _set_view_crop(view, ctx["bounds_xy"]))
 
-    hideable = []
+    load, uncategorized, collected = production_category_load(
+        doc, view, ctx["cfg"], diag=ctx.get("diag"))
+
+    hideable, pinned_visible = [], []
     for cat in doc.Settings.Categories:
         cid = getattr(cat, "Id", None)
         cid_int = _safe_int_id(cid)
-        if cid_int is None:
+        if cid_int is None or not load.get(cid_int):
             continue
         try:
-            if cat.CategoryType != CategoryType.Model or not view.CanCategoryBeHidden(cid):
+            if cat.CategoryType != CategoryType.Model:
                 continue
-            hideable.append({"id": cid_int, "name": getattr(cat, "Name", None),
-                             "was_hidden": bool(view.GetCategoryHidden(cid))})
+            entry = {"id": cid_int, "name": getattr(cat, "Name", None),
+                     "collected_element_count": int(load[cid_int]),
+                     "was_hidden": bool(view.GetCategoryHidden(cid))}
+            if not view.CanCategoryBeHidden(cid):
+                # Carries load but cannot be hidden: visible in every step,
+                # including step 0. Recorded, because it is the floor the
+                # sweep starts from and it is not zero.
+                pinned_visible.append(entry)
+                continue
+            hideable.append(entry)
         except Exception:
             continue
     hideable = [item for item in hideable if not item["was_hidden"]]
-    hideable.sort(key=lambda item: item["id"])
+    # Descending painted load; category id only breaks ties, so the order is
+    # deterministic across runs.
+    hideable.sort(key=lambda item: (-item["collected_element_count"], item["id"]))
+    load_note = {"collected_element_count": collected,
+                 "uncategorized_element_count": uncategorized,
+                 "always_visible_categories": [
+                     {"id": c["id"], "name": c["name"],
+                      "collected_element_count": c["collected_element_count"]}
+                     for c in pinned_visible],
+                 "always_visible_element_count": sum(
+                     c["collected_element_count"] for c in pinned_visible)}
     if not hideable:
-        return [], {"skipped": "no visible model category in this view can be hidden",
-                    "categories": []}
+        return [], dict(load_note, categories=[], skipped=(
+            "production collected {0} element(s) here, but no category carrying any of "
+            "them is both visible and hideable in this view".format(collected)))
 
     def set_hidden(items, hidden):
         for item in items:
@@ -712,13 +770,21 @@ def _case_d2(ctx, steps):
 
     _mutate(doc, "d2_hide_all", lambda: set_hidden(hideable, True))
     exports, step_records, revealed = [], [], []
+    base_load = load_note["always_visible_element_count"]
     for index, bucket in enumerate(buckets + [None]):
         record = ctx["capture"](ctx["cfg"], "d2_category_load", "step{0}".format(index))
+        revealed_load = sum(item["collected_element_count"] for item in revealed)
         record["visible_categories"] = [item["name"] for item in revealed]
+        record["revealed_element_count"] = revealed_load + base_load
         exports.append(record)
         step_records.append({"step": index,
                              "visible_category_count": len(revealed),
                              "visible_categories": [item["name"] for item in revealed],
+                             # What the step is a step OF: the sweep is over
+                             # drawn content, and category count alone does not
+                             # say how much of it each step added.
+                             "revealed_element_count": revealed_load + base_load,
+                             "revealed_element_count_from_buckets": revealed_load,
                              "color_assignment_count": record.get("color_assignment_count"),
                              "tiff_path": record["tiff_path"]})
         if bucket is None:
@@ -726,8 +792,13 @@ def _case_d2(ctx, steps):
         revealed = revealed + bucket
         _mutate(doc, "d2_unhide_{0}".format(index),
                 lambda b=bucket: set_hidden(b, False))
-    return exports, {"steps": step_records, "crop_pinned_to": list(ctx["bounds_xy"]),
-                     "categories": [{"id": c["id"], "name": c["name"]} for c in hideable]}
+    return exports, dict(load_note,
+                         steps=step_records,
+                         crop_pinned_to=list(ctx["bounds_xy"]),
+                         bucket_order="descending production-collected element count",
+                         categories=[{"id": c["id"], "name": c["name"],
+                                      "collected_element_count": c["collected_element_count"]}
+                                     for c in hideable])
 
 
 def _case_d3(ctx, sweep):
@@ -890,7 +961,7 @@ def _run_native(raw_view, output_dir, selection="all", repetitions=DEFAULT_REPET
         def capture(cfg, case, label):
             return production_capture(doc, view, cfg, case, label, capture_dir, diag=diag)
 
-        ctx = {"doc": doc, "view": view, "cfg": base_cfg, "capture": capture,
+        ctx = {"doc": doc, "view": view, "cfg": base_cfg, "capture": capture, "diag": diag,
                "cfg_output_dir": staging_dir, "export_dpi": float(export_dpi),
                "bounds_xy": geometry["bounds_xy"], "view_scale": geometry["view_scale"],
                "paper_width_in": geometry["paper_width_in"],

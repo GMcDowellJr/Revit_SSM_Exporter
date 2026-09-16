@@ -8,7 +8,7 @@ import pytest
 
 from tests.dynamo.revit_batch_contract import (BATCH_SCHEMA_VERSION, MANIFEST_SCHEMA_VERSION,
     ContractError, job_fingerprint, parse_view_reference, validate_batch, validate_manifest)
-from tests.dynamo.revit_batch_executor import execute_batch, resolve_view
+from tests.dynamo.revit_batch_executor import execute_batch, resolve_view, view_identity
 from tests.dynamo.revit_probe_registry import PROBE_MODULES, build_registry
 
 
@@ -693,3 +693,101 @@ def test_the_dynamo_entry_point_forwards_the_artifact_root():
             if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "execute_batch"]
     assert call, "execute_batch call not found"
     assert any(keyword.arg == "artifact_root" for keyword in call[0].keywords)
+
+
+# --- resume is about artifacts, not just job ids ----------------------------
+#
+# A completed job is only a reason to skip if its outputs are where THIS run
+# writes. Adding an artifact_root moved every capture to a new tree; resume
+# still saw ten completed jobs in the prior manifests, skipped all ten, and
+# reported the run completed with nothing written anywhere.
+
+def test_resume_reruns_a_job_whose_artifacts_went_somewhere_else(tmp_path):
+    calls = []
+    adapter = lambda view, settings, output: (calls.append(output) or envelope())
+    relative = batch([job("one", "u1")])
+    relative["jobs"][0]["output_directory"] = "captures/one"
+    run(tmp_path, relative, adapter, run_id="first", artifact_root=str(tmp_path / "old"))
+    resumed = batch([job("one", "u1")], resume=True)
+    resumed["jobs"][0]["output_directory"] = "captures/one"
+    result, manifest = run(tmp_path, resumed, adapter, run_id="second",
+                           artifact_root=str(tmp_path / "new"))
+    assert manifest["jobs"][0]["execution_status"] == "completed"
+    assert calls[-1] == str(tmp_path / "new" / "captures" / "one")
+    assert "Re-running" in manifest["warnings"][0]["message"]
+    assert result["jobs_executed"] == ["one"]
+
+
+def test_resume_still_skips_when_the_destination_is_unchanged(tmp_path):
+    calls = []
+    adapter = lambda view, settings, output: (calls.append(output) or envelope())
+    first = batch([job("one", "u1")])
+    first["jobs"][0]["output_directory"] = "captures/one"
+    run(tmp_path, first, adapter, run_id="first", artifact_root=str(tmp_path / "same"))
+    resumed = batch([job("one", "u1")], resume=True)
+    resumed["jobs"][0]["output_directory"] = "captures/one"
+    _, manifest = run(tmp_path, resumed, adapter, run_id="second",
+                      artifact_root=str(tmp_path / "same"))
+    assert manifest["jobs"][0]["execution_status"] == "skipped_resume"
+    assert len(calls) == 1
+
+
+def test_a_run_that_skipped_everything_does_not_report_completed(tmp_path):
+    adapter = lambda *args: envelope()
+    run(tmp_path, batch(), adapter, run_id="first")
+    resumed = batch(resume=True)
+    result, manifest = run(tmp_path, resumed, adapter, run_id="second")
+    assert manifest["execution_status"] == "nothing_to_do"
+    assert result["jobs_skipped_resume"] == ["one"]
+    assert "allow_rerun" in result["nothing_executed"]
+
+
+def test_allow_rerun_still_reaches_the_probe_after_a_move(tmp_path):
+    calls = []
+    adapter = lambda view, settings, output: (calls.append(output) or envelope())
+    run(tmp_path, batch(), adapter, run_id="first")
+    forced = batch(resume=True)
+    forced["execution_policy"]["allow_rerun"] = True
+    _, manifest = run(tmp_path, forced, adapter, run_id="second")
+    assert manifest["execution_status"] == "completed"
+    assert len(calls) == 2
+
+
+# --- view identity survives a 64-bit element id -----------------------------
+
+def test_view_identity_prefers_the_64_bit_value_over_the_legacy_property():
+    class BigId(object):
+        Value = 8796093022208
+        IntegerValue = -1
+
+    class BigView(object):
+        Id = BigId()
+        UniqueId = "u"
+        Name = "big"
+    assert view_identity(BigView())["element_id"] == 8796093022208
+
+
+def test_view_identity_does_not_fail_on_an_id_whose_legacy_getter_raises():
+    class BigId(object):
+        Value = 8796093022208
+
+        @property
+        def IntegerValue(self):
+            raise OverflowError("id does not fit in int32")
+
+    class BigView(object):
+        Id = BigId()
+        UniqueId = "u"
+        Name = "big"
+    assert view_identity(BigView())["element_id"] == 8796093022208
+
+
+def test_view_identity_falls_back_to_the_legacy_property_on_older_revit():
+    class BigId(object):
+        IntegerValue = 587278
+
+    class BigView(object):
+        Id = BigId()
+        UniqueId = "u"
+        Name = "small"
+    assert view_identity(BigView())["element_id"] == 587278
