@@ -466,6 +466,11 @@ color against the palette over white and reports the solved alpha, and
 Revit 2025 build 25.4.41.14, Dynamo CPython3, no links loaded. 21 captures over
 nine jobs. `drift_table.md` is the measured record; what follows is read off it.
 
+> **Superseded by Run 2 on one point.** Run 1 read the onset as the exported
+> *height*; Run 2 shows it is the **longer axis**, whichever that is. No Run 1
+> capture was wide-and-short, so the two readings were indistinguishable there.
+> Everything else in this section stands. See *Run 2* below.
+
 ### Drift: the onset is the exported HEIGHT, at ~10,000 px
 
 Every capture in the run falls on one side of a single line, and it is not the
@@ -612,63 +617,94 @@ D1, D3, D4 and D5 are unaffected: nothing in those code paths or in
 re-run.** Both probes now record `probe.source` per module, and a dry run
 refuses a probe whose file has changed since it was imported.
 
-## Run 2 — planned: pin the threshold, test the remedy
+## Run 2 — 2026-09-16: the limit is the LONGER AXIS at exactly 10,000 px
 
-`campaigns/stage_a_run2_threshold_and_remedy.json`, four jobs, ten captures,
-3–10 MB each. Its own `batch_id`, so Run 1's completed jobs do not resume-skip
-it. **Restart Revit first** — Run 1's D2 was spoiled by a module the session
-was still holding from before an edit.
+Sixteen captures, five jobs, same document and build.
+`RUN2_2026-09-16_drift_table.md` is the measured record.
 
-Every width below is chosen for the *height* it derives, using the aspect each
-view actually exported at in Run 1, and each capture has a stated prediction. A
-wrong prediction falsifies the height rule instead of being absorbed by it.
+### The rule, against all 28 captures from both runs
 
-| job | view | requested width | derived height | prediction |
+| candidate rule at 10,000 px | captures it gets wrong |
+|---|---|
+| **longer axis** | **1** |
+| exported height | 2 |
+| exported width | 7 |
+| total pixel count | 14 |
+
+**An export is hard-edged while `max(W, H) <= 10000`, and resampled above it.**
+The bracket is exact on both sides and needs no margin:
+
+| capture | W×H | longer axis | result |
+|---|---|---|---|
+| `hosp3 10000px` (Run 1) | 10000×9642 | **10000** | clean |
+| `hosp2 0.99x` | 8652×9978 | 9978 | clean |
+| `hosp2 0.995x` | 8695×10028 | **10028** | drift |
+
+Run 1's height reading is refuted by the two captures built to test the remedy,
+both of which were predicted clean and drifted: `10268×9900` and `12000×9885`
+have heights comfortably under the line and longer axes over it. Width alone is
+refuted by `8695×10028`, which drifts at 8695 wide. Pixel count is refuted
+outright — 149 Mpx clean against 87 Mpx drifted.
+
+**The one exception**, in both runs: `SEA LEVEL` (146925) at 15000×9927, clean.
+It is the only capture in either run with almost no content — **3** painted
+elements, against 210–658 everywhere else. Unexplained. Not something to design
+against.
+
+### D7: fit direction buys nothing
+
+The deciding capture drifted.
+
+| capture | W×H | "longer axis" | "the axis Revit does not fit to" | measured |
 |---|---|---|---|---|
-| `d3-threshold-pin-hosp-2` | 871863 | 8564 / 8652 / 8695 / 8739 | 9877 / 9979 / 10028 / 10079 | clean, clean, **drift**, drift |
-| `d3-height-cap-mob-1` | 528698 | 12000 / native (→15000) | 9885 / 12356 | clean, **drift** |
-| `d3-height-cap-hosp-3` | 929475 | 10268 / 12000 | 9900 / 11570 | clean, **drift** |
-| `d7-fit-direction-hosp-2` | 871863 | 9000 / 11000, each fit both ways | see below | **the deciding pair** |
-| `b3-underlay-hosp-2` | 871863 | 8584 | 9877 | underlay → off-palette px → 0 |
+| 9000, horizontal | 9000×10380 | drift | drift | **drift** |
+| 9000, vertical | 7803×9000 | clean | clean | **clean** |
+| 11000, horizontal | 11000×12686 | drift | drift | **drift** |
+| **11000, vertical** | **9537×11000** | **drift** | clean | **drift** |
 
-D7 is the one question Run 1 could not answer, and it needed a production
-change to ask: `cfg.color_id_buffer_fit_direction`, new, defaulting to
-`"horizontal"` so nothing changes unless a caller asks. Under vertical fit
-PixelSize sets the **height** and the width is derived:
+Under vertical fit the derived width was 9537, well under the line, and the
+export was resampled anyway. The limit belongs to the image, not to the axis
+Revit was asked to fit. `cfg.color_id_buffer_fit_direction` stays at its
+`"horizontal"` default; it is a measurement knob, not a remedy. The
+9000/vertical control confirms vertical fit exports cleanly in itself, so the
+deciding capture's drift is the mechanism and not the fit axis.
 
-| capture | width | height | "cap is on height" | "cap is on the derived axis" |
-|---|---|---|---|---|
-| 9000, horizontal | 9000 | 10380 | drift | drift |
-| 9000, vertical | 7804 | 9000 | clean | clean |
-| 11000, horizontal | 11000 | 12687 | drift | drift |
-| **11000, vertical** | **9538** | **11000** | **drift** | **clean** |
+### The remedy
 
-The last row is the whole experiment. The 9000/vertical row is its control: it
-says vertical fit exports cleanly at all, so a drift in the deciding capture
-cannot be blamed on the fit axis itself. If the deciding capture comes back
-clean, the remedy is to swap the fit axis on tall views and no density is given
-up anywhere — `MOB 1 - LEVEL 2` keeps the 20% the height cap would cost it.
+Bound whichever axis is larger. With horizontal fit, PixelSize is the width and
+the height follows the extents, so:
 
-The threshold sweep cuts (9927, 10079] down to roughly ±25 px around 10,000.
-The two height-cap jobs test the remedy and carry the run's sharpest
-prediction: **12000 px wide is predicted clean on MOB 1 and drifted on
-(N) HOSPITAL - LEVEL 3** — same requested width, opposite outcome, differing
-only in derived height. If width mattered they would agree.
+    pixel_size <= min(10000, 10000 * extent_u_ft / extent_v_ft)
 
-`b3-underlay-hosp-2` is pinned under the height ceiling on purpose: 871863
-drifts at native, and in a drifted capture the off-palette pixels are resample
-residue as well as underlay blend. It also asks whether the α=2/3 blend appears
-outside the SITE PLAN family at all.
+(`probe.pixel_size_under_ceiling` states it; the probe applies it nowhere.)
 
-D2 is dropped. **D6 needs no new campaign** — run this one twice, once with
-hardware acceleration on and once off, into different `artifact_root`s; a prior
-success only resume-skips when it landed where the current run writes, so the
-second pass re-runs everything by itself.
+| view | native | capped | density kept |
+|---|---|---|---|
+| `(N) HOSPITAL - LEVEL 2` | 8739×10079 | 8670×9999 | **99.2%** |
+| `(N) HOSPITAL - LEVEL 3` | 8023×7735 | unchanged | **100%** |
+| `MOB 1 - LEVEL 2` | 29890×24621 | 10000×8237 | 33.5% |
 
-Still not covered by any campaign, and both need input:
+Two of the three cost nothing worth measuring. `MOB 1 - LEVEL 2` is the case
+that hurts, and it is already being downsampled to 0.50 today — and drifting
+while it does. Where that trade is unacceptable, D5's tiling holds native
+density: 2×2 was enough for `LEVEL 2`; `MOB 1` at native needs 3×3
+(29890/3 = 9963, 24621/3 = 8207, both under).
 
-- **Links.** A different document, so a separate campaign; it needs the model
-  and the view ids.
+**`MAX_STAGE_A_PIXEL_SIZE = 15000` is not merely insufficient — it is above the
+limit.** Any view driven to it is past the line before the other axis is even
+considered.
+
+### B3: the blend is specific to views that have an underlay
+
+`(N) HOSPITAL - LEVEL 2` at 8584×9900: `hard_edge_ratio` **1.0**, off-palette
+pixels **0**, `blend_colors` **0**. `b3_underlay_off` recorded itself skipped,
+B1 having found no underlay configured on that view — and with no underlay
+there is no blend at all. Together with Run 1's `SITE PLAN AT LEVEL 4`, where
+disabling the underlay took 24,632 off-palette pixels to zero, the mechanism is
+established from both directions.
+
+That capture is also the remedy working end to end: the same view that drifts
+at native is perfectly hard-edged at 99.2% of native density.
 
 ## Hypotheses
 
@@ -680,9 +716,9 @@ table; everything else is still open.
 | # | Hypothesis | Status | Evidence that would settle it |
 |---|---|---|---|
 | D-H1 | Drift is non-deterministic (a render-path race) | **contradicted by run** | D1: byte-identical repeats contradict it |
-| D-H2 | Drift is a hard absolute pixel threshold near 10000 | **supported by run, on HEIGHT** | Every capture splits on exported height at a threshold in (9927, 10079]; width up to 15000 is clean. The baseline's counter-example measured the long axis, not the height |
+| D-H2 | Drift is a hard absolute pixel threshold near 10000 | **confirmed by run — on the LONGER AXIS, at exactly 10000** | 27 of 28 captures across both runs; clean at 10000×9642, drifted at 8695×10028. Run 1 read it as height because it had no wide-and-short capture; 10268×9900 and 12000×9885 settle it. One exception: SEA LEVEL 15000×9927, the only capture with 3 painted elements |
 | D-H3 | Drift is triggered by a *combination* of raster size and scene load | **not needed** — height alone separates every capture, at fixed load | D2: if unhiding categories in 49370 flips `hard_edge_ratio` at fixed size, supported; if it never flips, contradicted |
-| D-H4 | Drift is caused by the request exceeding what Revit will render, followed by an upscale | **supported by run** | D3+D4: if lowering DPI so native ≤ 15000 and requesting native exactly gives hard edges, supported. `(N) HOSPITAL - LEVEL 2` drifting at scale 1.00 already weighs against it |
+| D-H4 | Drift is caused by the request exceeding what Revit will render, followed by an upscale | **supported by run** — and the cap is on the image's longer axis, not on the axis PixelSize sets: vertical fit at 11000 drifts with a derived width of 9537 | D3+D4: if lowering DPI so native ≤ 15000 and requesting native exactly gives hard edges, supported. `(N) HOSPITAL - LEVEL 2` drifting at scale 1.00 already weighs against it |
 | D-H5 | Drift is a resample, not anti-aliasing | **supported by baseline** | AA already ruled out by stair-stepped curves in clean views; 34–60% overshoot is a negative-lobe kernel or a sharpening pass, which AA does not produce |
 | D-H6 | Drift is avoidable by tiling at native density | **supported by run** | D5: per-tile `hard_edge_ratio` of 1.0 with zero seam residual supports it |
 
@@ -723,11 +759,11 @@ emits its own `unconfirmed_api_assumptions` list.
    **Now the highest-value remaining test**: if the ~10,000 px height cap is a
    renderer/GPU limit, disabling hardware acceleration may move or remove it.
 6. `FitDirectionType.Vertical` exists on this install and `PixelSize` then
-   sets the exported **height**. Assumed by D7 and by
-   `cfg.color_id_buffer_fit_direction`; a capture that failed on it says so in
-   the report's `exceptions`. Until D7 runs, it is untested whether the cap is
-   on the *height* or on *the axis Revit does not fit to* — every Run 1 capture
-   used horizontal fit, where those are the same axis.
+   sets the exported **height**. **CONFIRMED by Run 2**: the vertical captures
+   came back 7803×9000 and 9537×11000, i.e. PixelSize set the height and the
+   width was derived. The question it was added for is answered — the cap is on
+   the longer axis, not on the axis Revit does not fit to — and swapping the
+   fit direction is not a remedy.
 
 **Underlay / blend**
 

@@ -120,19 +120,28 @@ DEFAULT_REPETITIONS = 2
 DEFAULT_SIZE_SWEEP = ("native", 10000, 12000, 15000)
 DEFAULT_D2_STEPS = 8
 DEFAULT_TILE_GRID = 2
-# The ceiling production already applies (color_id_buffer.MAX_STAGE_A_PIXEL_SIZE),
-# which with FitDirectionType.Horizontal bounds the WIDTH only.
-D4_WIDTH_CEILING = 15000
-# The height ceiling is Run 1's finding, not a production constant. Every
-# capture in that run split on exported height at a threshold in (9927, 10079],
-# with widths up to 15000 perfectly hard-edged. 9900 sits under the low end of
-# that bracket, so it is safe wherever in it the real limit falls; a follow-up
-# sweep at 0.98x/0.99x/1.00x on 871863 would pin it exactly.
-D4_HEIGHT_CEILING = 9900
-# Kept as the old name so an existing caller does not break. It was the width
-# ceiling all along, which is why D4 lowered no DPI in Run 1: it compared the
-# LONGEST axis against 15000 on a view whose height problem started at 10079.
-D4_NATIVE_CEILING = D4_WIDTH_CEILING
+# Run 2's measurement: an export stays hard-edged while its LONGER axis is at
+# most 10000 px, and is resampled above that. 28 captures across both runs, one
+# exception (see below). The bracket is exact on both sides -- 10000x9642 is
+# clean and 8695x10028 is not -- so this is the measured value, not a margin.
+#
+# It is NOT the height, which Run 1 could not distinguish because no capture
+# there was wide-and-short: 10268x9900 and 12000x9885 both drift with heights
+# well under the line. It is not the width either (8695 wide drifts), nor the
+# pixel count (149 Mpx clean, 87 Mpx drifted).
+#
+# The one exception is SEA LEVEL (146925) at 15000x9927, clean -- the only
+# capture in either run with almost no content (3 painted elements against
+# 210-658 everywhere else). Unexplained, and not something to design against.
+MAX_CLEAN_AXIS_PX = 10000
+# Production's own ceiling (color_id_buffer.MAX_STAGE_A_PIXEL_SIZE) bounds the
+# fitted axis only, and at 15000 it sits ABOVE the measured limit: a view driven
+# to 15000 px is past the line before the other axis is even considered.
+PRODUCTION_PIXEL_SIZE_CEILING = 15000
+# Superseded names, kept so an existing caller does not break.
+D4_WIDTH_CEILING = MAX_CLEAN_AXIS_PX
+D4_HEIGHT_CEILING = MAX_CLEAN_AXIS_PX
+D4_NATIVE_CEILING = MAX_CLEAN_AXIS_PX
 
 _PROBE_CONTRACT = None
 
@@ -339,25 +348,48 @@ def native_pixel_size(bounds_xy, export_dpi, view_scale):
 
 def dpi_for_native_ceiling(bounds_xy, view_scale, export_dpi,
                            ceiling=None, height_ceiling=None):
-    """The highest DPI <= ``export_dpi`` that fits both export ceilings.
+    """The highest DPI <= ``export_dpi`` whose LONGER axis fits the ceiling.
 
     D4 separates "Revit was asked for more pixels than it will render" from
     "this raster is simply large": lowering DPI shrinks the *request* without
     changing the view, its content, or its crop.
 
-    The two axes have different limits and they are not interchangeable. Width
-    is what PixelSize sets, capped by production at MAX_STAGE_A_PIXEL_SIZE.
-    Height is derived from the view's extents and is where the drift threshold
-    sits. Comparing the longest axis against the width ceiling -- what this did
-    before Run 1 -- passes a view whose height is already over the line, which
-    is exactly why D4 lowered nothing and duplicated D1.
+    Both axes are bounded by the same number, because Run 2 measured the limit
+    on the longer one whichever it happens to be. Bounding only the axis
+    PixelSize sets passes a view whose derived axis is already over (Run 1's
+    D4, which lowered nothing and duplicated D1); bounding only the height
+    passes a wide-and-short one (10268x9900, drifted).
+
+    ``ceiling`` and ``height_ceiling`` remain separately settable so an
+    experiment can probe the two independently; both default to the measured
+    value.
     """
-    ceiling = float(D4_WIDTH_CEILING if ceiling is None else ceiling)
-    height_ceiling = float(D4_HEIGHT_CEILING if height_ceiling is None else height_ceiling)
+    ceiling = float(MAX_CLEAN_AXIS_PX if ceiling is None else ceiling)
+    height_ceiling = float(MAX_CLEAN_AXIS_PX if height_ceiling is None else height_ceiling)
     width, height = native_pixel_size(bounds_xy, export_dpi, view_scale)
     factor = min(ceiling / width if width > ceiling else 1.0,
                  height_ceiling / height if height > height_ceiling else 1.0)
     return float(export_dpi) * factor
+
+
+def pixel_size_under_ceiling(bounds_xy, ceiling=None):
+    """The largest PixelSize whose export keeps BOTH axes under the ceiling.
+
+    Horizontal fit makes PixelSize the width and derives the height from the
+    view's extents, so bounding the export means bounding whichever of the two
+    is larger:
+
+        pixel_size <= min(ceiling, ceiling * extent_u / extent_v)
+
+    This is the remedy Run 2 supports, stated as arithmetic a caller can apply
+    without re-deriving it. It is not applied anywhere in this probe -- the
+    probe measures, it does not fix.
+    """
+    ceiling = float(MAX_CLEAN_AXIS_PX if ceiling is None else ceiling)
+    u0, v0, u1, v1 = [float(v) for v in bounds_xy]
+    if u1 <= u0 or v1 <= v0:
+        raise ValueError("bounds_xy must be a non-degenerate rectangle")
+    return int(min(ceiling, ceiling * (u1 - u0) / (v1 - v0)))
 
 
 def snap_to_pixel_lattice(bounds_xy, export_dpi, view_scale, grid):
@@ -990,9 +1022,9 @@ def _case_d4(ctx):
     return [record], {
         "original_export_dpi": ctx["export_dpi"],
         "lowered_export_dpi": lowered,
-        "width_ceiling_px": D4_WIDTH_CEILING,
-        "height_ceiling_px": D4_HEIGHT_CEILING,
-        "native_ceiling_px": D4_WIDTH_CEILING,
+        "width_ceiling_px": MAX_CLEAN_AXIS_PX,
+        "height_ceiling_px": MAX_CLEAN_AXIS_PX,
+        "native_ceiling_px": MAX_CLEAN_AXIS_PX,
         "pixel_size_at_lowered_dpi": int(round(lowered * ctx["paper_width_in"])),
         "accepted": (record.get("resolution") or {}).get("pixel_size"),
         # UNCONFIRMED: ImageExportOptions is driven purely through PixelSize.

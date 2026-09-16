@@ -76,21 +76,49 @@ def test_a_tall_view_is_lowered_until_its_height_hits_the_height_ceiling():
     assert width < probe.D4_WIDTH_CEILING
 
 
-def test_a_view_under_the_width_ceiling_is_still_lowered_for_its_height():
-    """The Run 1 case: 8739x10079 is far under 15000 wide and still drifts."""
+def test_a_tall_view_under_the_width_ceiling_is_still_lowered():
+    """(N) HOSPITAL - LEVEL 2: 8739x10079, under any width ceiling and drifted."""
     hospital = (0.0, 0.0, 466.1, 537.5)   # ~8739 x 10078 px at 150 dpi
     lowered = probe.dpi_for_native_ceiling(hospital, SCALE, DPI)
     assert lowered < DPI
     width, height = probe.native_pixel_size(hospital, lowered, SCALE)
-    assert height == pytest.approx(probe.D4_HEIGHT_CEILING)
+    assert height == pytest.approx(probe.MAX_CLEAN_AXIS_PX)
     # And the density cost of staying under it is small on this view.
     assert width / 8739.0 > 0.97
 
 
-def test_the_height_ceiling_sits_below_the_measured_bracket():
-    """(9927, 10079] is where Run 1 puts the threshold; 9900 is safe wherever
-    in that bracket it actually falls."""
-    assert probe.D4_HEIGHT_CEILING < 9927
+def test_a_wide_and_short_view_is_lowered_too():
+    """Run 2 killed the height-only reading: 10268x9900 and 12000x9885 both
+    drift with heights well under the line, so the WIDER axis is bounded too."""
+    wide = (0.0, 0.0, 640.0, 617.0)   # ~12000 x 11569 px at 150 dpi
+    lowered = probe.dpi_for_native_ceiling(wide, SCALE, DPI)
+    width, height = probe.native_pixel_size(wide, lowered, SCALE)
+    assert max(width, height) == pytest.approx(probe.MAX_CLEAN_AXIS_PX)
+
+
+def test_the_ceiling_is_the_measured_value_not_a_margin():
+    """Bracketed exactly on both sides: 10000x9642 is clean, 8695x10028 is
+    not. One number, both axes."""
+    assert probe.MAX_CLEAN_AXIS_PX == 10000
+    assert probe.D4_WIDTH_CEILING == probe.D4_HEIGHT_CEILING == 10000
+    # Production's own ceiling sits ABOVE it, which is the finding.
+    assert probe.PRODUCTION_PIXEL_SIZE_CEILING > probe.MAX_CLEAN_AXIS_PX
+
+
+def test_the_remedy_bounds_whichever_axis_is_larger():
+    tall = (0.0, 0.0, 465.56, 536.95)     # (N) HOSPITAL - LEVEL 2
+    wide = (0.0, 0.0, 536.95, 465.56)     # the same view transposed
+    for bounds in (tall, wide):
+        size = probe.pixel_size_under_ceiling(bounds)
+        u0, v0, u1, v1 = bounds
+        assert max(size, round(size * (v1 - v0) / (u1 - u0))) <= probe.MAX_CLEAN_AXIS_PX
+    # On this view the cost of staying under it is under 1% of native width.
+    assert probe.pixel_size_under_ceiling(tall) / 8739.0 > 0.99
+
+
+def test_the_remedy_rejects_a_degenerate_rectangle():
+    with pytest.raises(ValueError):
+        probe.pixel_size_under_ceiling((0.0, 0.0, 0.0, 100.0))
 
 
 # --- D5: pixel-lattice tiling ----------------------------------------------
