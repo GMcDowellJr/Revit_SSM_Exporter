@@ -186,7 +186,10 @@ def test_capture_errors_do_not_masquerade_as_unrestored_state():
 
 def test_safe_name_strips_path_hostile_characters():
     assert probe._safe_name("SITE PLAN AT LEVEL 4") == "SITE_PLAN_AT_LEVEL_4"
-    assert probe._safe_name("_N_ HOSPITAL - LEVEL 2") == "_N__HOSPITAL_-_LEVEL_2"
+    # The real view name, parentheses and all. Note it sanitizes to the same
+    # string an underscored spelling would, which is why a capture's file name
+    # also carries the view id rather than relying on the name alone.
+    assert probe._safe_name("(N) HOSPITAL - LEVEL 2") == "_N__HOSPITAL_-_LEVEL_2"
     assert probe._safe_name(None) == "view"
 
 

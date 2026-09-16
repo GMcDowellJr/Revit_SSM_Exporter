@@ -110,11 +110,18 @@ def test_no_element_id_is_invented(batch):
     """Every id must have a stated source. A wrong id silently probes the
     wrong view, which is the error this campaign exists to remove.
 
-    49370, 146925, 871863 and 587278 come from the 2026-09-15 baseline;
-    528698 (MOB 1 - LEVEL 2) and 871864 (_N_ HOSPITAL - LEVEL 3) were supplied
-    directly by Greg on 2026-09-16 for the two views the baseline never named.
+    49370, 146925, 871863 and 587278 come from the 2026-09-15 baseline.
+    528698 (MOB 1 - LEVEL 2) and 929475 ((N) HOSPITAL - LEVEL 3) come from the
+    campaign Greg supplied on 2026-09-16, read off the model itself.
+
+    929475 supersedes an earlier 871864 he gave in chat for the same view. The
+    campaign file is authoritative -- it was produced against the open model,
+    and 871864 sits one above LEVEL 2's 871863, which is what an assumed
+    adjacency looks like. resolve_view asserts the name against the resolved
+    view either way, so a wrong id fails the dry run rather than probing the
+    wrong view silently.
     """
-    stated = {49370, 146925, 871863, 587278, 528698, 871864}
+    stated = {49370, 146925, 871863, 587278, 528698, 929475}
     for job in batch["jobs"]:
         element_id = job["view"].get("element_id")
         if element_id is not None:
@@ -123,10 +130,13 @@ def test_no_element_id_is_invented(batch):
                 "stated; reference the view by name instead of guessing")
 
 
-def test_the_document_title_is_an_unmistakable_placeholder(batch):
+def test_the_document_title_is_set_to_a_real_model(batch):
     """Running against the wrong model must fail on the title check, not
-    produce plausible-looking captures of something else."""
-    assert "REPLACE" in batch["document"]["expected_title"].upper()
+    produce plausible-looking captures of something else. The placeholder is
+    gone; what matters now is that it is still a real, specific title."""
+    title = batch["document"]["expected_title"]
+    assert title and "REPLACE" not in title.upper()
+    assert title.strip() == title, "a stray space would never match doc.Title"
 
 
 def test_the_whole_campaign_runs_in_one_invocation(batch):

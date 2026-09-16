@@ -375,7 +375,7 @@ experiment has run.
 | D-H1 | Drift is non-deterministic (a render-path race) | open | D1: byte-identical repeats contradict it |
 | D-H2 | Drift is a hard absolute pixel threshold near 10000 | **contradicted by baseline** | `SEA LEVEL_49370` is clean at 15000×12356. A threshold alone cannot explain it |
 | D-H3 | Drift is triggered by a *combination* of raster size and scene load | open, leading | D2: if unhiding categories in 49370 flips `hard_edge_ratio` at fixed size, supported; if it never flips, contradicted |
-| D-H4 | Drift is caused by the request exceeding what Revit will render, followed by an upscale | open | D3+D4: if lowering DPI so native ≤ 15000 and requesting native exactly gives hard edges, supported. `_N_ HOSPITAL - LEVEL 2` drifting at scale 1.00 already weighs against it |
+| D-H4 | Drift is caused by the request exceeding what Revit will render, followed by an upscale | open | D3+D4: if lowering DPI so native ≤ 15000 and requesting native exactly gives hard edges, supported. `(N) HOSPITAL - LEVEL 2` drifting at scale 1.00 already weighs against it |
 | D-H5 | Drift is a resample, not anti-aliasing | **supported by baseline** | AA already ruled out by stair-stepped curves in clean views; 34–60% overshoot is a negative-lobe kernel or a sharpening pass, which AA does not produce |
 | D-H6 | Drift is avoidable by tiling at native density | open | D5: per-tile `hard_edge_ratio` of 1.0 with zero seam residual supports it |
 

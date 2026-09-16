@@ -4,7 +4,7 @@
   "batch_id": "batch-001",
   "created_at": "2026-09-16T00:00:00Z",
   "document": {
-    "expected_title": "REPLACE-WITH-THE-EXACT-MODEL-TITLE"
+    "expected_title": "KSRF_Hosp_Interior_AR_V03_33 MB_2025-02-03"
   },
   "execution_policy": {
     "max_jobs_per_run": 100,
@@ -29,7 +29,7 @@
       "probe_id": "stage_a_drift_onset",
       "view": {
         "element_id": 871863,
-        "name": "_N_ HOSPITAL - LEVEL 2"
+        "name": "(N) HOSPITAL - LEVEL 2"
       },
       "settings": {
         "selection": "d1_determinism",
@@ -80,8 +80,8 @@
       "job_id": "d3-hospital-level-3",
       "probe_id": "stage_a_drift_onset",
       "view": {
-        "name": "_N_ HOSPITAL - LEVEL 3",
-        "element_id": 871864
+        "name": "(N) HOSPITAL - LEVEL 3",
+        "element_id": 929475
       },
       "settings": {
         "selection": "d3_size_sweep"
@@ -93,7 +93,7 @@
       "probe_id": "stage_a_drift_onset",
       "view": {
         "element_id": 871863,
-        "name": "_N_ HOSPITAL - LEVEL 2"
+        "name": "(N) HOSPITAL - LEVEL 2"
       },
       "settings": {
         "selection": "d3_size_sweep",
@@ -106,7 +106,7 @@
       "probe_id": "stage_a_drift_onset",
       "view": {
         "element_id": 871863,
-        "name": "_N_ HOSPITAL - LEVEL 2"
+        "name": "(N) HOSPITAL - LEVEL 2"
       },
       "settings": {
         "selection": "d4_dpi_vs_pixel_size"
@@ -118,7 +118,7 @@
       "probe_id": "stage_a_drift_onset",
       "view": {
         "element_id": 871863,
-        "name": "_N_ HOSPITAL - LEVEL 2"
+        "name": "(N) HOSPITAL - LEVEL 2"
       },
       "settings": {
         "selection": "d5_crop_tiles",
