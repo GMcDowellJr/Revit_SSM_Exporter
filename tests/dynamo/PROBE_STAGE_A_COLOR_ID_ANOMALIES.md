@@ -26,77 +26,67 @@ generic passthrough adapter. They are deliberately **absent** from the
 analyzer's `SUPPORTED_PROBES` campaign-acceptance map: they emit metrics for a
 human to read, not an acceptance verdict.
 
+## How a capture is produced
+
+Every capture is produced by **calling production's own Stage A path**:
+
+```
+pipeline.init_view_raster
+  -> revit.collection.collect_view_elements
+    -> color_id_buffer.export_color_id_buffer_view
+```
+
+which is exactly what `pipeline.py:1099-1113` does. Bounds resolution, the
+suppression set and its ordering, the render crop, the palette step, the paint
+step, the link-category filters and the export options are all production's, so
+a probe capture cannot diverge from a production one by construction. An
+experiment varies exactly one input and then calls it:
+
+| Experiment | The one input it varies |
+|---|---|
+| D1 | nothing — the same call twice |
+| D2 | category visibility (crop pinned first, so size and density stay fixed) |
+| D3 | `cfg.color_id_buffer_export_dpi`, back-solved to the target width |
+| D4 | the same, lowered until native fits the ceiling |
+| D5 | the view's `CropBox`, one tile at a time |
+| B3 | the underlay range |
+
+Sizing goes through DPI rather than writing `PixelSize` directly, so
+production's own `round(export_dpi * paper_width_in)` and its
+`MAX_STAGE_A_PIXEL_SIZE` clamp both stay on the code path — that clamp is
+itself one of the things D3 and D4 are meant to characterize, so bypassing it
+would defeat the experiment. Each capture's TIFF and sidecar are moved to a
+case/label name; the moved **sidecar is production's own**, and is a valid
+standalone input to `--export-metrics`.
+
+### Why this shape
+
+Earlier revisions rebuilt the capture sequence by hand and diverged from it
+three times in review — wrong palette step, wrong suppression set, wrong
+ordering, no render crop — each silently invalidating the measurements the
+probe exists to take. Tests now assert structurally that the hand-mirrored
+machinery has not come back: the probe must reference `init_view_raster`,
+`collect_view_elements` and `export_color_id_buffer_view`, and must not
+reference `SetElementOverrides`, `ImageExportOptions`, `PixelSize`,
+`build_palette` or `_build_flat_color_ogs`.
+
+Production's own `Diagnostics` are captured and returned with every run. A
+clamped pixel size, a read-only phase filter, a crop that would not apply, a
+display style that could not be set — each changes how a capture must be read,
+and each is recorded rather than inferred.
+
 ## Architecture boundaries honoured
 
-- Dynamo side does extraction only: transaction, export, sidecar JSON. No probe
-  reads a pixel.
+- Dynamo side does extraction only: transaction, capture, sidecar JSON. No
+  probe reads a pixel.
 - All pixel analysis is in `tools/analyze_stage_a_probe.py` (Pillow + NumPy),
   outside Dynamo.
-- Existing files were patched, never rewritten: the analyzer gained an additive
-  metrics section and one CLI flag; the registry gained two dictionary entries.
-- The production palette (`build_palette`/`choose_step`) and the production
-  paint step (`_build_flat_color_ogs`) are **imported**, not reimplemented, so a
-  probe capture is painted exactly the way production paints one. The palette
-  step follows production's rule — `choose_step(global_threshold)` while the
-  assignment count fits under the configured threshold, not
-  `choose_step(count)`, which would give step 8 instead of 6 for any realistic
-  view and therefore a different set of assigned colours.
-- Both probes **apply production's crop** before exporting, via
-  `view_basis.crop_box_from_uv_bounds` and `CropBoxActive = True`, the way
-  `export_color_id_buffer_view` does (`color_id_buffer.py:1592-1596`).
-  Computing the bounds without applying them would hand `ExportImage` a
-  different extent — FitToPage fits whatever the view happens to show, so
-  visible content and realized pixels-per-foot can both differ from
-  production. Each export record follows the Stage A sidecar's own
-  `bounds_xy` contract: the rectangle actually cropped to, or **null** when
-  the view has no CropBox and FitToPage's auto-computed extent is what the
-  TIFF spans. On a null, no bounds-derived metric (`native_px`, the 10:1
-  frame correction, out-of-bbox counts) is computed at all, rather than being
-  computed against a rectangle the image does not cover.
-- Both probes follow **production's capture order**, which is not incidental:
-  suppress → crop → collect → neutralize category halftone → paint → export.
-  Collecting first would paint a set gathered under the view's *original*
-  phase filter; the neutral phase filter installed during suppression then
-  reveals what that filter hid (demolished, temporary), and `ExportImage`
-  renders those with no colour assigned. Production re-collects after the swap
-  for exactly this reason (`color_id_buffer.py:1762`), and crops first because
-  the crop narrows what the collect returns.
-- `PRODUCTION_SUPPRESSION_MUTATIONS` is **exactly** what
-  `export_color_id_buffer_view` performs and deliberately nothing more,
-  dispatched through `probe_stage_a_minimum_id_mutations._apply_mutation` —
-  the repo's own tested implementation of each one. This is not optional polish: `SmoothEdges` is
-  anti-aliasing, `ShowShadows` and `AmbientOcclusion` shade surfaces, a
-  non-flat `DisplayStyle` shades them, and filter/phase/halftone graphics
-  recolour them. A capture taken without those disabled measures *those*
-  effects, and the blended pixels they produce are indistinguishable from the
-  drift D1–D5 exist to isolate. Every report carries
-  `view_state_normalization.matches_production_capture_state`; when a mutation
-  is blocked by a template or unsupported on that Revit — or never ran at all —
-  it is named in `not_in_production_state` and raised as a warning rather than
-  silently degrading the capture.
-
-### Known residual divergences from production
-
-Recorded in every report under `view_state_normalization.known_divergences`,
-because a divergence that is written down can be reasoned about and one that
-is not cannot:
-
-| Divergence | Why it is left | Direction of error |
-|---|---|---|
-| Production calls `SetIsFilterEnabled(fid, False)` on an enabled+visible filter; the probe clears its override and leaves it enabled | No exact mutation exists in the reused set; both end with no filter graphics applied and the elements visible | Believed neutral |
-| LINK elements are not painted (brief non-goal: "No link handling") | Out of scope for this run; the baseline had no links loaded | A view **with** links carries uncontrolled LINK colours that production would have given category colours — inflates `off_palette_px` |
-
-Two things deliberately **not** suppressed, because production does not:
-
-- **Visibility-off filters.** Production disables only filters that were
-  enabled *and visible* (`color_id_buffer.py:1519-1521`); a filter whose
-  visibility is off stays enabled and keeps hiding its elements. Disabling it
-  would reveal elements production hides, which are not in the painted set and
-  would render with uncontrolled colours.
-- **Ambient occlusion, sketchy lines, depth cueing.** Suppressing these would
-  make the probe capture *cleaner* than production's — for a drift
-  investigation the worse direction of error, since a view that drifts in
-  production could come back clean.
+- Existing files were patched, never rewritten.
+- Nothing in the Stage A pipeline changed: palette generation, the paint step
+  and the export defaults are *called*, not reimplemented and not modified.
+- Every mutation is inside one TransactionGroup that is always rolled back,
+  with a pre/post state diff so a failed rollback is visible rather than
+  assumed.
 
 ## Required per-export metrics
 

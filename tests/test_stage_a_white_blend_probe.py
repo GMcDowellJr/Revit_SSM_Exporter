@@ -204,25 +204,26 @@ def test_an_unreadable_override_never_counts_as_halftone_set():
     assert summary["halftone_clear_is_warranted"] is False
 
 
-# --- B3 isolation and redundancy (Codex #3) --------------------------------
+# --- B3 redundancy, gated on production's own diagnostics -------------------
 
-def test_halftone_variant_is_redundant_once_normalization_cleared_it():
+def test_the_halftone_variant_is_redundant_when_production_cleared_it():
     """Production clears halftone itself, so re-clearing re-exports the baseline."""
-    for status in ("APPLIED", "ALREADY_MATCHED"):
-        assert probe._halftone_already_neutralized(
-            {"mutations": {"category_halftone_neutralized": {"status": status}}}) is True
+    assert probe.production_cleared_category_halftone({"events": []}) is True
+    assert probe.production_cleared_category_halftone(
+        {"events": [{"callsite": "paint_element_override"}]}) is True
 
 
-@pytest.mark.parametrize("status", ["FAILED", "BLOCKED_BY_TEMPLATE", "UNSUPPORTED"])
-def test_halftone_variant_is_not_redundant_when_normalization_could_not_clear_it(status):
-    assert probe._halftone_already_neutralized(
-        {"mutations": {"category_halftone_neutralized": {"status": status}}}) is False
+def test_the_halftone_variant_runs_when_productions_own_step_failed():
+    """That step is guarded and only warns, so a capture can reach export with
+    category halftone still set -- and then the variant is a real experiment."""
+    assert probe.production_cleared_category_halftone(
+        {"events": [{"callsite": "category_halftone", "message": "boom"}]}) is False
 
 
-def test_halftone_redundancy_is_false_when_normalization_is_missing_entirely():
-    assert probe._halftone_already_neutralized({}) is False
-    assert probe._halftone_already_neutralized(None) is False
-    assert probe._halftone_already_neutralized({"mutations": {}}) is False
+@pytest.mark.parametrize("payload", [None, {}, {"events": None}, {"events": "nope"},
+                                     {"events": [None, "junk"]}])
+def test_unreadable_diagnostics_assume_productions_normal_behaviour(payload):
+    assert probe.production_cleared_category_halftone(payload) is True
 
 
 def test_a_read_only_selection_is_recognised_as_needing_no_export():
@@ -233,9 +234,38 @@ def test_a_read_only_selection_is_recognised_as_needing_no_export():
 
 
 def test_b1_is_ordered_before_every_export_case():
-    """B1 must read the authored state, not the probe's own paint."""
+    """B1 must read the authored state, not production's paint."""
     assert probe.CASES[0] == "b1_query"
     assert all(case.startswith("b3_") for case in probe.CASES[1:])
+
+
+# --- driving production rather than mirroring it ----------------------------
+
+def test_the_probe_captures_through_the_shared_production_entry():
+    import inspect
+    source = inspect.getsource(probe._run_native)
+    assert "production_capture" in source
+    assert "plan_capture_geometry" in source
+
+
+# SetElementOverrides is deliberately NOT forbidden here: B3's halftone
+# variant clears element overrides as its experiment, which is a mutation the
+# probe owns, not the paint step production owns.
+@pytest.mark.parametrize("forbidden", [
+    "ImageExportOptions", "PixelSize", "build_palette", "_build_flat_color_ogs",
+    "choose_step", "init_view_raster",   # reached through the shared capture helper
+])
+def test_the_probe_does_not_perform_a_step_production_owns(forbidden):
+    import ast
+    import inspect
+    names = set()
+    for node in ast.walk(ast.parse(inspect.getsource(probe))):
+        if isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.add(node.attr)
+    assert forbidden not in names
+
 
 
 # --- category override snapshot / restore -----------------------------------

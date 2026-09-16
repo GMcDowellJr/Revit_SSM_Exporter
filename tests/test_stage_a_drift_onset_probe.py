@@ -190,34 +190,123 @@ def test_safe_name_strips_path_hostile_characters():
     assert probe._safe_name(None) == "view"
 
 
-# --- production palette step (Codex #2) -------------------------------------
+# --- driving production rather than mirroring it -----------------------------
 
-def test_palette_step_uses_the_global_threshold_not_the_view_element_count():
-    """Production pins the step to the configured global threshold.
+def test_the_probe_captures_through_productions_own_entry_points():
+    """The whole design: a probe capture IS a production capture.
 
-    Sizing the lattice to the view's own count gives a different palette, so a
-    probe capture could not be compared against a production one.
+    Three review rounds went to divergences between a hand-mirrored capture
+    sequence and export_color_id_buffer_view. The sequence is gone; this
+    asserts it does not come back.
     """
-    from vop_interwoven.color_id_buffer import choose_step
-    expected = choose_step(32767)
-    for count in (1, 50, 500, 5000, 32767):
-        assert probe.production_palette_step(count, 32767) == expected
+    import inspect
+    source = inspect.getsource(probe.production_capture)
+    assert "init_view_raster" in source
+    assert "collect_view_elements" in source
+    assert "export_color_id_buffer_view" in source
 
 
-def test_palette_step_falls_back_to_the_count_once_it_exceeds_the_threshold():
-    from vop_interwoven.color_id_buffer import choose_step
-    assert probe.production_palette_step(40000, 32767) == choose_step(40000)
+@pytest.mark.parametrize("gone", [
+    "PRODUCTION_SUPPRESSION_MUTATIONS",   # production owns the suppression set
+    "POST_COLLECTION_MUTATIONS",
+    "_normalize_view_state",
+    "_paint",                             # production owns the paint step
+    "production_palette_step",            # production owns the palette
+    "_export_tiff",                       # production owns the export options
+    "_set_pixel_size",
+    "apply_production_crop",              # production owns the render crop
+])
+def test_the_hand_mirrored_capture_machinery_is_gone(gone):
+    assert not hasattr(probe, gone), (
+        "{0} is back: the probe is mirroring production again instead of "
+        "calling it".format(gone))
 
 
-def test_the_step_rule_matches_what_production_actually_computes():
-    """Mirrors color_id_buffer.export_color_id_buffer_view's own expression."""
-    from vop_interwoven.color_id_buffer import choose_step
-    for count, threshold in ((10, 32767), (32767, 32767), (32768, 32767), (7, 100)):
-        production = choose_step(threshold if count <= threshold else count)
-        assert probe.production_palette_step(count, threshold) == production
+def _referenced_names(module):
+    """Every name and attribute the module's CODE touches.
+
+    Parsed rather than grepped: the module docstring legitimately names
+    ImageExportOptions when listing UNCONFIRMED API assumptions, and a
+    substring match would read that as the probe setting export options.
+    """
+    import ast
+    import inspect
+    names = set()
+    for node in ast.walk(ast.parse(inspect.getsource(module))):
+        if isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.add(node.attr)
+        elif isinstance(node, ast.alias):
+            names.add((node.asname or node.name).split(".")[-1])
+    return names
 
 
-# --- element id reading (Codex #4) ------------------------------------------
+@pytest.mark.parametrize("forbidden", [
+    "SetElementOverrides",      # painting
+    "ImageExportOptions",       # export options
+    "PixelSize",
+    "build_palette",            # palette generation
+    "choose_step",
+    "_build_flat_color_ogs",
+    "SetViewDisplayModel",      # display-model suppression
+    "SetCategoryOverrides",
+])
+def test_the_probe_does_not_perform_a_step_production_owns(forbidden):
+    assert forbidden not in _referenced_names(probe), (
+        "{0} is used by the probe; production owns that step".format(forbidden))
+
+
+def test_capture_config_turns_stage_a_on_and_redirects_its_output(tmp_path):
+    cfg = probe.build_capture_config(str(tmp_path), export_dpi=96.0)
+    assert cfg.output_dir == str(tmp_path)
+    assert cfg.enable_color_id_buffer_stage_a is True
+    assert cfg.color_id_buffer_export_dpi == 96.0
+
+
+def test_capture_config_keeps_the_default_dpi_when_none_is_given(tmp_path):
+    from vop_interwoven.config import Config
+    cfg = probe.build_capture_config(str(tmp_path))
+    assert cfg.color_id_buffer_export_dpi == Config().color_id_buffer_export_dpi
+
+
+def test_capture_config_applies_explicit_overrides(tmp_path):
+    cfg = probe.build_capture_config(str(tmp_path), overrides={"cell_size_paper_in": 0.25})
+    assert cfg.cell_size_paper_in == 0.25
+
+
+# --- driving size through DPI (D3 / D4) -------------------------------------
+
+@pytest.mark.parametrize("target,paper_width_in", [
+    (10000, 80.0), (12000, 80.0), (15000, 80.0), (8123, 54.156), (64, 1.0),
+])
+def test_dpi_for_pixel_width_round_trips_through_productions_own_formula(target, paper_width_in):
+    """export_color_id_buffer_view computes round(export_dpi * paper_width_in)."""
+    dpi = probe.dpi_for_pixel_width(target, paper_width_in)
+    assert int(round(dpi * paper_width_in)) == target
+
+
+def test_driving_size_through_dpi_keeps_productions_clamp_on_the_code_path():
+    """Above the ceiling the request must still be produced, so production --
+    not the probe -- is what clamps it. That clamp is itself under test in D3."""
+    from vop_interwoven.color_id_buffer import MAX_STAGE_A_PIXEL_SIZE
+    dpi = probe.dpi_for_pixel_width(MAX_STAGE_A_PIXEL_SIZE + 5000, 80.0)
+    assert int(round(dpi * 80.0)) == MAX_STAGE_A_PIXEL_SIZE + 5000
+
+
+@pytest.mark.parametrize("bad", [0, -1])
+def test_dpi_for_pixel_width_rejects_a_nonpositive_target(bad):
+    with pytest.raises(ValueError):
+        probe.dpi_for_pixel_width(bad, 80.0)
+
+
+@pytest.mark.parametrize("bad", [0.0, -3.0])
+def test_dpi_for_pixel_width_rejects_a_nonpositive_paper_width(bad):
+    with pytest.raises(ValueError):
+        probe.dpi_for_pixel_width(10000, bad)
+
+
+# --- element id reading -----------------------------------------------------
 
 class _Revit2025Id(object):
     """Revit 2025: Value is the 64-bit property; IntegerValue can throw."""
@@ -228,16 +317,14 @@ class _Revit2025Id(object):
         raise OverflowError("id exceeds the legacy 32-bit range")
 
 
-class _LegacyId(object):
-    IntegerValue = 871863
-
-
 def test_a_large_id_is_read_through_value_without_touching_integervalue():
     assert probe._safe_int_id(_Revit2025Id()) == 2 ** 40
 
 
 def test_a_legacy_id_with_only_integervalue_still_reads():
-    assert probe._safe_int_id(_LegacyId()) == 871863
+    class Legacy(object):
+        IntegerValue = 871863
+    assert probe._safe_int_id(Legacy()) == 871863
 
 
 def test_a_throwing_property_is_skipped_rather_than_propagated():
@@ -255,93 +342,3 @@ def test_a_throwing_property_is_skipped_rather_than_propagated():
 def test_a_plain_int_is_still_accepted():
     assert probe._safe_int_id(587278) == 587278
     assert probe._safe_int_id(None) is None
-
-
-# --- production view-state normalization (Codex #1) -------------------------
-
-def test_the_suppression_set_covers_every_blend_source_production_disables():
-    """Each of these exists in production to stop Revit blending pixels."""
-    required = {
-        "detach_template",              # unlocks everything below
-        "hide_annotation_categories",
-        "visible_filter_graphics_neutralized",
-        "phase_filter_neutralized",
-        "display_style_flat_colors",    # non-flat styles shade surfaces
-        "smooth_edges_off",             # anti-aliasing
-        "shadows_off",
-    }
-    assert required == set(probe.PRODUCTION_SUPPRESSION_MUTATIONS)
-
-
-def test_category_halftone_is_applied_after_collection_not_before():
-    """It needs the resolved element ids, so production runs it post-collect."""
-    assert probe.POST_COLLECTION_MUTATIONS == ("category_halftone_neutralized",)
-    assert "category_halftone_neutralized" not in probe.PRODUCTION_SUPPRESSION_MUTATIONS
-
-
-def test_visibility_off_filters_are_left_alone_as_production_leaves_them():
-    """Production disables only enabled+VISIBLE filters (color_id_buffer.py:1519-1521).
-
-    A visibility-off filter stays enabled and keeps hiding its elements.
-    Disabling it would reveal elements production hides, which are not in the
-    painted set and would render with uncontrolled colours.
-    """
-    assert "visibility_off_filters_disabled" not in probe.PRODUCTION_SUPPRESSION_MUTATIONS
-    assert "visibility_off_filters_disabled" not in probe.POST_COLLECTION_MUTATIONS
-
-
-@pytest.mark.parametrize("mutation", ["ambient_occlusion_off", "sketchy_lines_off",
-                                      "depth_cueing_off"])
-def test_mutations_production_does_not_perform_are_not_applied(mutation):
-    """Suppressing extra blend sources would make the probe cleaner than
-    production, so a view that drifts in production could come back clean."""
-    assert mutation not in probe.PRODUCTION_SUPPRESSION_MUTATIONS
-    assert mutation not in probe.POST_COLLECTION_MUTATIONS
-
-
-def test_the_template_is_detached_before_anything_it_would_block():
-    """A template locks the display/VG properties every later step writes."""
-    order = list(probe.PRODUCTION_SUPPRESSION_MUTATIONS)
-    assert order[0] == "detach_template"
-
-
-def _all_applied():
-    return {name: {"status": "APPLIED"} for name in
-            probe.PRODUCTION_SUPPRESSION_MUTATIONS + probe.POST_COLLECTION_MUTATIONS}
-
-
-def test_a_fully_applied_normalization_reports_no_shortfall():
-    mutations = _all_applied()
-    mutations["shadows_off"] = {"status": "ALREADY_MATCHED"}
-    assert probe.normalization_shortfall(mutations) == []
-
-
-def test_a_mutation_that_never_ran_counts_as_a_shortfall():
-    """Only scoring the entries present would hide a step that was skipped."""
-    mutations = _all_applied()
-    del mutations["phase_filter_neutralized"]
-    assert probe.normalization_shortfall(mutations) == ["phase_filter_neutralized"]
-
-
-def test_an_empty_normalization_names_every_expected_mutation():
-    expected = sorted(set(probe.PRODUCTION_SUPPRESSION_MUTATIONS)
-                      | set(probe.POST_COLLECTION_MUTATIONS))
-    assert probe.normalization_shortfall({}) == expected
-
-
-@pytest.mark.parametrize("status", ["FAILED", "BLOCKED_BY_TEMPLATE", "UNSUPPORTED",
-                                    "NOT_REQUESTED", None])
-def test_any_non_applied_status_is_named_as_a_shortfall(status):
-    mutations = _all_applied()
-    mutations["smooth_edges_off"] = {"status": status} if status else {}
-    assert probe.normalization_shortfall(mutations) == ["smooth_edges_off"]
-
-
-def test_every_suppression_mutation_is_one_the_minimum_id_probe_implements():
-    """The set is dispatched by that probe; an unknown name would silently
-    come back UNSUPPORTED instead of normalizing anything."""
-    from tests.dynamo import probe_stage_a_minimum_id_mutations as minimum
-    import inspect
-    source = inspect.getsource(minimum._apply_mutation)
-    for name in probe.PRODUCTION_SUPPRESSION_MUTATIONS:
-        assert '"{0}"'.format(name) in source, name

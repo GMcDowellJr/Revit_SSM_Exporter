@@ -539,3 +539,59 @@ def test_a_null_bounds_capture_still_measures_without_inventing_a_rectangle(tmp_
     assert m["pixels"]["out_of_bbox_palette_px"] == 0
     # Edge and blend metrics are bounds-independent and must still be reported.
     assert m["edges"]["hard_edge_ratio"] == 1.0
+
+
+# --- shared Value-first element id reader -----------------------------------
+
+def test_safe_api_element_id_value_reads_value_before_integervalue():
+    from vop_interwoven.revit.safe_api import element_id_value
+
+    class Revit2025Id(object):
+        Value = 2 ** 40
+
+        @property
+        def IntegerValue(self):
+            raise OverflowError("id exceeds the legacy 32-bit range")
+
+    class LegacyId(object):
+        IntegerValue = 871863
+
+    assert element_id_value(Revit2025Id()) == 2 ** 40
+    assert element_id_value(LegacyId()) == 871863
+
+
+def test_safe_api_element_id_value_returns_none_for_a_non_id():
+    from vop_interwoven.revit.safe_api import element_id_value
+    # No int() fallback: the answer always means "this was an element id".
+    assert element_id_value(587278) is None
+    assert element_id_value("587278") is None
+    assert element_id_value(None) is None
+    assert element_id_value(object()) is None
+
+
+def test_thinrunner_coerce_view_id_uses_the_shared_reader():
+    """thinrunner_streaming is a Dynamo entry script and is not importable
+    outside Revit (it manipulates sys.path at module scope), so its behaviour
+    is asserted from source rather than by calling it.
+
+    Both points matter: it must go through element_id_value rather than
+    reading IntegerValue first, and it must import it ABSOLUTELY -- this file
+    is loaded standalone in Dynamo, where a relative import has no package to
+    resolve against.
+    """
+    import ast
+    from pathlib import Path as _Path
+
+    source = _Path("vop_interwoven/thinrunner_streaming.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    coerce = next(node for node in ast.walk(tree)
+                  if isinstance(node, ast.FunctionDef) and node.name == "_coerce_view_id")
+    body = ast.get_source_segment(source, coerce)
+    assert "element_id_value" in body
+    assert "from vop_interwoven.revit.safe_api import element_id_value" in body
+    assert "from .revit" not in body, "relative import breaks the standalone Dynamo load"
+    # The old IntegerValue-first reads are gone. Checked on the parsed
+    # function, not the text: the comment explaining the change legitimately
+    # names IntegerValue.
+    attributes = {node.attr for node in ast.walk(coerce) if isinstance(node, ast.Attribute)}
+    assert "IntegerValue" not in attributes

@@ -613,8 +613,23 @@ def _collect_assignment_set(doc, view, max_count):
 
 
 def _palette(n):
+    """The palette production would assign for n elements.
+
+    Production does NOT size the lattice to the view's own element count: it
+    calls choose_step(color_id_buffer_global_assignment_threshold) whenever the
+    count fits under that threshold, so every view under it shares one global
+    step and therefore one stable set of RGB values (color_id_buffer.py:
+    1845-1848). Sizing to the per-view count instead gives step 8 rather than 6
+    for any realistic view -- a different palette, so this probe's ID rasters
+    would not be the ones production produces, which is the one thing a
+    minimum-ID-mutation search must not get wrong.
+    """
     from vop_interwoven.color_id_buffer import build_palette, choose_step
-    step = choose_step(max(n, 1))
+    from vop_interwoven.config import Config
+    total = max(int(n), 1)
+    global_threshold = int(getattr(
+        Config(), "color_id_buffer_global_assignment_threshold", 32767))
+    step = choose_step(global_threshold if total <= global_threshold else total)
     return build_palette(n, step=step), step
 
 
