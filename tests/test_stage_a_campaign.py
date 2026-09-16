@@ -197,7 +197,7 @@ def test_allow_rerun_keeps_the_prior_run_lookup_that_resume_false_discards():
     from tests.dynamo import revit_batch_executor
     source = inspect.getsource(revit_batch_executor.execute_batch)
     assert 'if policy["resume"] else {}' in source
-    assert 'not policy.get("allow_rerun", False)' in source
+    assert 'policy.get("allow_rerun", False)' in source
     guard = inspect.getsource(revit_batch_executor._prior_successes)
     assert "belongs to a different document" in guard
 

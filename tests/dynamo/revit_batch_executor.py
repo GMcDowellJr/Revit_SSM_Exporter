@@ -211,14 +211,23 @@ def _prior_successes(root, campaign_id, batch_id, current_document_identity):
             raise ContractError("Cannot resume campaign {0} batch {1}: prior run {2} belongs to a different document".format(
                 campaign_id, batch_id, prior.get("run_id", "unknown")))
         for record in completed:
-            successes[record["job_id"]] = {
+            # EVERY completed run for this job is kept, not just whichever one
+            # os.walk happened to reach last -- that order is not chronological
+            # and is not even stable, so a stale success could beat a newer
+            # applicable one and cost a multi-hundred-megabyte recapture, or
+            # fail the campaign for configuration drift against a run nobody
+            # was resuming from. execute_batch picks the applicable candidate.
+            successes.setdefault(record["job_id"], []).append({
                 "fingerprint": record.get("configuration_fingerprint"),
                 # Where that prior run actually wrote. A completed job is only
                 # a reason to skip if its artifacts are where THIS run would
                 # put them; see the destination check in execute_batch.
                 "output_directory": record.get("output_directory_resolved"),
                 "run_id": prior.get("run_id"),
-            }
+                "completed_at": prior.get("completed_at") or prior.get("started_at") or "",
+            })
+    for candidates in successes.values():
+        candidates.sort(key=lambda c: (c["completed_at"], c["run_id"] or ""), reverse=True)
     return successes
 
 
@@ -259,7 +268,17 @@ def execute_batch(batch_or_path, doc, registry, all_views=None, manifest_root=No
         selected = []
         for job, view, identity, resolved_output_directory in resolved:
             fingerprint = job_fingerprint(job)
-            previous = prior.get(job["job_id"]) if not policy.get("allow_rerun", False) else None
+            candidates = prior.get(job["job_id"]) or []
+            if policy.get("allow_rerun", False):
+                candidates = []
+            # Newest first, but a candidate that landed where this run writes
+            # wins over a newer one that did not: the question is "are this
+            # job's artifacts already here", and any prior run that put them
+            # here answers it.
+            previous = next((c for c in candidates
+                             if not _destination_moved(c.get("output_directory"),
+                                                       resolved_output_directory)),
+                            candidates[0] if candidates else None)
             if previous is not None:
                 # Destination first, before configuration drift. A prior
                 # success that landed somewhere else is not this run's job
@@ -326,6 +345,14 @@ def execute_batch(batch_or_path, doc, registry, all_views=None, manifest_root=No
             manifest["execution_status"] = "validation_only"
         elif any(j["execution_status"] == "failed" for j in manifest["jobs"]):
             manifest["execution_status"] = "failed"
+        elif any(j["execution_status"] == "inconclusive" for j in manifest["jobs"]):
+            # A probe returns inconclusive to say "this ran and did not measure
+            # what it is named after" -- a deliberate request to retry. Falling
+            # through to completed here threw that away: the campaign read as
+            # finished, with no inconclusive list and another_invocation_needed
+            # false, which is precisely the silent success the probes were
+            # changed to stop producing.
+            manifest["execution_status"] = "inconclusive"
         elif not attempted and manifest["jobs"]:
             # Every job was skipped by resume: nothing ran and nothing new was
             # written. Reporting that as "completed" is how a run that produced
@@ -357,8 +384,11 @@ def execute_batch(batch_or_path, doc, registry, all_views=None, manifest_root=No
             "jobs_executed": executed, "jobs_failed": failed,
             "jobs_deferred": [j["job_id"] for j in manifest["jobs_not_attempted"] if j["reason"] == "execution_limit"],
             "jobs_skipped_resume": [j["job_id"] for j in manifest["jobs"] if j["execution_status"] == "skipped_resume"],
+            "jobs_inconclusive": [j["job_id"] for j in manifest["jobs"] if j["execution_status"] == "inconclusive"],
             "errors": list(manifest["errors"]), "warnings": list(manifest["warnings"]),
-            "manifest_path": path, "another_invocation_needed": bool(manifest["jobs_not_attempted"])}
+            "manifest_path": path,
+            "another_invocation_needed": bool(manifest["jobs_not_attempted"]) or any(
+                j["execution_status"] == "inconclusive" for j in manifest["jobs"])}
     if manifest["execution_status"] == "nothing_to_do":
         # Same reason as configuration_error below: said in a field a person
         # reads first, not inferred from three empty lists.

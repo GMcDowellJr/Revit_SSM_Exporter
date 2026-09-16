@@ -467,8 +467,8 @@ def d2(monkeypatch):
 
     def build(categories, load):
         doc, view = _Doc(categories), _View(categories)
-        monkeypatch.setattr(probe, "production_category_load",
-                            lambda *a, **k: (dict(load), 0, sum(load.values())))
+        monkeypatch.setattr(probe, "collect_painted_load_as_production_would",
+                            lambda *a, **k: (dict(load), 0, sum(load.values()), True))
         captured = []
 
         def capture(cfg, case, label):

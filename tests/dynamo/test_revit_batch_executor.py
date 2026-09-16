@@ -862,3 +862,38 @@ def test_a_dry_run_passes_when_the_probe_source_is_current():
     registry = build_registry()
     assert registry["stage_a_drift_onset"].validate_settings(
         {"selection": "d1_determinism"}, "/tmp/out")["selection"] == "d1_determinism"
+
+
+def test_an_inconclusive_job_is_not_a_completed_campaign(tmp_path):
+    """A probe returns inconclusive to say it ran and did not measure what it
+    is named after. Falling through to completed threw that request away."""
+    adapter = lambda *args: envelope(status="inconclusive")
+    result, manifest = run(tmp_path, batch(), adapter, run_id="run")
+    assert manifest["execution_status"] == "inconclusive"
+    assert result["jobs_inconclusive"] == ["one"]
+    assert result["another_invocation_needed"] is True
+
+
+def test_a_completed_job_alongside_an_inconclusive_one_does_not_mask_it(tmp_path):
+    statuses = iter(("completed", "inconclusive"))
+    adapter = lambda *args: envelope(status=next(statuses))
+    _, manifest = run(tmp_path, batch([job("one", "u1"), job("two", "u2")]), adapter)
+    assert manifest["execution_status"] == "inconclusive"
+
+
+def test_resume_prefers_whichever_prior_run_wrote_where_this_one_writes(tmp_path):
+    """os.walk order is not chronological, so keeping only the last candidate
+    let a stale destination beat an applicable one."""
+    calls = []
+    adapter = lambda view, settings, output: (calls.append(output) or envelope())
+    first = batch([job("one", "u1")]); first["jobs"][0]["output_directory"] = "captures/one"
+    run(tmp_path, first, adapter, run_id="aaa-here", artifact_root=str(tmp_path / "here"))
+    moved = batch([job("one", "u1")]); moved["jobs"][0]["output_directory"] = "captures/one"
+    run(tmp_path, moved, adapter, run_id="zzz-elsewhere",
+        artifact_root=str(tmp_path / "elsewhere"))
+    resumed = batch([job("one", "u1")], resume=True)
+    resumed["jobs"][0]["output_directory"] = "captures/one"
+    _, manifest = run(tmp_path, resumed, adapter, run_id="third",
+                      artifact_root=str(tmp_path / "here"))
+    assert manifest["jobs"][0]["execution_status"] == "skipped_resume"
+    assert len(calls) == 2, "re-captured despite a prior success in this destination"

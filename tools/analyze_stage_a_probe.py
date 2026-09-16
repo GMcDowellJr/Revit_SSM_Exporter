@@ -2051,10 +2051,19 @@ def _metrics_export_records(json_path: Path, data: dict[str, Any]) -> list[tuple
                 # off-palette -- a full set of well-formed, meaningless numbers.
                 side = resolve_path(json_path, rec.get('sidecar_path'))
                 if side is not None and not side.exists():
-                    # Same relocation problem as the TIFF: prefer the sidecar
-                    # named beside the report when the recorded path is stale.
-                    beside = json_path.parent / Path(rec['sidecar_path']).name
-                    side = beside if beside.exists() else side
+                    # Same relocation problem as the TIFF, and the same places
+                    # to look: a moved probe directory leaves the report in the
+                    # root while its sidecars stay under captures/. Without
+                    # this the record loses its palette and raises NO_PALETTE
+                    # before the TIFF dedupe can skip it -- turning an intact
+                    # directory into a non-zero exit.
+                    name = Path(rec['sidecar_path']).name
+                    for beside in (json_path.parent / name,
+                                   json_path.parent / 'captures' / name,
+                                   json_path.parent.parent / 'captures' / name):
+                        if beside.exists():
+                            side = beside
+                            break
                 merged = dict(rec)
                 if side is not None and side.exists():
                     try:

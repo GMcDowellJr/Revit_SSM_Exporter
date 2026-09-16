@@ -597,7 +597,12 @@ def _set_view_crop(view, bounds_xy):
     return (u0, v0, u1, v1)
 
 
-def _snapshot(doc, view):
+def snapshot_is_complete(state):
+    """False when a snapshot could not read some category's visibility."""
+    return not (state or {}).get("category_read_errors")
+
+
+def _snapshot(doc, view, diag=None):
     state = {"doc_is_modified": bool(getattr(doc, "IsModified", False)),
              "view_template_id": _safe_int_id(getattr(view, "ViewTemplateId", None)),
              "crop_box_active": None, "crop_box": None, "category_hidden": {}}
@@ -623,6 +628,11 @@ def _snapshot(doc, view):
                 # a clean bill of health for state nobody looked at.
                 state.setdefault("category_read_errors", {})[str(cid_int)] = \
                     "{0}: {1}".format(type(ex).__name__, ex)
+                if diag is not None:
+                    diag.error(phase="raster", callsite="snapshot_category_hidden",
+                               message="Category {0} visibility could not be read, so "
+                                       "restoration cannot be verified for it: "
+                                       "{1}".format(cid_int, ex), exc=ex)
                 continue
     except Exception as ex:
         state["category_hidden_error"] = str(ex)
@@ -875,11 +885,9 @@ def production_category_load(doc, view, cfg, diag=None):
     draws anything from it, so empty categories consume buckets and the
     category carrying the load can land in an arbitrary late step.
 
-    One residual difference remains and is recorded rather than papered over:
-    production re-collects under its neutral phase filter inside its own
-    transaction, which this cannot reach from outside. On a view whose phase
-    filter hides elements the neutral one reveals, these counts are of the
-    authored phase.
+    This counts under whatever phase filter the view currently carries;
+    ``collect_painted_load_as_production_would`` is the caller that puts the
+    view on production's neutral filter first, which is what D2 uses.
 
     Returns (counts_by_category_id, uncategorized_count, painted_count).
     """
@@ -917,6 +925,49 @@ def production_category_load(doc, view, cfg, diag=None):
     return counts, uncategorized, painted
 
 
+def collect_painted_load_as_production_would(doc, view, cfg, diag=None):
+    """production_category_load, taken under production's neutral phase filter.
+
+    export_color_id_buffer_view swaps the view onto
+    ``get_or_create_neutral_phase_filter``'s filter and RE-collects before it
+    paints, so on a view whose authored phase filter hides what the neutral one
+    reveals, counting under the authored phase omits elements every capture
+    paints. Those categories then sit outside every bucket while staying
+    visible in the step D2 calls its zero-content control.
+
+    The swap uses production's own helper rather than a second neutral filter,
+    is made in its own transaction, and is put back in a ``finally`` -- the
+    same discipline D5 needs for its tile crops: a mutation that outlives its
+    case is handed to whatever runs next.
+
+    Returns (counts, uncategorized, painted, phase_normalized).
+    """
+    from Autodesk.Revit.DB import BuiltInParameter
+
+    param = None
+    try:
+        param = view.get_Parameter(BuiltInParameter.VIEW_PHASE_FILTER)
+    except Exception as ex:
+        if diag is not None:
+            diag.warn(phase="raster", callsite="d2_neutral_phase",
+                      message="Could not read the view's phase filter: {0}".format(ex))
+    if param is None or param.IsReadOnly:
+        # Production cannot swap it either, so the authored phase IS the
+        # capture's phase and the counts already match.
+        return production_category_load(doc, view, cfg, diag=diag) + (True,)
+
+    from vop_interwoven.color_id_buffer import get_or_create_neutral_phase_filter
+    original = param.AsElementId()
+    neutral = {}
+    _mutate(doc, "d2_neutral_phase_filter",
+            lambda: neutral.__setitem__("id", get_or_create_neutral_phase_filter(doc)[0].Id))
+    _mutate(doc, "d2_neutral_phase_swap", lambda: param.Set(neutral["id"]))
+    try:
+        return production_category_load(doc, view, cfg, diag=diag) + (True,)
+    finally:
+        _mutate(doc, "d2_neutral_phase_restore", lambda: param.Set(original))
+
+
 def _case_d2(ctx, steps):
     """D2: hold size and density fixed, grow visible content one bucket at a time.
 
@@ -949,7 +1000,7 @@ def _case_d2(ctx, steps):
                                "attributable to category load",
                     "crop_pinned_to": None, "categories": []}
 
-    load, uncategorized, painted = production_category_load(
+    load, uncategorized, painted, phase_normalized = collect_painted_load_as_production_would(
         doc, view, ctx["cfg"], diag=ctx.get("diag"))
 
     hideable, pinned_visible, unreadable = [], [], []
@@ -997,6 +1048,7 @@ def _case_d2(ctx, steps):
                     "crop_pinned_to": list(ctx["bounds_xy"]), "categories": []}
 
     load_note = {"painted_element_count": painted,
+                 "phase_normalized": phase_normalized,
                  "uncategorized_element_count": uncategorized,
                  "always_visible_categories": [
                      {"id": c["id"], "name": c["name"],
@@ -1287,7 +1339,7 @@ def _run_native(raw_view, output_dir, selection="all", repetitions=DEFAULT_REPET
             })
 
         _force_close_dynamo_transaction()
-        report["state"]["before"] = _snapshot(doc, view)
+        report["state"]["before"] = _snapshot(doc, view, diag=diag)
 
         from Autodesk.Revit.DB import TransactionGroup, TransactionStatus
         group = TransactionGroup(doc, "VOP Stage A Drift Onset Probe")
@@ -1342,10 +1394,27 @@ def _run_native(raw_view, output_dir, selection="all", repetitions=DEFAULT_REPET
         try:
             view = _unwrap_dynamo(raw_view)
             if view is not None and report["state"]["before"]:
-                report["state"]["after"] = _snapshot(doc, view)
+                report["state"]["after"] = _snapshot(doc, view, diag=diag)
                 diffs = _diff_state(report["state"]["before"], report["state"]["after"])
                 report["state"]["differences"] = diffs
-                report["state"]["restored"] = len(diffs) == 0
+                complete = (snapshot_is_complete(report["state"]["before"])
+                            and snapshot_is_complete(report["state"]["after"]))
+                report["state"]["snapshot_complete"] = complete
+                # Matching on the fields that COULD be read is not evidence of
+                # restoration when some could not. Unknown, not True -- which
+                # envelope_status reports as inconclusive rather than banking
+                # the job as a resumable success.
+                report["state"]["restored"] = (len(diffs) == 0) if complete else None
+                if not complete:
+                    report["warnings"].append({
+                        "stage": "state_restoration",
+                        "message": "category visibility could not be read for {0} "
+                                   "categor(ies), so restoration is unverified".format(
+                                       len((report["state"]["after"].get(
+                                           "category_read_errors") or {}))
+                                       or len((report["state"]["before"].get(
+                                           "category_read_errors") or {}))),
+                    })
         except Exception as ex:
             report["exceptions"].append(_exception_record("post_rollback_state_capture", ex))
 

@@ -815,7 +815,7 @@ def _run_native(raw_view, output_dir, selection="all", element_ids=None,
             })
 
         _force_close_dynamo_transaction()
-        report["state"]["before"] = _drift._snapshot(doc, view)
+        report["state"]["before"] = _drift._snapshot(doc, view, diag=diag)
 
         # B1 runs FIRST, on the untouched document, outside the
         # TransactionGroup. It has to report the view's *authored* state:
@@ -872,13 +872,30 @@ def _run_native(raw_view, output_dir, selection="all", element_ids=None,
         report["view"]["pinned_bounds_xy"] = (list(pinned["bounds"])
                                               if pinned.get("bounds") else None)
         if pinned.get("bounds") is None:
+            # A warning was not enough. The whole point of B3 is that each
+            # variant differs from the baseline in one mechanism; on an
+            # unpinnable view, disabling an underlay that carries elements
+            # beyond the ordinary model changes the extent as well, and the
+            # comparison is unattributable no matter what the metrics say.
+            # Refuse before exporting -- and D2 and D5 refuse on the same
+            # condition, so this is the rule, not a special case.
             report["warnings"].append({
                 "stage": "pin_capture_geometry",
-                "message": "This view has no CropBox, so each B3 capture re-derives its "
-                           "own bounds. A variant that changes what is visible may then "
-                           "differ from the baseline in extent as well as in mechanism, "
-                           "and its metrics are not attributable to the mechanism alone.",
+                "message": "This view has no applicable CropBox, so each B3 capture would "
+                           "re-derive its own bounds and a variant that changes what is "
+                           "visible would differ from the baseline in extent as well as "
+                           "in mechanism. No B3 capture was taken.",
             })
+            for case in export_cases:
+                report["cases"][case] = {
+                    "inconclusive": True,
+                    "skipped": "capture geometry could not be pinned, so this variant "
+                               "could not be compared against the baseline on equal "
+                               "extents"}
+            # Emptied rather than raised: _NoExportCasesRequested means "this
+            # was a read-only run", and this one opened a TransactionGroup and
+            # has to be rolled back and reported like any other.
+            export_cases = []
 
         captures_taken = []
         capture_geometry = []
@@ -1077,7 +1094,7 @@ def _run_native(raw_view, output_dir, selection="all", element_ids=None,
         try:
             view = _unwrap_dynamo(raw_view)
             if view is not None and report["state"]["before"]:
-                report["state"]["after"] = _drift._snapshot(doc, view)
+                report["state"]["after"] = _drift._snapshot(doc, view, diag=diag)
                 diffs = _drift._diff_state(report["state"]["before"], report["state"]["after"])
                 report["state"]["differences"] = diffs
                 report["state"]["restored"] = len(diffs) == 0
