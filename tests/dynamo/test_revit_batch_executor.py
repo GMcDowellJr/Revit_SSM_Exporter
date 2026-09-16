@@ -8,7 +8,7 @@ import pytest
 
 from tests.dynamo.revit_batch_contract import (BATCH_SCHEMA_VERSION, MANIFEST_SCHEMA_VERSION,
     ContractError, job_fingerprint, parse_view_reference, validate_batch, validate_manifest)
-from tests.dynamo.revit_batch_executor import execute_batch, resolve_view
+from tests.dynamo.revit_batch_executor import execute_batch, resolve_view, view_identity
 from tests.dynamo.revit_probe_registry import PROBE_MODULES, build_registry
 
 
@@ -579,3 +579,321 @@ def test_view_type_stable_name_passes_through_unchanged():
         ViewType = "Elevation"
 
     assert _view_type_name(RawView()) == "Elevation"
+
+
+# --- a configuration failure must be visible in the returned summary --------
+
+def _failing_doc(title="SOMETHING ELSE"):
+    class _App(object):
+        VersionNumber = "2025"
+        VersionBuild = "x"
+
+    class _Doc(object):
+        Title = title
+        PathName = "C:\\models\\other.rvt"
+        Application = _App()
+    return _Doc()
+
+
+def _two_job_batch(tmp_path, expected_title):
+    return {
+        "schema_version": "1.0", "campaign_id": "c", "batch_id": "b",
+        "created_at": "2026-09-16T00:00:00Z",
+        "document": {"expected_title": expected_title},
+        "execution_policy": {"max_jobs_per_run": 1, "on_job_error": "continue", "resume": False},
+        "jobs": [
+            {"job_id": "one", "probe_id": "p", "view": {"name": "V"},
+             "settings": {}, "output_directory": str(tmp_path / "one")},
+            {"job_id": "two", "probe_id": "p", "view": {"name": "V"},
+             "settings": {}, "output_directory": str(tmp_path / "two")},
+        ],
+    }
+
+
+def test_a_document_title_mismatch_is_named_in_the_summary(tmp_path):
+    """A configuration failure populates none of the job lists, so without an
+    explicit status it is indistinguishable from a clean run with nothing to
+    do -- which is exactly what a validation-only run exists to surface."""
+    from tests.dynamo.revit_batch_executor import execute_batch
+    summary = execute_batch(_two_job_batch(tmp_path, "EXPECTED TITLE"), _failing_doc(),
+                            registry={"p": lambda *a, **k: {}},
+                            manifest_root=str(tmp_path / "runs"), validation_only=True)
+    assert summary["execution_status"] == "configuration_failed"
+    assert "configuration_error" in summary
+    assert "title mismatch" in summary["configuration_error"]
+    assert summary["errors"]
+    assert summary["another_invocation_needed"] is False
+
+
+def test_a_clean_validation_run_reports_what_it_validated(tmp_path):
+    from tests.dynamo.revit_batch_executor import execute_batch
+
+    class _View(object):
+        UniqueId = "u"
+        Name = "V"
+        ViewType = "FloorPlan"
+        CropBoxActive = True
+        IsTemplate = False
+
+    summary = execute_batch(_two_job_batch(tmp_path, "SOMETHING ELSE"), _failing_doc(),
+                            registry={"p": lambda *a, **k: {}},
+                            all_views=lambda doc: [_View()],
+                            is_view=lambda value: True,
+                            manifest_root=str(tmp_path / "runs"), validation_only=True)
+    assert summary["execution_status"] == "validation_only"
+    assert "configuration_error" not in summary
+    assert sorted(summary["jobs_validated"]) == ["one", "two"]
+    # max_jobs_per_run is 1, so the second job is deferred and another
+    # invocation IS needed -- the signal that distinguishes this from a failure.
+    assert summary["jobs_deferred"] == ["two"]
+    assert summary["another_invocation_needed"] is True
+
+
+# --- artifact_root keeps capture output out of the checkout -----------------
+
+def test_a_relative_output_directory_resolves_against_the_artifact_root(tmp_path):
+    """A checked-in campaign must use relative paths -- an absolute one would be
+    wrong on every machine but the author's -- so the artifact root is what
+    decides where hundreds of megabytes of TIFF actually land."""
+    from tests.dynamo.revit_batch_executor import resolve_output_directory
+    import os
+    source = str(tmp_path / "campaigns" / "campaign.json")
+    root = str(tmp_path / "elsewhere")
+    resolved = resolve_output_directory("captures/job-1", source, root)
+    assert resolved == os.path.normpath(os.path.join(root, "captures", "job-1"))
+
+
+def test_without_an_artifact_root_output_lands_beside_the_batch_file(tmp_path):
+    """The documented hazard: for a campaign inside the repository this is the
+    checkout itself, which is why revit_batch_dynamo exposes IN[3]."""
+    from tests.dynamo.revit_batch_executor import resolve_output_directory
+    import os
+    source = str(tmp_path / "campaigns" / "campaign.json")
+    resolved = resolve_output_directory("captures/job-1", source, None)
+    assert resolved == os.path.normpath(
+        os.path.join(str(tmp_path / "campaigns"), "captures", "job-1"))
+
+
+def test_an_absolute_output_directory_ignores_the_artifact_root(tmp_path):
+    from tests.dynamo.revit_batch_executor import resolve_output_directory
+    import os
+    absolute = str(tmp_path / "explicit")
+    assert resolve_output_directory(absolute, None, str(tmp_path / "other")) == \
+        os.path.normpath(absolute)
+
+
+def test_the_dynamo_entry_point_forwards_the_artifact_root():
+    """IN[3] has to actually reach execute_batch, or the hazard above stands."""
+    import ast
+    import inspect
+    from tests.dynamo import revit_batch_dynamo
+    source = inspect.getsource(revit_batch_dynamo.dynamo_main)
+    assert "artifact_root" in source
+    call = [node for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "execute_batch"]
+    assert call, "execute_batch call not found"
+    assert any(keyword.arg == "artifact_root" for keyword in call[0].keywords)
+
+
+# --- resume is about artifacts, not just job ids ----------------------------
+#
+# A completed job is only a reason to skip if its outputs are where THIS run
+# writes. Adding an artifact_root moved every capture to a new tree; resume
+# still saw ten completed jobs in the prior manifests, skipped all ten, and
+# reported the run completed with nothing written anywhere.
+
+def test_resume_reruns_a_job_whose_artifacts_went_somewhere_else(tmp_path):
+    calls = []
+    adapter = lambda view, settings, output: (calls.append(output) or envelope())
+    relative = batch([job("one", "u1")])
+    relative["jobs"][0]["output_directory"] = "captures/one"
+    run(tmp_path, relative, adapter, run_id="first", artifact_root=str(tmp_path / "old"))
+    resumed = batch([job("one", "u1")], resume=True)
+    resumed["jobs"][0]["output_directory"] = "captures/one"
+    result, manifest = run(tmp_path, resumed, adapter, run_id="second",
+                           artifact_root=str(tmp_path / "new"))
+    assert manifest["jobs"][0]["execution_status"] == "completed"
+    assert calls[-1] == str(tmp_path / "new" / "captures" / "one")
+    assert "Re-running" in manifest["warnings"][0]["message"]
+    assert result["jobs_executed"] == ["one"]
+
+
+def test_resume_still_skips_when_the_destination_is_unchanged(tmp_path):
+    calls = []
+    adapter = lambda view, settings, output: (calls.append(output) or envelope())
+    first = batch([job("one", "u1")])
+    first["jobs"][0]["output_directory"] = "captures/one"
+    run(tmp_path, first, adapter, run_id="first", artifact_root=str(tmp_path / "same"))
+    resumed = batch([job("one", "u1")], resume=True)
+    resumed["jobs"][0]["output_directory"] = "captures/one"
+    _, manifest = run(tmp_path, resumed, adapter, run_id="second",
+                      artifact_root=str(tmp_path / "same"))
+    assert manifest["jobs"][0]["execution_status"] == "skipped_resume"
+    assert len(calls) == 1
+
+
+def test_a_run_that_skipped_everything_does_not_report_completed(tmp_path):
+    adapter = lambda *args: envelope()
+    run(tmp_path, batch(), adapter, run_id="first")
+    resumed = batch(resume=True)
+    result, manifest = run(tmp_path, resumed, adapter, run_id="second")
+    assert manifest["execution_status"] == "nothing_to_do"
+    assert result["jobs_skipped_resume"] == ["one"]
+    assert "allow_rerun" in result["nothing_executed"]
+
+
+def test_allow_rerun_still_reaches_the_probe_after_a_move(tmp_path):
+    calls = []
+    adapter = lambda view, settings, output: (calls.append(output) or envelope())
+    run(tmp_path, batch(), adapter, run_id="first")
+    forced = batch(resume=True)
+    forced["execution_policy"]["allow_rerun"] = True
+    _, manifest = run(tmp_path, forced, adapter, run_id="second")
+    assert manifest["execution_status"] == "completed"
+    assert len(calls) == 2
+
+
+# --- view identity survives a 64-bit element id -----------------------------
+
+def test_view_identity_prefers_the_64_bit_value_over_the_legacy_property():
+    class BigId(object):
+        Value = 8796093022208
+        IntegerValue = -1
+
+    class BigView(object):
+        Id = BigId()
+        UniqueId = "u"
+        Name = "big"
+    assert view_identity(BigView())["element_id"] == 8796093022208
+
+
+def test_view_identity_does_not_fail_on_an_id_whose_legacy_getter_raises():
+    class BigId(object):
+        Value = 8796093022208
+
+        @property
+        def IntegerValue(self):
+            raise OverflowError("id does not fit in int32")
+
+    class BigView(object):
+        Id = BigId()
+        UniqueId = "u"
+        Name = "big"
+    assert view_identity(BigView())["element_id"] == 8796093022208
+
+
+def test_view_identity_falls_back_to_the_legacy_property_on_older_revit():
+    class BigId(object):
+        IntegerValue = 587278
+
+    class BigView(object):
+        Id = BigId()
+        UniqueId = "u"
+        Name = "small"
+    assert view_identity(BigView())["element_id"] == 587278
+
+
+def test_a_prior_run_that_recorded_no_destination_is_rerun_not_trusted(tmp_path):
+    """Unknown is not the same as 'already there'.
+
+    Manifests written before output directories were recorded say nothing
+    about where their artifacts landed. Skipping on that risks a run that
+    writes nothing and reports success; re-running costs one capture.
+    """
+    calls = []
+    adapter = lambda view, settings, output: (calls.append(output) or envelope())
+    run(tmp_path, batch(), adapter, run_id="first")
+    prior = Path(tmp_path) / "first" / "revit_run_manifest.json"
+    payload = json.loads(prior.read_text())
+    for record in payload["jobs"]:
+        record.pop("output_directory_resolved", None)
+    prior.write_text(json.dumps(payload))
+    resumed = batch(resume=True)
+    _, manifest = run(tmp_path, resumed, adapter, run_id="second")
+    assert manifest["jobs"][0]["execution_status"] == "completed"
+    assert "an unrecorded directory" in manifest["warnings"][0]["message"]
+    assert len(calls) == 2
+
+
+def test_changing_settings_and_the_output_root_together_is_not_configuration_drift(tmp_path):
+    """The drift guard compares against a prior success. One that landed in a
+    different tree is not this run's job done, so it is not a baseline either
+    -- and a campaign edited at the same time as its artifact root must still
+    run."""
+    calls = []
+    adapter = lambda view, settings, output: (calls.append(output) or envelope())
+    first = batch([job("one", "u1")])
+    first["jobs"][0]["output_directory"] = "captures/one"
+    run(tmp_path, first, adapter, run_id="first", artifact_root=str(tmp_path / "old"))
+    changed = batch([job("one", "u1", settings={"selection": "b1_query"})], resume=True)
+    changed["jobs"][0]["output_directory"] = "captures/one"
+    _, manifest = run(tmp_path, changed, adapter, run_id="second",
+                      artifact_root=str(tmp_path / "new"))
+    assert manifest["execution_status"] == "completed"
+    assert manifest["jobs"][0]["execution_status"] == "completed"
+
+
+def test_changing_settings_alone_is_still_configuration_drift(tmp_path):
+    adapter = lambda *args: envelope()
+    first = batch([job("one", "u1")])
+    first["jobs"][0]["output_directory"] = "captures/one"
+    run(tmp_path, first, adapter, run_id="first", artifact_root=str(tmp_path / "same"))
+    changed = batch([job("one", "u1", settings={"selection": "b1_query"})], resume=True)
+    changed["jobs"][0]["output_directory"] = "captures/one"
+    _, manifest = run(tmp_path, changed, adapter, run_id="second",
+                      artifact_root=str(tmp_path / "same"))
+    assert manifest["execution_status"] == "configuration_failed"
+    assert "Configuration drift" in manifest["errors"][0]["message"]
+
+
+def test_a_dry_run_refuses_a_probe_whose_source_changed_since_import(monkeypatch):
+    """The dry run is where staleness belongs: cheap to refuse before the model
+    is open, expensive to discover after a campaign of captures."""
+    from tests.dynamo import probe_stage_a_drift_onset as drift
+    registry = build_registry()
+    monkeypatch.setattr(drift, "MODULE_MTIME_AT_IMPORT",
+                        (drift.MODULE_MTIME_AT_IMPORT or 0) - 3600.0)
+    with pytest.raises(ValueError, match="stale source"):
+        registry["stage_a_drift_onset"].validate_settings(
+            {"selection": "d1_determinism"}, "/tmp/out")
+
+
+def test_a_dry_run_passes_when_the_probe_source_is_current():
+    registry = build_registry()
+    assert registry["stage_a_drift_onset"].validate_settings(
+        {"selection": "d1_determinism"}, "/tmp/out")["selection"] == "d1_determinism"
+
+
+def test_an_inconclusive_job_is_not_a_completed_campaign(tmp_path):
+    """A probe returns inconclusive to say it ran and did not measure what it
+    is named after. Falling through to completed threw that request away."""
+    adapter = lambda *args: envelope(status="inconclusive")
+    result, manifest = run(tmp_path, batch(), adapter, run_id="run")
+    assert manifest["execution_status"] == "inconclusive"
+    assert result["jobs_inconclusive"] == ["one"]
+    assert result["another_invocation_needed"] is True
+
+
+def test_a_completed_job_alongside_an_inconclusive_one_does_not_mask_it(tmp_path):
+    statuses = iter(("completed", "inconclusive"))
+    adapter = lambda *args: envelope(status=next(statuses))
+    _, manifest = run(tmp_path, batch([job("one", "u1"), job("two", "u2")]), adapter)
+    assert manifest["execution_status"] == "inconclusive"
+
+
+def test_resume_prefers_whichever_prior_run_wrote_where_this_one_writes(tmp_path):
+    """os.walk order is not chronological, so keeping only the last candidate
+    let a stale destination beat an applicable one."""
+    calls = []
+    adapter = lambda view, settings, output: (calls.append(output) or envelope())
+    first = batch([job("one", "u1")]); first["jobs"][0]["output_directory"] = "captures/one"
+    run(tmp_path, first, adapter, run_id="aaa-here", artifact_root=str(tmp_path / "here"))
+    moved = batch([job("one", "u1")]); moved["jobs"][0]["output_directory"] = "captures/one"
+    run(tmp_path, moved, adapter, run_id="zzz-elsewhere",
+        artifact_root=str(tmp_path / "elsewhere"))
+    resumed = batch([job("one", "u1")], resume=True)
+    resumed["jobs"][0]["output_directory"] = "captures/one"
+    _, manifest = run(tmp_path, resumed, adapter, run_id="third",
+                      artifact_root=str(tmp_path / "here"))
+    assert manifest["jobs"][0]["execution_status"] == "skipped_resume"
+    assert len(calls) == 2, "re-captured despite a prior success in this destination"

@@ -47,6 +47,19 @@ variants, default `"all"`). Minimum-ID mutations and model linework retain
 their existing `IN[3]` selection. Missing selections still mean all cases;
 unknown names raise `ValueError` rather than silently selecting nothing.
 
+## Stage A color-ID anomaly probes (diagnostic, not campaign)
+
+`probe_stage_a_drift_onset.py` (experiments D1-D5) and
+`probe_stage_a_white_blend.py` (B1, B3) instrument the two color-ID buffer
+anomalies from the 2026-09-15 run. They follow the same callable contract as
+the campaign probes and are registered in `revit_probe_registry.py`, but they
+are analyzed by `tools/analyze_stage_a_probe.py --export-metrics` rather than
+by the campaign acceptance path, and so are deliberately absent from that
+analyzer's `SUPPORTED_PROBES` map. See
+[`PROBE_STAGE_A_COLOR_ID_ANOMALIES.md`](PROBE_STAGE_A_COLOR_ID_ANOMALIES.md)
+for the metric definitions, the experiment matrix, the open hypotheses, and the
+UNCONFIRMED Revit API assumptions each probe encodes.
+
 ## Usage
 
 1. **Open Dynamo** in Revit with your test model loaded

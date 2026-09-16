@@ -31,3 +31,13 @@ graphify-out/.graphify_*
 graphify-out/cache/
 graphify-out/2*/
 .agents/
+# Stage A probe capture artifacts. A campaign with relative output_directory
+# values resolves them against the batch file's own directory unless an
+# artifact root is supplied (revit_batch_dynamo IN[3]), which would write
+# hundreds of megabytes of TIFF into the checkout. Ignored as a safety net --
+# supplying the artifact root is still the right answer.
+/captures/
+tests/dynamo/campaigns/captures/
+**/drift_onset_probe/
+**/white_blend_probe/
+revit_runs/

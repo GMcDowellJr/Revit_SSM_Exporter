@@ -1,0 +1,81 @@
+{
+  "schema_version": "1.0",
+  "campaign_id": "stage-a-run2-threshold-and-remedy",
+  "batch_id": "batch-002",
+  "created_at": "2026-09-16T00:00:00Z",
+  "document": {
+    "expected_title": "KSRF_Hosp_Interior_AR_V03_33 MB_2025-02-03"
+  },
+  "execution_policy": {
+    "max_jobs_per_run": 100,
+    "on_job_error": "continue",
+    "resume": true
+  },
+  "jobs": [
+    {
+      "job_id": "d3-threshold-pin-hosp-2",
+      "probe_id": "stage_a_drift_onset",
+      "view": {
+        "element_id": 871863,
+        "name": "(N) HOSPITAL - LEVEL 2"
+      },
+      "settings": {
+        "selection": "d3_size_sweep",
+        "pixel_sizes": "0.98,0.99,0.995,native"
+      },
+      "output_directory": "captures/d3-threshold-pin-hosp-2"
+    },
+    {
+      "job_id": "d3-height-cap-mob-1",
+      "probe_id": "stage_a_drift_onset",
+      "view": {
+        "element_id": 528698,
+        "name": "MOB 1 - LEVEL 2"
+      },
+      "settings": {
+        "selection": "d3_size_sweep",
+        "pixel_sizes": "12000,native"
+      },
+      "output_directory": "captures/d3-height-cap-mob-1"
+    },
+    {
+      "job_id": "d3-height-cap-hosp-3",
+      "probe_id": "stage_a_drift_onset",
+      "view": {
+        "element_id": 929475,
+        "name": "(N) HOSPITAL - LEVEL 3"
+      },
+      "settings": {
+        "selection": "d3_size_sweep",
+        "pixel_sizes": "10268,12000"
+      },
+      "output_directory": "captures/d3-height-cap-hosp-3"
+    },
+    {
+      "job_id": "d7-fit-direction-hosp-2",
+      "probe_id": "stage_a_drift_onset",
+      "view": {
+        "element_id": 871863,
+        "name": "(N) HOSPITAL - LEVEL 2"
+      },
+      "settings": {
+        "selection": "d7_fit_direction",
+        "pixel_sizes": "9000,11000"
+      },
+      "output_directory": "captures/d7-fit-direction-hosp-2"
+    },
+    {
+      "job_id": "b3-underlay-hosp-2",
+      "probe_id": "stage_a_white_blend",
+      "view": {
+        "element_id": 871863,
+        "name": "(N) HOSPITAL - LEVEL 2"
+      },
+      "settings": {
+        "selection": "b1_query,b3_baseline,b3_underlay_off",
+        "pixel_size": 8584
+      },
+      "output_directory": "captures/b3-underlay-hosp-2"
+    }
+  ]
+}

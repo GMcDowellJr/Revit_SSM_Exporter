@@ -8,6 +8,7 @@ from pathlib import Path
 
 from tests.dynamo.probe_stage_a_minimum_id_mutations import (
     _add_repo_root_to_path,
+    _palette,
     _ensure_typing_module,
     _hide_annotation_categories,
     MUTATION_CATALOG,
@@ -388,3 +389,27 @@ def test_already_hidden_categories_still_report_already_matched(fake_revit_db):
     _hide_annotation_categories(doc, view, result)
     rec = result["mutations"]["hide_annotation_categories"]
     assert rec["status"] == STATUS_ALREADY
+
+
+def test_palette_step_uses_productions_global_threshold_not_the_element_count():
+    """Production pins the step to the configured global threshold.
+
+    Sizing the lattice to the view's own count gives step 8 where production
+    uses 6, so the probe's ID rasters would not be the ones production
+    produces -- the one thing a minimum-ID-mutation search must not get wrong.
+    """
+    from vop_interwoven.color_id_buffer import choose_step
+    from vop_interwoven.config import Config
+    threshold = int(Config().color_id_buffer_global_assignment_threshold)
+    expected = choose_step(threshold)
+    for count in (1, 50, 500, 5000, threshold):
+        _palette_colors, step = _palette(count)
+        assert step == expected, count
+
+
+def test_palette_step_falls_back_to_the_count_above_the_threshold():
+    from vop_interwoven.color_id_buffer import choose_step
+    from vop_interwoven.config import Config
+    threshold = int(Config().color_id_buffer_global_assignment_threshold)
+    _palette_colors, step = _palette(threshold + 10000)
+    assert step == choose_step(threshold + 10000)

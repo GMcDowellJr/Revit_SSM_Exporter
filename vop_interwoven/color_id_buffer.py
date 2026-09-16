@@ -1176,7 +1176,26 @@ def _set_pixel_size_with_backoff(opts, pixel_size, diag=None, view_id=None):
             candidate = max(floor, candidate // 2)
 
 
-def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None):
+def _fit_direction(name):
+    """Map cfg.color_id_buffer_fit_direction onto Revit's FitDirectionType.
+
+    Unknown values are refused rather than defaulted: silently exporting along
+    the other axis would change the output size of every view, and a typo in a
+    config is not a reason to do that.
+    """
+    from Autodesk.Revit.DB import FitDirectionType
+    key = str(name or "horizontal").strip().lower()
+    if key == "horizontal":
+        return FitDirectionType.Horizontal
+    if key == "vertical":
+        return FitDirectionType.Vertical
+    raise ValueError(
+        "color_id_buffer_fit_direction must be 'horizontal' or 'vertical', "
+        "got {0!r}".format(name))
+
+
+def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None,
+                 fit_direction="horizontal"):
     from Autodesk.Revit.DB import (
         ImageExportOptions, ExportRange, ZoomFitType, FitDirectionType, ElementId,
         ImageFileType,
@@ -1192,7 +1211,11 @@ def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None):
     opts.ExportRange = ExportRange.SetOfViews
     opts.SetViewsAndSheets(ids)
     opts.ZoomType = ZoomFitType.FitToPage
-    opts.FitDirection = FitDirectionType.Horizontal
+    # PixelSize sets the axis fitted here; the other one is derived from the
+    # view's extents and is bounded by nothing. Horizontal is the shipped
+    # default, so unless a caller asks otherwise this is the line it has
+    # always been.
+    opts.FitDirection = _fit_direction(fit_direction)
     actual_pixel_size = _set_pixel_size_with_backoff(opts, pixel_size, diag=diag, view_id=view_id)
     opts.FilePath = os.path.join(out_dir, "_vop_color_id_tmp")
 
@@ -1323,10 +1346,19 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
 
     scale = float(getattr(view, "Scale", 1) or 1)
     export_dpi = float(getattr(cfg, "color_id_buffer_export_dpi", 150))
+    # Normalized here, once, so the value handed to Revit and the value written
+    # into the sidecar cannot disagree. A cfg without the field is the shipped
+    # behaviour.
+    fit_direction = str(
+        getattr(cfg, "color_id_buffer_fit_direction", "horizontal") or "horizontal"
+    ).strip().lower()
     if raster is not None and getattr(raster, "W", 0) and getattr(raster, "cell_size_ft", 0):
         paper_width_in = (float(raster.W) * float(raster.cell_size_ft) * 12.0) / max(scale, 1.0e-6)
+        paper_height_in = (float(getattr(raster, "H", 0) or 0) * float(raster.cell_size_ft)
+                           * 12.0) / max(scale, 1.0e-6)
     else:
         paper_width_in = 1.0
+        paper_height_in = 1.0
         if diag is not None:
             diag.warn(
                 phase="color_id_buffer",
@@ -1335,7 +1367,23 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                         "sizing (export resolution will be far below the requested DPI)",
                 view_id=view_id,
             )
-    pixel_size = int(round(export_dpi * paper_width_in))
+    # PixelSize sets the axis Revit is asked to FIT, so the requested size has
+    # to come from that axis's paper dimension. Deriving it from the width
+    # under vertical fit silently scales the whole export by the view's aspect
+    # ratio: a tall view would lose density merely by switching fit direction,
+    # and export_dpi would no longer mean the same thing in the two cases.
+    paper_fit_in = paper_height_in if fit_direction == "vertical" else paper_width_in
+    if paper_fit_in <= 0:
+        paper_fit_in = paper_width_in
+        if diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="pixel_size",
+                message="vertical fit requested but the raster reports no height; "
+                        "sizing from the paper width instead",
+                view_id=view_id,
+            )
+    pixel_size = int(round(export_dpi * paper_fit_in))
     pixel_size = max(64, min(pixel_size, MAX_STAGE_A_PIXEL_SIZE))
     if pixel_size >= MAX_STAGE_A_PIXEL_SIZE and diag is not None:
         diag.warn(
@@ -1969,7 +2017,8 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     actual_pixel_size = pixel_size
     try:
         _tiff_path, actual_pixel_size = _export_tiff(
-            doc, view, tiff_path, pixel_size, diag=diag, view_id=view_id
+            doc, view, tiff_path, pixel_size, diag=diag, view_id=view_id,
+            fit_direction=fit_direction,
         )
     finally:
         restore_tx = Transaction(doc, "VOP Stage A RESTORE color ID buffer")
@@ -2155,6 +2204,13 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             "requested_pixel_size": pixel_size,
             "export_dpi": export_dpi,
             "view_scale": scale,
+            # Which axis pixel_size set. Without it a reader cannot tell
+            # whether the other dimension was requested or derived, and every
+            # size-derived metric downstream assumes one of the two.
+            "fit_direction": fit_direction,
+            # The paper dimension pixel_size was derived from, so a reader can
+            # reproduce the request instead of assuming it came from the width.
+            "paper_fit_in": paper_fit_in,
         },
         # View-local UV rectangle (min_u, min_v, max_u, max_v) the export
         # was cropped to -- the same tuple set as view.CropBox above, not

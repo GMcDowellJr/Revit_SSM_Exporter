@@ -148,17 +148,25 @@ def _coerce_view_id(value):
     if value is None:
         return None
 
-    try:
-        if hasattr(value, "IntegerValue"):
-            return int(value.IntegerValue)
-    except Exception:
-        pass
+    # Value-first (Revit 2025's 64-bit property) via the shared reader. The
+    # previous IntegerValue-first form did not crash -- every read here is
+    # guarded -- but on an id outside the int32 range it fell through every
+    # branch and returned None, silently losing the view id rather than
+    # failing loudly.
+    from vop_interwoven.revit.safe_api import element_id_value
+
+    coerced = element_id_value(value)
+    if coerced is not None:
+        return coerced
 
     try:
-        if hasattr(value, "Id") and hasattr(value.Id, "IntegerValue"):
-            return int(value.Id.IntegerValue)
+        inner = getattr(value, "Id", None)
     except Exception:
-        pass
+        inner = None
+    if inner is not None:
+        coerced = element_id_value(inner)
+        if coerced is not None:
+            return coerced
 
     try:
         if isinstance(value, int):

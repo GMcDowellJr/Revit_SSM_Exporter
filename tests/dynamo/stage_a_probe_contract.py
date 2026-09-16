@@ -67,15 +67,35 @@ def _view_type_name(view):
     return text
 
 
+def element_id_value(value):
+    """Read an ElementId as an int, Revit 2025's 64-bit ``Value`` first.
+
+    ``IntegerValue`` is the legacy 32-bit property, deprecated in Revit 2025;
+    for an id outside the int32 range its getter can *raise* rather than
+    return, and ``getattr(obj, "IntegerValue", default)`` does not catch that
+    because a default only covers AttributeError. Every probe's envelope is
+    built through view_identity(), so reading it the wrong way round here
+    throws away a completed interrogation on the way out -- the work is done
+    and the result is lost while being labelled.
+    """
+    for attr in ("Value", "IntegerValue"):
+        try:
+            inner = getattr(value, attr, None)
+        except Exception:
+            continue
+        if inner is None:
+            continue
+        try:
+            return int(inner)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 def view_identity(view):
     view = getattr(view, "InternalElement", view)
-    element_id = getattr(view, "Id", None)
-    integer_id = getattr(element_id, "IntegerValue", element_id)
-    try:
-        integer_id = int(integer_id)
-    except (TypeError, ValueError):
-        integer_id = None
-    return {"id": integer_id, "name": getattr(view, "Name", None), "type": _view_type_name(view)}
+    return {"id": element_id_value(getattr(view, "Id", None)),
+            "name": getattr(view, "Name", None), "type": _view_type_name(view)}
 
 
 def execution_envelope(probe_id, requested_settings, resolved_view_identity,
