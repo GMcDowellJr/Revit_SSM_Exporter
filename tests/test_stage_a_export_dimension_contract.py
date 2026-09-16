@@ -491,3 +491,48 @@ def test_dim_check_gates_high_reliability(dim_check, expect_high):
     assert ok is expect_high
     if not expect_high:
         assert dim_check in reason
+
+
+def test_post_cap_sidecar_missing_dim_check_is_not_high():
+    """H1: pre_cap_px marks a producer that runs the dimension check, so a
+    sidecar carrying it with no dim_check has had the verification removed."""
+    _capture_reliability = _reliability()
+    ok, reason = _capture_reliability({
+        "applied_display_style": "FlatColors",
+        "applied_smooth_edges": False,
+        "resolution": {"pre_cap_px": 12000, "requested_px": 10000},
+    })
+    assert ok is False
+    assert "should be present" in reason
+
+
+def test_legacy_sidecar_without_either_field_keeps_high():
+    """H1: the pre-check sidecar's behaviour is unchanged -- absent is not
+    failed when nothing claims the check was ever run."""
+    _capture_reliability = _reliability()
+    ok, reason = _capture_reliability({
+        "applied_display_style": "FlatColors",
+        "applied_smooth_edges": False,
+        "resolution": {"pixel_size": 4000, "export_dpi": 150.0, "view_scale": 96.0},
+    })
+    assert ok is True
+    assert reason is None
+    # Same again with no resolution block at all.
+    ok, reason = _capture_reliability({
+        "applied_display_style": "FlatColors", "applied_smooth_edges": False})
+    assert ok is True and reason is None
+
+
+def test_show_shadows_unchanged_does_not_affect_reliability():
+    """H4: reliability reads AA and dimensions; shadows are not its input,
+    and the smooth-edges normalisation must not leak onto them."""
+    _capture_reliability = _reliability()
+    ok, reason = _capture_reliability({
+        "applied_display_style": "FlatColors",
+        "applied_smooth_edges": False,
+        "applied_show_shadows": "unchanged",
+        "resolution": {"pre_cap_px": 9000, "dim_check": "pass"},
+    })
+    assert ok is True
+    assert reason is None
+

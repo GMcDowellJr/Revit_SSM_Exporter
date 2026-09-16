@@ -527,10 +527,27 @@ def _capture_reliability(sidecar: dict[str, Any]) -> tuple[bool, str | None]:
     # The export's own dimensions are part of whether this capture is
     # trustworthy, not a separate concern: a mismatch means the image is not
     # the size the geometry was computed for, and "read_failed" means nobody
-    # checked. A sidecar predating the check carries no dim_check at all and
-    # is judged on the graphics settings alone, as it always was.
-    dim_check = (sidecar.get("resolution") or {}).get("dim_check")
-    dim_ok = dim_check is None or dim_check == "pass"
+    # checked.
+    #
+    # A missing dim_check means two different things depending on who wrote
+    # the sidecar, so "pre_cap_px" is used as the producer marker -- both
+    # fields arrived together, so a sidecar carrying one and not the other
+    # did not come intact from a producer that runs the check. A sidecar
+    # with neither predates the check entirely and is judged on its graphics
+    # settings alone, exactly as it always was; a sidecar with pre_cap_px
+    # and no dim_check has had the verification stripped out of it, and
+    # granting that HIGH would let an edited or truncated sidecar buy back
+    # the confidence the check exists to withhold.
+    resolution = sidecar.get("resolution") or {}
+    dim_check = resolution.get("dim_check")
+    verified_producer = resolution.get("pre_cap_px") is not None
+    if dim_check is None:
+        dim_ok = not verified_producer
+        if not dim_ok:
+            dim_check = "missing (sidecar records pre_cap_px, so its producer ran "
+            dim_check += "the dimension check and this field should be present)"
+    else:
+        dim_ok = dim_check == "pass"
     if display_style == "FlatColors" and smooth_edges is False and dim_ok:
         return True, None
     return False, (
