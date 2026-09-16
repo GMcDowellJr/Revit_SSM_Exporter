@@ -326,6 +326,56 @@ class TestDecodeStageAColorId(unittest.TestCase):
             expected = ((9000.0 / 150.0) * 96.0 / 12.0) / 9000.0
             self.assertAlmostEqual(doc["feet_per_pixel"], expected, places=12)
 
+    def test_feet_per_pixel_divides_by_the_fitted_axis_when_it_is_shorter(self):
+        """H3: the denominator follows requested_axis, not "the bigger one".
+
+        Under vertical fit of a wide view the fitted axis is the SHORT one.
+        Dividing by the width here -- whether by assuming width, or by
+        reaching for whichever dimension is larger -- reports a scale wrong
+        by the view's aspect ratio, and wrong in the direction that makes
+        the capture look finer than it is.
+        """
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sidecar_path, tiff_path, arr = self._make_fixture(tmp_dir)
+            sidecar = json.load(open(sidecar_path))
+            sidecar["resolution"].update({
+                "requested_axis": "height",
+                "pre_cap_px": 5000,
+                "pixel_size": 5000,
+                "actual_w": 12000,   # derived, and the LONGER of the two
+                "actual_h": 5000,    # fitted, and the shorter
+                "dim_check": "pass",
+            })
+            doc = dsc.build_decoded_document(
+                Path(tiff_path), sidecar, Path(sidecar_path), bounds_uv=None)
+
+            expected = ((5000.0 / 150.0) * 96.0 / 12.0) / 5000.0
+            self.assertAlmostEqual(doc["feet_per_pixel"], expected, places=12)
+            self.assertEqual(doc["feet_per_pixel_basis"], "sidecar_actual_dims")
+            # Not the derived/longer axis.
+            self.assertNotAlmostEqual(
+                doc["feet_per_pixel"], ((5000.0 / 150.0) * 96.0 / 12.0) / 12000.0, places=9)
+
+    def test_feet_per_pixel_defaults_to_width_when_axis_unrecorded(self):
+        """A sidecar with no requested_axis predates the field; horizontal
+        fit is the shipped default and what those captures used."""
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sidecar_path, tiff_path, arr = self._make_fixture(tmp_dir)
+            sidecar = json.load(open(sidecar_path))
+            sidecar["resolution"].update({
+                "pre_cap_px": 8000, "pixel_size": 8000,
+                "actual_w": 8000, "actual_h": 3000,
+            })
+            sidecar["resolution"].pop("requested_axis", None)
+            doc = dsc.build_decoded_document(
+                Path(tiff_path), sidecar, Path(sidecar_path), bounds_uv=None)
+            expected = ((8000.0 / 150.0) * 96.0 / 12.0) / 8000.0
+            self.assertAlmostEqual(doc["feet_per_pixel"], expected, places=12)
+
     def test_pixel_space_output_when_bounds_omitted(self):
         import tempfile
         with tempfile.TemporaryDirectory() as tmp_dir:

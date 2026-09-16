@@ -245,6 +245,21 @@ def test_unreadable_export_is_read_failed_not_pass(monkeypatch, tmp_path):
     assert any(w.get("callsite") == "export_dim_check" for w in diag.warnings)
 
 
+def test_backoff_floor_follows_the_fitted_axis(monkeypatch, tmp_path):
+    """H3: under vertical fit the floor is the grid's H, not its W -- the
+    same axis feet_per_pixel divides by. Taking W here would let the backoff
+    request fewer rows than the grid has, on exactly the views (tall ones)
+    where vertical fit is chosen."""
+    exporter = _FakeExporter(lambda px: (px // 2, px // 2))
+    accepted, report, diag = _run_export(
+        monkeypatch, tmp_path, exporter, 9000,
+        fit_direction="vertical", grid_axis_px=2500)
+    assert report["requested_axis"] == "height"
+    assert exporter.requests == [9000, 4500]   # 2250 would be under the grid
+    assert all(r >= 2500 for r in exporter.requests)
+    assert report["backoff_stop_reason"] == "grid_floor"
+
+
 def test_vertical_fit_checks_the_height_axis(monkeypatch, tmp_path):
     exporter = _FakeExporter(lambda px: (5000, px))
     accepted, report, diag = _run_export(
@@ -459,7 +474,8 @@ def test_read_failed_denies_the_decoder_high_confidence():
     _capture_reliability = _reliability()
     ok, reason = _capture_reliability(
         {"applied_display_style": "FlatColors", "applied_smooth_edges": "read_failed"})
-    assert ok is False and "read_failed" in reason
+    assert ok is False
+    assert "applied_smooth_edges='read_failed'" in reason
     ok, reason = _capture_reliability(
         {"applied_display_style": "FlatColors", "applied_smooth_edges": False})
     assert ok is True and reason is None
@@ -472,7 +488,7 @@ def test_legacy_unchanged_denies_high_and_reports_aa_unknown():
         {"applied_display_style": "FlatColors", "applied_smooth_edges": "unchanged"})
     assert ok is False
     # Reported as the unknown state it always was, not echoed as "unchanged".
-    assert "read_failed" in reason
+    assert "applied_smooth_edges='read_failed'" in reason
     assert "'unchanged'" not in reason
 
 
@@ -490,7 +506,7 @@ def test_dim_check_gates_high_reliability(dim_check, expect_high):
     ok, reason = _capture_reliability(sidecar)
     assert ok is expect_high
     if not expect_high:
-        assert dim_check in reason
+        assert "dim_check={0!r}".format(dim_check) in reason
 
 
 def test_post_cap_sidecar_missing_dim_check_is_not_high():
@@ -536,3 +552,68 @@ def test_show_shadows_unchanged_does_not_affect_reliability():
     assert ok is True
     assert reason is None
 
+
+class _FakeRaster(object):
+    """Minimal raster: grid extents only, no bounds_xy, so the crop and
+    re-collection paths stay out of the way of what this is measuring."""
+
+    def __init__(self, W, H, cell_size_ft=1.0):
+        self.W = W
+        self.H = H
+        self.cell_size_ft = cell_size_ft
+        self.bounds_xy = None
+        self.model_clip_bounds = None
+        self.view_basis = None
+
+
+def _run_view_with_raster(tmp_path, doc, view, raster, **cfg_kw):
+    cfg = Config(**cfg_kw)
+    cfg.include_linked_rvt = False
+    cfg.debug_dump_path = str(tmp_path)
+    diag = _HarnessDiag()
+    result = cib.export_color_id_buffer_view(
+        doc, view, elements=[], cfg=cfg, diag=diag, raster=raster, elem_cache=None)
+    return result, diag
+
+
+@pytest.mark.parametrize("fit,expected_floor,expected_axis", [
+    ("horizontal", 800, "width"),
+    ("vertical", 250, "height"),
+])
+def test_backoff_floor_is_the_grid_extent_on_the_fitted_axis(
+        tmp_path, fit, expected_floor, expected_axis):
+    """H3: the call site must pick raster.H under vertical fit, matching the
+    axis feet_per_pixel divides by. A 800x250 grid makes the two distinct."""
+    with _install_fake_revit_db():
+        doc = _SizedDoc(lambda px: (px, px))
+        result, diag = _run_view_with_raster(
+            tmp_path, doc, _FakeView(view_id=110), _FakeRaster(W=800, H=250),
+            color_id_buffer_fit_direction=fit)
+
+    res = result["metadata"]["resolution"]
+    assert res["requested_axis"] == expected_axis
+    assert res["backoff_floor_px"] == expected_floor
+    assert res["backoff_max_retries"] == cib.MAX_MISMATCH_RETRIES
+
+
+def test_cap_override_above_the_ceiling_warns(tmp_path):
+    """F6: the test-only override announces that it cannot widen anything."""
+    with _install_fake_revit_db():
+        doc = _SizedDoc(lambda px: (px, px))
+        result, diag = _run_view(
+            tmp_path, doc, _FakeView(view_id=111),
+            color_id_buffer_cap_axis_px=15000)
+
+    warned = [w for w in diag.warnings
+              if w.get("callsite") == "pixel_size" and "test-only" in w.get("message", "")]
+    assert warned, "raising the sizing cap past the verification ceiling must warn"
+
+
+def test_cap_override_at_or_below_the_ceiling_does_not_warn(tmp_path):
+    with _install_fake_revit_db():
+        doc = _SizedDoc(lambda px: (px, px))
+        result, diag = _run_view(
+            tmp_path, doc, _FakeView(view_id=112),
+            color_id_buffer_cap_axis_px=MAX_STAGE_A_AXIS_PX)
+
+    assert not [w for w in diag.warnings if "test-only" in w.get("message", "")]

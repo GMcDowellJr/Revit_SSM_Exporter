@@ -181,6 +181,9 @@ class _FakeZoomFitType(object):
 
 class _FakeFitDirectionType(object):
     Horizontal = "Horizontal"
+    # Real FitDirectionType has both; the fake only needed Horizontal until
+    # a test exercised vertical fit, where production reads this member.
+    Vertical = "Vertical"
 
 
 class _FakeGenericList(list):

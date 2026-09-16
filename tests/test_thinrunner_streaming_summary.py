@@ -49,13 +49,14 @@ def test_describe_suppression_false_means_suppressed(helpers):
 def test_describe_suppression_unchanged_means_no(helpers):
     # Still the right reading for applied_show_shadows, whose writer skips
     # the mutation when shadows are genuinely already off.
-    assert helpers["_describe_suppression"]("unchanged").startswith("no (already off")
+    assert helpers["_describe_suppression"]("unchanged") == (
+        "no (already off, or unsupported on this Revit host)")
 
 
 def test_describe_suppression_read_failed_is_unknown_not_no(helpers):
-    result = helpers["_describe_suppression"]("read_failed")
-    assert result.startswith("unknown")
-    assert "already off" not in result
+    # Equality, not `"no" in result.lower()`: "unknown" contains "no".
+    assert helpers["_describe_suppression"]("read_failed") == (
+        "unknown (state could not be read)")
 
 
 def test_summarize_normalizes_legacy_unchanged_for_smooth_edges_only(helpers, tmp_path):
@@ -67,15 +68,28 @@ def test_summarize_normalizes_legacy_unchanged_for_smooth_edges_only(helpers, tm
         "applied_show_shadows": "unchanged",
         "applied_smooth_edges": "unchanged",
     }))
-    text = "\n".join(helpers["_summarize_stage_a_sidecar"](str(sidecar)))
-    assert "Smooth edges suppressed: unknown (state could not be read)" in text
-    assert "Shadows suppressed: no (already off" in text
+    lines = [ln.strip() for ln in helpers["_summarize_stage_a_sidecar"](str(sidecar))]
+    assert "Smooth edges suppressed: unknown (state could not be read)" in lines
+    assert "Shadows suppressed: no (already off, or unsupported on this Revit host)" in lines
+
+
+def test_shadows_unchanged_prints_as_already_off_beside_a_clean_aa_read(helpers, tmp_path):
+    """H4: the pairing that must NOT be normalised -- shadows genuinely off,
+    AA genuinely confirmed off. Each field keeps its own meaning."""
+    import json
+    sidecar = tmp_path / "shadows_off.json"
+    sidecar.write_text(json.dumps({
+        "applied_show_shadows": "unchanged",
+        "applied_smooth_edges": False,
+    }))
+    lines = [ln.strip() for ln in helpers["_summarize_stage_a_sidecar"](str(sidecar))]
+    assert "Shadows suppressed: no (already off, or unsupported on this Revit host)" in lines
+    assert "Smooth edges suppressed: yes" in lines
 
 
 def test_describe_suppression_unchanged_failed_means_no(helpers):
-    result = helpers["_describe_suppression"]("unchanged (failed)")
-    assert "no" in result.lower()
-    assert "fail" in result.lower()
+    assert helpers["_describe_suppression"]("unchanged (failed)") == (
+        "no (suppression attempt failed)")
 
 
 # --- _summarize_stage_a_sidecar ---------------------------------------------
@@ -91,13 +105,14 @@ def test_summarize_stage_a_sidecar_happy_path(helpers, tmp_path):
         "paint_failures": 0,
     }))
 
-    lines = helpers["_summarize_stage_a_sidecar"](str(sidecar))
-    text = "\n".join(lines)
+    raw_lines = helpers["_summarize_stage_a_sidecar"](str(sidecar))
+    text = "\n".join(raw_lines)
+    lines = [ln.strip() for ln in raw_lines]
 
-    assert "Shadows suppressed: yes" in text
-    assert "Smooth edges suppressed: yes" in text
-    assert "LINK categories colored: 2" in text
-    assert "Near-face-W collected: host=2 link=1" in text
+    assert "Shadows suppressed: yes" in lines
+    assert "Smooth edges suppressed: yes" in lines
+    assert "LINK categories colored: 2" in lines
+    assert "Near-face-W collected: host=2 link=1" in lines
     # No paint failures -- line omitted entirely.
     assert "paint failures" not in text.lower()
 
