@@ -1176,7 +1176,26 @@ def _set_pixel_size_with_backoff(opts, pixel_size, diag=None, view_id=None):
             candidate = max(floor, candidate // 2)
 
 
-def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None):
+def _fit_direction(name):
+    """Map cfg.color_id_buffer_fit_direction onto Revit's FitDirectionType.
+
+    Unknown values are refused rather than defaulted: silently exporting along
+    the other axis would change the output size of every view, and a typo in a
+    config is not a reason to do that.
+    """
+    from Autodesk.Revit.DB import FitDirectionType
+    key = str(name or "horizontal").strip().lower()
+    if key == "horizontal":
+        return FitDirectionType.Horizontal
+    if key == "vertical":
+        return FitDirectionType.Vertical
+    raise ValueError(
+        "color_id_buffer_fit_direction must be 'horizontal' or 'vertical', "
+        "got {0!r}".format(name))
+
+
+def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None,
+                 fit_direction="horizontal"):
     from Autodesk.Revit.DB import (
         ImageExportOptions, ExportRange, ZoomFitType, FitDirectionType, ElementId,
         ImageFileType,
@@ -1192,7 +1211,11 @@ def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None):
     opts.ExportRange = ExportRange.SetOfViews
     opts.SetViewsAndSheets(ids)
     opts.ZoomType = ZoomFitType.FitToPage
-    opts.FitDirection = FitDirectionType.Horizontal
+    # PixelSize sets the axis fitted here; the other one is derived from the
+    # view's extents and is bounded by nothing. Horizontal is the shipped
+    # default, so unless a caller asks otherwise this is the line it has
+    # always been.
+    opts.FitDirection = _fit_direction(fit_direction)
     actual_pixel_size = _set_pixel_size_with_backoff(opts, pixel_size, diag=diag, view_id=view_id)
     opts.FilePath = os.path.join(out_dir, "_vop_color_id_tmp")
 
@@ -1323,6 +1346,12 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
 
     scale = float(getattr(view, "Scale", 1) or 1)
     export_dpi = float(getattr(cfg, "color_id_buffer_export_dpi", 150))
+    # Normalized here, once, so the value handed to Revit and the value written
+    # into the sidecar cannot disagree. A cfg without the field is the shipped
+    # behaviour.
+    fit_direction = str(
+        getattr(cfg, "color_id_buffer_fit_direction", "horizontal") or "horizontal"
+    ).strip().lower()
     if raster is not None and getattr(raster, "W", 0) and getattr(raster, "cell_size_ft", 0):
         paper_width_in = (float(raster.W) * float(raster.cell_size_ft) * 12.0) / max(scale, 1.0e-6)
     else:
@@ -1969,7 +1998,8 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     actual_pixel_size = pixel_size
     try:
         _tiff_path, actual_pixel_size = _export_tiff(
-            doc, view, tiff_path, pixel_size, diag=diag, view_id=view_id
+            doc, view, tiff_path, pixel_size, diag=diag, view_id=view_id,
+            fit_direction=fit_direction,
         )
     finally:
         restore_tx = Transaction(doc, "VOP Stage A RESTORE color ID buffer")
@@ -2155,6 +2185,10 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             "requested_pixel_size": pixel_size,
             "export_dpi": export_dpi,
             "view_scale": scale,
+            # Which axis pixel_size set. Without it a reader cannot tell
+            # whether the other dimension was requested or derived, and every
+            # size-derived metric downstream assumes one of the two.
+            "fit_direction": fit_direction,
         },
         # View-local UV rectangle (min_u, min_v, max_u, max_v) the export
         # was cropped to -- the same tuple set as view.CropBox above, not

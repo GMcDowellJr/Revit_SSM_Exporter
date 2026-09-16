@@ -32,7 +32,8 @@ Dynamo inputs:
     IN[1] = output directory
     IN[2] = case selection: "all" or a comma-separated subset of
             d1_determinism, d2_category_load, d3_size_sweep,
-            d4_dpi_vs_pixel_size, d5_crop_tiles          (default "all")
+            d4_dpi_vs_pixel_size, d5_crop_tiles, d7_fit_direction
+                                                          (default "all")
     IN[3] = repetitions for D1                            (default 2)
     IN[4] = D3 sizes: "native,10000,12000,15000" or a list
                                                           (default that list)
@@ -111,6 +112,7 @@ CASES = (
     "d3_size_sweep",
     "d4_dpi_vs_pixel_size",
     "d5_crop_tiles",
+    "d7_fit_direction",
 )
 
 DEFAULT_EXPORT_DPI = 150.0
@@ -927,6 +929,59 @@ def _case_d3(ctx, sweep):
                              "MAX_STAGE_A_PIXEL_SIZE clamp both stay on the code path"}
 
 
+def _case_d7(ctx, sweep):
+    """D7: is the cap on the exported height, or on the axis Revit does not fit?
+
+    Every capture before this one used horizontal fit, where PixelSize sets the
+    width exactly and the height is always the derived axis. "The cap is on
+    height" and "the cap is on whichever axis Revit does not fit to" therefore
+    predict identically on all of Run 1, and they imply different remedies: the
+    first needs the request bounded and density given up on tall views, the
+    second needs only the fit axis swapped.
+
+    Vertical fit separates them. PixelSize then sets the HEIGHT and the width
+    is derived, so a request that puts the height over the threshold while
+    leaving the derived width under it is answered one way by each reading.
+    Production is still what exports; only cfg.color_id_buffer_fit_direction
+    differs between the two captures of a pair.
+    """
+    u0, v0, u1, v1 = [float(v) for v in ctx["bounds_xy"]]
+    aspect = (v1 - v0) / (u1 - u0)
+    exports, records = [], []
+    for entry in resolve_size_sweep(sweep, ctx["native_pixel_size"]):
+        requested = entry["requested_pixel_size"]
+        dpi = dpi_for_pixel_width(requested, ctx["paper_width_in"])
+        for direction in ("horizontal", "vertical"):
+            cfg = build_capture_config(
+                ctx["cfg_output_dir"], export_dpi=dpi,
+                overrides={"color_id_buffer_fit_direction": direction})
+            record = ctx["capture"](cfg, "d7_fit_direction",
+                                    "{0}.{1}".format(entry["label"], direction))
+            fitted = "width" if direction == "horizontal" else "height"
+            predicted = ((requested, int(round(requested * aspect))) if fitted == "width"
+                         else (int(round(requested / aspect)), requested))
+            record.update({"fit_direction": direction, "fitted_axis": fitted,
+                           "requested_pixel_size": requested,
+                           "predicted_width_px": predicted[0],
+                           "predicted_height_px": predicted[1]})
+            exports.append(record)
+            records.append({"label": record["label"], "fit_direction": direction,
+                            "fitted_axis": fitted, "requested_pixel_size": requested,
+                            "predicted_width_px": predicted[0],
+                            "predicted_height_px": predicted[1],
+                            "actual_dimensions_px": record.get("dimensions_px"),
+                            "tiff_path": record["tiff_path"]})
+    return exports, {
+        "pairs": records,
+        "aspect_height_over_width": aspect,
+        "note": "fit direction is varied through cfg.color_id_buffer_fit_direction, "
+                "which export_color_id_buffer_view reads; the probe sets no "
+                "ImageExportOptions field itself",
+        "unconfirmed": "FitDirectionType.Vertical is assumed to exist on this "
+                       "install; a capture that failed will say so in exceptions",
+    }
+
+
 def _case_d4(ctx):
     """D4: lower DPI until native fits the ceiling, then capture at exactly that."""
     lowered = dpi_for_native_ceiling(ctx["bounds_xy"], ctx["view_scale"], ctx["export_dpi"])
@@ -1083,6 +1138,7 @@ def _run_native(raw_view, output_dir, selection="all", repetitions=DEFAULT_REPET
             "d3_size_sweep": lambda: _case_d3(ctx, pixel_sizes),
             "d4_dpi_vs_pixel_size": lambda: _case_d4(ctx),
             "d5_crop_tiles": lambda: _case_d5(ctx, tile_grid),
+            "d7_fit_direction": lambda: _case_d7(ctx, pixel_sizes),
         }
         for case in cases:
             started = time.time()

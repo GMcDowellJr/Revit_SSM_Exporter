@@ -62,7 +62,11 @@ def test_the_campaign_covers_every_experiment_in_the_brief(batch):
     for job in batch["jobs"]:
         module = drift if job["probe_id"] == "stage_a_drift_onset" else blend
         selected.update(module.select_cases(job["settings"]["selection"]))
-    assert set(drift.CASES) <= selected, "a D experiment is missing"
+    # The D cases as they stood when this campaign was written. d7_fit_direction
+    # came out of Run 1's findings and belongs to Run 2; a finished campaign is
+    # a record of what was run, not a list to be back-filled.
+    assert {"d1_determinism", "d2_category_load", "d3_size_sweep",
+            "d4_dpi_vs_pixel_size", "d5_crop_tiles"} <= selected, "a D experiment is missing"
     assert set(blend.CASES) <= selected, "a B experiment is missing"
 
 
@@ -320,6 +324,24 @@ def test_run2_drops_the_category_load_sweep(run2):
         if job["probe_id"] != "stage_a_drift_onset":
             continue
         assert "d2_category_load" not in drift.select_cases(job["settings"]["selection"])
+
+
+def test_run2_carries_the_fit_direction_experiment(run2):
+    """The one question Run 1 could not answer: under horizontal fit the height
+    is always the derived axis, so "the cap is on height" and "the cap is on
+    the axis Revit does not fit to" predict identically."""
+    job = job_by_id(run2, "d7-fit-direction-hosp-2")
+    assert "d7_fit_direction" in drift.select_cases(job["settings"]["selection"])
+    native, aspect = RUN1_GEOMETRY[job["view"]["element_id"]]
+    widths = [e["requested_pixel_size"]
+              for e in drift.resolve_size_sweep(job["settings"]["pixel_sizes"], native)]
+    # Under VERTICAL fit the request sets the height and the width is derived.
+    # The deciding capture needs the height over the threshold and the derived
+    # width under it; the other is the control that says vertical fit works.
+    deciding = [w for w in widths if w > 10079 and (w / aspect) < 9927]
+    control = [w for w in widths if w < 9927 and (w / aspect) < 9927]
+    assert deciding, "no capture separates the two readings"
+    assert control, "no capture establishes that vertical fit exports cleanly at all"
 
 
 def test_every_run2_view_id_appeared_in_run_1(run2):

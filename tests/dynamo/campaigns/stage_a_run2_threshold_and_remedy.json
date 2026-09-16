@@ -52,6 +52,19 @@
       "output_directory": "captures/d3-height-cap-hosp-3"
     },
     {
+      "job_id": "d7-fit-direction-hosp-2",
+      "probe_id": "stage_a_drift_onset",
+      "view": {
+        "element_id": 871863,
+        "name": "(N) HOSPITAL - LEVEL 2"
+      },
+      "settings": {
+        "selection": "d7_fit_direction",
+        "pixel_sizes": "9000,11000"
+      },
+      "output_directory": "captures/d7-fit-direction-hosp-2"
+    },
+    {
       "job_id": "b3-underlay-hosp-2",
       "probe_id": "stage_a_white_blend",
       "view": {

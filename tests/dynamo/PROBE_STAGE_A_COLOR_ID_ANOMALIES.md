@@ -628,7 +628,26 @@ wrong prediction falsifies the height rule instead of being absorbed by it.
 | `d3-threshold-pin-hosp-2` | 871863 | 8564 / 8652 / 8695 / 8739 | 9877 / 9979 / 10028 / 10079 | clean, clean, **drift**, drift |
 | `d3-height-cap-mob-1` | 528698 | 12000 / native (→15000) | 9885 / 12356 | clean, **drift** |
 | `d3-height-cap-hosp-3` | 929475 | 10268 / 12000 | 9900 / 11570 | clean, **drift** |
+| `d7-fit-direction-hosp-2` | 871863 | 9000 / 11000, each fit both ways | see below | **the deciding pair** |
 | `b3-underlay-hosp-2` | 871863 | 8584 | 9877 | underlay → off-palette px → 0 |
+
+D7 is the one question Run 1 could not answer, and it needed a production
+change to ask: `cfg.color_id_buffer_fit_direction`, new, defaulting to
+`"horizontal"` so nothing changes unless a caller asks. Under vertical fit
+PixelSize sets the **height** and the width is derived:
+
+| capture | width | height | "cap is on height" | "cap is on the derived axis" |
+|---|---|---|---|---|
+| 9000, horizontal | 9000 | 10380 | drift | drift |
+| 9000, vertical | 7804 | 9000 | clean | clean |
+| 11000, horizontal | 11000 | 12687 | drift | drift |
+| **11000, vertical** | **9538** | **11000** | **drift** | **clean** |
+
+The last row is the whole experiment. The 9000/vertical row is its control: it
+says vertical fit exports cleanly at all, so a drift in the deciding capture
+cannot be blamed on the fit axis itself. If the deciding capture comes back
+clean, the remedy is to swap the fit axis on tall views and no density is given
+up anywhere — `MOB 1 - LEVEL 2` keeps the 20% the height cap would cost it.
 
 The threshold sweep cuts (9927, 10079] down to roughly ±25 px around 10,000.
 The two height-cap jobs test the remedy and carry the run's sharpest
@@ -648,12 +667,6 @@ second pass re-runs everything by itself.
 
 Still not covered by any campaign, and both need input:
 
-- **Fit direction.** Every capture so far used `FitDirectionType.Horizontal`,
-  so PixelSize set the width exactly and the height was always the derived
-  axis. Nothing distinguishes "the cap is on height" from "the cap is on
-  whichever axis Revit does not fit to". Testing it means varying an
-  `ImageExportOptions` field that `export_color_id_buffer_view` sets, which is
-  a production edit rather than an experiment input — see the stop condition.
 - **Links.** A different document, so a separate campaign; it needs the model
   and the view ids.
 
@@ -709,14 +722,12 @@ emits its own `unconfirmed_api_assumptions` list.
 5. No API access to hardware acceleration is known, which is why D6 is manual.
    **Now the highest-value remaining test**: if the ~10,000 px height cap is a
    renderer/GPU limit, disabling hardware acceleration may move or remove it.
-6. **Untested**: whether the cap is on the *height* or on *the axis Revit does
-   not fit to*. Every capture in Run 1 used `FitDirectionType.Horizontal`, so
-   PixelSize set the width exactly (5427, 10000, 12000, 15000 all accepted
-   verbatim) and the height was always the derived one. If the cap belongs to
-   the derived axis rather than to height, exporting a tall view with
-   `FitDirectionType.Vertical` would move it to the width and allow the full
-   height — which would change the recommended fix entirely. One capture of
-   871863 at native with Vertical fit decides it.
+6. `FitDirectionType.Vertical` exists on this install and `PixelSize` then
+   sets the exported **height**. Assumed by D7 and by
+   `cfg.color_id_buffer_fit_direction`; a capture that failed on it says so in
+   the report's `exceptions`. Until D7 runs, it is untested whether the cap is
+   on the *height* or on *the axis Revit does not fit to* — every Run 1 capture
+   used horizontal fit, where those are the same axis.
 
 **Underlay / blend**
 

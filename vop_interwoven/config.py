@@ -161,6 +161,7 @@ class Config:
         enable_color_id_buffer_stage_a=False,
         color_id_buffer_export_dpi=150,
         color_id_buffer_global_assignment_threshold=32767,
+        color_id_buffer_fit_direction="horizontal",
         
     ):
         """Initialize VOP configuration.
@@ -345,6 +346,22 @@ class Config:
         self.enable_color_id_buffer_stage_a = bool(enable_color_id_buffer_stage_a)
         self.color_id_buffer_export_dpi = float(color_id_buffer_export_dpi)
         self.color_id_buffer_global_assignment_threshold = int(color_id_buffer_global_assignment_threshold)
+        # Which axis ImageExportOptions.PixelSize sets. "horizontal" is the
+        # shipped behaviour and the default; nothing changes unless a caller
+        # asks for "vertical".
+        #
+        # It exists because Stage A's drift onset sits on the exported HEIGHT
+        # (~10,000 px), and under horizontal fit the height is always the
+        # derived axis -- so "the cap is on height" and "the cap is on whatever
+        # axis Revit does not fit to" predict identically and cannot be told
+        # apart. They imply different remedies: the first needs the request
+        # bounded (and density given up on tall views), the second needs only
+        # the fit axis swapped. One capture under vertical fit decides it.
+        self.color_id_buffer_fit_direction = str(color_id_buffer_fit_direction).strip().lower()
+        if self.color_id_buffer_fit_direction not in ("horizontal", "vertical"):
+            raise ValueError(
+                "color_id_buffer_fit_direction must be 'horizontal' or 'vertical', "
+                "got {0!r}".format(color_id_buffer_fit_direction))
         if self.color_id_buffer_export_dpi <= 0:
             raise ValueError("color_id_buffer_export_dpi must be positive")
         if self.color_id_buffer_global_assignment_threshold <= 0:
@@ -573,6 +590,7 @@ class Config:
             # VOP Stage A color ID-buffer extraction
             "enable_color_id_buffer_stage_a": self.enable_color_id_buffer_stage_a,
             "color_id_buffer_export_dpi": self.color_id_buffer_export_dpi,
+            "color_id_buffer_fit_direction": self.color_id_buffer_fit_direction,
             "color_id_buffer_global_assignment_threshold": (
                 self.color_id_buffer_global_assignment_threshold
             ),
@@ -648,6 +666,7 @@ class Config:
             # VOP Stage A color ID-buffer extraction
             enable_color_id_buffer_stage_a=d.get("enable_color_id_buffer_stage_a", False),
             color_id_buffer_export_dpi=d.get("color_id_buffer_export_dpi", 150),
+            color_id_buffer_fit_direction=d.get("color_id_buffer_fit_direction", "horizontal"),
             color_id_buffer_global_assignment_threshold=d.get(
                 "color_id_buffer_global_assignment_threshold", 32767
             ),

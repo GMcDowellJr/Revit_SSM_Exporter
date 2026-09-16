@@ -22,7 +22,7 @@ def test_importing_the_probe_starts_no_transaction_and_sets_no_output():
     assert not hasattr(probe, "OUT")
     assert probe.PROBE_NAME == "stage_a_drift_onset"
     assert probe.CASES == ("d1_determinism", "d2_category_load", "d3_size_sweep",
-                           "d4_dpi_vs_pixel_size", "d5_crop_tiles")
+                           "d4_dpi_vs_pixel_size", "d5_crop_tiles", "d7_fit_direction")
 
 
 # --- native density ---------------------------------------------------------
