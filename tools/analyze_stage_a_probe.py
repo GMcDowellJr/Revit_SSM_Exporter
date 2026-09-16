@@ -2106,13 +2106,36 @@ def _main_export_metrics(ns) -> int:
 
     inputs.sort(key=lambda path: (0 if _is_bare_sidecar(path) else 1, str(path)))
 
+    # Row labels come from each file's path relative to the common root, not
+    # from its stem. A campaign gives every job its own directory, and capture
+    # file names repeat across them by design -- d1_determinism.rep0 exists
+    # under every D1 job -- so a stem alone produces two identical rows with
+    # nothing to say which view each belongs to. The relative path also names
+    # the job, which is what a reader actually wants in the table.
+    def _row_label(path: Path, row: str, row_count: int) -> str:
+        try:
+            relative = Path(os.path.relpath(path, _table_root))
+        except ValueError:
+            # Different drives on Windows: no relative path exists.
+            relative = path
+        stem = relative.with_suffix('').as_posix()
+        # The per-record label only earns its place when a file yields more
+        # than one row; otherwise it just repeats the file name.
+        return '{0}:{1}'.format(stem, row) if row_count > 1 else stem
+
+    try:
+        _table_root = (os.path.commonpath([str(path.parent) for path in inputs])
+                       if inputs else '')
+    except ValueError:
+        _table_root = ''
+
     for jp in inputs:
         try:
             out, rows = analyze_metrics_json(jp, seen_tiffs=seen_tiffs)
         except Exception as e:
             failures += 1; print(f"✗ {jp}: {type(e).__name__}: {e}"); continue
         for label, metrics in rows:
-            table_rows.append((f"{jp.stem}:{label}", metrics))
+            table_rows.append((_row_label(jp, label, len(rows)), metrics))
         if rows:
             print(f"✓ {jp} -> {out}: {len(rows)} export(s) measured")
         else:

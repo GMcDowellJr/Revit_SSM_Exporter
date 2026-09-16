@@ -873,3 +873,63 @@ def test_the_probe_records_a_relocatable_tiff_path():
     source = inspect.getsource(drift.production_capture)
     assert 'sidecar["tiff_path"] = os.path.basename(tiff_path)' in source
     assert 'tiff_path_at_capture' in source
+
+
+# --- table rows must say which job a capture came from ----------------------
+
+def _campaign_tree(tmp_path):
+    """The layout a campaign run produces: one directory per job, and capture
+    file names that repeat across them by design."""
+    root = tmp_path / "captures"
+    for job, inset in (("d1-hospital-level-2", 16), ("d1-mob-1-level-2", 8)):
+        captures = root / job / "drift_onset_probe" / "captures"
+        captures.mkdir(parents=True)
+        write_tiff(captures, solid_square(inset=inset), "d1_determinism.rep0.tiff")
+        side = dict(sidecar(), tiff_path="d1_determinism.rep0.tiff", view_id=1)
+        (captures / "d1_determinism.rep0.json").write_text(
+            json.dumps(side), encoding="utf-8")
+    return root
+
+
+def test_identically_named_captures_from_different_jobs_get_distinct_rows(tmp_path):
+    root = _campaign_tree(tmp_path)
+    table = tmp_path / "t.md"
+    assert analyzer.main([str(root), "--export-metrics", "--metrics-table", str(table)]) == 0
+    text = table.read_text(encoding="utf-8")
+    rows = [line for line in text.strip().split("\n")[2:]]
+    assert len(rows) == 2
+    labels = [row.split("|")[1].strip() for row in rows]
+    assert len(set(labels)) == 2, labels
+    # The job directory is what disambiguates, and is what a reader wants.
+    assert any("d1-hospital-level-2" in label for label in labels)
+    assert any("d1-mob-1-level-2" in label for label in labels)
+
+
+def test_a_row_label_does_not_repeat_the_file_name_for_a_single_capture(tmp_path):
+    write_tiff(tmp_path, solid_square(), "view.tiff")
+    doc = dict(sidecar(), tiff_path="view.tiff", view_id=42)
+    (tmp_path / "view.json").write_text(json.dumps(doc), encoding="utf-8")
+    table = tmp_path / "t.md"
+    analyzer.main([str(tmp_path), "--export-metrics", "--metrics-table", str(table)])
+    label = table.read_text(encoding="utf-8").strip().split("\n")[2].split("|")[1].strip()
+    assert label == "view"
+
+
+def test_a_multi_export_report_still_labels_each_row(tmp_path):
+    write_tiff(tmp_path, solid_square(), "a.tiff")
+    write_tiff(tmp_path, solid_square(inset=8), "b.tiff")
+    base = sidecar()
+    doc = {"color_assignment_map": base["color_assignment_map"],
+           "link_category_color_map": {},
+           "exports": [
+               {"label": "rep0", "tiff_path": "a.tiff", "resolution": base["resolution"],
+                "bounds_xy": base["bounds_xy"]},
+               {"label": "rep1", "tiff_path": "b.tiff", "resolution": base["resolution"],
+                "bounds_xy": base["bounds_xy"]},
+           ]}
+    (tmp_path / "report.json").write_text(json.dumps(doc), encoding="utf-8")
+    table = tmp_path / "t.md"
+    analyzer.main([str(tmp_path), "--export-metrics", "--metrics-table", str(table)])
+    labels = [line.split("|")[1].strip()
+              for line in table.read_text(encoding="utf-8").strip().split("\n")[2:]]
+    assert sorted(labels) == ["report:rep0", "report:rep1"]
