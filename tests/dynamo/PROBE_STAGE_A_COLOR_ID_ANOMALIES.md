@@ -199,10 +199,20 @@ One Dynamo node, one input, no per-run choices.
 ```
 paste tests/dynamo/revit_batch_dynamo.py
   IN[0] = ...\tests\dynamo\campaigns\stage_a_color_id_anomalies.json
-  IN[1] = null
-  IN[2] = true     # dry run first: resolves every view, validates every
-                   # setting, exports nothing
+  IN[1] = null                       # manifest root; same value EVERY run
+  IN[2] = true                       # dry run: resolves every view, validates
+                                     # every setting, exports nothing
+  IN[3] = D:\vop_probe               # artifact root -- REQUIRED, see below
 ```
+
+**`IN[3]` is not optional in practice.** The campaign's `output_directory`
+values are relative, as a checked-in file's must be: an absolute path would be
+wrong on every machine but the author's. Relative paths resolve against the
+directory holding the campaign file, which here is inside the repository — so
+without an artifact root, captures are written into the checkout. A Stage A
+TIFF can reach several hundred megabytes. `.gitignore` covers the paths as a
+safety net, but supplying `IN[3]` is the actual answer. Point it at a scratch
+volume with room for tens of gigabytes.
 
 Set `document.expected_title` to the exact model title before the first run —
 it is a deliberate `REPLACE-…` placeholder so that running against the wrong
@@ -249,15 +259,36 @@ What this removes, all of which went wrong on the first hand-run attempt:
 | Output directory | one shared folder; captures collided across views | one per job |
 | Knowing what has run | remembered | `resume` plus a run manifest |
 
-Analysis is then per job directory, or across all of them at once:
+### Analysing what it captured
+
+The campaign gives every job its own directory, so one command covers the whole
+run:
 
 ```bash
-python tools/analyze_stage_a_probe.py \
-    "<output>/captures" --export-metrics --metrics-table drift_table.md
+python tools/analyze_stage_a_probe.py "D:/vop_probe/captures" \
+    --export-metrics --metrics-table drift_table.md
+```
+
+That walks every job directory, measures each capture once, and writes one
+table plus a `.metrics.json` beside each sidecar. Both probes' output is
+included; split them if you prefer two tables:
+
+```bash
+python tools/analyze_stage_a_probe.py "D:/vop_probe/captures" \
+    --export-metrics --metrics-table drift_table.md
+python tools/analyze_stage_a_probe.py "D:/vop_probe/captures/b1-site-plan-4" \
+    "D:/vop_probe/captures/b3-site-plan-4" \
+    --export-metrics --metrics-table blend_table.md
 ```
 
 `--metrics-table` is written relative to the current directory, not to the
-captures path.
+captures path. Pass `-` to print it instead.
+
+Each job directory also holds the probe's own report — `*.drift_onset.json` or
+`*.white_blend.json` — at its top level. Those carry what the table cannot:
+production's `Diagnostics`, `state.restored`, the B1 read-only findings, and
+each B3 variant's `variant_status`. Read them alongside the table, not instead
+of it.
 
 ### Running a single experiment by hand
 

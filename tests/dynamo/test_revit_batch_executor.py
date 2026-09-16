@@ -647,3 +647,49 @@ def test_a_clean_validation_run_reports_what_it_validated(tmp_path):
     # invocation IS needed -- the signal that distinguishes this from a failure.
     assert summary["jobs_deferred"] == ["two"]
     assert summary["another_invocation_needed"] is True
+
+
+# --- artifact_root keeps capture output out of the checkout -----------------
+
+def test_a_relative_output_directory_resolves_against_the_artifact_root(tmp_path):
+    """A checked-in campaign must use relative paths -- an absolute one would be
+    wrong on every machine but the author's -- so the artifact root is what
+    decides where hundreds of megabytes of TIFF actually land."""
+    from tests.dynamo.revit_batch_executor import resolve_output_directory
+    import os
+    source = str(tmp_path / "campaigns" / "campaign.json")
+    root = str(tmp_path / "elsewhere")
+    resolved = resolve_output_directory("captures/job-1", source, root)
+    assert resolved == os.path.normpath(os.path.join(root, "captures", "job-1"))
+
+
+def test_without_an_artifact_root_output_lands_beside_the_batch_file(tmp_path):
+    """The documented hazard: for a campaign inside the repository this is the
+    checkout itself, which is why revit_batch_dynamo exposes IN[3]."""
+    from tests.dynamo.revit_batch_executor import resolve_output_directory
+    import os
+    source = str(tmp_path / "campaigns" / "campaign.json")
+    resolved = resolve_output_directory("captures/job-1", source, None)
+    assert resolved == os.path.normpath(
+        os.path.join(str(tmp_path / "campaigns"), "captures", "job-1"))
+
+
+def test_an_absolute_output_directory_ignores_the_artifact_root(tmp_path):
+    from tests.dynamo.revit_batch_executor import resolve_output_directory
+    import os
+    absolute = str(tmp_path / "explicit")
+    assert resolve_output_directory(absolute, None, str(tmp_path / "other")) == \
+        os.path.normpath(absolute)
+
+
+def test_the_dynamo_entry_point_forwards_the_artifact_root():
+    """IN[3] has to actually reach execute_batch, or the hazard above stands."""
+    import ast
+    import inspect
+    from tests.dynamo import revit_batch_dynamo
+    source = inspect.getsource(revit_batch_dynamo.dynamo_main)
+    assert "artifact_root" in source
+    call = [node for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "execute_batch"]
+    assert call, "execute_batch call not found"
+    assert any(keyword.arg == "artifact_root" for keyword in call[0].keywords)
