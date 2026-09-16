@@ -302,6 +302,26 @@ re-capturing. Changing `batch_id` also works and keeps the previous run's
 results attributable to the old id, which is worth doing when the two runs
 should be comparable rather than one replacing the other.
 
+### Artifact names
+
+Every artifact a probe writes — each capture TIFF, its sidecar, and the run's
+aggregate JSON report — is named:
+
+```
+<job>.<view id>.<case>.<label>.tiff     d1-hospital-level-2.871863.d1_determinism.rep0.tiff
+<job>.<view id>.<view name>.<probe>.json   b3-site-plan-4.587278.SITE_PLAN_AT_LEVEL_4.white_blend.json
+```
+
+`<job>` is the basename of the run's output directory, which the batch
+executor names after the job id. It is there because view id and case are not
+enough: four D jobs target 871863 and two B jobs target 587278, so
+`SITE_PLAN_AT_LEVEL_4.587278.white_blend.json` named both B jobs' reports.
+Per-job directories only keep those apart while the files stay in them, and
+they do not — captures get pooled for analysis, copied off the Revit host, and
+attached to a message, and then the earlier one is what gets overwritten. A
+run given no output directory gets no token rather than being stamped with the
+process working directory's name.
+
 **Delete the old capture directories as well.** None of these flags remove
 anything: a re-run overwrites a capture of the same name, but a job that fails
 or is skipped leaves the *previous* run's file in place, looking current.

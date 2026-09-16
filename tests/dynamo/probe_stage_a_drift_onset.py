@@ -182,6 +182,43 @@ def _safe_name(value):
     return re.sub(r"[^A-Za-z0-9_. -]+", "_", text).strip().replace(" ", "_") or "view"
 
 
+def run_token(output_dir):
+    """A short name for THIS run, taken from its own output directory.
+
+    Two jobs on the same view produce artifacts with identical names -- the
+    campaign runs four D jobs against 871863 and two B jobs against 587278 --
+    and per-job directories only hide that while the files stay in their
+    folders. They do not stay there: captures get pooled for analysis, copied
+    off the Revit host, and attached to a message. A name that only says
+    "SITE PLAN AT LEVEL 4, view 587278" cannot then be told apart from the
+    other job's, and the earlier one is what gets overwritten.
+
+    The batch executor gives every job its own output directory named after
+    the job, so its basename is already the distinguishing token; outside a
+    campaign it is whatever directory the run was pointed at. Empty or
+    degenerate (a drive root) yields "", and callers leave the token out.
+    """
+    text = str(output_dir or "").strip()
+    if not text:
+        # abspath("") is the process cwd, whose name would then be stamped
+        # onto every artifact of a run that named no directory at all.
+        return ""
+    base = os.path.basename(os.path.normpath(os.path.abspath(
+        os.path.expanduser(text))))
+    if not base or base in (os.sep, os.altsep, ".", ".."):
+        return ""
+    return _safe_name(base)
+
+
+def _stem(*parts):
+    """Join the non-empty parts of an artifact name with dots.
+
+    Every artifact name starts with the run token so that two jobs on the same
+    view stay distinguishable once their files are pooled.
+    """
+    return ".".join(str(part) for part in parts if part not in (None, ""))
+
+
 def _safe_int_id(value):
     """Read an ElementId as an int, Revit 2025's 64-bit ``Value`` first.
 
@@ -564,7 +601,7 @@ def plan_capture_geometry(doc, view, cfg, diag=None):
     }
 
 
-def production_capture(doc, view, cfg, case, label, capture_dir, diag=None):
+def production_capture(doc, view, cfg, case, label, capture_dir, diag=None, run=""):
     """Run production's Stage A capture once and keep its artifacts under ``label``.
 
     export_color_id_buffer_view writes one TIFF and one sidecar per view and
@@ -592,8 +629,8 @@ def production_capture(doc, view, cfg, case, label, capture_dir, diag=None):
     # run silently overwrote the first's sidecar while its TIFF stayed, leaving
     # sidecars and images crossed between views and a capture set that looks
     # complete and is not.
-    stem = "{0}.{1}.{2}".format(
-        _safe_int_id(getattr(view, "Id", None)), _safe_name(case), _safe_name(label))
+    stem = _stem(run, _safe_int_id(getattr(view, "Id", None)),
+                 _safe_name(case), _safe_name(label))
     tiff_path = os.path.join(capture_dir, stem + ".tiff")
     sidecar_path = os.path.join(capture_dir, stem + ".json")
     for source, destination in ((out.get("tiff_path"), tiff_path),
@@ -913,6 +950,7 @@ def _run_native(raw_view, output_dir, selection="all", repetitions=DEFAULT_REPET
             raise ValueError("IN[0] did not resolve to a Revit view")
         cases = select_cases(selection)
         out_base = os.path.abspath(os.path.expanduser(str(output_dir)))
+        run = run_token(out_base)
         probe_dir = os.path.join(out_base, "drift_onset_probe")
         # Production writes into <cfg.output_dir>/color_id_buffer/; pointing it
         # at a probe-owned staging directory keeps a probe run from clobbering
@@ -959,7 +997,8 @@ def _run_native(raw_view, output_dir, selection="all", repetitions=DEFAULT_REPET
             raise RuntimeError("TransactionGroup.Start did not start")
 
         def capture(cfg, case, label):
-            return production_capture(doc, view, cfg, case, label, capture_dir, diag=diag)
+            return production_capture(doc, view, cfg, case, label, capture_dir,
+                                      diag=diag, run=run)
 
         ctx = {"doc": doc, "view": view, "cfg": base_cfg, "capture": capture, "diag": diag,
                "cfg_output_dir": staging_dir, "export_dpi": float(export_dpi),
@@ -1023,10 +1062,9 @@ def _run_native(raw_view, output_dir, selection="all", repetitions=DEFAULT_REPET
             probe_dir = os.path.join(out_base, "drift_onset_probe")
             if not os.path.isdir(probe_dir):
                 os.makedirs(probe_dir)
-            json_path = os.path.join(
-                probe_dir, "{0}.{1}.drift_onset.json".format(
-                    _safe_name(report["view"].get("name") or "view"),
-                    report["view"].get("id")))
+            json_path = os.path.join(probe_dir, "{0}.drift_onset.json".format(
+                _stem(run_token(out_base), report["view"].get("id"),
+                      _safe_name(report["view"].get("name") or "view"))))
             with open(json_path, "w") as handle:
                 json.dump(report, handle, indent=2, sort_keys=True)
             report["json_report_path"] = json_path

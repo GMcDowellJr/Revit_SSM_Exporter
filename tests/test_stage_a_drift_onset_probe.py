@@ -476,3 +476,35 @@ def test_d2_skips_rather_than_sweeping_a_view_with_no_hideable_load(d2):
     exports, detail = probe._case_d2(ctx, steps=8)
     assert exports == [] and captured == []
     assert "no category carrying any of them" in detail["skipped"]
+
+
+# --- artifact names are unique across a campaign, not just within a job -----
+#
+# Four D jobs target view 871863 and two B jobs target 587278. Per-job
+# directories only keep their artifacts apart while the files stay in those
+# directories, and they do not: captures get pooled for analysis, copied off
+# the Revit host, and attached to a message.
+
+def test_the_run_token_is_the_output_directory_name():
+    assert probe.run_token("/x/captures/d1-hospital-level-2") == "d1-hospital-level-2"
+    assert probe.run_token("C:/x/captures/b3-site-plan-4") == "b3-site-plan-4"
+
+
+def test_the_run_token_sanitizes_and_degrades_to_empty():
+    assert probe.run_token("/x/d3 size sweep") == "d3_size_sweep"
+    assert probe.run_token("") == ""
+    assert probe.run_token(None) == ""
+
+
+def test_two_jobs_on_one_view_do_not_produce_the_same_capture_name():
+    a = probe._stem(probe.run_token("/x/captures/d1-hospital-level-2"), 871863,
+                    "d1_determinism", "rep0")
+    b = probe._stem(probe.run_token("/x/captures/d4-hospital-level-2"), 871863,
+                    "d1_determinism", "rep0")
+    assert a != b
+    assert a == "d1-hospital-level-2.871863.d1_determinism.rep0"
+
+
+def test_a_stem_drops_an_empty_run_token_rather_than_leaving_a_dot():
+    assert probe._stem("", 871863, "d1_determinism", "rep0") == \
+        "871863.d1_determinism.rep0"

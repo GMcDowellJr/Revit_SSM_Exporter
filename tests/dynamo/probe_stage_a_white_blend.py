@@ -703,6 +703,7 @@ def _run_native(raw_view, output_dir, selection="all", element_ids=None,
         cases = select_cases(selection)
         explicit_ids = parse_element_ids(element_ids)
         out_base = os.path.abspath(os.path.expanduser(str(output_dir)))
+        run = _drift.run_token(out_base)
         probe_dir = os.path.join(out_base, "white_blend_probe")
         staging_dir = os.path.join(probe_dir, "_staging")
         capture_dir = os.path.join(probe_dir, "captures")
@@ -807,7 +808,8 @@ def _run_native(raw_view, output_dir, selection="all", element_ids=None,
         capture_geometry = []
 
         def capture(label, extra=None):
-            record = production_capture(doc, view, cfg, "b3", label, capture_dir, diag=diag)
+            record = production_capture(doc, view, cfg, "b3", label, capture_dir,
+                                        diag=diag, run=run)
             captures_taken.append(label)
             capture_geometry.append((label, record.get("bounds_xy"),
                                      record.get("dimensions_px")))
@@ -1002,8 +1004,9 @@ def _run_native(raw_view, output_dir, selection="all", element_ids=None,
             probe_dir = os.path.join(out_base, "white_blend_probe")
             if not os.path.isdir(probe_dir):
                 os.makedirs(probe_dir)
-            json_path = os.path.join(probe_dir, "{0}.{1}.white_blend.json".format(
-                _safe_name(report["view"].get("name") or "view"), report["view"].get("id")))
+            json_path = os.path.join(probe_dir, "{0}.white_blend.json".format(
+                _drift._stem(_drift.run_token(out_base), report["view"].get("id"),
+                             _safe_name(report["view"].get("name") or "view"))))
             with open(json_path, "w") as handle:
                 json.dump(report, handle, indent=2, sort_keys=True)
             report["json_report_path"] = json_path
