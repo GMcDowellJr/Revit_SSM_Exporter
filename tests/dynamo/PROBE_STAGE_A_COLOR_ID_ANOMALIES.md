@@ -259,6 +259,39 @@ What this removes, all of which went wrong on the first hand-run attempt:
 | Output directory | one shared folder; captures collided across views | one per job |
 | Knowing what has run | remembered | `resume` plus a run manifest |
 
+### Forcing a fresh run
+
+`resume` skips jobs a prior run completed, which is what makes an interrupted
+run cheap to continue. To deliberately re-capture everything, set:
+
+```json
+"execution_policy": { "max_jobs_per_run": 100, "on_job_error": "continue",
+                      "resume": true, "allow_rerun": true }
+```
+
+`allow_rerun` is the right knob, not `resume: false`. Both re-execute every
+job, but `resume: false` skips the prior-run lookup entirely and with it the
+check that refuses to continue a campaign whose earlier run was against a
+**different document** — exactly the guard worth keeping when deliberately
+re-capturing. Changing `batch_id` also works and keeps the previous run's
+results attributable to the old id, which is worth doing when the two runs
+should be comparable rather than one replacing the other.
+
+**Delete the old capture directories as well.** None of these flags remove
+anything: a re-run overwrites a capture of the same name, but a job that fails
+or is skipped leaves the *previous* run's file in place, looking current.
+Every capture now records `captured_at`, and the analyzer carries it into
+`image.captured_at`, so a leftover can be spotted without trusting a file
+modification time that copying resets — but deleting is still the reliable
+answer:
+
+```
+rmdir /s /q D:\vop_probe\captures
+```
+
+Set `allow_rerun` back to false (or drop it) afterwards, or every later run
+re-captures the lot.
+
 ### Analysing what it captured
 
 The campaign gives every job its own directory, so one command covers the whole

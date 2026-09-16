@@ -164,3 +164,35 @@ def test_a_view_reference_may_be_an_element_id():
 def test_a_malformed_view_reference_is_rejected(bad):
     with pytest.raises(ContractError):
         parse_view_reference(bad)
+
+
+# --- forcing a fresh run ----------------------------------------------------
+
+def test_the_campaign_resumes_by_default_rather_than_recapturing(batch):
+    """A re-run should continue, not repeat several gigabytes of capture."""
+    policy = batch["execution_policy"]
+    assert policy["resume"] is True
+    assert policy.get("allow_rerun", False) is False
+
+
+def test_allow_rerun_is_accepted_by_the_contract():
+    """The documented way to force a fresh run has to actually validate."""
+    import copy
+    import json as _json
+    from tests.dynamo.revit_batch_contract import validate_batch
+    forced = copy.deepcopy(_json.loads(CAMPAIGN.read_text(encoding="utf-8")))
+    forced["execution_policy"]["allow_rerun"] = True
+    assert validate_batch(forced) is forced
+
+
+def test_allow_rerun_keeps_the_prior_run_lookup_that_resume_false_discards():
+    """Both re-execute everything, but resume=false also skips the check that
+    refuses to continue a campaign whose earlier run used a different
+    document -- the guard most worth keeping when deliberately re-capturing."""
+    import inspect
+    from tests.dynamo import revit_batch_executor
+    source = inspect.getsource(revit_batch_executor.execute_batch)
+    assert 'if policy["resume"] else {}' in source
+    assert 'not policy.get("allow_rerun", False)' in source
+    guard = inspect.getsource(revit_batch_executor._prior_successes)
+    assert "belongs to a different document" in guard

@@ -933,3 +933,34 @@ def test_a_multi_export_report_still_labels_each_row(tmp_path):
     labels = [line.split("|")[1].strip()
               for line in table.read_text(encoding="utf-8").strip().split("\n")[2:]]
     assert sorted(labels) == ["report:rep0", "report:rep1"]
+
+
+# --- a capture can be dated, so a leftover is detectable --------------------
+
+def test_a_captures_timestamp_is_carried_into_its_metrics(tmp_path):
+    """A re-run overwrites a capture of the same name, but a skipped or failed
+    job leaves the previous run's file looking current."""
+    write_tiff(tmp_path, solid_square(), "c.tiff")
+    side = dict(sidecar(), tiff_path="c.tiff", view_id=1,
+                captured_at="2026-09-16T19:22:39.261571Z")
+    src = tmp_path / "d1_determinism.rep0.json"
+    src.write_text(json.dumps(side), encoding="utf-8")
+    _out, rows = analyzer.analyze_metrics_json(src)
+    assert rows[0][1]["image"]["captured_at"] == "2026-09-16T19:22:39.261571Z"
+
+
+def test_an_older_capture_without_a_timestamp_still_measures(tmp_path):
+    """Captures taken before the stamp existed must not become unreadable."""
+    write_tiff(tmp_path, solid_square(), "c.tiff")
+    side = dict(sidecar(), tiff_path="c.tiff", view_id=1)
+    src = tmp_path / "d1_determinism.rep0.json"
+    src.write_text(json.dumps(side), encoding="utf-8")
+    _out, rows = analyzer.analyze_metrics_json(src)
+    assert "captured_at" not in rows[0][1]["image"]
+    assert rows[0][1]["edges"]["hard_edge_ratio"] == 1.0
+
+
+def test_the_probe_stamps_every_capture():
+    import inspect
+    from tests.dynamo import probe_stage_a_drift_onset as drift
+    assert 'sidecar["captured_at"]' in inspect.getsource(drift.production_capture)

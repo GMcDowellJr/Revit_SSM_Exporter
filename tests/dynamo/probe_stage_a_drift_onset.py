@@ -388,6 +388,15 @@ def _now_ms():
     return int(round(time.time() * 1000.0))
 
 
+def _utc_now_iso():
+    from datetime import datetime
+    try:
+        from datetime import timezone
+        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    except ImportError:  # pragma: no cover - very old runtimes
+        return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
 def _image_dimensions(path):
     """Best-effort (w, h) without asserting anything about the pixels."""
     try:
@@ -608,6 +617,12 @@ def production_capture(doc, view, cfg, case, label, capture_dir, diag=None):
         sidecar["tiff_path_at_capture"] = tiff_path
         sidecar["probe_case"] = case
         sidecar["probe_label"] = label
+        # When this capture was taken. A re-run writes over a capture of the
+        # same name, but a job that is skipped or fails leaves the PREVIOUS
+        # run's file sitting there looking current -- and nothing else in the
+        # sidecar distinguishes the two. This is how a stale capture is spotted
+        # without having to trust a file modification time that copying resets.
+        sidecar["captured_at"] = _utc_now_iso()
         with open(sidecar_path, "w") as handle:
             json.dump(sidecar, handle, indent=2, sort_keys=True)
 

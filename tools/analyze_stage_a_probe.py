@@ -1820,8 +1820,13 @@ def stage_a_export_metrics(tiff_path: Path, sidecar: dict[str, Any]) -> dict[str
         hist = {('>={0}'.format(_TRANSITION_HIST_CAP) if int(v) >= _TRANSITION_HIST_CAP else str(int(v))): int(c)
                 for v, c in zip(vals.tolist(), cnts.tolist())}
 
+    image = base_info(tiff_path)
+    # Carried through so a capture can be dated without trusting a file
+    # modification time, which copying a capture set resets.
+    if sidecar.get('captured_at'):
+        image['captured_at'] = sidecar['captured_at']
     return {
-        'image': base_info(tiff_path),
+        'image': image,
         'palette_color_count': int(palette_sorted.size),
         'resolution': resolution,
         'frame': frame,
