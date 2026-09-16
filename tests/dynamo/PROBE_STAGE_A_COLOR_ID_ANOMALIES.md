@@ -207,10 +207,36 @@ paste tests/dynamo/revit_batch_dynamo.py
 Set `document.expected_title` to the exact model title before the first run —
 it is a deliberate `REPLACE-…` placeholder so that running against the wrong
 model fails the title check instead of producing plausible captures of
-something else. Then set `IN[2] = false` and re-run the node once per job:
-`max_jobs_per_run` is 1 and `resume` is true, so each invocation takes the next
-job and skips what is done. A single D2 or D3 job can write several gigabytes,
-which is why stopping between jobs is the default rather than an option.
+something else. Then set `IN[2] = false` and run the node once: the campaign
+executes every job in a single invocation.
+
+A dry run that passed reports `execution_status: "validation_only"` with every
+job in `jobs_validated`. A run that failed configuration reports
+`execution_status: "configuration_failed"` and a `configuration_error` naming
+the reason — empty job lists alone do not distinguish the two, which is why
+the status is in the summary and not only in the manifest.
+
+### Pacing, resume, and where the manifest goes
+
+`max_jobs_per_run` is 100, comfortably above the ten jobs, so one run does the
+lot. Set it to 1 to step through a job at a time instead — worth doing on a
+machine where disk is tight, since D2, D3 and D5 each write several captures
+and a Stage A TIFF can reach ~550 MB.
+
+`resume` is true and `on_job_error` is `continue`, which together make a long
+unattended run recoverable: a probe that fails is recorded and the campaign
+carries on, and if Revit or Dynamo dies partway the next run picks up from the
+last completed job instead of repeating what is already done.
+
+**Resume only works if `IN[1]` is the same every time.** It finds prior runs by
+walking the manifest root for manifests with a matching campaign and batch id,
+so a manifest root that changes between runs looks like a campaign that has
+never run, and everything is captured again. Leave `IN[1]` null (the root is
+then derived from the campaign file's own directory) or pass the same explicit
+path every time — but do not alternate.
+
+Resume also refuses to cross documents: a prior run of the same campaign
+against a different model raises rather than silently mixing captures.
 
 What this removes, all of which went wrong on the first hand-run attempt:
 

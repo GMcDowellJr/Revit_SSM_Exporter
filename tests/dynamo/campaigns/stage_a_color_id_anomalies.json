@@ -7,7 +7,7 @@
     "expected_title": "REPLACE-WITH-THE-EXACT-MODEL-TITLE"
   },
   "execution_policy": {
-    "max_jobs_per_run": 1,
+    "max_jobs_per_run": 100,
     "on_job_error": "continue",
     "resume": true
   },

@@ -129,10 +129,19 @@ def test_the_document_title_is_an_unmistakable_placeholder(batch):
     assert "REPLACE" in batch["document"]["expected_title"].upper()
 
 
-def test_one_job_per_invocation_so_a_multi_gigabyte_run_can_be_stopped(batch):
+def test_the_whole_campaign_runs_in_one_invocation(batch):
+    """One node run does the lot. `resume` still matters: if Revit or Dynamo
+    dies partway, the next run picks up from the last completed job instead of
+    repeating the multi-gigabyte ones already done."""
     policy = batch["execution_policy"]
-    assert policy["max_jobs_per_run"] == 1
+    assert policy["max_jobs_per_run"] >= len(batch["jobs"])
     assert policy["resume"] is True
+
+
+def test_one_failing_job_does_not_abandon_the_rest(batch):
+    """A long unattended run must not stop at the first probe that fails; a
+    failed job is recorded and the campaign continues."""
+    assert batch["execution_policy"]["on_job_error"] == "continue"
 
 
 def test_a_view_reference_may_be_an_element_id():
