@@ -617,7 +617,12 @@ def _snapshot(doc, view):
             try:
                 if view.CanCategoryBeHidden(cid):
                     state["category_hidden"][str(cid_int)] = bool(view.GetCategoryHidden(cid))
-            except Exception:
+            except Exception as ex:
+                # Dropping the category silently would let _diff_state report
+                # the view restored on a category it never actually checked --
+                # a clean bill of health for state nobody looked at.
+                state.setdefault("category_read_errors", {})[str(cid_int)] = \
+                    "{0}: {1}".format(type(ex).__name__, ex)
                 continue
     except Exception as ex:
         state["category_hidden_error"] = str(ex)
@@ -627,7 +632,7 @@ def _snapshot(doc, view):
 def _diff_state(before, after):
     diffs = []
     for key in sorted(set(before) | set(after)):
-        if key.endswith("_error"):
+        if key.endswith("_error") or key.endswith("_errors"):
             continue
         if before.get(key) != after.get(key):
             diffs.append({"key": key, "before": before.get(key), "after": after.get(key)})
@@ -678,6 +683,50 @@ def dpi_for_pixel_width(target_px, paper_width_in):
     return target_px / paper_width_in
 
 
+def unresolved_cases(report):
+    """Cases that ran but did not reach a usable result.
+
+    A case can complete its mutations, write its captures and still not have
+    measured what it is named after -- a halftone variant whose categories
+    refused to clear, a D2 sweep missing a category production paints, a D5
+    tiling on a view whose crop would not apply. Each of those records itself
+    as failed or inconclusive, and the envelope has to carry that upward:
+    the batch executor treats `completed` as a resumable success, so a run
+    reported completed is one resume will never retry.
+    """
+    out = []
+    for name in sorted((report.get("cases") or {}).keys()):
+        detail = (report.get("cases") or {}).get(name)
+        if not isinstance(detail, dict):
+            continue
+        if (detail.get("failed") or detail.get("inconclusive")
+                or detail.get("variant_status") == "inconclusive"):
+            out.append(name)
+    return out
+
+
+def envelope_status(report, rollback_ok, restored, ran_something, read_only=False):
+    """The one place both probes decide what to report upward.
+
+    ``restored is False`` is a failure, not a nuance: the document was left
+    changed. Reporting that as completed both hides it and lets resume skip
+    the job on every later run.
+    """
+    if report.get("exceptions"):
+        return "failed"
+    if not (rollback_ok or read_only):
+        return "failed"
+    if restored is False:
+        return "failed"
+    if unresolved_cases(report):
+        return "inconclusive"
+    if restored is None and not read_only:
+        return "inconclusive"
+    if not ran_something:
+        return "inconclusive"
+    return "completed"
+
+
 def plan_capture_geometry(doc, view, cfg, diag=None):
     """The raster production would build, and the numbers experiments plan against.
 
@@ -689,6 +738,9 @@ def plan_capture_geometry(doc, view, cfg, diag=None):
     bounds = raster.bounds_xy
     scale = float(getattr(view, "Scale", 1) or 1)
     paper_width_in = (float(raster.W) * float(raster.cell_size_ft) * 12.0) / max(scale, 1.0e-6)
+    # PixelSize sizes the axis Revit fits, so a vertical-fit request has to be
+    # derived from the paper HEIGHT or the same DPI means a different density.
+    paper_height_in = (float(raster.H) * float(raster.cell_size_ft) * 12.0) / max(scale, 1.0e-6)
     return {
         "bounds_xy": (float(bounds.xmin), float(bounds.ymin),
                       float(bounds.xmax), float(bounds.ymax)),
@@ -696,6 +748,7 @@ def plan_capture_geometry(doc, view, cfg, diag=None):
         "cell_size_ft": float(raster.cell_size_ft),
         "view_scale": scale,
         "paper_width_in": paper_width_in,
+        "paper_height_in": paper_height_in,
         # What production would request at this config's DPI. The brief's
         # "native" density is exactly this.
         "native_pixel_size": int(round(float(cfg.color_id_buffer_export_dpi) * paper_width_in)),
@@ -822,22 +875,46 @@ def production_category_load(doc, view, cfg, diag=None):
     draws anything from it, so empty categories consume buckets and the
     category carrying the load can land in an arbitrary late step.
 
-    Returns (counts_by_category_id, uncategorized_count, collected_count).
+    One residual difference remains and is recorded rather than papered over:
+    production re-collects under its neutral phase filter inside its own
+    transaction, which this cannot reach from outside. On a view whose phase
+    filter hides elements the neutral one reveals, these counts are of the
+    authored phase.
+
+    Returns (counts_by_category_id, uncategorized_count, painted_count).
     """
+    import copy
+
     from vop_interwoven.pipeline import init_view_raster
-    from vop_interwoven.revit.collection import collect_view_elements
+    from vop_interwoven.revit.collection import (
+        collect_view_elements, expand_host_link_import_model_elements)
+    from vop_interwoven.color_id_buffer import _split_expanded_elements, resolve_all
 
     raster = init_view_raster(doc, view, cfg, diag=diag)
-    elements = collect_view_elements(doc, view, raster, diag=diag, cfg=cfg)
-    counts, uncategorized, collected = {}, 0, 0
-    for element in elements:
-        collected += 1
+    collected = collect_view_elements(doc, view, raster, diag=diag, cfg=cfg)
+    # collect_view_elements is where production STARTS, not where it ends. It
+    # then expands links and DWG imports and resolves groups and family
+    # subcomponents, and colors are assigned to that resolved set. Counting the
+    # collected set instead misses a painted subcomponent category entirely, so
+    # D2 would leave it visible in every step -- including the step 0 it calls
+    # the zero-content control -- while reporting it in no bucket at all.
+    host_only_cfg = copy.copy(cfg)
+    host_only_cfg.include_linked_rvt = False   # production does the same here
+    expanded = expand_host_link_import_model_elements(
+        doc, view, collected, host_only_cfg, diag=diag, elem_cache=None)
+    host_elements, _link_entries = _split_expanded_elements(expanded)
+    resolved_ids = resolve_all(doc, host_elements)
+
+    counts, uncategorized, painted = {}, 0, 0
+    for eid in resolved_ids:
+        element = doc.GetElement(eid)
+        painted += 1
         cid = _safe_int_id(getattr(getattr(element, "Category", None), "Id", None))
         if cid is None:
             uncategorized += 1
             continue
         counts[cid] = counts.get(cid, 0) + 1
-    return counts, uncategorized, collected
+    return counts, uncategorized, painted
 
 
 def _case_d2(ctx, steps):
@@ -848,21 +925,34 @@ def _case_d2(ctx, steps):
     returns a smaller rectangle, and the export size changes with the content
     -- which is exactly the confound D2 exists to remove.
 
-    Buckets are built from production's collected element set, in descending
-    element count, so step N always carries more drawn content than step N-1
-    and the step where drift appears is the onset. The crop is pinned before
+    Buckets are built from the element set production actually paints, ordered
+    by descending element count, so step N always carries more drawn content
+    than step N-1 and the step where drift appears is the onset. The crop is pinned before
     the count is taken, so the counts describe the captures rather than some
     other extent.
     """
     from Autodesk.Revit.DB import CategoryType, ElementId
     doc, view = ctx["doc"], ctx["view"]
 
-    _mutate(doc, "d2_pin_crop", lambda: _set_view_crop(view, ctx["bounds_xy"]))
+    pinned = {}
+    _mutate(doc, "d2_pin_crop",
+            lambda: pinned.__setitem__("bounds", _set_view_crop(view, ctx["bounds_xy"])))
+    if pinned.get("bounds") is None:
+        # Without the pin, hiding categories shrinks the model extents and the
+        # export resizes with the content -- so a drift that appears partway
+        # through the sweep is attributable to the reframing, not to load,
+        # which is the one thing D2 exists to separate. Reporting
+        # crop_pinned_to while that is true would state the opposite.
+        return [], {"inconclusive": True,
+                    "skipped": "this view has no applicable CropBox, so each step would "
+                               "re-derive its own extent and a drift onset would not be "
+                               "attributable to category load",
+                    "crop_pinned_to": None, "categories": []}
 
-    load, uncategorized, collected = production_category_load(
+    load, uncategorized, painted = production_category_load(
         doc, view, ctx["cfg"], diag=ctx.get("diag"))
 
-    hideable, pinned_visible = [], []
+    hideable, pinned_visible, unreadable = [], [], []
     for cat in doc.Settings.Categories:
         cid = getattr(cat, "Id", None)
         cid_int = _safe_int_id(cid)
@@ -872,7 +962,7 @@ def _case_d2(ctx, steps):
             if cat.CategoryType != CategoryType.Model:
                 continue
             entry = {"id": cid_int, "name": getattr(cat, "Name", None),
-                     "collected_element_count": int(load[cid_int]),
+                     "painted_element_count": int(load[cid_int]),
                      "was_hidden": bool(view.GetCategoryHidden(cid))}
             if not view.CanCategoryBeHidden(cid):
                 # Carries load but cannot be hidden: visible in every step,
@@ -881,24 +971,43 @@ def _case_d2(ctx, steps):
                 pinned_visible.append(entry)
                 continue
             hideable.append(entry)
-        except Exception:
+        except Exception as ex:
+            # This category IS painted -- the load filter above already
+            # established that. Dropping it would leave it visible in every
+            # step while appearing in no bucket, and the sweep would report an
+            # onset for content it never varied.
+            unreadable.append({"id": cid_int, "name": getattr(cat, "Name", None),
+                               "painted_element_count": int(load[cid_int]),
+                               "type": type(ex).__name__, "message": str(ex)})
+            if ctx.get("diag") is not None:
+                ctx["diag"].error(phase="raster", callsite="d2_category_snapshot",
+                                  message="Category {0} carries painted elements but could "
+                                          "not be read: {1}".format(cid_int, ex), exc=ex)
             continue
     hideable = [item for item in hideable if not item["was_hidden"]]
     # Descending painted load; category id only breaks ties, so the order is
     # deterministic across runs.
-    hideable.sort(key=lambda item: (-item["collected_element_count"], item["id"]))
-    load_note = {"collected_element_count": collected,
+    hideable.sort(key=lambda item: (-item["painted_element_count"], item["id"]))
+    if unreadable:
+        return [], {"inconclusive": True,
+                    "skipped": "{0} categor(ies) production paints could not be read for "
+                               "visibility, so the sweep would vary an incomplete content "
+                               "set".format(len(unreadable)),
+                    "unreadable_categories": unreadable,
+                    "crop_pinned_to": list(ctx["bounds_xy"]), "categories": []}
+
+    load_note = {"painted_element_count": painted,
                  "uncategorized_element_count": uncategorized,
                  "always_visible_categories": [
                      {"id": c["id"], "name": c["name"],
-                      "collected_element_count": c["collected_element_count"]}
+                      "painted_element_count": c["painted_element_count"]}
                      for c in pinned_visible],
                  "always_visible_element_count": sum(
-                     c["collected_element_count"] for c in pinned_visible)}
+                     c["painted_element_count"] for c in pinned_visible)}
     if not hideable:
-        return [], dict(load_note, categories=[], skipped=(
-            "production collected {0} element(s) here, but no category carrying any of "
-            "them is both visible and hideable in this view".format(collected)))
+        return [], dict(load_note, categories=[], inconclusive=True, skipped=(
+            "production paints {0} element(s) here, but no category carrying any of "
+            "them is both visible and hideable in this view".format(painted)))
 
     def set_hidden(items, hidden):
         for item in items:
@@ -913,7 +1022,7 @@ def _case_d2(ctx, steps):
     base_load = load_note["always_visible_element_count"]
     for index, bucket in enumerate(buckets + [None]):
         record = ctx["capture"](ctx["cfg"], "d2_category_load", "step{0}".format(index))
-        revealed_load = sum(item["collected_element_count"] for item in revealed)
+        revealed_load = sum(item["painted_element_count"] for item in revealed)
         record["visible_categories"] = [item["name"] for item in revealed]
         record["revealed_element_count"] = revealed_load + base_load
         exports.append(record)
@@ -935,9 +1044,9 @@ def _case_d2(ctx, steps):
     return exports, dict(load_note,
                          steps=step_records,
                          crop_pinned_to=list(ctx["bounds_xy"]),
-                         bucket_order="descending production-collected element count",
+                         bucket_order="descending production-painted element count",
                          categories=[{"id": c["id"], "name": c["name"],
-                                      "collected_element_count": c["collected_element_count"]}
+                                      "painted_element_count": c["painted_element_count"]}
                                      for c in hideable])
 
 
@@ -980,13 +1089,18 @@ def _case_d7(ctx, sweep):
     u0, v0, u1, v1 = [float(v) for v in ctx["bounds_xy"]]
     aspect = (v1 - v0) / (u1 - u0)
     exports, records = [], []
+    # PixelSize sizes the fitted axis, so each direction's DPI comes from that
+    # axis's paper dimension. One DPI for both would make the vertical capture
+    # a different density from its horizontal partner and confound the pair.
+    paper_in = {"horizontal": ctx["paper_width_in"], "vertical": ctx["paper_height_in"]}
     for entry in resolve_size_sweep(sweep, ctx["native_pixel_size"]):
         requested = entry["requested_pixel_size"]
-        dpi = dpi_for_pixel_width(requested, ctx["paper_width_in"])
         for direction in ("horizontal", "vertical"):
+            dpi = dpi_for_pixel_width(requested, paper_in[direction])
             cfg = build_capture_config(
                 ctx["cfg_output_dir"], export_dpi=dpi,
                 overrides={"color_id_buffer_fit_direction": direction})
+            record_dpi = dpi
             record = ctx["capture"](cfg, "d7_fit_direction",
                                     "{0}.{1}".format(entry["label"], direction))
             fitted = "width" if direction == "horizontal" else "height"
@@ -994,6 +1108,8 @@ def _case_d7(ctx, sweep):
                          else (int(round(requested / aspect)), requested))
             record.update({"fit_direction": direction, "fitted_axis": fitted,
                            "requested_pixel_size": requested,
+                           "planned_export_dpi": record_dpi,
+                           "paper_fit_in": paper_in[direction],
                            "predicted_width_px": predicted[0],
                            "predicted_height_px": predicted[1]})
             exports.append(record)
@@ -1049,6 +1165,16 @@ def _case_d5(ctx, grid):
         applied = {}
         _mutate(doc, "d5_crop_{0}".format(label),
                 lambda t=tile: applied.__setitem__("bounds", _set_view_crop(view, t["bounds_xy"])))
+        if applied.get("bounds") is None:
+            # The crop IS the tile. Without it every "tile" is the same
+            # full-view export under a different name, and N identical
+            # captures at N-times-reduced size would read as tiling working.
+            return exports, {"inconclusive": True,
+                             "skipped": "tile {0} could not be cropped (this view has no "
+                                        "applicable CropBox), so the remaining captures "
+                                        "would be full-view exports labelled as "
+                                        "tiles".format(label),
+                             "tiles_captured": len(tile_records), "tiles": tile_records}
         # Hold each tile at the same density as the full-view capture rather
         # than letting FitToPage rescale it: the tile is narrower, so its
         # paper width is smaller and the same DPI yields proportionally fewer
@@ -1162,6 +1288,7 @@ def _run_native(raw_view, output_dir, selection="all", repetitions=DEFAULT_REPET
                "cfg_output_dir": staging_dir, "export_dpi": float(export_dpi),
                "bounds_xy": geometry["bounds_xy"], "view_scale": geometry["view_scale"],
                "paper_width_in": geometry["paper_width_in"],
+               "paper_height_in": geometry["paper_height_in"],
                "native_pixel_size": geometry["native_pixel_size"]}
 
         runners = {
@@ -1248,12 +1375,7 @@ def run_probe(raw_view, output_dir, selection="all", repetitions=DEFAULT_REPETIT
     if native.get("json_report_path"):
         artifacts.append(native["json_report_path"])
     errors = list(native.get("exceptions", []))
-    if errors or not rollback_ok:
-        status = "failed"
-    elif not native.get("exports"):
-        status = "inconclusive"
-    else:
-        status = "completed"
+    status = envelope_status(native, rollback_ok, restored, bool(native.get("exports")))
     return contract.execution_envelope(
         PROBE_NAME,
         {"selection": selection, "repetitions": repetitions, "pixel_sizes": pixel_sizes,

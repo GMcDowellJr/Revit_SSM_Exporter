@@ -548,3 +548,46 @@ def test_the_white_blend_probe_checks_the_module_it_captures_through():
     assert "probe_stage_a_white_blend" in names[0]
     assert "probe_stage_a_drift_onset" in names[1]
     assert all(record["stale"] is False for record in probe.source_records())
+
+
+# --- an override property that throws must not cost the whole report --------
+
+def test_an_override_property_that_throws_keeps_the_rest_of_the_report():
+    """hasattr() invokes the getter and swallows only AttributeError, so a
+    property that exists and throws used to take the entire override report
+    with it -- including a readable Halftone=True, which is the value the B3
+    halftone gate turns on. Third place this defect appeared."""
+    class Hostile(object):
+        Halftone = True
+
+        @property
+        def Transparency(self):
+            raise RuntimeError("disposed")
+
+    out = probe._ogs_report(Hostile())
+    assert out["Halftone"] is True
+    assert out["Transparency"].startswith("ERROR RuntimeError")
+
+
+def test_an_absent_override_property_is_simply_absent():
+    class Sparse(object):
+        Halftone = False
+    out = probe._ogs_report(Sparse())
+    assert out["Halftone"] is False
+    assert "Transparency" not in out
+
+
+# --- an unreadable underlay warrants the experiment, it does not cancel it ---
+
+def test_an_unreadable_underlay_parameter_still_warrants_the_variant():
+    underlay = {"underlay_configured": None, "read_errors": ["VIEW_UNDERLAY_BOTTOM_ID"],
+                "base_level_id": None, "top_level_id": None}
+    summary = probe._summarize_b1(underlay, [])
+    assert summary["underlay_off_is_warranted"] is True
+    assert summary["underlay_read_errors"] == ["VIEW_UNDERLAY_BOTTOM_ID"]
+
+
+def test_a_view_with_no_underlay_and_no_read_error_still_skips_the_variant():
+    underlay = {"underlay_configured": False, "read_errors": [],
+                "base_level_id": None, "top_level_id": None}
+    assert probe._summarize_b1(underlay, [])["underlay_off_is_warranted"] is False

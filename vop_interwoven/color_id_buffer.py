@@ -1354,8 +1354,11 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     ).strip().lower()
     if raster is not None and getattr(raster, "W", 0) and getattr(raster, "cell_size_ft", 0):
         paper_width_in = (float(raster.W) * float(raster.cell_size_ft) * 12.0) / max(scale, 1.0e-6)
+        paper_height_in = (float(getattr(raster, "H", 0) or 0) * float(raster.cell_size_ft)
+                           * 12.0) / max(scale, 1.0e-6)
     else:
         paper_width_in = 1.0
+        paper_height_in = 1.0
         if diag is not None:
             diag.warn(
                 phase="color_id_buffer",
@@ -1364,7 +1367,23 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                         "sizing (export resolution will be far below the requested DPI)",
                 view_id=view_id,
             )
-    pixel_size = int(round(export_dpi * paper_width_in))
+    # PixelSize sets the axis Revit is asked to FIT, so the requested size has
+    # to come from that axis's paper dimension. Deriving it from the width
+    # under vertical fit silently scales the whole export by the view's aspect
+    # ratio: a tall view would lose density merely by switching fit direction,
+    # and export_dpi would no longer mean the same thing in the two cases.
+    paper_fit_in = paper_height_in if fit_direction == "vertical" else paper_width_in
+    if paper_fit_in <= 0:
+        paper_fit_in = paper_width_in
+        if diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="pixel_size",
+                message="vertical fit requested but the raster reports no height; "
+                        "sizing from the paper width instead",
+                view_id=view_id,
+            )
+    pixel_size = int(round(export_dpi * paper_fit_in))
     pixel_size = max(64, min(pixel_size, MAX_STAGE_A_PIXEL_SIZE))
     if pixel_size >= MAX_STAGE_A_PIXEL_SIZE and diag is not None:
         diag.warn(
@@ -2189,6 +2208,9 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             # whether the other dimension was requested or derived, and every
             # size-derived metric downstream assumes one of the two.
             "fit_direction": fit_direction,
+            # The paper dimension pixel_size was derived from, so a reader can
+            # reproduce the request instead of assuming it came from the width.
+            "paper_fit_in": paper_fit_in,
         },
         # View-local UV rectangle (min_u, min_v, max_u, max_v) the export
         # was cropped to -- the same tuple set as view.CropBox above, not

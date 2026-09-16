@@ -44,7 +44,19 @@ def solid_square(size=64, color=RED, inset=16):
 
 
 def measure(tmp_path, arr, **kw):
+    """Measure a synthetic raster, with a sidecar whose bounds MATCH it.
+
+    The frame model predicts the exported height from the view's extents, and
+    the analyzer now refuses to derive padding or density from a model the
+    capture disproves. A fixture whose canvas does not match its declared
+    bounds therefore exercises the unknown-frame path, not the ordinary one --
+    so unless a test is deliberately about a mismatch, the default bounds are
+    taken from the image's own aspect.
+    """
     path = write_tiff(tmp_path, arr)
+    if "bounds" not in kw:
+        h, w = arr.shape[:2]
+        kw["bounds"] = (0.0, 0.0, 100.0, 100.0 * h / float(w))
     return analyzer.stage_a_export_metrics(path, sidecar(**kw))
 
 
@@ -142,7 +154,7 @@ def test_single_pixel_speckle_is_never_3x3_solid(tmp_path):
 
 def test_native_px_and_scale_factor_follow_extent_dpi_and_scale(tmp_path):
     # 100 ft at 150 dpi, 1:96 -> 100 * 12 * 150 / 96 = 1875 px native.
-    m = measure(tmp_path, solid_square(size=64), bounds=(0.0, 0.0, 100.0, 80.0))
+    m = measure(tmp_path, solid_square(size=64), bounds=(0.0, 0.0, 100.0, 100.0))
     res = m["resolution"]
     assert res["native_width_px"] == pytest.approx(1875.0)
     assert res["scale_factor"] == pytest.approx(64 / 1875.0)
@@ -155,7 +167,7 @@ def test_pixel_size_backoff_is_reported_when_revit_lowered_the_request(tmp_path)
 
 
 def test_no_clamp_for_an_ordinary_aspect(tmp_path):
-    m = measure(tmp_path, solid_square(size=64), bounds=(0.0, 0.0, 100.0, 80.0))
+    m = measure(tmp_path, solid_square(size=64), bounds=(0.0, 0.0, 100.0, 100.0))
     assert m["frame"]["clamp_applied"] is False
     assert m["frame"]["pad_y_px"] == 0.0
     assert m["pixels"]["out_of_bbox_palette_px"] == 0
@@ -606,27 +618,30 @@ def test_scale_factor_is_measured_across_content_not_the_padded_canvas(tmp_path)
     width is frame. Dividing the full width by native would report twice the
     density the capture actually rendered at.
     """
-    # 50 ft wide x 1000 ft tall = 1:20, clamped to 1:10.
-    arr = np.full((400, 200, 3), 255, dtype=np.uint8)
+    # 50 ft wide x 1000 ft tall = 1:20, clamped to 1:10. The canvas has to be
+    # the one the clamp model predicts (200 x 2000) or the capture disproves
+    # the model and there is no content rectangle to measure across at all.
+    arr = np.full((2000, 200, 3), 255, dtype=np.uint8)
     arr[:, 50:150] = RED
     m = measure(tmp_path, arr, bounds=(0.0, 0.0, 50.0, 1000.0))
     frame, res = m["frame"], m["resolution"]
 
+    assert frame["clamp_matches_actual_height"] is True
     assert frame["clamp_applied"] is True
-    assert frame["pad_x_px"] == pytest.approx(90.0)     # (200 - 400*0.05)/2
-    assert res["content_width_px"] == 20                # 200 - 2*90
+    assert frame["pad_x_px"] == pytest.approx(50.0)     # (200 - 2000*0.05)/2
+    assert res["content_width_px"] == 100               # 200 - 2*50
     assert res["width_px"] == 200
 
     # native = 50 ft * 12 * 150 / 96 = 937.5 px
     assert res["native_width_px"] == pytest.approx(937.5)
-    assert res["scale_factor"] == pytest.approx(20 / 937.5)
+    assert res["scale_factor"] == pytest.approx(100 / 937.5)
     # The uncorrected figure is kept, and is 10x the real one here.
     assert res["canvas_scale_factor"] == pytest.approx(200 / 937.5)
     assert res["canvas_scale_factor"] > res["scale_factor"]
 
 
 def test_an_unclamped_capture_has_identical_content_and_canvas_scale(tmp_path):
-    m = measure(tmp_path, solid_square(size=64), bounds=(0.0, 0.0, 100.0, 80.0))
+    m = measure(tmp_path, solid_square(size=64), bounds=(0.0, 0.0, 100.0, 100.0))
     res = m["resolution"]
     assert m["frame"]["clamp_applied"] is False
     assert res["content_width_px"] == res["width_px"] == 64
@@ -1020,3 +1035,68 @@ def test_the_reported_match_list_is_capped_without_dropping_a_composited_one(tmp
     assert any(m.get("is_composited_region") for m in blend["matches"])
     # The counts are over every candidate, not over the trimmed list.
     assert blend["matched_color_count"] > len(blend["matches"])
+
+
+# --- a capture that disproves the frame model gets no frame-derived numbers --
+
+def test_a_capture_that_contradicts_the_clamp_model_reports_no_density(tmp_path):
+    """A 64x64 canvas cannot come from 100x80 ft of extent. The analyzer used
+    to invent padding from the model anyway and hand back scale_factor and
+    out_of_bbox_palette_px built on it."""
+    m = measure(tmp_path, solid_square(size=64), bounds=(0.0, 0.0, 100.0, 80.0))
+    assert m["frame"]["clamp_matches_actual_height"] is False
+    assert m["frame"]["content_rect_px"] is None
+    assert m["frame"]["pad_x_px"] is None and m["frame"]["pad_y_px"] is None
+    assert m["resolution"]["scale_factor"] is None
+    assert m["resolution"]["content_width_px"] is None
+    assert m["pixels"]["out_of_bbox_palette_px"] is None
+    # The pixel scan still runs: edges do not depend on the frame.
+    assert m["edges"]["hard_edge_ratio"] == 1.0
+
+
+def test_the_ordinary_path_still_reports_density(tmp_path):
+    m = measure(tmp_path, solid_square(size=64))
+    assert m["frame"]["clamp_matches_actual_height"] is True
+    assert m["resolution"]["scale_factor"] is not None
+    assert m["pixels"]["out_of_bbox_palette_px"] == 0
+
+
+# --- the census cap bounds distinct colors, not how far down they are counted -
+
+def test_colors_already_in_the_census_keep_counting_after_the_cap(tmp_path, monkeypatch):
+    # The census runs stripe by stripe, so this needs more than one stripe:
+    # the colour is established in the first, the cap is blown in the second,
+    # and the bulk of its pixels are in the third.
+    monkeypatch.setattr(analyzer, "_MAX_OFF_COLOR_KEYS", 2)
+    rows = analyzer._METRIC_STRIPE_ROWS
+    arr = np.full((rows * 2 + 200, 60, 3), 255, dtype=np.uint8)
+    known = blend_over_white(RED, 0.67)
+    arr[0:2, :] = known                                   # stripe 0: takes a slot
+    for i in range(20):                                   # stripe 1: blows the cap
+        arr[rows + 10 + i * 4:rows + 12 + i * 4, :] = blend_over_white(BLUE, 0.05 + i * 0.03)
+    arr[rows * 2 + 100:rows * 2 + 118, 10:50] = known     # stripe 2: the bulk of it
+    blend = measure(tmp_path, arr, colors=(RED, BLUE))["white_blend"]
+    counted = [m["pixel_count"] for m in blend["matches"]
+               if list(m["off_rgb"]) == [int(c) for c in known]]
+    assert counted, "the established colour fell out of the census entirely"
+    assert counted[0] > 700          # 2*60 in stripe 0 + 18*40 in stripe 2
+
+
+# --- an ambiguous alpha-ray match says so --------------------------------
+
+def test_two_palette_colors_on_one_ray_are_reported_as_ambiguous():
+    # (204,0,0) and (210,30,30) both lie on the ray from white through a dark
+    # red; a pixel between them solves against either at a different alpha.
+    palette = np.array(sorted((0xCC0000, 0xD21E1E)), dtype=np.uint32)
+    off = analyzer._rgb_to_code(np.array([[[221, 85, 85]]], dtype=np.uint8))[0][0]
+    solved = analyzer._unblend_over_white(int(off), palette)
+    assert solved is not None
+    assert solved["ambiguous"] is True
+    assert solved["alternatives"]
+    assert solved["alternatives"][0]["palette_code"] != solved["palette_code"]
+
+
+def test_an_unambiguous_match_is_not_flagged(tmp_path):
+    blend = measure(tmp_path, solid_square(color=blend_over_white(RED, 0.67), inset=8),
+                    colors=(RED,))["white_blend"]
+    assert all(m["ambiguous"] is False for m in blend["matches"])

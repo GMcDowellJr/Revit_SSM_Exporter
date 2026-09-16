@@ -74,11 +74,19 @@ def resolve_capture_tiff(json_path: Path, recorded: str | None) -> Path | None:
     resolved = resolve_path(json_path, recorded)
     if resolved is not None and resolved.exists():
         return resolved
-    # Last resort: the recorded file name, in the sidecar's own directory.
     if recorded:
-        beside = json_path.parent / Path(recorded).name
-        if beside.exists():
-            return beside
+        name = Path(recorded).name
+        # The aggregate report sits in the probe ROOT while its captures sit in
+        # the probe's captures/ child, so a moved probe directory leaves the
+        # report's absolute paths stale and its siblings empty. Searching only
+        # beside the report then reports TIFF_MISSING for files that are
+        # present one directory down -- on a capture set that is entirely
+        # intact, and after the standalone sidecars have already measured fine.
+        for beside in (json_path.parent / name,
+                       json_path.parent / 'captures' / name,
+                       json_path.parent.parent / 'captures' / name):
+            if beside.exists():
+                return beside
     return resolved
 
 
@@ -1254,9 +1262,16 @@ def _native_resolution(sidecar: dict[str, Any], width_px: int, height_px: int,
     # is not model pixels. Realized density has to be measured across the
     # content, or a clamped view reports a scale factor it never rendered at
     # (a 1:20-aspect view would come back at twice its real density).
-    content_rect = frame.get('content_rect_px') or [0, 0, int(width_px), int(height_px)]
-    content_width_px = max(0, int(content_rect[2]) - int(content_rect[0]))
-    content_height_px = max(0, int(content_rect[3]) - int(content_rect[1]))
+    content_rect = frame.get('content_rect_px')
+    frame_known = content_rect is not None
+    if not frame_known:
+        # The capture disproved the clamp model (frame.clamp_matches_actual_height
+        # is false), so there is no content rectangle to measure across. Report
+        # the canvas and leave every content-derived number unknown rather than
+        # deriving density from a rectangle this image says is wrong.
+        content_rect = [0, 0, int(width_px), int(height_px)]
+    content_width_px = max(0, int(content_rect[2]) - int(content_rect[0])) if frame_known else None
+    content_height_px = max(0, int(content_rect[3]) - int(content_rect[1])) if frame_known else None
     out: dict[str, Any] = {
         'width_px': int(width_px),
         'height_px': int(height_px),
@@ -1286,8 +1301,11 @@ def _native_resolution(sidecar: dict[str, Any], width_px: int, height_px: int,
     out['native_width_px'] = extent_u * per_ft
     out['native_height_px'] = extent_v * per_ft
     if out['native_width_px'] > 0:
-        # Measured across the content, not the padded canvas.
-        out['scale_factor'] = float(content_width_px) / out['native_width_px']
+        # Measured across the content, not the padded canvas -- and left
+        # unknown when the capture disproved the frame model, because then
+        # there is no trustworthy content width to measure across.
+        out['scale_factor'] = (float(content_width_px) / out['native_width_px']
+                               if frame_known else None)
         # Kept alongside it so the difference on a clamped capture is visible
         # rather than having to be inferred from the frame block.
         out['canvas_scale_factor'] = float(width_px) / out['native_width_px']
@@ -1322,6 +1340,17 @@ def _frame_geometry(sidecar: dict[str, Any], width_px: int, height_px: int) -> d
     out['clamp_applied'] = abs(clamped - aspect) > 1e-9
     out['predicted_height_px'] = float(width_px) / clamped
     out['clamp_matches_actual_height'] = abs(out['predicted_height_px'] - float(height_px)) <= 2.0
+    if not out['clamp_matches_actual_height']:
+        # The capture just disproved the frame model for itself. Padding
+        # derived from a model this image contradicts is a guess, and
+        # scale_factor and out_of_bbox_palette_px are computed from the
+        # rectangle it produces -- so a capture that tells us we are wrong
+        # would be answered with two confident numbers built on being wrong.
+        # Leave them unknown instead; content_rect_px stays the full canvas so
+        # the pixel scan still has something to scan.
+        out['content_rect_px'] = None
+        out['pad_x_px'] = out['pad_y_px'] = None
+        return out
     pad_x = pad_y = 0.0
     if aspect > clamped:          # too wide: short axis is V, so height is padded
         pad_y = max(0.0, (float(height_px) - float(width_px) / aspect) / 2.0)
@@ -1495,7 +1524,12 @@ def _scan_export(arr: np.ndarray, palette_sorted: np.ndarray,
             sample_rgb.extend(row_samples)
 
         # Off-palette color census, for the pastel/unblend stage.
-        if not off_truncated and own_off.any():
+        # The cap bounds how many DISTINCT colors are tracked, not how far down
+        # the image they are counted. Stopping the whole census at the cap made
+        # every count a prefix of the image: a composited region low in a large
+        # drifted capture would be ranked on the handful of its pixels that
+        # happened to appear above the cut, or missed entirely.
+        if own_off.any():
             vals, cnts = np.unique(code[lo:hi][own_off], return_counts=True)
             for v, c in zip(vals.tolist(), cnts.tolist()):
                 if v in off_counts:
@@ -1663,8 +1697,24 @@ def _unblend_over_white(off_code: int, palette_sorted: np.ndarray) -> dict[str, 
     best = int(np.argmin(err))
     if not np.isfinite(err[best]) or err[best] > _ALPHA_CHANNEL_TOL:
         return None
+    # Two palette colors can sit on the same ray toward white, and then both
+    # reconstruct this pixel about as well at different alphas. argmin would
+    # pick whichever sorts first and report its alpha as fact -- a pixel
+    # composited at 0.67 coming back at 0.59 against the wrong element, with
+    # nothing in the output to say a coin was flipped. Report the ambiguity.
+    rivals = np.flatnonzero(err <= max(err[best], 0.0) + _ALPHA_CHANNEL_TOL)
+    rivals = rivals[rivals != best]
+    alternatives = []
+    for index in rivals[:8].tolist():
+        if abs(float(mean_alpha[index]) - float(mean_alpha[best])) <= 0.005:
+            continue      # same answer by another name, not an ambiguity
+        alternatives.append({'palette_code': int(pal[index]),
+                             'palette_rgb': _code_to_rgb(int(pal[index])),
+                             'alpha': float(mean_alpha[index]),
+                             'max_channel_error': float(err[index])})
     return {'palette_rgb': _code_to_rgb(int(pal[best])), 'palette_code': int(pal[best]),
-            'alpha': float(mean_alpha[best]), 'max_channel_error': float(err[best])}
+            'alpha': float(mean_alpha[best]), 'max_channel_error': float(err[best]),
+            'ambiguous': bool(alternatives), 'alternatives': alternatives}
 
 
 def _tally_codes(values: np.ndarray, wanted_sorted: np.ndarray, out: np.ndarray) -> None:
@@ -1901,7 +1951,8 @@ def stage_a_export_metrics(tiff_path: Path, sidecar: dict[str, Any]) -> dict[str
     # rectangle to report a density the capture actually rendered at.
     frame = _frame_geometry(sidecar, w, h)
     resolution = _native_resolution(sidecar, w, h, frame)
-    scan = _scan_export(arr, palette_sorted, frame['content_rect_px'])
+    scan = _scan_export(arr, palette_sorted,
+                        frame['content_rect_px'] or [0, 0, int(w), int(h)])
 
     blend = _pastel_analysis(scan['off_color_counts'], palette_sorted, labels, h * w)
     _apply_pastel_profile(blend, _pastel_solidity(
@@ -1938,7 +1989,10 @@ def stage_a_export_metrics(tiff_path: Path, sidecar: dict[str, Any]) -> dict[str
             'off_palette_fraction': (scan['off_palette_px'] / total_px) if total_px else None,
             'off_palette_distinct_colors': len(scan['off_color_counts']),
             'off_palette_census_truncated': scan['off_color_census_truncated'],
-            'out_of_bbox_palette_px': scan['out_of_bbox_palette_px'],
+            # Counted against the content rectangle, so it is only meaningful
+            # when that rectangle is. See frame.clamp_matches_actual_height.
+            'out_of_bbox_palette_px': (scan['out_of_bbox_palette_px']
+                                       if frame.get('content_rect_px') is not None else None),
         },
         'edges': {
             'hard_edge_count': hard,
@@ -2250,7 +2304,21 @@ def _main_export_metrics(ns) -> int:
             failures += 1; print(f"✗ {jp}: {type(e).__name__}: {e}"); continue
         for label, metrics in rows:
             table_rows.append((_row_label(jp, label, len(rows)), metrics))
-        if rows:
+        partial = []
+        try:
+            partial = [e for e in (json.loads(out.read_text(encoding='utf-8')).get('errors') or [])
+                       if (e or {}).get('code') != 'DUPLICATE_TIFF']
+        except Exception:
+            partial = []
+        if rows and partial:
+            # Some exports measured and some did not. Printing a tick and
+            # exiting 0 hands back a table with an experiment silently missing
+            # from it -- and on a drift sweep the missing row is often the one
+            # that would have moved the answer.
+            failures += 1
+            print(f"✗ {jp} -> {out}: {len(rows)} measured, "
+                  f"{len(partial)} failed ({', '.join(sorted({str((e or {}).get('code')) for e in partial}))})")
+        elif rows:
             print(f"✓ {jp} -> {out}: {len(rows)} export(s) measured")
         else:
             # A tick and "0 measured" reads like success. Name the reason here

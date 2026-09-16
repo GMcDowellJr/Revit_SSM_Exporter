@@ -250,12 +250,17 @@ def _parameter_report(element, names):
         record = {"builtin_parameter_present": True, "on_element": True}
         try:
             record["element_id"] = _safe_int_id(param.AsElementId())
-        except Exception:
-            pass
+        except Exception as ex:
+            # This id is the only fallback _underlay_report has when the
+            # reflected GetUnderlay* members are absent. Swallowing the failure
+            # reports the underlay as "not configured" on a view that has one,
+            # and b3_underlay_off then skips itself for a reason that is not
+            # true -- the experiment lost to a silent except.
+            record["element_id_error"] = "{0}: {1}".format(type(ex).__name__, ex)
         try:
             record["as_string"] = param.AsValueString() or param.AsString()
-        except Exception:
-            pass
+        except Exception as ex:
+            record["as_string_error"] = "{0}: {1}".format(type(ex).__name__, ex)
         out[name] = record
     return out
 
@@ -269,10 +274,20 @@ def _ogs_report(ogs):
                  "ProjectionLineColor", "CutLineColor",
                  "SurfaceForegroundPatternId", "SurfaceForegroundPatternVisible",
                  "CutForegroundPatternId", "IsValidObject"):
-        if not hasattr(ogs, name):
-            continue
+        # Retrieved ONCE, inside the handler. hasattr() invokes the getter and
+        # swallows only AttributeError, so a property that exists and throws
+        # propagated out and the caller discarded the whole override report --
+        # taking a readable Halftone=True on another property with it, which
+        # is the value the B3 halftone gate turns on. Same defect as _reflect
+        # and _stringify, in the third place it appears.
         try:
             value = getattr(ogs, name)
+        except AttributeError:
+            continue
+        except Exception as ex:
+            out[name] = "ERROR {0}: {1}".format(type(ex).__name__, ex)
+            continue
+        try:
             if name.endswith("Color"):
                 out[name] = (None if value is None or not getattr(value, "IsValid", True)
                              else [int(value.Red), int(value.Green), int(value.Blue)])
@@ -306,7 +321,17 @@ def _underlay_report(doc, view):
     report["top_level_id"] = top
     # Revit spells "no underlay" as the invalid ElementId (-1).
     configured = [v for v in (base, top) if isinstance(v, int) and v > 0]
-    report["underlay_configured"] = bool(configured) if (base is not None or top is not None) else None
+    # A parameter that exists and threw is not evidence of "no underlay". If
+    # the only fallback id could not be read, the answer is unknown -- and
+    # unknown has to warrant the experiment, the same asymmetry the halftone
+    # gate uses: a redundant export costs disk, a wrongly skipped one costs
+    # the answer.
+    report["read_errors"] = sorted(
+        name for name, record in (report.get("parameters") or {}).items()
+        if isinstance(record, dict) and ("element_id_error" in record or "error" in record))
+    report["underlay_configured"] = (
+        bool(configured) if (base is not None or top is not None)
+        else (None if report["read_errors"] else False))
 
     if report["underlay_configured"]:
         try:
@@ -491,7 +516,10 @@ def _summarize_b1(underlay, elements):
         "distinct_design_options": sorted({rec.get("design_option_name") for rec in elements
                                            if rec.get("design_option_name")}),
         # B3 gating, stated as what B1 observed rather than as a diagnosis.
-        "underlay_off_is_warranted": bool(underlay.get("underlay_configured")),
+        # None means unreadable, which warrants the variant; only an explicit
+        # False (nothing configured, nothing failed) skips it.
+        "underlay_off_is_warranted": underlay.get("underlay_configured") is not False,
+        "underlay_read_errors": list(underlay.get("read_errors") or []),
         "halftone_clear_is_warranted": bool(with_element_halftone or with_category_halftone),
     }
 
@@ -1066,14 +1094,14 @@ def run_probe(raw_view, output_dir, selection="all", element_ids=None,
         artifacts.append(native["json_report_path"])
     errors = list(native.get("exceptions", []))
     ran_something = bool(native.get("exports")) or "b1_query" in native.get("cases", {})
-    # A read-only run never opens a TransactionGroup, so an absent rollback is
-    # the correct outcome for it, not a failed one.
-    if errors or not (rollback_ok or read_only):
-        status = "failed"
-    elif not ran_something:
-        status = "inconclusive"
-    else:
-        status = "completed"
+    # Shared with the drift probe. A read-only run never opens a
+    # TransactionGroup, so an absent rollback is the correct outcome for it,
+    # not a failed one -- and a case that recorded itself inconclusive (a
+    # halftone variant whose categories refused to clear) has to reach the
+    # envelope, or the executor banks the run as a success and resume never
+    # retries the experiment that did not happen.
+    status = _drift.envelope_status(native, rollback_ok, restored, ran_something,
+                                    read_only=read_only)
     if read_only:
         rollback_status, restoration_status = "not_started", "not_checked"
     else:

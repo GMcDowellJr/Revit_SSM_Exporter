@@ -489,7 +489,7 @@ def test_d2_buckets_are_ordered_by_production_load_not_category_id(d2):
     ctx, _ = d2(categories, {10: 5, 20: 900, 30: 40})
     _, detail = probe._case_d2(ctx, steps=3)
     assert [c["name"] for c in detail["categories"]] == ["Roofs", "Floors", "Walls"]
-    assert [c["collected_element_count"] for c in detail["categories"]] == [900, 40, 5]
+    assert [c["painted_element_count"] for c in detail["categories"]] == [900, 40, 5]
 
 
 def test_d2_leaves_out_categories_this_view_draws_nothing_from(d2):
@@ -597,3 +597,87 @@ def test_an_uncheckable_module_is_unknown_rather_than_stale():
 def test_stale_sources_selects_only_the_stale_records():
     records = [{"file": "a", "stale": False}, {"file": "b", "stale": True}]
     assert probe.stale_sources(records) == [{"file": "b", "stale": True}]
+
+
+# --- an unresolved case must not be reported as a resumable success ---------
+
+def report(cases=None, exceptions=None):
+    return {"cases": cases or {}, "exceptions": exceptions or []}
+
+
+def test_a_case_that_marked_itself_inconclusive_reaches_the_envelope():
+    for detail in ({"inconclusive": True}, {"failed": True},
+                   {"variant_status": "inconclusive"}):
+        assert probe.envelope_status(report({"c": detail}), True, True, True) == "inconclusive"
+
+
+def test_a_run_that_left_the_document_changed_is_a_failure():
+    """restored=False means the model was not put back. Reporting that as
+    completed both hides it and lets resume skip the job forever."""
+    assert probe.envelope_status(report(), True, False, True) == "failed"
+
+
+def test_an_unverifiable_restoration_is_inconclusive_not_completed():
+    assert probe.envelope_status(report(), True, None, True) == "inconclusive"
+
+
+def test_a_clean_run_is_still_completed():
+    assert probe.envelope_status(report({"d1_determinism": {"steps": []}}),
+                                 True, True, True) == "completed"
+
+
+def test_a_read_only_run_needs_no_rollback():
+    assert probe.envelope_status(report(), False, None, True, read_only=True) == "completed"
+    assert probe.envelope_status(report(), False, None, True) == "failed"
+
+
+def test_an_exception_outranks_everything():
+    assert probe.envelope_status(report(exceptions=[{"x": 1}]), True, True, True) == "failed"
+
+
+def test_snapshot_read_errors_are_not_diffed_as_state():
+    before = {"category_hidden": {"1": False}, "category_read_errors": {"9": "boom"}}
+    after = {"category_hidden": {"1": False}, "category_read_errors": {"9": "other"}}
+    assert probe._diff_state(before, after) == []
+
+
+# --- D2 and D5 refuse to measure what they cannot control -------------------
+
+def test_d2_refuses_to_sweep_when_the_crop_cannot_be_pinned(d2, monkeypatch):
+    monkeypatch.setattr(probe, "_set_view_crop", lambda view, bounds: None)
+    ctx, captured = d2([_Category(10, "Walls")], {10: 100})
+    exports, detail = probe._case_d2(ctx, steps=2)
+    assert exports == [] and captured == []
+    assert detail["inconclusive"] is True and detail["crop_pinned_to"] is None
+
+
+def test_d2_refuses_when_a_painted_category_will_not_read(d2):
+    class Hostile(object):
+        """Exists, is painted, and throws when its type is read."""
+        def __init__(self):
+            self.Id = _Id(20)
+            self.Name = "Roofs"
+
+        @property
+        def CategoryType(self):
+            raise RuntimeError("disposed")
+    categories = [_Category(10, "Walls"), Hostile()]
+    ctx, captured = d2(categories, {10: 100, 20: 25})
+    exports, detail = probe._case_d2(ctx, steps=2)
+    assert exports == [] and captured == []
+    assert detail["inconclusive"] is True
+    assert [c["name"] for c in detail["unreadable_categories"]] == ["Roofs"]
+    assert detail["unreadable_categories"][0]["painted_element_count"] == 25
+
+
+def test_d5_stops_before_exporting_a_tile_it_could_not_crop(d2, monkeypatch):
+    """Without the crop every "tile" is the same full-view export under a new
+    name -- N identical captures that would read as tiling working."""
+    monkeypatch.setattr(probe, "_set_view_crop", lambda view, bounds: None)
+    ctx, captured = d2([_Category(10, "Walls")], {10: 100})
+    ctx["export_dpi"], ctx["view_scale"] = 150.0, 96.0
+    ctx["capture"] = lambda cfg, case, label: captured.append(label) or {
+        "tiff_path": label + ".tiff", "label": label}
+    exports, detail = probe._case_d5(ctx, grid=2)
+    assert exports == [] and captured == []
+    assert detail["inconclusive"] is True and detail["tiles_captured"] == 0
