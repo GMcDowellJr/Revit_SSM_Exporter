@@ -349,6 +349,60 @@ def test_aa_read_failure_is_explicit_not_unchanged(tmp_path):
     assert result["success"] is True
 
 
+class _DisplayModelWithoutSmoothEdges(object):
+    """A ViewDisplayModel that simply has no SmoothEdges member, as on a
+    host/view type that does not expose the setting."""
+
+    def __init__(self, show_shadows):
+        self.ShowShadows = show_shadows
+        self.disposed = False
+
+    def Dispose(self):
+        self.disposed = True
+
+
+class _ViewWithoutSmoothEdges(_FakeView):
+    def GetViewDisplayModel(self):
+        return _DisplayModelWithoutSmoothEdges(self._show_shadows)
+
+    def SetViewDisplayModel(self, dm):
+        self._show_shadows = dm.ShowShadows
+        self.display_model_writes.append((None, dm.ShowShadows))
+
+
+def test_missing_smooth_edges_attribute_is_read_failed_not_off(tmp_path):
+    """G1: no SmoothEdges member at all must not read as 'already off'."""
+    with _install_fake_revit_db():
+        doc = _SizedDoc(lambda px: (px, px))
+        result, diag = _run_view(tmp_path, doc, _ViewWithoutSmoothEdges(view_id=106))
+
+    meta = result["metadata"]
+    assert meta["applied_smooth_edges"] == "read_failed"
+    assert meta["smooth_edges_read_error"] == "AttributeError"
+    assert any(w.get("callsite") == "smooth_edges_capture" for w in diag.warnings)
+    # Shadow suppression is untouched by this: that capture has always had
+    # its own sentinel and still reports on its own terms.
+    assert meta["applied_show_shadows"] is False
+
+
+def test_writer_never_emits_the_legacy_unchanged_value(tmp_path):
+    with _install_fake_revit_db():
+        doc = _SizedDoc(lambda px: (px, px))
+        for view in (_FakeView(view_id=107),
+                     _ViewDisplayModelRaises(view_id=108),
+                     _ViewWithoutSmoothEdges(view_id=109)):
+            result, _ = _run_view(tmp_path, doc, view)
+            assert result["metadata"]["applied_smooth_edges"] != "unchanged"
+
+
+def test_normalizer_maps_legacy_unchanged_to_read_failed():
+    assert cib.normalize_applied_smooth_edges("unchanged") == "read_failed"
+    assert cib.normalize_applied_smooth_edges("read_failed") == "read_failed"
+    assert cib.normalize_applied_smooth_edges(False) is False
+    assert cib.normalize_applied_smooth_edges("unchanged (failed)") == "unchanged (failed)"
+    assert cib.normalize_applied_smooth_edges(None) is None
+
+
 def test_aa_normal_path_is_unchanged_by_this_patch(tmp_path):
     """G4: the successful path keeps its existing values."""
     with _install_fake_revit_db():

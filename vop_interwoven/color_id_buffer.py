@@ -1245,6 +1245,25 @@ def read_image_dimensions(path):
     return width, height
 
 
+# Sidecars written before "read_failed" existed record a failed AA read as
+# "unchanged" -- see the writer below for why that string could never mean
+# what it says. Readers must not treat those captures as clean.
+LEGACY_UNKNOWN_SMOOTH_EDGES = "unchanged"
+
+
+def normalize_applied_smooth_edges(value):
+    """Map a sidecar's applied_smooth_edges onto its true meaning.
+
+    Exists so the decode tool, the thinrunner summary and the probes cannot
+    each decide separately what a legacy "unchanged" meant. Only False is a
+    confirmed anti-aliasing-off capture; everything else is returned as-is
+    except "unchanged", which becomes "read_failed".
+    """
+    if value == LEGACY_UNKNOWN_SMOOTH_EDGES:
+        return "read_failed"
+    return value
+
+
 def _set_pixel_size_with_backoff(opts, pixel_size, diag=None, view_id=None):
     """Set ImageExportOptions.PixelSize, backing off if Revit rejects the value.
 
@@ -1785,10 +1804,31 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     # two apart, so a view whose AA state was unknown was reported exactly
     # like one that needed no change.
     smooth_edges_read_error = None
+    # No getattr default here. bool(getattr(dm, "SmoothEdges", None)) reads a
+    # host that does not expose the property at all as False -- "AA is
+    # already off, nothing to do" -- which is the same silent coercion the
+    # ShowShadows capture below already refuses via its own sentinel. An
+    # absent property means this capture does not know the view's AA state,
+    # and an unknown state is not an off state.
+    _MISSING_SMOOTH_EDGES = object()
     try:
         _dm = view.GetViewDisplayModel()
         try:
-            orig_smooth_edges = bool(getattr(_dm, "SmoothEdges", None))
+            _raw_smooth_edges = getattr(_dm, "SmoothEdges", _MISSING_SMOOTH_EDGES)
+            if _raw_smooth_edges is _MISSING_SMOOTH_EDGES:
+                # getattr without a default would have raised exactly this.
+                smooth_edges_read_error = "AttributeError"
+                if diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite="smooth_edges_capture",
+                        message="ViewDisplayModel has no SmoothEdges attribute on this "
+                                "Revit host; anti-aliasing cannot be confirmed off and "
+                                "decoded edges may be blended",
+                        view_id=view_id,
+                    )
+            else:
+                orig_smooth_edges = bool(_raw_smooth_edges)
         finally:
             try:
                 _dm.Dispose()
@@ -2022,11 +2062,14 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # pixel colors right at element boundaries that a decoder can't tell
         # apart from a genuine third color — this is the specific setting the
         # original empirical Stage A testing confirmed as "AA-off is clean".
-        # "unchanged" is reserved for a successful read that found nothing to
-        # do; a failed read is its own value so it can never be mistaken for
-        # a clean capture. Capture PROCEEDS either way -- an unconfirmed AA
+        # "unchanged" is NOT a value this writer can produce any more. It
+        # never once meant what it said: a successful read always reaches the
+        # set below and ends at False or "unchanged (failed)", so the only
+        # way "unchanged" was ever written was a read that failed. Starting
+        # from "read_failed" removes the word rather than leaving a label
+        # nothing can reach. Capture PROCEEDS either way -- an unconfirmed AA
         # state costs decode confidence (MEDIUM, not HIGH), not the export.
-        applied_smooth_edges = "read_failed" if smooth_edges_read_error else "unchanged"
+        applied_smooth_edges = "read_failed"
         if orig_smooth_edges is not None:
             try:
                 dm = view.GetViewDisplayModel()
