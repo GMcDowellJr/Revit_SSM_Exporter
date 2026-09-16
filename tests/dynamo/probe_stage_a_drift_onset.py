@@ -577,7 +577,14 @@ def production_capture(doc, view, cfg, case, label, capture_dir, diag=None):
 
     if not os.path.isdir(capture_dir):
         os.makedirs(capture_dir)
-    stem = "{0}.{1}".format(_safe_name(case), _safe_name(label))
+    # The view id is part of the name, not decoration. Case and label alone
+    # collide across views: running D1 on one view and D3 on another into the
+    # same output directory produced identically-named files, so the second
+    # run silently overwrote the first's sidecar while its TIFF stayed, leaving
+    # sidecars and images crossed between views and a capture set that looks
+    # complete and is not.
+    stem = "{0}.{1}.{2}".format(
+        _safe_int_id(getattr(view, "Id", None)), _safe_name(case), _safe_name(label))
     tiff_path = os.path.join(capture_dir, stem + ".tiff")
     sidecar_path = os.path.join(capture_dir, stem + ".json")
     for source, destination in ((out.get("tiff_path"), tiff_path),

@@ -13,6 +13,13 @@ except ImportError:  # Reported as an analysis limitation by the public API.
     np = None
 try:
     from PIL import Image, ImageChops
+    # Pillow refuses images past ~89 Mpx and RAISES past twice that, as a
+    # defence against decompression-bomb input. A Stage A capture is our own
+    # export and is legitimately far larger than that -- 15000 x 12356 is
+    # 185 Mpx -- so the guard would reject exactly the large captures the
+    # drift investigation exists to measure, and it did: several came back as
+    # "0 export(s) measured".
+    Image.MAX_IMAGE_PIXELS = None
 except ImportError:  # Reported as an analysis limitation by the public API.
     Image = ImageChops = None
 
@@ -1868,8 +1875,12 @@ def _metrics_export_records(json_path: Path, data: dict[str, Any]) -> list[tuple
                         for key in ('case', 'label'):
                             if rec.get(key) is not None:
                                 merged[key] = rec[key]
+                # Inherit a palette the enclosing report actually carries, but
+                # never invent an empty one: an absent field is how "wrong file
+                # pointed at" is told apart from "capture that painted nothing".
                 for key in ('color_assignment_map', 'link_category_color_map'):
-                    merged.setdefault(key, node.get(key) or {})
+                    if key not in merged and node.get(key) is not None:
+                        merged[key] = node[key]
                 found.append((str(rec.get('label') or rec.get('case') or i), tiff, merged))
         return found
 
@@ -1880,24 +1891,35 @@ def _metrics_export_records(json_path: Path, data: dict[str, Any]) -> list[tuple
     if not records and data.get('tiff_path'):
         tiff = resolve_path(json_path, data.get('tiff_path'))
         if tiff is not None:
-            records = [(str(data.get('view_id') or json_path.stem), tiff, data)]
+            # A capture written by a probe labels itself; a hand-run Stage A
+            # sidecar falls back to its view id, then to the file name.
+            label = data.get('probe_label') or data.get('view_id') or json_path.stem
+            records = [(str(label), tiff, data)]
     if not records:
         raise ValueError('NO_EXPORT_RECORDS: {0} has neither "tiff_path" nor an "exports" list'.format(json_path.name))
     # Every metric here is palette-relative. Measuring against an empty palette
     # does not fail -- it reports every pixel as off-palette, a hard_edge_ratio
     # of 0 and no pastels, which reads exactly like a catastrophically drifted
     # capture. Refuse instead, and say where the palette was expected.
-    # Scoped to records whose TIFF is actually there: a missing TIFF cannot be
-    # measured either way and is already reported per-record as TIFF_MISSING.
-    empty = [label for label, tiff, side in records
-             if tiff.exists()
-             and not (side.get('color_assignment_map') or side.get('link_category_color_map'))]
-    if empty:
+    # A palette that is ABSENT means the wrong file was pointed at -- a probe
+    # report carries no color_assignment_map, and measuring against an empty
+    # one does not fail, it reports every pixel as off-palette and reads like a
+    # catastrophically drifted capture.
+    #
+    # A palette that is PRESENT AND EMPTY is a different thing entirely: a real
+    # production capture in which nothing was painted. D2's step 0 is exactly
+    # that by construction -- every model category hidden, as the zero-content
+    # control the later steps are read against. Refusing it would throw away
+    # the control.
+    missing = [label for label, tiff, side in records
+               if tiff.exists() and 'color_assignment_map' not in side
+               and 'link_category_color_map' not in side]
+    if missing:
         raise ValueError(
-            'NO_PALETTE: {0} describes export(s) {1} with no color_assignment_map. '
-            'Point --export-metrics at the probe\'s captures/ directory (each capture '
-            'keeps production\'s own sidecar, which carries the palette) rather than at '
-            'the probe report.'.format(json_path.name, ', '.join(sorted(empty)[:5])))
+            'NO_PALETTE: {0} describes export(s) {1} with no color_assignment_map field '
+            'at all. Point --export-metrics at the probe\'s captures/ directory (each '
+            'capture keeps production\'s own sidecar, which carries the palette) rather '
+            'than at the probe report.'.format(json_path.name, ', '.join(sorted(missing)[:5])))
     return records
 
 
@@ -2047,7 +2069,28 @@ def _main_export_metrics(ns) -> int:
             failures += 1; print(f"✗ {jp}: {type(e).__name__}: {e}"); continue
         for label, metrics in rows:
             table_rows.append((f"{jp.stem}:{label}", metrics))
-        print(f"✓ {jp} -> {out}: {len(rows)} export(s) measured")
+        if rows:
+            print(f"✓ {jp} -> {out}: {len(rows)} export(s) measured")
+        else:
+            # A tick and "0 measured" reads like success. Name the reason here
+            # rather than making someone open the .metrics.json to find it.
+            try:
+                why = json.loads(out.read_text(encoding='utf-8')).get('errors') or []
+            except Exception:
+                why = []
+            codes = {e.get('code') for e in why}
+            if why and codes == {'DUPLICATE_TIFF'}:
+                # Everything here was already measured from the capture's own
+                # sidecar. That is dedupe working, not a failure.
+                print(f"– {jp}: {len(why)} capture(s) already measured; skipped")
+                continue
+            detail = '; '.join(
+                '{0}{1}'.format(e.get('code', '?'),
+                                ': ' + str(e.get('message') or e.get('type') or '')
+                                if (e.get('message') or e.get('type')) else '')
+                for e in why[:3]) or 'no export records'
+            failures += 1
+            print(f"✗ {jp} -> {out}: nothing measured ({detail})")
     if ns.metrics_table and table_rows:
         table = format_metrics_table(table_rows)
         if ns.metrics_table == '-':

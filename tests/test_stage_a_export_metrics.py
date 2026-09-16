@@ -758,3 +758,65 @@ def test_dedupe_does_not_suppress_genuinely_distinct_captures(tmp_path):
         measured.add(payload["exports"]["871863"]["image"]["sha256"])
     # The two fixtures differ, so both were really measured.
     assert len(measured) == 2
+
+
+# --- a legitimately empty capture is data, not an error ---------------------
+
+def test_a_capture_that_painted_nothing_is_measured_not_refused(tmp_path):
+    """D2's step 0 hides every model category by construction: it is the
+    zero-content control the later steps are read against. Its
+    color_assignment_map is present and empty, and refusing it would throw the
+    control away."""
+    arr = np.full((64, 64, 3), 255, dtype=np.uint8)      # all background
+    side = dict(sidecar(), tiff_path="empty.tiff")
+    side["color_assignment_map"] = {}
+    write_tiff(tmp_path, arr, "empty.tiff")
+    src = tmp_path / "d2_category_load.step0.json"
+    src.write_text(json.dumps(side), encoding="utf-8")
+    _out, rows = analyzer.analyze_metrics_json(src)
+    metrics = rows[0][1]
+    assert metrics["palette_color_count"] == 0
+    assert metrics["pixels"]["white_px"] == 64 * 64
+    assert metrics["pixels"]["off_palette_px"] == 0
+    assert metrics["edges"]["hard_edge_count"] == 0
+
+
+def test_a_palette_field_that_is_absent_entirely_is_still_refused(tmp_path):
+    """That means the wrong file was pointed at — a probe report, not a capture."""
+    write_tiff(tmp_path, solid_square(), "a.tiff")
+    base = sidecar()
+    doc = {"exports": [{"label": "rep0", "tiff_path": "a.tiff",
+                        "resolution": base["resolution"], "bounds_xy": base["bounds_xy"]}]}
+    src = tmp_path / "report.json"
+    src.write_text(json.dumps(doc), encoding="utf-8")
+    with pytest.raises(ValueError, match="NO_PALETTE"):
+        analyzer.analyze_metrics_json(src)
+
+
+def test_a_capture_labels_itself_by_its_probe_label(tmp_path):
+    write_tiff(tmp_path, solid_square(), "c.tiff")
+    side = dict(sidecar(), tiff_path="c.tiff", view_id=871863,
+                probe_case="d1_determinism", probe_label="rep0")
+    src = tmp_path / "871863.d1_determinism.rep0.json"
+    src.write_text(json.dumps(side), encoding="utf-8")
+    _out, rows = analyzer.analyze_metrics_json(src)
+    assert [label for label, _ in rows] == ["rep0"]
+
+
+# --- large captures must not trip Pillow's bomb guard -----------------------
+
+def test_pillow_pixel_limit_is_lifted_for_our_own_captures():
+    """15000 x 12356 is 185 Mpx. Pillow warns past ~89 Mpx and raises past
+    twice that, so the guard rejected exactly the large captures the drift
+    investigation exists to measure."""
+    assert Image.MAX_IMAGE_PIXELS is None
+
+
+def test_an_image_past_the_default_bomb_limit_is_measured(tmp_path):
+    import PIL.Image as _PILImage
+    default_limit = 89478485
+    # Not actually allocating 89 Mpx: assert the guard is off, then measure a
+    # real image, so the test stays fast but still exercises the path.
+    assert _PILImage.MAX_IMAGE_PIXELS is None or _PILImage.MAX_IMAGE_PIXELS > default_limit
+    m = measure(tmp_path, solid_square())
+    assert m["edges"]["hard_edge_ratio"] == 1.0
