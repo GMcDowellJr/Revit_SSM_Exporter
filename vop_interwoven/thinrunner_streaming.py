@@ -346,6 +346,8 @@ def _describe_suppression(applied_value):
         return "yes"
     if applied_value == "unchanged (failed)":
         return "no (suppression attempt failed)"
+    if applied_value == "read_failed":
+        return "unknown (state could not be read)"
     if applied_value == "unchanged":
         return "no (already off, or unsupported on this Revit host)"
     return str(applied_value)
@@ -376,8 +378,16 @@ def _summarize_stage_a_sidecar(sidecar_path):
     lines.append("    Shadows suppressed: {}".format(
         _describe_suppression(meta.get("applied_show_shadows"))
     ))
+    # Normalised for smooth edges ONLY. A legacy sidecar's "unchanged" was
+    # never reachable from a successful AA read, so printing it as "already
+    # off, or unsupported" claims more than the capture established. That
+    # reading IS correct for applied_show_shadows above, whose writer skips
+    # the mutation when shadows are genuinely already off -- which is why
+    # the normalisation lives here and not inside _describe_suppression.
+    from vop_interwoven.color_id_buffer import normalize_applied_smooth_edges
     lines.append("    Smooth edges suppressed: {}".format(
-        _describe_suppression(meta.get("applied_smooth_edges"))
+        _describe_suppression(
+            normalize_applied_smooth_edges(meta.get("applied_smooth_edges")))
     ))
 
     link_map = meta.get("link_category_color_map") or {}

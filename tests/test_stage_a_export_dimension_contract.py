@@ -445,16 +445,49 @@ def test_aa_normal_path_is_unchanged_by_this_patch(tmp_path):
     assert meta["smooth_edges_read_error"] is None
 
 
-def test_read_failed_denies_the_decoder_high_confidence(tmp_path):
-    """"read_failed" must not read as a clean AA-off capture downstream."""
+def _reliability():
     # The decode tool states numpy as a dependency and is meant to run
     # outside Dynamo; skip rather than fail the suite where it is absent,
     # matching tests/test_decode_stage_a_color_id.py.
     pytest.importorskip("numpy")
     from tools.decode_stage_a_color_id import _capture_reliability
+    return _capture_reliability
+
+
+def test_read_failed_denies_the_decoder_high_confidence():
+    """"read_failed" must not read as a clean AA-off capture downstream."""
+    _capture_reliability = _reliability()
     ok, reason = _capture_reliability(
         {"applied_display_style": "FlatColors", "applied_smooth_edges": "read_failed"})
     assert ok is False and "read_failed" in reason
     ok, reason = _capture_reliability(
         {"applied_display_style": "FlatColors", "applied_smooth_edges": False})
     assert ok is True and reason is None
+
+
+def test_legacy_unchanged_denies_high_and_reports_aa_unknown():
+    """G4: a sidecar predating "read_failed" is not a clean capture."""
+    _capture_reliability = _reliability()
+    ok, reason = _capture_reliability(
+        {"applied_display_style": "FlatColors", "applied_smooth_edges": "unchanged"})
+    assert ok is False
+    # Reported as the unknown state it always was, not echoed as "unchanged".
+    assert "read_failed" in reason
+    assert "'unchanged'" not in reason
+
+
+@pytest.mark.parametrize("dim_check,expect_high", [
+    ("pass", True),
+    ("read_failed", False),   # G3
+    ("mismatch", False),
+    (None, True),             # legacy sidecar, judged on graphics alone
+])
+def test_dim_check_gates_high_reliability(dim_check, expect_high):
+    _capture_reliability = _reliability()
+    sidecar = {"applied_display_style": "FlatColors", "applied_smooth_edges": False}
+    if dim_check is not None:
+        sidecar["resolution"] = {"dim_check": dim_check}
+    ok, reason = _capture_reliability(sidecar)
+    assert ok is expect_high
+    if not expect_high:
+        assert dim_check in reason

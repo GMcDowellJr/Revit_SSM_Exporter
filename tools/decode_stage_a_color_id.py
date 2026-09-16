@@ -187,7 +187,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # Pure-Python constant, safe to import outside Revit/Dynamo (color_id_buffer.py
 # defers all Revit API imports to inside function bodies).
-from vop_interwoven.color_id_buffer import MAX_STAGE_A_PIXEL_SIZE
+from vop_interwoven.color_id_buffer import (
+    MAX_STAGE_A_PIXEL_SIZE,
+    normalize_applied_smooth_edges,
+)
 
 TOOL_VERSION = "1.0.0"
 SCHEMA_VERSION = "1.0"
@@ -504,8 +507,8 @@ def _capture_reliability(sidecar: dict[str, Any]) -> tuple[bool, str | None]:
 
     export_color_id_buffer_view() only guarantees exact-match colors (no
     lighting/shading tint, no anti-aliased edge blending) when it actually
-    achieved DisplayStyle.FlatColors AND successfully disabled smooth edges
-    (color_id_buffer.py:560-624). On older Revit hosts, or a view type that
+    achieved DisplayStyle.FlatColors AND successfully disabled smooth edges,
+    at an export whose measured dimensions matched the request. On older Revit hosts, or a view type that
     doesn't expose these settings, it falls back to plain Shading (still
     lit/shadowed) or leaves the view's display unchanged, and records exactly
     that in "applied_display_style"/"applied_smooth_edges" -- it does not
@@ -515,14 +518,27 @@ def _capture_reliability(sidecar: dict[str, Any]) -> tuple[bool, str | None]:
     combination that gates occlusion, pipeline.py:2443-2444).
     """
     display_style = sidecar.get("applied_display_style")
-    smooth_edges = sidecar.get("applied_smooth_edges")
-    if display_style == "FlatColors" and smooth_edges is False:
+    # A sidecar written before "read_failed" existed records a failed AA read
+    # as "unchanged". Both are the same fact -- the AA state was never
+    # established -- so they are normalised to one value here rather than
+    # letting a legacy capture read as something milder than it is.
+    smooth_edges = normalize_applied_smooth_edges(sidecar.get("applied_smooth_edges"))
+    # The export's own dimensions are part of whether this capture is
+    # trustworthy, not a separate concern: a mismatch means the image is not
+    # the size the geometry was computed for, and "read_failed" means nobody
+    # checked. A sidecar predating the check carries no dim_check at all and
+    # is judged on the graphics settings alone, as it always was.
+    dim_check = (sidecar.get("resolution") or {}).get("dim_check")
+    dim_ok = dim_check is None or dim_check == "pass"
+    if display_style == "FlatColors" and smooth_edges is False and dim_ok:
         return True, None
     return False, (
-        "Stage A did not confirm a clean flat-color, anti-aliasing-off capture for "
-        "this view (applied_display_style={0!r}, applied_smooth_edges={1!r}); "
-        "decoded colors may be lit/shaded or anti-aliased rather than exact palette "
-        "matches".format(display_style, smooth_edges)
+        "Stage A did not confirm a clean flat-color, anti-aliasing-off capture at a "
+        "verified size for this view (applied_display_style={0!r}, "
+        "applied_smooth_edges={1!r}, dim_check={2!r}); decoded colors may be "
+        "lit/shaded or anti-aliased rather than exact palette matches, or the image "
+        "may not be the size it was requested at".format(
+            display_style, smooth_edges, dim_check)
     )
 
 

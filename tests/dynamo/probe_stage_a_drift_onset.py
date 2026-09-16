@@ -829,6 +829,8 @@ def production_capture(doc, view, cfg, case, label, capture_dir, diag=None, run=
         with open(sidecar_path, "w") as handle:
             json.dump(sidecar, handle, indent=2, sort_keys=True)
 
+    from vop_interwoven.color_id_buffer import normalize_applied_smooth_edges
+
     record = {
         "case": case,
         "label": "{0}/{1}".format(case, label),
@@ -841,7 +843,10 @@ def production_capture(doc, view, cfg, case, label, capture_dir, diag=None, run=
         "color_assignment_count": out.get("color_assignment_count"),
         "paint_failures": sidecar.get("paint_failures"),
         "applied_display_style": sidecar.get("applied_display_style"),
-        "applied_smooth_edges": sidecar.get("applied_smooth_edges"),
+        # Normalised so a legacy "unchanged" capture is not analysed as
+        # something milder than an unestablished AA state.
+        "applied_smooth_edges": normalize_applied_smooth_edges(
+            sidecar.get("applied_smooth_edges")),
         "applied_show_shadows": sidecar.get("applied_show_shadows"),
         "uncolorable_link_categories": sidecar.get("uncolorable_link_categories"),
         "failed_link_categories": sidecar.get("failed_link_categories"),

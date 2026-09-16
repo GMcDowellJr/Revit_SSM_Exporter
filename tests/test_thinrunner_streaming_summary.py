@@ -47,7 +47,29 @@ def test_describe_suppression_false_means_suppressed(helpers):
 
 
 def test_describe_suppression_unchanged_means_no(helpers):
-    assert "no" in helpers["_describe_suppression"]("unchanged").lower()
+    # Still the right reading for applied_show_shadows, whose writer skips
+    # the mutation when shadows are genuinely already off.
+    assert helpers["_describe_suppression"]("unchanged").startswith("no (already off")
+
+
+def test_describe_suppression_read_failed_is_unknown_not_no(helpers):
+    result = helpers["_describe_suppression"]("read_failed")
+    assert result.startswith("unknown")
+    assert "already off" not in result
+
+
+def test_summarize_normalizes_legacy_unchanged_for_smooth_edges_only(helpers, tmp_path):
+    """F5/G4: a legacy sidecar must not read as a confirmed AA-off capture,
+    while the same literal on shadows keeps its own (correct) meaning."""
+    import json
+    sidecar = tmp_path / "legacy.json"
+    sidecar.write_text(json.dumps({
+        "applied_show_shadows": "unchanged",
+        "applied_smooth_edges": "unchanged",
+    }))
+    text = "\n".join(helpers["_summarize_stage_a_sidecar"](str(sidecar)))
+    assert "Smooth edges suppressed: unknown (state could not be read)" in text
+    assert "Shadows suppressed: no (already off" in text
 
 
 def test_describe_suppression_unchanged_failed_means_no(helpers):
