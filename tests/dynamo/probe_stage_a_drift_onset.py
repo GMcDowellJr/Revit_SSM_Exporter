@@ -172,13 +172,27 @@ def _safe_name(value):
 
 
 def _safe_int_id(value):
-    for attr in ("IntegerValue", "Value"):
-        inner = getattr(value, attr, None)
-        if inner is not None:
-            try:
-                return int(inner)
-            except (TypeError, ValueError):
-                pass
+    """Read an ElementId as an int, Revit 2025's 64-bit ``Value`` first.
+
+    ``IntegerValue`` is the legacy 32-bit property and is deprecated in Revit
+    2025; for an id outside the int32 range its getter can raise rather than
+    return, and ``getattr(value, "IntegerValue", None)`` does not catch that --
+    a default only covers AttributeError, not a throwing property. Reading
+    ``Value`` first, with each property access in its own try, keeps a
+    large-id document from failing the probe during collection, naming, or
+    reporting.
+    """
+    for attr in ("Value", "IntegerValue"):
+        try:
+            inner = getattr(value, attr, None)
+        except Exception:
+            continue
+        if inner is None:
+            continue
+        try:
+            return int(inner)
+        except (TypeError, ValueError):
+            continue
     try:
         return int(value)
     except (TypeError, ValueError):
@@ -435,12 +449,32 @@ def _collect_host_elements(doc, view, max_count=None):
                       "painted": len(resolved)}
 
 
+def production_palette_step(assignment_count, global_threshold):
+    """The palette step production would use for this many assignments.
+
+    Production does *not* size the lattice to the view's own element count --
+    it calls ``choose_step(global_threshold)`` whenever the count fits under
+    the configured threshold, so every view under it shares one global step
+    and therefore one stable set of RGB values. Sizing to the per-view count
+    instead yields step 8 rather than 6 for any realistic view, which is a
+    different palette and a different set of assigned colors; a capture made
+    that way could not be compared against a production one.
+    """
+    global_threshold = int(global_threshold)
+    total = int(assignment_count)
+    from vop_interwoven.color_id_buffer import choose_step
+    return choose_step(global_threshold if total <= global_threshold else total)
+
+
 def _paint(doc, view, element_ids):
     """Assign the production color-ID palette. Never a second palette generator."""
     from Autodesk.Revit.DB import Color
+    from vop_interwoven.config import Config
     from vop_interwoven.color_id_buffer import (
-        build_palette, choose_step, _build_flat_color_ogs, _get_solid_pattern_id)
-    step = choose_step(max(len(element_ids), 1))
+        build_palette, _build_flat_color_ogs, _get_solid_pattern_id)
+    global_threshold = getattr(
+        Config(), "color_id_buffer_global_assignment_threshold", 32767)
+    step = production_palette_step(len(element_ids), global_threshold)
     palette = build_palette(len(element_ids), step=step)
     solid = _get_solid_pattern_id(doc)
     if solid is None:
@@ -456,6 +490,82 @@ def _paint(doc, view, element_ids):
             failures.append({"element_id": _safe_int_id(eid),
                              "type": type(ex).__name__, "message": str(ex)})
     return color_map, failures, step
+
+
+# Production's own suppression set, in the order export_color_id_buffer_view
+# applies it: detach the template first (it locks the display/VG properties
+# every later step writes), then the visibility and graphics mutations, then
+# the display-model flags. Every one of these exists to stop Revit blending
+# pixels for a reason unrelated to rasterization -- SmoothEdges is
+# anti-aliasing, ShowShadows and AmbientOcclusion shade surfaces, a non-flat
+# DisplayStyle shades them, and filter/phase/halftone graphics recolor them.
+# A capture taken without them measures those effects instead of the resample
+# the drift experiments are trying to isolate.
+PRODUCTION_SUPPRESSION_MUTATIONS = (
+    "detach_template",
+    "hide_annotation_categories",
+    "visibility_off_filters_disabled",
+    "visible_filter_graphics_neutralized",
+    "phase_filter_neutralized",
+    "category_halftone_neutralized",
+    "display_style_flat_colors",
+    "smooth_edges_off",
+    "shadows_off",
+    "ambient_occlusion_off",
+    "sketchy_lines_off",
+    "depth_cueing_off",
+)
+
+
+def _minimum_id_mutations_module():
+    """The repo's own implementation of the production suppression set.
+
+    Reusing it rather than writing a third copy: production applies these
+    inline inside export_color_id_buffer_view with no callable seam, and
+    stage_a_minimum_id_mutations already implements each one against the same
+    Revit API with its own tests and template/unsupported handling. Importing
+    a probe module is safe by the Stage A probe contract -- it opens no
+    transaction, reads no Dynamo IN, and writes no artifact.
+    """
+    try:
+        import tests.dynamo.probe_stage_a_minimum_id_mutations as module
+    except ImportError:
+        import probe_stage_a_minimum_id_mutations as module  # type: ignore
+    return module
+
+
+def normalization_shortfall(mutations):
+    """Mutations that did not end in a state matching production's capture.
+
+    APPLIED and ALREADY_MATCHED both leave the view in production's state.
+    Anything else -- blocked by a template, unsupported on this Revit, or
+    outright failed -- means this capture is not normalized the way a
+    production capture is, and every metric taken from it has to be read
+    knowing that. Returned rather than raised: a view that cannot reach the
+    production state is itself a finding, not a crash.
+    """
+    ok = {"APPLIED", "ALREADY_MATCHED"}
+    return sorted(mutation_id for mutation_id, record in (mutations or {}).items()
+                  if (record or {}).get("status") not in ok)
+
+
+def _normalize_view_state(doc, view, element_ids):
+    """Put the view into the same graphic state production exports from.
+
+    Applied after painting and before any export, in one committed
+    transaction inside the caller's TransactionGroup, so the rollback that
+    already covers the paint covers this too.
+    """
+    module = _minimum_id_mutations_module()
+    result = {"mutations": {}}
+    for mutation_id in PRODUCTION_SUPPRESSION_MUTATIONS:
+        try:
+            module._apply_mutation(doc, view, element_ids, result, mutation_id)
+        except Exception as ex:
+            result["mutations"][mutation_id] = {
+                "mutation_id": mutation_id, "status": "FAILED",
+                "message": "{0}: {1}".format(type(ex).__name__, ex)}
+    return result
 
 
 def _set_pixel_size(opts, requested):
@@ -887,6 +997,29 @@ def _run_native(raw_view, output_dir, selection="all", repetitions=DEFAULT_REPET
                            "paint_failures": paint_result.get("failures", [])}
         report["color_assignment_map"] = paint_result.get("color_map", {})
 
+        # Without this, a view with smooth edges, shadows, a non-flat display
+        # style, live filters, or a template exports those effects and the
+        # blended pixels they produce are indistinguishable from the drift
+        # D1-D5 exist to measure.
+        normalization = {}
+        _mutate(doc, "normalize_view_state",
+                lambda: normalization.update(
+                    _normalize_view_state(doc, view, element_ids)))
+        shortfall = normalization_shortfall(normalization.get("mutations"))
+        report["view_state_normalization"] = {
+            "requested": list(PRODUCTION_SUPPRESSION_MUTATIONS),
+            "mutations": normalization.get("mutations", {}),
+            "not_in_production_state": shortfall,
+            "matches_production_capture_state": not shortfall,
+        }
+        if shortfall:
+            report.setdefault("warnings", []).append({
+                "stage": "normalize_view_state",
+                "message": "This capture is NOT in production's export state; {0} did not "
+                           "apply. Blended pixels in it may come from those effects rather "
+                           "than from rasterization.".format(", ".join(shortfall)),
+            })
+
         ctx = {"doc": doc, "view": view, "out_dir": out_dir, "base": base,
                "bounds_xy": bounds_xy, "export_dpi": export_dpi, "view_scale": view_scale,
                "native_width_px": native_w, "element_ids": element_ids}
@@ -975,7 +1108,8 @@ def run_probe(raw_view, output_dir, selection="all", repetitions=DEFAULT_REPETIT
         contract.view_identity(raw_view), native, artifacts,
         "succeeded" if rollback_ok else ("failed" if native["transaction_group"].get("rollback_attempted") else "not_started"),
         "restored" if restored else ("not_restored" if restored is False else "not_checked"),
-        started_at, execution_status=status, errors=errors)
+        started_at, execution_status=status, errors=errors,
+        warnings=list(native.get("warnings", [])))
 
 
 def dynamo_main(inputs):

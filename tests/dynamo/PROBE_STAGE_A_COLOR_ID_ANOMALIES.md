@@ -36,7 +36,24 @@ human to read, not an acceptance verdict.
   metrics section and one CLI flag; the registry gained two dictionary entries.
 - The production palette (`build_palette`/`choose_step`) and the production
   paint step (`_build_flat_color_ogs`) are **imported**, not reimplemented, so a
-  probe capture is painted exactly the way production paints one.
+  probe capture is painted exactly the way production paints one. The palette
+  step follows production's rule — `choose_step(global_threshold)` while the
+  assignment count fits under the configured threshold, not
+  `choose_step(count)`, which would give step 8 instead of 6 for any realistic
+  view and therefore a different set of assigned colours.
+- Both probes put the view into **production's export state** before any
+  export, using `PRODUCTION_SUPPRESSION_MUTATIONS` dispatched through
+  `probe_stage_a_minimum_id_mutations._apply_mutation` — the repo's own tested
+  implementation of that set. This is not optional polish: `SmoothEdges` is
+  anti-aliasing, `ShowShadows` and `AmbientOcclusion` shade surfaces, a
+  non-flat `DisplayStyle` shades them, and filter/phase/halftone graphics
+  recolour them. A capture taken without those disabled measures *those*
+  effects, and the blended pixels they produce are indistinguishable from the
+  drift D1–D5 exist to isolate. Every report carries
+  `view_state_normalization.matches_production_capture_state`; when a mutation
+  is blocked by a template or unsupported on that Revit, it is named in
+  `not_in_production_state` and raised as a warning rather than silently
+  degrading the capture.
 
 ## Required per-export metrics
 
@@ -165,13 +182,32 @@ confirmed to exist. See UNCONFIRMED below.
 
 ## Experiments — white blend
 
-`b1_query` is strictly read-only: underlay configuration, the view's phase
-filter and its per-status presentation, and per-element level, overrides,
-category overrides, design option, and phase created/demolished.
+`b1_query` is strictly read-only **and runs before any mutation**, outside the
+TransactionGroup entirely. Ordering matters: the paint step writes an
+`OverrideGraphicSettings` with `Halftone` off and `SurfaceTransparency` 0 onto
+every painted element, so a B1 pass taken after painting would read its own
+overrides back and report "no element halftone anywhere" for every document —
+making the halftone gate structurally incapable of ever firing. B1 reports the
+view's *authored* state: underlay configuration, the phase filter and its
+per-status presentation, and per-element level, overrides, category overrides,
+design option, and phase created/demolished.
 
+`b3_baseline` is the production-normalized comparison export.
 `b3_underlay_off` and `b3_halftone_cleared` each run **only if B1 found that
-mechanism configured on this view**, and record why they were skipped otherwise.
-`b3_baseline` gives the unmodified comparison export.
+mechanism configured on this view**, and record why they were skipped
+otherwise. Each variant restores its own mutation before the next one runs —
+every mutation commits into the enclosing TransactionGroup, so without an
+explicit restore the underlay would stay off through the halftone export and
+that TIFF would carry two changes at once, which is exactly what makes a
+one-mechanism-at-a-time experiment unattributable.
+
+`b3_halftone_cleared` additionally skips itself as **redundant** when the
+probe's own production normalization already neutralized category halftone
+(and the paint step already cleared element halftone). That is not an
+evasion — it is the answer to B-H1 established without spending a
+full-resolution TIFF: if production's own capture setup already clears
+halftone at both levels, halftone cannot be what survives into a production
+capture.
 
 B2 is entirely analyzer-side: `white_blend.matches` unblends each off-palette
 color against the palette over white and reports the solved alpha, and
@@ -203,7 +239,7 @@ be checked rather than argued.
 
 | # | Hypothesis | Status | Evidence that would settle it |
 |---|---|---|---|
-| B-H1 | Element-level halftone or surface transparency | **contradicted by code** | `color_id_buffer._build_flat_color_ogs` already calls `SetHalftone(False)` and `SetSurfaceTransparency(0)` on every painted element, and element overrides outrank category, filter, and template overrides. B1 confirms empirically |
+| B-H1 | Element-level halftone or surface transparency | **contradicted by code** | `color_id_buffer._build_flat_color_ogs` already calls `SetHalftone(False)` and `SetSurfaceTransparency(0)` on every painted element, and production clears category halftone in its capture setup; element overrides outrank category, filter, and template overrides. B1 reports the authored state, and `b3_halftone_cleared`'s redundancy skip confirms it on the run |
 | B-H2 | View underlay | open, leading | Consistent with every baseline fact: the affected categories (Walls, Generic Models, Roofs, Doors, Windows) are exactly what an underlay from an adjacent level shows; the blend is uniform over the whole element; and pastels unblend to the *palette* color, so the override applied and something composited afterwards. B1's `elements_on_an_underlay_level`, then B3's `underlay_off` export |
 | B-H3 | Phase filter "Overridden" graphics | open, weaker | Phase overrides sit below element overrides in Revit's precedence, so they should have been beaten by the paint step. B1 records the phase filter and its per-status presentation anyway |
 | B-H4 | Design option graphics | open, weak | B1 records each element's design option |

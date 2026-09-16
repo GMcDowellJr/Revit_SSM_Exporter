@@ -188,3 +188,123 @@ def test_safe_name_strips_path_hostile_characters():
     assert probe._safe_name("SITE PLAN AT LEVEL 4") == "SITE_PLAN_AT_LEVEL_4"
     assert probe._safe_name("_N_ HOSPITAL - LEVEL 2") == "_N__HOSPITAL_-_LEVEL_2"
     assert probe._safe_name(None) == "view"
+
+
+# --- production palette step (Codex #2) -------------------------------------
+
+def test_palette_step_uses_the_global_threshold_not_the_view_element_count():
+    """Production pins the step to the configured global threshold.
+
+    Sizing the lattice to the view's own count gives a different palette, so a
+    probe capture could not be compared against a production one.
+    """
+    from vop_interwoven.color_id_buffer import choose_step
+    expected = choose_step(32767)
+    for count in (1, 50, 500, 5000, 32767):
+        assert probe.production_palette_step(count, 32767) == expected
+
+
+def test_palette_step_falls_back_to_the_count_once_it_exceeds_the_threshold():
+    from vop_interwoven.color_id_buffer import choose_step
+    assert probe.production_palette_step(40000, 32767) == choose_step(40000)
+
+
+def test_the_step_rule_matches_what_production_actually_computes():
+    """Mirrors color_id_buffer.export_color_id_buffer_view's own expression."""
+    from vop_interwoven.color_id_buffer import choose_step
+    for count, threshold in ((10, 32767), (32767, 32767), (32768, 32767), (7, 100)):
+        production = choose_step(threshold if count <= threshold else count)
+        assert probe.production_palette_step(count, threshold) == production
+
+
+# --- element id reading (Codex #4) ------------------------------------------
+
+class _Revit2025Id(object):
+    """Revit 2025: Value is the 64-bit property; IntegerValue can throw."""
+    Value = 2 ** 40
+
+    @property
+    def IntegerValue(self):
+        raise OverflowError("id exceeds the legacy 32-bit range")
+
+
+class _LegacyId(object):
+    IntegerValue = 871863
+
+
+def test_a_large_id_is_read_through_value_without_touching_integervalue():
+    assert probe._safe_int_id(_Revit2025Id()) == 2 ** 40
+
+
+def test_a_legacy_id_with_only_integervalue_still_reads():
+    assert probe._safe_int_id(_LegacyId()) == 871863
+
+
+def test_a_throwing_property_is_skipped_rather_than_propagated():
+    class Hostile(object):
+        @property
+        def Value(self):
+            raise RuntimeError("disposed")
+
+        @property
+        def IntegerValue(self):
+            raise RuntimeError("disposed")
+    assert probe._safe_int_id(Hostile()) is None
+
+
+def test_a_plain_int_is_still_accepted():
+    assert probe._safe_int_id(587278) == 587278
+    assert probe._safe_int_id(None) is None
+
+
+# --- production view-state normalization (Codex #1) -------------------------
+
+def test_the_suppression_set_covers_every_blend_source_production_disables():
+    """Each of these exists in production to stop Revit blending pixels."""
+    required = {
+        "detach_template",              # unlocks everything below
+        "hide_annotation_categories",
+        "visibility_off_filters_disabled",
+        "visible_filter_graphics_neutralized",
+        "phase_filter_neutralized",
+        "category_halftone_neutralized",
+        "display_style_flat_colors",    # non-flat styles shade surfaces
+        "smooth_edges_off",             # anti-aliasing
+        "shadows_off",
+    }
+    assert required <= set(probe.PRODUCTION_SUPPRESSION_MUTATIONS)
+
+
+def test_the_template_is_detached_before_anything_it_would_block():
+    """A template locks the display/VG properties every later step writes."""
+    order = list(probe.PRODUCTION_SUPPRESSION_MUTATIONS)
+    assert order[0] == "detach_template"
+
+
+def test_a_fully_applied_normalization_reports_no_shortfall():
+    mutations = {name: {"status": "APPLIED"} for name in probe.PRODUCTION_SUPPRESSION_MUTATIONS}
+    mutations["shadows_off"] = {"status": "ALREADY_MATCHED"}
+    assert probe.normalization_shortfall(mutations) == []
+
+
+@pytest.mark.parametrize("status", ["FAILED", "BLOCKED_BY_TEMPLATE", "UNSUPPORTED",
+                                    "NOT_REQUESTED", None])
+def test_any_non_applied_status_is_named_as_a_shortfall(status):
+    mutations = {name: {"status": "APPLIED"} for name in probe.PRODUCTION_SUPPRESSION_MUTATIONS}
+    mutations["smooth_edges_off"] = {"status": status} if status else {}
+    assert probe.normalization_shortfall(mutations) == ["smooth_edges_off"]
+
+
+def test_shortfall_of_an_empty_normalization_is_empty_not_an_error():
+    assert probe.normalization_shortfall(None) == []
+    assert probe.normalization_shortfall({}) == []
+
+
+def test_every_suppression_mutation_is_one_the_minimum_id_probe_implements():
+    """The set is dispatched by that probe; an unknown name would silently
+    come back UNSUPPORTED instead of normalizing anything."""
+    from tests.dynamo import probe_stage_a_minimum_id_mutations as minimum
+    import inspect
+    source = inspect.getsource(minimum._apply_mutation)
+    for name in probe.PRODUCTION_SUPPRESSION_MUTATIONS:
+        assert '"{0}"'.format(name) in source, name

@@ -446,6 +446,75 @@ def _clear_underlay(view):
         "a settable {0} parameter".format("/".join(UNDERLAY_PARAMETER_NAMES)))
 
 
+class _NoExportCasesRequested(Exception):
+    """Only ``b1_query`` was selected. B1 is read-only, so there is nothing to
+    paint, normalize, export, or roll back -- not an error."""
+
+
+def _halftone_already_neutralized(normalization):
+    """True when this probe's own normalization already cleared halftone.
+
+    Production clears element halftone in its paint step and category halftone
+    in its capture setup. When the normalization applied here reproduces that,
+    a `halftone_cleared` variant would differ from the baseline in nothing at
+    all, and exporting it would spend a full-resolution TIFF to re-measure the
+    baseline.
+    """
+    record = (normalization or {}).get("mutations", {}).get("category_halftone_neutralized")
+    return (record or {}).get("status") in ("APPLIED", "ALREADY_MATCHED")
+
+
+def _set_underlay(view, base_id, top_id):
+    """Put the underlay range back exactly as B1 found it.
+
+    Each B3 variant has to be the *only* difference from the baseline export.
+    Every mutation here commits into the enclosing TransactionGroup, so
+    without an explicit restore the underlay stays off for whatever variant
+    runs next and its TIFF carries two changes at once -- which is precisely
+    what makes a one-mechanism-at-a-time experiment unattributable.
+    """
+    from Autodesk.Revit.DB import ElementId
+    base = ElementId(int(base_id)) if base_id and int(base_id) > 0 else ElementId.InvalidElementId
+    top = ElementId(int(top_id)) if top_id and int(top_id) > 0 else ElementId.InvalidElementId
+    if hasattr(view, "SetUnderlayRange"):
+        view.SetUnderlayRange(base, top)
+        return "SetUnderlayRange"
+    from Autodesk.Revit.DB import BuiltInParameter
+    for name, value in (("VIEW_UNDERLAY_BOTTOM_ID", base), ("VIEW_UNDERLAY_TOP_ID", top),
+                        ("VIEW_UNDERLAY_ID", base)):
+        bip = getattr(BuiltInParameter, name, None)
+        if bip is None:
+            continue
+        param = view.get_Parameter(bip)
+        if param is not None and not param.IsReadOnly:
+            param.Set(value)
+    return "parameters"
+
+
+def _category_override_state(view, categories):
+    """Snapshot category overrides so a B3 variant can be undone exactly."""
+    state = []
+    for cat_id, cat_name in categories:
+        try:
+            state.append((cat_id, cat_name, view.GetCategoryOverrides(cat_id)))
+        except Exception:
+            continue
+    return state
+
+
+def _restore_category_overrides(view, state):
+    restored = []
+    for cat_id, cat_name, ogs in state:
+        if ogs is None:
+            continue
+        try:
+            view.SetCategoryOverrides(cat_id, ogs)
+            restored.append(cat_name)
+        except Exception:
+            continue
+    return restored
+
+
 def _clear_halftone(doc, view, element_ids, categories):
     """Force Halftone off at the element AND category level.
 
@@ -544,6 +613,40 @@ def _run_native(raw_view, output_dir, selection="all", element_ids=None,
         _force_close_dynamo_transaction()
         report["state"]["before"] = _drift._snapshot(doc, view)
 
+        painted_ids, collect_stats = _collect_host_elements(doc, view, max_elements)
+        candidates, candidate_source = _candidate_element_ids(
+            doc, view, painted_ids, explicit_ids)
+
+        # B1 runs FIRST, on the untouched document, and outside the
+        # TransactionGroup entirely. It has to report the view's *authored*
+        # state: the paint step writes an OverrideGraphicSettings with
+        # Halftone off and SurfaceTransparency 0 onto every painted element,
+        # so a B1 run after painting would read its own overrides back and
+        # report "no element halftone anywhere" for every document, making the
+        # halftone gate structurally incapable of ever firing.
+        b1 = None
+        if "b1_query" in cases:
+            started = time.time()
+            try:
+                underlay = _underlay_report(doc, view)
+                elements = [_element_report(doc, view, eid, underlay) for eid in candidates]
+                b1 = {"candidate_source": candidate_source,
+                      "read_before_any_mutation": True,
+                      "underlay": underlay,
+                      "phase": _phase_report(doc, view),
+                      "elements": elements,
+                      "summary": _summarize_b1(underlay, elements)}
+                report["cases"]["b1_query"] = b1
+            except Exception as ex:
+                report["exceptions"].append(_exception_record("b1_query", ex))
+                report["cases"]["b1_query"] = {"failed": True, "type": type(ex).__name__,
+                                               "message": str(ex)}
+            report["timings_ms"]["b1_query"] = int(round((time.time() - started) * 1000.0))
+
+        export_cases = [case for case in cases if case != "b1_query"]
+        if not export_cases:
+            raise _NoExportCasesRequested()
+
         from Autodesk.Revit.DB import TransactionGroup, TransactionStatus
         group = TransactionGroup(doc, "VOP Stage A White Blend Probe")
         group_started = group.Start() == TransactionStatus.Started
@@ -551,7 +654,6 @@ def _run_native(raw_view, output_dir, selection="all", element_ids=None,
         if not group_started:
             raise RuntimeError("TransactionGroup.Start did not start")
 
-        painted_ids, collect_stats = _collect_host_elements(doc, view, max_elements)
         paint_result = {}
 
         def do_paint():
@@ -563,27 +665,34 @@ def _run_native(raw_view, output_dir, selection="all", element_ids=None,
                            "paint_failures": paint_result.get("failures", [])}
         report["color_assignment_map"] = paint_result.get("color_map", {})
 
-        candidates, candidate_source = _candidate_element_ids(
-            doc, view, painted_ids, explicit_ids)
+        # The B3 exports must start from production's export state, or the
+        # baseline is not the capture the 0.67 blend was observed in.
+        normalization = {}
+        _mutate(doc, "normalize_view_state",
+                lambda: normalization.update(
+                    _drift._normalize_view_state(doc, view, painted_ids)))
+        shortfall = _drift.normalization_shortfall(normalization.get("mutations"))
+        report["view_state_normalization"] = {
+            "requested": list(_drift.PRODUCTION_SUPPRESSION_MUTATIONS),
+            "mutations": normalization.get("mutations", {}),
+            "not_in_production_state": shortfall,
+            "matches_production_capture_state": not shortfall,
+        }
+        if shortfall:
+            report.setdefault("warnings", []).append({
+                "stage": "normalize_view_state",
+                "message": "B3 exports are NOT in production's export state; {0} did not "
+                           "apply.".format(", ".join(shortfall)),
+            })
 
         def export(label, extra=None):
             return _record_export(doc, view, out_dir, base, "b3", label, requested_px,
                                   bounds_xy, export_dpi, view_scale, extra=extra)
 
-        b1 = None
-        for case in cases:
+        for case in export_cases:
             started = time.time()
             try:
-                if case == "b1_query":
-                    underlay = _underlay_report(doc, view)
-                    elements = [_element_report(doc, view, eid, underlay) for eid in candidates]
-                    b1 = {"candidate_source": candidate_source,
-                          "underlay": underlay,
-                          "phase": _phase_report(doc, view),
-                          "elements": elements,
-                          "summary": _summarize_b1(underlay, elements)}
-                    report["cases"][case] = b1
-                elif case == "b3_baseline":
+                if case == "b3_baseline":
                     record = export("baseline")
                     report["exports"].append(record)
                     report["cases"][case] = {"tiff_path": record["tiff_path"]}
@@ -598,13 +707,27 @@ def _run_native(raw_view, output_dir, selection="all", element_ids=None,
                             "skipped": "B1 found no underlay configured on this view",
                             "underlay": b1["underlay"].get("underlay_configured")}
                     else:
+                        original = (b1["underlay"].get("base_level_id"),
+                                    b1["underlay"].get("top_level_id"))
                         used = {}
                         _mutate(doc, "underlay_off",
                                 lambda: used.setdefault("api", _clear_underlay(view)))
-                        record = export("underlay_off", extra={"mechanism": "underlay_off"})
-                        report["exports"].append(record)
-                        report["cases"][case] = {"tiff_path": record["tiff_path"],
-                                                 "api_used": used.get("api")}
+                        try:
+                            record = export("underlay_off",
+                                            extra={"mechanism": "underlay_off"})
+                            report["exports"].append(record)
+                            report["cases"][case] = {"tiff_path": record["tiff_path"],
+                                                     "api_used": used.get("api")}
+                        finally:
+                            # Restore before the next variant runs, so its TIFF
+                            # differs from the baseline in one mechanism only.
+                            _mutate(doc, "underlay_restore",
+                                    lambda: used.setdefault(
+                                        "restore_api", _set_underlay(view, *original)))
+                            report["cases"][case] = dict(
+                                report["cases"].get(case) or {},
+                                restored_underlay=list(original),
+                                restore_api=used.get("restore_api"))
                 elif case == "b3_halftone_cleared":
                     warranted = bool(b1 and b1["summary"].get("halftone_clear_is_warranted"))
                     if b1 is None:
@@ -618,21 +741,56 @@ def _run_native(raw_view, output_dir, selection="all", element_ids=None,
                                        "per element",
                             "elements_with_element_halftone": b1["summary"]["elements_with_element_halftone"],
                             "elements_with_category_halftone": b1["summary"]["elements_with_category_halftone"]}
+                    elif _halftone_already_neutralized(normalization):
+                        # Production's own normalization clears category
+                        # halftone and its paint step clears element halftone,
+                        # so re-clearing them here would produce a TIFF
+                        # identical to the baseline. That identity is the
+                        # answer to B-H1, established without an export:
+                        # halftone cannot be what survives into a production
+                        # capture.
+                        report["cases"][case] = {
+                            "skipped": "redundant: the production normalization this probe "
+                                       "applies already neutralized category halftone, and "
+                                       "the paint step already cleared element halftone, so "
+                                       "this variant would re-export the baseline unchanged",
+                            "category_halftone_neutralized": (
+                                normalization.get("mutations", {})
+                                .get("category_halftone_neutralized")),
+                            "authored_state_had_halftone": {
+                                "elements": b1["summary"]["elements_with_element_halftone"],
+                                "categories": b1["summary"]["elements_with_category_halftone"]},
+                        }
                     else:
                         categories = _candidate_categories(doc, view, candidates)
+                        before = _category_override_state(view, categories)
                         detail = {}
                         _mutate(doc, "halftone_cleared",
                                 lambda: detail.update(
                                     _clear_halftone(doc, view, candidates, categories)))
-                        record = export("halftone_cleared",
-                                        extra={"mechanism": "halftone_cleared"})
-                        report["exports"].append(record)
-                        report["cases"][case] = dict(detail, tiff_path=record["tiff_path"])
+                        try:
+                            record = export("halftone_cleared",
+                                            extra={"mechanism": "halftone_cleared"})
+                            report["exports"].append(record)
+                            report["cases"][case] = dict(detail, tiff_path=record["tiff_path"])
+                        finally:
+                            restored = {}
+                            _mutate(doc, "halftone_restore",
+                                    lambda: restored.setdefault(
+                                        "categories",
+                                        _restore_category_overrides(view, before)))
+                            report["cases"][case] = dict(
+                                report["cases"].get(case) or {},
+                                restored_categories=restored.get("categories"))
             except Exception as ex:
                 report["exceptions"].append(_exception_record(case, ex))
                 report["cases"][case] = {"failed": True, "type": type(ex).__name__,
                                          "message": str(ex)}
             report["timings_ms"][case] = int(round((time.time() - started) * 1000.0))
+    except _NoExportCasesRequested:
+        # b1_query alone: read-only, so no TransactionGroup was ever started
+        # and there is nothing to restore.
+        report["b1_only_run"] = True
     except Exception as ex:
         report["exceptions"].append(_exception_record("setup_or_outer", ex))
     finally:
@@ -691,6 +849,7 @@ def run_probe(raw_view, output_dir, selection="all", element_ids=None,
     started_at = contract.utc_now_iso()
     native = _run_native(raw_view, output_dir, selection, element_ids, export_dpi,
                          pixel_size, max_elements, repo_root)
+    read_only = bool(native.get("b1_only_run"))
     rollback_ok = bool(native["transaction_group"].get("rollback_succeeded"))
     restored = native["state"].get("restored")
     artifacts = [rec["tiff_path"] for rec in native.get("exports", []) if rec.get("tiff_path")]
@@ -698,20 +857,30 @@ def run_probe(raw_view, output_dir, selection="all", element_ids=None,
         artifacts.append(native["json_report_path"])
     errors = list(native.get("exceptions", []))
     ran_something = bool(native.get("exports")) or "b1_query" in native.get("cases", {})
-    if errors or not rollback_ok:
+    # A read-only run never opens a TransactionGroup, so an absent rollback is
+    # the correct outcome for it, not a failed one.
+    if errors or not (rollback_ok or read_only):
         status = "failed"
     elif not ran_something:
         status = "inconclusive"
     else:
         status = "completed"
+    if read_only:
+        rollback_status, restoration_status = "not_started", "not_checked"
+    else:
+        rollback_status = ("succeeded" if rollback_ok
+                           else ("failed" if native["transaction_group"].get("rollback_attempted")
+                                 else "not_started"))
+        restoration_status = ("restored" if restored
+                              else ("not_restored" if restored is False else "not_checked"))
     return contract.execution_envelope(
         PROBE_NAME,
         {"selection": selection, "element_ids": element_ids, "export_dpi": export_dpi,
          "pixel_size": pixel_size, "max_elements": max_elements},
         contract.view_identity(raw_view), native, artifacts,
-        "succeeded" if rollback_ok else ("failed" if native["transaction_group"].get("rollback_attempted") else "not_started"),
-        "restored" if restored else ("not_restored" if restored is False else "not_checked"),
-        started_at, execution_status=status, errors=errors)
+        rollback_status, restoration_status,
+        started_at, execution_status=status, errors=errors,
+        warnings=list(native.get("warnings", [])))
 
 
 def dynamo_main(inputs):

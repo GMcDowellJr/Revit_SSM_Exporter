@@ -202,3 +202,78 @@ def test_an_unreadable_override_never_counts_as_halftone_set():
     summary = probe._summarize_b1({"underlay_configured": False}, [record])
     assert summary["elements_with_element_halftone"] == []
     assert summary["halftone_clear_is_warranted"] is False
+
+
+# --- B3 isolation and redundancy (Codex #3) --------------------------------
+
+def test_halftone_variant_is_redundant_once_normalization_cleared_it():
+    """Production clears halftone itself, so re-clearing re-exports the baseline."""
+    for status in ("APPLIED", "ALREADY_MATCHED"):
+        assert probe._halftone_already_neutralized(
+            {"mutations": {"category_halftone_neutralized": {"status": status}}}) is True
+
+
+@pytest.mark.parametrize("status", ["FAILED", "BLOCKED_BY_TEMPLATE", "UNSUPPORTED"])
+def test_halftone_variant_is_not_redundant_when_normalization_could_not_clear_it(status):
+    assert probe._halftone_already_neutralized(
+        {"mutations": {"category_halftone_neutralized": {"status": status}}}) is False
+
+
+def test_halftone_redundancy_is_false_when_normalization_is_missing_entirely():
+    assert probe._halftone_already_neutralized({}) is False
+    assert probe._halftone_already_neutralized(None) is False
+    assert probe._halftone_already_neutralized({"mutations": {}}) is False
+
+
+def test_a_read_only_selection_is_recognised_as_needing_no_export():
+    assert issubclass(probe._NoExportCasesRequested, Exception)
+    assert [c for c in probe.select_cases("b1_query") if c != "b1_query"] == []
+    assert [c for c in probe.select_cases("all") if c != "b1_query"] == [
+        "b3_baseline", "b3_underlay_off", "b3_halftone_cleared"]
+
+
+def test_b1_is_ordered_before_every_export_case():
+    """B1 must read the authored state, not the probe's own paint."""
+    assert probe.CASES[0] == "b1_query"
+    assert all(case.startswith("b3_") for case in probe.CASES[1:])
+
+
+# --- category override snapshot / restore -----------------------------------
+
+class _View(object):
+    def __init__(self, overrides):
+        self._overrides = dict(overrides)
+        self.set_calls = []
+
+    def GetCategoryOverrides(self, cat_id):
+        if cat_id not in self._overrides:
+            raise RuntimeError("no overrides for {0}".format(cat_id))
+        return self._overrides[cat_id]
+
+    def SetCategoryOverrides(self, cat_id, ogs):
+        self.set_calls.append((cat_id, ogs))
+
+
+def test_category_overrides_are_snapshotted_for_an_exact_undo():
+    view = _View({1: "ogs-walls", 2: "ogs-roofs"})
+    state = probe._category_override_state(view, [(1, "Walls"), (2, "Roofs")])
+    assert state == [(1, "Walls", "ogs-walls"), (2, "Roofs", "ogs-roofs")]
+
+
+def test_a_category_whose_overrides_cannot_be_read_is_left_out_of_the_snapshot():
+    view = _View({1: "ogs-walls"})
+    state = probe._category_override_state(view, [(1, "Walls"), (9, "Doors")])
+    assert [name for _, name, _ in state] == ["Walls"]
+
+
+def test_restoring_writes_back_exactly_what_was_captured():
+    view = _View({1: "ogs-walls", 2: "ogs-roofs"})
+    state = probe._category_override_state(view, [(1, "Walls"), (2, "Roofs")])
+    assert probe._restore_category_overrides(view, state) == ["Walls", "Roofs"]
+    assert view.set_calls == [(1, "ogs-walls"), (2, "ogs-roofs")]
+
+
+def test_restoring_skips_a_null_snapshot_rather_than_writing_none():
+    view = _View({})
+    assert probe._restore_category_overrides(view, [(1, "Walls", None)]) == []
+    assert view.set_calls == []
