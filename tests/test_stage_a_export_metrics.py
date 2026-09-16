@@ -642,3 +642,48 @@ def test_a_null_bounds_capture_reports_no_scale_factor_of_either_kind(tmp_path):
     assert res.get("canvas_scale_factor") is None
     # Content dimensions still describe the image itself, which is knowable.
     assert res["content_width_px"] == 64
+
+
+# --- palette must be present, or nothing may be measured --------------------
+
+def test_an_exports_list_with_no_palette_is_refused_not_measured(tmp_path):
+    """An empty palette does not fail — it reports every pixel as off-palette,
+    a hard_edge_ratio of 0 and no pastels, which reads exactly like a
+    catastrophically drifted capture. That silent-wrong-answer is the failure
+    mode worth refusing."""
+    write_tiff(tmp_path, solid_square(), "a.tiff")
+    base = sidecar()
+    doc = {"exports": [{"label": "rep0", "tiff_path": "a.tiff",
+                        "resolution": base["resolution"], "bounds_xy": base["bounds_xy"]}]}
+    src = tmp_path / "report.json"
+    src.write_text(json.dumps(doc), encoding="utf-8")
+    with pytest.raises(ValueError, match="NO_PALETTE"):
+        analyzer.analyze_metrics_json(src)
+
+
+def test_an_export_record_defers_to_its_own_production_sidecar(tmp_path):
+    """The probe records name their sidecar and deliberately do not duplicate
+    the palette; the sidecar is production's own and carries it."""
+    write_tiff(tmp_path, solid_square(), "cap.tiff")
+    side = dict(sidecar(), tiff_path="cap.tiff")
+    (tmp_path / "cap.json").write_text(json.dumps(side), encoding="utf-8")
+    doc = {"exports": [{"label": "rep0", "case": "d1_determinism",
+                        "tiff_path": "cap.tiff", "sidecar_path": "cap.json"}]}
+    src = tmp_path / "report.json"
+    src.write_text(json.dumps(doc), encoding="utf-8")
+    _out, rows = analyzer.analyze_metrics_json(src)
+    assert [label for label, _ in rows] == ["rep0"]
+    metrics = rows[0][1]
+    assert metrics["palette_color_count"] == 1
+    assert metrics["edges"]["hard_edge_ratio"] == 1.0
+    assert metrics["resolution"]["native_width_px"] == pytest.approx(1875.0)
+
+
+def test_a_bare_production_sidecar_is_measured_directly(tmp_path):
+    """The captures/ directory is the intended --export-metrics target."""
+    write_tiff(tmp_path, solid_square(), "d1_determinism.rep0.tiff")
+    side = dict(sidecar(), tiff_path="d1_determinism.rep0.tiff", view_id=871863)
+    src = tmp_path / "d1_determinism.rep0.json"
+    src.write_text(json.dumps(side), encoding="utf-8")
+    _out, rows = analyzer.analyze_metrics_json(src)
+    assert rows[0][1]["palette_color_count"] == 1

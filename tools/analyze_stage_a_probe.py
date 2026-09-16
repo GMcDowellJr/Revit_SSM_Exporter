@@ -1850,7 +1850,24 @@ def _metrics_export_records(json_path: Path, data: dict[str, Any]) -> list[tuple
                 tiff = resolve_path(json_path, rec.get('tiff_path'))
                 if tiff is None:
                     continue
+                # A probe record that names its own production sidecar defers
+                # to it entirely: that file carries the palette, and the probe
+                # record deliberately does not duplicate it. Without this the
+                # palette would default to {} and every pixel would count as
+                # off-palette -- a full set of well-formed, meaningless numbers.
+                side = resolve_path(json_path, rec.get('sidecar_path'))
                 merged = dict(rec)
+                if side is not None and side.exists():
+                    try:
+                        loaded = json.loads(side.read_text(encoding='utf-8'))
+                    except Exception:
+                        loaded = None
+                    if isinstance(loaded, dict):
+                        merged = dict(loaded)
+                        merged['tiff_path'] = str(tiff)
+                        for key in ('case', 'label'):
+                            if rec.get(key) is not None:
+                                merged[key] = rec[key]
                 for key in ('color_assignment_map', 'link_category_color_map'):
                     merged.setdefault(key, node.get(key) or {})
                 found.append((str(rec.get('label') or rec.get('case') or i), tiff, merged))
@@ -1866,6 +1883,21 @@ def _metrics_export_records(json_path: Path, data: dict[str, Any]) -> list[tuple
             records = [(str(data.get('view_id') or json_path.stem), tiff, data)]
     if not records:
         raise ValueError('NO_EXPORT_RECORDS: {0} has neither "tiff_path" nor an "exports" list'.format(json_path.name))
+    # Every metric here is palette-relative. Measuring against an empty palette
+    # does not fail -- it reports every pixel as off-palette, a hard_edge_ratio
+    # of 0 and no pastels, which reads exactly like a catastrophically drifted
+    # capture. Refuse instead, and say where the palette was expected.
+    # Scoped to records whose TIFF is actually there: a missing TIFF cannot be
+    # measured either way and is already reported per-record as TIFF_MISSING.
+    empty = [label for label, tiff, side in records
+             if tiff.exists()
+             and not (side.get('color_assignment_map') or side.get('link_category_color_map'))]
+    if empty:
+        raise ValueError(
+            'NO_PALETTE: {0} describes export(s) {1} with no color_assignment_map. '
+            'Point --export-metrics at the probe\'s captures/ directory (each capture '
+            'keeps production\'s own sidecar, which carries the palette) rather than at '
+            'the probe report.'.format(json_path.name, ', '.join(sorted(empty)[:5])))
     return records
 
 
