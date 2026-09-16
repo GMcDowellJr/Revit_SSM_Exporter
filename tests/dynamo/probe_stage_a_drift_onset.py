@@ -1160,6 +1160,22 @@ def _case_d5(ctx, grid):
     doc, view = ctx["doc"], ctx["view"]
     tiles = snap_to_pixel_lattice(ctx["bounds_xy"], ctx["export_dpi"], ctx["view_scale"], grid)
     exports, tile_records = [], []
+    try:
+        return _d5_tiles(ctx, grid, tiles, exports, tile_records)
+    finally:
+        # Every tile crop commits into the enclosing TransactionGroup and is
+        # not rolled back until the whole run ends, so D5 would otherwise hand
+        # the next case a view cropped to its LAST tile. D7 plans against
+        # ctx["bounds_xy"] while production would re-resolve that quarter
+        # rectangle -- the fit-direction comparison would be run on a different
+        # view from the one it reports. D2 pins the crop for its own reasons;
+        # D5 has to put it back.
+        _mutate(doc, "d5_restore_full_crop",
+                lambda: _set_view_crop(view, ctx["bounds_xy"]))
+
+
+def _d5_tiles(ctx, grid, tiles, exports, tile_records):
+    doc, view = ctx["doc"], ctx["view"]
     for tile in tiles:
         label = "r{0}c{1}".format(tile["row"], tile["col"])
         applied = {}

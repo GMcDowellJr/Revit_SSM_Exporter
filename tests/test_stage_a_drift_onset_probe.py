@@ -681,3 +681,33 @@ def test_d5_stops_before_exporting_a_tile_it_could_not_crop(d2, monkeypatch):
     exports, detail = probe._case_d5(ctx, grid=2)
     assert exports == [] and captured == []
     assert detail["inconclusive"] is True and detail["tiles_captured"] == 0
+
+
+def test_d5_hands_the_view_back_on_the_planned_crop(d2, monkeypatch):
+    """Every tile crop commits into the enclosing TransactionGroup, so without
+    a restore D5 leaves the next case looking at its LAST tile -- D7 would then
+    plan against the full view while production exported a quarter of it."""
+    applied = []
+    ctx, _ = d2([_Category(10, "Walls")], {10: 100})
+    ctx["export_dpi"], ctx["view_scale"] = 150.0, 96.0
+    ctx["capture"] = lambda cfg, case, label: {"tiff_path": label + ".tiff", "label": label}
+    monkeypatch.setattr(probe, "_set_view_crop",
+                        lambda view, bounds: applied.append(tuple(bounds)) or tuple(bounds))
+    exports, detail = probe._case_d5(ctx, grid=2)
+    assert len(exports) == 4
+    assert applied[-1] == tuple(BOUNDS), "D5 left the view on a tile"
+
+
+def test_d5_restores_the_crop_even_when_a_tile_fails(d2, monkeypatch):
+    applied = []
+
+    def crop(view, bounds):
+        applied.append(tuple(bounds))
+        return None if len(applied) == 1 else tuple(bounds)
+    monkeypatch.setattr(probe, "_set_view_crop", crop)
+    ctx, _ = d2([_Category(10, "Walls")], {10: 100})
+    ctx["export_dpi"], ctx["view_scale"] = 150.0, 96.0
+    ctx["capture"] = lambda cfg, case, label: {"tiff_path": label + ".tiff", "label": label}
+    exports, detail = probe._case_d5(ctx, grid=2)
+    assert detail["inconclusive"] is True
+    assert applied[-1] == tuple(BOUNDS)

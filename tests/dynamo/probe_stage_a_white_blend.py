@@ -622,6 +622,40 @@ def _category_override_state(view, categories):
     return state
 
 
+def _element_override_state(view, element_ids):
+    """Snapshot element overrides so the halftone variant can be undone exactly.
+
+    _clear_halftone writes an OverrideGraphicSettings onto every candidate
+    ELEMENT as well as onto their categories, and those writes commit into the
+    enclosing TransactionGroup like any other. Restoring only the categories
+    leaves the element overrides in place for whatever case runs next, so a
+    selection that puts b3_halftone_cleared before b3_baseline or
+    b3_underlay_off gives that later capture two changes at once -- exactly the
+    unattributable comparison each variant's restore exists to prevent.
+    """
+    state = []
+    for eid in element_ids or []:
+        try:
+            state.append((eid, view.GetElementOverrides(eid)))
+        except Exception:
+            state.append((eid, None))
+    return state
+
+
+def _restore_element_overrides(view, state):
+    restored, failures = 0, []
+    for eid, ogs in state:
+        if ogs is None:
+            continue
+        try:
+            view.SetElementOverrides(eid, ogs)
+            restored += 1
+        except Exception as ex:
+            failures.append({"element_id": _element_id_int(eid),
+                             "type": type(ex).__name__, "message": str(ex)})
+    return {"restored": restored, "failures": failures}
+
+
 def _restore_category_overrides(view, state):
     restored = []
     for cat_id, cat_name, ogs in state:
@@ -942,6 +976,7 @@ def _run_native(raw_view, output_dir, selection="all", element_ids=None,
                         # to run the variant rather than skip it.
                         categories = _candidate_categories(doc, view, candidates)
                         before = _category_override_state(view, categories)
+                        before_elements = _element_override_state(view, candidates)
                         detail = {}
                         _mutate(doc, "halftone_cleared",
                                 lambda: detail.update(
@@ -980,12 +1015,24 @@ def _run_native(raw_view, output_dir, selection="all", element_ids=None,
                         finally:
                             restored = {}
                             _mutate(doc, "halftone_restore",
-                                    lambda: restored.setdefault(
-                                        "categories",
-                                        _restore_category_overrides(view, before)))
+                                    lambda: restored.update({
+                                        "categories": _restore_category_overrides(view, before),
+                                        "elements": _restore_element_overrides(
+                                            view, before_elements)}))
+                            element_restore = restored.get("elements") or {}
+                            if element_restore.get("failures"):
+                                report["warnings"].append({
+                                    "stage": "b3_halftone_cleared",
+                                    "message": "{0} element override(s) could not be put back, "
+                                               "so a later B3 capture in this run may carry "
+                                               "this variant's changes as well as its "
+                                               "own".format(len(element_restore["failures"])),
+                                })
                             report["cases"][case] = dict(
                                 report["cases"].get(case) or {},
-                                restored_categories=restored.get("categories"))
+                                restored_categories=restored.get("categories"),
+                                restored_elements=element_restore.get("restored"),
+                                restore_failures=element_restore.get("failures"))
             except Exception as ex:
                 report["exceptions"].append(_exception_record(case, ex))
                 report["cases"][case] = {"failed": True, "type": type(ex).__name__,
