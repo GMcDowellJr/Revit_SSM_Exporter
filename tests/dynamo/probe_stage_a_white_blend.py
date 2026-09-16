@@ -578,41 +578,73 @@ def _restore_category_overrides(view, state):
     return restored
 
 
-def _clear_halftone(doc, view, element_ids, categories):
+def _clear_halftone(doc, view, element_ids, categories, diag=None):
     """Force Halftone off at the element AND category level.
 
     Production's paint step already sets element halftone off, so this is only
     meaningful for the category/template layer -- ``already_off_at_element``
     records how many elements were already clear, so a null result here is not
     mistaken for the mechanism having been neutralized.
+
+    A category or element that refuses its override is NOT skipped quietly.
+    This variant exists to answer "does the blend survive with halftone off",
+    and it only answers that if halftone is actually off everywhere it was
+    asked to be; exporting a capture labelled ``halftone_cleared`` with
+    halftone still active on some category would make the comparison say the
+    opposite of what it appears to. Failures are recorded in Diagnostics and
+    returned, and the caller marks the variant inconclusive rather than
+    publishing it -- the repository's no-silent-failure rule, applied to an
+    experiment rather than to the pipeline.
     """
-    from Autodesk.Revit.DB import OverrideGraphicSettings
     already_off = 0
+    failures = []
+
+    def _record(kind, identity, error):
+        failures.append({"kind": kind, "identity": identity,
+                         "type": type(error).__name__, "message": str(error)})
+        if diag is not None:
+            try:
+                diag.error(phase="white_blend_probe", callsite="clear_halftone",
+                           message="Could not clear halftone on {0} {1}: {2}".format(
+                               kind, identity, error),
+                           exc=error)
+            except Exception:
+                pass
+
     for eid in element_ids:
         try:
             ogs = view.GetElementOverrides(eid)
-        except Exception:
-            continue
-        if ogs is None:
-            continue
-        if getattr(ogs, "Halftone", False) is False:
-            already_off += 1
-        ogs.SetHalftone(False)
-        ogs.SetSurfaceTransparency(0)
-        view.SetElementOverrides(eid, ogs)
+            if ogs is None:
+                continue
+            if getattr(ogs, "Halftone", False) is False:
+                already_off += 1
+            ogs.SetHalftone(False)
+            ogs.SetSurfaceTransparency(0)
+            view.SetElementOverrides(eid, ogs)
+        except Exception as ex:
+            _record("element", _safe_int_id(eid), ex)
     cleared_categories = []
     for cat_id, cat_name in categories:
         try:
-            ogs = view.GetCategoryOverrides(cat_id) or OverrideGraphicSettings()
+            ogs = view.GetCategoryOverrides(cat_id)
+            if ogs is None:
+                # Imported here rather than at the top of the function: this is
+                # the only path that needs Revit, and keeping it off the others
+                # lets the clearing logic be exercised outside Dynamo.
+                from Autodesk.Revit.DB import OverrideGraphicSettings
+                ogs = OverrideGraphicSettings()
             ogs.SetHalftone(False)
             ogs.SetSurfaceTransparency(0)
             view.SetCategoryOverrides(cat_id, ogs)
             cleared_categories.append(cat_name)
-        except Exception:
-            continue
+        except Exception as ex:
+            _record("category", cat_name, ex)
     return {"already_off_at_element": already_off,
             "elements_touched": len(element_ids),
-            "categories_cleared": cleared_categories}
+            "categories_requested": [name for _cat_id, name in categories],
+            "categories_cleared": cleared_categories,
+            "failures": failures,
+            "fully_cleared": not failures}
 
 
 # --------------------------------------------------------------------------
@@ -732,11 +764,38 @@ def _run_native(raw_view, output_dir, selection="all", element_ids=None,
         if not group_started:
             raise RuntimeError("TransactionGroup.Start did not start")
 
+        # Pin the crop before the first capture and leave it pinned for every
+        # B3 variant. production_capture re-runs init_view_raster each time, and
+        # a view whose underlay carries elements beyond the ordinary model
+        # changes extents when that underlay is switched off -- so underlay_off
+        # would be measured at different bounds, dimensions and density from
+        # the baseline, and a difference in edge or pastel metrics could no
+        # longer be attributed to the underlay alone. D2 pins for the same
+        # reason when it hides categories.
+        pinned = {}
+        _mutate(doc, "pin_capture_geometry",
+                lambda: pinned.__setitem__(
+                    "bounds", _set_view_crop(view, geometry["bounds_xy"])))
+        report["view"]["capture_geometry_pinned"] = pinned.get("bounds") is not None
+        report["view"]["pinned_bounds_xy"] = (list(pinned["bounds"])
+                                              if pinned.get("bounds") else None)
+        if pinned.get("bounds") is None:
+            report["warnings"].append({
+                "stage": "pin_capture_geometry",
+                "message": "This view has no CropBox, so each B3 capture re-derives its "
+                           "own bounds. A variant that changes what is visible may then "
+                           "differ from the baseline in extent as well as in mechanism, "
+                           "and its metrics are not attributable to the mechanism alone.",
+            })
+
         captures_taken = []
+        capture_geometry = []
 
         def capture(label, extra=None):
             record = production_capture(doc, view, cfg, "b3", label, capture_dir, diag=diag)
             captures_taken.append(label)
+            capture_geometry.append((label, record.get("bounds_xy"),
+                                     record.get("dimensions_px")))
             if extra:
                 record.update(extra)
             return record
@@ -827,14 +886,30 @@ def _run_native(raw_view, output_dir, selection="all", element_ids=None,
                         detail = {}
                         _mutate(doc, "halftone_cleared",
                                 lambda: detail.update(
-                                    _clear_halftone(doc, view, candidates, categories)))
+                                    _clear_halftone(doc, view, candidates, categories,
+                                                    diag=diag)))
                         try:
                             record = capture("halftone_cleared",
                                              extra={"mechanism": "halftone_cleared"})
                             report["exports"].append(record)
+                            if not detail.get("fully_cleared", True):
+                                # The capture exists, but it is not the
+                                # experiment it is named after.
+                                report["warnings"].append({
+                                    "stage": "b3_halftone_cleared",
+                                    "message": "halftone could not be cleared on {0} "
+                                               "target(s); this capture does not establish "
+                                               "that halftone was neutralized and must not "
+                                               "be read as the halftone-off "
+                                               "condition".format(len(detail["failures"])),
+                                })
                             report["cases"][case] = dict(detail,
                                                          tiff_path=record["tiff_path"],
                                                          sidecar_path=record["sidecar_path"],
+                                                         variant_status=(
+                                                             "completed"
+                                                             if detail.get("fully_cleared", True)
+                                                             else "inconclusive"),
                                                          ran_because=(
                                                              "production's own category-halftone "
                                                              "step reported a failure for this view"
@@ -857,6 +932,25 @@ def _run_native(raw_view, output_dir, selection="all", element_ids=None,
                 report["cases"][case] = {"failed": True, "type": type(ex).__name__,
                                          "message": str(ex)}
             report["timings_ms"][case] = int(round((time.time() - started) * 1000.0))
+        # Every B3 capture's realized bounds and dimensions, so a variant that
+        # drifted from the baseline despite the pin is visible in the report
+        # rather than having to be inferred from the metrics.
+        report["capture_geometry"] = [
+            {"label": label, "bounds_xy": bounds, "dimensions_px": dimensions}
+            for label, bounds, dimensions in capture_geometry]
+        baseline = next((item for item in capture_geometry if item[0] == "baseline"), None)
+        if baseline is not None:
+            drifted = [item[0] for item in capture_geometry
+                       if item[1] != baseline[1] or item[2] != baseline[2]]
+            report["capture_geometry_matches_baseline"] = not drifted
+            if drifted:
+                report["warnings"].append({
+                    "stage": "capture_geometry",
+                    "message": "B3 variant(s) {0} were captured at different bounds or "
+                               "dimensions from the baseline, so a difference in their "
+                               "metrics is not attributable to the mechanism "
+                               "alone".format(", ".join(drifted)),
+                })
     except _NoExportCasesRequested:
         # b1_query alone: read-only, so no TransactionGroup was ever started
         # and there is nothing to restore.

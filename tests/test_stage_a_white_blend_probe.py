@@ -421,3 +421,89 @@ def test_a_method_that_raises_when_called_is_still_a_call_error():
     found = probe._reflect(View(), ("GetUnderlayOrientation",))
     assert found["GetUnderlayOrientation"]["callable"] is True
     assert "ValueError: no underlay" in found["GetUnderlayOrientation"]["call_error"]
+
+
+# --- an incompletely cleared halftone variant is not the experiment ---------
+
+class _HalftoneView(object):
+    """A view where some category refuses its override."""
+
+    def __init__(self, refuse=()):
+        self.refuse = set(refuse)
+        self.category_sets = []
+
+    def GetElementOverrides(self, eid):
+        return ogs(Halftone=False, SurfaceTransparency=0,
+                   SetHalftone=lambda *_a: None, SetSurfaceTransparency=lambda *_a: None)
+
+    def SetElementOverrides(self, eid, value):
+        pass
+
+    def GetCategoryOverrides(self, cat_id):
+        if cat_id in self.refuse:
+            raise RuntimeError("category refuses overrides")
+        return ogs(Halftone=False, SetHalftone=lambda *_a: None,
+                   SetSurfaceTransparency=lambda *_a: None)
+
+    def SetCategoryOverrides(self, cat_id, value):
+        self.category_sets.append(cat_id)
+
+
+class _Diag(object):
+    def __init__(self):
+        self.errors = []
+
+    def error(self, **kwargs):
+        self.errors.append(kwargs)
+
+
+def test_clearing_every_category_reports_fully_cleared():
+    view = _HalftoneView()
+    diag = _Diag()
+    detail = probe._clear_halftone(None, view, [], [(1, "Walls"), (2, "Roofs")], diag=diag)
+    assert detail["fully_cleared"] is True
+    assert detail["categories_cleared"] == ["Walls", "Roofs"]
+    assert detail["failures"] == []
+    assert diag.errors == []
+
+
+def test_a_category_that_refuses_its_override_is_recorded_not_skipped():
+    """Exporting a capture labelled halftone_cleared with halftone still active
+    on some category would make the comparison say the opposite of what it
+    appears to."""
+    view = _HalftoneView(refuse={2})
+    diag = _Diag()
+    detail = probe._clear_halftone(None, view, [], [(1, "Walls"), (2, "Roofs")], diag=diag)
+    assert detail["fully_cleared"] is False
+    assert detail["categories_cleared"] == ["Walls"]
+    assert [f["identity"] for f in detail["failures"]] == ["Roofs"]
+    assert detail["categories_requested"] == ["Walls", "Roofs"]
+    # Recorded in Diagnostics, per the repository's no-silent-failure rule.
+    assert len(diag.errors) == 1
+    assert diag.errors[0]["callsite"] == "clear_halftone"
+
+
+def test_clearing_works_without_a_diagnostics_object():
+    view = _HalftoneView(refuse={1})
+    detail = probe._clear_halftone(None, view, [], [(1, "Walls")], diag=None)
+    assert detail["fully_cleared"] is False
+
+
+# --- B3 captures must share the baseline's geometry -------------------------
+
+def test_the_probe_pins_the_crop_before_the_first_b3_capture():
+    """production_capture re-runs init_view_raster every time, so a variant
+    that changes what is visible would otherwise be captured at different
+    bounds and density from the baseline."""
+    import inspect
+    source = inspect.getsource(probe._run_native)
+    pin = source.index("pin_capture_geometry")
+    first_capture = source.index("captures_taken = []")
+    assert pin < first_capture
+
+
+def test_the_probe_reports_whether_every_variant_matched_the_baseline():
+    import inspect
+    source = inspect.getsource(probe._run_native)
+    assert "capture_geometry_matches_baseline" in source
+    assert "not attributable to the mechanism" in source
