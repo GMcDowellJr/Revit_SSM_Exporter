@@ -1195,7 +1195,8 @@ def _percentiles(values: np.ndarray, points=(50, 75, 90, 99, 100)) -> dict[str, 
     return {'p{0}'.format(p): float(np.percentile(values, p)) for p in points}
 
 
-def _native_resolution(sidecar: dict[str, Any], width_px: int, height_px: int) -> dict[str, Any]:
+def _native_resolution(sidecar: dict[str, Any], width_px: int, height_px: int,
+                       frame: dict[str, Any]) -> dict[str, Any]:
     """native_px = extent_ft * dpi * 12 / view_scale, and the realized scale factor.
 
     ``bounds_xy`` is the view-local rectangle in feet the export was cropped to
@@ -1205,9 +1206,19 @@ def _native_resolution(sidecar: dict[str, Any], width_px: int, height_px: int) -
     """
     res = sidecar.get('resolution') or {}
     bounds = sidecar.get('bounds_xy')
+    # The canvas can be wider than the model content: Revit pads the short
+    # axis to keep the export inside its 10:1 aspect limit, and that padding
+    # is not model pixels. Realized density has to be measured across the
+    # content, or a clamped view reports a scale factor it never rendered at
+    # (a 1:20-aspect view would come back at twice its real density).
+    content_rect = frame.get('content_rect_px') or [0, 0, int(width_px), int(height_px)]
+    content_width_px = max(0, int(content_rect[2]) - int(content_rect[0]))
+    content_height_px = max(0, int(content_rect[3]) - int(content_rect[1]))
     out: dict[str, Any] = {
         'width_px': int(width_px),
         'height_px': int(height_px),
+        'content_width_px': content_width_px,
+        'content_height_px': content_height_px,
         'max_axis_px': int(max(width_px, height_px)),
         'requested_pixel_size': res.get('requested_pixel_size'),
         'accepted_pixel_size': res.get('pixel_size'),
@@ -1232,7 +1243,11 @@ def _native_resolution(sidecar: dict[str, Any], width_px: int, height_px: int) -
     out['native_width_px'] = extent_u * per_ft
     out['native_height_px'] = extent_v * per_ft
     if out['native_width_px'] > 0:
-        out['scale_factor'] = float(width_px) / out['native_width_px']
+        # Measured across the content, not the padded canvas.
+        out['scale_factor'] = float(content_width_px) / out['native_width_px']
+        # Kept alongside it so the difference on a clamped capture is visible
+        # rather than having to be inferred from the frame block.
+        out['canvas_scale_factor'] = float(width_px) / out['native_width_px']
     return out
 
 
@@ -1749,8 +1764,10 @@ def stage_a_export_metrics(tiff_path: Path, sidecar: dict[str, Any]) -> dict[str
     arr = load_rgb(tiff_path)
     h, w = arr.shape[:2]
     palette_sorted, labels = _palette_from_sidecar(sidecar)
-    resolution = _native_resolution(sidecar, w, h)
+    # frame first: the resolution block needs the clamp-corrected content
+    # rectangle to report a density the capture actually rendered at.
     frame = _frame_geometry(sidecar, w, h)
+    resolution = _native_resolution(sidecar, w, h, frame)
     scan = _scan_export(arr, palette_sorted, frame['content_rect_px'])
 
     blend = _pastel_analysis(scan['off_color_counts'], palette_sorted, labels, h * w)

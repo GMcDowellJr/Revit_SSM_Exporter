@@ -595,3 +595,50 @@ def test_thinrunner_coerce_view_id_uses_the_shared_reader():
     # names IntegerValue.
     attributes = {node.attr for node in ast.walk(coerce) if isinstance(node, ast.Attribute)}
     assert "IntegerValue" not in attributes
+
+
+# --- scale factor on a clamped capture --------------------------------------
+
+def test_scale_factor_is_measured_across_content_not_the_padded_canvas(tmp_path):
+    """Revit pads the short axis to stay inside 10:1; padding is not model pixels.
+
+    A 1:20-aspect view is padded horizontally to 1:10, so half the canvas
+    width is frame. Dividing the full width by native would report twice the
+    density the capture actually rendered at.
+    """
+    # 50 ft wide x 1000 ft tall = 1:20, clamped to 1:10.
+    arr = np.full((400, 200, 3), 255, dtype=np.uint8)
+    arr[:, 50:150] = RED
+    m = measure(tmp_path, arr, bounds=(0.0, 0.0, 50.0, 1000.0))
+    frame, res = m["frame"], m["resolution"]
+
+    assert frame["clamp_applied"] is True
+    assert frame["pad_x_px"] == pytest.approx(90.0)     # (200 - 400*0.05)/2
+    assert res["content_width_px"] == 20                # 200 - 2*90
+    assert res["width_px"] == 200
+
+    # native = 50 ft * 12 * 150 / 96 = 937.5 px
+    assert res["native_width_px"] == pytest.approx(937.5)
+    assert res["scale_factor"] == pytest.approx(20 / 937.5)
+    # The uncorrected figure is kept, and is 10x the real one here.
+    assert res["canvas_scale_factor"] == pytest.approx(200 / 937.5)
+    assert res["canvas_scale_factor"] > res["scale_factor"]
+
+
+def test_an_unclamped_capture_has_identical_content_and_canvas_scale(tmp_path):
+    m = measure(tmp_path, solid_square(size=64), bounds=(0.0, 0.0, 100.0, 80.0))
+    res = m["resolution"]
+    assert m["frame"]["clamp_applied"] is False
+    assert res["content_width_px"] == res["width_px"] == 64
+    assert res["scale_factor"] == res["canvas_scale_factor"]
+
+
+def test_a_null_bounds_capture_reports_no_scale_factor_of_either_kind(tmp_path):
+    side = sidecar()
+    side["bounds_xy"] = None
+    res = analyzer.stage_a_export_metrics(
+        write_tiff(tmp_path, solid_square(), "nb.tiff"), side)["resolution"]
+    assert res["scale_factor"] is None
+    assert res.get("canvas_scale_factor") is None
+    # Content dimensions still describe the image itself, which is knowable.
+    assert res["content_width_px"] == 64

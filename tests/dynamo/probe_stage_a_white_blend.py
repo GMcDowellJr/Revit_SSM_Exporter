@@ -132,23 +132,35 @@ def _reflect(obj, names):
     """
     found = {}
     for name in names:
-        if not hasattr(obj, name):
-            found[name] = {"present": False}
-            continue
+        # Retrieved ONCE, inside the handler. hasattr() invokes the getter and
+        # only swallows AttributeError, so a .NET property that exists but
+        # throws for this view or document would propagate out and abort the
+        # whole B1 query -- the opposite of this function's promise. Absence
+        # is AttributeError specifically; anything else is a read_error on a
+        # member that is present.
         try:
             value = getattr(obj, name)
-            if callable(value):
-                try:
-                    result = value()
-                    found[name] = {"present": True, "callable": True,
-                                   "value": _stringify(result)}
-                except Exception as ex:
-                    found[name] = {"present": True, "callable": True,
-                                   "call_error": "{0}: {1}".format(type(ex).__name__, ex)}
-            else:
-                found[name] = {"present": True, "callable": False, "value": _stringify(value)}
+        except AttributeError:
+            found[name] = {"present": False}
+            continue
         except Exception as ex:
-            found[name] = {"present": True, "read_error": "{0}: {1}".format(type(ex).__name__, ex)}
+            found[name] = {"present": True,
+                           "read_error": "{0}: {1}".format(type(ex).__name__, ex)}
+            continue
+        if callable(value):
+            try:
+                result = value()
+            except Exception as ex:
+                found[name] = {"present": True, "callable": True,
+                               "call_error": "{0}: {1}".format(type(ex).__name__, ex)}
+                continue
+            found[name] = {"present": True, "callable": True, "value": _stringify(result)}
+            continue
+        try:
+            found[name] = {"present": True, "callable": False, "value": _stringify(value)}
+        except Exception as ex:
+            found[name] = {"present": True, "callable": False,
+                           "read_error": "{0}: {1}".format(type(ex).__name__, ex)}
     return found
 
 

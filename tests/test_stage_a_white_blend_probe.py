@@ -360,3 +360,48 @@ def test_reflection_of_a_large_id_property_does_not_raise():
             return _LargeId()
     found = probe._reflect(View(), ("GetUnderlayBaseLevel",))
     assert found["GetUnderlayBaseLevel"]["value"] == 2 ** 40
+
+
+# --- reflection must never abort B1 (Codex round 3) -------------------------
+
+class _ThrowingProperty(object):
+    """A .NET-style property that exists but whose getter fails for this view."""
+
+    @property
+    def GetUnderlayBaseLevel(self):
+        raise RuntimeError("not valid for this view type")
+
+
+def test_a_present_member_whose_getter_throws_is_a_read_error_not_a_crash():
+    """hasattr() invokes the getter and only swallows AttributeError, so the
+    old presence check propagated and aborted the whole B1 query."""
+    found = probe._reflect(_ThrowingProperty(), ("GetUnderlayBaseLevel",))
+    assert found["GetUnderlayBaseLevel"]["present"] is True
+    assert "RuntimeError: not valid for this view type" in \
+        found["GetUnderlayBaseLevel"]["read_error"]
+
+
+def test_absence_is_distinguished_from_a_failing_getter():
+    absent = probe._reflect(object(), ("GetUnderlayTopLevel",))
+    assert absent["GetUnderlayTopLevel"] == {"present": False}
+    failing = probe._reflect(_ThrowingProperty(), ("GetUnderlayBaseLevel",))
+    assert failing["GetUnderlayBaseLevel"]["present"] is True
+
+
+def test_one_throwing_member_does_not_stop_the_others_being_reported():
+    class Mixed(_ThrowingProperty):
+        GetUnderlayTopLevel = 311
+    found = probe._reflect(Mixed(), ("GetUnderlayBaseLevel", "GetUnderlayTopLevel",
+                                     "SetUnderlayRange"))
+    assert "read_error" in found["GetUnderlayBaseLevel"]
+    assert found["GetUnderlayTopLevel"]["value"] == 311
+    assert found["SetUnderlayRange"] == {"present": False}
+
+
+def test_a_method_that_raises_when_called_is_still_a_call_error():
+    class View(object):
+        def GetUnderlayOrientation(self):
+            raise ValueError("no underlay")
+    found = probe._reflect(View(), ("GetUnderlayOrientation",))
+    assert found["GetUnderlayOrientation"]["callable"] is True
+    assert "ValueError: no underlay" in found["GetUnderlayOrientation"]["call_error"]
