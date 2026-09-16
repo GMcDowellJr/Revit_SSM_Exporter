@@ -77,6 +77,11 @@ def resolve_view(doc, reference, all_views=None, is_view=None):
         view = doc.GetElement(reference["unique_id"])
         if view is None:
             raise ContractError("No view has UniqueId {0}".format(reference["unique_id"]))
+    elif reference.get("element_id") is not None:
+        from Autodesk.Revit.DB import ElementId
+        view = doc.GetElement(ElementId(int(reference["element_id"])))
+        if view is None:
+            raise ContractError("No view has ElementId {0}".format(reference["element_id"]))
     else:
         views = list(all_views(doc) if callable(all_views) else (all_views or []))
         matches = [view for view in views if getattr(view, "Name", None) == reference["name"]]
@@ -97,6 +102,10 @@ def resolve_view(doc, reference, all_views=None, is_view=None):
     for requested, resolved in (("unique_id", "unique_id"), ("name", "name"),
                                 ("view_type", "view_type"), ("crop_active", "crop_active"),
                                 ("is_template", "is_template")):
+        # element_id is deliberately absent: it is how the view was found, so
+        # asserting it against itself proves nothing. Any `name` given beside
+        # it IS asserted here, which is what catches an id that has drifted
+        # onto a different or renamed view.
         if requested in reference and reference[requested] != actual[resolved]:
             raise ContractError("View assertion {0} mismatch: expected {1!r}, resolved {2!r}".format(requested, reference[requested], actual[resolved]))
     return view, actual

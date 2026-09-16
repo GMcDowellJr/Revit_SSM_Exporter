@@ -29,15 +29,33 @@ def _stable_id(value, label):
 
 
 def parse_view_reference(value):
+    """Validate one job's view reference.
+
+    ``element_id`` exists alongside ``unique_id`` and ``name`` because those
+    two are not always usable in practice. A UniqueId has to be looked up by
+    hand, and a name is not necessarily unique -- a model can hold two views
+    both called "SEA LEVEL", which resolve_view correctly refuses rather than
+    guessing between. The integer ElementId is the identifier a person
+    actually has in front of them (it is what the Stage A outputs are named
+    by), and it is unambiguous, so a campaign can be written without a manual
+    lookup step that is itself a source of error.
+
+    ``name`` may still be given alongside it, in which case resolve_view
+    asserts the two agree -- an id pointing at a renamed or different view
+    fails loudly instead of silently probing the wrong one.
+    """
     value = _object(value, "view")
-    allowed = ("unique_id", "name", "view_type", "crop_active", "is_template")
+    allowed = ("unique_id", "element_id", "name", "view_type", "crop_active", "is_template")
     unknown = sorted(set(value) - set(allowed))
     if unknown:
         raise ContractError("Unknown view reference fields: {0}".format(unknown))
-    if not value.get("unique_id") and not value.get("name"):
-        raise ContractError("view requires unique_id or name")
+    if not value.get("unique_id") and not value.get("name") and value.get("element_id") is None:
+        raise ContractError("view requires unique_id, element_id or name")
     if "unique_id" in value and not isinstance(value["unique_id"], str):
         raise ContractError("view.unique_id must be a string")
+    if "element_id" in value and (isinstance(value["element_id"], bool)
+                                  or not isinstance(value["element_id"], int)):
+        raise ContractError("view.element_id must be an integer")
     if "name" in value and not isinstance(value["name"], str):
         raise ContractError("view.name must be a string")
     for key in ("crop_active", "is_template"):

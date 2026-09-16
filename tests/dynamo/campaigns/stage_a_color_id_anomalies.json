@@ -1,0 +1,140 @@
+{
+  "schema_version": "1.0",
+  "campaign_id": "stage-a-color-id-anomalies",
+  "batch_id": "batch-001",
+  "created_at": "2026-09-16T00:00:00Z",
+  "document": {
+    "expected_title": "REPLACE-WITH-THE-EXACT-MODEL-TITLE"
+  },
+  "execution_policy": {
+    "max_jobs_per_run": 1,
+    "on_job_error": "continue",
+    "resume": true
+  },
+  "jobs": [
+    {
+      "job_id": "b1-site-plan-4",
+      "probe_id": "stage_a_white_blend",
+      "view": {
+        "element_id": 587278,
+        "name": "SITE PLAN AT LEVEL 4"
+      },
+      "settings": {
+        "selection": "b1_query"
+      },
+      "output_directory": "captures/b1-site-plan-4"
+    },
+    {
+      "job_id": "d1-hospital-level-2",
+      "probe_id": "stage_a_drift_onset",
+      "view": {
+        "element_id": 871863,
+        "name": "_N_ HOSPITAL - LEVEL 2"
+      },
+      "settings": {
+        "selection": "d1_determinism",
+        "repetitions": 2
+      },
+      "output_directory": "captures/d1-hospital-level-2"
+    },
+    {
+      "job_id": "d1-mob-1-level-2",
+      "probe_id": "stage_a_drift_onset",
+      "view": {
+        "name": "MOB 1 - LEVEL 2"
+      },
+      "settings": {
+        "selection": "d1_determinism",
+        "repetitions": 2
+      },
+      "output_directory": "captures/d1-mob-1-level-2"
+    },
+    {
+      "job_id": "d2-sea-level-clean",
+      "probe_id": "stage_a_drift_onset",
+      "view": {
+        "element_id": 49370,
+        "name": "SEA LEVEL"
+      },
+      "settings": {
+        "selection": "d2_category_load",
+        "d2_steps": 8
+      },
+      "output_directory": "captures/d2-sea-level-clean"
+    },
+    {
+      "job_id": "d1-sea-level-drifted",
+      "probe_id": "stage_a_drift_onset",
+      "view": {
+        "element_id": 146925,
+        "name": "SEA LEVEL"
+      },
+      "settings": {
+        "selection": "d1_determinism",
+        "repetitions": 2
+      },
+      "output_directory": "captures/d1-sea-level-drifted"
+    },
+    {
+      "job_id": "d3-hospital-level-3",
+      "probe_id": "stage_a_drift_onset",
+      "view": {
+        "name": "_N_ HOSPITAL - LEVEL 3"
+      },
+      "settings": {
+        "selection": "d3_size_sweep"
+      },
+      "output_directory": "captures/d3-hospital-level-3"
+    },
+    {
+      "job_id": "d3-hospital-level-2-sub-native",
+      "probe_id": "stage_a_drift_onset",
+      "view": {
+        "element_id": 871863,
+        "name": "_N_ HOSPITAL - LEVEL 2"
+      },
+      "settings": {
+        "selection": "d3_size_sweep",
+        "pixel_sizes": "0.9,0.95"
+      },
+      "output_directory": "captures/d3-hospital-level-2-sub-native"
+    },
+    {
+      "job_id": "d4-hospital-level-2",
+      "probe_id": "stage_a_drift_onset",
+      "view": {
+        "element_id": 871863,
+        "name": "_N_ HOSPITAL - LEVEL 2"
+      },
+      "settings": {
+        "selection": "d4_dpi_vs_pixel_size"
+      },
+      "output_directory": "captures/d4-hospital-level-2"
+    },
+    {
+      "job_id": "d5-hospital-level-2",
+      "probe_id": "stage_a_drift_onset",
+      "view": {
+        "element_id": 871863,
+        "name": "_N_ HOSPITAL - LEVEL 2"
+      },
+      "settings": {
+        "selection": "d5_crop_tiles",
+        "tile_grid": 2
+      },
+      "output_directory": "captures/d5-hospital-level-2"
+    },
+    {
+      "job_id": "b3-site-plan-4",
+      "probe_id": "stage_a_white_blend",
+      "view": {
+        "element_id": 587278,
+        "name": "SITE PLAN AT LEVEL 4"
+      },
+      "settings": {
+        "selection": "b3_baseline,b3_underlay_off,b3_halftone_cleared"
+      },
+      "output_directory": "captures/b3-site-plan-4"
+    }
+  ]
+}

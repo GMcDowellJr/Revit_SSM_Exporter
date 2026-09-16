@@ -192,6 +192,55 @@ stripe-invariant by test, but the decoded image itself is held whole.
 
 ## Running it
 
+The experiment set is fixed, so it is **checked in as a campaign** rather than
+hand-wired per run: `tests/dynamo/campaigns/stage_a_color_id_anomalies.json`.
+One Dynamo node, one input, no per-run choices.
+
+```
+paste tests/dynamo/revit_batch_dynamo.py
+  IN[0] = ...\tests\dynamo\campaigns\stage_a_color_id_anomalies.json
+  IN[1] = null
+  IN[2] = true     # dry run first: resolves every view, validates every
+                   # setting, exports nothing
+```
+
+Set `document.expected_title` to the exact model title before the first run —
+it is a deliberate `REPLACE-…` placeholder so that running against the wrong
+model fails the title check instead of producing plausible captures of
+something else. Then set `IN[2] = false` and re-run the node once per job:
+`max_jobs_per_run` is 1 and `resume` is true, so each invocation takes the next
+job and skips what is done. A single D2 or D3 job can write several gigabytes,
+which is why stopping between jobs is the default rather than an option.
+
+What this removes, all of which went wrong on the first hand-run attempt:
+
+| | Hand-wired | Campaign |
+|---|---|---|
+| View choice | picked in Dynamo per run | resolved from the manifest by element id |
+| Two views named "SEA LEVEL" | picked by eye | `resolve_view` refuses an ambiguous name |
+| Wrong model open | discovered from the output | `expected_title` fails first |
+| Case names | typed per run | validated by the dry run, against the probes' own parsers |
+| Output directory | one shared folder; captures collided across views | one per job |
+| Knowing what has run | remembered | `resume` plus a run manifest |
+
+Analysis is then per job directory, or across all of them at once:
+
+```bash
+python tools/analyze_stage_a_probe.py \
+    "<output>/captures" --export-metrics --metrics-table drift_table.md
+```
+
+`--metrics-table` is written relative to the current directory, not to the
+captures path.
+
+### Running a single experiment by hand
+
+Still supported, and documented in each probe's module docstring — the
+campaign calls the same `run_probe`. Prefer the campaign: every failure in the
+table above came from the hand path.
+
+
+
 ```bash
 # Dynamo node (drift block)
 #   IN[0] view, IN[1] output dir, IN[2] "all" or a case subset,

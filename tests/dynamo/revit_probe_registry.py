@@ -409,14 +409,80 @@ def _model_linework_adapter(module_name):
     return invoke
 
 
+_DRIFT_ONSET_RUNTIME_SETTINGS = frozenset((
+    "selection", "repetitions", "pixel_sizes", "export_dpi", "d2_steps",
+    "tile_grid", "max_elements", "repo_root",
+))
+_WHITE_BLEND_RUNTIME_SETTINGS = frozenset((
+    "selection", "element_ids", "export_dpi", "pixel_size", "max_elements", "repo_root",
+))
+
+
+def _anomaly_probe_adapter(module_name, allowed, probe_id):
+    """Adapter for the Stage A anomaly probes, with real settings validation.
+
+    The generic passthrough adapter has no ``validate_settings``, so a
+    validation-only run would resolve every view and then still let a typo
+    like ``"d1_determinsm"`` through to execution -- discovering it only after
+    the model was open and a job had started. These probes are driven from a
+    checked-in campaign precisely so a person is not hand-entering case names,
+    which only helps if the dry run actually checks them.
+
+    Validation reuses each probe's own ``select_cases`` and sweep parser rather
+    than a second copy of the accepted values, so the two cannot drift apart.
+    It opens no transaction and exports nothing.
+    """
+    def resolve(settings, output_directory):
+        if not output_directory:
+            raise ValueError("output_directory is required")
+        module = __import__(module_name, fromlist=["run_probe"])
+        arguments = dict(settings)
+        unknown = sorted(set(arguments) - allowed)
+        if unknown:
+            raise ValueError("Unknown settings for {0}: {1}".format(probe_id, unknown))
+        if arguments.get("selection") is not None:
+            module.select_cases(arguments["selection"])
+        if probe_id == "stage_a_drift_onset" and arguments.get("pixel_sizes") is not None:
+            # Native width is not knowable without a document; 10000 is a
+            # stand-in that exercises the same parser and the same floor check.
+            module.resolve_size_sweep(arguments["pixel_sizes"], 10000.0)
+        if probe_id == "stage_a_white_blend" and arguments.get("element_ids") is not None:
+            module.parse_element_ids(arguments["element_ids"])
+        for key in ("repetitions", "d2_steps", "tile_grid"):
+            if key in arguments and (isinstance(arguments[key], bool)
+                                     or not isinstance(arguments[key], int)):
+                raise ValueError("{0}.{1} must be an integer".format(probe_id, key))
+        for key in ("export_dpi", "pixel_size"):
+            if arguments.get(key) is not None:
+                try:
+                    if float(arguments[key]) <= 0:
+                        raise ValueError
+                except (TypeError, ValueError):
+                    raise ValueError("{0}.{1} must be a positive number".format(probe_id, key))
+        return arguments
+
+    def invoke(view, settings, output_directory):
+        module = __import__(module_name, fromlist=["run_probe"])
+        arguments = resolve(settings, output_directory)
+        return module.run_probe(raw_view=view, output_dir=output_directory, **arguments)
+
+    invoke.validate_settings = lambda settings, output_directory: resolve(settings, output_directory)
+    return invoke
+
+
 def build_registry(doc=None):
     specialized = {"stage_a_transaction_group_export", "stage_a_minimum_id_mutations", "stage_a_external_sources",
-                   "stage_a_image_alignment", "stage_a_model_linework"}
+                   "stage_a_image_alignment", "stage_a_model_linework",
+                   "stage_a_drift_onset", "stage_a_white_blend"}
     registry = {probe_id: _adapter(module) for probe_id, module in PROBE_MODULES.items()
                 if probe_id not in specialized}
     registry["stage_a_minimum_id_mutations"] = _minimum_id_mutations_adapter(PROBE_MODULES["stage_a_minimum_id_mutations"])
     registry["stage_a_image_alignment"] = _image_alignment_adapter(PROBE_MODULES["stage_a_image_alignment"])
     registry["stage_a_model_linework"] = _model_linework_adapter(PROBE_MODULES["stage_a_model_linework"])
+    registry["stage_a_drift_onset"] = _anomaly_probe_adapter(
+        PROBE_MODULES["stage_a_drift_onset"], _DRIFT_ONSET_RUNTIME_SETTINGS, "stage_a_drift_onset")
+    registry["stage_a_white_blend"] = _anomaly_probe_adapter(
+        PROBE_MODULES["stage_a_white_blend"], _WHITE_BLEND_RUNTIME_SETTINGS, "stage_a_white_blend")
     transaction_module = PROBE_MODULES["stage_a_transaction_group_export"]
     registry["stage_a_transaction_group_export"] = (_transaction_adapter(doc, transaction_module)
                                                        if doc is not None else _adapter(transaction_module))
