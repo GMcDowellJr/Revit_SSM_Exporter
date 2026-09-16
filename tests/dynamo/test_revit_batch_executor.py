@@ -791,3 +791,56 @@ def test_view_identity_falls_back_to_the_legacy_property_on_older_revit():
         UniqueId = "u"
         Name = "small"
     assert view_identity(BigView())["element_id"] == 587278
+
+
+def test_a_prior_run_that_recorded_no_destination_is_rerun_not_trusted(tmp_path):
+    """Unknown is not the same as 'already there'.
+
+    Manifests written before output directories were recorded say nothing
+    about where their artifacts landed. Skipping on that risks a run that
+    writes nothing and reports success; re-running costs one capture.
+    """
+    calls = []
+    adapter = lambda view, settings, output: (calls.append(output) or envelope())
+    run(tmp_path, batch(), adapter, run_id="first")
+    prior = Path(tmp_path) / "first" / "revit_run_manifest.json"
+    payload = json.loads(prior.read_text())
+    for record in payload["jobs"]:
+        record.pop("output_directory_resolved", None)
+    prior.write_text(json.dumps(payload))
+    resumed = batch(resume=True)
+    _, manifest = run(tmp_path, resumed, adapter, run_id="second")
+    assert manifest["jobs"][0]["execution_status"] == "completed"
+    assert "an unrecorded directory" in manifest["warnings"][0]["message"]
+    assert len(calls) == 2
+
+
+def test_changing_settings_and_the_output_root_together_is_not_configuration_drift(tmp_path):
+    """The drift guard compares against a prior success. One that landed in a
+    different tree is not this run's job done, so it is not a baseline either
+    -- and a campaign edited at the same time as its artifact root must still
+    run."""
+    calls = []
+    adapter = lambda view, settings, output: (calls.append(output) or envelope())
+    first = batch([job("one", "u1")])
+    first["jobs"][0]["output_directory"] = "captures/one"
+    run(tmp_path, first, adapter, run_id="first", artifact_root=str(tmp_path / "old"))
+    changed = batch([job("one", "u1", settings={"selection": "b1_query"})], resume=True)
+    changed["jobs"][0]["output_directory"] = "captures/one"
+    _, manifest = run(tmp_path, changed, adapter, run_id="second",
+                      artifact_root=str(tmp_path / "new"))
+    assert manifest["execution_status"] == "completed"
+    assert manifest["jobs"][0]["execution_status"] == "completed"
+
+
+def test_changing_settings_alone_is_still_configuration_drift(tmp_path):
+    adapter = lambda *args: envelope()
+    first = batch([job("one", "u1")])
+    first["jobs"][0]["output_directory"] = "captures/one"
+    run(tmp_path, first, adapter, run_id="first", artifact_root=str(tmp_path / "same"))
+    changed = batch([job("one", "u1", settings={"selection": "b1_query"})], resume=True)
+    changed["jobs"][0]["output_directory"] = "captures/one"
+    _, manifest = run(tmp_path, changed, adapter, run_id="second",
+                      artifact_root=str(tmp_path / "same"))
+    assert manifest["execution_status"] == "configuration_failed"
+    assert "Configuration drift" in manifest["errors"][0]["message"]

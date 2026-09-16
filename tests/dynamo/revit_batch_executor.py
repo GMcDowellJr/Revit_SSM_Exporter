@@ -158,13 +158,15 @@ def resolve_output_directory(output_directory, batch_source_path=None, artifact_
 
 
 def _destination_moved(previous_directory, resolved_output_directory):
-    """True when a prior success landed somewhere other than this run's output.
+    """True when a prior success did not land where this run writes.
 
-    A prior record written before output directories were resolved carries no
-    destination; that is unknown, not a move, so it is left to resume.
+    A prior record from before output directories were recorded carries no
+    destination. That is unknown, and unknown counts as moved: skipping on it
+    risks a run that writes nothing and reports success, while re-running it
+    costs one repeated capture. The expensive mistake is the silent one.
     """
     if not previous_directory:
-        return False
+        return True
     return os.path.normcase(os.path.normpath(previous_directory)) != \
         os.path.normcase(os.path.normpath(resolved_output_directory))
 
@@ -259,12 +261,15 @@ def execute_batch(batch_or_path, doc, registry, all_views=None, manifest_root=No
             fingerprint = job_fingerprint(job)
             previous = prior.get(job["job_id"]) if not policy.get("allow_rerun", False) else None
             if previous is not None:
-                if previous["fingerprint"] != fingerprint:
-                    raise ContractError("Configuration drift for completed job {0}".format(job["job_id"]))
+                # Destination first, before configuration drift. A prior
+                # success that landed somewhere else is not this run's job
+                # done -- so it is also not a baseline to detect drift
+                # against, and changing a job's settings at the same time as
+                # its output root must not fail the whole campaign.
                 moved = _destination_moved(previous.get("output_directory"), resolved_output_directory)
                 if moved:
-                    # The job succeeded before, but into a different directory
-                    # -- an artifact_root was added, changed, or dropped. Its
+                    # An artifact_root was added, changed or dropped, or the
+                    # prior run never recorded where it wrote. Either way its
                     # outputs are not where this run is asked to put them, so
                     # "already done" would hand back an empty capture set and
                     # call the run completed. Re-run it, and say why.
@@ -273,8 +278,10 @@ def execute_batch(batch_or_path, doc, registry, all_views=None, manifest_root=No
                         "message": "Re-running: prior run {0} completed this job into {1}, "
                                    "but this run writes to {2}.".format(
                                        previous.get("run_id") or "unknown",
-                                       previous.get("output_directory"),
+                                       previous.get("output_directory") or "an unrecorded directory",
                                        resolved_output_directory)})
+                elif previous["fingerprint"] != fingerprint:
+                    raise ContractError("Configuration drift for completed job {0}".format(job["job_id"]))
                 else:
                     manifest["jobs"].append(_job_record(job, identity, fingerprint, "skipped_resume", resolved_output_directory))
                     continue

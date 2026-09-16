@@ -284,7 +284,12 @@ run cheap to continue. To deliberately re-capture everything, set:
 success only counts as "already done" if it landed in the directory this run
 writes to, so adding, changing, or dropping `IN[3]`/`artifact_root` re-runs the
 affected jobs by itself and records a `resume` warning naming the old and new
-destinations. A run in which every job was skipped reports
+destinations. The same applies to a prior manifest that never recorded where
+it wrote: unknown counts as moved, because skipping on it risks a run that
+writes nothing and calls itself successful, while re-running costs one
+capture. The destination is checked *before* the configuration-drift guard, so
+editing a job's settings at the same time as its output root re-runs the job
+rather than failing the campaign. A run in which every job was skipped reports
 `execution_status: "nothing_to_do"` with a `nothing_executed` line in the
 summary, rather than `completed` — a run that wrote nothing no longer reads
 like a successful one.
