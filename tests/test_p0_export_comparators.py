@@ -618,3 +618,107 @@ def test_the_two_batches_share_one_campaign_id_and_differ_by_batch_id():
                     "p0_export_correctness_b.json").read_text())
     assert a["campaign_id"] == b["campaign_id"] == "p0-export-correctness"
     assert a["batch_id"] != b["batch_id"]
+
+
+# --------------------------------------------------------------------------
+# Regressions from run 0532104e -- three jobs recorded failed, all three
+# having in fact completed, against captures that measured nothing.
+# --------------------------------------------------------------------------
+
+def test_probe_returns_an_execution_envelope_not_a_bare_report():
+    """The executor reads execution_status off the envelope and defaults it
+    to "failed" when absent. Run 0532104e returned a bare report, so three
+    successful captures were all recorded failed with empty error lists."""
+    import inspect
+    probe = _probe()
+    src = inspect.getsource(probe.run_probe)
+    assert "execution_envelope(" in src, "run_probe must return an envelope"
+    assert "envelope_status(" in src, "status must come from the shared rule"
+    # And the envelope's own required keys must be the contract's.
+    from tests.dynamo import stage_a_probe_contract as contract
+    envelope = contract.execution_envelope(
+        probe.PROBE_NAME, {}, {"element_id": 1}, {"records": []}, [],
+        "succeeded", "restored", contract.utc_now_iso(),
+        execution_status="completed")
+    contract.validate_execution_envelope(envelope)
+    assert envelope["execution_status"] == "completed"
+
+
+def test_capture_passes_a_real_raster_and_collected_elements():
+    """raster=None makes production fall back to a 1 paper-inch width -- a
+    150x277 px export with an empty color_assignment_map, which is what run
+    0532104e graded."""
+    import inspect
+    probe = _probe()
+    # Comments explain the old bug by name, so only executable lines count.
+    src = "\n".join(line for line in inspect.getsource(probe.run_capture).splitlines()
+                    if not line.lstrip().startswith("#"))
+    assert "init_view_raster(" in src and "collect_view_elements(" in src
+    assert "raster=raster" in src
+    assert "raster=None" not in src
+    assert "elements=[]" not in src
+
+
+def test_select_census_distinguishes_the_three_empty_outcomes():
+    """candidates: [] with no error, no warning and no count could equally
+    mean no plan views, a collector that returned nothing, or every view
+    silently dropped. The census names which."""
+    import inspect
+    probe = _probe()
+    src = inspect.getsource(probe._plan_views)
+    for key in ("collector_returned", "collector_error", "templates",
+                "non_plan_view_types", "read_errors"):
+        assert key in src, key
+    # The bare `except Exception: continue` that hid the cause is gone.
+    assert "except Exception:\n            continue" not in src
+
+
+def test_unmeasured_capture_is_reported_not_filled_with_zeros(tmp_path):
+    """The analyzer's metrics pass must leave a missing capture as None --
+    a fabricated 0/1.0 would turn 'nobody measured' into a clean pass."""
+    pytest.importorskip("numpy")
+    pytest.importorskip("PIL")
+    from tools.analyze_stage_a_probe import _p0_records_with_metrics
+    report = tmp_path / "stage_a_p0_export_correctness.json"
+    report.write_text("{}")
+    native = {"records": [dict(default_record(), metrics={
+        "hard_edges": None, "blended_edges": None, "hard_ratio": None, "off_px": None},
+        tiff_path="missing.tiff", sidecar_path="missing.json")]}
+    out = _p0_records_with_metrics(native, report)
+    record = out["records"][0]
+    assert record["metrics"]["hard_ratio"] is None
+    assert "capture not found" in record["measurement_error"]
+    # And it still fails, for the right reason.
+    status, reasons = _status(cmp.evaluate_record("p0_default", record),
+                              "hard_ratio_measured")
+    assert status == "FAIL" and "HARD_RATIO_NOT_MEASURED" in reasons
+
+
+def test_metrics_pass_leaves_select_records_alone(tmp_path):
+    from tools.analyze_stage_a_probe import _p0_records_with_metrics
+    report = tmp_path / "r.json"
+    report.write_text("{}")
+    native = {"records": [{"case": "p0_select", "candidates": [],
+                           "enumeration_census": {"collector_returned": 0}}]}
+    assert _p0_records_with_metrics(native, report)["records"][0]["case"] == "p0_select"
+
+
+def test_a_blank_capture_fails_every_way_it_should():
+    """Run 0532104e's actual numbers: 150x277 px, nothing painted. The
+    dimension check passes (the export IS the size it was asked for), which
+    is exactly why the other rules have to carry the verdict."""
+    record = default_record()
+    record["resolution"].update({
+        "actual_w": 150, "actual_h": 277, "pre_cap_px": 150, "requested_px": 150,
+        "paper_fit_in": 1.0, "predicted_derived_px": 150, "dim_check": "pass",
+    })
+    record["metrics"] = {"hard_edges": None, "blended_edges": None,
+                         "hard_ratio": None, "off_px": None}
+    checks = cmp.evaluate_record("p0_default", record)
+    assert _overall(checks) == "FAIL"
+    failed = {r for c in checks if c["status"] == "FAIL" for r in c["reason_codes"]}
+    assert "HARD_RATIO_NOT_MEASURED" in failed
+    assert "OFF_PX_NOT_MEASURED" in failed
+    # The size check alone would have passed it.
+    assert _status(checks, "longer_axis_within_ceiling")[0] == "PASS"
+    assert _status(checks, "dim_check")[0] == "PASS"

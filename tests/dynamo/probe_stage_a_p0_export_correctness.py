@@ -199,18 +199,48 @@ class OverrideLedger(object):
 
 
 def _plan_views(doc):
+    """Plan views, with a census of everything excluded and why.
+
+    The first version returned a bare list and swallowed any exception per
+    view with `continue`. Run 0532104e came back with candidates: [] and no
+    error, no warning and no count -- an empty enumeration that could equally
+    have meant "this document has no plan views", "the collector returned
+    nothing", or "every view raised and was silently dropped". Refusing to
+    distinguish those is the silent-failure this repo's rules forbid, and it
+    cost a Revit round trip to notice.
+
+    Returns (views, census). The census is reported whatever the outcome, so
+    an empty result always says which of those three happened.
+    """
     from Autodesk.Revit.DB import FilteredElementCollector, View
+    census = {"collector_returned": 0, "templates": 0, "non_plan_view_types": {},
+              "read_errors": [], "collector_error": None}
     out = []
-    for view in FilteredElementCollector(doc).OfClass(View):
+    try:
+        collected = list(FilteredElementCollector(doc).OfClass(View))
+    except Exception as ex:
+        # Never swallowed: an OfClass that refuses the abstract View type is
+        # the difference between "no plan views" and "we never looked".
+        census["collector_error"] = "{0}: {1}".format(type(ex).__name__, ex)
+        return out, census
+    census["collector_returned"] = len(collected)
+    for view in collected:
         try:
             if view.IsTemplate:
+                census["templates"] += 1
                 continue
-            if str(getattr(view, "ViewType", "")).split(".")[-1] not in PLAN_VIEW_TYPE_NAMES:
+            view_type = str(getattr(view, "ViewType", "")).split(".")[-1]
+            if view_type not in PLAN_VIEW_TYPE_NAMES:
+                census["non_plan_view_types"][view_type] = \
+                    census["non_plan_view_types"].get(view_type, 0) + 1
                 continue
-        except Exception:
+        except Exception as ex:
+            census["read_errors"].append({
+                "element_id": getattr(getattr(view, "Id", None), "IntegerValue", None),
+                "error": "{0}: {1}".format(type(ex).__name__, ex)})
             continue
         out.append(view)
-    return out
+    return out, census
 
 
 def run_select(doc, cfg_dpi, fit_direction, cap_axis_px=None, diag=None):
@@ -219,7 +249,8 @@ def run_select(doc, cfg_dpi, fit_direction, cap_axis_px=None, diag=None):
     from vop_interwoven.revit.view_basis import make_view_basis, resolve_view_bounds
 
     candidates = []
-    for view in _plan_views(doc):
+    views, census = _plan_views(doc)
+    for view in views:
         entry = {"view_id": view.Id.IntegerValue, "view_name": getattr(view, "Name", None),
                  "view_type": str(getattr(view, "ViewType", "")).split(".")[-1],
                  "scale": float(getattr(view, "Scale", 1) or 1)}
@@ -242,6 +273,8 @@ def run_select(doc, cfg_dpi, fit_direction, cap_axis_px=None, diag=None):
         "candidates": candidates,
         "derived_job_candidates": [c["view_id"] for c in candidates
                                    if c.get("eligible_for_derived_job")],
+        # Always present, so an empty candidate list states its own cause.
+        "enumeration_census": census,
         "probe_overrides": [],
     }
 
@@ -257,6 +290,8 @@ def run_capture(doc, view, case, output_dir, export_dpi=None, cap_axis_px=None,
     from probe_stage_a_drift_onset import build_capture_config
     from probe_stage_a_white_blend import _clear_underlay, _underlay_report
     from vop_interwoven.color_id_buffer import export_color_id_buffer_view
+    from vop_interwoven.pipeline import init_view_raster
+    from vop_interwoven.revit.collection import collect_view_elements
     from Autodesk.Revit.DB import Transaction, TransactionStatus
 
     ledger = OverrideLedger()
@@ -299,16 +334,42 @@ def run_capture(doc, view, case, output_dir, export_dpi=None, cap_axis_px=None,
         overrides["color_id_buffer_cap_axis_px"] = int(cap_axis_px)
 
     cfg = build_capture_config(output_dir, export_dpi=export_dpi, overrides=overrides)
-    out = export_color_id_buffer_view(doc, view, elements=[], cfg=cfg, diag=diag,
-                                      raster=None, elem_cache=None)
+
+    # The raster and the element list are NOT optional inputs to dress the
+    # call with. Run 0532104e passed raster=None and elements=[] and
+    # production did exactly what it says it does without them: fell back to
+    # a 1 paper-inch width (a 150 x 277 px export), skipped the explicit
+    # crop for FitToPage's auto extent, used the pre-phase-swap collection,
+    # and painted nothing -- color_assignment_map was empty. Every number
+    # the P0 comparators grade was measured against a blank image.
+    #
+    # init_view_raster + collect_view_elements are production's own, and are
+    # what probe_stage_a_drift_onset.production_capture passes, so a P0
+    # capture and a production one cannot diverge by construction.
+    raster = init_view_raster(doc, view, cfg, diag=diag)
+    elements = collect_view_elements(doc, view, raster, diag=diag, cfg=cfg)
+    out = export_color_id_buffer_view(doc, view, elements, cfg, diag=diag,
+                                      raster=raster, elem_cache=None)
 
     sidecar = out.get("metadata") or {}
+    record = build_record(
+        case, view_id, getattr(view, "Name", None), sidecar,
+        decoded=None, metrics=None, overrides=ledger.as_list(),
+        failure_reason=out.get("failure_reason"), success=out.get("success"),
+        errors=errors)
+    # Recorded as bare file names, resolved by the analyzer against the
+    # report's own directory: an absolute path is correct only while the
+    # capture set stays where it was written, and these get moved. Same
+    # convention probe_stage_a_drift_onset uses for the same reason.
+    record["tiff_path"] = os.path.basename(out.get("tiff_path") or "") or None
+    record["sidecar_path"] = os.path.basename(out.get("sidecar_path") or "") or None
+    record["tiff_path_at_capture"] = out.get("tiff_path")
+    record["grid"] = {"W": int(getattr(raster, "W", 0) or 0),
+                      "H": int(getattr(raster, "H", 0) or 0),
+                      "cell_size_ft": float(getattr(raster, "cell_size_ft", 0) or 0)}
+    record["color_assignment_count"] = out.get("color_assignment_count")
     return {
-        "record_seed": build_record(
-            case, view_id, getattr(view, "Name", None), sidecar,
-            decoded=None, metrics=None, overrides=ledger.as_list(),
-            failure_reason=out.get("failure_reason"), success=out.get("success"),
-            errors=errors),
+        "record_seed": record,
         "ledger": ledger,
         "tiff_path": out.get("tiff_path"),
         "sidecar_path": out.get("sidecar_path"),
@@ -323,6 +384,11 @@ def empty_report(output_dir, cases, inputs=None):
         "inputs": dict(inputs or {}, output_directory=output_dir, cases=list(cases)),
         "records": [],
         "rollback": {"group_started": False, "rolled_back": False},
+        # "exceptions" is the key envelope_status reads; "errors" is the
+        # envelope's own list. They are kept in step -- a case that could
+        # not run appears in both -- rather than letting a failure be
+        # visible in one and invisible to the status rule.
+        "exceptions": [],
         "errors": [], "warnings": [], "timings_ms": {},
         "started_at": None, "finished_at": None,
     }
@@ -345,7 +411,7 @@ def _unwrap_view(raw_view):
 
 
 def run_probe(raw_view=None, output_dir=None, selection="all", export_dpi=None,
-              cap_axis_px=None, disable_underlay=True, **unused):
+              cap_axis_px=None, disable_underlay=True, repo_root=None, **unused):
     """Entry point matching revit_probe_registry's generic adapter contract.
 
     Everything that mutates the document happens inside ONE TransactionGroup
@@ -364,6 +430,12 @@ def run_probe(raw_view=None, output_dir=None, selection="all", export_dpi=None,
         "ignored_settings": sorted(unused) or None,
     })
     report["started_at"] = _now_ms()
+    # The same loader every other probe uses: it puts the repo root on
+    # sys.path so `tests.dynamo...` and a bare import both resolve, whether
+    # the probe is running from a checkout or from a Dynamo node's cwd.
+    import probe_stage_a_drift_onset as _drift
+    contract = _drift._probe_contract(output_dir, repo_root)
+    _started_iso = contract.utc_now_iso()
 
     from vop_interwoven.core.diagnostics import Diagnostics
     from vop_interwoven.resolution_contract import DEFAULT_COLOR_ID_EXPORT_DPI
@@ -409,8 +481,10 @@ def run_probe(raw_view=None, output_dir=None, selection="all", export_dpi=None,
                 # Recorded, never swallowed: a case that could not run is not
                 # a case that passed, and the comparator grades a missing
                 # record as a failure rather than an absence.
-                report["errors"].append({
-                    "case": case, "error": "{0}: {1}".format(type(ex).__name__, ex)})
+                failure = {"case": case,
+                           "error": "{0}: {1}".format(type(ex).__name__, ex)}
+                report["errors"].append(failure)
+                report["exceptions"].append(failure)
     finally:
         if group is not None:
             try:
@@ -445,4 +519,37 @@ def run_probe(raw_view=None, output_dir=None, selection="all", export_dpi=None,
     with open(path, "w") as handle:
         json.dump(report, handle, indent=2, sort_keys=True, default=str)
     report["report_path"] = path
-    return report
+
+    # The batch executor reads execution_status off the ENVELOPE, defaulting
+    # to "failed" when absent (revit_batch_executor.py:328). Run 0532104e
+    # returned this bare report instead of an envelope, so all three jobs
+    # were recorded failed with empty error lists while every capture had
+    # in fact completed and rolled back -- and rollback_status /
+    # state_restoration_status read "unknown" for the same reason. Every
+    # other probe in this directory goes through execution_envelope; this
+    # one now does too, rather than inventing its own return shape.
+    read_only = all(case == "p0_select" for case in cases)
+    rollback_ok = bool(report["rollback"].get("rolled_back"))
+    # Restoration is the group rollback here: this probe takes no separate
+    # before/after snapshot, so it must not claim one. None reads as
+    # "not checked", which envelope_status downgrades rather than banks.
+    restored = rollback_ok if report["rollback"]["group_started"] else None
+    ran_something = bool(report["records"]) and not report["errors"]
+    status = _drift.envelope_status(report, rollback_ok, restored, ran_something,
+                                    read_only=read_only)
+    if read_only:
+        rollback_status, restoration_status = "not_started", "not_checked"
+    else:
+        rollback_status = "succeeded" if rollback_ok else "failed"
+        restoration_status = ("restored" if restored
+                              else ("not_restored" if restored is False else "not_checked"))
+    artifacts = [path] + [a[k] for a in report.get("capture_artifacts", [])
+                          for k in ("tiff_path", "sidecar_path") if a.get(k)]
+    return contract.execution_envelope(
+        PROBE_NAME,
+        {"selection": selection, "export_dpi": export_dpi,
+         "cap_axis_px": cap_axis_px, "disable_underlay": bool(disable_underlay)},
+        contract.view_identity(view if view is not None else raw_view),
+        report, artifacts, rollback_status, restoration_status, _started_iso,
+        execution_status=status,
+        errors=list(report["errors"]), warnings=list(report["warnings"]))
