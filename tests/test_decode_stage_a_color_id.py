@@ -645,10 +645,17 @@ class TestDecodeStageAColorId(unittest.TestCase):
             # cropped to a narrower 20ft-wide rectangle, not the 96ft-wide
             # estimate the resolution block alone would produce
             # ((150/150)*96/12 = 96.0 ft).
+            #
+            # The crop is 20x15 ft into this fixture's 40x30 px image: square
+            # pixels, so the ExportImage aspect clamp did not fire and no pad
+            # is recovered. This used to read 20x30 ft into the same 40x30 px
+            # image, which is an aspect pair that exists ONLY if pixels are
+            # non-square -- i.e. it encoded the D1 defect as an expectation.
+            # The clamp case has its own coverage in the D1 gate tests below.
             sidecar["resolution"]["requested_pixel_size"] = 150
             sidecar["resolution"]["pixel_size"] = 40
             doc = dsc.build_decoded_document(
-                Path(tiff_path), sidecar, Path(sidecar_path), bounds_uv=(0.0, 0.0, 20.0, 30.0)
+                Path(tiff_path), sidecar, Path(sidecar_path), bounds_uv=(0.0, 0.0, 20.0, 15.0)
             )
             # Correct: 20ft crop width / 40px actual width.
             self.assertAlmostEqual(doc["feet_per_pixel"], 20.0 / 40.0, places=9)
