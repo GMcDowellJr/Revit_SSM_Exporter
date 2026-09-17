@@ -372,7 +372,10 @@ class TestClampPadGeometry(unittest.TestCase):
 
             doc = cap.decode()
             self.assertIsNotNone(doc["feet_per_pixel_unreliable_reason"])
-            self.assertIn("negative", doc["feet_per_pixel_unreliable_reason"])
+            # The DIMENSION-AGREEMENT guard now catches this first; the pad
+            # sign is no longer the mechanism. Same defect, caught earlier
+            # and for a reason that also covers the inverse direction.
+            self.assertIn("not the same size", doc["feet_per_pixel_unreliable_reason"])
             self.assertIsNot(doc["capture_reliable"], True)
             self.assertFalse(doc["capture_reliable"])
             self.assertIsNotNone(doc["capture_unreliable_reason"])
@@ -381,22 +384,82 @@ class TestClampPadGeometry(unittest.TestCase):
             for entry in doc["elements"].values():
                 self.assertEqual(entry["confidence"], "MEDIUM")
 
-    def test_g6_guard_does_not_fire_within_tolerance(self):
-        """The guard's floor is below anything rounding produces: a pad of
-        -0.5 px (the most negative value the byColor run exhibits under the
-        corrected model) must still decode clean."""
+    def test_g6_dimension_guard_fires_when_the_file_is_LARGER(self):
+        """The inverse of the case above, and the one the pad-sign check
+        could never see: when the file is BIGGER than the sidecar records,
+        both pads come out POSITIVE and the mismatch reads as a legitimate
+        centred clamp pad.
+
+        Sidecar 40x30 against a 60x45 file on a 20x15 ft crop gives fpp 0.5
+        and pads (+10.0, +7.5) -- nothing negative anywhere, so the old guard
+        stayed silent and the capture could keep HIGH confidence.
+        """
         import tempfile
         crop = (0.0, 0.0, 20.0, 15.0)
         with tempfile.TemporaryDirectory() as tmp_dir:
-            bands = [(5, 20, 5, 15)]
-            # 41 px recorded against a 40 px file: fpp = max(20/41, 15/30) =
-            # 0.5, so crop_u/fpp = 40 px and pad_x = 0. Widen by one more to
-            # reach a sub-pixel negative instead.
-            cap = _Capture(tmp_dir, 40, 30, crop, bands,
-                           name="rounding", sidecar_dims=(40, 31))
-            _, pad_x, pad_y = dsc._clamp_pad_geometry(
-                crop, 40, 30, measured_w=40, measured_h=31)
-            self.assertGreaterEqual(min(pad_x, pad_y), dsc.MIN_PAD_PX)
+            bands = [(5, 30, 5, 20)]
+            cap = _Capture(tmp_dir, 60, 45, crop, bands,
+                           name="file_larger", sidecar_dims=(40, 30))
+            fpp, pad_x, pad_y = dsc._clamp_pad_geometry(
+                crop, 60, 45, measured_w=40, measured_h=30)
+            self.assertAlmostEqual(fpp, 0.5, places=9)
+            self.assertGreater(min(pad_x, pad_y), 0.0, "both pads positive: the blind spot")
+            self.assertGreaterEqual(min(pad_x, pad_y), dsc.MIN_PAD_PX,
+                                    "the pad-sign guard cannot see this case")
+            print("\n[G6-inverse] file larger than sidecar: pad_x={0:.3f} px, "
+                  "pad_y={1:.3f} px -- both positive".format(pad_x, pad_y))
+
+            doc = cap.decode()
+            self.assertIsNotNone(doc["feet_per_pixel_unreliable_reason"])
+            self.assertIn("not the same size", doc["feet_per_pixel_unreliable_reason"])
+            self.assertFalse(doc["capture_reliable"])
+            for entry in doc["elements"].values():
+                self.assertEqual(entry["confidence"], "MEDIUM")
+
+    def test_g6_unexplained_pad_without_a_clamp_is_rejected(self):
+        """A frame the clamp model cannot account for must not be silently
+        reinterpreted as centred padding.
+
+        100x80 ft into a 64x64 px image gives fpp 1.5625 and pad_y 6.4 px --
+        but the crop's aspect is 1.25, nowhere near the limit, so ExportImage
+        had nothing to pad. The producer's own dimension check validates only
+        the fitted axis and the ceiling, so a derived-axis mismatch like this
+        reaches the decoder unflagged and would otherwise earn HIGH
+        confidence on shifted loops.
+        """
+        import tempfile
+        crop = (0.0, 0.0, 100.0, 80.0)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            bands = [(10, 30, 10, 30)]
+            cap = _Capture(tmp_dir, 64, 64, crop, bands, name="bad_frame")
+            fpp, pad_x, pad_y = dsc._clamp_pad_geometry(crop, 64, 64)
+            self.assertAlmostEqual(fpp, 1.5625, places=9)
+            self.assertAlmostEqual(pad_y, 6.4, places=6)
+            self.assertGreater(pad_y, dsc.MAX_UNCLAMPED_PAD_PX)
+            self.assertLess(100.0 / 80.0, dsc.MAX_STAGE_A_ASPECT,
+                            "fixture must sit INSIDE the clamp limit")
+
+            doc = cap.decode()
+            self.assertIsNotNone(doc["feet_per_pixel_unreliable_reason"])
+            self.assertIn("clamp never touched", doc["feet_per_pixel_unreliable_reason"])
+            self.assertFalse(doc["capture_reliable"])
+
+    def test_g6_rounding_pads_from_the_real_run_stay_clean(self):
+        """The unclamped pads the byColor run actually exhibits -- 0.000,
+        0.103, 0.340, 0.356 and 1.807 px, Revit's own rounding of the derived
+        axis -- must NOT trip the guard above. A threshold that demoted four
+        of six real views would be worse than no threshold.
+        """
+        import tempfile
+        # Reproduces Elevation 5's shape: the worst real rounding pad, 1.807 px.
+        image_w, image_h = 1000, 500
+        crop = (0.0, 0.0, (image_w - 2 * 1.807) * 0.1, 50.0)
+        fpp, pad_x, pad_y = dsc._clamp_pad_geometry(crop, image_w, image_h)
+        self.assertAlmostEqual(pad_x, 1.807, places=6)
+        self.assertLess(pad_x, dsc.MAX_UNCLAMPED_PAD_PX)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cap = _Capture(tmp_dir, image_w, image_h, crop,
+                           [(100, 300, 100, 300)], name="rounding_pad")
             doc = cap.decode()
             self.assertIsNone(doc["feet_per_pixel_unreliable_reason"])
             self.assertTrue(doc["capture_reliable"])
