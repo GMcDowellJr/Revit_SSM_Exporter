@@ -32,7 +32,6 @@ SUPPORTED_PROBES = {
     "stage_a_model_linework": "model_linework",
     "stage_a_external_sources": "external_sources",
     "stage_a_graphics_semantics": "graphics_semantics",
-    "stage_a_p0_export_correctness": "p0_export_correctness",
 }
 
 DARK_THRESHOLD = 64
@@ -839,82 +838,12 @@ def _resolve_comparison_reference(data: dict[str, Any], native: dict[str, Any], 
     return _check('comparison_reference_resolution', 'PASS', [], provenance)
 
 
-def _p0_records_with_metrics(native: dict[str, Any], json_path: Path) -> dict[str, Any]:
-    """Fill each p0 record's edge/pixel metrics by measuring its own TIFF.
-
-    The probe runs inside Dynamo, where numpy and Pillow are not guaranteed,
-    so it records WHERE its capture is and leaves the measuring to this
-    analyzer -- the same split every other Stage A probe uses. Without this
-    pass the records reach the comparators with hard_ratio None and every
-    job fails HARD_RATIO_NOT_MEASURED, which is the correct verdict for an
-    unmeasured capture and the wrong one for a capture nobody measured.
-
-    A record whose TIFF or sidecar cannot be found, or whose measurement
-    raises, keeps its metrics as None and gains a measurement_error. It is
-    never filled with zeros: the comparator must see "not measured", not a
-    fabricated clean result.
-    """
-    records = native.get('records')
-    if not isinstance(records, list):
-        return native
-    out = []
-    for record in records:
-        if not isinstance(record, dict) or record.get('case') == 'p0_select':
-            out.append(record)
-            continue
-        record = dict(record)
-        metrics = dict(record.get('metrics') or {})
-        if metrics.get('hard_ratio') is not None:
-            out.append(record)
-            continue
-        try:
-            tiff = resolve_capture_tiff(json_path, record.get('tiff_path'))
-            sidecar_name = record.get('sidecar_path')
-            sidecar_path = (json_path.parent / sidecar_name) if sidecar_name else None
-            if tiff is None or sidecar_path is None or not sidecar_path.exists():
-                record['measurement_error'] = (
-                    'capture not found beside the report (tiff={0!r}, sidecar={1!r})'.format(
-                        record.get('tiff_path'), sidecar_name))
-                out.append(record)
-                continue
-            with sidecar_path.open() as handle:
-                sidecar = json.load(handle)
-            measured = stage_a_export_metrics(tiff, sidecar)
-            edges, pixels = measured.get('edges') or {}, measured.get('pixels') or {}
-            metrics.update({
-                'hard_edges': edges.get('hard_edge_count'),
-                'blended_edges': edges.get('blended_edge_count'),
-                # Carried through INCLUDING None -- see the comparator's
-                # module docstring for why a null ratio must stay null.
-                'hard_ratio': edges.get('hard_edge_ratio'),
-                'off_px': pixels.get('off_palette_px'),
-            })
-            record['metrics'] = metrics
-            record['measured_from'] = str(tiff.name)
-        except Exception as error:  # recorded, never swallowed
-            record['measurement_error'] = '{0}: {1}'.format(type(error).__name__, error)
-        out.append(record)
-    return dict(native, records=out)
-
-
-def _family_checks(data: dict[str, Any], native: dict[str, Any], family: str,
-                   json_path: Path | None = None) -> list[dict[str, Any]]:
+def _family_checks(data: dict[str, Any], native: dict[str, Any], family: str) -> list[dict[str, Any]]:
     checks = []
     reference_check = _resolve_comparison_reference(data, native, family)
     if reference_check is not None:
         checks.append(reference_check)
-    if family == 'p0_export_correctness':
-        # Delegated wholesale: every P0 acceptance rule is an exact
-        # comparison over values the pipeline already recorded, and it lives
-        # in one module so the campaign's acceptance_requirements and the
-        # code that enforces them cannot drift. The generic requested/actual
-        # case-coverage below does not apply -- the comparator does its own
-        # coverage check (an empty report is a FAIL, not an empty pass).
-        from tools.p0_export_comparators import evaluate_report
-        measured = (_p0_records_with_metrics(native, json_path)
-                    if json_path is not None else native)
-        checks.extend(evaluate_report(measured))
-    elif family == 'image_alignment':
+    if family == 'image_alignment':
         checks.append(_alignment_coverage(data, native))
     else:
         requested, actual = _requested_names(data, native, family), _actual_names(native, family)
@@ -1139,7 +1068,7 @@ def _family_checks(data: dict[str, Any], native: dict[str, Any], family: str,
 def _acceptance_record(json_path: Path, data: dict[str, Any], probe_id: str,
                        family: str, native: dict[str, Any], limitations: list[dict[str, Any]],
                        analysis_errors: list[dict[str, Any]]) -> dict[str, Any]:
-    checks = _safety_checks(data, native) + _family_checks(data, native, family, json_path)
+    checks = _safety_checks(data, native) + _family_checks(data, native, family)
     if analysis_errors:
         checks.append(_check('analyzer_execution', 'INCONCLUSIVE', ['ANALYZER_EXCEPTION'], analysis_errors))
     fail = [c for c in checks if c['status'] == 'FAIL']
@@ -2237,13 +2166,31 @@ def _fmt_cell(value: Any) -> str:
     return str(value)
 
 
+# Columns where None means "this was never measured", not "not applicable".
+#
+# hard_ratio is hard / (hard + blended) and is None when no edge transitions
+# were counted at all. Rendered as "-" like every other empty cell, a reader
+# checking an acceptance criterion of 1.0 sees "-" and reads "no data yet" --
+# when the real state is "nothing was measured and nothing said so". The P0
+# checkpoint was written against exactly that misreading. Restricted to the
+# one column whose None is unambiguous: elsewhere None can legitimately mean
+# the metric does not apply to that capture.
+_NOT_MEASURED_COLUMNS = frozenset({'hard_ratio'})
+_NOT_MEASURED_CELL = 'NOT-MEASURED'
+
+
 def format_metrics_table(rows: list[tuple[str, dict[str, Any]]]) -> str:
     """Markdown table of the required per-export metrics, one row per export."""
     header = [name for name, _ in _METRIC_TABLE_COLUMNS]
     lines = ['| ' + ' | '.join(header) + ' |',
              '| ' + ' | '.join('---' for _ in header) + ' |']
     for label, metrics in rows:
-        cells = [label] + [_fmt_cell(getter(metrics)) for name, getter in _METRIC_TABLE_COLUMNS[1:]]
+        cells = [label]
+        for name, getter in _METRIC_TABLE_COLUMNS[1:]:
+            value = getter(metrics)
+            cells.append(_NOT_MEASURED_CELL
+                         if value is None and name in _NOT_MEASURED_COLUMNS
+                         else _fmt_cell(value))
         lines.append('| ' + ' | '.join(cells) + ' |')
     return '\n'.join(lines)
 

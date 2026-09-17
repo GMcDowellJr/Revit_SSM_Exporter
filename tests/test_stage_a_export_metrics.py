@@ -1100,3 +1100,30 @@ def test_an_unambiguous_match_is_not_flagged(tmp_path):
     blend = measure(tmp_path, solid_square(color=blend_over_white(RED, 0.67), inset=8),
                     colors=(RED,))["white_blend"]
     assert all(m["ambiguous"] is False for m in blend["matches"])
+
+
+def test_unmeasured_hard_ratio_renders_unmissably_not_as_a_dash(tmp_path):
+    """hard_ratio is null when no edges were counted at all. Printed as "-"
+    it reads as "no data yet" to someone checking an acceptance criterion of
+    1.0, when the real state is that nothing was measured."""
+    import copy
+    from tools.analyze_stage_a_probe import format_metrics_table
+
+    # A real metrics dict, so the fixture cannot drift from the columns.
+    write_tiff(tmp_path, solid_square(), "view.tiff")
+    metrics = analyzer.stage_a_export_metrics(tmp_path / "view.tiff", sidecar())
+    assert metrics["edges"]["hard_edge_ratio"] == 1.0
+
+    measured = format_metrics_table([("cap", metrics)])
+    assert "NOT-MEASURED" not in measured
+
+    empty = copy.deepcopy(metrics)
+    empty["edges"].update({"hard_edge_count": 0, "blended_edge_count": 0,
+                           "hard_edge_ratio": None})
+    unmeasured = format_metrics_table([("cap", empty)])
+    assert "NOT-MEASURED" in unmeasured
+    # A clean row and an unmeasured row must not render alike.
+    assert measured.splitlines()[-1] != unmeasured.splitlines()[-1]
+    # Other null columns keep the ordinary dash: only the unambiguous one
+    # is escalated.
+    assert "| - |" in unmeasured

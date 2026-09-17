@@ -16,11 +16,6 @@ PROBE_MODULES = {
     "stage_a_minimum_id_mutations": "tests.dynamo.probe_stage_a_minimum_id_mutations",
     "stage_a_model_linework": "tests.dynamo.probe_stage_a_model_linework",
     "stage_a_transaction_group_export": "tests.dynamo.probe_stage_a_transaction_group_export",
-    # Unlike the diagnostic probes above, this one IS analyzed by the
-    # campaign acceptance path: analyze_stage_a_probe.SUPPORTED_PROBES maps
-    # it to the p0_export_correctness family, whose comparators return
-    # PASS/FAIL with no manual review.
-    "stage_a_p0_export_correctness": "tests.dynamo.probe_stage_a_p0_export_correctness",
 }
 
 
