@@ -54,7 +54,7 @@ For input sidecar ``<name>.json``, this tool writes a sibling
       "grid_bounds_uv": [xmin, ymin, xmax, ymax] | null,
       "feet_per_pixel": <float> | null,   # from MEASURED export dimensions
       "feet_per_pixel_unreliable_reason": <str> | null,
-      "feet_per_pixel_basis": "sidecar_actual_dims" | "decoded_image_dims" | null,
+      "feet_per_pixel_basis": {"numerator": <str>|null, "denominator": <str>|null},
       "background_element_id": 0,
       "off_palette_foreground_pixel_count": <int>,
       "background_pixel_count": <int>,
@@ -192,6 +192,7 @@ from vop_interwoven.color_id_buffer import (
     MAX_STAGE_A_PIXEL_SIZE,
     normalize_applied_smooth_edges,
 )
+from vop_interwoven.resolution_contract import DEFAULT_COLOR_ID_EXPORT_DPI
 
 TOOL_VERSION = "1.0.0"
 SCHEMA_VERSION = "1.0"
@@ -582,7 +583,8 @@ def build_decoded_document(
 
     feet_per_pixel = None
     feet_per_pixel_unreliable_reason = None
-    feet_per_pixel_basis = None
+    feet_per_pixel_numerator_basis = None
+    feet_per_pixel_denominator_basis = None
     resolution = sidecar.get("resolution") or {}
     try:
         # feet_per_pixel describes the image that EXISTS, so its denominator
@@ -598,10 +600,10 @@ def build_decoded_document(
         sidecar_h = resolution.get("actual_h")
         if sidecar_w and sidecar_h:
             measured_w, measured_h = float(sidecar_w), float(sidecar_h)
-            feet_per_pixel_basis = "sidecar_actual_dims"
+            feet_per_pixel_denominator_basis = "sidecar_actual_dims"
         else:
             measured_w, measured_h = float(w), float(h)
-            feet_per_pixel_basis = "decoded_image_dims"
+            feet_per_pixel_denominator_basis = "decoded_image_dims"
         measured_fit_px = measured_h if fitted_axis == "height" else measured_w
 
         if bounds_uv is not None:
@@ -614,21 +616,38 @@ def build_decoded_document(
             crop_width_ft = float(bounds_uv[2]) - float(bounds_uv[0])
             if measured_w and crop_width_ft:
                 feet_per_pixel = crop_width_ft / measured_w
+                feet_per_pixel_numerator_basis = "crop_bounds_ft"
         else:
             # No known crop rectangle (coordinate_space="pixel" fallback),
-            # so the physical extent has to be reconstructed from what was
-            # asked for: pre_cap_px paper-inches at export_dpi, in feet.
-            # This is the one place a REQUESTED value belongs, and it must
-            # be the UNCAPPED one -- capping changes pixel density, not the
-            # model extent the view covers, so "requested_pixel_size"
-            # (post-cap) would understate the extent on any capped export.
-            # The measured pixel count is still what it is divided by.
+            # so the physical extent has to be reconstructed. Three sources,
+            # best first.
+            #
+            # paper_fit_in is the view's real paper extent along the fitted
+            # axis, recorded by the producer before any pixel arithmetic
+            # touched it. Everything else here goes through pre_cap_px,
+            # which carries a max(64, ...) floor: on a view whose true
+            # request lands under 64 px the floor fires and pre_cap_px/dpi
+            # reports a LARGER extent than the view has. paper_fit_in is
+            # unaffected by that floor and by the axis cap alike.
+            view_scale = resolution.get("view_scale")
+            paper_fit_in = resolution.get("paper_fit_in")
             requested_px = resolution.get("pre_cap_px")
             if not requested_px:
                 requested_px = resolution.get("requested_pixel_size")
+            # The DPI the producer actually used, not the one this tool
+            # would default to -- a capture exported at 200 DPI divided by
+            # 150 reports an extent a third too large.
             export_dpi = resolution.get("export_dpi")
-            view_scale = resolution.get("view_scale")
-            if requested_px and export_dpi and view_scale and measured_fit_px:
+            dpi_basis = "sidecar_export_dpi"
+            if not export_dpi:
+                export_dpi = DEFAULT_COLOR_ID_EXPORT_DPI
+                dpi_basis = "default_export_dpi"
+
+            if paper_fit_in and view_scale and measured_fit_px:
+                model_fit_ft = float(paper_fit_in) * float(view_scale) / 12.0
+                feet_per_pixel = model_fit_ft / measured_fit_px
+                feet_per_pixel_numerator_basis = "sidecar_paper_fit_in"
+            elif requested_px and export_dpi and view_scale and measured_fit_px:
                 requested_px = float(requested_px)
                 if not resolution.get("pre_cap_px") and requested_px >= MAX_STAGE_A_PIXEL_SIZE:
                     # A sidecar predating the cap carries only the post-cap
@@ -647,11 +666,13 @@ def build_decoded_document(
                 else:
                     model_fit_ft = (requested_px / float(export_dpi)) * float(view_scale) / 12.0
                     feet_per_pixel = model_fit_ft / measured_fit_px
+                    feet_per_pixel_numerator_basis = "pre_cap_px_and_" + dpi_basis
     except (TypeError, ValueError):
         feet_per_pixel = None
 
     if feet_per_pixel is None:
-        feet_per_pixel_basis = None
+        feet_per_pixel_numerator_basis = None
+        feet_per_pixel_denominator_basis = None
 
     coordinate_space = "view_uv" if bounds_uv is not None else "pixel"
 
@@ -733,10 +754,15 @@ def build_decoded_document(
         "grid_bounds_uv": grid_bounds_uv,
         "feet_per_pixel": feet_per_pixel,
         "feet_per_pixel_unreliable_reason": feet_per_pixel_unreliable_reason,
-        # Which measurement the denominator came from: the producer's own
-        # recorded export dimensions, or this decode's measurement of the
-        # file. Never a requested pixel count.
-        "feet_per_pixel_basis": feet_per_pixel_basis,
+        # Both halves of how the number was arrived at. The denominator is
+        # always a MEASUREMENT (the producer's recorded export dimensions,
+        # or this decode's own read of the file) and never a requested pixel
+        # count. The numerator says which record of the view's physical
+        # extent was available, best first.
+        "feet_per_pixel_basis": {
+            "numerator": feet_per_pixel_numerator_basis,
+            "denominator": feet_per_pixel_denominator_basis,
+        },
         "background_element_id": BACKGROUND_ELEMENT_ID,
         "off_palette_foreground_pixel_count": stats["off_palette_foreground_pixel_count"],
         "background_pixel_count": stats["background_pixel_count"],

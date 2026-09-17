@@ -267,7 +267,7 @@ class TestDecodeStageAColorId(unittest.TestCase):
 
             expected = ((12000.0 / 150.0) * 96.0 / 12.0) / 10000.0
             self.assertAlmostEqual(doc["feet_per_pixel"], expected, places=12)
-            self.assertEqual(doc["feet_per_pixel_basis"], "sidecar_actual_dims")
+            self.assertEqual(doc["feet_per_pixel_basis"]["denominator"], "sidecar_actual_dims")
             self.assertIsNone(doc["feet_per_pixel_unreliable_reason"])
             # Not the pre-cap count as denominator...
             self.assertNotAlmostEqual(
@@ -293,7 +293,7 @@ class TestDecodeStageAColorId(unittest.TestCase):
             # The fixture image is genuinely 40 px wide.
             expected = ((80.0 / 150.0) * 96.0 / 12.0) / 40.0
             self.assertAlmostEqual(doc["feet_per_pixel"], expected, places=12)
-            self.assertEqual(doc["feet_per_pixel_basis"], "decoded_image_dims")
+            self.assertEqual(doc["feet_per_pixel_basis"]["denominator"], "decoded_image_dims")
 
     def test_feet_per_pixel_from_crop_uses_measured_width(self):
         import tempfile
@@ -308,7 +308,7 @@ class TestDecodeStageAColorId(unittest.TestCase):
             doc = dsc.build_decoded_document(
                 Path(tiff_path), sidecar, Path(sidecar_path), bounds_uv=(0.0, 0.0, 20.0, 15.0))
             self.assertAlmostEqual(doc["feet_per_pixel"], 20.0 / 40.0, places=12)
-            self.assertEqual(doc["feet_per_pixel_basis"], "decoded_image_dims")
+            self.assertEqual(doc["feet_per_pixel_basis"]["denominator"], "decoded_image_dims")
 
     def test_feet_per_pixel_uses_the_fitted_axis_under_vertical_fit(self):
         import tempfile
@@ -353,7 +353,7 @@ class TestDecodeStageAColorId(unittest.TestCase):
 
             expected = ((5000.0 / 150.0) * 96.0 / 12.0) / 5000.0
             self.assertAlmostEqual(doc["feet_per_pixel"], expected, places=12)
-            self.assertEqual(doc["feet_per_pixel_basis"], "sidecar_actual_dims")
+            self.assertEqual(doc["feet_per_pixel_basis"]["denominator"], "sidecar_actual_dims")
             # Not the derived/longer axis.
             self.assertNotAlmostEqual(
                 doc["feet_per_pixel"], ((5000.0 / 150.0) * 96.0 / 12.0) / 12000.0, places=9)
@@ -375,6 +375,91 @@ class TestDecodeStageAColorId(unittest.TestCase):
                 Path(tiff_path), sidecar, Path(sidecar_path), bounds_uv=None)
             expected = ((8000.0 / 150.0) * 96.0 / 12.0) / 8000.0
             self.assertAlmostEqual(doc["feet_per_pixel"], expected, places=12)
+
+    def test_numerator_prefers_paper_fit_in_over_a_floored_pre_cap_px(self):
+        """O1: the max(64, ...) floor on pre_cap_px makes it report a LARGER
+        extent than a tiny view has. paper_fit_in never went through it."""
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sidecar_path, tiff_path, arr = self._make_fixture(tmp_dir)
+            sidecar = json.load(open(sidecar_path))
+            # A view whose true request is 0.2in * 150dpi = 30 px; the floor
+            # fires and pre_cap_px is recorded as 64.
+            sidecar["resolution"].update({
+                "paper_fit_in": 0.2,
+                "pre_cap_px": 64,
+                "pixel_size": 64,
+                "export_dpi": 150.0,
+                "requested_axis": "width",
+                "actual_w": 64, "actual_h": 48,
+                "dim_check": "pass",
+            })
+            doc = dsc.build_decoded_document(
+                Path(tiff_path), sidecar, Path(sidecar_path), bounds_uv=None)
+
+            expected = (0.2 * 96.0 / 12.0) / 64.0
+            self.assertAlmostEqual(doc["feet_per_pixel"], expected, places=12)
+            self.assertEqual(
+                doc["feet_per_pixel_basis"]["numerator"], "sidecar_paper_fit_in")
+            # The floored value would over-report the extent by 64/30.
+            floored = ((64.0 / 150.0) * 96.0 / 12.0) / 64.0
+            self.assertNotAlmostEqual(doc["feet_per_pixel"], floored, places=9)
+
+    def test_numerator_uses_the_sidecars_own_dpi_not_the_default(self):
+        """O2: a capture exported at 200 DPI divided by 150 reports an
+        extent a third too large."""
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sidecar_path, tiff_path, arr = self._make_fixture(tmp_dir)
+            sidecar = json.load(open(sidecar_path))
+            sidecar["resolution"].update({
+                "pre_cap_px": 8000, "pixel_size": 8000, "export_dpi": 200.0,
+                "actual_w": 8000, "actual_h": 4000, "requested_axis": "width",
+            })
+            sidecar["resolution"].pop("paper_fit_in", None)
+            doc = dsc.build_decoded_document(
+                Path(tiff_path), sidecar, Path(sidecar_path), bounds_uv=None)
+
+            expected = ((8000.0 / 200.0) * 96.0 / 12.0) / 8000.0
+            self.assertAlmostEqual(doc["feet_per_pixel"], expected, places=12)
+            self.assertEqual(doc["feet_per_pixel_basis"]["numerator"],
+                             "pre_cap_px_and_sidecar_export_dpi")
+            self.assertNotAlmostEqual(
+                doc["feet_per_pixel"], ((8000.0 / 150.0) * 96.0 / 12.0) / 8000.0, places=9)
+
+    def test_numerator_falls_back_to_the_default_dpi_and_says_so(self):
+        """O3: a legacy sidecar with neither paper_fit_in nor export_dpi."""
+        import tempfile
+        from pathlib import Path
+        from vop_interwoven.resolution_contract import DEFAULT_COLOR_ID_EXPORT_DPI
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sidecar_path, tiff_path, arr = self._make_fixture(tmp_dir)
+            sidecar = json.load(open(sidecar_path))
+            sidecar["resolution"] = {
+                "pixel_size": 40, "requested_pixel_size": 40, "view_scale": 96.0,
+            }
+            doc = dsc.build_decoded_document(
+                Path(tiff_path), sidecar, Path(sidecar_path), bounds_uv=None)
+
+            expected = ((40.0 / DEFAULT_COLOR_ID_EXPORT_DPI) * 96.0 / 12.0) / 40.0
+            self.assertAlmostEqual(doc["feet_per_pixel"], expected, places=12)
+            self.assertEqual(doc["feet_per_pixel_basis"]["numerator"],
+                             "pre_cap_px_and_default_export_dpi")
+            self.assertEqual(doc["feet_per_pixel_basis"]["denominator"],
+                             "decoded_image_dims")
+
+    def test_crop_branch_records_its_own_numerator_basis(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sidecar_path, tiff_path, arr = self._make_fixture(tmp_dir)
+            sidecar = json.load(open(sidecar_path))
+            doc = dsc.build_decoded_document(
+                Path(tiff_path), sidecar, Path(sidecar_path), bounds_uv=(0.0, 0.0, 20.0, 15.0))
+            self.assertEqual(doc["feet_per_pixel_basis"]["numerator"], "crop_bounds_ft")
+            self.assertAlmostEqual(doc["feet_per_pixel"], 20.0 / 40.0, places=12)
 
     def test_pixel_space_output_when_bounds_omitted(self):
         import tempfile
