@@ -48,7 +48,22 @@ import time
 # imports cleanly outside Revit for the offline comparator tests.
 
 PROBE_NAME = "stage_a_p0_export_correctness"
-PROBE_VERSION = "2026-09-17.1"
+# Bump this with any change to what the probe RECORDS. Two runs of this
+# probe produced byte-identical captures across a fix because the version
+# did not move and nothing else in the report distinguished the code that
+# wrote it -- telling them apart meant fingerprinting which keys existed.
+# A report should say which build produced it in one field.
+PROBE_VERSION = "2026-09-17.2"
+
+# Keys a report carries only once a given change is in. Reported verbatim
+# so "is this the build I think it is?" is answerable from the report
+# alone, without diffing key sets by hand.
+REPORT_FEATURES = (
+    "envelope",            # returns an execution_envelope, not a bare report
+    "production_raster",   # captures with init_view_raster + collect_view_elements
+    "enumeration_census",  # p0_select says why a candidate list is empty
+    "capture_paths",       # records name their own tiff/sidecar for the analyzer
+)
 
 CASES = ("p0_select", "p0_default", "p0_derived", "p0_override")
 
@@ -380,6 +395,7 @@ def run_capture(doc, view, case, output_dir, export_dpi=None, cap_axis_px=None,
 def empty_report(output_dir, cases, inputs=None):
     return {
         "probe": {"name": PROBE_NAME, "version": PROBE_VERSION,
+                  "features": list(REPORT_FEATURES),
                   "target": "Revit 2025 / Dynamo 3.3 CPython3"},
         "inputs": dict(inputs or {}, output_directory=output_dir, cases=list(cases)),
         "records": [],
