@@ -477,7 +477,11 @@ class StreamingExporter:
         except Exception:
             pass
 
-        vop_grid = {"W": W, "H": H, "cell_size_ft": cell_size_ft} if cell_size_ft > 0 else None
+        vop_grid = None
+        if cell_size_ft > 0:
+            from vop_interwoven.view_raster_export import _grid_origin_uv
+            vop_grid = {"W": W, "H": H, "cell_size_ft": cell_size_ft,
+                        "origin_uv": _grid_origin_uv(view_result)}
 
         png_path = export_view_image(
             self.doc, eid, output_path,
