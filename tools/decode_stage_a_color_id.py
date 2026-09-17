@@ -52,8 +52,9 @@ For input sidecar ``<name>.json``, this tool writes a sibling
       "view_bounds_uv": [xmin, ymin, xmax, ymax] | null,
       "model_crop_offset_uv": [dxmin, dymin, dxmax, dymax] | null,
       "grid_bounds_uv": [xmin, ymin, xmax, ymax] | null,
-      "feet_per_pixel": <float> | null,
+      "feet_per_pixel": <float> | null,   # from MEASURED export dimensions
       "feet_per_pixel_unreliable_reason": <str> | null,
+      "feet_per_pixel_basis": {"numerator": <str>|null, "denominator": <str>|null},
       "background_element_id": 0,
       "off_palette_foreground_pixel_count": <int>,
       "background_pixel_count": <int>,
@@ -84,11 +85,11 @@ element in this decode is "MEDIUM", since the render is not a guaranteed
 exact-match, anti-aliasing-off capture and must not be handed AREAL+HIGH
 occlusion authority (pipeline.py:2443-2444) it hasn't earned. Similarly,
 "feet_per_pixel" is null (with "feet_per_pixel_unreliable_reason" set) when
-color_id_buffer.py's own MAX_STAGE_A_PIXEL_SIZE clamp (color_id_buffer.py:
-398-399) makes the sidecar's "requested_pixel_size" the clamp value rather
-than the model's true desired width -- see _capture_reliability() and the
-feet_per_pixel computation in build_decoded_document() for exactly what is
-checked.
+color_id_buffer.py capped the request and the sidecar predates the
+"pre_cap_px" field, so "requested_pixel_size" is the capped value rather
+than the model's true desired width and nothing records the latter -- see
+_capture_reliability() and the feet_per_pixel computation in
+build_decoded_document() for exactly what is checked.
 
 An element present in color_assignment_map but with zero visible pixels
 (fully occluded, or a paint failure recorded in the sidecar) is simply
@@ -187,7 +188,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # Pure-Python constant, safe to import outside Revit/Dynamo (color_id_buffer.py
 # defers all Revit API imports to inside function bodies).
-from vop_interwoven.color_id_buffer import MAX_STAGE_A_PIXEL_SIZE
+from vop_interwoven.color_id_buffer import (
+    MAX_STAGE_A_PIXEL_SIZE,
+    normalize_applied_smooth_edges,
+)
+from vop_interwoven.resolution_contract import DEFAULT_COLOR_ID_EXPORT_DPI
 
 TOOL_VERSION = "1.0.0"
 SCHEMA_VERSION = "1.0"
@@ -405,7 +410,7 @@ def _shoelace_area(loop: list[tuple[int, int]]) -> float:
 # Row-chunk budget for _element_bounding_boxes: bounds the several full-chunk
 # int64 temporaries (order/row-index/col-index arrays, each 8 bytes/pixel) to
 # roughly this many pixels at once. At the producer's documented ceiling
-# (MAX_STAGE_A_PIXEL_SIZE=15000, a 15000x15000 image), sorting the WHOLE
+# (MAX_STAGE_A_PIXEL_SIZE, a square image at that per-axis limit), sorting the WHOLE
 # flattened image in one pass -- as an earlier version of this function did --
 # allocates several such int64 arrays simultaneously (order, unravelled row/
 # col indices, their sorted copies) for ~1.8GB each, ~10GB+ peak; verified by
@@ -504,8 +509,8 @@ def _capture_reliability(sidecar: dict[str, Any]) -> tuple[bool, str | None]:
 
     export_color_id_buffer_view() only guarantees exact-match colors (no
     lighting/shading tint, no anti-aliased edge blending) when it actually
-    achieved DisplayStyle.FlatColors AND successfully disabled smooth edges
-    (color_id_buffer.py:560-624). On older Revit hosts, or a view type that
+    achieved DisplayStyle.FlatColors AND successfully disabled smooth edges,
+    at an export whose measured dimensions matched the request. On older Revit hosts, or a view type that
     doesn't expose these settings, it falls back to plain Shading (still
     lit/shadowed) or leaves the view's display unchanged, and records exactly
     that in "applied_display_style"/"applied_smooth_edges" -- it does not
@@ -515,14 +520,44 @@ def _capture_reliability(sidecar: dict[str, Any]) -> tuple[bool, str | None]:
     combination that gates occlusion, pipeline.py:2443-2444).
     """
     display_style = sidecar.get("applied_display_style")
-    smooth_edges = sidecar.get("applied_smooth_edges")
-    if display_style == "FlatColors" and smooth_edges is False:
+    # A sidecar written before "read_failed" existed records a failed AA read
+    # as "unchanged". Both are the same fact -- the AA state was never
+    # established -- so they are normalised to one value here rather than
+    # letting a legacy capture read as something milder than it is.
+    smooth_edges = normalize_applied_smooth_edges(sidecar.get("applied_smooth_edges"))
+    # The export's own dimensions are part of whether this capture is
+    # trustworthy, not a separate concern: a mismatch means the image is not
+    # the size the geometry was computed for, and "read_failed" means nobody
+    # checked.
+    #
+    # A missing dim_check means two different things depending on who wrote
+    # the sidecar, so "pre_cap_px" is used as the producer marker -- both
+    # fields arrived together, so a sidecar carrying one and not the other
+    # did not come intact from a producer that runs the check. A sidecar
+    # with neither predates the check entirely and is judged on its graphics
+    # settings alone, exactly as it always was; a sidecar with pre_cap_px
+    # and no dim_check has had the verification stripped out of it, and
+    # granting that HIGH would let an edited or truncated sidecar buy back
+    # the confidence the check exists to withhold.
+    resolution = sidecar.get("resolution") or {}
+    dim_check = resolution.get("dim_check")
+    verified_producer = resolution.get("pre_cap_px") is not None
+    if dim_check is None:
+        dim_ok = not verified_producer
+        if not dim_ok:
+            dim_check = "missing (sidecar records pre_cap_px, so its producer ran "
+            dim_check += "the dimension check and this field should be present)"
+    else:
+        dim_ok = dim_check == "pass"
+    if display_style == "FlatColors" and smooth_edges is False and dim_ok:
         return True, None
     return False, (
-        "Stage A did not confirm a clean flat-color, anti-aliasing-off capture for "
-        "this view (applied_display_style={0!r}, applied_smooth_edges={1!r}); "
-        "decoded colors may be lit/shaded or anti-aliased rather than exact palette "
-        "matches".format(display_style, smooth_edges)
+        "Stage A did not confirm a clean flat-color, anti-aliasing-off capture at a "
+        "verified size for this view (applied_display_style={0!r}, "
+        "applied_smooth_edges={1!r}, dim_check={2!r}); decoded colors may be "
+        "lit/shaded or anti-aliased rather than exact palette matches, or the image "
+        "may not be the size it was requested at".format(
+            display_style, smooth_edges, dim_check)
     )
 
 
@@ -548,67 +583,96 @@ def build_decoded_document(
 
     feet_per_pixel = None
     feet_per_pixel_unreliable_reason = None
+    feet_per_pixel_numerator_basis = None
+    feet_per_pixel_denominator_basis = None
     resolution = sidecar.get("resolution") or {}
     try:
-        actual_px = float(resolution.get("pixel_size"))
+        # feet_per_pixel describes the image that EXISTS, so its denominator
+        # is the image's measured size -- never the pixel count that was
+        # requested. Those were the same number only as long as nothing
+        # checked; the dimension check exists precisely because they came
+        # apart (a 8695 px request exporting 10028 px tall). The sidecar's
+        # actual_w/actual_h are the producer's own measurement; `w`/`h` here
+        # are this decode's measurement of the same file and are used when
+        # the sidecar has none (it predates the check, or its read failed).
+        fitted_axis = resolution.get("requested_axis") or "width"
+        sidecar_w = resolution.get("actual_w")
+        sidecar_h = resolution.get("actual_h")
+        if sidecar_w and sidecar_h:
+            measured_w, measured_h = float(sidecar_w), float(sidecar_h)
+            feet_per_pixel_denominator_basis = "sidecar_actual_dims"
+        else:
+            measured_w, measured_h = float(w), float(h)
+            feet_per_pixel_denominator_basis = "decoded_image_dims"
+        measured_fit_px = measured_h if fitted_axis == "height" else measured_w
+
         if bounds_uv is not None:
             # The rectangle this TIFF was actually cropped to is known
             # directly (bounds_uv, from the sidecar's own "bounds_xy" --
-            # see decode_one()): its width in feet divided by the actual
-            # pixel width IS feet-per-pixel exactly, regardless of any
-            # PixelSize backoff (color_id_buffer.py:285-316) or crop
-            # narrowing (color_id_buffer.py's compute_model_crop() can crop
-            # to raster.model_clip_bounds, narrower than the raster.W/cell_
-            # size_ft/scale math the estimate below is derived from) --
-            # unlike that estimate, this needs no MAX_STAGE_A_PIXEL_SIZE
-            # clamp caveat at all, since it never goes through requested_
-            # pixel_size.
+            # see decode_one()): its width in feet divided by the image's
+            # measured pixel width IS feet-per-pixel exactly. No caveat
+            # about PixelSize backoff, crop narrowing or the axis cap
+            # applies, because no requested quantity enters it at all.
             crop_width_ft = float(bounds_uv[2]) - float(bounds_uv[0])
-            if actual_px and crop_width_ft:
-                feet_per_pixel = crop_width_ft / actual_px
+            if measured_w and crop_width_ft:
+                feet_per_pixel = crop_width_ft / measured_w
+                feet_per_pixel_numerator_basis = "crop_bounds_ft"
         else:
-            # No known crop rectangle (coordinate_space="pixel" fallback) --
-            # estimate physical width from raster.W/cell_size_ft/scale via
-            # requested_pixel_size (not the possibly-backed-off actual
-            # pixel_size, which is what raster.W/cell_size_ft/scale was
-            # originally sized to, color_id_buffer.py:384-399: the model
-            # width, in pixels, the export was SUPPOSED to be. Deriving
-            # model_width_ft from actual_px instead would make it cancel out
-            # of feet_per_pixel entirely, independent of actual_px, silently
-            # reporting the pre-backoff scale even when Revit's PixelSize
-            # backoff actually shrank the export -- wrong by requested_px/
-            # actual_px on any degraded-resolution export). This estimate is
-            # only as good as FitToPage's own auto-computed extent matching
-            # it, since there is no known crop rectangle to measure directly.
-            requested_px = resolution.get("requested_pixel_size")
-            requested_px = float(requested_px) if requested_px else actual_px
-            export_dpi = float(resolution.get("export_dpi"))
-            view_scale = float(resolution.get("view_scale"))
-            if actual_px and export_dpi:
-                if requested_px >= MAX_STAGE_A_PIXEL_SIZE:
-                    # color_id_buffer.py:398-399 clamps its own `pixel_size`
-                    # to MAX_STAGE_A_PIXEL_SIZE *before* writing it as
-                    # "requested_pixel_size" (color_id_buffer.py:930-933) --
-                    # the true pre-clamp desired width (from raster.W/cell_
-                    # size_ft) is never persisted anywhere in the sidecar
-                    # once clamping occurs. requested_px here is then the
-                    # clamp value, not the model's real paper extent, so
-                    # model_width_ft/feet_per_pixel would be silently wrong
-                    # (underestimated) even when Revit accepted this exact
-                    # pixel count with no further backoff. There is no way
-                    # to recover the true value from the sidecar alone --
-                    # report the gap rather than a wrong number.
+            # No known crop rectangle (coordinate_space="pixel" fallback),
+            # so the physical extent has to be reconstructed. Three sources,
+            # best first.
+            #
+            # paper_fit_in is the view's real paper extent along the fitted
+            # axis, recorded by the producer before any pixel arithmetic
+            # touched it. Everything else here goes through pre_cap_px,
+            # which carries a max(64, ...) floor: on a view whose true
+            # request lands under 64 px the floor fires and pre_cap_px/dpi
+            # reports a LARGER extent than the view has. paper_fit_in is
+            # unaffected by that floor and by the axis cap alike.
+            view_scale = resolution.get("view_scale")
+            paper_fit_in = resolution.get("paper_fit_in")
+            requested_px = resolution.get("pre_cap_px")
+            if not requested_px:
+                requested_px = resolution.get("requested_pixel_size")
+            # The DPI the producer actually used, not the one this tool
+            # would default to -- a capture exported at 200 DPI divided by
+            # 150 reports an extent a third too large.
+            export_dpi = resolution.get("export_dpi")
+            dpi_basis = "sidecar_export_dpi"
+            if not export_dpi:
+                export_dpi = DEFAULT_COLOR_ID_EXPORT_DPI
+                dpi_basis = "default_export_dpi"
+
+            if paper_fit_in and view_scale and measured_fit_px:
+                model_fit_ft = float(paper_fit_in) * float(view_scale) / 12.0
+                feet_per_pixel = model_fit_ft / measured_fit_px
+                feet_per_pixel_numerator_basis = "sidecar_paper_fit_in"
+            elif requested_px and export_dpi and view_scale and measured_fit_px:
+                requested_px = float(requested_px)
+                if not resolution.get("pre_cap_px") and requested_px >= MAX_STAGE_A_PIXEL_SIZE:
+                    # A sidecar predating the cap carries only the post-cap
+                    # "requested_pixel_size": the true pre-cap extent was
+                    # never persisted, so model_fit_ft would be silently
+                    # understated. Current sidecars record "pre_cap_px" and
+                    # take the branch below; for the older ones there is no
+                    # way to recover it, so report the gap rather than a
+                    # wrong number.
                     feet_per_pixel_unreliable_reason = (
                         "requested_pixel_size ({0}) is at or above MAX_STAGE_A_PIXEL_SIZE "
-                        "({1}); color_id_buffer.py clamps before persisting this field, so "
-                        "the true pre-clamp desired width is not recoverable from the "
-                        "sidecar".format(int(requested_px), MAX_STAGE_A_PIXEL_SIZE)
+                        "({1}) and this sidecar carries no pre_cap_px, so it predates the "
+                        "two-axis cap and the true pre-cap desired extent is not "
+                        "recoverable from it".format(int(requested_px), MAX_STAGE_A_PIXEL_SIZE)
                     )
                 else:
-                    model_width_ft = (requested_px / export_dpi) * view_scale / 12.0
-                    feet_per_pixel = model_width_ft / actual_px
+                    model_fit_ft = (requested_px / float(export_dpi)) * float(view_scale) / 12.0
+                    feet_per_pixel = model_fit_ft / measured_fit_px
+                    feet_per_pixel_numerator_basis = "pre_cap_px_and_" + dpi_basis
     except (TypeError, ValueError):
         feet_per_pixel = None
+
+    if feet_per_pixel is None:
+        feet_per_pixel_numerator_basis = None
+        feet_per_pixel_denominator_basis = None
 
     coordinate_space = "view_uv" if bounds_uv is not None else "pixel"
 
@@ -690,6 +754,15 @@ def build_decoded_document(
         "grid_bounds_uv": grid_bounds_uv,
         "feet_per_pixel": feet_per_pixel,
         "feet_per_pixel_unreliable_reason": feet_per_pixel_unreliable_reason,
+        # Both halves of how the number was arrived at. The denominator is
+        # always a MEASUREMENT (the producer's recorded export dimensions,
+        # or this decode's own read of the file) and never a requested pixel
+        # count. The numerator says which record of the view's physical
+        # extent was available, best first.
+        "feet_per_pixel_basis": {
+            "numerator": feet_per_pixel_numerator_basis,
+            "denominator": feet_per_pixel_denominator_basis,
+        },
         "background_element_id": BACKGROUND_ELEMENT_ID,
         "off_palette_foreground_pixel_count": stats["off_palette_foreground_pixel_count"],
         "background_pixel_count": stats["background_pixel_count"],

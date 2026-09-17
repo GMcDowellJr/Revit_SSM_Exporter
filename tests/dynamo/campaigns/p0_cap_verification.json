@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0",
+  "campaign_id": "p0-cap-verification",
+  "batch_id": "batch-001",
+  "created_at": "2026-09-17T00:00:00Z",
+  "document": {
+    "expected_title": "KSRF_Hosp_Interior_AR_V03_33 MB_2025-02-03"
+  },
+  "execution_policy": {
+    "max_jobs_per_run": 100,
+    "on_job_error": "continue",
+    "resume": true
+  },
+  "jobs": [
+    {
+      "job_id": "p0-cap-fitted-axis-mob-1",
+      "probe_id": "stage_a_drift_onset",
+      "view": {
+        "element_id": 528698,
+        "name": "MOB 1 - LEVEL 2"
+      },
+      "settings": {
+        "selection": "d3_size_sweep",
+        "pixel_sizes": "native"
+      },
+      "output_directory": "captures/p0-cap-fitted-axis-mob-1"
+    },
+    {
+      "job_id": "p0-cap-derived-axis-hosp-2",
+      "probe_id": "stage_a_drift_onset",
+      "view": {
+        "element_id": 871863,
+        "name": "(N) HOSPITAL - LEVEL 2"
+      },
+      "settings": {
+        "selection": "d3_size_sweep",
+        "pixel_sizes": "native"
+      },
+      "output_directory": "captures/p0-cap-derived-axis-hosp-2"
+    }
+  ]
+}

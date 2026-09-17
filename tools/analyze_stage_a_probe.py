@@ -2166,13 +2166,31 @@ def _fmt_cell(value: Any) -> str:
     return str(value)
 
 
+# Columns where None means "this was never measured", not "not applicable".
+#
+# hard_ratio is hard / (hard + blended) and is None when no edge transitions
+# were counted at all. Rendered as "-" like every other empty cell, a reader
+# checking an acceptance criterion of 1.0 sees "-" and reads "no data yet" --
+# when the real state is "nothing was measured and nothing said so". The P0
+# checkpoint was written against exactly that misreading. Restricted to the
+# one column whose None is unambiguous: elsewhere None can legitimately mean
+# the metric does not apply to that capture.
+_NOT_MEASURED_COLUMNS = frozenset({'hard_ratio'})
+_NOT_MEASURED_CELL = 'NOT-MEASURED'
+
+
 def format_metrics_table(rows: list[tuple[str, dict[str, Any]]]) -> str:
     """Markdown table of the required per-export metrics, one row per export."""
     header = [name for name, _ in _METRIC_TABLE_COLUMNS]
     lines = ['| ' + ' | '.join(header) + ' |',
              '| ' + ' | '.join('---' for _ in header) + ' |']
     for label, metrics in rows:
-        cells = [label] + [_fmt_cell(getter(metrics)) for name, getter in _METRIC_TABLE_COLUMNS[1:]]
+        cells = [label]
+        for name, getter in _METRIC_TABLE_COLUMNS[1:]:
+            value = getter(metrics)
+            cells.append(_NOT_MEASURED_CELL
+                         if value is None and name in _NOT_MEASURED_COLUMNS
+                         else _fmt_cell(value))
         lines.append('| ' + ' | '.join(cells) + ' |')
     return '\n'.join(lines)
 

@@ -639,13 +639,68 @@ def _snapshot(doc, view, diag=None):
     return state
 
 
-def _diff_state(before, after):
+# Largest change in a numeric state value that still counts as restored.
+#
+# Revit hands back doubles that differ in the last bit or two from the ones
+# it was given: run 1b113822 restored a crop box through production's own
+# `view.CropBox = orig_crop_box` and read it back 1.1e-13 ft different,
+# which exact equality reported as an unrestored document -- failing a job
+# whose rollback had in fact succeeded and whose every other state key was
+# identical.
+#
+# 1e-9 ft is four orders of magnitude above that noise and is Revit's own
+# length-tolerance scale; it is also ~3e-10 mm, and nine orders below the
+# smallest cell any of these captures uses. Nothing geometrically meaningful
+# hides under it. Tolerated deltas are still RECORDED (see _diff_state's
+# `tolerated` argument) rather than discarded, so a drift creeping toward
+# the tolerance is visible instead of silently absorbed.
+STATE_FLOAT_TOLERANCE_FT = 1e-9
+
+
+def _is_number(value):
+    # bool is an int subclass; a True/False flip is a state change, not a
+    # rounding difference, so it must never be compared with a tolerance.
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _max_numeric_delta(before, after):
+    """Largest absolute difference between two numeric values of the same
+    shape, or None when they are not both numeric and the same shape.
+
+    None means "not comparable numerically", which callers must treat as a
+    real difference -- never as zero.
+    """
+    if _is_number(before) and _is_number(after):
+        return abs(float(after) - float(before))
+    if (isinstance(before, (list, tuple)) and isinstance(after, (list, tuple))
+            and len(before) == len(after) and len(before) > 0
+            and all(_is_number(b) and _is_number(a) for b, a in zip(before, after))):
+        return max(abs(float(a) - float(b)) for b, a in zip(before, after))
+    return None
+
+
+def _diff_state(before, after, tolerated=None):
+    """State keys that changed, ignoring float noise at or under tolerance.
+
+    ``tolerated`` is an optional list this appends the absorbed differences
+    to, with the delta that was absorbed. Pass one to keep them in the
+    report; omit it and they are simply not differences.
+    """
     diffs = []
     for key in sorted(set(before) | set(after)):
         if key.endswith("_error") or key.endswith("_errors"):
             continue
-        if before.get(key) != after.get(key):
-            diffs.append({"key": key, "before": before.get(key), "after": after.get(key)})
+        b, a = before.get(key), after.get(key)
+        if b == a:
+            continue
+        delta = _max_numeric_delta(b, a)
+        if delta is not None and delta <= STATE_FLOAT_TOLERANCE_FT:
+            if tolerated is not None:
+                tolerated.append({"key": key, "before": b, "after": a,
+                                  "max_delta": delta,
+                                  "tolerance": STATE_FLOAT_TOLERANCE_FT})
+            continue
+        diffs.append({"key": key, "before": b, "after": a, "max_delta": delta})
     return diffs
 
 
@@ -829,6 +884,8 @@ def production_capture(doc, view, cfg, case, label, capture_dir, diag=None, run=
         with open(sidecar_path, "w") as handle:
             json.dump(sidecar, handle, indent=2, sort_keys=True)
 
+    from vop_interwoven.color_id_buffer import normalize_applied_smooth_edges
+
     record = {
         "case": case,
         "label": "{0}/{1}".format(case, label),
@@ -841,7 +898,10 @@ def production_capture(doc, view, cfg, case, label, capture_dir, diag=None, run=
         "color_assignment_count": out.get("color_assignment_count"),
         "paint_failures": sidecar.get("paint_failures"),
         "applied_display_style": sidecar.get("applied_display_style"),
-        "applied_smooth_edges": sidecar.get("applied_smooth_edges"),
+        # Normalised so a legacy "unchanged" capture is not analysed as
+        # something milder than an unestablished AA state.
+        "applied_smooth_edges": normalize_applied_smooth_edges(
+            sidecar.get("applied_smooth_edges")),
         "applied_show_shadows": sidecar.get("applied_show_shadows"),
         "uncolorable_link_categories": sidecar.get("uncolorable_link_categories"),
         "failed_link_categories": sidecar.get("failed_link_categories"),
@@ -1395,8 +1455,11 @@ def _run_native(raw_view, output_dir, selection="all", repetitions=DEFAULT_REPET
             view = _unwrap_dynamo(raw_view)
             if view is not None and report["state"]["before"]:
                 report["state"]["after"] = _snapshot(doc, view, diag=diag)
-                diffs = _diff_state(report["state"]["before"], report["state"]["after"])
+                tolerated = []
+                diffs = _diff_state(report["state"]["before"], report["state"]["after"],
+                                    tolerated=tolerated)
                 report["state"]["differences"] = diffs
+                report["state"]["tolerated_differences"] = tolerated
                 complete = (snapshot_is_complete(report["state"]["before"])
                             and snapshot_is_complete(report["state"]["after"]))
                 report["state"]["snapshot_complete"] = complete

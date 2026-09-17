@@ -10,10 +10,22 @@ state before returning to the next view.
 import copy
 import json
 import os
+import struct
 import time
 
+from .resolution_contract import (
+    DEFAULT_COLOR_ID_EXPORT_DPI,
+    MAX_STAGE_A_AXIS_PX,
+    cap_axes,
+)
+
 NEUTRAL_PHASE_FILTER_NAME = "VOP_NeutralPhaseFilter"
-MAX_STAGE_A_PIXEL_SIZE = 15000
+# Kept as a name so existing readers (tools/decode_stage_a_color_id.py) keep
+# importing one symbol, but it is no longer a ceiling of this module's own
+# invention sitting above the measured limit: it IS the measured limit, and
+# it now bounds BOTH exported axes rather than only the one FitDirection
+# sets. See resolution_contract.MAX_STAGE_A_AXIS_PX for the evidence.
+MAX_STAGE_A_PIXEL_SIZE = MAX_STAGE_A_AXIS_PX
 # Near-white and near-black corners of the RGB cube are reserved as invalid so
 # a decoder can draw a clean boundary against two distinct noise sources:
 # (a) AA/export halos at the page background, which is white outside the
@@ -1142,6 +1154,131 @@ def _hidden_category_state(doc, view):
     return state
 
 
+# TIFF tag numbers for the two fields this module needs, and the scalar
+# field types they are allowed to carry (BYTE/SHORT/LONG). Anything else is
+# refused rather than guessed at -- a misread dimension is worse than an
+# honest read failure, because it would silently pass or fail the export
+# dimension check below.
+_TIFF_TAG_IMAGE_WIDTH = 256
+_TIFF_TAG_IMAGE_LENGTH = 257
+_TIFF_SCALAR_FORMATS = {1: "B", 3: "H", 4: "I"}
+
+
+def read_image_dimensions(path):
+    """Return ``(width, height)`` of a classic TIFF from its header alone.
+
+    Deliberately NOT Pillow. Every existing dimension reader in this repo
+    (the Stage A probes) goes through ``PIL.Image.open``, and the captures
+    that most need measuring are exactly the ones Pillow refuses: its
+    ~179 Mpx decompression-bomb guard rejected the largest exports in the
+    2026-09-16 runs (see tests/dynamo/RUN1_2026-09-16_drift_table.md) and
+    the callers recorded ``dimensions_px: null``, which is how an
+    over-limit export stayed invisible. Pillow is also not present
+    in the Dynamo CPython3 runtime this code actually ships into.
+
+    Parsing the header instead reads ~8 bytes plus one IFD and never touches
+    the pixel data, so it costs the same on a 300 MB export as on a thumbnail
+    and cannot be defeated by a size guard. Raises on anything it cannot read
+    exactly -- the caller records that as ``read_failed`` rather than
+    treating an unknown size as a pass.
+    """
+    with open(path, "rb") as fh:
+        header = fh.read(8)
+        if len(header) < 8:
+            raise ValueError(
+                "'{0}' is {1} bytes; too short to hold a TIFF header".format(
+                    path, len(header)))
+        order = header[0:2]
+        if order == b"II":
+            endian = "<"
+        elif order == b"MM":
+            endian = ">"
+        else:
+            raise ValueError(
+                "'{0}' does not start with a TIFF byte-order mark (II/MM)".format(path))
+        magic, ifd_offset = struct.unpack(endian + "HI", header[2:8])
+        if magic == 43:
+            raise ValueError(
+                "'{0}' is BigTIFF (magic 43); this reader handles classic TIFF "
+                "only. A Stage A export capped at {1} px per axis stays far "
+                "under classic TIFF's 4 GB limit, so BigTIFF here means the "
+                "export was not produced the way this module expects".format(
+                    path, MAX_STAGE_A_AXIS_PX))
+        if magic != 42:
+            raise ValueError(
+                "'{0}' has TIFF magic {1}, expected 42".format(path, magic))
+        fh.seek(ifd_offset)
+        raw_count = fh.read(2)
+        if len(raw_count) < 2:
+            raise ValueError("'{0}' has a truncated IFD entry count".format(path))
+        (entry_count,) = struct.unpack(endian + "H", raw_count)
+        entries = fh.read(entry_count * 12)
+        if len(entries) < entry_count * 12:
+            raise ValueError(
+                "'{0}' declares {1} IFD entries but the file ends early".format(
+                    path, entry_count))
+
+    width = None
+    height = None
+    for i in range(entry_count):
+        off = i * 12
+        tag, field_type, field_count = struct.unpack(endian + "HHI", entries[off:off + 8])
+        if tag not in (_TIFF_TAG_IMAGE_WIDTH, _TIFF_TAG_IMAGE_LENGTH):
+            continue
+        fmt = _TIFF_SCALAR_FORMATS.get(field_type)
+        if fmt is None or field_count != 1:
+            raise ValueError(
+                "'{0}' stores TIFF tag {1} as type {2} count {3}; expected a single "
+                "BYTE/SHORT/LONG".format(path, tag, field_type, field_count))
+        size = struct.calcsize(fmt)
+        # A value of 4 bytes or fewer lives inline in the value/offset field,
+        # left-justified (TIFF6 sec. 2) -- so it starts at byte 0 of the
+        # field under both byte orders.
+        (value,) = struct.unpack(endian + fmt, entries[off + 8:off + 8 + size])
+        if tag == _TIFF_TAG_IMAGE_WIDTH:
+            width = int(value)
+        else:
+            height = int(value)
+
+    if width is None or height is None:
+        raise ValueError(
+            "'{0}' first IFD carries no ImageWidth/ImageLength tag".format(path))
+    if width <= 0 or height <= 0:
+        raise ValueError(
+            "'{0}' reports non-positive dimensions {1}x{2}".format(path, width, height))
+    return width, height
+
+
+# Sidecars written before "read_failed" existed record a failed AA read as
+# "unchanged" -- see the writer below for why that string could never mean
+# what it says. Readers must not treat those captures as clean.
+LEGACY_UNKNOWN_SMOOTH_EDGES = "unchanged"
+
+# Absolute lower bound for PixelSize backoff, used when Revit rejects a
+# value outright and as the dimension-mismatch floor only when the view's
+# own grid extent is unknown. It is a "this is not a pixel count" guard, not
+# a useful resolution -- the grid extent is what makes the mismatch floor
+# meaningful.
+_PIXEL_SIZE_BACKOFF_FLOOR = 16
+# Re-exports attempted after a dimension mismatch, on top of the first
+# export. Three total exports of a large view is already expensive; a fourth
+# halving has never turned a mismatch into a pass in any observed run.
+MAX_MISMATCH_RETRIES = 2
+
+
+def normalize_applied_smooth_edges(value):
+    """Map a sidecar's applied_smooth_edges onto its true meaning.
+
+    Exists so the decode tool, the thinrunner summary and the probes cannot
+    each decide separately what a legacy "unchanged" meant. Only False is a
+    confirmed anti-aliasing-off capture; everything else is returned as-is
+    except "unchanged", which becomes "read_failed".
+    """
+    if value == LEGACY_UNKNOWN_SMOOTH_EDGES:
+        return "read_failed"
+    return value
+
+
 def _set_pixel_size_with_backoff(opts, pixel_size, diag=None, view_id=None):
     """Set ImageExportOptions.PixelSize, backing off if Revit rejects the value.
 
@@ -1153,7 +1290,7 @@ def _set_pixel_size_with_backoff(opts, pixel_size, diag=None, view_id=None):
     """
     candidate = max(1, int(pixel_size))
     requested = candidate
-    floor = 16
+    floor = _PIXEL_SIZE_BACKOFF_FLOOR
     while True:
         try:
             opts.PixelSize = candidate
@@ -1194,16 +1331,18 @@ def _fit_direction(name):
         "got {0!r}".format(name))
 
 
-def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None,
-                 fit_direction="horizontal"):
+def _export_one_tiff(doc, view, out_dir, output_path, pixel_size, diag=None,
+                     view_id=None, fit_direction="horizontal"):
+    """Run exactly one ExportImage and move its TIFF to ``output_path``.
+
+    Returns the PixelSize Revit actually accepted (see
+    ``_set_pixel_size_with_backoff``), which may be lower than requested.
+    """
     from Autodesk.Revit.DB import (
         ImageExportOptions, ExportRange, ZoomFitType, FitDirectionType, ElementId,
         ImageFileType,
     )
     import System.Collections.Generic as SCG
-    out_dir = os.path.dirname(output_path)
-    if out_dir and not os.path.exists(out_dir):
-        os.makedirs(out_dir)
     before = set(os.listdir(out_dir)) if os.path.isdir(out_dir) else set()
     ids = SCG.List[ElementId]()
     ids.Add(view.Id)
@@ -1212,9 +1351,11 @@ def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None,
     opts.SetViewsAndSheets(ids)
     opts.ZoomType = ZoomFitType.FitToPage
     # PixelSize sets the axis fitted here; the other one is derived from the
-    # view's extents and is bounded by nothing. Horizontal is the shipped
-    # default, so unless a caller asks otherwise this is the line it has
-    # always been.
+    # view's extents and is bounded by nothing Revit will tell us about in
+    # advance. Horizontal is the shipped default, so unless a caller asks
+    # otherwise this is the line it has always been -- and the caller's
+    # two-axis cap plus the post-export check below are what bound the
+    # derived axis.
     opts.FitDirection = _fit_direction(fit_direction)
     actual_pixel_size = _set_pixel_size_with_backoff(opts, pixel_size, diag=diag, view_id=view_id)
     opts.FilePath = os.path.join(out_dir, "_vop_color_id_tmp")
@@ -1237,7 +1378,162 @@ def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None,
     if os.path.exists(output_path):
         os.remove(output_path)
     os.rename(created, output_path)
-    return output_path, actual_pixel_size
+    return actual_pixel_size
+
+
+def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None,
+                 fit_direction="horizontal", max_axis_px=MAX_STAGE_A_AXIS_PX,
+                 grid_axis_px=None, max_mismatch_retries=MAX_MISMATCH_RETRIES):
+    """Export the view, then MEASURE the file and refuse to trust the request.
+
+    Everything upstream of this function -- the DPI math, the two-axis cap,
+    even Revit's own PixelSize backoff -- is a prediction about the image
+    FitToPage will produce. Nothing before now has looked at the image. The
+    2026-09-16 runs found views whose derived axis landed 10028 px tall from
+    an 8695 px request, drifting, with the pipeline reporting success, so a
+    prediction is exactly what must not be recorded as a result.
+
+    The export passes only when the axis PixelSize set came back within 1 px
+    of what was asked AND neither axis exceeds ``max_axis_px``. A mismatch is
+    routed into the same halving backoff Revit's PixelSize rejection uses:
+    halve, re-export, re-measure.
+
+    That backoff is bounded on both ends, because an unbounded one is its own
+    failure mode: halving a 10000 px request to a hard floor of 16 is ten
+    full exports of a large view, and the last several ask Revit for fewer
+    pixels than the cell grid has cells, where a "successful" export can no
+    longer resolve the grid it exists to fill. So at most
+    ``max_mismatch_retries`` re-exports are attempted, and no request goes
+    below ``grid_axis_px`` -- the view's own grid extent along the fitted
+    axis. Hitting either bound reports the view as a mismatch and the caller
+    fails it. The export never continues silently and never grinds.
+
+    Note ``max_axis_px`` is the VERIFICATION ceiling and stays at the
+    measured limit even when a caller raises the sizing cap: a deliberately
+    over-cap request is precisely the case this check has to catch.
+
+    Args:
+        grid_axis_px: the raster's own cell count along the fitted axis, used
+            as the backoff floor. None means no grid is known, and the floor
+            falls back to ``_PIXEL_SIZE_BACKOFF_FLOOR`` -- an absolute lower
+            bound, not a meaningful one.
+
+    Returns ``(output_path, actual_pixel_size, dim_report)``.
+    """
+    out_dir = os.path.dirname(output_path)
+    if out_dir and not os.path.exists(out_dir):
+        os.makedirs(out_dir)
+
+    requested_axis = "height" if str(fit_direction).strip().lower() == "vertical" else "width"
+    candidate = max(1, int(pixel_size))
+    if grid_axis_px:
+        floor = max(1, int(grid_axis_px))
+    else:
+        floor = _PIXEL_SIZE_BACKOFF_FLOOR
+    max_retries = max(0, int(max_mismatch_retries))
+    attempts = []
+
+    while True:
+        actual_pixel_size = _export_one_tiff(
+            doc, view, out_dir, output_path, candidate, diag=diag,
+            view_id=view_id, fit_direction=fit_direction,
+        )
+
+        actual_w = None
+        actual_h = None
+        dim_read_error = None
+        try:
+            actual_w, actual_h = read_image_dimensions(output_path)
+        except Exception as ex:
+            dim_read_error = "{0}: {1}".format(type(ex).__name__, ex)
+
+        if dim_read_error is not None:
+            # Not a pass. The exported file may be within the limit or far
+            # over it; this run simply does not know, and says so.
+            dim_check = "read_failed"
+        else:
+            on_axis = actual_w if requested_axis == "width" else actual_h
+            axis_ok = abs(int(on_axis) - int(actual_pixel_size)) <= 1
+            cap_ok = max(int(actual_w), int(actual_h)) <= int(max_axis_px)
+            dim_check = "pass" if (axis_ok and cap_ok) else "mismatch"
+
+        attempts.append({
+            "requested_px": int(candidate),
+            "accepted_px": int(actual_pixel_size),
+            "actual_w": actual_w,
+            "actual_h": actual_h,
+            "dim_check": dim_check,
+            "dim_read_error": dim_read_error,
+        })
+
+        report = {
+            "requested_axis": requested_axis,
+            "actual_w": actual_w,
+            "actual_h": actual_h,
+            "dim_check": dim_check,
+            "dim_read_error": dim_read_error,
+            "dim_check_ceiling_px": int(max_axis_px),
+            "attempts": attempts,
+        }
+
+        if dim_check == "read_failed":
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="export_dim_check",
+                    message="could not read the exported image's dimensions ({0}); "
+                            "this capture is NOT confirmed to be within the {1} px "
+                            "per-axis limit".format(dim_read_error, int(max_axis_px)),
+                    view_id=view_id,
+                )
+            return output_path, actual_pixel_size, report
+
+        if dim_check == "pass":
+            return output_path, actual_pixel_size, report
+
+        if diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="export_dim_check",
+                message="exported {0}x{1} for a {2}-axis request of {3} px (limit {4} px "
+                        "per axis); halving the request and re-exporting".format(
+                            actual_w, actual_h, requested_axis, int(actual_pixel_size),
+                            int(max_axis_px)),
+                view_id=view_id,
+            )
+
+        # Halve what Revit ACCEPTED, not what was asked for. _set_pixel_
+        # size_with_backoff may already have reduced the request -- a
+        # 10000 asked for and accepted at 5000 -- and halving the original
+        # would then ask for 5000 again: the identical export, one of two
+        # retries spent making no progress.
+        next_candidate = int(actual_pixel_size) // 2
+        stop_reason = None
+        if len(attempts) > max_retries:
+            stop_reason = "retry_limit"
+        elif next_candidate < floor:
+            # Deliberately not clamped up to the floor and retried: the point
+            # of the floor is that a request under the grid's own cell count
+            # cannot produce a usable capture, so there is nothing below here
+            # worth spending an export on.
+            stop_reason = "grid_floor"
+        if stop_reason is not None:
+            if diag is not None:
+                diag.error(
+                    phase="color_id_buffer",
+                    callsite="export_dim_check",
+                    message="exported dimensions still disagree with the request after "
+                            "{0} attempt(s) (stopped on {1}: retry limit {2}, floor {3} "
+                            "px); last export was {4}x{5}".format(
+                                len(attempts), stop_reason, max_retries, floor,
+                                actual_w, actual_h),
+                    view_id=view_id,
+                )
+            report["backoff_exhausted"] = True
+            report["backoff_stop_reason"] = stop_reason
+            return output_path, actual_pixel_size, report
+
+        candidate = next_candidate
 
 
 def compute_model_crop(model_clip_bounds, bounds_xy):
@@ -1345,7 +1641,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     json_path = os.path.join(out_dir, "{0}_{1}.json".format(safe_name, view_id))
 
     scale = float(getattr(view, "Scale", 1) or 1)
-    export_dpi = float(getattr(cfg, "color_id_buffer_export_dpi", 150))
+    export_dpi = float(getattr(cfg, "color_id_buffer_export_dpi", DEFAULT_COLOR_ID_EXPORT_DPI))
     # Normalized here, once, so the value handed to Revit and the value written
     # into the sidecar cannot disagree. A cfg without the field is the shipped
     # behaviour.
@@ -1383,14 +1679,104 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                         "sizing from the paper width instead",
                 view_id=view_id,
             )
-    pixel_size = int(round(export_dpi * paper_fit_in))
-    pixel_size = max(64, min(pixel_size, MAX_STAGE_A_PIXEL_SIZE))
-    if pixel_size >= MAX_STAGE_A_PIXEL_SIZE and diag is not None:
+    pre_cap_px = max(64, int(round(export_dpi * paper_fit_in)))
+    requested_axis = "height" if fit_direction == "vertical" else "width"
+
+    # PixelSize bounds the fitted axis ONLY: FitToPage derives the other axis
+    # from the view's extents and bounds it by nothing. Capping the request
+    # therefore needs the ratio between the two axes of the rectangle the
+    # export is actually fitted to -- and that rectangle is the model-only
+    # crop applied further below (compute_model_crop), not raster.bounds_xy,
+    # whenever a narrower model_clip_bounds exists. Using the grid's own
+    # aspect here would understate the derived axis by exactly the amount
+    # the crop narrows. compute_model_crop is pure, so resolving it twice
+    # costs nothing and keeps the cap honest about what will be rendered.
+    aspect_derived_over_fit = None
+    if raster is not None and getattr(raster, "bounds_xy", None) is not None:
+        try:
+            _render_bounds, _unused_offset = compute_model_crop(
+                getattr(raster, "model_clip_bounds", None), raster.bounds_xy
+            )
+            _u = float(_render_bounds.xmax) - float(_render_bounds.xmin)
+            _v = float(_render_bounds.ymax) - float(_render_bounds.ymin)
+            if _u > 0.0 and _v > 0.0:
+                aspect_derived_over_fit = (_u / _v) if fit_direction == "vertical" else (_v / _u)
+        except Exception as ex:
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="pixel_size_aspect",
+                    message="could not resolve the export crop's aspect ratio from the "
+                            "raster ({0}); falling back to the grid's own paper "
+                            "extents for the two-axis cap".format(ex),
+                    view_id=view_id,
+                )
+    if aspect_derived_over_fit is None and paper_fit_in > 0:
+        _paper_derived_in = paper_width_in if fit_direction == "vertical" else paper_height_in
+        if _paper_derived_in > 0:
+            aspect_derived_over_fit = float(_paper_derived_in) / float(paper_fit_in)
+    if aspect_derived_over_fit is None:
+        # Nothing to derive the other axis from, so the cap can only bound
+        # the fitted one. Say so rather than implying both axes are covered:
+        # the post-export dimension check is then the only thing between this
+        # view and an over-limit export.
+        aspect_derived_over_fit = 1.0
+        if diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="pixel_size_aspect",
+                message="no usable view extents; the two-axis cap can bound only the "
+                        "fitted axis for this view, leaving the derived axis "
+                        "unverified until the post-export dimension check",
+                view_id=view_id,
+            )
+
+    # The raster's own cell count along the fitted axis, which bounds how
+    # far a dimension mismatch may back off: an export narrower than the
+    # grid it feeds cannot resolve that grid, so there is nothing below it
+    # worth attempting. None when no raster was supplied.
+    if raster is not None:
+        grid_axis_px = getattr(raster, "H", None) if fit_direction == "vertical" else getattr(raster, "W", None)
+        grid_axis_px = int(grid_axis_px) if grid_axis_px else None
+    else:
+        grid_axis_px = None
+
+    # TEST-ONLY. A caller may raise the SIZING cap to prove the post-export
+    # check fires (see _export_tiff: the verification ceiling stays at the
+    # measured limit regardless). None/0/absent means the shipped limit,
+    # which is what every production run uses.
+    cap_axis_px = getattr(cfg, "color_id_buffer_cap_axis_px", None) or MAX_STAGE_A_AXIS_PX
+    if cap_axis_px > MAX_STAGE_A_AXIS_PX and diag is not None:
         diag.warn(
             phase="color_id_buffer",
             callsite="pixel_size",
-            message="Requested Stage A pixel size clamped to {0}; export DPI may "
-                    "not be met for this view".format(MAX_STAGE_A_PIXEL_SIZE),
+            message="color_id_buffer_cap_axis_px is {0}, above the {1} px verification "
+                    "ceiling: this is a test-only override and every export it lets "
+                    "through will be rejected by the post-export dimension check and "
+                    "driven into the mismatch backoff".format(
+                        cap_axis_px, MAX_STAGE_A_AXIS_PX),
+            view_id=view_id,
+        )
+    cap = cap_axes(pre_cap_px, pre_cap_px * aspect_derived_over_fit, cap_axis_px)
+    pixel_size = max(64, cap["accepted_px"])
+    if pixel_size != cap["accepted_px"] and diag is not None:
+        diag.warn(
+            phase="color_id_buffer",
+            callsite="pixel_size",
+            message="two-axis cap wanted {0} px but the 64 px floor overrides it; the "
+                    "derived axis may exceed {1} px for this view".format(
+                        cap["accepted_px"], cap["max_axis_px"]),
+            view_id=view_id,
+        )
+    if cap["cap_applied"] and diag is not None:
+        diag.warn(
+            phase="color_id_buffer",
+            callsite="pixel_size",
+            message="Stage A export capped from {0} to {1} px on the {2} axis so BOTH "
+                    "axes stay within {3} px (derived axis predicted at {4} px); the "
+                    "requested export DPI is not met for this view".format(
+                        cap["pre_cap_px"], pixel_size, requested_axis,
+                        cap["max_axis_px"], cap["accepted_derived_px"]),
             view_id=view_id,
         )
 
@@ -1483,21 +1869,56 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     # restore transaction boundary). Fetch a fresh ViewDisplayModel whenever we
     # actually need to read or write it.
     orig_smooth_edges = None
+    # The exception TYPE when the read itself fails, which is the difference
+    # between "AA was already off, nothing to do" and "this capture never
+    # found out whether AA was on". Both used to be recorded as
+    # applied_smooth_edges = "unchanged" -- and because
+    # bool(getattr(dm, "SmoothEdges", None)) can never return None, a failed
+    # read was in fact the ONLY way "unchanged" was ever written. A reader
+    # (tools/decode_stage_a_color_id._capture_reliability) could not tell the
+    # two apart, so a view whose AA state was unknown was reported exactly
+    # like one that needed no change.
+    smooth_edges_read_error = None
+    # No getattr default here. bool(getattr(dm, "SmoothEdges", None)) reads a
+    # host that does not expose the property at all as False -- "AA is
+    # already off, nothing to do" -- which is the same silent coercion the
+    # ShowShadows capture below already refuses via its own sentinel. An
+    # absent property means this capture does not know the view's AA state,
+    # and an unknown state is not an off state.
+    _MISSING_SMOOTH_EDGES = object()
     try:
         _dm = view.GetViewDisplayModel()
         try:
-            orig_smooth_edges = bool(getattr(_dm, "SmoothEdges", None))
+            _raw_smooth_edges = getattr(_dm, "SmoothEdges", _MISSING_SMOOTH_EDGES)
+            if _raw_smooth_edges is _MISSING_SMOOTH_EDGES:
+                # getattr without a default would have raised exactly this.
+                smooth_edges_read_error = "AttributeError"
+                if diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite="smooth_edges_capture",
+                        message="ViewDisplayModel has no SmoothEdges attribute on this "
+                                "Revit host; anti-aliasing cannot be confirmed off and "
+                                "decoded edges may be blended",
+                        view_id=view_id,
+                    )
+            else:
+                orig_smooth_edges = bool(_raw_smooth_edges)
         finally:
             try:
                 _dm.Dispose()
             except Exception:
                 pass
     except Exception as ex:
+        smooth_edges_read_error = type(ex).__name__
         if diag is not None:
             diag.warn(
                 phase="color_id_buffer",
                 callsite="smooth_edges_capture",
-                message=str(ex),
+                message="could not read the view's SmoothEdges state ({0}: {1}); the "
+                        "capture proceeds but anti-aliasing cannot be confirmed off "
+                        "and decoded edges may be blended".format(
+                            type(ex).__name__, ex),
                 view_id=view_id,
             )
 
@@ -1716,7 +2137,14 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # pixel colors right at element boundaries that a decoder can't tell
         # apart from a genuine third color — this is the specific setting the
         # original empirical Stage A testing confirmed as "AA-off is clean".
-        applied_smooth_edges = "unchanged"
+        # "unchanged" is NOT a value this writer can produce any more. It
+        # never once meant what it said: a successful read always reaches the
+        # set below and ends at False or "unchanged (failed)", so the only
+        # way "unchanged" was ever written was a read that failed. Starting
+        # from "read_failed" removes the word rather than leaving a label
+        # nothing can reach. Capture PROCEEDS either way -- an unconfirmed AA
+        # state costs decode confidence (MEDIUM, not HIGH), not the export.
+        applied_smooth_edges = "read_failed"
         if orig_smooth_edges is not None:
             try:
                 dm = view.GetViewDisplayModel()
@@ -2015,10 +2443,20 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         raise
 
     actual_pixel_size = pixel_size
+    dim_report = {
+        "requested_axis": requested_axis,
+        "actual_w": None,
+        "actual_h": None,
+        "dim_check": "read_failed",
+        "dim_read_error": "export did not complete",
+        "dim_check_ceiling_px": MAX_STAGE_A_AXIS_PX,
+        "attempts": [],
+    }
     try:
-        _tiff_path, actual_pixel_size = _export_tiff(
+        _tiff_path, actual_pixel_size, dim_report = _export_tiff(
             doc, view, tiff_path, pixel_size, diag=diag, view_id=view_id,
-            fit_direction=fit_direction,
+            fit_direction=fit_direction, max_axis_px=MAX_STAGE_A_AXIS_PX,
+            grid_axis_px=grid_axis_px,
         )
     finally:
         restore_tx = Transaction(doc, "VOP Stage A RESTORE color ID buffer")
@@ -2210,7 +2648,40 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             "fit_direction": fit_direction,
             # The paper dimension pixel_size was derived from, so a reader can
             # reproduce the request instead of assuming it came from the width.
+            # This is the view's real paper extent along requested_axis, and
+            # it is the ONLY field that survives both the 64 px floor on
+            # pre_cap_px and the axis cap: a reader reconstructing physical
+            # scale should start here and fall back to pre_cap_px/export_dpi
+            # only for sidecars written before it existed.
             "paper_fit_in": paper_fit_in,
+            # Both axes, so a reader never has to infer the other one from
+            # an aspect ratio it would have to derive from the pixels.
+            "paper_width_in": paper_width_in,
+            "paper_height_in": paper_height_in,
+            # The two-axis cap. pre_cap_px is the uncapped request, which is
+            # what makes a capped export reconstructable: before this field
+            # existed the pre-cap value was discarded and no consumer could
+            # recover the view's real paper extent from the sidecar.
+            "requested_axis": requested_axis,
+            "requested_px": pixel_size,
+            "pre_cap_px": cap["pre_cap_px"],
+            "cap_applied": bool(cap["cap_applied"]),
+            "max_axis_px": cap["max_axis_px"],
+            "predicted_derived_px": cap["accepted_derived_px"],
+            # What the exported file MEASURED, as opposed to everything above
+            # it, which is what was asked for. dim_check is "pass" only when
+            # the fitted axis came back within 1 px of the request and
+            # neither axis exceeds dim_check_ceiling_px; "read_failed" means
+            # the dimensions could not be read at all and is NOT a pass.
+            "actual_w": dim_report.get("actual_w"),
+            "actual_h": dim_report.get("actual_h"),
+            "dim_check": dim_report.get("dim_check"),
+            "dim_check_ceiling_px": dim_report.get("dim_check_ceiling_px"),
+            "dim_read_error": dim_report.get("dim_read_error"),
+            "dim_check_attempts": dim_report.get("attempts"),
+            "backoff_stop_reason": dim_report.get("backoff_stop_reason"),
+            "backoff_floor_px": grid_axis_px,
+            "backoff_max_retries": MAX_MISMATCH_RETRIES,
         },
         # View-local UV rectangle (min_u, min_v, max_u, max_v) the export
         # was cropped to -- the same tuple set as view.CropBox above, not
@@ -2244,6 +2715,9 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "near_face_w_map": near_face_w_map,
         "applied_display_style": applied_display_style,
         "applied_smooth_edges": applied_smooth_edges,
+        # The exception type when the SmoothEdges read raised; None whenever
+        # the read succeeded, whatever it found.
+        "smooth_edges_read_error": smooth_edges_read_error,
         "applied_show_shadows": applied_show_shadows,
         # Where the "can Stage A color this category?" answer came from:
         # "frozen_whitelist" (VETTED_COLORABLE_CATEGORY_IDS) or
@@ -2280,10 +2754,34 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     with open(json_path, "w") as f:
         json.dump(state_out, f, indent=2, sort_keys=True)
 
+    # A dimension mismatch that survived the halving backoff is a failed
+    # view, not a successful one with a note attached. The TIFF and sidecar
+    # are still written -- they are the evidence -- but the pipeline counts
+    # this view as failed (streaming.py honours success=False) so the run
+    # cannot report a clean Stage A pass over an export whose size Revit
+    # never actually delivered.
+    failure_reason = None
+    if dim_report.get("dim_check") == "mismatch":
+        failure_reason = "export_dim_mismatch"
+        if diag is not None:
+            diag.error(
+                phase="color_id_buffer",
+                callsite="export_dim_check",
+                message="view failed: exported {0}x{1} never matched the request on the "
+                        "{2} axis within the {3} px per-axis limit, through {4} "
+                        "attempt(s)".format(
+                            dim_report.get("actual_w"), dim_report.get("actual_h"),
+                            dim_report.get("requested_axis"),
+                            dim_report.get("dim_check_ceiling_px"),
+                            len(dim_report.get("attempts") or [])),
+                view_id=view_id,
+            )
+
     return {
         "view_id": view_id,
         "view_name": getattr(view, "Name", None),
-        "success": True,
+        "success": failure_reason is None,
+        "failure_reason": failure_reason,
         "stage": "color_id_buffer_stage_a",
         "tiff_path": tiff_path,
         "sidecar_path": json_path,

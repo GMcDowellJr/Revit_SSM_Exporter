@@ -47,13 +47,49 @@ def test_describe_suppression_false_means_suppressed(helpers):
 
 
 def test_describe_suppression_unchanged_means_no(helpers):
-    assert "no" in helpers["_describe_suppression"]("unchanged").lower()
+    # Still the right reading for applied_show_shadows, whose writer skips
+    # the mutation when shadows are genuinely already off.
+    assert helpers["_describe_suppression"]("unchanged") == (
+        "no (already off, or unsupported on this Revit host)")
+
+
+def test_describe_suppression_read_failed_is_unknown_not_no(helpers):
+    # Equality, not `"no" in result.lower()`: "unknown" contains "no".
+    assert helpers["_describe_suppression"]("read_failed") == (
+        "unknown (state could not be read)")
+
+
+def test_summarize_normalizes_legacy_unchanged_for_smooth_edges_only(helpers, tmp_path):
+    """F5/G4: a legacy sidecar must not read as a confirmed AA-off capture,
+    while the same literal on shadows keeps its own (correct) meaning."""
+    import json
+    sidecar = tmp_path / "legacy.json"
+    sidecar.write_text(json.dumps({
+        "applied_show_shadows": "unchanged",
+        "applied_smooth_edges": "unchanged",
+    }))
+    lines = [ln.strip() for ln in helpers["_summarize_stage_a_sidecar"](str(sidecar))]
+    assert "Smooth edges suppressed: unknown (state could not be read)" in lines
+    assert "Shadows suppressed: no (already off, or unsupported on this Revit host)" in lines
+
+
+def test_shadows_unchanged_prints_as_already_off_beside_a_clean_aa_read(helpers, tmp_path):
+    """H4: the pairing that must NOT be normalised -- shadows genuinely off,
+    AA genuinely confirmed off. Each field keeps its own meaning."""
+    import json
+    sidecar = tmp_path / "shadows_off.json"
+    sidecar.write_text(json.dumps({
+        "applied_show_shadows": "unchanged",
+        "applied_smooth_edges": False,
+    }))
+    lines = [ln.strip() for ln in helpers["_summarize_stage_a_sidecar"](str(sidecar))]
+    assert "Shadows suppressed: no (already off, or unsupported on this Revit host)" in lines
+    assert "Smooth edges suppressed: yes" in lines
 
 
 def test_describe_suppression_unchanged_failed_means_no(helpers):
-    result = helpers["_describe_suppression"]("unchanged (failed)")
-    assert "no" in result.lower()
-    assert "fail" in result.lower()
+    assert helpers["_describe_suppression"]("unchanged (failed)") == (
+        "no (suppression attempt failed)")
 
 
 # --- _summarize_stage_a_sidecar ---------------------------------------------
@@ -69,13 +105,14 @@ def test_summarize_stage_a_sidecar_happy_path(helpers, tmp_path):
         "paint_failures": 0,
     }))
 
-    lines = helpers["_summarize_stage_a_sidecar"](str(sidecar))
-    text = "\n".join(lines)
+    raw_lines = helpers["_summarize_stage_a_sidecar"](str(sidecar))
+    text = "\n".join(raw_lines)
+    lines = [ln.strip() for ln in raw_lines]
 
-    assert "Shadows suppressed: yes" in text
-    assert "Smooth edges suppressed: yes" in text
-    assert "LINK categories colored: 2" in text
-    assert "Near-face-W collected: host=2 link=1" in text
+    assert "Shadows suppressed: yes" in lines
+    assert "Smooth edges suppressed: yes" in lines
+    assert "LINK categories colored: 2" in lines
+    assert "Near-face-W collected: host=2 link=1" in lines
     # No paint failures -- line omitted entirely.
     assert "paint failures" not in text.lower()
 
@@ -141,3 +178,46 @@ def test_relocate_batch_stage_a_outputs_noop_when_no_stage_a_dir(helpers, tmp_pa
     # Must not raise when Stage A produced nothing for this batch.
     helpers["_relocate_batch_stage_a_outputs"](str(batch_output_dir), str(output_dir), [])
     assert not (output_dir / "color_id_buffer").exists()
+
+
+# --- failed Stage A views keep their evidence -------------------------------
+
+def _exporter():
+    """A StreamingExporter with just enough state to call on_view_complete."""
+    from vop_interwoven.streaming import StreamingExporter
+    exporter = StreamingExporter.__new__(StreamingExporter)
+    exporter.views_processed = 0
+    exporter.views_failed = 0
+    exporter.view_summaries = []
+    exporter.full_results = None
+    return exporter
+
+
+def test_a_failed_stage_a_view_keeps_its_tiff_and_sidecar_paths():
+    """The TIFF and sidecar of a dimension-mismatch failure ARE the evidence
+    for why it failed. Dropping the paths left them on disk with nothing
+    pointing at them: absent from view_summaries, not rewritten when a batch
+    is relocated, and rendered as an ordinary 0x0 grid."""
+    exporter = _exporter()
+    exporter.on_view_complete({
+        "view_id": 528698, "view_name": "MOB 1 - LEVEL 2",
+        "success": False, "failure_reason": "export_dim_mismatch",
+        "stage": "color_id_buffer_stage_a",
+        "tiff_path": "C:/out/MOB 1 - LEVEL 2_528698.tiff",
+        "sidecar_path": "C:/out/MOB 1 - LEVEL 2_528698.json",
+    })
+    assert exporter.views_failed == 1
+    summary = exporter.view_summaries[0]
+    assert summary["success"] is False
+    assert summary["failure_reason"] == "export_dim_mismatch"
+    assert summary["stage"] == "color_id_buffer_stage_a"
+    assert summary["tiff_path"].endswith("_528698.tiff")
+    assert summary["sidecar_path"].endswith("_528698.json")
+
+
+def test_a_non_stage_a_failure_summary_is_unchanged():
+    """Only Stage A payloads gain the extra fields; nothing else does."""
+    exporter = _exporter()
+    exporter.on_view_complete({"view_id": 7, "view_name": "V", "success": False})
+    assert exporter.view_summaries[0] == {
+        "view_id": 7, "view_name": "V", "success": False}

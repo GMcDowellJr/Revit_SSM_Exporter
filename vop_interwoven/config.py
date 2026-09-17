@@ -8,6 +8,8 @@ proxy stamping, and depth-buffer occlusion logic.
 import math
 import os
 
+from .resolution_contract import DEFAULT_COLOR_ID_EXPORT_DPI
+
 
 class Config:
     """Configuration for VOP interwoven pipeline.
@@ -159,9 +161,10 @@ class Config:
         csv_compat_mode=True,
         # VOP Stage A: Revit color ID-buffer extraction
         enable_color_id_buffer_stage_a=False,
-        color_id_buffer_export_dpi=150,
+        color_id_buffer_export_dpi=DEFAULT_COLOR_ID_EXPORT_DPI,
         color_id_buffer_global_assignment_threshold=32767,
         color_id_buffer_fit_direction="horizontal",
+        color_id_buffer_cap_axis_px=None,
         
     ):
         """Initialize VOP configuration.
@@ -357,6 +360,23 @@ class Config:
         # apart. They imply different remedies: the first needs the request
         # bounded (and density given up on tall views), the second needs only
         # the fit axis swapped. One capture under vertical fit decides it.
+        # TEST-ONLY. Overrides the per-axis SIZING cap on Stage A color-ID
+        # exports. Production runs leave this None; it exists so a run can
+        # deliberately request an over-limit export and observe the check
+        # reject it. Setting it above the verification ceiling logs a
+        # warning per view and guarantees every export enters the mismatch
+        # backoff, so it is not a way to get larger captures.
+        # None means the measured limit (resolution_contract.
+        # MAX_STAGE_A_AXIS_PX). Raising it does NOT raise the post-export
+        # verification ceiling, which is fixed at the measured limit -- that
+        # asymmetry is the point: setting this above the limit is how a run
+        # proves the dimension check actually fires instead of assuming it.
+        self.color_id_buffer_cap_axis_px = (
+            None if color_id_buffer_cap_axis_px is None else int(color_id_buffer_cap_axis_px)
+        )
+        if (self.color_id_buffer_cap_axis_px is not None
+                and self.color_id_buffer_cap_axis_px <= 0):
+            raise ValueError("color_id_buffer_cap_axis_px must be positive or None")
         self.color_id_buffer_fit_direction = str(color_id_buffer_fit_direction).strip().lower()
         if self.color_id_buffer_fit_direction not in ("horizontal", "vertical"):
             raise ValueError(
@@ -591,6 +611,7 @@ class Config:
             "enable_color_id_buffer_stage_a": self.enable_color_id_buffer_stage_a,
             "color_id_buffer_export_dpi": self.color_id_buffer_export_dpi,
             "color_id_buffer_fit_direction": self.color_id_buffer_fit_direction,
+            "color_id_buffer_cap_axis_px": self.color_id_buffer_cap_axis_px,
             "color_id_buffer_global_assignment_threshold": (
                 self.color_id_buffer_global_assignment_threshold
             ),
@@ -665,7 +686,9 @@ class Config:
             csv_compat_mode=d.get("csv_compat_mode", True),
             # VOP Stage A color ID-buffer extraction
             enable_color_id_buffer_stage_a=d.get("enable_color_id_buffer_stage_a", False),
-            color_id_buffer_export_dpi=d.get("color_id_buffer_export_dpi", 150),
+            color_id_buffer_export_dpi=d.get(
+                "color_id_buffer_export_dpi", DEFAULT_COLOR_ID_EXPORT_DPI),
+            color_id_buffer_cap_axis_px=d.get("color_id_buffer_cap_axis_px"),
             color_id_buffer_fit_direction=d.get("color_id_buffer_fit_direction", "horizontal"),
             color_id_buffer_global_assignment_threshold=d.get(
                 "color_id_buffer_global_assignment_threshold", 32767

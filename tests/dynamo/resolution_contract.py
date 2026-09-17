@@ -1,21 +1,21 @@
-"""Pure Stage A probe resolution helpers for safe non-Revit tests."""
+"""Pure Stage A probe resolution helpers for safe non-Revit tests.
+
+The CAP itself is not defined here any more. ``round_half_up_positive``,
+``_positive`` and the two-axis cap arithmetic now live in
+``vop_interwoven.resolution_contract`` so that production enforces the same
+numbers this contract asserts, rather than a ceiling of its own. Everything
+below is the probe-facing report shape built on top of that one source.
+"""
 from __future__ import annotations
 
 import json
-import math
 
-
-def round_half_up_positive(value):
-    value = float(value)
-    if value < 0:
-        raise ValueError("round_half_up_positive requires a nonnegative value")
-    return int(math.floor(value + 0.5))
-
-
-def _positive(value, name):
-    if value is None or float(value) <= 0:
-        raise ValueError(f"{name} must be positive")
-    return float(value)
+from vop_interwoven.resolution_contract import (  # noqa: F401  (re-exported)
+    MAX_STAGE_A_AXIS_PX,
+    _positive,
+    cap_axes,
+    round_half_up_positive,
+)
 
 
 def calculate_paper_space_resolution(model_width_ft, model_height_ft, view_scale, target_dpi, bounds_source):
@@ -54,13 +54,11 @@ def apply_resolution_cap(report, max_pixel_dimension):
     report = dict(report, max_pixel_dimension=cap)
     if cap is None:
         return report
-    width = report["requested_width_px"]
-    height = report["predicted_height_px"]
-    factor = min(1.0, cap / width, cap / height)
-    if factor < 1:
-        accepted = max(1, round_half_up_positive(width * factor))
+    capped = cap_axes(report["requested_width_px"], report["predicted_height_px"], cap)
+    if capped["cap_applied"]:
+        accepted = capped["accepted_px"]
         report["accepted_width_px"] = accepted
-        report["predicted_height_px"] = max(1, round_half_up_positive(height * factor))
+        report["predicted_height_px"] = capped["accepted_derived_px"]
         report["accepted_pixels_per_model_foot"] = accepted / report["model_width_ft"]
         report["effective_dpi"] = report["accepted_pixels_per_model_foot"] * report["view_scale"] / 12.0
         report["actual_model_inches_per_pixel"] = 12.0 / report["accepted_pixels_per_model_foot"]

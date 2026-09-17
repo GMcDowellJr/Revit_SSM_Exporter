@@ -711,3 +711,60 @@ def test_d5_restores_the_crop_even_when_a_tile_fails(d2, monkeypatch):
     exports, detail = probe._case_d5(ctx, grid=2)
     assert detail["inconclusive"] is True
     assert applied[-1] == tuple(BOUNDS)
+
+
+# --- state restoration tolerance -------------------------------------------
+
+def test_ulp_crop_box_noise_is_not_an_unrestored_document():
+    """Run 1b113822's actual numbers: a crop box restored through Revit and
+    read back 1.1e-13 ft different failed the job as unrestored."""
+    before = {"crop_box": [-84.91755372174678, -162.13599266857221,
+                           380.64335389387617, 374.816630286904],
+              "crop_box_active": True, "doc_is_modified": False,
+              "view_template_id": None, "category_hidden": {"-2000011": False}}
+    after = {"crop_box": [-84.91755372174677, -162.13599266857216,
+                          380.64335389387605, 374.816630286904],
+             "crop_box_active": True, "doc_is_modified": False,
+             "view_template_id": None, "category_hidden": {"-2000011": False}}
+    tolerated = []
+    assert probe._diff_state(before, after, tolerated=tolerated) == []
+    # Absorbed, not discarded: the delta stays in the report.
+    assert len(tolerated) == 1
+    assert tolerated[0]["key"] == "crop_box"
+    assert 0 < tolerated[0]["max_delta"] < 1e-12
+
+
+def test_a_real_crop_change_is_still_a_difference():
+    before = {"crop_box": [0.0, 0.0, 100.0, 100.0]}
+    # One millionth of a foot: still nine orders above the tolerance.
+    after = {"crop_box": [0.0, 0.0, 100.000001, 100.0]}
+    diffs = probe._diff_state(before, after)
+    assert [d["key"] for d in diffs] == ["crop_box"]
+    assert diffs[0]["max_delta"] == pytest.approx(1e-6)
+
+
+def test_tolerance_boundary_is_inclusive_and_one_sided():
+    tol = probe.STATE_FLOAT_TOLERANCE_FT
+    assert probe._diff_state({"v": 0.0}, {"v": tol}) == []
+    assert len(probe._diff_state({"v": 0.0}, {"v": tol * 10})) == 1
+
+
+@pytest.mark.parametrize("before,after", [
+    ({"crop_box_active": True}, {"crop_box_active": False}),
+    ({"view_template_id": None}, {"view_template_id": 4211}),
+    ({"category_hidden": {"-2000011": False}}, {"category_hidden": {"-2000011": True}}),
+    ({"doc_is_modified": False}, {"doc_is_modified": True}),
+])
+def test_non_numeric_state_is_still_compared_exactly(before, after):
+    """bool is an int subclass -- a True/False flip must never be absorbed
+    as a rounding difference."""
+    assert len(probe._diff_state(before, after)) == 1
+
+
+def test_differently_shaped_values_are_not_numerically_comparable():
+    """None means 'not comparable', which must read as a difference and
+    never as a delta of zero."""
+    assert probe._max_numeric_delta([1.0, 2.0], [1.0]) is None
+    assert probe._max_numeric_delta([1.0], "1.0") is None
+    assert probe._max_numeric_delta(None, 0.0) is None
+    assert len(probe._diff_state({"crop_box": [1.0, 2.0]}, {"crop_box": [1.0]})) == 1
