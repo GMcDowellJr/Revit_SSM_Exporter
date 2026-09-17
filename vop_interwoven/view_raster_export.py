@@ -512,7 +512,29 @@ def _resize_to_exact(path, width_px, height_px, diag=None):
     already have the correct aspect ratio and this call is a no-op.  It guards
     against any residual floating-point discrepancy.
 
+    THAT PREMISE ONLY BECAME TRUE WITH A4.  Until the model-view branch of
+    _prepare_view_for_export() was anchored to the VOP grid's own origin, the
+    two images could be translated against each other by (crop_min -
+    grid_min) -- and this function could not have detected it, because a
+    translated image is exactly the right SIZE.  A size check is not an
+    alignment check, and the no-op claim above is a claim about the crop box,
+    not about this function.  It holds while ``vop_grid["origin_uv"]`` is
+    supplied; on the fallback path that cannot re-anchor, it does not.
+
+    NEVER CALL THIS ON A COLOR-ID RASTER.  Both backends RESAMPLE --
+    Image.LANCZOS here, Graphics.DrawImage below -- and interpolation invents
+    intermediate RGB values that map to no element ID, which silently
+    destroys exact-match decoding.  On a view_raster comparison PNG that is
+    cosmetic; on a Stage A capture it would be total.  Stage A does not reach
+    this module (it goes through color_id_buffer.export_color_id_buffer_view),
+    and nothing in this function's name or signature says so, which is the
+    reason the prohibition is written down here.
+
     Tries Pillow first (CPython), then System.Drawing (IronPython/Revit).
+    Both fallbacks swallow their exceptions, so a failure in each leaves the
+    ORIGINAL mismatched image on disk and reports only through the warning at
+    the end.  That is a No-Silent-Failure violation; it predates A4 and is
+    left alone deliberately rather than mixed into a logic change.
     """
     try:
         from vop_interwoven.np_backend import PILLOW_AVAILABLE

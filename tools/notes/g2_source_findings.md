@@ -259,3 +259,97 @@ falsify them rather than be rationalised afterwards:
    explanation and requires no assumption of a hidden tolerance.
 
 Neither prediction is a result. The harness settles it.
+
+---
+
+# Q5 — the recorded "residual floor" does not span the population
+
+*Added from the six-view per-element CSV produced by the standalone
+residual_floor_report, measured on the 2026-09-17 byColor run
+(800 rows, all HOST). That report is not in this repository: its
+capability is folded into `tools/notes/g2_bbox_excursion_report.py`
+(A6), and the clamp copy it carried is now the shared leaf module
+`tools/clamp_pad_geometry.py` (A1).*
+
+## The six recorded per-view figures include clipped elements
+
+PR #200 §1 lists the population as `0.0968 0.1055 0.1056 0.1067 0.1475
+0.1512` and describes it as "a residual floor of roughly 0.097–0.151 ft
+that spans the whole population, clamped and unclamped alike."
+
+All six reproduce exactly as **max over ALL elements, V edges only,
+clamped at 0** — the old g2 measurement. Removing elements whose
+**reference bbox crosses the crop** changes two of them outright:
+
+| view | n unclip | n clip | PR #200 | unclipped max (V) | max edge | axis |
+|---|---|---|---|---|---|---|
+| `_E_ HOSPITAL - LEVEL 1` | 372 | 0 | 0.1512 | 0.1512 | `u_lo` | **U** |
+| `_E_ HOSPITAL - LEVEL 5` | 229 | 0 | 0.1475 | 0.1475 | `u_hi` | **U** |
+| `Elevation 5 - a` | 24 | 30 | 0.1056 | **0.0438** | `v_hi` | V |
+| `Elevation 9 - a` | 35 | 26 | 0.1055 | **0.0487** | `v_hi` | V |
+| `SEA LEVEL` | 3 | 0 | 0.0968 | 0.0968 | `v_hi` | V |
+| `Section 1` | 56 | 25 | 0.1067 | 0.1067 | `v_hi` | V |
+
+**Elev 5 and Elev 9 enter the 0.097–0.151 band ONLY through clipped
+elements.** Their unclipped maxima are less than half the recorded
+figures. The band does not span the population; it spans a pooling of
+two populations, one of which is boundary truncation.
+
+## At the median the quantity is sub-pixel and not consistently signed
+
+Per-view median of the per-element worst-of-four-edges, unclipped, in
+pixels: Elev 5 **−0.152**, Elev 9 +0.122, SEA LEVEL +0.741, Section 1
++0.874, L1 +0.438, L5 +0.197.
+
+One is negative. A single "residual floor" constant would be fiction —
+the quantity is a mixture of a small positive term and
+silhouette-to-AABB slack, and only a worst-of-N over a pooled
+population makes it look like a band.
+
+## Which edge supplies each max, and the U/V rule
+
+The two views whose max sits on a **U** edge (L1, L5) are exactly the
+two where a four-edge measurement exceeds a V-only one — 0.1559 vs
+0.1512 and 0.1546 vs 0.1475. The four V-edge views agree to the last
+digit.
+
+So: **a four-edge report reads higher than a V-only one exactly when
+the max edge is a U edge.** The "zero-clip views" explanation is wrong:
+there are three zero-clip views (L1, L5, SEA LEVEL) and SEA LEVEL's max
+is on `v_hi`, so it does not read higher. `n_clipped` correlated by
+chance on four of six.
+
+**A four-edge report is NOT uniformly higher than a V-only one**, because
+restricting to unclipped narrows the population at the same time — on
+Elev 5 and Elev 9 it reads *lower*. Edge scope and population scope are
+two independent differences and must be matched separately before any
+two such figures are compared.
+
+## Two printed "discriminators" were the same number
+
+That report printed `med_px/dpi` and `med_ft/fpp` per view under a
+`DISCRIMINATORS` heading. `med_ft/fpp` is algebraically `med_px`:
+`worst_px = worst_ft / fpp` per element, `fpp` is constant within a
+view, and the median commutes with division by a positive constant.
+Verified bit-for-bit on all six views. Neither is emitted by the folded
+tool, and its docstring records why so they are not restored.
+
+## Clipped is a reference test, not a pixel test
+
+`clipped` (reference bbox crosses the crop) and `touches_image_edge`
+(painted pixels reach a border) are different populations — Elev 5:
+30 vs 22; Section 1: 25 vs 6. Given the table above, substituting one
+for the other reproduces the error this section documents. Both are
+carried.
+
+## Open, not resolved
+
+- The clipped test carries `eps = fpp * 0.5`. Whether any element sits
+  within half a pixel of the crop boundary — i.e. whether the epsilon
+  ever changes a classification — is **not established**, and the
+  per-element CSV cannot settle it: it carries no absolute reference
+  coordinates. Third tolerance with no observed instance, after the
+  1-px round-trip tolerance and the negative-pad guard.
+- H1/H3/H4 remain recorded do-not-investigate. `near_face_w`,
+  `export_dpi` and the pixel-size columns are carried in the folded
+  tool's per-element CSV but nothing correlates them.
