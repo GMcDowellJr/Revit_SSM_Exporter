@@ -406,6 +406,60 @@ class TestDecodeStageAColorId(unittest.TestCase):
             floored = ((64.0 / 150.0) * 96.0 / 12.0) / 64.0
             self.assertNotAlmostEqual(doc["feet_per_pixel"], floored, places=9)
 
+    def test_paper_fit_in_divides_by_the_fitted_axis_under_vertical_fit(self):
+        """G4: the bounds_xy-absent fallback's PREFERRED numerator branch,
+        under vertical fit.
+
+        paper_fit_in is the grid's extent along requested_axis, so its
+        denominator must be that same axis's measured pixel count. decode
+        picks it once, at the top of the try block
+        (``measured_fit_px = measured_h if fitted_axis == "height" else
+        measured_w``), and both numerator branches below read that one
+        variable -- but only the pre_cap_px branch had vertical-fit coverage.
+        The paper_fit_in branch is the one production sidecars actually take,
+        because it is tried first.
+
+        Dividing by the width here reports a scale wrong by the view's
+        aspect ratio, and wrong in the direction that makes the capture look
+        finer than it is. This fixture makes the two answers differ by 3x, so
+        a float-tolerance pass cannot hide it.
+
+        Reachable by construction: every field set below is one
+        color_id_buffer.py writes, and bounds_xy is absent exactly when the
+        crop could not be applied (no raster/bounds provided, or the view has
+        no CropBox) -- the case build_decoded_document's own else-branch
+        exists for.
+        """
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sidecar_path, tiff_path, arr = self._make_fixture(tmp_dir)
+            sidecar = json.load(open(sidecar_path))
+            sidecar["resolution"].update({
+                "paper_fit_in": 10.0,
+                "requested_axis": "height",
+                "pre_cap_px": 3000,
+                "pixel_size": 3000,
+                "actual_w": 9000,    # derived, and 3x the fitted axis
+                "actual_h": 3000,    # fitted
+                "dim_check": "pass",
+            })
+            doc = dsc.build_decoded_document(
+                Path(tiff_path), sidecar, Path(sidecar_path), bounds_uv=None)
+
+            expected = (10.0 * 96.0 / 12.0) / 3000.0
+            self.assertAlmostEqual(doc["feet_per_pixel"], expected, places=12)
+            self.assertEqual(
+                doc["feet_per_pixel_basis"]["numerator"], "sidecar_paper_fit_in")
+            self.assertEqual(
+                doc["feet_per_pixel_basis"]["denominator"], "sidecar_actual_dims")
+            # Not the derived axis: that answer is 3x finer and plausible.
+            self.assertNotAlmostEqual(
+                doc["feet_per_pixel"], (10.0 * 96.0 / 12.0) / 9000.0, places=9)
+            # This branch converts no point to UV, so it must say so rather
+            # than claim a view_uv space it cannot place anything in.
+            self.assertEqual(doc["coordinate_space"], "pixel")
+
     def test_numerator_uses_the_sidecars_own_dpi_not_the_default(self):
         """O2: a capture exported at 200 DPI divided by 150 reports an
         extent a third too large."""
