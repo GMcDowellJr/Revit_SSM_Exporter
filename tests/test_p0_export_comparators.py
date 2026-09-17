@@ -390,7 +390,21 @@ def test_campaign_validates_and_schedules_as_specified():
         (REPO / "campaign" / "p0_export_correctness.campaign.json").read_text())
     planner.validate_campaign(campaign)
 
+    registry = campaign["view_registry"]
+    # One real view, one registry entry. The planner does not check
+    # unique_id uniqueness, so a second entry for the same view validates
+    # cleanly while making that view appear twice to anything keyed by
+    # view_key, and giving the operator two placeholders to fill with the
+    # same value and no check that they match.
+    unique_ids = [v["unique_id"] for v in registry.values()]
+    assert len(unique_ids) == len(set(unique_ids)), registry
+
     jobs = {j["job_key"]: j for stage in campaign["stages"] for j in stage["jobs"]}
+    # p0.select is document-wide and reads no view geometry; it shares the
+    # checkpoint view's registry entry purely to satisfy the view_key
+    # requirement and to reach the document through raw_view.
+    assert jobs["p0.select"]["view_key"] == jobs["p0.default"]["view_key"]
+    assert "p0_enumeration_anchor" in registry[jobs["p0.select"]["view_key"]]["roles"]
     assert set(jobs) == {"p0.select", "p0.default", "p0.derived", "p0.override"}
     assert jobs["p0.select"]["manual_review_required"] is True
     for key in ("p0.default", "p0.derived", "p0.override"):

@@ -11,9 +11,9 @@
       "expected_name": "MOB 1 - LEVEL 2",
       "expected_view_type": "FloorPlan",
       "expected_crop_active": true,
-      "roles": ["p0_default_capture", "p0_override_capture"],
+      "roles": ["p0_default_capture", "p0_override_capture", "p0_enumeration_anchor"],
       "source_content_tags": ["host"],
-      "notes": "The P0 checkpoint view. Underlay is disabled on this view only, by the probe, inside the rolled-back group."
+      "notes": "The P0 checkpoint view. Underlay is disabled on this view only, by the probe, inside the rolled-back group. It also carries p0_enumeration_anchor: p0.select is document-wide and reads no view geometry, but every job must name a view_key, and the executor resolves that view and hands it over as raw_view -- which is how p0.select reaches the document at all. The anchor is this view rather than a second registry entry for it, so one real view is not registered twice."
     },
     "derived_axis_candidate": {
       "unique_id": "REPLACE-AFTER-P0-SELECT",
@@ -23,15 +23,6 @@
       "roles": ["p0_derived_capture"],
       "source_content_tags": ["host"],
       "notes": "Filled in from p0.select's derived_job_candidates after the manual review closes. Must be a view whose cap_binding_axis is 'derived' -- the 8695x10028 shape a fitted-axis-only cap waves through."
-    },
-    "selection_scope": {
-      "unique_id": "REPLACE-WITH-VIEW-UNIQUEID",
-      "expected_name": "MOB 1 - LEVEL 2",
-      "expected_view_type": "FloorPlan",
-      "expected_crop_active": true,
-      "roles": ["p0_enumeration_anchor"],
-      "source_content_tags": ["host"],
-      "notes": "p0.select enumerates every plan view in the document; the campaign's view binding still needs one anchor view, and this is it. The job reads the document, not this view."
     }
   },
   "job_templates": {
@@ -47,7 +38,7 @@
       "jobs": [
         {
           "job_key": "p0.select",
-          "view_key": "selection_scope",
+          "view_key": "mob_1_level_2",
           "probe_id": "stage_a_p0_export_correctness",
           "case": "p0_select",
           "variant": "enumerate_plan_views",
