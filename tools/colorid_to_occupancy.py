@@ -136,6 +136,22 @@ def frame_from_capture(sidecar, img_w, img_h):
     return fpp, pad_x, pad_y, (cxmin, cymin, cxmax, cymax)
 
 
+def grid_bounds_from_capture(sidecar, crop):
+    """Return the SHARED RASTER GRID's rectangle (raster.bounds_xy), which is
+    what W/H/cell are defined against -- not the narrower rectangle this TIFF
+    was cropped to.
+
+    color_id_buffer.py:2697-2707 defines the offset as raster.bounds_xy ->
+    render crop, so going the other way SUBTRACTS it. Same arithmetic
+    decode_stage_a_color_id.py:678-685 uses for its grid_bounds_uv.
+
+    On a capture with a zero offset (no narrowing) this is the crop itself.
+    """
+    off = sidecar.get("model_crop_offset_uv") or [0.0, 0.0, 0.0, 0.0]
+    return (float(crop[0]) - float(off[0]), float(crop[1]) - float(off[1]),
+            float(crop[2]) - float(off[2]), float(crop[3]) - float(off[3]))
+
+
 def grid_from_geom(view_id, geom):
     rec = geom["perf"].get(view_id)
     vop = geom["vop"].get(view_id)
@@ -160,26 +176,35 @@ def grid_from_geom(view_id, geom):
     return {"W": W, "H": H, "cell": cell, "basis": "geom_run"}
 
 
-def grid_assumed(sidecar, crop):
+def grid_assumed(sidecar, grid_bounds):
+    """Reconstruct W/H/cell when no geometry run is available.
+
+    ``backoff_floor_px`` is raster.W (or raster.H under vertical fit) --
+    color_id_buffer.py:1735-1740 sets it from the raster, :2683 records it --
+    so it counts cells across the FULL shared grid. Dividing the narrowed TIFF
+    crop's extent by it understates the cell size by the crop-to-grid
+    difference, and the other dimension then comes out wrong too. Take both
+    extents from the grid's own rectangle.
+    """
     res = sidecar.get("resolution") or {}
     axis = res.get("requested_axis") or "width"
     grid_axis_px = res.get("backoff_floor_px")
-    cxmin, cymin, cxmax, cymax = crop
-    crop_u = cxmax - cxmin
-    crop_v = cymax - cymin
-    if not grid_axis_px:
+    gxmin, gymin, gxmax, gymax = grid_bounds
+    grid_u = gxmax - gxmin
+    grid_v = gymax - gymin
+    if not grid_axis_px or grid_u <= 0 or grid_v <= 0:
         return None
     n = int(grid_axis_px)
     if axis == "height":
-        cell = crop_v / n
-        H, W = n, max(1, int(round(crop_u / cell)))
+        cell = grid_v / n
+        H, W = n, max(1, int(round(grid_u / cell)))
     else:
-        cell = crop_u / n
-        W, H = n, max(1, int(round(crop_v / cell)))
+        cell = grid_u / n
+        W, H = n, max(1, int(round(grid_v / cell)))
     return {"W": W, "H": H, "cell": cell, "basis": "assumed"}
 
 
-def colorid_cell_coverage(tiff_path, sidecar, grid, fpp, pad_x, pad_y, crop):
+def colorid_cell_coverage(tiff_path, sidecar, grid, fpp, pad_x, pad_y, crop, grid_bounds):
     """Return (covered_px, ink_px, total_px) per cell, each shape (H, W).
 
     covered_px : pixels whose color is an assigned palette color (FILL channel,
@@ -193,7 +218,13 @@ def colorid_cell_coverage(tiff_path, sidecar, grid, fpp, pad_x, pad_y, crop):
     palette = np.array(sorted({pack(v) for v in cmap.values()}), dtype=np.int64)
 
     W, H, cell = grid["W"], grid["H"], grid["cell"]
-    gxmin, gymin = crop[0], crop[1]
+    # Cell indices are measured from the SHARED GRID's origin. crop[0:2] is
+    # this TIFF's own (possibly narrowed) origin; using it would shift every
+    # index by the crop-to-grid offset on an annotation-expanded view, while
+    # the geometry grid and the vop_raster PNG stay anchored at
+    # raster.bounds_xy. Pixel -> UV below still uses crop, which is what the
+    # TIFF actually spans.
+    gxmin, gymin = grid_bounds[0], grid_bounds[1]
 
     im = Image.open(tiff_path)
     img_w, img_h = im.size
@@ -350,7 +381,9 @@ def main(argv=None):
                 "pad_px": [round(pad_x, 2), round(pad_y, 2)],
             })
 
-            grid = (grid_from_geom(vid, geom) if geom else None) or grid_assumed(sc, crop)
+            grid_bounds = grid_bounds_from_capture(sc, crop)
+            rec["grid_bounds_uv"] = [round(v, 6) for v in grid_bounds]
+            grid = (grid_from_geom(vid, geom) if geom else None) or grid_assumed(sc, grid_bounds)
             if grid is None:
                 rec["error"] = "no grid definition available"
                 summary.append(rec)
@@ -359,7 +392,7 @@ def main(argv=None):
                            "cell_ft": grid["cell"], "basis": grid["basis"]}
 
             covered, ink, total = colorid_cell_coverage(
-                tp, sc, grid, fpp, pad_x, pad_y, crop)
+                tp, sc, grid, fpp, pad_x, pad_y, crop, grid_bounds)
             with np.errstate(invalid="ignore", divide="ignore"):
                 frac = np.where(total > 0, covered / np.maximum(total, 1), 0.0)
 
