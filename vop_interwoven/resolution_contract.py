@@ -78,7 +78,40 @@ def cap_axes(requested_px, derived_px, max_axis_px=MAX_STAGE_A_AXIS_PX):
         factor = min(1.0, float(cap) / requested, float(cap) / derived)
 
     pre_cap_px = max(1, round_half_up_positive(requested))
-    pre_cap_derived_px = max(1, round_half_up_positive(derived))
+    # FLOOR on the DERIVED axis (D5), half-up on the fitted one. The two
+    # axes are not the same kind of quantity and must not share a rule:
+    #
+    #   fitted   Revit is HANDED this as PixelSize and renders exactly it.
+    #            The number is a REQUEST, and half-up is the right way to
+    #            turn a real-valued want into one. (Its only production
+    #            caller hands cap_axes an int anyway -- color_id_buffer.py
+    #            :1682 -- so the rule there is inert in practice.)
+    #   derived  Revit COMPUTES this from the view's extents. The number is
+    #            a PREDICTION of what Revit will do, and four captures came
+    #            back one pixel under the half-up prediction.
+    #
+    # CAVEAT, and it is the whole caveat: the mechanism is INFERRED, NOT
+    # CONFIRMED. "Revit truncates" and "Revit computes from a slightly
+    # different crop" BOTH produce -1 at n=4, and nothing in this repo
+    # distinguishes them. If it is the second, flooring is right for the
+    # wrong reason and will be wrong the other way on a capture whose crop
+    # differs in the opposite direction. n=4 is four captures, not a law.
+    #
+    # WHAT THIS DOES AND DOES NOT MOVE. It changes a reported PREDICTION --
+    # accepted_derived_px, pre_cap_derived_px, and the sidecar's
+    # predicted_derived_px -- and NOT the pixel count handed to Revit.
+    # accepted_px is taken from floor(requested * factor) below, which does
+    # not read either of these; the only path back into it is the `while`
+    # backstop, which is a float-last-bit guard that fires in 0 of 300000
+    # random cases and 0 of 400000 constructed near-boundary ones, and
+    # accepted_px is identical under both rules across all of them. So a
+    # cap decision cannot flip through this while that loop stays what its
+    # own comment says it is. If the loop is ever given real work to do,
+    # this becomes a decision-affecting change and this note is wrong.
+    #
+    # Flooring also never OVER-predicts: the error against the true derived
+    # value is in [0, 1) instead of half-up's (-0.5, 0.5].
+    pre_cap_derived_px = max(1, int(math.floor(derived)))
     if factor < 1.0:
         # FLOOR, not round-half-up. Rounding the fitted axis up can hand
         # back the request unchanged while the derived axis is still
@@ -94,13 +127,13 @@ def cap_axes(requested_px, derived_px, max_axis_px=MAX_STAGE_A_AXIS_PX):
         # prediction derived from a pixel count nobody asks for is what
         # made the two disagree in the first place.
         aspect = derived / requested
-        accepted_derived_px = max(1, round_half_up_positive(accepted_px * aspect))
+        accepted_derived_px = max(1, int(math.floor(accepted_px * aspect)))
         # Floating-point only: floor(requested * cap/derived) * aspect is
         # <= cap algebraically, so this can trip at most on the last bit.
         # Bounded by accepted_px, which strictly decreases.
         while accepted_px > 1 and accepted_derived_px > cap:
             accepted_px -= 1
-            accepted_derived_px = max(1, round_half_up_positive(accepted_px * aspect))
+            accepted_derived_px = max(1, int(math.floor(accepted_px * aspect)))
         cap_applied = True
     else:
         accepted_px = pre_cap_px
