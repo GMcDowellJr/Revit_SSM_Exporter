@@ -836,8 +836,15 @@ def build_decoded_document(
             # The DPI the producer actually used, not the one this tool
             # would default to -- a capture exported at 200 DPI divided by
             # 150 reports an extent a third too large.
-            export_dpi = resolution.get("export_dpi")
-            dpi_basis = "sidecar_export_dpi"
+            # "requested_export_dpi" is the current name; "export_dpi" is the
+            # same value under the name sidecars written before the rename
+            # carry. Neither is a measurement -- both record what was ASKED
+            # for -- which is why the basis string below says "requested".
+            export_dpi = resolution.get("requested_export_dpi")
+            dpi_basis = "sidecar_requested_export_dpi"
+            if not export_dpi:
+                export_dpi = resolution.get("export_dpi")
+                dpi_basis = "sidecar_legacy_export_dpi"
             if not export_dpi:
                 export_dpi = DEFAULT_COLOR_ID_EXPORT_DPI
                 dpi_basis = "default_export_dpi"

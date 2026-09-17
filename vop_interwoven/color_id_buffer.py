@@ -2635,11 +2635,40 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             restore_tx.RollBack()
             raise
 
+    # The dpi this capture ACHIEVED along the fitted axis, as opposed to the
+    # dpi that was asked for. They come apart three ways, all of them in the
+    # sizing path above: the max(64, ...) floor on pre_cap_px, the two-axis
+    # cap, and the dimension-mismatch backoff. None when the exported file's
+    # dimensions could not be read -- there is then no measurement to report,
+    # and reporting the request in its place is the exact confusion this
+    # field exists to end.
+    _actual_fit_px = (dim_report.get("actual_h") if requested_axis == "height"
+                      else dim_report.get("actual_w"))
+    effective_export_dpi = None
+    if _actual_fit_px and paper_fit_in > 0:
+        effective_export_dpi = float(_actual_fit_px) / float(paper_fit_in)
+
     state_out = {
         "view_id": view_id,
         "resolution": {
             "pixel_size": actual_pixel_size,
             "requested_pixel_size": pixel_size,
+            # The dpi that was REQUESTED. Named for that, because the old name
+            # ("export_dpi") reads as a property of the export and has already
+            # been consumed as a measurement once. Nothing here verifies that
+            # Revit delivered it; effective_export_dpi below is the measurement.
+            "requested_export_dpi": export_dpi,
+            # The dpi the exported file actually carries along requested_axis:
+            # actual_fit_px / paper_fit_in. Identically view_scale / (12 * fpp)
+            # for the feet_per_pixel a decoder derives, since paper_fit_in *
+            # view_scale / 12 IS the fitted axis's model extent -- so this
+            # figure and the decoder's cannot drift apart.
+            "effective_export_dpi": effective_export_dpi,
+            # RETAINED, not renamed away: every sidecar already written carries
+            # this name, and tools/decode_stage_a_color_id.py's pixel-space
+            # fallback reads it. Dropping it would orphan those captures. It is
+            # the request -- the same value as requested_export_dpi -- and new
+            # readers should prefer that name.
             "export_dpi": export_dpi,
             "view_scale": scale,
             # Which axis pixel_size set. Without it a reader cannot tell

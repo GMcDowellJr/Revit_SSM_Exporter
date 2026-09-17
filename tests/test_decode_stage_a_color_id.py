@@ -424,8 +424,34 @@ class TestDecodeStageAColorId(unittest.TestCase):
 
             expected = ((8000.0 / 200.0) * 96.0 / 12.0) / 8000.0
             self.assertAlmostEqual(doc["feet_per_pixel"], expected, places=12)
+            # This fixture carries the LEGACY field name, so the basis says so.
+            # The value is the same either way -- both names record the dpi that
+            # was requested, never one that was measured.
             self.assertEqual(doc["feet_per_pixel_basis"]["numerator"],
-                             "pre_cap_px_and_sidecar_export_dpi")
+                             "pre_cap_px_and_sidecar_legacy_export_dpi")
+
+    def test_numerator_prefers_requested_export_dpi_over_the_legacy_name(self):
+        """A10: the same value under the current name, and the basis string
+        must say which field it came from -- a sidecar carrying BOTH must not
+        silently report the legacy one."""
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sidecar_path, tiff_path, arr = self._make_fixture(tmp_dir)
+            sidecar = json.load(open(sidecar_path))
+            sidecar["resolution"].update({
+                "pre_cap_px": 8000, "pixel_size": 8000,
+                "requested_export_dpi": 200.0, "export_dpi": 200.0,
+                "actual_w": 8000, "actual_h": 4000, "requested_axis": "width",
+            })
+            sidecar["resolution"].pop("paper_fit_in", None)
+            doc = dsc.build_decoded_document(
+                Path(tiff_path), sidecar, Path(sidecar_path), bounds_uv=None)
+
+            expected = ((8000.0 / 200.0) * 96.0 / 12.0) / 8000.0
+            self.assertAlmostEqual(doc["feet_per_pixel"], expected, places=12)
+            self.assertEqual(doc["feet_per_pixel_basis"]["numerator"],
+                             "pre_cap_px_and_sidecar_requested_export_dpi")
             self.assertNotAlmostEqual(
                 doc["feet_per_pixel"], ((8000.0 / 150.0) * 96.0 / 12.0) / 8000.0, places=9)
 
