@@ -71,6 +71,15 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
+# Repo root (parent of tools/) on sys.path so the sibling leaf module below is
+# importable however this tool is invoked. It deliberately reaches for
+# clamp_pad_geometry ONLY: that module is standard-library-only, so sharing it
+# does NOT put vop_interwoven -- or tools/decode_stage_a_color_id.py, which
+# does import vop_interwoven -- on this standalone tool's dependency path.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from tools.clamp_pad_geometry import clamp_pad_geometry  # noqa: E402
+
 TOOL_VERSION = "1.0.0"
 SCHEMA_VERSION = "1.0"
 
@@ -238,10 +247,19 @@ def _uv_rect_to_pixel_bbox(bbox_corners_uv, bounds_uv, image_w, image_h):
     this did until D8 -- is correct only when both pads are zero, and
     silently displaces every mapped corner on the padded axis otherwise. It
     went unnoticed because nothing composed the two directions; that is now
-    tests/test_uv_pixel_round_trip.py's job. The clamp math is deliberately
-    duplicated here rather than shared with decode: extracting one helper
-    across every copy is out of scope for this change, and importing decode
-    would put vop_interwoven on this standalone tool's dependency path.
+    tests/test_uv_pixel_round_trip.py's job. The clamp math is no longer
+    duplicated here: it comes from tools/clamp_pad_geometry.py, the one copy
+    decode derives its own geometry from, so the forward and inverse mappings
+    cannot drift apart again the way D1 and D8 did. Importing decode itself
+    would still put vop_interwoven on this standalone tool's dependency path,
+    which is why the shared helper is a standard-library-only leaf module.
+
+    No producer-recorded export size is passed. This function is handed a TIFF
+    that has already been read and has no sidecar ``resolution`` block in
+    scope, so both of the helper's denominators are this image's own
+    dimensions -- the correct reading when there is no second measurement to
+    disagree with. A dim_check mismatch is therefore invisible here, and is
+    caught upstream by decode's Guard 1.
 
     Returns (x0, y0, x1, y1) inclusive integer pixel bounds, clamped to the
     image, or None if bbox_corners_uv/bounds_uv is unavailable or degenerate.
@@ -253,11 +271,10 @@ def _uv_rect_to_pixel_bbox(bbox_corners_uv, bounds_uv, image_w, image_h):
     # (via fpp), where before they were only multipliers.
     if xmax <= xmin or ymax <= ymin or image_w <= 0 or image_h <= 0:
         return None
-    crop_u = float(xmax) - float(xmin)
-    crop_v = float(ymax) - float(ymin)
-    fpp = max(crop_u / float(image_w), crop_v / float(image_h))
-    pad_x = (float(image_w) - crop_u / fpp) / 2.0
-    pad_y = (float(image_h) - crop_v / fpp) / 2.0
+    # The degeneracy guard above has already rejected everything the helper
+    # raises ValueError for, so this cannot throw here; that guard stays where
+    # it is because it also decides this function's None return.
+    fpp, pad_x, pad_y = clamp_pad_geometry(bounds_uv, image_w, image_h)
     xs_px = []
     ys_px = []
     for u, v in bbox_corners_uv:
