@@ -78,19 +78,25 @@ def tiff_for(sidecar_path: Path) -> Path:
 def frame_from_capture(sidecar, img_w, img_h):
     """Return (fpp, pad_x, pad_y, crop) using the isotropic + symmetric-pad model.
 
-    crop is the sidecar's bounds_xy shifted by model_crop_offset_uv, i.e. the
-    rectangle the TIFF content actually spans.
+    crop is the sidecar's bounds_xy AS RECORDED -- color_id_buffer.py:2694
+    writes that field as exactly the rectangle the view was cropped to (the
+    same tuple handed to view.CropBox at :2063), so it already IS the
+    rectangle the TIFF content spans.
+
+    model_crop_offset_uv is deliberately NOT applied here. It describes
+    raster.bounds_xy -> this crop (color_id_buffer.py:2697-2707: ADD it to
+    raster.bounds_xy's corners to reconstruct the crop), so adding it to the
+    crop applies it a second time. That is what this function used to do: on
+    a narrowed capture it produced a rectangle that was neither the crop nor
+    the grid, and disagreed with tools/decode_stage_a_color_id.py on
+    feet_per_pixel by 60% (see tools/notes/frame_anchor_findings.md, G7).
+    To go the other way -- crop -> the wider shared grid -- SUBTRACT it, as
+    decode_stage_a_color_id.py:678-685 does for grid_bounds_uv.
     """
     bounds = sidecar.get("bounds_xy")
     if not bounds or len(bounds) != 4:
         raise ValueError("sidecar has no usable bounds_xy")
-    xmin, ymin, xmax, ymax = (float(v) for v in bounds)
-
-    off = sidecar.get("model_crop_offset_uv") or [0.0, 0.0, 0.0, 0.0]
-    cxmin = xmin + float(off[0])
-    cymin = ymin + float(off[1])
-    cxmax = xmax + float(off[2])
-    cymax = ymax + float(off[3])
+    cxmin, cymin, cxmax, cymax = (float(v) for v in bounds)
 
     crop_u = cxmax - cxmin
     crop_v = cymax - cymin
