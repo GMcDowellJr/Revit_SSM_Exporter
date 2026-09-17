@@ -562,3 +562,59 @@ def test_probe_record_carries_hard_ratio_none_through_unchanged():
     status, reasons = _status(cmp.evaluate_record("p0_default", record),
                               "hard_ratio_measured")
     assert status == "FAIL" and "HARD_RATIO_NOT_MEASURED" in reasons
+
+
+# --------------------------------------------------------------------------
+# The runnable batch files
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name,expected_jobs", [
+    ("p0_export_correctness_a", ["p0-select", "p0-default-mob-1", "p0-override-mob-1"]),
+    ("p0_export_correctness_b", ["p0-derived"]),
+])
+def test_batch_files_validate_against_the_executor_contract(name, expected_jobs):
+    """These are what Dynamo actually runs. The planner-schema campaign in
+    campaign/ describes the same work for the planner flow, but the batch
+    executor consumes a batch, not a campaign, and rejects one outright."""
+    from tests.dynamo import revit_batch_contract as contract
+    batch = json.loads((REPO / "tests" / "dynamo" / "campaigns" / (name + ".json")).read_text())
+    contract.validate_batch(batch)
+    assert [j["job_id"] for j in batch["jobs"]] == expected_jobs
+    for job in batch["jobs"]:
+        assert job["probe_id"] == "stage_a_p0_export_correctness"
+        # The case a job runs travels in settings.selection; the batch job
+        # schema is additionalProperties:false and has no `case` field.
+        assert job["settings"]["selection"] in cmp.ALL_CASES
+
+
+def test_batch_a_holds_every_job_that_needs_no_human_input():
+    """p0.derived is the only job gated on a person choosing a view, so it
+    is the only one held back -- splitting the other three out would cost a
+    Revit round trip for nothing."""
+    from tests.dynamo import revit_batch_contract as contract
+    a = json.loads((REPO / "tests" / "dynamo" / "campaigns" /
+                    "p0_export_correctness_a.json").read_text())
+    contract.validate_batch(a)
+    selections = {j["settings"]["selection"] for j in a["jobs"]}
+    assert selections == {"p0_select", "p0_default", "p0_override"}
+    # The capture jobs run against a real, resolvable view id.
+    for job in a["jobs"]:
+        assert job["view"]["element_id"] == 528698
+
+
+def test_batch_b_is_the_only_one_carrying_a_placeholder():
+    b = json.loads((REPO / "tests" / "dynamo" / "campaigns" /
+                    "p0_export_correctness_b.json").read_text())
+    assert b["jobs"][0]["view"]["element_id"] == 0
+    assert "REPLACE" in b["jobs"][0]["view"]["name"]
+
+
+def test_the_two_batches_share_one_campaign_id_and_differ_by_batch_id():
+    """Resume keys on (campaign_id, batch_id), so batch B must not collide
+    with A or it would be treated as a resume of it."""
+    a = json.loads((REPO / "tests" / "dynamo" / "campaigns" /
+                    "p0_export_correctness_a.json").read_text())
+    b = json.loads((REPO / "tests" / "dynamo" / "campaigns" /
+                    "p0_export_correctness_b.json").read_text())
+    assert a["campaign_id"] == b["campaign_id"] == "p0-export-correctness"
+    assert a["batch_id"] != b["batch_id"]
