@@ -178,3 +178,46 @@ def test_relocate_batch_stage_a_outputs_noop_when_no_stage_a_dir(helpers, tmp_pa
     # Must not raise when Stage A produced nothing for this batch.
     helpers["_relocate_batch_stage_a_outputs"](str(batch_output_dir), str(output_dir), [])
     assert not (output_dir / "color_id_buffer").exists()
+
+
+# --- failed Stage A views keep their evidence -------------------------------
+
+def _exporter():
+    """A StreamingExporter with just enough state to call on_view_complete."""
+    from vop_interwoven.streaming import StreamingExporter
+    exporter = StreamingExporter.__new__(StreamingExporter)
+    exporter.views_processed = 0
+    exporter.views_failed = 0
+    exporter.view_summaries = []
+    exporter.full_results = None
+    return exporter
+
+
+def test_a_failed_stage_a_view_keeps_its_tiff_and_sidecar_paths():
+    """The TIFF and sidecar of a dimension-mismatch failure ARE the evidence
+    for why it failed. Dropping the paths left them on disk with nothing
+    pointing at them: absent from view_summaries, not rewritten when a batch
+    is relocated, and rendered as an ordinary 0x0 grid."""
+    exporter = _exporter()
+    exporter.on_view_complete({
+        "view_id": 528698, "view_name": "MOB 1 - LEVEL 2",
+        "success": False, "failure_reason": "export_dim_mismatch",
+        "stage": "color_id_buffer_stage_a",
+        "tiff_path": "C:/out/MOB 1 - LEVEL 2_528698.tiff",
+        "sidecar_path": "C:/out/MOB 1 - LEVEL 2_528698.json",
+    })
+    assert exporter.views_failed == 1
+    summary = exporter.view_summaries[0]
+    assert summary["success"] is False
+    assert summary["failure_reason"] == "export_dim_mismatch"
+    assert summary["stage"] == "color_id_buffer_stage_a"
+    assert summary["tiff_path"].endswith("_528698.tiff")
+    assert summary["sidecar_path"].endswith("_528698.json")
+
+
+def test_a_non_stage_a_failure_summary_is_unchanged():
+    """Only Stage A payloads gain the extra fields; nothing else does."""
+    exporter = _exporter()
+    exporter.on_view_complete({"view_id": 7, "view_name": "V", "success": False})
+    assert exporter.view_summaries[0] == {
+        "view_id": 7, "view_name": "V", "success": False}

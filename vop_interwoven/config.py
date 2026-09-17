@@ -688,6 +688,7 @@ class Config:
             enable_color_id_buffer_stage_a=d.get("enable_color_id_buffer_stage_a", False),
             color_id_buffer_export_dpi=d.get(
                 "color_id_buffer_export_dpi", DEFAULT_COLOR_ID_EXPORT_DPI),
+            color_id_buffer_cap_axis_px=d.get("color_id_buffer_cap_axis_px"),
             color_id_buffer_fit_direction=d.get("color_id_buffer_fit_direction", "horizontal"),
             color_id_buffer_global_assignment_threshold=d.get(
                 "color_id_buffer_global_assignment_threshold", 32767

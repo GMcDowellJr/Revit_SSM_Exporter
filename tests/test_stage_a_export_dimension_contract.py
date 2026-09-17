@@ -31,7 +31,15 @@ def test_cap_is_the_measured_limit_and_production_holds_no_15000():
     # that already fits.
     (10000, 9642, 10000, 9642, False),
     # Measured drifted at 8695 wide: under any width cap, over on height.
-    (8695, 10028, 8671, 10000, True),
+    # 8670/9999, not 8671/10000: 8671 px at this aspect really derives
+    # 10000.3, so the old half-up result predicted a size the export would
+    # not have had. Flooring the fitted axis keeps prediction and reality
+    # on the same side of the ceiling.
+    (8695, 10028, 8670, 9999, True),
+    # The case that made the rounding matter: capping by a fraction of a
+    # pixel used to hand back the request unchanged (501) while reporting
+    # the derived axis capped to 10000 -- and 501 px really derives 10001.
+    (501, 10001, 500, 9981, True),
 ])
 def test_two_axis_cap_bounds_the_longer_axis(requested, derived, expect_px,
                                              expect_derived, expect_capped):
@@ -41,6 +49,34 @@ def test_two_axis_cap_bounds_the_longer_axis(requested, derived, expect_px,
     assert out["cap_applied"] is expect_capped
     assert max(out["accepted_px"], out["accepted_derived_px"]) <= MAX_STAGE_A_AXIS_PX
     assert out["pre_cap_px"] == requested
+
+
+@pytest.mark.parametrize("requested,derived", [
+    (501, 10001), (8695, 10028), (8739, 10079), (20000, 5000), (5000, 20000),
+    (10001, 10001), (12345, 6789), (999, 100000),
+])
+def test_the_accepted_pair_is_what_the_export_will_actually_be(requested, derived):
+    """The prediction has to survive being acted on.
+
+    Requesting accepted_px at the view's real aspect must not produce a
+    derived axis over the ceiling -- that is the whole contract, and
+    half-up rounding broke it by up to a pixel in exactly the cases where
+    the cap only just fires.
+    """
+    out = cap_axes(requested, derived)
+    real_derived = out["accepted_px"] * (derived / requested)
+    assert out["accepted_px"] <= MAX_STAGE_A_AXIS_PX
+    assert real_derived <= MAX_STAGE_A_AXIS_PX + 1e-6
+    # And the recorded prediction matches what that request really derives.
+    assert abs(out["accepted_derived_px"] - real_derived) <= 0.5 + 1e-9
+
+
+def test_capping_never_returns_the_uncapped_request(  ):
+    """cap_applied True with accepted_px == pre_cap_px is the shape that
+    let an over-ceiling export through while claiming to have capped it."""
+    out = cap_axes(501, 10001)
+    assert out["cap_applied"] is True
+    assert out["accepted_px"] < out["pre_cap_px"]
 
 
 def test_cap_rejects_nonpositive_axes():
@@ -180,6 +216,32 @@ def test_half_size_export_is_a_mismatch_and_backs_off(monkeypatch, tmp_path):
     assert exporter.requests == [8000, 4000, 2000]
     assert report["backoff_stop_reason"] == "retry_limit"
     assert diag.errors, "backoff exhaustion must be recorded as an error"
+
+
+class _DownshiftingExporter(_FakeExporter):
+    """Revit's own PixelSize backoff already halved the request before the
+    export ran, as _set_pixel_size_with_backoff does on an ArgumentException."""
+
+    def __call__(self, doc, view, out_dir, output_path, pixel_size, diag=None,
+                 view_id=None, fit_direction="horizontal"):
+        accepted = int(pixel_size) // 2
+        self.requests.append(int(pixel_size))
+        w, h = self.produce(accepted)
+        write_tiff_header(output_path, w, h)
+        return accepted
+
+
+def test_backoff_halves_what_revit_accepted_not_what_was_asked(monkeypatch, tmp_path):
+    """A 10000 request accepted at 5000, halved from 10000, asks 5000 again
+    -- the identical export, one of two retries spent on no progress."""
+    # A constant over-ceiling derived axis, so the loop can only end on the
+    # retry bound -- not by a halved request happening to fit.
+    exporter = _DownshiftingExporter(lambda px: (px, 20000))
+    accepted, report, diag = _run_export(monkeypatch, tmp_path, exporter, 10000)
+    # Requests must strictly decrease; 10000 -> 2500 -> 625, never 10000 ->
+    # 5000 (which Revit would downshift to 2500 and re-export identically).
+    assert exporter.requests == [10000, 2500, 625]
+    assert report["dim_check"] == "mismatch"
 
 
 def test_persistent_mismatch_never_exceeds_three_exports(monkeypatch, tmp_path):

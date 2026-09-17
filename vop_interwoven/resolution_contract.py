@@ -80,8 +80,27 @@ def cap_axes(requested_px, derived_px, max_axis_px=MAX_STAGE_A_AXIS_PX):
     pre_cap_px = max(1, round_half_up_positive(requested))
     pre_cap_derived_px = max(1, round_half_up_positive(derived))
     if factor < 1.0:
-        accepted_px = max(1, round_half_up_positive(requested * factor))
-        accepted_derived_px = max(1, round_half_up_positive(derived * factor))
+        # FLOOR, not round-half-up. Rounding the fitted axis up can hand
+        # back the request unchanged while the derived axis is still
+        # reported as capped: cap_axes(501, 10001) returned 501 with a
+        # predicted 10000, and 501 px at that aspect really does derive
+        # 10001. The cap then "fired" and changed nothing, the post-export
+        # check caught the over-ceiling render, and the backoff halved
+        # 501 to 250 -- half the resolution spent to save one pixel.
+        # Flooring can only ever land at or below the cap.
+        accepted_px = max(1, int(math.floor(requested * factor)))
+        # And the derived prediction is recomputed from the integer that
+        # will actually be requested, not from the unrounded scale. A
+        # prediction derived from a pixel count nobody asks for is what
+        # made the two disagree in the first place.
+        aspect = derived / requested
+        accepted_derived_px = max(1, round_half_up_positive(accepted_px * aspect))
+        # Floating-point only: floor(requested * cap/derived) * aspect is
+        # <= cap algebraically, so this can trip at most on the last bit.
+        # Bounded by accepted_px, which strictly decreases.
+        while accepted_px > 1 and accepted_derived_px > cap:
+            accepted_px -= 1
+            accepted_derived_px = max(1, round_half_up_positive(accepted_px * aspect))
         cap_applied = True
     else:
         accepted_px = pre_cap_px

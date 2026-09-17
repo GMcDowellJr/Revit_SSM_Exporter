@@ -1502,7 +1502,12 @@ def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None,
                 view_id=view_id,
             )
 
-        next_candidate = candidate // 2
+        # Halve what Revit ACCEPTED, not what was asked for. _set_pixel_
+        # size_with_backoff may already have reduced the request -- a
+        # 10000 asked for and accepted at 5000 -- and halving the original
+        # would then ask for 5000 again: the identical export, one of two
+        # retries spent making no progress.
+        next_candidate = int(actual_pixel_size) // 2
         stop_reason = None
         if len(attempts) > max_retries:
             stop_reason = "retry_limit"

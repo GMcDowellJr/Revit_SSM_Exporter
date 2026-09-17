@@ -292,11 +292,28 @@ class StreamingExporter:
         # Cache-hit payloads may be rehydrated in _write_csv_rows.
         if not is_success:
             self.views_failed += 1
-            self.view_summaries.append({
+            summary = {
                 "view_id": view_result.get("view_id"),
                 "view_name": view_result.get("view_name"),
                 "success": False
-            })
+            }
+            if is_stage_a:
+                # A Stage A view that failed its post-export dimension check
+                # still WROTE its TIFF and sidecar -- they are the evidence
+                # for why it failed. Dropping the paths here left that
+                # evidence on disk with nothing pointing at it: not
+                # inventoried in view_summaries, not rewritten when a batch
+                # is relocated, and rendered by the thinrunner as an
+                # ordinary 0x0 grid rather than a dimension failure. The
+                # same fields the success branch below records are kept,
+                # plus the reason.
+                summary.update({
+                    "stage": "color_id_buffer_stage_a",
+                    "failure_reason": view_result.get("failure_reason"),
+                    "tiff_path": view_result.get("tiff_path"),
+                    "sidecar_path": view_result.get("sidecar_path"),
+                })
+            self.view_summaries.append(summary)
             return
 
         if is_stage_a:
