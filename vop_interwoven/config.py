@@ -8,6 +8,8 @@ proxy stamping, and depth-buffer occlusion logic.
 import math
 import os
 
+from .resolution_contract import DEFAULT_COLOR_ID_EXPORT_DPI
+
 
 class Config:
     """Configuration for VOP interwoven pipeline.
@@ -159,7 +161,7 @@ class Config:
         csv_compat_mode=True,
         # VOP Stage A: Revit color ID-buffer extraction
         enable_color_id_buffer_stage_a=False,
-        color_id_buffer_export_dpi=150,
+        color_id_buffer_export_dpi=DEFAULT_COLOR_ID_EXPORT_DPI,
         color_id_buffer_global_assignment_threshold=32767,
         color_id_buffer_fit_direction="horizontal",
         color_id_buffer_cap_axis_px=None,
@@ -684,7 +686,8 @@ class Config:
             csv_compat_mode=d.get("csv_compat_mode", True),
             # VOP Stage A color ID-buffer extraction
             enable_color_id_buffer_stage_a=d.get("enable_color_id_buffer_stage_a", False),
-            color_id_buffer_export_dpi=d.get("color_id_buffer_export_dpi", 150),
+            color_id_buffer_export_dpi=d.get(
+                "color_id_buffer_export_dpi", DEFAULT_COLOR_ID_EXPORT_DPI),
             color_id_buffer_fit_direction=d.get("color_id_buffer_fit_direction", "horizontal"),
             color_id_buffer_global_assignment_threshold=d.get(
                 "color_id_buffer_global_assignment_threshold", 32767

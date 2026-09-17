@@ -22,6 +22,14 @@ import math
 # the evidence and for the single unexplained exception.
 MAX_STAGE_A_AXIS_PX = 10000
 
+# The export DPI Stage A uses when a Config does not say otherwise. Unlike
+# MAX_STAGE_A_AXIS_PX this is a convention, not a measurement -- no run in
+# this repo derives it -- so it lives here as ONE name rather than as the
+# four literals it used to be (config.py's signature and from_dict default,
+# color_id_buffer's getattr fallback, and the decode tool's own fallback for
+# a sidecar that never recorded which DPI it used).
+DEFAULT_COLOR_ID_EXPORT_DPI = 150.0
+
 
 def round_half_up_positive(value):
     """Round a nonnegative value half-up (Python's round() is half-to-even)."""

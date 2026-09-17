@@ -13,7 +13,11 @@ import os
 import struct
 import time
 
-from .resolution_contract import MAX_STAGE_A_AXIS_PX, cap_axes
+from .resolution_contract import (
+    DEFAULT_COLOR_ID_EXPORT_DPI,
+    MAX_STAGE_A_AXIS_PX,
+    cap_axes,
+)
 
 NEUTRAL_PHASE_FILTER_NAME = "VOP_NeutralPhaseFilter"
 # Kept as a name so existing readers (tools/decode_stage_a_color_id.py) keep
@@ -1632,7 +1636,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     json_path = os.path.join(out_dir, "{0}_{1}.json".format(safe_name, view_id))
 
     scale = float(getattr(view, "Scale", 1) or 1)
-    export_dpi = float(getattr(cfg, "color_id_buffer_export_dpi", 150))
+    export_dpi = float(getattr(cfg, "color_id_buffer_export_dpi", DEFAULT_COLOR_ID_EXPORT_DPI))
     # Normalized here, once, so the value handed to Revit and the value written
     # into the sidecar cannot disagree. A cfg without the field is the shipped
     # behaviour.
@@ -2639,7 +2643,16 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             "fit_direction": fit_direction,
             # The paper dimension pixel_size was derived from, so a reader can
             # reproduce the request instead of assuming it came from the width.
+            # This is the view's real paper extent along requested_axis, and
+            # it is the ONLY field that survives both the 64 px floor on
+            # pre_cap_px and the axis cap: a reader reconstructing physical
+            # scale should start here and fall back to pre_cap_px/export_dpi
+            # only for sidecars written before it existed.
             "paper_fit_in": paper_fit_in,
+            # Both axes, so a reader never has to infer the other one from
+            # an aspect ratio it would have to derive from the pixels.
+            "paper_width_in": paper_width_in,
+            "paper_height_in": paper_height_in,
             # The two-axis cap. pre_cap_px is the uncapped request, which is
             # what makes a capped export reconstructable: before this field
             # existed the pre-cap value was discarded and no consumer could
