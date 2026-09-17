@@ -1095,8 +1095,12 @@ def _run_native(raw_view, output_dir, selection="all", element_ids=None,
             view = _unwrap_dynamo(raw_view)
             if view is not None and report["state"]["before"]:
                 report["state"]["after"] = _drift._snapshot(doc, view, diag=diag)
-                diffs = _drift._diff_state(report["state"]["before"], report["state"]["after"])
+                tolerated = []
+                diffs = _drift._diff_state(report["state"]["before"],
+                                           report["state"]["after"],
+                                           tolerated=tolerated)
                 report["state"]["differences"] = diffs
+                report["state"]["tolerated_differences"] = tolerated
                 report["state"]["restored"] = len(diffs) == 0
         except Exception as ex:
             report["exceptions"].append(_exception_record("post_rollback_state_capture", ex))
