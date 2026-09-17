@@ -174,8 +174,18 @@ class OverrideLedger(object):
     def __init__(self):
         self.entries = []
 
-    def record(self, name, value):
-        entry = {"override": name, "value": value, "restored": False, "restore_error": None}
+    def record(self, name, value, applied=True, reason=None):
+        """``applied=False`` records an override that was NOT needed.
+
+        A view with no underlay configured needs no underlay change, and
+        claiming one anyway would report a mutation that never happened and
+        then grade it as successfully restored. The requirement the
+        checkpoint actually has is "underlay is off during the capture",
+        which a view without one already satisfies -- so it is recorded as
+        satisfied-without-mutation rather than as an applied override.
+        """
+        entry = {"override": name, "value": value, "applied": bool(applied),
+                 "reason": reason, "restored": not applied, "restore_error": None}
         self.entries.append(entry)
         return entry
 
@@ -245,7 +255,7 @@ def run_capture(doc, view, case, output_dir, export_dpi=None, cap_axis_px=None,
     default. Returns the per-view record.
     """
     from probe_stage_a_drift_onset import build_capture_config
-    from probe_stage_a_white_blend import _clear_underlay
+    from probe_stage_a_white_blend import _clear_underlay, _underlay_report
     from vop_interwoven.color_id_buffer import export_color_id_buffer_view
     from Autodesk.Revit.DB import Transaction, TransactionStatus
 
@@ -255,17 +265,33 @@ def run_capture(doc, view, case, output_dir, export_dpi=None, cap_axis_px=None,
 
     underlay_entry = None
     if disable_underlay:
-        underlay_entry = ledger.record("underlay_disabled", True)
-        tx = Transaction(doc, "VOP P0: disable underlay")
-        if tx.Start() != TransactionStatus.Started:
-            raise RuntimeError("could not start the underlay transaction")
-        try:
-            mechanism = _clear_underlay(view)
-            underlay_entry["mechanism"] = mechanism
-            tx.Commit()
-        except Exception:
-            tx.RollBack()
-            raise
+        # Ask first. b3_underlay_off in probe_stage_a_white_blend gates
+        # itself the same way, and run 1b113822 is why: that job skipped
+        # with "B1 found no underlay configured on this view". Calling
+        # _clear_underlay regardless would log an override that changed
+        # nothing and then grade it restored.
+        underlay = _underlay_report(doc, view)
+        configured = underlay.get("underlay_configured")
+        if configured is False:
+            underlay_entry = ledger.record(
+                "underlay_disabled", True, applied=False,
+                reason="no_underlay_configured")
+        else:
+            # None (could not be determined) is treated as configured: the
+            # capture proceeds with the underlay cleared, which is correct
+            # either way, rather than skipping on an unknown.
+            underlay_entry = ledger.record("underlay_disabled", True)
+            underlay_entry["underlay_configured"] = configured
+            tx = Transaction(doc, "VOP P0: disable underlay")
+            if tx.Start() != TransactionStatus.Started:
+                raise RuntimeError("could not start the underlay transaction")
+            try:
+                underlay_entry["mechanism"] = _clear_underlay(view)
+                tx.Commit()
+            except Exception:
+                tx.RollBack()
+                raise
+        underlay_entry["underlay_off_for_capture"] = True
 
     overrides = {}
     if cap_axis_px:
@@ -401,6 +427,11 @@ def run_probe(raw_view=None, output_dir=None, selection="all", export_dpi=None,
             restored = bool(report["rollback"].get("rolled_back"))
             for record in report["records"]:
                 for entry in record.get("probe_overrides") or []:
+                    if not entry.get("applied", True):
+                        # Nothing was changed, so the rollback has nothing to
+                        # say about it; it stays restored=True regardless of
+                        # how the group ended.
+                        continue
                     entry["restored"] = restored
                     if not restored:
                         entry["restore_error"] = report["rollback"].get(

@@ -64,8 +64,9 @@ def default_record(**overrides):
         "metrics": {"hard_edges": 17340, "blended_edges": 0,
                     "hard_ratio": 1.0, "off_px": 0},
         "probe_overrides": [
-            {"override": "underlay_disabled", "value": True, "restored": True,
-             "restore_error": None},
+            {"override": "underlay_disabled", "value": True, "applied": True,
+             "reason": None, "restored": True, "restore_error": None,
+             "underlay_off_for_capture": True, "mechanism": "SetUnderlayRange"},
         ],
         "failure_reason": None,
         "success": True,
@@ -99,7 +100,8 @@ def derived_record(**overrides):
         "metrics": {"hard_edges": 9100, "blended_edges": 0,
                     "hard_ratio": 1.0, "off_px": 0},
         "probe_overrides": [
-            {"override": "underlay_disabled", "value": True, "restored": True},
+            {"override": "underlay_disabled", "value": True, "applied": True,
+             "restored": True, "underlay_off_for_capture": True},
         ],
         "success": True,
     }
@@ -135,8 +137,10 @@ def override_record(**overrides):
         "metrics": {"hard_edges": 12000, "blended_edges": 0,
                     "hard_ratio": 1.0, "off_px": 0},
         "probe_overrides": [
-            {"override": "underlay_disabled", "value": True, "restored": True},
-            {"override": "color_id_buffer_cap_axis_px", "value": 15000, "restored": True},
+            {"override": "underlay_disabled", "value": True, "applied": True,
+             "restored": True, "underlay_off_for_capture": True},
+            {"override": "color_id_buffer_cap_axis_px", "value": 15000,
+             "applied": True, "restored": True},
         ],
         "failure_reason": None,
         "success": True,
@@ -185,6 +189,66 @@ def test_default_each_rule_discriminates(path, value, check, reason):
     assert status == "FAIL"
     assert reason in reasons
     assert _overall(checks) == "FAIL"
+
+
+def test_a_view_with_no_underlay_needs_no_mutation_and_still_passes():
+    """Run 1b113822's case, on a P0 job: the checkpoint asks for the
+    underlay off, and a view that never had one satisfies that without a
+    mutation. The skip must be recorded with its reason, not inferred."""
+    record = copy.deepcopy(default_record())
+    record["probe_overrides"] = [
+        {"override": "underlay_disabled", "value": True, "applied": False,
+         "reason": "no_underlay_configured", "restored": True,
+         "underlay_off_for_capture": True},
+    ]
+    checks = cmp.evaluate_record("p0_default", record)
+    assert _overall(checks) == "PASS", [c for c in checks if c["status"] != "PASS"]
+
+
+def test_an_unapplied_override_with_no_reason_fails():
+    """"applied: false" with nothing saying why is indistinguishable from an
+    override that was forgotten."""
+    record = copy.deepcopy(default_record())
+    record["probe_overrides"][0].update({"applied": False, "reason": None})
+    status, reasons = _status(cmp.evaluate_record("p0_default", record),
+                              "overrides_restored")
+    assert status == "FAIL" and "OVERRIDE_SKIP_UNEXPLAINED" in reasons
+
+
+def test_missing_underlay_bookkeeping_fails_rather_than_being_assumed():
+    record = copy.deepcopy(default_record())
+    record["probe_overrides"] = [
+        {"override": "color_id_buffer_cap_axis_px", "value": 15000,
+         "applied": True, "restored": True}]
+    status, reasons = _status(cmp.evaluate_record("p0_default", record), "underlay_off")
+    assert status == "FAIL" and "UNDERLAY_STATE_NOT_RECORDED" in reasons
+
+
+def test_underlay_left_on_fails_the_capture():
+    record = copy.deepcopy(default_record())
+    record["probe_overrides"][0]["underlay_off_for_capture"] = False
+    status, reasons = _status(cmp.evaluate_record("p0_default", record), "underlay_off")
+    assert status == "FAIL" and "UNDERLAY_NOT_OFF_FOR_CAPTURE" in reasons
+
+
+def test_an_unapplied_override_is_not_graded_on_the_rollback():
+    """Nothing was changed, so a failed rollback says nothing about it."""
+    record = copy.deepcopy(default_record())
+    record["probe_overrides"] = [
+        {"override": "underlay_disabled", "value": True, "applied": False,
+         "reason": "no_underlay_configured", "restored": True,
+         "underlay_off_for_capture": True},
+        {"override": "color_id_buffer_cap_axis_px", "value": 15000,
+         "applied": True, "restored": False},
+    ]
+    status, reasons = _status(cmp.evaluate_record("p0_default", record),
+                              "overrides_restored")
+    assert status == "FAIL" and "OVERRIDE_NOT_RESTORED" in reasons
+    unrestored = [c for c in cmp.evaluate_record("p0_default", record)
+                  if c["check_id"].endswith(".overrides_restored")][0]
+    # Only the applied one is named.
+    assert [o["override"] for o in unrestored["evidence"]["unrestored"]] == [
+        "color_id_buffer_cap_axis_px"]
 
 
 def test_default_unrestored_override_fails():

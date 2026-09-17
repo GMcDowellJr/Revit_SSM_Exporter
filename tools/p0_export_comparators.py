@@ -106,19 +106,46 @@ def check_hard_ratio_measured(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def check_overrides_restored(record: dict[str, Any]) -> dict[str, Any]:
-    """Every probe-only override the job applied must report restored.
+    """Every probe-only override the job APPLIED must report restored.
 
     A job that changes the document and leaves it changed has contaminated
     every later job in the batch, so this is graded on the same footing as
-    the measurement it was applied for -- not as a cleanup note.
+    the measurement it was applied for -- not as a cleanup note. An entry
+    marked applied=False changed nothing (e.g. a view with no underlay to
+    disable) and has nothing to restore; it still has to be present and
+    carry its reason, so "nothing needed doing" stays visible rather than
+    looking like an override that was forgotten.
     """
     overrides = record.get("probe_overrides")
     if not isinstance(overrides, list) or not overrides:
         return _check("overrides_restored", "FAIL", ["NO_OVERRIDE_RECORD"], overrides)
-    unrestored = [o for o in overrides if o.get("restored") is not True]
+    applied = [o for o in overrides if o.get("applied", True)]
+    unrestored = [o for o in applied if o.get("restored") is not True]
+    unexplained = [o for o in overrides
+                   if not o.get("applied", True) and not o.get("reason")]
+    if unexplained:
+        return _check("overrides_restored", "FAIL", ["OVERRIDE_SKIP_UNEXPLAINED"],
+                      {"overrides": overrides, "unexplained": unexplained})
     return _verdict(not unrestored, "overrides_restored",
                     "OVERRIDE_NOT_RESTORED", {"overrides": overrides,
                                               "unrestored": unrestored})
+
+
+def check_underlay_off(record: dict[str, Any]) -> dict[str, Any]:
+    """The capture ran with the underlay off, however that came about.
+
+    The P0 checkpoint says "underlay disabled on the test view". A view that
+    never had one satisfies that without a mutation, which is the outcome
+    run 1b113822 hit on a different view. What must not pass is a capture
+    where the underlay state was never established at all.
+    """
+    overrides = record.get("probe_overrides") or []
+    entries = [o for o in overrides if o.get("override") == "underlay_disabled"]
+    if not entries:
+        return _check("underlay_off", "FAIL", ["UNDERLAY_STATE_NOT_RECORDED"], overrides)
+    entry = entries[0]
+    return _verdict(entry.get("underlay_off_for_capture") is True, "underlay_off",
+                    "UNDERLAY_NOT_OFF_FOR_CAPTURE", entry)
 
 
 def check_dim_check_pass(record: dict[str, Any]) -> dict[str, Any]:
@@ -180,6 +207,7 @@ def evaluate_default(record: dict[str, Any]) -> list[dict[str, Any]]:
                             "export_dpi": resolution.get("export_dpi"),
                             "missing": missing}))
 
+    checks.append(check_underlay_off(record))
     checks.append(check_overrides_restored(record))
     return checks
 
@@ -219,6 +247,7 @@ def evaluate_derived(record: dict[str, Any]) -> list[dict[str, Any]]:
                             "requested_px": resolution.get("requested_px")}))
 
     checks.append(check_hard_ratio_measured(record))
+    checks.append(check_underlay_off(record))
     checks.append(check_overrides_restored(record))
     return checks
 
@@ -285,6 +314,7 @@ def evaluate_override(record: dict[str, Any]) -> list[dict[str, Any]]:
                                     "success": record.get("success")}))
 
     checks.append(check_hard_ratio_measured(record))
+    checks.append(check_underlay_off(record))
     checks.append(check_overrides_restored(record))
     return checks
 
