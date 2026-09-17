@@ -51,10 +51,35 @@ from PIL import Image
 
 Image.MAX_IMAGE_PIXELS = None
 
-GEOM_EDGE_RGB = (0, 255, 0)
-GEOM_PROXY_RGB = (0, 128, 0)
-GEOM_ANNO_RGB = (255, 0, 0)
-GEOM_ANNO_OVER_MODEL_RGB = (255, 165, 0)
+# vop_raster PNGs come from either of TWO exporters with DIFFERENT palettes,
+# and export_raster_to_png() prefers the Pillow one whenever NumPy and Pillow
+# are both present (png_export.py:449-451) -- which is the common path. This
+# tool originally recognised only the .NET constants, so on a normal run every
+# model-only and annotation-only cell was missed and the reported IoUs and
+# diff PNGs were invalid.
+#
+#   Pillow  (png_export.py:398-406): edge (0,200,0), proxy (0,100,0),
+#           anno-only (100,149,237), anno-over-model (255,165,0), and in
+#           cut_vs_projection mode cut (64,64,64) / projection (192,192,192).
+#   .NET    (png_export.py:248-256): edge (0,255,0), proxy (0,128,0),
+#           anno (255,0,0). Its orange and grey constants are declared but
+#           never reached -- that path is strictly priority-based
+#           (edge > proxy > anno, :274-296), so it emits no overlap colour at
+#           all and an annotated model cell simply renders green.
+#
+# Both palettes are accepted. A colour that means "model" in one and
+# something else in the other would make this ambiguous; none does.
+GEOM_MODEL_RGBS = (
+    (0, 200, 0), (0, 100, 0),      # Pillow: edge, proxy
+    (0, 255, 0), (0, 128, 0),      # .NET:   edge, proxy
+    (64, 64, 64), (192, 192, 192),  # cut_vs_projection: cut, projection
+    (255, 165, 0),                  # Pillow: annotation over model
+)
+GEOM_ANNO_RGBS = (
+    (100, 149, 237),                # Pillow: annotation only
+    (255, 0, 0),                    # .NET:   annotation
+    (255, 165, 0),                  # Pillow: annotation over model
+)
 
 ROW_CHUNK = 512
 
@@ -247,9 +272,8 @@ def geom_png_masks(png_path, W, H):
     sample = arr[np.ix_(ys, xs)]
     packed = (sample[..., 0].astype(np.int64) << 16) | \
              (sample[..., 1].astype(np.int64) << 8) | sample[..., 2]
-    model = (packed == pack(GEOM_EDGE_RGB)) | (packed == pack(GEOM_PROXY_RGB)) | \
-            (packed == pack(GEOM_ANNO_OVER_MODEL_RGB))
-    anno = (packed == pack(GEOM_ANNO_RGB)) | (packed == pack(GEOM_ANNO_OVER_MODEL_RGB))
+    model = np.isin(packed, np.array([pack(c) for c in GEOM_MODEL_RGBS], dtype=np.int64))
+    anno = np.isin(packed, np.array([pack(c) for c in GEOM_ANNO_RGBS], dtype=np.int64))
     # PNG row 0 is the top; grid row 0 is the bottom.
     return model[::-1], anno[::-1], None
 
