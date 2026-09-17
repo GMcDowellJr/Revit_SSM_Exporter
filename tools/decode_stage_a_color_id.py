@@ -561,10 +561,119 @@ def _capture_reliability(sidecar: dict[str, Any]) -> tuple[bool, str | None]:
     )
 
 
-def _pixel_corner_to_uv(x: int, y: int, bounds_uv, image_w: int, image_h: int) -> tuple[float, float]:
+# A computed pad below this many pixels is not rounding: it means the crop
+# rectangle and the image do not describe the same capture (see
+# _clamp_pad_geometry -- the pad can only go negative when the producer's
+# recorded export dimensions and the file this decode is reading disagree).
+#
+# The tolerance comes from the 2026-09-17 byColor run, whose unpadded views
+# measured -0.5 to +1.81 px under the corrected model -- zero within
+# rounding. Note that _clamp_pad_geometry cannot itself produce a pad in
+# (-1.0, 0) on an intact sidecar: when feet_per_pixel and the pads are
+# measured against the same dimensions the pad is >= 0 by construction, so
+# that -0.5 reflects a pad taken against a different dimension source than
+# the ratio was. The floor is set below the observed spread either way, so
+# it stays correct under both derivations and fires only on a real
+# disagreement.
+MIN_PAD_PX = -1.0
+
+# The aspect ExportImage will not exceed. Mirrors tools/analyze_stage_a_
+# probe.py:1337-1345's own `min(max(aspect, 0.1), 10.0)`, and carries that
+# module's caveat verbatim: the figure comes from the 2026-09-15 run, not
+# from documented API behaviour.
+MAX_STAGE_A_ASPECT = 10.0
+
+# A pad this large on a capture whose aspect never reached the clamp is not
+# a clamp pad, and nothing else in the frame model explains it. Measured:
+# across the six views of the 2026-09-17 byColor run the unclamped pads are
+# 0.000, 0.103, 0.340, 0.356 and 1.807 px -- Revit's own rounding of the
+# derived axis -- while Section 1, the one view the clamp actually fired on,
+# pads 91.748 px. 4.0 px sits with headroom above the rounding population and
+# far below any real clamp.
+MAX_UNCLAMPED_PAD_PX = 4.0
+
+
+def _clamp_pad_geometry(
+    bounds_uv,
+    image_w: int,
+    image_h: int,
+    measured_w=None,
+    measured_h=None,
+) -> tuple[float, float, float]:
+    """Return (feet_per_pixel, pad_x, pad_y) for a crop rendered into an image.
+
+    Revit's ExportImage clamps a capture's aspect ratio at 10:1 and pads the
+    short axis to reach it -- Section 1 of the 2026-09-17 byColor run came
+    back 9960x996, exactly 10.000. The clamp is ExportImage's own behaviour,
+    it cannot be disabled, and it is recorded in no sidecar field, so it has
+    to be modelled here rather than wished away.
+
+    Pixels are square. The PADDED axis therefore carries more pixels than its
+    extent warrants, which makes its feet-per-pixel ratio SMALLER than the
+    truth; the UNPADDED axis's ratio IS the truth. So take the larger of the
+    two ratios, and the pad on the other axis follows from it, split evenly
+    (the clamp centres the rendered content in the padded image).
+
+    Stretching u and v independently across the full image instead -- what
+    this tool did before -- implies non-square pixels, and puts every decoded
+    point on the padded axis out by up to half the pad's worth of feet with
+    nothing anywhere reporting that it happened.
+
+    ``measured_w``/``measured_h`` are the producer's own recorded export
+    dimensions (``resolution.actual_w``/``actual_h``) when the sidecar has
+    them; feet_per_pixel is derived from those, since they are the
+    measurement the producer's own dimension check verified. The pads are
+    always measured against ``image_w``/``image_h``, the file this decode is
+    actually reading. On any intact capture the two agree and the
+    distinction is invisible. Where they disagree the pads go NEGATIVE --
+    which is the signal, not an artefact: the image is not the size the
+    producer says it is, and no pad model can reconcile that silently.
+    """
+    xmin, ymin, xmax, ymax = (float(c) for c in bounds_uv)
+    crop_u_ft = xmax - xmin
+    crop_v_ft = ymax - ymin
+    fit_w = float(measured_w) if measured_w else float(image_w)
+    fit_h = float(measured_h) if measured_h else float(image_h)
+    if (
+        crop_u_ft <= 0.0
+        or crop_v_ft <= 0.0
+        or fit_w <= 0.0
+        or fit_h <= 0.0
+        or float(image_w) <= 0.0
+        or float(image_h) <= 0.0
+    ):
+        raise ValueError(
+            "degenerate capture geometry: crop {0}x{1} ft rendered into {2}x{3} px "
+            "(feet-per-pixel measured against {4}x{5} px)".format(
+                crop_u_ft, crop_v_ft, image_w, image_h, fit_w, fit_h))
+    feet_per_pixel = max(crop_u_ft / fit_w, crop_v_ft / fit_h)
+    pad_x = (float(image_w) - crop_u_ft / feet_per_pixel) / 2.0
+    pad_y = (float(image_h) - crop_v_ft / feet_per_pixel) / 2.0
+    return (feet_per_pixel, pad_x, pad_y)
+
+
+def _pixel_corner_to_uv(
+    x: int,
+    y: int,
+    bounds_uv,
+    image_w: int,
+    image_h: int,
+    geometry: tuple[float, float, float] | None = None,
+) -> tuple[float, float]:
+    """Map one pixel-corner coordinate into view-local UV.
+
+    ``geometry`` is ``_clamp_pad_geometry()``'s triple. A caller decoding a
+    whole image passes it in so that the per-point mapping and the reported
+    feet_per_pixel come from ONE derivation and cannot drift apart; it is
+    computed here when omitted, which keeps the plain five-argument call
+    working for single-point callers.
+    """
     xmin, ymin, xmax, ymax = bounds_uv
-    u = xmin + (float(x) / float(image_w)) * (xmax - xmin)
-    v = ymax - (float(y) / float(image_h)) * (ymax - ymin)
+    if geometry is None:
+        geometry = _clamp_pad_geometry(bounds_uv, image_w, image_h)
+    feet_per_pixel, pad_x, pad_y = geometry
+    u = float(xmin) + (float(x) - pad_x) * feet_per_pixel
+    v = float(ymax) - (float(y) - pad_y) * feet_per_pixel
     return (u, v)
 
 
@@ -585,6 +694,16 @@ def build_decoded_document(
     feet_per_pixel_unreliable_reason = None
     feet_per_pixel_numerator_basis = None
     feet_per_pixel_denominator_basis = None
+    # The ONE derivation of (feet_per_pixel, pad_x, pad_y) for this capture,
+    # shared by the reported feet_per_pixel below and by every decoded point
+    # further down. None on the pixel-space fallback, where no crop rectangle
+    # is known and no point is converted to UV at all.
+    capture_geometry = None
+    # Set only by the frame-model guards below, which also demote
+    # capture_reliable. Kept separate from feet_per_pixel_unreliable_reason's
+    # other causes, which report a gap in the sidecar rather than a capture
+    # whose own geometry does not add up.
+    frame_guard_reason = None
     resolution = sidecar.get("resolution") or {}
     try:
         # feet_per_pixel describes the image that EXISTS, so its denominator
@@ -609,22 +728,108 @@ def build_decoded_document(
         if bounds_uv is not None:
             # The rectangle this TIFF was actually cropped to is known
             # directly (bounds_uv, from the sidecar's own "bounds_xy" --
-            # see decode_one()): its width in feet divided by the image's
-            # measured pixel width IS feet-per-pixel exactly. No caveat
-            # about PixelSize backoff, crop narrowing or the axis cap
-            # applies, because no requested quantity enters it at all.
-            crop_width_ft = float(bounds_uv[2]) - float(bounds_uv[0])
-            if measured_w and crop_width_ft:
-                feet_per_pixel = crop_width_ft / measured_w
-                feet_per_pixel_numerator_basis = "crop_bounds_ft"
+            # see decode_one()), so no requested quantity enters this at
+            # all: no caveat about PixelSize backoff, crop narrowing or the
+            # axis cap applies.
+            #
+            # What DOES apply is ExportImage's 10:1 aspect clamp, which pads
+            # the short axis with pixels the crop does not cover. Dividing
+            # the crop's WIDTH by the image's width regardless -- what this
+            # did before -- is wrong twice over: wrong whenever the clamp
+            # fired (the width is the padded axis), and wrong under vertical
+            # fit (the width is not the axis that was fitted). _clamp_pad_
+            # geometry() takes the ratio from whichever axis was NOT padded
+            # and recovers the other axis's pad from it.
+            crop_u_ft = float(bounds_uv[2]) - float(bounds_uv[0])
+            crop_v_ft = float(bounds_uv[3]) - float(bounds_uv[1])
+            capture_geometry = _clamp_pad_geometry(
+                bounds_uv, w, h,
+                measured_w=sidecar_w or None, measured_h=sidecar_h or None,
+            )
+            feet_per_pixel, pad_x, pad_y = capture_geometry
+            # Which axis the number came from -- the same selection
+            # _clamp_pad_geometry's max() makes, named here so the guard
+            # below can say it. Under the clamp the two ratios differ and the
+            # larger (unpadded) one wins outright; on an unpadded capture they
+            # are equal and requested_axis breaks the tie, that being the axis
+            # Revit was actually asked to fit.
+            ratio_u = crop_u_ft / measured_w
+            ratio_v = crop_v_ft / measured_h
+            if ratio_u > ratio_v:
+                numerator_axis = "width"
+            elif ratio_v > ratio_u:
+                numerator_axis = "height"
+            else:
+                numerator_axis = fitted_axis
+            feet_per_pixel_numerator_basis = "crop_bounds_ft"
+            # Guard 1 -- the recorded export size and this file must be the
+            # same size, IN EITHER DIRECTION. The pad-sign check below only
+            # ever caught a file SMALLER than the sidecar says: when the file
+            # is LARGER both pads come out positive and the mismatch reads as
+            # a centred clamp pad, so a 40x30 sidecar against a 60x45 file
+            # (20x15 ft crop) yields fpp 0.5 and pads (+10.0, +7.5) and slips
+            # through. Comparing the two measurements directly catches both.
+            if sidecar_w and sidecar_h and (int(sidecar_w) != int(w) or int(sidecar_h) != int(h)):
+                frame_guard_reason = (
+                    "the producer's recorded export size ({0}x{1} px) and this file "
+                    "({2}x{3} px) are not the same size, so they do not describe the same "
+                    "capture and the crop rectangle cannot be placed in it".format(
+                        int(sidecar_w), int(sidecar_h), int(w), int(h))
+                )
+            # Guard 2 -- a pad the clamp cannot account for. ExportImage pads
+            # only to bring an over-limit aspect back to the limit, so on a
+            # capture whose crop aspect never reached the limit there is
+            # nothing for a large pad to be. Reinterpreting that discrepancy
+            # as centred padding is exactly what analyze_stage_a_probe.py's
+            # _frame_geometry() (:1345-1375) refuses to do via its own
+            # clamp_matches_actual_height check, and what would otherwise hand
+            # shifted loops HIGH confidence -- the producer's dimension check
+            # validates only the fitted axis and the ceiling, so a derived-axis
+            # mismatch reaches here unflagged.
+            elif max(pad_x, pad_y) > MAX_UNCLAMPED_PAD_PX:
+                crop_aspect = crop_u_ft / crop_v_ft if crop_v_ft else 0.0
+                clamped_aspect = min(max(crop_aspect, 1.0 / MAX_STAGE_A_ASPECT),
+                                     MAX_STAGE_A_ASPECT)
+                if abs(clamped_aspect - crop_aspect) <= 1e-9:
+                    frame_guard_reason = (
+                        "recovered pad (pad_x={0:.3f} px, pad_y={1:.3f} px) exceeds {2} px "
+                        "on a capture the clamp never touched: the crop's aspect ({3:.4f}) "
+                        "is already within the {4}:1 limit, so ExportImage had nothing to "
+                        "pad and this {5}x{6} px image does not match the {7:.4f} x {8:.4f} ft "
+                        "crop it claims to render".format(
+                            pad_x, pad_y, MAX_UNCLAMPED_PAD_PX, crop_aspect,
+                            MAX_STAGE_A_ASPECT, int(w), int(h), crop_u_ft, crop_v_ft)
+                    )
+            # Guard 3 -- kept as defence in depth. Unreachable while guard 1
+            # holds (pads are >= 0 whenever fpp and the pads share their
+            # dimensions), but it costs nothing and fails loudly if that ever
+            # stops being true.
+            elif pad_x < MIN_PAD_PX or pad_y < MIN_PAD_PX:
+                frame_guard_reason = (
+                    "recovered clamp pad is negative beyond rounding (pad_x={0:.3f} px, "
+                    "pad_y={1:.3f} px, floor {2} px): feet_per_pixel was taken from the "
+                    "{3} axis of the recorded export size ({4}x{5} px, basis {6!r}), and "
+                    "that does not fit this file ({7}x{8} px)".format(
+                        pad_x, pad_y, MIN_PAD_PX, numerator_axis,
+                        int(measured_w), int(measured_h),
+                        feet_per_pixel_denominator_basis, int(w), int(h))
+                )
+            if frame_guard_reason is not None:
+                feet_per_pixel_unreliable_reason = frame_guard_reason
         else:
             # No known crop rectangle (coordinate_space="pixel" fallback),
             # so the physical extent has to be reconstructed. Three sources,
             # best first.
             #
-            # paper_fit_in is the view's real paper extent along the fitted
-            # axis, recorded by the producer before any pixel arithmetic
-            # touched it. Everything else here goes through pre_cap_px,
+            # paper_fit_in is the GRID's extent along the fitted axis, in
+            # paper inches -- color_id_buffer.py:1651-1654 computes it as
+            # raster.W * raster.cell_size_ft * 12 / scale, and raster.W is
+            # already ceil(bounds/cell) (view_basis.py:1183-1184). It is
+            # therefore the crop rounded UP to whole cells, and it OVERSTATES
+            # the rectangle actually rendered by up to one cell: on Elev 5 of
+            # the 2026-09-17 byColor run it reports 97.0 ft against a 96.38 ft
+            # crop, 0.64% over. It is still the best numerator available on
+            # this branch -- everything else here goes through pre_cap_px,
             # which carries a max(64, ...) floor: on a view whose true
             # request lands under 64 px the floor fires and pre_cap_px/dpi
             # reports a LARGER extent than the view has. paper_fit_in is
@@ -667,8 +872,19 @@ def build_decoded_document(
                     model_fit_ft = (requested_px / float(export_dpi)) * float(view_scale) / 12.0
                     feet_per_pixel = model_fit_ft / measured_fit_px
                     feet_per_pixel_numerator_basis = "pre_cap_px_and_" + dpi_basis
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as ex:
         feet_per_pixel = None
+        if feet_per_pixel_unreliable_reason is None:
+            feet_per_pixel_unreliable_reason = (
+                "feet_per_pixel could not be derived from this sidecar: {0}: {1}".format(
+                    type(ex).__name__, ex))
+        if bounds_uv is not None and capture_geometry is None:
+            # A crop rectangle that cannot be placed in its own image leaves
+            # no honest way to turn a pixel into UV, and coordinate_space is
+            # about to claim "view_uv" regardless. Fail loudly here rather
+            # than emit a decode whose every point is fabricated; main()
+            # reports the file and moves on to the next one.
+            raise
 
     if feet_per_pixel is None:
         feet_per_pixel_numerator_basis = None
@@ -696,6 +912,17 @@ def build_decoded_document(
         ]
 
     capture_reliable, capture_unreliable_reason = _capture_reliability(sidecar)
+    if frame_guard_reason is not None:
+        # A capture whose crop rectangle cannot be placed in its own image is
+        # not a reliable capture, whatever its graphics settings say. Demoting
+        # here is what keeps the decoded loops out of AREAL+HIGH occlusion
+        # authority (pipeline.py:2443-2444) -- geometry this tool cannot
+        # locate must not be handed the authority to occlude other geometry.
+        capture_reliable = False
+        capture_unreliable_reason = (
+            frame_guard_reason if capture_unreliable_reason is None
+            else capture_unreliable_reason + "; " + frame_guard_reason
+        )
     # AREAL occlusion authority requires HIGH specifically (pipeline.py:2443-
     # 2444); MEDIUM keeps this as visible, non-occluding proxy geometry --
     # the same policy AREAL's own MEDIUM/LOW confidence already gets
@@ -718,7 +945,10 @@ def build_decoded_document(
         pixel_area = 0
         for info in loop_infos:
             if bounds_uv is not None:
-                points = [_pixel_corner_to_uv(x, y, bounds_uv, w, h) for (x, y) in info["points"]]
+                points = [
+                    _pixel_corner_to_uv(x, y, bounds_uv, w, h, geometry=capture_geometry)
+                    for (x, y) in info["points"]
+                ]
             else:
                 points = [(float(x), float(y)) for (x, y) in info["points"]]
             loops_out.append(

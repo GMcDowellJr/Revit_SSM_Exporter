@@ -218,19 +218,51 @@ def _uv_rect_to_pixel_bbox(bbox_corners_uv, bounds_uv, image_w, image_h):
     UV rectangle (4 corners, as persisted by revit/collection.py's
     project_bbox_corners_uv()) into this TIFF's pixel-space AABB.
 
+    Models Revit ExportImage's aspect-clamp padding, because the forward
+    mapping this inverts does. ExportImage refuses to export beyond its
+    aspect limit and pads the short axis symmetrically, so feet-per-pixel
+    comes from the UNPADDED axis -- the larger of the two ratios, since the
+    padded axis carries pixels its extent does not cover and therefore
+    understates its own ratio -- and the other axis's pad follows from it:
+
+        fpp   = max(crop_u / image_w, crop_v / image_h)
+        pad_x = (image_w - crop_u / fpp) / 2
+        pad_y = (image_h - crop_v / fpp) / 2
+        x     = (u - xmin) / fpp + pad_x
+        y     = (ymax - v) / fpp + pad_y
+
+    which is the algebraic inverse of _pixel_corner_to_uv's
+    ``u = xmin + (x - pad_x) * fpp`` / ``v = ymax - (y - pad_y) * fpp``.
+
+    Stretching each axis independently across the full image instead -- what
+    this did until D8 -- is correct only when both pads are zero, and
+    silently displaces every mapped corner on the padded axis otherwise. It
+    went unnoticed because nothing composed the two directions; that is now
+    tests/test_uv_pixel_round_trip.py's job. The clamp math is deliberately
+    duplicated here rather than shared with decode: extracting one helper
+    across every copy is out of scope for this change, and importing decode
+    would put vop_interwoven on this standalone tool's dependency path.
+
     Returns (x0, y0, x1, y1) inclusive integer pixel bounds, clamped to the
     image, or None if bbox_corners_uv/bounds_uv is unavailable or degenerate.
     """
     if not bbox_corners_uv or bounds_uv is None:
         return None
     xmin, ymin, xmax, ymax = bounds_uv
-    if xmax <= xmin or ymax <= ymin:
+    # image_w/image_h join the degeneracy check because they are divisors now
+    # (via fpp), where before they were only multipliers.
+    if xmax <= xmin or ymax <= ymin or image_w <= 0 or image_h <= 0:
         return None
+    crop_u = float(xmax) - float(xmin)
+    crop_v = float(ymax) - float(ymin)
+    fpp = max(crop_u / float(image_w), crop_v / float(image_h))
+    pad_x = (float(image_w) - crop_u / fpp) / 2.0
+    pad_y = (float(image_h) - crop_v / fpp) / 2.0
     xs_px = []
     ys_px = []
     for u, v in bbox_corners_uv:
-        xs_px.append((u - xmin) / (xmax - xmin) * image_w)
-        ys_px.append((ymax - v) / (ymax - ymin) * image_h)
+        xs_px.append((u - xmin) / fpp + pad_x)
+        ys_px.append((ymax - v) / fpp + pad_y)
     x0_raw = math.floor(min(xs_px))
     x1_raw = math.ceil(max(xs_px)) - 1
     y0_raw = math.floor(min(ys_px))
