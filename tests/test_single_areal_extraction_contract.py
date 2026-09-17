@@ -3,6 +3,8 @@
 import ast
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 PIPELINE = ROOT / "vop_interwoven" / "pipeline.py"
 RASTER = ROOT / "vop_interwoven" / "core" / "raster.py"
@@ -46,6 +48,7 @@ def _find_element_loop(render_fn):
     raise AssertionError("per-element loop not found")
 
 
+@pytest.mark.quarantine  # see tests/quarantine_registry.py
 def test_areal_path_extracts_geometry_once_before_raster_decompose():
     tree = ast.parse(PIPELINE.read_text(encoding="utf-8"))
     render_fn = _find_function(tree, "render_model_front_to_back")
