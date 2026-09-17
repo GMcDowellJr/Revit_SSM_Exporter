@@ -32,6 +32,7 @@ SUPPORTED_PROBES = {
     "stage_a_model_linework": "model_linework",
     "stage_a_external_sources": "external_sources",
     "stage_a_graphics_semantics": "graphics_semantics",
+    "stage_a_p0_export_correctness": "p0_export_correctness",
 }
 
 DARK_THRESHOLD = 64
@@ -843,7 +844,16 @@ def _family_checks(data: dict[str, Any], native: dict[str, Any], family: str) ->
     reference_check = _resolve_comparison_reference(data, native, family)
     if reference_check is not None:
         checks.append(reference_check)
-    if family == 'image_alignment':
+    if family == 'p0_export_correctness':
+        # Delegated wholesale: every P0 acceptance rule is an exact
+        # comparison over values the pipeline already recorded, and it lives
+        # in one module so the campaign's acceptance_requirements and the
+        # code that enforces them cannot drift. The generic requested/actual
+        # case-coverage below does not apply -- the comparator does its own
+        # coverage check (an empty report is a FAIL, not an empty pass).
+        from tools.p0_export_comparators import evaluate_report
+        checks.extend(evaluate_report(native))
+    elif family == 'image_alignment':
         checks.append(_alignment_coverage(data, native))
     else:
         requested, actual = _requested_names(data, native, family), _actual_names(native, family)

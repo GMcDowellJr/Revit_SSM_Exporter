@@ -1,0 +1,152 @@
+{
+  "schema_version": "1.0",
+  "campaign_id": "p0-export-correctness",
+  "description": "Executes the P0 G5 Revit checkpoint for Stage A export correctness. Every acceptance decision here is an automated comparator (tools/p0_export_comparators.py) reading values the production pipeline already records; the one human decision is which view p0.derived runs against, because only a person looking at the model can say which plan view is the right representative of the cap binding on the derived axis. Probe-only overrides (underlay off, raised sizing cap) apply inside a rolled-back TransactionGroup and are graded on being restored. No production default is modified by any job.",
+  "document_expectations": {
+    "expected_title": "KSRF_Hosp_Interior_AR_V03_33 MB_2025-02-03"
+  },
+  "view_registry": {
+    "mob_1_level_2": {
+      "unique_id": "REPLACE-WITH-VIEW-UNIQUEID",
+      "expected_name": "MOB 1 - LEVEL 2",
+      "expected_view_type": "FloorPlan",
+      "expected_crop_active": true,
+      "roles": ["p0_default_capture", "p0_override_capture"],
+      "source_content_tags": ["host"],
+      "notes": "The P0 checkpoint view. Underlay is disabled on this view only, by the probe, inside the rolled-back group."
+    },
+    "derived_axis_candidate": {
+      "unique_id": "REPLACE-AFTER-P0-SELECT",
+      "expected_name": "REPLACE-AFTER-P0-SELECT",
+      "expected_view_type": "FloorPlan",
+      "expected_crop_active": true,
+      "roles": ["p0_derived_capture"],
+      "source_content_tags": ["host"],
+      "notes": "Filled in from p0.select's derived_job_candidates after the manual review closes. Must be a view whose cap_binding_axis is 'derived' -- the 8695x10028 shape a fitted-axis-only cap waves through."
+    },
+    "selection_scope": {
+      "unique_id": "REPLACE-WITH-VIEW-UNIQUEID",
+      "expected_name": "MOB 1 - LEVEL 2",
+      "expected_view_type": "FloorPlan",
+      "expected_crop_active": true,
+      "roles": ["p0_enumeration_anchor"],
+      "source_content_tags": ["host"],
+      "notes": "p0.select enumerates every plan view in the document; the campaign's view binding still needs one anchor view, and this is it. The job reads the document, not this view."
+    }
+  },
+  "job_templates": {
+    "p0_capture": {
+      "probe_id": "stage_a_p0_export_correctness",
+      "repetition": 1
+    }
+  },
+  "stages": [
+    {
+      "stage_id": "p0.enumerate",
+      "description": "Read-only enumeration of plan views, reporting the pre-cap request, fitted axis, predicted w x h, and whether the cap binds and on which axis. Mutates nothing and exports nothing.",
+      "jobs": [
+        {
+          "job_key": "p0.select",
+          "view_key": "selection_scope",
+          "probe_id": "stage_a_p0_export_correctness",
+          "case": "p0_select",
+          "variant": "enumerate_plan_views",
+          "repetition": 1,
+          "manual_review_required": true,
+          "manual_review_reason": "A human selects the view p0.derived runs against from derived_job_candidates. No comparator can make this choice: it needs a person to confirm the candidate is a representative plan view rather than an artifact of a stale crop.",
+          "settings": {
+            "selection": "p0_select"
+          },
+          "output_directory": "captures/p0-select"
+        }
+      ]
+    },
+    {
+      "stage_id": "p0.capture",
+      "description": "The three capture jobs. p0.default and p0.override are independent of each other and of every s2.* job; only p0.derived waits, and only on p0.select's manual review.",
+      "jobs": [
+        {
+          "job_key": "p0.default",
+          "view_key": "mob_1_level_2",
+          "probe_id": "stage_a_p0_export_correctness",
+          "case": "p0_default",
+          "variant": "underlay_off_default_cap",
+          "repetition": 1,
+          "settings": {
+            "selection": "p0_default",
+            "disable_underlay": true
+          },
+          "output_directory": "captures/p0-default"
+        },
+        {
+          "job_key": "p0.override",
+          "view_key": "mob_1_level_2",
+          "probe_id": "stage_a_p0_export_correctness",
+          "case": "p0_override",
+          "variant": "underlay_off_cap_15000",
+          "repetition": 1,
+          "settings": {
+            "selection": "p0_override",
+            "disable_underlay": true,
+            "cap_axis_px": 15000
+          },
+          "output_directory": "captures/p0-override"
+        },
+        {
+          "job_key": "p0.derived",
+          "view_key": "derived_axis_candidate",
+          "probe_id": "stage_a_p0_export_correctness",
+          "case": "p0_derived",
+          "variant": "underlay_off_default_cap",
+          "repetition": 1,
+          "settings": {
+            "selection": "p0_derived",
+            "disable_underlay": true
+          },
+          "output_directory": "captures/p0-derived"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "job": "p0.derived",
+      "requires_job": "p0.select",
+      "statuses": ["PASS", "INCONCLUSIVE"]
+    }
+  ],
+  "acceptance_requirements": {
+    "comparator_module": "tools/p0_export_comparators.py",
+    "verification_ceiling_px": 10000,
+    "notes": "Every check below is automated and produces PASS or FAIL with no manual review. hard_ratio of null (rendered '-' in the metrics table) is a FAIL in every job and is never skipped: analyze_stage_a_probe computes hard/(hard+blended) and returns null when no edges were counted at all, so a reader checking for 1.0 who sees '-' would read 'no data yet' when the real state is 'nothing was measured'.",
+    "p0.default": [
+      "max(actual_w, actual_h) <= 10000",
+      "dim_check == pass",
+      "off_px == 0",
+      "hard_edges > 0 AND hard_ratio == 1.0",
+      "applied_smooth_edges != read_failed",
+      "paper_fit_in and export_dpi both present",
+      "every probe override restored"
+    ],
+    "p0.derived": [
+      "dim_check == pass",
+      "abs(predicted_derived_px - actual derived axis) <= 1",
+      "cap_applied == true",
+      "hard_ratio measured",
+      "every probe override restored"
+    ],
+    "p0.override": [
+      "first export attempt dim_check == mismatch",
+      "backoff fired (more than one attempt)",
+      "no attempt over the ceiling is recorded as a pass",
+      "final dim_check == pass, OR backoff_stop_reason in {retry_limit, grid_floor} AND the view failed with export_dim_mismatch",
+      "hard_ratio measured",
+      "every probe override restored"
+    ]
+  },
+  "execution_defaults": {
+    "batch_size": 2,
+    "on_job_error": "continue"
+  },
+  "diagnostic_expansion_rules": []
+}
