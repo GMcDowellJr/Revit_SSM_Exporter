@@ -26,6 +26,23 @@ _element_bounding_boxes(id_array), which is the element's pixel extent in
 the decoded image. Measuring against that is circular -- the patch moves
 measurement and reference together and any gate passes trivially.
 
+CLIPPED IS A REFERENCE TEST, NOT A PIXEL TEST
+----------------------------------------------
+An element is CLIPPED when its reference bbox crosses the crop rectangle:
+the image cannot show its full extent, so every edge figure for it is a
+lower bound. That is not the same population as "its painted pixels reach a
+border of the image", which is carried separately as
+``touches_image_edge``. On the 2026-09-17 byColor run the two differ
+sharply -- Elev 5: 30 clipped against 22 touching; Section 1: 25 against 6 --
+so the two tests are not interchangeable and neither substitutes for the
+other.
+
+This distinction is load-bearing. Two of that run's six recorded per-view
+figures, 0.1056 and 0.1055 ft on Elev 5 and Elev 9, come ENTIRELY from
+clipped elements: those views' unclipped maxima are 0.0438 and 0.0487 ft,
+less than half. A report that pools the two populations puts both views
+inside a "0.097-0.151 ft floor" they do not belong to.
+
 WHAT THIS MEASUREMENT CAN AND CANNOT CLAIM
 ------------------------------------------
 bbox_corners_uv is the AABB of 8 projected corners -- a SUPERSET of the
@@ -62,6 +79,32 @@ report is signed. A population whose median is negative is not "better" than
 one whose median is positive -- it is a different population, mostly AABB
 slack, and it is reported separately for that reason.
 
+HOST ONLY, AND WHY LINK IS NOT A SECOND SCOPE
+----------------------------------------------
+The standalone report this folds in iterated
+``near_face_w_map[scope]`` for scope in ("host", "link") and carried a
+``scope`` column. Its LINK branch cannot produce a row: it looks the element
+up in the pixel extents, and those extents are keyed off
+``color_assignment_map``, which is per-element HOST identity. LINK elements
+are painted per CATEGORY through ``link_category_color_map`` (see
+color_id_buffer.py's _apply_link_category_filters), and a LINK key
+("<link_inst_id>:<link_elem_id>") never appears in the HOST map -- which is
+why its own six-view CSV is 800 rows, all host, zero link. The branch is not
+reproduced here rather than carried as dead code. Recovering LINK identity
+from a category blob is tools/link_identity_resolver.py's job, and it is
+advisory, never occlusion truth.
+
+TWO DISCRIMINATOR LINES DELIBERATELY NOT PRINTED
+-------------------------------------------------
+The standalone report printed, per view, ``med_px/dpi=`` and ``med_ft/fpp=``.
+``med_ft/fpp`` is ALGEBRAICALLY IDENTICAL to ``med_px``: worst_px is
+worst_ft/fpp per element, fpp is constant within a view, and the median
+commutes with division by a positive constant. Verified bit-for-bit on all
+six views of the 2026-09-17 byColor run. So the second figure is a table
+column reprinted under a name that reads like an independent check, beneath
+a heading ("DISCRIMINATORS") that reads as though a test ran. None did. Both
+lines are gone.
+
 NOT REPORTED, DELIBERATELY
 --------------------------
 - No view tier, working/sheet status, or importance label. The axis cap
@@ -72,6 +115,10 @@ NOT REPORTED, DELIBERATELY
 - No "residual floor" constant. The quantity is a mixture -- see the
   per-category split -- and a single number for it would be fiction.
 - No pass/fail verdict against any threshold. Distributions only.
+- No H1/H3/H4 discriminator block. ``near_face_w``, ``export_dpi`` and the
+  pixel-size columns are CARRIED in the per-element CSV, because dropping
+  data a previous tool collected is a silent loss -- but nothing here
+  correlates them. Those hypotheses are recorded do-not-investigate.
 
 Standalone: PIL + NumPy + the standard library, plus the shared leaf module
 tools/clamp_pad_geometry.py. Imports nothing from vop_interwoven, and
@@ -182,7 +229,8 @@ def decode_pixel_extents(tiff_path, color_assignment_map):
         cols = np.nonzero(mask.any(axis=0))[0]
         if rows.size and cols.size:
             out[code_to_id[code]] = (int(cols.min()), int(rows.min()),
-                                     int(cols.max()) + 1, int(rows.max()) + 1)
+                                     int(cols.max()) + 1, int(rows.max()) + 1,
+                                     int(mask.sum()))
     return out, w, h
 
 
@@ -251,9 +299,10 @@ def measure_view(sidecar_path, mappings):
     fpp, pad_x, pad_y = clamp_pad_geometry(
         bounds, image_w, image_h, measured_w=dims[0], measured_h=dims[1])
 
+    xmin, ymin, xmax, ymax = bounds
     rows = []
     no_ref = 0
-    for elem_id_str, (c0, r0, c1, r1) in extents.items():
+    for elem_id_str, (c0, r0, c1, r1, npx) in extents.items():
         entry = host_ref.get(elem_id_str) or {}
         corners = entry.get("bbox_corners_uv")
         if not corners:
@@ -264,17 +313,39 @@ def measure_view(sidecar_path, mappings):
         ref_umin, ref_umax = min(us), max(us)
         ref_vmin, ref_vmax = min(vs), max(vs)
 
-        # An element whose painted extent reaches a border of the image was
-        # cut off by the crop, so its true extent is unknown and its
-        # excursion on that edge is a lower bound, not a measurement. It is
-        # reported as its own population rather than mixed in or dropped.
-        clipped = (c0 == 0 or r0 == 0 or c1 >= image_w or r1 >= image_h)
+        # CLIPPED means the element's REFERENCE bbox crosses the crop
+        # rectangle, so the image physically cannot show its full extent and
+        # every edge figure for it is a lower bound rather than a
+        # measurement. It is NOT the same test as "the painted pixels reach
+        # a border of the image", which is reported alongside it as
+        # touches_image_edge: on the 2026-09-17 byColor run Elev 5 has 30
+        # clipped against 22 touching, and Section 1 has 25 against 6, so
+        # substituting one for the other changes the population materially.
+        #
+        # TOLERANCE CARRIED, NOT INTRODUCED: the half-pixel epsilon is the
+        # one the standalone report used. Whether any element in that run
+        # actually sits within half a pixel of the crop boundary -- i.e.
+        # whether the epsilon ever changes a classification -- is NOT
+        # established; its per-element CSV does not carry the absolute
+        # reference coordinates needed to check. See the session report.
+        eps = fpp * 0.5
+        clipped = (ref_umin < xmin - eps or ref_umax > xmax + eps
+                   or ref_vmin < ymin - eps or ref_vmax > ymax + eps)
+        touches_image_edge = (c0 == 0 or r0 == 0
+                              or c1 >= image_w or r1 >= image_h)
 
+        ref_du = ref_umax - ref_umin
+        ref_dv = ref_vmax - ref_vmin
         row = {
             "elem_id": elem_id_str,
             "category": entry.get("category"),
+            "near_face_w": entry.get("near_face_w"),
             "clipped": clipped,
+            "touches_image_edge": touches_image_edge,
             "px_c0": c0, "px_r0": r0, "px_c1": c1, "px_r1": r1,
+            "px_count": npx, "px_w": c1 - c0, "px_h": r1 - r0,
+            "ref_du_ft": ref_du, "ref_dv_ft": ref_dv,
+            "ref_aspect": (ref_du / ref_dv) if ref_dv > 0 else float("inf"),
         }
         for name, fn in mappings.items():
             # Corner (c0, r0) is the top-left: U min, V max.
@@ -282,12 +353,21 @@ def measure_view(sidecar_path, mappings):
             dec_umin, dec_vmax = fn(c0, r0, bounds, image_w, image_h, dims)
             dec_umax, dec_vmin = fn(c1, r1, bounds, image_w, image_h, dims)
             # Signed, per edge. Positive => decoded lies OUTSIDE the ref bbox.
-            row[name] = {
+            edges = {
                 "u_lo": ref_umin - dec_umin,
                 "u_hi": dec_umax - ref_umax,
                 "v_lo": ref_vmin - dec_vmin,
                 "v_hi": dec_vmax - ref_vmax,
             }
+            # worst = the per-element max over all four edges, UNCLAMPED.
+            # This is the quantity the six recorded per-view figures are
+            # maxima of, and the one Task 1's "which edge supplies the max"
+            # is asked about, so it is carried rather than recomputed.
+            worst_edge = max(edges, key=edges.get)
+            edges["worst"] = edges[worst_edge]
+            edges["worst_edge"] = worst_edge
+            edges["worst_px"] = edges[worst_edge] / fpp
+            row[name] = edges
         rows.append(row)
 
     return {"view": sidecar_path.stem, "painted": len(extents), "measured": len(rows),
@@ -322,6 +402,11 @@ def summarize(values):
         "p90": s[min(n - 1, int(round(0.90 * (n - 1))))],
         "min": s[0],
         "max": s[-1],
+        # The share of the cell lying OUTSIDE the reference bbox. Reported
+        # because the sign is the whole distinction between a mapping error
+        # and silhouette-to-AABB slack, and a median alone hides it: a cell
+        # can have a negative median and still contain positive excursions.
+        "pos_frac": sum(1 for v in s if v > 0.0) / float(n),
     }
 
 
@@ -338,9 +423,9 @@ def _print_cell(label, values, indent="    "):
             " ".join("{0:+.4f}".format(v) for v in sorted(values))))
     else:
         print("{0}{1:<34} n={2:<4} med {3:+.4f}   p10 {4:+.4f}   p90 {5:+.4f}   "
-              "min {6:+.4f}   max {7:+.4f}  ft".format(
+              "min {6:+.4f}   max {7:+.4f} ft   outside {8:.0%}".format(
                   indent, label, s["n"], s["median"], s["p10"], s["p90"],
-                  s["min"], s["max"]))
+                  s["min"], s["max"], s["pos_frac"]))
 
 
 def _edge_values(rows, mapping, edges):
@@ -348,7 +433,7 @@ def _edge_values(rows, mapping, edges):
 
 
 def _which_edge_supplies_max(rows, mapping):
-    """(edge_name, value, elem_id) for the single largest POSITIVE excursion.
+    """(edge_name, value, elem_id, category) for the largest excursion.
 
     This is the question section 1's max answers, and it is reported by EDGE
     NAME rather than as a bare number: a max drawn from u_hi and a max drawn
@@ -360,7 +445,7 @@ def _which_edge_supplies_max(rows, mapping):
         for e in EDGES:
             v = r[mapping][e]
             if best is None or v > best[1]:
-                best = (e, v, r["elem_id"])
+                best = (e, v, r["elem_id"], r["category"])
     return best
 
 
@@ -387,13 +472,18 @@ def report_view_population(results, mapping):
 
         unclipped = [x for x in r["rows"] if not x["clipped"]]
         clipped = [x for x in r["rows"] if x["clipped"]]
-        print("    n_clipped {0}  (extent reaches an image border; its excursion on"
-              " that edge is a lower bound)".format(len(clipped)))
+        touching = sum(1 for x in r["rows"] if x["touches_image_edge"])
+        print("    n_clipped {0}  (REFERENCE bbox crosses the crop, so every edge "
+              "figure for it is a lower bound)".format(len(clipped)))
+        print("    n_touching_image_edge {0}  (painted pixels reach a border -- a "
+              "DIFFERENT population, reported, never substituted)".format(touching))
 
         for scope_label, scope_rows in (("unclipped", unclipped), ("clipped", clipped)):
             if not scope_rows:
                 continue
             print("  {0}:".format(scope_label))
+            _print_cell("worst (max over all 4 edges)",
+                        [x[mapping]["worst"] for x in scope_rows])
             _print_cell("U edges (u_lo, u_hi)", _edge_values(scope_rows, mapping, U_EDGES))
             _print_cell("V edges (v_lo, v_hi)", _edge_values(scope_rows, mapping, V_EDGES))
             for e in EDGES:
@@ -402,8 +492,12 @@ def report_view_population(results, mapping):
             top = _which_edge_supplies_max(scope_rows, mapping)
             if top is not None:
                 axis = "U" if top[0] in U_EDGES else "V"
-                print("      max positive excursion {0:+.4f} ft on edge {1} ({2} axis), "
-                      "element {3}".format(top[1], top[0], axis, top[2]))
+                print("      MAX {0:+.4f} ft on edge {1} ({2} axis), element {3}, "
+                      "category {4}".format(top[1], top[0], axis, top[2], top[3]))
+                # Named because a max drawn from a U edge and a max drawn
+                # from a V edge are not the same measurement, and a figure
+                # reported without its edge cannot be compared against one
+                # that measured a different edge set.
 
 
 def report_categories(results, mapping):
@@ -429,6 +523,8 @@ def report_categories(results, mapping):
             if not scope_rows:
                 continue
             print("  {0}:".format(scope_label))
+            _print_cell("worst (max over all 4 edges)",
+                        [x[mapping]["worst"] for x in scope_rows])
             _print_cell("U edges (u_lo, u_hi)", _edge_values(scope_rows, mapping, U_EDGES))
             _print_cell("V edges (v_lo, v_hi)", _edge_values(scope_rows, mapping, V_EDGES))
             for e in EDGES:
@@ -456,11 +552,16 @@ def report_mapping_comparison(results, names):
 
 
 def write_per_element_csv(path, results, names):
-    fields = ["view", "elem_id", "category", "clipped",
-              "px_c0", "px_r0", "px_c1", "px_r1",
-              "fpp", "effective_dpi", "requested_export_dpi", "cap_applied"]
+    fields = ["view", "elem_id", "category", "near_face_w",
+              "clipped", "touches_image_edge",
+              "px_c0", "px_r0", "px_c1", "px_r1", "px_count", "px_w", "px_h",
+              "ref_du_ft", "ref_dv_ft", "ref_aspect",
+              "fpp", "effective_dpi", "requested_export_dpi", "cap_applied",
+              "view_scale", "pad_x", "pad_y"]
     for n in names:
         fields += ["{0}_{1}".format(n, e) for e in EDGES]
+        fields += ["{0}_worst_ft".format(n), "{0}_worst_px".format(n),
+                   "{0}_worst_edge".format(n)]
     with open(path, "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=fields)
         w.writeheader()
@@ -469,16 +570,25 @@ def write_per_element_csv(path, results, names):
             for row in r["rows"]:
                 rec = {
                     "view": r["view"], "elem_id": row["elem_id"],
-                    "category": row["category"], "clipped": int(row["clipped"]),
+                    "category": row["category"], "near_face_w": row["near_face_w"],
+                    "clipped": int(row["clipped"]),
+                    "touches_image_edge": int(row["touches_image_edge"]),
                     "px_c0": row["px_c0"], "px_r0": row["px_r0"],
                     "px_c1": row["px_c1"], "px_r1": row["px_r1"],
+                    "px_count": row["px_count"], "px_w": row["px_w"],
+                    "px_h": row["px_h"], "ref_du_ft": row["ref_du_ft"],
+                    "ref_dv_ft": row["ref_dv_ft"], "ref_aspect": row["ref_aspect"],
                     "fpp": r["fpp"], "effective_dpi": cap["effective_dpi"],
                     "requested_export_dpi": cap["requested_export_dpi"],
-                    "cap_applied": cap["cap_applied"],
+                    "cap_applied": cap["cap_applied"], "view_scale": cap["view_scale"],
+                    "pad_x": r["pad_x"], "pad_y": r["pad_y"],
                 }
                 for n in names:
                     for e in EDGES:
                         rec["{0}_{1}".format(n, e)] = row[n][e]
+                    rec["{0}_worst_ft".format(n)] = row[n]["worst"]
+                    rec["{0}_worst_px".format(n)] = row[n]["worst_px"]
+                    rec["{0}_worst_edge".format(n)] = row[n]["worst_edge"]
                 w.writerow(rec)
     print("\nper-element CSV written: {0}".format(path))
 
