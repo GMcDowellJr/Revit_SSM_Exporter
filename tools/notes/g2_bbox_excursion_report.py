@@ -295,7 +295,14 @@ def measure_view(sidecar_path, mappings):
 
     res = sidecar.get("resolution") or {}
     aw, ah = res.get("actual_w"), res.get("actual_h")
-    dims = (float(aw), float(ah)) if (aw and ah) else (float(image_w), float(image_h))
+    # The producer's recorded export size, or None -- deliberately NOT
+    # pre-resolved to this image's own dimensions here. clamp_pad_geometry()
+    # already owns that fallback (`float(measured_w) if measured_w else
+    # float(image_w)`), and computing it a second time at the call site is the
+    # "one quantity derived in two places" shape CLAUDE.md records. The
+    # numbers are identical either way; the point is that there is one
+    # derivation of them, so the two cannot drift.
+    dims = (aw or None, ah or None)
     fpp, pad_x, pad_y = clamp_pad_geometry(
         bounds, image_w, image_h, measured_w=dims[0], measured_h=dims[1])
 
