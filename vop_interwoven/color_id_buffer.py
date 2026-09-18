@@ -2658,27 +2658,44 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     # feet_per_pixel from -- so taking it here is what makes this field
     # equal view_scale / (12 * feet_per_pixel) rather than merely close to it.
     #
-    # The FITTED axis is the right one to divide: PixelSize sets it and the
-    # post-export dimension check verifies it came back within 1 px of the
-    # request, so a clamp pad on the fitted axis would have failed that check.
-    # The derived axis carries the pad and is not usable here.
+    # BOTH AXES, AND THE SMALLER ANSWER WINS. requested_axis must NOT select
+    # the axis here. ExportImage's aspect clamp pads the short axis, and the
+    # fitted axis can BE the short one: an 80 x 4 ft crop under vertical fit
+    # comes back 400 x 40 px, where the 40 px height is the axis PixelSize
+    # set AND the axis carrying 10 px of pad on each side. The dimension
+    # check passes -- the padded height is exactly the requested 40 -- so it
+    # cannot be used to argue the fitted axis is unpadded. Dividing by the
+    # fitted axis there counts pad as rendered crop and reports 80 dpi where
+    # the truth is 40.
     #
-    # None whenever any term is missing -- the dimensions could not be read,
-    # or no crop could be applied (FitToPage's auto extent, which this code
-    # never learns). There is then no measurement to report, and substituting
-    # the request is the exact confusion this field exists to end.
-    _actual_fit_px = (dim_report.get("actual_h") if requested_axis == "height"
-                      else dim_report.get("actual_w"))
-    _crop_fit_ft = None
-    if crop_bounds_xy is not None:
-        _crop_fit_ft = (float(crop_bounds_xy[3]) - float(crop_bounds_xy[1])
-                        if requested_axis == "height"
-                        else float(crop_bounds_xy[2]) - float(crop_bounds_xy[0]))
+    # The padded axis carries more pixels than its extent warrants, so it
+    # always reports the LARGER dpi; the unpadded axis is the truth. Taking
+    # the minimum of the two per-axis figures selects the unpadded one
+    # without needing the aspect limit, the pad, or which axis was fitted.
+    #
+    # This is the same selection tools/clamp_pad_geometry.py makes as
+    # max(crop_u/w, crop_v/h) -- stated in dpi rather than feet-per-pixel,
+    # since min(a/x, b/y) is the reciprocal of max(x/a, y/b). It is written
+    # out rather than imported because vop_interwoven is deployed by copying
+    # the package into Revit/Dynamo (see README) and must not depend on
+    # tools/. The equality with the decoder is pinned by
+    # tests/test_effective_export_dpi.py rather than left to this comment.
+    #
+    # None whenever any term is missing -- either dimension could not be
+    # read, or no crop could be applied (FitToPage's auto extent, which this
+    # code never learns). There is then no measurement to report, and
+    # substituting the request is the exact confusion this field exists to
+    # end.
     effective_export_dpi = None
-    if _actual_fit_px and _crop_fit_ft and _crop_fit_ft > 0 and scale > 0:
-        # paper inches along the fitted axis = model feet * 12 / view scale
-        _paper_rendered_in = _crop_fit_ft * 12.0 / scale
-        effective_export_dpi = float(_actual_fit_px) / _paper_rendered_in
+    _aw_px, _ah_px = dim_report.get("actual_w"), dim_report.get("actual_h")
+    if crop_bounds_xy is not None and _aw_px and _ah_px and scale > 0:
+        _crop_u_ft = float(crop_bounds_xy[2]) - float(crop_bounds_xy[0])
+        _crop_v_ft = float(crop_bounds_xy[3]) - float(crop_bounds_xy[1])
+        if _crop_u_ft > 0.0 and _crop_v_ft > 0.0:
+            # paper inches along an axis = model feet * 12 / view scale
+            _dpi_u = float(_aw_px) / (_crop_u_ft * 12.0 / scale)
+            _dpi_v = float(_ah_px) / (_crop_v_ft * 12.0 / scale)
+            effective_export_dpi = min(_dpi_u, _dpi_v)
 
     state_out = {
         "view_id": view_id,
@@ -2690,7 +2707,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             # been consumed as a measurement once. Nothing here verifies that
             # Revit delivered it; effective_export_dpi below is the measurement.
             "requested_export_dpi": export_dpi,
-            # The dpi the exported file actually carries along requested_axis,
+            # The dpi the exported file actually carries on its UNPADDED axis,
             # measured against the RENDERED CROP (see above). Identically
             # view_scale / (12 * feet_per_pixel) for the feet_per_pixel a
             # decoder derives from this same sidecar's "bounds_xy", so the
