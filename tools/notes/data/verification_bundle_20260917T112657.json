@@ -1,0 +1,2108 @@
+{
+  "L0_manifest": {
+    "bundle_schema_version": "1.1",
+    "config_hash": "a493722f",
+    "config_hash_note": "a change in this value is CONFIGURATION_DRIFT under the existing campaign-fingerprint semantics and supersedes prior jobs",
+    "declared_cache_mode": "unknown",
+    "document": null,
+    "document_provenance": "NOT DECLARED. No bundle CSV carries the document identity, so it is absent rather than inferred.",
+    "exporter_versions": [
+      "vop_interwoven"
+    ],
+    "lossiness": "THIS BUNDLE IS LOSSY. It is a reviewable summary, not the run. Absence of a quantity here does NOT mean absence from the data. Every input file is checksummed above; read them, not this, when the question is what the run contained.",
+    "path": "geometry",
+    "path_provenance": "declared by the operator via --path and recorded here. No CSV column discriminates the path: RowSource is a hardcoded constant written unconditionally by both paths.",
+    "rows": {
+      "views_core": {
+        "rows_dropped_from_cache": 4,
+        "rows_read": 12,
+        "rows_retained": 8,
+        "why_dropped": "FromCache is True (invariant 2)"
+      },
+      "views_occlusion": {
+        "rows_dropped_from_cache": null,
+        "rows_read": 6,
+        "rows_retained": 6,
+        "why_dropped": "no FromCache column in this role; nothing could be identified as cached, so the dropped count is UNKNOWN, not zero"
+      },
+      "views_perf": {
+        "rows_dropped_from_cache": null,
+        "rows_read": 12,
+        "rows_retained": 12,
+        "why_dropped": "no FromCache column in this role; nothing could be identified as cached, so the dropped count is UNKNOWN, not zero"
+      },
+      "views_vop": {
+        "rows_dropped_from_cache": 4,
+        "rows_read": 12,
+        "rows_retained": 8,
+        "why_dropped": "FromCache is True (invariant 2)"
+      }
+    },
+    "run_id": "20260917T112657_2025-02-03.rvt",
+    "run_ids_observed": [
+      "20260917T112657_2025-02-03.rvt"
+    ],
+    "source_artifacts": {
+      "bundle_dir": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\KSRF_byGeom",
+      "diagnostics_json": null,
+      "files": {
+        "views_core": {
+          "bytes": 3391,
+          "file": "views_core_2025-02-03.rvt.csv",
+          "sha256": "d5635b456031b41c81ac1beaebf9dd323f9f2181371fc37ebe5934c23fcd2a59"
+        },
+        "views_occlusion": {
+          "bytes": 1099,
+          "file": "views_occlusion_2025-02-03.rvt.csv",
+          "sha256": "9f3325622ea29e4c262b49ce97755cab7bc8c055e2227e5145946dbc2433ecaa"
+        },
+        "views_perf": {
+          "bytes": 4100,
+          "file": "views_perf_2025-02-03.rvt.csv",
+          "sha256": "7e0f61f7ca6767c20534b8a457c5a964def5aee2fd70acbbc3e5aa499e6a3549"
+        },
+        "views_vop": {
+          "bytes": 3558,
+          "file": "views_vop_2025-02-03.rvt.csv",
+          "sha256": "c8e049ac531c5b9fd2da10c7b63320059caa9b0b7a223e069e6e36a0acf4dfb0"
+        }
+      },
+      "roles_absent": []
+    },
+    "tool": "verify_invariant_core",
+    "tool_sha256": "b10cd46e5d6b39efde1cbf9371bf6435db7d686f889da126889c9b6e6c13d861"
+  },
+  "L1_per_view": [
+    {
+      "ambiguous_in": [
+        "views_perf"
+      ],
+      "anno_cells": {
+        "DETAIL": 0.0,
+        "DIM": 657.0,
+        "LINES": 913.0,
+        "OTHER": 0.0,
+        "REGION": 0.0,
+        "TAG": 108.0,
+        "TEXT": 3344.0
+      },
+      "cap_triggered_cell_size": false,
+      "cell_size_effective_ft": 0.010417,
+      "cell_size_ratio_effective_over_requested": 1.0,
+      "cell_size_requested_ft": 0.010417,
+      "cell_total_a_filled_cells": null,
+      "cell_total_b_components": null,
+      "cell_total_b_sum": null,
+      "cell_total_ratio_b_over_a": null,
+      "grid_cells": null,
+      "grid_height": null,
+      "grid_width": null,
+      "is_on_sheet": false,
+      "present_in": {
+        "views_core": true,
+        "views_perf": false,
+        "views_vop": true
+      },
+      "resolution_mode": "canonical",
+      "run_id": "20260917T112657_2025-02-03.rvt",
+      "total_cells_declared": 10368.0,
+      "view_frame_hash": "0be35ad0",
+      "view_id": 29165,
+      "view_name": "Stantec Graphic Standards - Text & Dim Styles (Imperial)",
+      "view_type": "DraftingView"
+    },
+    {
+      "ambiguous_in": [
+        "views_perf"
+      ],
+      "anno_cells": {
+        "DETAIL": 0.0,
+        "DIM": 0.0,
+        "LINES": 4.0,
+        "OTHER": 0.0,
+        "REGION": 0.0,
+        "TAG": 99.0,
+        "TEXT": 601.0
+      },
+      "cap_triggered_cell_size": false,
+      "cell_size_effective_ft": 0.010417,
+      "cell_size_ratio_effective_over_requested": 1.0,
+      "cell_size_requested_ft": 0.010417,
+      "cell_total_a_filled_cells": null,
+      "cell_total_b_components": null,
+      "cell_total_b_sum": null,
+      "cell_total_ratio_b_over_a": null,
+      "grid_cells": null,
+      "grid_height": null,
+      "grid_width": null,
+      "is_on_sheet": false,
+      "present_in": {
+        "views_core": true,
+        "views_perf": false,
+        "views_vop": true
+      },
+      "resolution_mode": "canonical",
+      "run_id": "20260917T112657_2025-02-03.rvt",
+      "total_cells_declared": 1820.0,
+      "view_frame_hash": "1ec3801d",
+      "view_id": 141459,
+      "view_name": "Architectural Symbols Legend",
+      "view_type": "Legend"
+    },
+    {
+      "ambiguous_in": [
+        "views_perf"
+      ],
+      "anno_cells": {
+        "DETAIL": 0.0,
+        "DIM": 0.0,
+        "LINES": 0.0,
+        "OTHER": 0.0,
+        "REGION": 0.0,
+        "TAG": 0.0,
+        "TEXT": 0.0
+      },
+      "cap_triggered_cell_size": true,
+      "cell_size_effective_ft": 2.848365,
+      "cell_size_ratio_effective_over_requested": 2.848365,
+      "cell_size_requested_ft": 1.0,
+      "cell_total_a_filled_cells": null,
+      "cell_total_b_components": null,
+      "cell_total_b_sum": null,
+      "cell_total_ratio_b_over_a": null,
+      "grid_cells": null,
+      "grid_height": null,
+      "grid_width": null,
+      "is_on_sheet": false,
+      "present_in": {
+        "views_core": true,
+        "views_perf": false,
+        "views_vop": true
+      },
+      "resolution_mode": "adaptive",
+      "run_id": "20260917T112657_2025-02-03.rvt",
+      "total_cells_declared": 97920.0,
+      "view_frame_hash": "1d851332",
+      "view_id": 146925,
+      "view_name": "SEA LEVEL",
+      "view_type": "CeilingPlan"
+    },
+    {
+      "ambiguous_in": [],
+      "anno_cells": {
+        "DETAIL": 0.0,
+        "DIM": 0.0,
+        "LINES": 0.0,
+        "OTHER": 0.0,
+        "REGION": 1074.0,
+        "TAG": 0.0,
+        "TEXT": 0.0
+      },
+      "cap_triggered_cell_size": true,
+      "cell_size_effective_ft": 4.55968,
+      "cell_size_ratio_effective_over_requested": 4.55968,
+      "cell_size_requested_ft": 1.0,
+      "cell_total_a_filled_cells": 5778.0,
+      "cell_total_b_components": {
+        "AnnoOnly": 2.0,
+        "ModelOnly": 5006.0,
+        "Overlap": 1072.0
+      },
+      "cell_total_b_sum": 6080.0,
+      "cell_total_ratio_b_over_a": 1.052267,
+      "grid_cells": 100800,
+      "grid_height": 288,
+      "grid_width": 350,
+      "is_on_sheet": false,
+      "present_in": {
+        "views_core": true,
+        "views_perf": true,
+        "views_vop": true
+      },
+      "resolution_mode": "adaptive",
+      "run_id": "20260917T112657_2025-02-03.rvt",
+      "total_cells_declared": 100800.0,
+      "view_frame_hash": "1c1b4f43",
+      "view_id": 542078,
+      "view_name": "(E) HOSPITAL - LEVEL 1",
+      "view_type": "FloorPlan"
+    },
+    {
+      "ambiguous_in": [],
+      "anno_cells": {
+        "DETAIL": 0.0,
+        "DIM": 0.0,
+        "LINES": 0.0,
+        "OTHER": 0.0,
+        "REGION": 737.0,
+        "TAG": 0.0,
+        "TEXT": 0.0
+      },
+      "cap_triggered_cell_size": true,
+      "cell_size_effective_ft": 4.55968,
+      "cell_size_ratio_effective_over_requested": 4.55968,
+      "cell_size_requested_ft": 1.0,
+      "cell_total_a_filled_cells": 3715.0,
+      "cell_total_b_components": {
+        "AnnoOnly": 2.0,
+        "ModelOnly": 3130.0,
+        "Overlap": 735.0
+      },
+      "cell_total_b_sum": 3867.0,
+      "cell_total_ratio_b_over_a": 1.040915,
+      "grid_cells": 100800,
+      "grid_height": 288,
+      "grid_width": 350,
+      "is_on_sheet": false,
+      "present_in": {
+        "views_core": true,
+        "views_perf": true,
+        "views_vop": true
+      },
+      "resolution_mode": "adaptive",
+      "run_id": "20260917T112657_2025-02-03.rvt",
+      "total_cells_declared": 100800.0,
+      "view_frame_hash": "1c1b4f43",
+      "view_id": 554620,
+      "view_name": "(E) HOSPITAL - LEVEL 5",
+      "view_type": "FloorPlan"
+    },
+    {
+      "ambiguous_in": [],
+      "anno_cells": {
+        "DETAIL": 0.0,
+        "DIM": 0.0,
+        "LINES": 0.0,
+        "OTHER": 0.0,
+        "REGION": 0.0,
+        "TAG": 0.0,
+        "TEXT": 0.0
+      },
+      "cap_triggered_cell_size": false,
+      "cell_size_effective_ft": 1.0,
+      "cell_size_ratio_effective_over_requested": 1.0,
+      "cell_size_requested_ft": 1.0,
+      "cell_total_a_filled_cells": 1521.0,
+      "cell_total_b_components": {
+        "AnnoOnly": 0.0,
+        "ModelOnly": 1768.0,
+        "Overlap": 0.0
+      },
+      "cell_total_b_sum": 1768.0,
+      "cell_total_ratio_b_over_a": 1.162393,
+      "grid_cells": 2425,
+      "grid_height": 25,
+      "grid_width": 97,
+      "is_on_sheet": false,
+      "present_in": {
+        "views_core": true,
+        "views_perf": true,
+        "views_vop": true
+      },
+      "resolution_mode": "canonical",
+      "run_id": "20260917T112657_2025-02-03.rvt",
+      "total_cells_declared": 2425.0,
+      "view_frame_hash": "6147c316",
+      "view_id": 630733,
+      "view_name": "Elevation 5 - a",
+      "view_type": "Elevation"
+    },
+    {
+      "ambiguous_in": [],
+      "anno_cells": {
+        "DETAIL": 0.0,
+        "DIM": 0.0,
+        "LINES": 0.0,
+        "OTHER": 0.0,
+        "REGION": 0.0,
+        "TAG": 0.0,
+        "TEXT": 0.0
+      },
+      "cap_triggered_cell_size": false,
+      "cell_size_effective_ft": 1.0,
+      "cell_size_ratio_effective_over_requested": 1.0,
+      "cell_size_requested_ft": 1.0,
+      "cell_total_a_filled_cells": 1530.0,
+      "cell_total_b_components": {
+        "AnnoOnly": 0.0,
+        "ModelOnly": 1942.0,
+        "Overlap": 0.0
+      },
+      "cell_total_b_sum": 1942.0,
+      "cell_total_ratio_b_over_a": 1.269281,
+      "grid_cells": 7904,
+      "grid_height": 152,
+      "grid_width": 52,
+      "is_on_sheet": false,
+      "present_in": {
+        "views_core": true,
+        "views_perf": true,
+        "views_vop": true
+      },
+      "resolution_mode": "canonical",
+      "run_id": "20260917T112657_2025-02-03.rvt",
+      "total_cells_declared": 7904.0,
+      "view_frame_hash": "6147c316",
+      "view_id": 770742,
+      "view_name": "Elevation 9 - a",
+      "view_type": "Elevation"
+    },
+    {
+      "ambiguous_in": [
+        "views_perf"
+      ],
+      "anno_cells": {
+        "DETAIL": 0.0,
+        "DIM": 0.0,
+        "LINES": 0.0,
+        "OTHER": 0.0,
+        "REGION": 0.0,
+        "TAG": 0.0,
+        "TEXT": 0.0
+      },
+      "cap_triggered_cell_size": true,
+      "cell_size_effective_ft": 1.383326,
+      "cell_size_ratio_effective_over_requested": 1.383326,
+      "cell_size_requested_ft": 1.0,
+      "cell_total_a_filled_cells": null,
+      "cell_total_b_components": null,
+      "cell_total_b_sum": null,
+      "cell_total_ratio_b_over_a": null,
+      "grid_cells": null,
+      "grid_height": null,
+      "grid_width": null,
+      "is_on_sheet": false,
+      "present_in": {
+        "views_core": true,
+        "views_perf": false,
+        "views_vop": true
+      },
+      "resolution_mode": "adaptive",
+      "run_id": "20260917T112657_2025-02-03.rvt",
+      "total_cells_declared": 12288.0,
+      "view_frame_hash": "e6b7dcd2",
+      "view_id": 864834,
+      "view_name": "Section 1",
+      "view_type": "Section"
+    }
+  ],
+  "L2_per_category": {
+    "CeilingPlan": {
+      "categories_not_evaluable": [],
+      "cells": {
+        "OTHER_ROLLUP": {
+          "categories_rolled_in": [
+            "TEXT",
+            "TAG",
+            "DIM",
+            "DETAIL",
+            "LINES",
+            "REGION",
+            "OTHER"
+          ],
+          "category": "OTHER_ROLLUP",
+          "distinct_from": "the AnnoCells_OTHER annotation bucket, which is a real category and rolls in here like any other when its own n is below the floor",
+          "n": 0,
+          "per_category_n": {
+            "DETAIL": 0,
+            "DIM": 0,
+            "LINES": 0,
+            "OTHER": 0,
+            "REGION": 0,
+            "TAG": 0,
+            "TEXT": 0
+          },
+          "sum": 0.0,
+          "summary": {
+            "label": "CeilingPlan/OTHER_ROLLUP",
+            "n": 0,
+            "n_min_order_statistic": 8,
+            "n_missing": 0,
+            "suppressed": {
+              "n": 0,
+              "reason": "no non-null observations"
+            }
+          }
+        }
+      },
+      "n_min_rollup": 8,
+      "n_views": 1,
+      "view_type": "CeilingPlan"
+    },
+    "DraftingView": {
+      "categories_not_evaluable": [],
+      "cells": {
+        "OTHER_ROLLUP": {
+          "categories_rolled_in": [
+            "TEXT",
+            "TAG",
+            "DIM",
+            "DETAIL",
+            "LINES",
+            "REGION",
+            "OTHER"
+          ],
+          "category": "OTHER_ROLLUP",
+          "distinct_from": "the AnnoCells_OTHER annotation bucket, which is a real category and rolls in here like any other when its own n is below the floor",
+          "n": 4,
+          "per_category_n": {
+            "DETAIL": 0,
+            "DIM": 1,
+            "LINES": 1,
+            "OTHER": 0,
+            "REGION": 0,
+            "TAG": 1,
+            "TEXT": 1
+          },
+          "sum": 5022.0,
+          "summary": {
+            "label": "DraftingView/OTHER_ROLLUP",
+            "max": 3344.0,
+            "min": 108.0,
+            "n": 4,
+            "n_min_order_statistic": 8,
+            "n_missing": 0,
+            "suppressed": {
+              "n": 4,
+              "reason": "n=4 < n_min=8; median and quantiles withheld"
+            }
+          }
+        }
+      },
+      "n_min_rollup": 8,
+      "n_views": 1,
+      "view_type": "DraftingView"
+    },
+    "Elevation": {
+      "categories_not_evaluable": [],
+      "cells": {
+        "OTHER_ROLLUP": {
+          "categories_rolled_in": [
+            "TEXT",
+            "TAG",
+            "DIM",
+            "DETAIL",
+            "LINES",
+            "REGION",
+            "OTHER"
+          ],
+          "category": "OTHER_ROLLUP",
+          "distinct_from": "the AnnoCells_OTHER annotation bucket, which is a real category and rolls in here like any other when its own n is below the floor",
+          "n": 0,
+          "per_category_n": {
+            "DETAIL": 0,
+            "DIM": 0,
+            "LINES": 0,
+            "OTHER": 0,
+            "REGION": 0,
+            "TAG": 0,
+            "TEXT": 0
+          },
+          "sum": 0.0,
+          "summary": {
+            "label": "Elevation/OTHER_ROLLUP",
+            "n": 0,
+            "n_min_order_statistic": 8,
+            "n_missing": 0,
+            "suppressed": {
+              "n": 0,
+              "reason": "no non-null observations"
+            }
+          }
+        }
+      },
+      "n_min_rollup": 8,
+      "n_views": 2,
+      "view_type": "Elevation"
+    },
+    "FloorPlan": {
+      "categories_not_evaluable": [],
+      "cells": {
+        "OTHER_ROLLUP": {
+          "categories_rolled_in": [
+            "TEXT",
+            "TAG",
+            "DIM",
+            "DETAIL",
+            "LINES",
+            "REGION",
+            "OTHER"
+          ],
+          "category": "OTHER_ROLLUP",
+          "distinct_from": "the AnnoCells_OTHER annotation bucket, which is a real category and rolls in here like any other when its own n is below the floor",
+          "n": 2,
+          "per_category_n": {
+            "DETAIL": 0,
+            "DIM": 0,
+            "LINES": 0,
+            "OTHER": 0,
+            "REGION": 2,
+            "TAG": 0,
+            "TEXT": 0
+          },
+          "sum": 1811.0,
+          "summary": {
+            "label": "FloorPlan/OTHER_ROLLUP",
+            "max": 1074.0,
+            "min": 737.0,
+            "n": 2,
+            "n_min_order_statistic": 8,
+            "n_missing": 0,
+            "suppressed": {
+              "n": 2,
+              "reason": "n=2 < n_min=8; median and quantiles withheld"
+            }
+          }
+        }
+      },
+      "n_min_rollup": 8,
+      "n_views": 2,
+      "view_type": "FloorPlan"
+    },
+    "Legend": {
+      "categories_not_evaluable": [],
+      "cells": {
+        "OTHER_ROLLUP": {
+          "categories_rolled_in": [
+            "TEXT",
+            "TAG",
+            "DIM",
+            "DETAIL",
+            "LINES",
+            "REGION",
+            "OTHER"
+          ],
+          "category": "OTHER_ROLLUP",
+          "distinct_from": "the AnnoCells_OTHER annotation bucket, which is a real category and rolls in here like any other when its own n is below the floor",
+          "n": 3,
+          "per_category_n": {
+            "DETAIL": 0,
+            "DIM": 0,
+            "LINES": 1,
+            "OTHER": 0,
+            "REGION": 0,
+            "TAG": 1,
+            "TEXT": 1
+          },
+          "sum": 704.0,
+          "summary": {
+            "label": "Legend/OTHER_ROLLUP",
+            "max": 601.0,
+            "min": 4.0,
+            "n": 3,
+            "n_min_order_statistic": 8,
+            "n_missing": 0,
+            "suppressed": {
+              "n": 3,
+              "reason": "n=3 < n_min=8; median and quantiles withheld"
+            }
+          }
+        }
+      },
+      "n_min_rollup": 8,
+      "n_views": 1,
+      "view_type": "Legend"
+    },
+    "Section": {
+      "categories_not_evaluable": [],
+      "cells": {
+        "OTHER_ROLLUP": {
+          "categories_rolled_in": [
+            "TEXT",
+            "TAG",
+            "DIM",
+            "DETAIL",
+            "LINES",
+            "REGION",
+            "OTHER"
+          ],
+          "category": "OTHER_ROLLUP",
+          "distinct_from": "the AnnoCells_OTHER annotation bucket, which is a real category and rolls in here like any other when its own n is below the floor",
+          "n": 0,
+          "per_category_n": {
+            "DETAIL": 0,
+            "DIM": 0,
+            "LINES": 0,
+            "OTHER": 0,
+            "REGION": 0,
+            "TAG": 0,
+            "TEXT": 0
+          },
+          "sum": 0.0,
+          "summary": {
+            "label": "Section/OTHER_ROLLUP",
+            "n": 0,
+            "n_min_order_statistic": 8,
+            "n_missing": 0,
+            "suppressed": {
+              "n": 0,
+              "reason": "no non-null observations"
+            }
+          }
+        }
+      },
+      "n_min_rollup": 8,
+      "n_views": 1,
+      "view_type": "Section"
+    }
+  },
+  "L3_exemplars": {
+    "below_target_min": true,
+    "below_target_note": "fewer exemplars than the target minimum means the rule yielded that many over this bundle; nothing is padded to reach 20",
+    "exemplars": [
+      {
+        "row": {
+          "ambiguous_in": [
+            "views_perf"
+          ],
+          "anno_cells": {
+            "DETAIL": 0.0,
+            "DIM": 657.0,
+            "LINES": 913.0,
+            "OTHER": 0.0,
+            "REGION": 0.0,
+            "TAG": 108.0,
+            "TEXT": 3344.0
+          },
+          "cap_triggered_cell_size": false,
+          "cell_size_effective_ft": 0.010417,
+          "cell_size_ratio_effective_over_requested": 1.0,
+          "cell_size_requested_ft": 0.010417,
+          "cell_total_a_filled_cells": null,
+          "cell_total_b_components": null,
+          "cell_total_b_sum": null,
+          "cell_total_ratio_b_over_a": null,
+          "grid_cells": null,
+          "grid_height": null,
+          "grid_width": null,
+          "is_on_sheet": false,
+          "present_in": {
+            "views_core": true,
+            "views_perf": false,
+            "views_vop": true
+          },
+          "resolution_mode": "canonical",
+          "run_id": "20260917T112657_2025-02-03.rvt",
+          "total_cells_declared": 10368.0,
+          "view_frame_hash": "0be35ad0",
+          "view_id": 29165,
+          "view_name": "Stantec Graphic Standards - Text & Dim Styles (Imperial)",
+          "view_type": "DraftingView"
+        },
+        "run_id": "20260917T112657_2025-02-03.rvt",
+        "selection_reason": "named by a violation",
+        "view_id": 29165,
+        "view_name": "Stantec Graphic Standards - Text & Dim Styles (Imperial)",
+        "view_type": "DraftingView"
+      },
+      {
+        "row": {
+          "ambiguous_in": [
+            "views_perf"
+          ],
+          "anno_cells": {
+            "DETAIL": 0.0,
+            "DIM": 657.0,
+            "LINES": 913.0,
+            "OTHER": 0.0,
+            "REGION": 0.0,
+            "TAG": 108.0,
+            "TEXT": 3344.0
+          },
+          "cap_triggered_cell_size": false,
+          "cell_size_effective_ft": 0.010417,
+          "cell_size_ratio_effective_over_requested": 1.0,
+          "cell_size_requested_ft": 0.010417,
+          "cell_total_a_filled_cells": null,
+          "cell_total_b_components": null,
+          "cell_total_b_sum": null,
+          "cell_total_ratio_b_over_a": null,
+          "grid_cells": null,
+          "grid_height": null,
+          "grid_width": null,
+          "is_on_sheet": false,
+          "present_in": {
+            "views_core": true,
+            "views_perf": false,
+            "views_vop": true
+          },
+          "resolution_mode": "canonical",
+          "run_id": "20260917T112657_2025-02-03.rvt",
+          "total_cells_declared": 10368.0,
+          "view_frame_hash": "0be35ad0",
+          "view_id": 29165,
+          "view_name": "Stantec Graphic Standards - Text & Dim Styles (Imperial)",
+          "view_type": "DraftingView"
+        },
+        "run_id": "20260917T112657_2025-02-03.rvt",
+        "selection_reason": "view max annotation category: TEXT=3344.0",
+        "view_id": 29165,
+        "view_name": "Stantec Graphic Standards - Text & Dim Styles (Imperial)",
+        "view_type": "DraftingView"
+      },
+      {
+        "row": {
+          "ambiguous_in": [
+            "views_perf"
+          ],
+          "anno_cells": {
+            "DETAIL": 0.0,
+            "DIM": 657.0,
+            "LINES": 913.0,
+            "OTHER": 0.0,
+            "REGION": 0.0,
+            "TAG": 108.0,
+            "TEXT": 3344.0
+          },
+          "cap_triggered_cell_size": false,
+          "cell_size_effective_ft": 0.010417,
+          "cell_size_ratio_effective_over_requested": 1.0,
+          "cell_size_requested_ft": 0.010417,
+          "cell_total_a_filled_cells": null,
+          "cell_total_b_components": null,
+          "cell_total_b_sum": null,
+          "cell_total_ratio_b_over_a": null,
+          "grid_cells": null,
+          "grid_height": null,
+          "grid_width": null,
+          "is_on_sheet": false,
+          "present_in": {
+            "views_core": true,
+            "views_perf": false,
+            "views_vop": true
+          },
+          "resolution_mode": "canonical",
+          "run_id": "20260917T112657_2025-02-03.rvt",
+          "total_cells_declared": 10368.0,
+          "view_frame_hash": "0be35ad0",
+          "view_id": 29165,
+          "view_name": "Stantec Graphic Standards - Text & Dim Styles (Imperial)",
+          "view_type": "DraftingView"
+        },
+        "run_id": "20260917T112657_2025-02-03.rvt",
+        "selection_reason": "view min annotation category: TAG=108.0",
+        "view_id": 29165,
+        "view_name": "Stantec Graphic Standards - Text & Dim Styles (Imperial)",
+        "view_type": "DraftingView"
+      },
+      {
+        "row": {
+          "ambiguous_in": [
+            "views_perf"
+          ],
+          "anno_cells": {
+            "DETAIL": 0.0,
+            "DIM": 0.0,
+            "LINES": 4.0,
+            "OTHER": 0.0,
+            "REGION": 0.0,
+            "TAG": 99.0,
+            "TEXT": 601.0
+          },
+          "cap_triggered_cell_size": false,
+          "cell_size_effective_ft": 0.010417,
+          "cell_size_ratio_effective_over_requested": 1.0,
+          "cell_size_requested_ft": 0.010417,
+          "cell_total_a_filled_cells": null,
+          "cell_total_b_components": null,
+          "cell_total_b_sum": null,
+          "cell_total_ratio_b_over_a": null,
+          "grid_cells": null,
+          "grid_height": null,
+          "grid_width": null,
+          "is_on_sheet": false,
+          "present_in": {
+            "views_core": true,
+            "views_perf": false,
+            "views_vop": true
+          },
+          "resolution_mode": "canonical",
+          "run_id": "20260917T112657_2025-02-03.rvt",
+          "total_cells_declared": 1820.0,
+          "view_frame_hash": "1ec3801d",
+          "view_id": 141459,
+          "view_name": "Architectural Symbols Legend",
+          "view_type": "Legend"
+        },
+        "run_id": "20260917T112657_2025-02-03.rvt",
+        "selection_reason": "named by a violation",
+        "view_id": 141459,
+        "view_name": "Architectural Symbols Legend",
+        "view_type": "Legend"
+      },
+      {
+        "row": {
+          "ambiguous_in": [
+            "views_perf"
+          ],
+          "anno_cells": {
+            "DETAIL": 0.0,
+            "DIM": 0.0,
+            "LINES": 4.0,
+            "OTHER": 0.0,
+            "REGION": 0.0,
+            "TAG": 99.0,
+            "TEXT": 601.0
+          },
+          "cap_triggered_cell_size": false,
+          "cell_size_effective_ft": 0.010417,
+          "cell_size_ratio_effective_over_requested": 1.0,
+          "cell_size_requested_ft": 0.010417,
+          "cell_total_a_filled_cells": null,
+          "cell_total_b_components": null,
+          "cell_total_b_sum": null,
+          "cell_total_ratio_b_over_a": null,
+          "grid_cells": null,
+          "grid_height": null,
+          "grid_width": null,
+          "is_on_sheet": false,
+          "present_in": {
+            "views_core": true,
+            "views_perf": false,
+            "views_vop": true
+          },
+          "resolution_mode": "canonical",
+          "run_id": "20260917T112657_2025-02-03.rvt",
+          "total_cells_declared": 1820.0,
+          "view_frame_hash": "1ec3801d",
+          "view_id": 141459,
+          "view_name": "Architectural Symbols Legend",
+          "view_type": "Legend"
+        },
+        "run_id": "20260917T112657_2025-02-03.rvt",
+        "selection_reason": "view max annotation category: TEXT=601.0",
+        "view_id": 141459,
+        "view_name": "Architectural Symbols Legend",
+        "view_type": "Legend"
+      },
+      {
+        "row": {
+          "ambiguous_in": [
+            "views_perf"
+          ],
+          "anno_cells": {
+            "DETAIL": 0.0,
+            "DIM": 0.0,
+            "LINES": 4.0,
+            "OTHER": 0.0,
+            "REGION": 0.0,
+            "TAG": 99.0,
+            "TEXT": 601.0
+          },
+          "cap_triggered_cell_size": false,
+          "cell_size_effective_ft": 0.010417,
+          "cell_size_ratio_effective_over_requested": 1.0,
+          "cell_size_requested_ft": 0.010417,
+          "cell_total_a_filled_cells": null,
+          "cell_total_b_components": null,
+          "cell_total_b_sum": null,
+          "cell_total_ratio_b_over_a": null,
+          "grid_cells": null,
+          "grid_height": null,
+          "grid_width": null,
+          "is_on_sheet": false,
+          "present_in": {
+            "views_core": true,
+            "views_perf": false,
+            "views_vop": true
+          },
+          "resolution_mode": "canonical",
+          "run_id": "20260917T112657_2025-02-03.rvt",
+          "total_cells_declared": 1820.0,
+          "view_frame_hash": "1ec3801d",
+          "view_id": 141459,
+          "view_name": "Architectural Symbols Legend",
+          "view_type": "Legend"
+        },
+        "run_id": "20260917T112657_2025-02-03.rvt",
+        "selection_reason": "view min annotation category: LINES=4.0",
+        "view_id": 141459,
+        "view_name": "Architectural Symbols Legend",
+        "view_type": "Legend"
+      },
+      {
+        "row": {
+          "ambiguous_in": [
+            "views_perf"
+          ],
+          "anno_cells": {
+            "DETAIL": 0.0,
+            "DIM": 0.0,
+            "LINES": 0.0,
+            "OTHER": 0.0,
+            "REGION": 0.0,
+            "TAG": 0.0,
+            "TEXT": 0.0
+          },
+          "cap_triggered_cell_size": true,
+          "cell_size_effective_ft": 2.848365,
+          "cell_size_ratio_effective_over_requested": 2.848365,
+          "cell_size_requested_ft": 1.0,
+          "cell_total_a_filled_cells": null,
+          "cell_total_b_components": null,
+          "cell_total_b_sum": null,
+          "cell_total_ratio_b_over_a": null,
+          "grid_cells": null,
+          "grid_height": null,
+          "grid_width": null,
+          "is_on_sheet": false,
+          "present_in": {
+            "views_core": true,
+            "views_perf": false,
+            "views_vop": true
+          },
+          "resolution_mode": "adaptive",
+          "run_id": "20260917T112657_2025-02-03.rvt",
+          "total_cells_declared": 97920.0,
+          "view_frame_hash": "1d851332",
+          "view_id": 146925,
+          "view_name": "SEA LEVEL",
+          "view_type": "CeilingPlan"
+        },
+        "run_id": "20260917T112657_2025-02-03.rvt",
+        "selection_reason": "named by a violation",
+        "view_id": 146925,
+        "view_name": "SEA LEVEL",
+        "view_type": "CeilingPlan"
+      },
+      {
+        "row": {
+          "ambiguous_in": [],
+          "anno_cells": {
+            "DETAIL": 0.0,
+            "DIM": 0.0,
+            "LINES": 0.0,
+            "OTHER": 0.0,
+            "REGION": 1074.0,
+            "TAG": 0.0,
+            "TEXT": 0.0
+          },
+          "cap_triggered_cell_size": true,
+          "cell_size_effective_ft": 4.55968,
+          "cell_size_ratio_effective_over_requested": 4.55968,
+          "cell_size_requested_ft": 1.0,
+          "cell_total_a_filled_cells": 5778.0,
+          "cell_total_b_components": {
+            "AnnoOnly": 2.0,
+            "ModelOnly": 5006.0,
+            "Overlap": 1072.0
+          },
+          "cell_total_b_sum": 6080.0,
+          "cell_total_ratio_b_over_a": 1.052267,
+          "grid_cells": 100800,
+          "grid_height": 288,
+          "grid_width": 350,
+          "is_on_sheet": false,
+          "present_in": {
+            "views_core": true,
+            "views_perf": true,
+            "views_vop": true
+          },
+          "resolution_mode": "adaptive",
+          "run_id": "20260917T112657_2025-02-03.rvt",
+          "total_cells_declared": 100800.0,
+          "view_frame_hash": "1c1b4f43",
+          "view_id": 542078,
+          "view_name": "(E) HOSPITAL - LEVEL 1",
+          "view_type": "FloorPlan"
+        },
+        "run_id": "20260917T112657_2025-02-03.rvt",
+        "selection_reason": "median draw by grid_cells",
+        "view_id": 542078,
+        "view_name": "(E) HOSPITAL - LEVEL 1",
+        "view_type": "FloorPlan"
+      },
+      {
+        "row": {
+          "ambiguous_in": [],
+          "anno_cells": {
+            "DETAIL": 0.0,
+            "DIM": 0.0,
+            "LINES": 0.0,
+            "OTHER": 0.0,
+            "REGION": 1074.0,
+            "TAG": 0.0,
+            "TEXT": 0.0
+          },
+          "cap_triggered_cell_size": true,
+          "cell_size_effective_ft": 4.55968,
+          "cell_size_ratio_effective_over_requested": 4.55968,
+          "cell_size_requested_ft": 1.0,
+          "cell_total_a_filled_cells": 5778.0,
+          "cell_total_b_components": {
+            "AnnoOnly": 2.0,
+            "ModelOnly": 5006.0,
+            "Overlap": 1072.0
+          },
+          "cell_total_b_sum": 6080.0,
+          "cell_total_ratio_b_over_a": 1.052267,
+          "grid_cells": 100800,
+          "grid_height": 288,
+          "grid_width": 350,
+          "is_on_sheet": false,
+          "present_in": {
+            "views_core": true,
+            "views_perf": true,
+            "views_vop": true
+          },
+          "resolution_mode": "adaptive",
+          "run_id": "20260917T112657_2025-02-03.rvt",
+          "total_cells_declared": 100800.0,
+          "view_frame_hash": "1c1b4f43",
+          "view_id": 542078,
+          "view_name": "(E) HOSPITAL - LEVEL 1",
+          "view_type": "FloorPlan"
+        },
+        "run_id": "20260917T112657_2025-02-03.rvt",
+        "selection_reason": "named by a violation",
+        "view_id": 542078,
+        "view_name": "(E) HOSPITAL - LEVEL 1",
+        "view_type": "FloorPlan"
+      },
+      {
+        "row": {
+          "ambiguous_in": [],
+          "anno_cells": {
+            "DETAIL": 0.0,
+            "DIM": 0.0,
+            "LINES": 0.0,
+            "OTHER": 0.0,
+            "REGION": 1074.0,
+            "TAG": 0.0,
+            "TEXT": 0.0
+          },
+          "cap_triggered_cell_size": true,
+          "cell_size_effective_ft": 4.55968,
+          "cell_size_ratio_effective_over_requested": 4.55968,
+          "cell_size_requested_ft": 1.0,
+          "cell_total_a_filled_cells": 5778.0,
+          "cell_total_b_components": {
+            "AnnoOnly": 2.0,
+            "ModelOnly": 5006.0,
+            "Overlap": 1072.0
+          },
+          "cell_total_b_sum": 6080.0,
+          "cell_total_ratio_b_over_a": 1.052267,
+          "grid_cells": 100800,
+          "grid_height": 288,
+          "grid_width": 350,
+          "is_on_sheet": false,
+          "present_in": {
+            "views_core": true,
+            "views_perf": true,
+            "views_vop": true
+          },
+          "resolution_mode": "adaptive",
+          "run_id": "20260917T112657_2025-02-03.rvt",
+          "total_cells_declared": 100800.0,
+          "view_frame_hash": "1c1b4f43",
+          "view_id": 542078,
+          "view_name": "(E) HOSPITAL - LEVEL 1",
+          "view_type": "FloorPlan"
+        },
+        "run_id": "20260917T112657_2025-02-03.rvt",
+        "selection_reason": "view max annotation category: REGION=1074.0",
+        "view_id": 542078,
+        "view_name": "(E) HOSPITAL - LEVEL 1",
+        "view_type": "FloorPlan"
+      },
+      {
+        "row": {
+          "ambiguous_in": [],
+          "anno_cells": {
+            "DETAIL": 0.0,
+            "DIM": 0.0,
+            "LINES": 0.0,
+            "OTHER": 0.0,
+            "REGION": 737.0,
+            "TAG": 0.0,
+            "TEXT": 0.0
+          },
+          "cap_triggered_cell_size": true,
+          "cell_size_effective_ft": 4.55968,
+          "cell_size_ratio_effective_over_requested": 4.55968,
+          "cell_size_requested_ft": 1.0,
+          "cell_total_a_filled_cells": 3715.0,
+          "cell_total_b_components": {
+            "AnnoOnly": 2.0,
+            "ModelOnly": 3130.0,
+            "Overlap": 735.0
+          },
+          "cell_total_b_sum": 3867.0,
+          "cell_total_ratio_b_over_a": 1.040915,
+          "grid_cells": 100800,
+          "grid_height": 288,
+          "grid_width": 350,
+          "is_on_sheet": false,
+          "present_in": {
+            "views_core": true,
+            "views_perf": true,
+            "views_vop": true
+          },
+          "resolution_mode": "adaptive",
+          "run_id": "20260917T112657_2025-02-03.rvt",
+          "total_cells_declared": 100800.0,
+          "view_frame_hash": "1c1b4f43",
+          "view_id": 554620,
+          "view_name": "(E) HOSPITAL - LEVEL 5",
+          "view_type": "FloorPlan"
+        },
+        "run_id": "20260917T112657_2025-02-03.rvt",
+        "selection_reason": "named by a violation",
+        "view_id": 554620,
+        "view_name": "(E) HOSPITAL - LEVEL 5",
+        "view_type": "FloorPlan"
+      },
+      {
+        "row": {
+          "ambiguous_in": [],
+          "anno_cells": {
+            "DETAIL": 0.0,
+            "DIM": 0.0,
+            "LINES": 0.0,
+            "OTHER": 0.0,
+            "REGION": 737.0,
+            "TAG": 0.0,
+            "TEXT": 0.0
+          },
+          "cap_triggered_cell_size": true,
+          "cell_size_effective_ft": 4.55968,
+          "cell_size_ratio_effective_over_requested": 4.55968,
+          "cell_size_requested_ft": 1.0,
+          "cell_total_a_filled_cells": 3715.0,
+          "cell_total_b_components": {
+            "AnnoOnly": 2.0,
+            "ModelOnly": 3130.0,
+            "Overlap": 735.0
+          },
+          "cell_total_b_sum": 3867.0,
+          "cell_total_ratio_b_over_a": 1.040915,
+          "grid_cells": 100800,
+          "grid_height": 288,
+          "grid_width": 350,
+          "is_on_sheet": false,
+          "present_in": {
+            "views_core": true,
+            "views_perf": true,
+            "views_vop": true
+          },
+          "resolution_mode": "adaptive",
+          "run_id": "20260917T112657_2025-02-03.rvt",
+          "total_cells_declared": 100800.0,
+          "view_frame_hash": "1c1b4f43",
+          "view_id": 554620,
+          "view_name": "(E) HOSPITAL - LEVEL 5",
+          "view_type": "FloorPlan"
+        },
+        "run_id": "20260917T112657_2025-02-03.rvt",
+        "selection_reason": "view max annotation category: REGION=737.0",
+        "view_id": 554620,
+        "view_name": "(E) HOSPITAL - LEVEL 5",
+        "view_type": "FloorPlan"
+      },
+      {
+        "row": {
+          "ambiguous_in": [],
+          "anno_cells": {
+            "DETAIL": 0.0,
+            "DIM": 0.0,
+            "LINES": 0.0,
+            "OTHER": 0.0,
+            "REGION": 0.0,
+            "TAG": 0.0,
+            "TEXT": 0.0
+          },
+          "cap_triggered_cell_size": false,
+          "cell_size_effective_ft": 1.0,
+          "cell_size_ratio_effective_over_requested": 1.0,
+          "cell_size_requested_ft": 1.0,
+          "cell_total_a_filled_cells": 1521.0,
+          "cell_total_b_components": {
+            "AnnoOnly": 0.0,
+            "ModelOnly": 1768.0,
+            "Overlap": 0.0
+          },
+          "cell_total_b_sum": 1768.0,
+          "cell_total_ratio_b_over_a": 1.162393,
+          "grid_cells": 2425,
+          "grid_height": 25,
+          "grid_width": 97,
+          "is_on_sheet": false,
+          "present_in": {
+            "views_core": true,
+            "views_perf": true,
+            "views_vop": true
+          },
+          "resolution_mode": "canonical",
+          "run_id": "20260917T112657_2025-02-03.rvt",
+          "total_cells_declared": 2425.0,
+          "view_frame_hash": "6147c316",
+          "view_id": 630733,
+          "view_name": "Elevation 5 - a",
+          "view_type": "Elevation"
+        },
+        "run_id": "20260917T112657_2025-02-03.rvt",
+        "selection_reason": "named by a violation",
+        "view_id": 630733,
+        "view_name": "Elevation 5 - a",
+        "view_type": "Elevation"
+      },
+      {
+        "row": {
+          "ambiguous_in": [],
+          "anno_cells": {
+            "DETAIL": 0.0,
+            "DIM": 0.0,
+            "LINES": 0.0,
+            "OTHER": 0.0,
+            "REGION": 0.0,
+            "TAG": 0.0,
+            "TEXT": 0.0
+          },
+          "cap_triggered_cell_size": false,
+          "cell_size_effective_ft": 1.0,
+          "cell_size_ratio_effective_over_requested": 1.0,
+          "cell_size_requested_ft": 1.0,
+          "cell_total_a_filled_cells": 1530.0,
+          "cell_total_b_components": {
+            "AnnoOnly": 0.0,
+            "ModelOnly": 1942.0,
+            "Overlap": 0.0
+          },
+          "cell_total_b_sum": 1942.0,
+          "cell_total_ratio_b_over_a": 1.269281,
+          "grid_cells": 7904,
+          "grid_height": 152,
+          "grid_width": 52,
+          "is_on_sheet": false,
+          "present_in": {
+            "views_core": true,
+            "views_perf": true,
+            "views_vop": true
+          },
+          "resolution_mode": "canonical",
+          "run_id": "20260917T112657_2025-02-03.rvt",
+          "total_cells_declared": 7904.0,
+          "view_frame_hash": "6147c316",
+          "view_id": 770742,
+          "view_name": "Elevation 9 - a",
+          "view_type": "Elevation"
+        },
+        "run_id": "20260917T112657_2025-02-03.rvt",
+        "selection_reason": "named by a violation",
+        "view_id": 770742,
+        "view_name": "Elevation 9 - a",
+        "view_type": "Elevation"
+      },
+      {
+        "row": {
+          "ambiguous_in": [
+            "views_perf"
+          ],
+          "anno_cells": {
+            "DETAIL": 0.0,
+            "DIM": 0.0,
+            "LINES": 0.0,
+            "OTHER": 0.0,
+            "REGION": 0.0,
+            "TAG": 0.0,
+            "TEXT": 0.0
+          },
+          "cap_triggered_cell_size": true,
+          "cell_size_effective_ft": 1.383326,
+          "cell_size_ratio_effective_over_requested": 1.383326,
+          "cell_size_requested_ft": 1.0,
+          "cell_total_a_filled_cells": null,
+          "cell_total_b_components": null,
+          "cell_total_b_sum": null,
+          "cell_total_ratio_b_over_a": null,
+          "grid_cells": null,
+          "grid_height": null,
+          "grid_width": null,
+          "is_on_sheet": false,
+          "present_in": {
+            "views_core": true,
+            "views_perf": false,
+            "views_vop": true
+          },
+          "resolution_mode": "adaptive",
+          "run_id": "20260917T112657_2025-02-03.rvt",
+          "total_cells_declared": 12288.0,
+          "view_frame_hash": "e6b7dcd2",
+          "view_id": 864834,
+          "view_name": "Section 1",
+          "view_type": "Section"
+        },
+        "run_id": "20260917T112657_2025-02-03.rvt",
+        "selection_reason": "named by a violation",
+        "view_id": 864834,
+        "view_name": "Section 1",
+        "view_type": "Section"
+      }
+    ],
+    "over_cap_note": "violation exemplars are reserved before truncation, so the cap can be exceeded rather than drop one; a non-zero violation_exemplars_over_cap records by how much",
+    "selected": 15,
+    "selection_rule": "each view's max and min annotation category; every view named by a violation; one median draw by grid_cells",
+    "target_range": [
+      20,
+      40
+    ],
+    "truncated": 0,
+    "truncated_are_all_lower_priority": true,
+    "violation_exemplars": 8,
+    "violation_exemplars_over_cap": 0
+  },
+  "L4_violation_register": {
+    "baseline_seed_run": "20260917T112500",
+    "baseline_seed_warning": "That run is DIRTY. The baseline seeds the EXISTENCE of these violations only. The recorded figures are an example of the data type and are not evidence, not ground truth, and not a prior.",
+    "carried_from_baseline": [
+      {
+        "absence_means": "NOTHING. This tool version has no detector for it, so its absence from this run's findings is not evidence of a fix.",
+        "baseline_status": "KNOWN_OPEN_UNDETECTED",
+        "detector": null,
+        "detector_mode": "NO_DETECTOR",
+        "first_observed_run": "20260917T112500",
+        "summary": "A FromCache row carries mixed provenance: ResolutionMode adaptive->canonical, CapTriggered True->False, CellSizeRequested rewritten to equal Effective, element and timing counts zeroed -- while CollectMs / RasterGeomExtractMs / RasterCellWriteMs copy through verbatim.",
+        "violation_id": "I2.CACHE_REHYDRATION_PROVENANCE",
+        "why_no_detector": "Invariant 2 DROPS FromCache rows, so they leave the population before any comparison. Detecting this needs a fresh-vs-cached row comparison that the cache redesign (7.1) may make moot. Carried here so its absence from findings is never read as a fix."
+      },
+      {
+        "absence_means": "NOTHING. The detector emits measurements but asserts nothing, so it can never produce a finding to match.",
+        "baseline_status": "KNOWN_OPEN_REPORT_ONLY",
+        "detector": "I7",
+        "detector_mode": "REPORT_ONLY_NO_ASSERTION",
+        "first_observed_run": "20260917T112500",
+        "summary": "FilledCells (views_perf) and ModelOnly+Overlap+AnnoOnly (views_vop) disagree for the same view.",
+        "violation_id": "I7.CELL_TOTAL_DISAGREEMENT",
+        "why_not_asserted": "The two totals count different populations by construction. The fix is a declared definition of what each counts, not a tolerance. Out of scope for this unit."
+      }
+    ],
+    "new_violation_count": 0,
+    "new_violations": [],
+    "not_reported_as": "pass/fail",
+    "observed": [
+      {
+        "baseline_status": "KNOWN_OPEN",
+        "detail": {
+          "duplicate_keys": {
+            "20260917T112657_2025-02-03.rvt|141459": {
+              "from_cache": [
+                false,
+                true
+              ],
+              "row_indices": [
+                5,
+                9
+              ]
+            },
+            "20260917T112657_2025-02-03.rvt|146925": {
+              "from_cache": [
+                false,
+                true
+              ],
+              "row_indices": [
+                1,
+                2
+              ]
+            },
+            "20260917T112657_2025-02-03.rvt|29165": {
+              "from_cache": [
+                false,
+                true
+              ],
+              "row_indices": [
+                6,
+                10
+              ]
+            },
+            "20260917T112657_2025-02-03.rvt|864834": {
+              "from_cache": [
+                false,
+                true
+              ],
+              "row_indices": [
+                8,
+                12
+              ]
+            }
+          },
+          "role": "views_core",
+          "view_ids": [
+            29165,
+            141459,
+            146925,
+            864834
+          ]
+        },
+        "first_observed_run": "20260917T112500",
+        "invariant": "I2",
+        "summary": "views_core: 4 (RunId, ViewId) key(s) were emitted on more than one row",
+        "violation_id": "I2.DUPLICATE_VIEW_ROW"
+      },
+      {
+        "baseline_status": "KNOWN_OPEN",
+        "detail": {
+          "duplicate_keys": {
+            "20260917T112657_2025-02-03.rvt|141459": {
+              "from_cache": [
+                false,
+                true
+              ],
+              "row_indices": [
+                5,
+                9
+              ]
+            },
+            "20260917T112657_2025-02-03.rvt|146925": {
+              "from_cache": [
+                false,
+                true
+              ],
+              "row_indices": [
+                1,
+                2
+              ]
+            },
+            "20260917T112657_2025-02-03.rvt|29165": {
+              "from_cache": [
+                false,
+                true
+              ],
+              "row_indices": [
+                6,
+                10
+              ]
+            },
+            "20260917T112657_2025-02-03.rvt|864834": {
+              "from_cache": [
+                false,
+                true
+              ],
+              "row_indices": [
+                8,
+                12
+              ]
+            }
+          },
+          "role": "views_vop",
+          "view_ids": [
+            29165,
+            141459,
+            146925,
+            864834
+          ]
+        },
+        "first_observed_run": "20260917T112500",
+        "invariant": "I2",
+        "summary": "views_vop: 4 (RunId, ViewId) key(s) were emitted on more than one row",
+        "violation_id": "I2.DUPLICATE_VIEW_ROW"
+      },
+      {
+        "baseline_status": "KNOWN_OPEN",
+        "detail": {
+          "duplicate_keys": {
+            "20260917T112657_2025-02-03.rvt|141459": {
+              "from_cache": [
+                false,
+                false
+              ],
+              "row_indices": [
+                5,
+                9
+              ]
+            },
+            "20260917T112657_2025-02-03.rvt|146925": {
+              "from_cache": [
+                false,
+                false
+              ],
+              "row_indices": [
+                1,
+                2
+              ]
+            },
+            "20260917T112657_2025-02-03.rvt|29165": {
+              "from_cache": [
+                false,
+                false
+              ],
+              "row_indices": [
+                6,
+                10
+              ]
+            },
+            "20260917T112657_2025-02-03.rvt|864834": {
+              "from_cache": [
+                false,
+                false
+              ],
+              "row_indices": [
+                8,
+                12
+              ]
+            }
+          },
+          "role": "views_perf",
+          "view_ids": [
+            29165,
+            141459,
+            146925,
+            864834
+          ]
+        },
+        "first_observed_run": "20260917T112500",
+        "invariant": "I2",
+        "summary": "views_perf: 4 (RunId, ViewId) key(s) were emitted on more than one row",
+        "violation_id": "I2.DUPLICATE_VIEW_ROW"
+      },
+      {
+        "baseline_status": "KNOWN_OPEN",
+        "detail": {
+          "collisions": {
+            "1c1b4f43": [
+              {
+                "cells": 100800,
+                "height": 288,
+                "view_id": 542078,
+                "width": 350
+              },
+              {
+                "cells": 100800,
+                "height": 288,
+                "view_id": 554620,
+                "width": 350
+              }
+            ],
+            "6147c316": [
+              {
+                "cells": 2425,
+                "height": 25,
+                "view_id": 630733,
+                "width": 97
+              },
+              {
+                "cells": 7904,
+                "height": 152,
+                "view_id": 770742,
+                "width": 52
+              }
+            ]
+          }
+        },
+        "first_observed_run": "20260917T112500",
+        "invariant": "I8",
+        "summary": "2 ViewFrameHash value(s) cover more than one distinct (ViewId, grid dims) key",
+        "violation_id": "I8.VIEW_FRAME_HASH_COLLISION"
+      }
+    ],
+    "reported_as": "register"
+  },
+  "bundle_schema_version": "1.1",
+  "invariants": {
+    "I1": {
+      "distinct_run_ids": [
+        "20260917T112657_2025-02-03.rvt"
+      ],
+      "id": "I1",
+      "name": "single RunId per bundle",
+      "per_role_run_ids": {
+        "views_core": [
+          "20260917T112657_2025-02-03.rvt"
+        ],
+        "views_occlusion": [
+          "20260917T112657_2025-02-03.rvt"
+        ],
+        "views_perf": [
+          "20260917T112657_2025-02-03.rvt"
+        ],
+        "views_vop": [
+          "20260917T112657_2025-02-03.rvt"
+        ]
+      },
+      "run_id": "20260917T112657_2025-02-03.rvt",
+      "status": "HOLDS"
+    },
+    "I2": {
+      "cache_expectation": "NONE DECLARED. No count is expected in either direction: the cache is under review, and an assertion here would encode current behaviour as a rule.",
+      "declared_cache_mode": "unknown",
+      "id": "I2",
+      "name": "one row per (RunId, ViewId, path); FromCache dropped and counted",
+      "path_note": "path is declared at bundle level (L0), so within this bundle the key reduces to (RunId, ViewId)",
+      "per_role": {
+        "views_core": {
+          "distinct_keys_emitted": 8,
+          "distinct_keys_retained": 8,
+          "duplicate_keys": {
+            "20260917T112657_2025-02-03.rvt|141459": {
+              "from_cache": [
+                false,
+                true
+              ],
+              "row_indices": [
+                5,
+                9
+              ]
+            },
+            "20260917T112657_2025-02-03.rvt|146925": {
+              "from_cache": [
+                false,
+                true
+              ],
+              "row_indices": [
+                1,
+                2
+              ]
+            },
+            "20260917T112657_2025-02-03.rvt|29165": {
+              "from_cache": [
+                false,
+                true
+              ],
+              "row_indices": [
+                6,
+                10
+              ]
+            },
+            "20260917T112657_2025-02-03.rvt|864834": {
+              "from_cache": [
+                false,
+                true
+              ],
+              "row_indices": [
+                8,
+                12
+              ]
+            }
+          },
+          "duplicate_keys_counted_over": "every emitted row, BEFORE the FromCache filter: a fresh row plus a cached row for one view is a duplicate emission, and filtering first would hide exactly that case",
+          "from_cache_column_present": true,
+          "rows_dropped_from_cache": 4,
+          "rows_read": 12,
+          "rows_retained": 8,
+          "status": "VIOLATED"
+        },
+        "views_occlusion": {
+          "distinct_keys_emitted": 6,
+          "distinct_keys_retained": 6,
+          "duplicate_keys": {},
+          "duplicate_keys_counted_over": "every emitted row, BEFORE the FromCache filter: a fresh row plus a cached row for one view is a duplicate emission, and filtering first would hide exactly that case",
+          "from_cache_column_present": false,
+          "from_cache_note": "this role has no FromCache column, so cached rows in it cannot be identified or counted; the dropped count is unknown, not zero",
+          "rows_dropped_from_cache": null,
+          "rows_read": 6,
+          "rows_retained": 6,
+          "status": "HOLDS"
+        },
+        "views_perf": {
+          "distinct_keys_emitted": 8,
+          "distinct_keys_retained": 8,
+          "duplicate_keys": {
+            "20260917T112657_2025-02-03.rvt|141459": {
+              "from_cache": [
+                false,
+                false
+              ],
+              "row_indices": [
+                5,
+                9
+              ]
+            },
+            "20260917T112657_2025-02-03.rvt|146925": {
+              "from_cache": [
+                false,
+                false
+              ],
+              "row_indices": [
+                1,
+                2
+              ]
+            },
+            "20260917T112657_2025-02-03.rvt|29165": {
+              "from_cache": [
+                false,
+                false
+              ],
+              "row_indices": [
+                6,
+                10
+              ]
+            },
+            "20260917T112657_2025-02-03.rvt|864834": {
+              "from_cache": [
+                false,
+                false
+              ],
+              "row_indices": [
+                8,
+                12
+              ]
+            }
+          },
+          "duplicate_keys_counted_over": "every emitted row, BEFORE the FromCache filter: a fresh row plus a cached row for one view is a duplicate emission, and filtering first would hide exactly that case",
+          "from_cache_column_present": false,
+          "from_cache_note": "this role has no FromCache column, so cached rows in it cannot be identified or counted; the dropped count is unknown, not zero",
+          "rows_dropped_from_cache": null,
+          "rows_read": 12,
+          "rows_retained": 12,
+          "status": "VIOLATED"
+        },
+        "views_vop": {
+          "distinct_keys_emitted": 8,
+          "distinct_keys_retained": 8,
+          "duplicate_keys": {
+            "20260917T112657_2025-02-03.rvt|141459": {
+              "from_cache": [
+                false,
+                true
+              ],
+              "row_indices": [
+                5,
+                9
+              ]
+            },
+            "20260917T112657_2025-02-03.rvt|146925": {
+              "from_cache": [
+                false,
+                true
+              ],
+              "row_indices": [
+                1,
+                2
+              ]
+            },
+            "20260917T112657_2025-02-03.rvt|29165": {
+              "from_cache": [
+                false,
+                true
+              ],
+              "row_indices": [
+                6,
+                10
+              ]
+            },
+            "20260917T112657_2025-02-03.rvt|864834": {
+              "from_cache": [
+                false,
+                true
+              ],
+              "row_indices": [
+                8,
+                12
+              ]
+            }
+          },
+          "duplicate_keys_counted_over": "every emitted row, BEFORE the FromCache filter: a fresh row plus a cached row for one view is a duplicate emission, and filtering first would hide exactly that case",
+          "from_cache_column_present": true,
+          "rows_dropped_from_cache": 4,
+          "rows_read": 12,
+          "rows_retained": 8,
+          "status": "VIOLATED"
+        }
+      },
+      "status": "VIOLATED",
+      "total_rows_dropped_from_cache": 8
+    },
+    "I3": {
+      "id": "I3",
+      "name": "capped/adaptive => IsOnSheet False (one-way)",
+      "per_cap": {
+        "CELL_SIZE_CAP": {
+          "antecedent_rows": 4,
+          "antecedent_rows_indeterminate": 0,
+          "cap_field": "CapTriggered",
+          "converse": "NOT ASSERTED AND NOT INFERRED. A non-capped view is not thereby sheeted.",
+          "direction": "capped/adaptive => IsOnSheet False",
+          "indeterminate_covers": "both an unpopulated IsOnSheet on a capped/adaptive row, and an unpopulated CapTriggered/ResolutionMode on an on-sheet row",
+          "is_on_sheet_distinct_values": [
+            "False"
+          ],
+          "is_on_sheet_false_count": 8,
+          "is_on_sheet_true_count": 0,
+          "is_on_sheet_unpopulated_count": 0,
+          "reason": "no row carries IsOnSheet True, so the column cannot distinguish 'nothing is on a sheet' from 'the viewport scan never ran'. Reporting HOLDS here would report clean for precisely the reason the data is uninformative. Self-retires on the first run containing a True.",
+          "source": "views_core",
+          "status": "NOT_EXERCISED"
+        },
+        "EXPORT_PIXEL_CAP": {
+          "cap_field": "cap_applied",
+          "reason": "the sidecar is not one of this bundle's inputs (the bundle is the four CSVs); this cap is named here so that the CELL_SIZE_CAP result below is never read as covering it",
+          "source": "color-ID sidecar JSON",
+          "status": "NOT_EVALUABLE"
+        }
+      },
+      "status": "NOT_EXERCISED"
+    },
+    "I4": {
+      "assertion": "the PAIR ships; requested == effective is NOT asserted",
+      "id": "I4",
+      "name": "every requested value ships with effective + ratio",
+      "per_role": {
+        "views_core": {
+          "measured": [
+            {
+              "pair": {
+                "effective": "CellSizeEffective_ft",
+                "requested": "CellSizeRequested_ft"
+              },
+              "ratio_summary": {
+                "label": "views_core.CellSizeRequested_ft effective/requested",
+                "max": 4.55968,
+                "min": 1.0,
+                "n": 8,
+                "n_min_order_statistic": 8,
+                "n_missing": 0,
+                "order_statistics": {
+                  "median": 1.191663,
+                  "p10": 1.0,
+                  "p90": 4.55968
+                }
+              },
+              "rows_total": 8,
+              "rows_where_requested_equals_effective": 4
+            }
+          ],
+          "pairs": [
+            {
+              "effective": "CellSizeEffective_ft",
+              "requested": "CellSizeRequested_ft"
+            }
+          ],
+          "requested_columns": [
+            "CellSizeRequested_ft"
+          ],
+          "rows_missing_effective": [],
+          "status": "HOLDS",
+          "unpaired_requested_columns": []
+        },
+        "views_occlusion": {
+          "pairs": [],
+          "reason": "this role emits no Requested column",
+          "requested_columns": [],
+          "status": "NOT_EXERCISED",
+          "unpaired_requested_columns": []
+        },
+        "views_perf": {
+          "pairs": [],
+          "reason": "this role emits no Requested column",
+          "requested_columns": [],
+          "status": "NOT_EXERCISED",
+          "unpaired_requested_columns": []
+        },
+        "views_vop": {
+          "measured": [
+            {
+              "pair": {
+                "effective": "CellSizeEffective_ft",
+                "requested": "CellSizeRequested_ft"
+              },
+              "ratio_summary": {
+                "label": "views_vop.CellSizeRequested_ft effective/requested",
+                "max": 4.55968,
+                "min": 1.0,
+                "n": 8,
+                "n_min_order_statistic": 8,
+                "n_missing": 0,
+                "order_statistics": {
+                  "median": 1.191663,
+                  "p10": 1.0,
+                  "p90": 4.55968
+                }
+              },
+              "rows_total": 8,
+              "rows_where_requested_equals_effective": 4
+            }
+          ],
+          "pairs": [
+            {
+              "effective": "CellSizeEffective_ft",
+              "requested": "CellSizeRequested_ft"
+            }
+          ],
+          "requested_columns": [
+            "CellSizeRequested_ft"
+          ],
+          "rows_missing_effective": [],
+          "status": "HOLDS",
+          "unpaired_requested_columns": []
+        }
+      },
+      "status": "HOLDS"
+    },
+    "I5": {
+      "id": "I5",
+      "is_a_tolerance": false,
+      "n_min_order_statistic": 8,
+      "name": "no summary statistic without n",
+      "rationale": "lifted from MIN_N_FOR_SUMMARY in tools/notes/g2_bbox_excursion_report.py: at n >= 8 at least three observations sit strictly each side of the median and both quartiles land at interior ranks. That argument covers order statistics and nothing else.",
+      "scope": "order statistics only (median, p10, p90). Counts, sums, ratios, min and max are reported at ANY n, always with n alongside.",
+      "status": "REPORT_ONLY",
+      "suppression_is_visible": "a withheld statistic is emitted as a 'suppressed' record carrying n and the reason -- never omitted, because an absent key and a withheld key read identically to a consumer"
+    },
+    "I6": {
+      "id": "I6",
+      "name": "row-count checksums",
+      "per_role": {
+        "views_core": {
+          "bytes": 3391,
+          "column_count": 24,
+          "distinct_run_ids": [
+            "20260917T112657_2025-02-03.rvt"
+          ],
+          "distinct_view_ids_retained": 8,
+          "file": "views_core_2025-02-03.rvt.csv",
+          "present": true,
+          "rows_dropped": 4,
+          "rows_read": 12,
+          "rows_retained": 8,
+          "sha256": "d5635b456031b41c81ac1beaebf9dd323f9f2181371fc37ebe5934c23fcd2a59"
+        },
+        "views_occlusion": {
+          "bytes": 1099,
+          "column_count": 17,
+          "distinct_run_ids": [
+            "20260917T112657_2025-02-03.rvt"
+          ],
+          "distinct_view_ids_retained": 6,
+          "file": "views_occlusion_2025-02-03.rvt.csv",
+          "present": true,
+          "rows_dropped": 0,
+          "rows_read": 6,
+          "rows_retained": 6,
+          "sha256": "9f3325622ea29e4c262b49ce97755cab7bc8c055e2227e5145946dbc2433ecaa"
+        },
+        "views_perf": {
+          "bytes": 4100,
+          "column_count": 41,
+          "distinct_run_ids": [
+            "20260917T112657_2025-02-03.rvt"
+          ],
+          "distinct_view_ids_retained": 8,
+          "file": "views_perf_2025-02-03.rvt.csv",
+          "present": true,
+          "rows_dropped": 0,
+          "rows_read": 12,
+          "rows_retained": 12,
+          "sha256": "7e0f61f7ca6767c20534b8a457c5a964def5aee2fd70acbbc3e5aa499e6a3549"
+        },
+        "views_vop": {
+          "bytes": 3558,
+          "column_count": 32,
+          "distinct_run_ids": [
+            "20260917T112657_2025-02-03.rvt"
+          ],
+          "distinct_view_ids_retained": 8,
+          "file": "views_vop_2025-02-03.rvt.csv",
+          "present": true,
+          "rows_dropped": 4,
+          "rows_read": 12,
+          "rows_retained": 8,
+          "sha256": "c8e049ac531c5b9fd2da10c7b63320059caa9b0b7a223e069e6e36a0acf4dfb0"
+        }
+      },
+      "status": "REPORT_ONLY"
+    },
+    "I7": {
+      "assertion": "NONE. No equality assertion and no tolerance -- by decision, not by omission.",
+      "id": "I7",
+      "name": "independently emitted cell totals",
+      "ratio_summary": {
+        "label": "total_b/total_a",
+        "max": 1.269281,
+        "min": 1.040915,
+        "n": 4,
+        "n_min_order_statistic": 8,
+        "n_missing": 0,
+        "suppressed": {
+          "n": 4,
+          "reason": "n=4 < n_min=8; median and quantiles withheld"
+        }
+      },
+      "status": "REPORT_ONLY",
+      "total_a": "FilledCells (views_perf)",
+      "total_b": "ModelOnly + Overlap + AnnoOnly (views_vop)",
+      "views_ambiguous": {
+        "20260917T112657_2025-02-03.rvt|141459": [
+          5,
+          9
+        ],
+        "20260917T112657_2025-02-03.rvt|146925": [
+          1,
+          2
+        ],
+        "20260917T112657_2025-02-03.rvt|29165": [
+          6,
+          10
+        ],
+        "20260917T112657_2025-02-03.rvt|864834": [
+          8,
+          12
+        ]
+      },
+      "views_ambiguous_note": "a view with more than one retained row in views_perf or views_vop is EXCLUDED from these totals: nothing says which row is authoritative, and taking either would report one row's counters as the view's. See invariant 2.",
+      "views_in_perf_only": [],
+      "views_in_vop_only": [
+        29165,
+        141459,
+        146925,
+        864834
+      ],
+      "views_joined": 4,
+      "views_where_totals_are_equal": 0
+    },
+    "I8": {
+      "collisions": {
+        "1c1b4f43": [
+          {
+            "cells": 100800,
+            "height": 288,
+            "view_id": 542078,
+            "width": 350
+          },
+          {
+            "cells": 100800,
+            "height": 288,
+            "view_id": 554620,
+            "width": 350
+          }
+        ],
+        "6147c316": [
+          {
+            "cells": 2425,
+            "height": 25,
+            "view_id": 630733,
+            "width": 97
+          },
+          {
+            "cells": 7904,
+            "height": 152,
+            "view_id": 770742,
+            "width": 52
+          }
+        ]
+      },
+      "distinct_hashes": 2,
+      "id": "I8",
+      "name": "frame-hash uniqueness across distinct (ViewId, grid dims)",
+      "rows_evaluated": 4,
+      "rows_unjoinable": [
+        {
+          "reason": "more than one retained views_perf row for this key, so its grid dimensions are ambiguous",
+          "view_id": 146925
+        },
+        {
+          "reason": "more than one retained views_perf row for this key, so its grid dimensions are ambiguous",
+          "view_id": 141459
+        },
+        {
+          "reason": "more than one retained views_perf row for this key, so its grid dimensions are ambiguous",
+          "view_id": 29165
+        },
+        {
+          "reason": "more than one retained views_perf row for this key, so its grid dimensions are ambiguous",
+          "view_id": 864834
+        }
+      ],
+      "status": "VIOLATED"
+    }
+  }
+}
