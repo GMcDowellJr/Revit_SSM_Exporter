@@ -290,6 +290,17 @@ it only ever ran its own copy. If production's arithmetic is not callable,
 `view_raster_export._crop_uv_frame()` are, and both extractions are what made
 the defect visible.
 
+**Second corollary, because the first one was not enough.** Extracting the
+formula binds the *formula*. It does not bind the *arguments* production
+passes. After `effective_export_dpi()` was extracted and every property bound
+to it, the original grid-extent defect could still be reinstated at the call
+site — `_effective_export_dpi(<grid tuple>, ...)` — with all 981 tests green,
+because the properties supply their own crop bounds and never see production's.
+A signature check cannot close this: the grid rectangle and the render crop are
+both four-value tuples. **Exercise the call site**
+(`tests/test_effective_dpi_call_site.py`), and make the two candidate
+arguments produce visibly different answers so the fixture discriminates.
+
 ### 2. An identity claimed in prose and never asserted
 
 Every one of the six violated an invariant already written in a comment above
@@ -327,6 +338,12 @@ would also pass against a harness broken outright.
 - **Green means nothing until you know what ran.** `no-bare-except` is scoped
   to `pipeline.py`, `revit/` and `core/`; it passed on a 21-file PR touching
   none of them.
+- **Know what the fake harness does NOT provide.** The shared fake
+  `Autodesk.Revit.DB` had no `XYZ`/`BoundingBoxXYZ`, so
+  `crop_box_from_uv_bounds()` raised `ImportError` and every end-to-end test
+  ran with `bounds_xy=None` — the crop path was never exercised at all. A
+  test that cannot reach the code it names is worth less than no test, so
+  pin reachability with a control case.
 
 ### Tooling that found real defects here
 
