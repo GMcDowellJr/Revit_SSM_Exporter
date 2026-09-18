@@ -265,6 +265,88 @@ cfg = Config(
 
 Check the strategy tracker output for extraction method usage and failures.
 
+## Recurring Defect Classes
+
+Six real defects shipped across PRs #200–#202 and were found by review, not by
+any check in this repo. They fall into three classes that keep recurring. Read
+this before writing a fix, not after.
+
+### 1. A quantity computed in two places, never composed
+
+`feet_per_pixel` existed as five copies; the forward and inverse uv↔pixel
+mappings drifted apart because nothing ran them back to back; the achieved-dpi
+figure disagreed with the decoder's twice in a row. `TINY/LINEAR/AREAL` is
+currently implemented three times and they disagree (issue #203).
+
+**Rule.** When two pieces of code must agree, a test must *compose* them.
+Testing each alone binds each to its own copy — see
+`tests/test_uv_pixel_round_trip.py` and `tests/test_effective_export_dpi.py`
+for the shape.
+
+**Corollary, learned the hard way.** A test that *reimplements* the thing it
+checks proves nothing: production can regress and the test stays green because
+it only ever ran its own copy. If production's arithmetic is not callable,
+**extract it** — that is what `resolution_contract.effective_export_dpi()` and
+`view_raster_export._crop_uv_frame()` are, and both extractions are what made
+the defect visible.
+
+### 2. An identity claimed in prose and never asserted
+
+Every one of the six violated an invariant already written in a comment above
+the code that broke it. Two of those comments (`resolution_contract.py:91`,
+`:112`) turned out to be *overstated* — both fail below the one-pixel floor.
+
+**Rule.** If a comment claims an identity, a universal ("always", "never",
+"identically", "cannot"), assert it over generated inputs. Property tests live
+in `tests/test_invariants_*.py`. A comment that *argues* why something is safe
+is an unasserted proof obligation, not documentation.
+
+### 3. Test infrastructure that nothing tests
+
+`tests/conftest.py` decides whether failures are reported at all, so nothing
+running inside it can observe it. Two defects shipped there — a quarantine that
+absorbed any exception, and a check that made a quarantined file unrunnable by
+node id — both invisible to the 959 tests it governed.
+
+**Rule.** Harness behaviour is checked by running pytest as a subprocess and
+asserting on its exit code: `tests/test_harness_contract.py`. Any such file
+needs a **control** asserting the unmutated copy is green, or every scenario
+would also pass against a harness broken outright.
+
+### The discipline that actually caught things
+
+- **Prove a check against a known-positive commit.** A rule you have not
+  falsified is a hope. A `semgrep` rule here returned `0` and looked clean; it
+  was verified against the wrong commit, then against the right one, where it
+  found 4. Record the SHA a check was proven against.
+- **Mutate production, not the test.** If reinstating the original defect does
+  not turn the suite red, the test is not wired to it.
+- **Watch the test count.** Rewriting a test file once truncated it, silently
+  deleting 7 cases. The suite went green at 974. Only the total dropping from
+  981 caught it.
+- **Green means nothing until you know what ran.** `no-bare-except` is scoped
+  to `pipeline.py`, `revit/` and `core/`; it passed on a 21-file PR touching
+  none of them.
+
+### Tooling that found real defects here
+
+Not installed by default; install when reviewing:
+
+```bash
+pip install vulture
+pip install --ignore-installed PyJWT semgrep   # plain install hits a Debian PyJWT conflict
+```
+
+- **`semgrep`** found the hardcoded classification threshold
+  (`pipeline.py:2396`, `:2398`) with zero false positives, and 86 instances of
+  `except X: pass` — a Refactor Rule #1 violation that
+  `check_no_bare_except.py` does not catch, because it only looks for bare
+  `except:`. Runtime is 2–3 min over `vop_interwoven/` + `tools/`.
+- **`vulture --min-confidence 80`** for dead code. At 60 it false-positives on
+  Revit API attributes set dynamically.
+- Update these rules when a new defect class appears, and record what each was
+  proven against.
+
 ## Code Quality Checks
 
 ```bash
