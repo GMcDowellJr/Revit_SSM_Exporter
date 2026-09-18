@@ -68,11 +68,21 @@ from pathlib import Path
 
 
 def handler_shape(handler):
-    """Name the syntactic shape, because that is what a pattern is blind to."""
+    """Name the syntactic shape, because that is what a pattern is blind to.
+
+    TUPLE ARITY IS PART OF THE SHAPE. `.semgrep/vop-rules.yml` enumerates tuple
+    arities one pattern at a time -- a tuple metavariable does not bind a
+    variadic exception list -- so a 4-tuple is invisible to a rule that stops at
+    3. Reporting every tuple as "except (A, B):" would hide exactly the axis the
+    rule is sensitive to, so the arity is spelled out and a new one shows up
+    here before CI has to fail to find it.
+    """
     if handler.type is None:
         return "bare `except:`"
     if isinstance(handler.type, ast.Tuple):
-        return "except (A, B) as e:" if handler.name else "except (A, B):"
+        n = len(handler.type.elts)
+        names = ", ".join(chr(ord("A") + i) for i in range(n)) if n <= 6 else "%d-tuple" % n
+        return "except (%s) as e:" % names if handler.name else "except (%s):" % names
     return "except X as e:" if handler.name else "except X:"
 
 
