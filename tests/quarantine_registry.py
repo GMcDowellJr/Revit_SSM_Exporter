@@ -15,10 +15,22 @@ tests/conftest.py enforces a two-way binding at collection time:
     collection ERROR, not a skip;
   - an entry here naming no collected test is a collection ERROR too, so a
     renamed or deleted test cannot leave a stale entry behind;
-  - each marked test runs as ``xfail(strict=True)``. Strict is the point: the
-    day the underlying defect is fixed, the suite goes RED and names the
-    entry to remove. A quarantine that quietly starts passing is how a
-    quarantine becomes permanent.
+  - each marked test runs as ``xfail(strict=True, raises=<the entry's
+    "raises">)``. BOTH halves matter, in opposite directions:
+
+      * ``strict`` turns an unexpected PASS into a failure, so the day the
+        underlying defect is fixed the suite goes RED and names the entry to
+        remove. A quarantine that quietly starts passing is how a quarantine
+        becomes permanent.
+      * ``raises`` turns an unexpected FAILURE MODE into a failure. Strict
+        says nothing about HOW a test fails: without a type, a production
+        regression that made a quarantined test raise TypeError would still
+        be reported as the expected xfail and leave the suite green. The
+        quarantine would have grown from "this one known defect" into "any
+        defect at all" without anyone deciding to widen it.
+
+    ``raises`` is therefore mandatory, and collection fails on an entry that
+    omits it.
 
 The suite is therefore green with these two present, and it is green for a
 stated reason that is checked mechanically.
@@ -30,12 +42,15 @@ architecture principle from CLAUDE.md, and in both the PRODUCTION CODE is
 what disagrees with them. Quarantining records that; it does not settle it.
 """
 
-# key: "<path relative to the repo root>::<test name>"
+# key:    "<path relative to the repo root>::<test name>"
+# raises: the ONE exception type this test is quarantined for. Anything else
+#         it raises is a new failure and must not be absorbed here.
 QUARANTINED = {
     "tests/test_occlusion_contract.py::"
     "test_rasterize_areal_loops_low_does_not_populate_rect_gate_cells": {
         "first_seen": "2026-09-17",
         "first_seen_at": "a9051f2",
+        "raises": AssertionError,
         "reason": (
             "rasterize_areal_loops() populates _out_cells for an AREAL element "
             "whose geometry came back LOW confidence via aabb_fallback. The test "
@@ -65,6 +80,7 @@ QUARANTINED = {
     "test_areal_path_extracts_geometry_once_before_raster_decompose": {
         "first_seen": "2026-09-17",
         "first_seen_at": "a9051f2",
+        "raises": AssertionError,
         "reason": (
             "A static AST contract: the per-element loop in "
             "render_model_front_to_back() must contain exactly one "
