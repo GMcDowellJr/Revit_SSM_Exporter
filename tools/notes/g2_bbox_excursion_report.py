@@ -295,14 +295,21 @@ def measure_view(sidecar_path, mappings):
 
     res = sidecar.get("resolution") or {}
     aw, ah = res.get("actual_w"), res.get("actual_h")
-    # The producer's recorded export size, or None -- deliberately NOT
-    # pre-resolved to this image's own dimensions here. clamp_pad_geometry()
-    # already owns that fallback (`float(measured_w) if measured_w else
-    # float(image_w)`), and computing it a second time at the call site is the
-    # "one quantity derived in two places" shape CLAUDE.md records. The
-    # numbers are identical either way; the point is that there is one
-    # derivation of them, so the two cannot drift.
-    dims = (aw or None, ah or None)
+    # The producer's recorded export size, ATOMICALLY: either both fields or
+    # neither. The fallback VALUE is still clamp_pad_geometry's to supply --
+    # passing None lets it use image_w/image_h, so that arithmetic is not
+    # written out a second time here.
+    #
+    # THE PAIR CANNOT BE SPLIT. clamp_pad_geometry falls back PER FIELD, so
+    # handing it one recorded dimension and one missing one silently mixes a
+    # producer width with an image height, and feet_per_pixel comes from a
+    # rectangle that never existed. On an 80x4 ft crop decoded at 400x40 px,
+    # a sidecar recording actual_w=800 with actual_h absent moves
+    # (fpp, pad_x, pad_y) from (0.2, 0, 10) to (0.1, -200, 0) -- a pad sign
+    # that reads as a dim_check mismatch when the real fault is partial
+    # metadata. Half a measurement is not a measurement, so it is refused
+    # rather than half-used.
+    dims = (aw, ah) if (aw and ah) else (None, None)
     fpp, pad_x, pad_y = clamp_pad_geometry(
         bounds, image_w, image_h, measured_w=dims[0], measured_h=dims[1])
 

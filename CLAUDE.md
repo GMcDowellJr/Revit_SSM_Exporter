@@ -398,10 +398,20 @@ pip install --ignore-installed PyJWT semgrep   # plain install hits a Debian PyJ
   are added, **179** with the tuple arities — against an AST total of **179**.
   Runtime is 2–3 min over `vop_interwoven/` + `tools/`.
 
-  **Equal counts are not the proof; equal SETS are.** The reconciliation matches
-  each semgrep span against each AST handler's line: 179 covered, 0 missed. Two
-  different populations of 179 would have passed a count check. Do the set
-  comparison.
+  **Equal counts are not the proof; equal SETS are — and coverage is not set
+  equality either.** The first version of `--reconcile` checked only that every
+  AST handler fell inside some span. Review showed that certifies an
+  arbitrarily overbroad rule: **one fabricated span per file**, first handler to
+  last, covers all 179 and exits 0 on **29 spans**. It now requires an
+  INJECTIVE assignment of spans to distinct handlers, so it fails on a handler
+  no span covers, a span covering no handler, a duplicate, and the overbroad
+  case. All four were confirmed by mutating the fixture; the real output proves
+  the bijection.
+
+  A weaker check that *names itself* after the stronger one is worse than no
+  check, and this one shipped inside the very file that records the defect
+  class. Prose is not a proof, including prose written by whoever just read
+  the rule about prose.
 
   What the sweep also showed, and neither number says on its own:
 
