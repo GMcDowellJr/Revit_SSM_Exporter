@@ -191,6 +191,12 @@ STATUS_REPORT_ONLY = "REPORT_ONLY"
 # (thinrunner_streaming.py), so those magnitudes are reachable, not theoretical.
 _INTEGER_TEXT = re.compile(r"^[+-]?[0-9]+$")
 
+# "9007199254740993.0" is an integer written in float form. Sending it through
+# float() loses the same precision as the plain form does, so the zero-fraction
+# case is stripped and parsed exactly too; only a REAL fraction ("80.5") falls
+# through to the float path, where it is refused as non-integral.
+_INTEGER_WITH_ZERO_FRACTION = re.compile(r"^([+-]?[0-9]+)\.0*$")
+
 
 class Refusal(Exception):
     """The tool cannot identify something it needs, so it declines.
@@ -359,9 +365,11 @@ def parse_int(raw, column, role, row_index):
     if raw is not None:
         text = str(raw).strip()
         if _INTEGER_TEXT.match(text):
-            # Exact. Python ints are arbitrary precision; the float path below
-            # is only for a value written in float form, such as "80.0".
+            # Exact. Python ints are arbitrary precision.
             return int(text)
+        zero_fraction = _INTEGER_WITH_ZERO_FRACTION.match(text)
+        if zero_fraction:
+            return int(zero_fraction.group(1))
     value = parse_number(raw, column, role, row_index)
     if value is None:
         return None
@@ -378,6 +386,39 @@ def _round6(value):
     if value is None:
         return None
     return round(float(value), 6)
+
+
+def _finite(value, label):
+    """Return value, or refuse when a DERIVED number is not finite.
+
+    Refusing non-finite inputs and non-finite ratios still left sums: three
+    finite 1e308 components add to inf, and if the ratio's denominator is zero
+    or absent, _ratio returns None before it would ever see the numerator. The
+    non-finite total then reaches json.dumps as Infinity regardless.
+    """
+    if value is None:
+        return None
+    # The conversion itself can raise: Python ints are arbitrary precision, so
+    # a sum of large finite components is an exact int that float() rejects
+    # with OverflowError rather than returning inf. Both outcomes are the same
+    # defect and both must refuse, not traceback.
+    try:
+        as_float = float(value)
+    except OverflowError:
+        raise Refusal(
+            "{0} overflows a float ({1} digits). Its components are "
+            "individually finite, so this is an overflow in the aggregate, "
+            "and the value cannot be represented in the bundle.".format(
+                label, len(str(abs(int(value)))))
+        )
+    if not math.isfinite(as_float):
+        raise Refusal(
+            "{0} is not finite ({1}). Its components are individually finite, "
+            "so this is an overflow in the aggregate, and emitting it would "
+            "put a non-standard JSON token in the bundle.".format(
+                label, as_float)
+        )
+    return as_float
 
 
 def _ratio(numerator, denominator, label="ratio"):
@@ -473,11 +514,38 @@ def _sha256_and_size(path):
 
 
 def read_role(path, role):
-    """Return (fieldnames, rows). Refuses on an unreadable or empty file."""
-    with open(path, "r", newline="", encoding="utf-8-sig") as handle:
-        reader = csv.DictReader(handle)
-        fieldnames = reader.fieldnames
-        rows = list(reader)
+    """Return (fieldnames, rows). Refuses on an unreadable, empty or
+    ambiguously-headed file.
+
+    A read that fails is a refusal, not a traceback: exit 1 is reserved for
+    --fail-on-new, so an unreadable input exiting 1 would let automation read
+    "could not open the file" as "verification found a new violation".
+    """
+    try:
+        with open(path, "r", newline="", encoding="utf-8-sig") as handle:
+            reader = csv.DictReader(handle)
+            fieldnames = reader.fieldnames
+            rows = list(reader)
+    except (OSError, UnicodeError, csv.Error) as exc:
+        raise Refusal(
+            "{0} ({1}) could not be read: {2}: {3}. Fix the file or its "
+            "permissions; this tool will not verify a bundle it cannot "
+            "read.".format(role, path, type(exc).__name__, exc)
+        )
+    if fieldnames:
+        seen = set()
+        repeated = sorted({name for name in fieldnames
+                           if name in seen or seen.add(name)})
+        if repeated:
+            # csv.DictReader silently keeps only the LAST value for a repeated
+            # header, so two conflicting columns of the same name change joins
+            # and invariant outcomes while the file looks unambiguous.
+            raise Refusal(
+                "{0} ({1}) repeats the header(s): {2}. DictReader keeps only "
+                "the last column of a repeated name, so the values this tool "
+                "would read are not the ones the file states. Fix the "
+                "emitter.".format(role, path, ", ".join(repeated))
+            )
     if not fieldnames:
         raise Refusal(
             "{0} ({1}) has no header row. An unheadered CSV cannot be read by "
@@ -859,6 +927,26 @@ def invariant_3_tier_one_way(loaded, retained_core):
         mode = "" if mode_raw is None else str(mode_raw).strip().lower()
         sheet_values.append(on_sheet)
         is_antecedent = (capped is True) or (mode == "adaptive")
+        # The antecedent is UNKNOWN when a component that could make it true
+        # was never written: a blank CapTriggered, or a blank ResolutionMode.
+        # Treating either as false excludes the row, and an excluded on-sheet
+        # row is precisely one that might satisfy the antecedent and violate
+        # the implication -- so excluding it can only ever produce a false
+        # clean. It matters only when the row is on a sheet: with IsOnSheet
+        # False the consequent holds whether the antecedent applies or not.
+        antecedent_unknown = (not is_antecedent) and (capped is None or mode == "")
+        if antecedent_unknown and on_sheet is True:
+            indeterminate.append({
+                "row_index": idx,
+                "view_id": entry["view_id"],
+                "cap_triggered": capped,
+                "resolution_mode": mode_raw,
+                "is_on_sheet": on_sheet,
+                "why": ("the antecedent could not be determined (CapTriggered "
+                        "or ResolutionMode unpopulated) and this row is on a "
+                        "sheet, so it may satisfy the antecedent and violate"),
+            })
+            continue
         if is_antecedent:
             antecedent_rows.append({
                 "row_index": idx,
@@ -881,6 +969,10 @@ def invariant_3_tier_one_way(loaded, retained_core):
     any_true = any(v is True for v in sheet_values)
     record["antecedent_rows"] = len(antecedent_rows)
     record["antecedent_rows_indeterminate"] = len(indeterminate)
+    record["indeterminate_covers"] = (
+        "both an unpopulated IsOnSheet on a capped/adaptive row, and an "
+        "unpopulated CapTriggered/ResolutionMode on an on-sheet row"
+    )
     record["is_on_sheet_distinct_values"] = distinct_sheet
     record["is_on_sheet_true_count"] = sum(1 for v in sheet_values if v is True)
     record["is_on_sheet_false_count"] = sum(1 for v in sheet_values if v is False)
@@ -1014,6 +1106,7 @@ def invariant_4_requested_effective(loaded, retained_by_role):
             record["status"] = STATUS_HOLDS
 
         measured = []
+        unpaired_rows = []
         for pair in pairs:
             series = []
             for entry in retained_by_role.get(role, []):
@@ -1034,6 +1127,19 @@ def invariant_4_requested_effective(loaded, retained_by_role):
                 })
             key = "{0}.{1}".format(role, pair["requested"])
             ratio_series[key] = series
+            # Header presence is not shipment. A row whose requested value is
+            # populated while its effective cell is blank did NOT ship an
+            # effective value, and certifying the invariant off the header
+            # alone is the same error as reading a column's existence as its
+            # content.
+            missing_effective = [
+                {"view_id": item["view_id"], "requested": item["requested"]}
+                for item in series
+                if item["requested"] is not None and item["effective"] is None
+            ]
+            if missing_effective:
+                unpaired_rows.append({
+                    "pair": pair, "rows": missing_effective})
             measured.append({
                 "pair": pair,
                 "ratio_summary": summarize(
@@ -1046,6 +1152,19 @@ def invariant_4_requested_effective(loaded, retained_by_role):
                 "rows_total": len(series),
             })
         record["measured"] = measured
+        record["rows_missing_effective"] = unpaired_rows
+        if unpaired_rows:
+            record["status"] = STATUS_VIOLATED
+            findings.append({
+                "violation_id": "I4.REQUESTED_WITHOUT_EFFECTIVE",
+                "invariant": "I4",
+                "summary": (
+                    "{0}: {1} row(s) carry a requested value whose effective "
+                    "cell is blank".format(
+                        role, sum(len(u["rows"]) for u in unpaired_rows))
+                ),
+                "detail": {"role": role, "rows": unpaired_rows},
+            })
         per_role[role] = record
 
     statuses = [r.get("status") for r in per_role.values()]
@@ -1153,17 +1272,20 @@ def invariant_7_cell_totals(loaded, retained_by_role):
     for key in sorted(set(perf_by_key) & set(vop_by_key), key=lambda k: k[1]):
         perf_entry = perf_by_key[key]
         vop_entry = vop_by_key[key]
-        total_a = parse_number(perf_entry["raw"].get("FilledCells"),
-                               "FilledCells", "views_perf",
-                               perf_entry["row_index"])
+        # Counts, parsed as integers: a fractional FilledCells is a malformed
+        # count, not a measurement to carry into a ratio.
+        total_a = parse_int(perf_entry["raw"].get("FilledCells"),
+                            "FilledCells", "views_perf",
+                            perf_entry["row_index"])
         parts = {}
         for column in ("ModelOnly", "Overlap", "AnnoOnly"):
-            parts[column] = parse_number(vop_entry["raw"].get(column), column,
-                                         "views_vop", vop_entry["row_index"])
+            parts[column] = parse_int(vop_entry["raw"].get(column), column,
+                                      "views_vop", vop_entry["row_index"])
         if any(v is None for v in parts.values()):
             total_b = None
         else:
-            total_b = sum(parts.values())
+            total_b = _finite(sum(parts.values()),
+                              "cell total b (view {0})".format(key[1]))
         # Keyed by the FULL join key, not by view_id alone: a bundle carrying
         # two RunIds (itself an I1 violation, but the bundle is still emitted)
         # would otherwise have both rows for a view silently share whichever
@@ -1178,7 +1300,9 @@ def invariant_7_cell_totals(loaded, retained_by_role):
                 "cell totals b/a (view {0})".format(key[1])),
             "difference_b_minus_a": (
                 None if (total_a is None or total_b is None)
-                else _round6(total_b - total_a)),
+                else _round6(_finite(
+                    float(total_b) - float(total_a),
+                    "cell total difference (view {0})".format(key[1])))),
         }
 
     record["views_joined"] = len(per_view)
@@ -1410,7 +1534,7 @@ def build_l1(retained_by_role, cell_totals_by_view):
 # L2 -- per-category, keyed (ViewType x Category)
 # ---------------------------------------------------------------------------
 
-def build_l2(l1_rows):
+def build_l2(l1_rows, absent_categories=()):
     """Cells keyed (ViewType x Category) over the AnnoCells_* buckets.
 
     n is the number of views of that ViewType carrying a NON-ZERO value for
@@ -1435,6 +1559,21 @@ def build_l2(l1_rows):
         rollup_values = []
         rollup_n = 0
         for category in ANNO_CATEGORIES:
+            if category in absent_categories:
+                # An absent HEADER is not an observed zero. Reporting n=0 and
+                # rolling it up would present a schema change -- a deleted
+                # column -- as a category that simply had no contributing
+                # views, which is what a before/after annotation comparison
+                # would then silently mis-read.
+                cells[category] = {
+                    "category": category,
+                    "status": STATUS_NOT_EVALUABLE,
+                    "reason": ("views_vop has no AnnoCells_{0} column, so "
+                               "nothing was observed for this category; that "
+                               "is not the same as observing zero"
+                               .format(category)),
+                }
+                continue
             values = [r["anno_cells"].get(category) for r in rows]
             contributing = [v for v in values if v is not None and v > 0]
             cell = {
@@ -1474,6 +1613,7 @@ def build_l2(l1_rows):
             }
         l2[view_type] = {
             "view_type": view_type,
+            "categories_not_evaluable": sorted(absent_categories),
             "n_views": len(rows),
             "n_min_rollup": N_MIN_L2_ROLLUP,
             "cells": cells,
@@ -1504,9 +1644,14 @@ def build_l3(l1_rows, findings):
     selected = {}
 
     def add(row, reason):
-        marker = (row["view_id"], reason)
+        # Keyed by (RunId, ViewId, reason). Verification deliberately
+        # continues after an I1 violation, so a bundle can hold the same
+        # ViewId under two runs; keying on view_id alone collapsed the second
+        # run's exemplars even though both rows survive in L1.
+        marker = (row["run_id"], row["view_id"], reason)
         if marker not in selected:
             selected[marker] = {
+                "run_id": row["run_id"],
                 "view_id": row["view_id"],
                 "view_name": row["view_name"],
                 "view_type": row["view_type"],
@@ -1546,14 +1691,16 @@ def build_l3(l1_rows, findings):
     # exemplar and silently discarded the second -- contradicting the
     # selection rule printed alongside it, which promises every violation.
     ordered = sorted(selected.values(),
-                     key=lambda e: (e["view_id"], e["selection_reason"]))
+                     key=lambda e: (e["run_id"], e["view_id"],
+                                    e["selection_reason"]))
     reserved = [e for e in ordered
                 if e["selection_reason"] == "named by a violation"]
     optional = [e for e in ordered
                 if e["selection_reason"] != "named by a violation"]
     room = max(L3_TARGET_MAX - len(reserved), 0)
     exemplars = sorted(reserved + optional[:room],
-                       key=lambda e: (e["view_id"], e["selection_reason"]))
+                       key=lambda e: (e["run_id"], e["view_id"],
+                                      e["selection_reason"]))
     truncated = len(optional) - min(len(optional), room)
     violations_over_cap = max(len(reserved) - L3_TARGET_MAX, 0)
     return {
@@ -1604,7 +1751,7 @@ def _walk_view_ids(node):
 # L4 -- violation register, against the known-open baseline
 # ---------------------------------------------------------------------------
 
-def build_l4(findings, run_id):
+def build_l4(findings, run_id, detector_status=None):
     """A register, never a pass/fail verdict.
 
     Every finding is classified against the known-open baseline so the
@@ -1654,10 +1801,27 @@ def build_l4(findings, run_id):
             )
             record["why_not_asserted"] = baseline.get("why_not_asserted")
         else:
-            record["baseline_status"] = "NOT_OBSERVED_THIS_RUN"
-            record["absence_means"] = (
-                "the active detector ran over this bundle and did not fire"
-            )
+            status = (detector_status or {}).get(baseline["detector"])
+            if status in (STATUS_NOT_EVALUABLE, STATUS_NOT_EXERCISED):
+                # The detector's own corrected status has to reach the
+                # register. Otherwise an invariant that declined to decide is
+                # reported here as having decided, and incomplete capture is
+                # presented as evidence the violation was absent -- the same
+                # false clean the detector itself was just fixed to refuse.
+                record["baseline_status"] = "KNOWN_OPEN_NOT_EVALUABLE"
+                record["detector_status"] = status
+                record["absence_means"] = (
+                    "NOTHING. Invariant {0} reported {1} on this bundle, so "
+                    "it did not range over the full population and its "
+                    "silence is not evidence.".format(
+                        baseline["detector"], status)
+                )
+            else:
+                record["baseline_status"] = "NOT_OBSERVED_THIS_RUN"
+                record["detector_status"] = status
+                record["absence_means"] = (
+                    "the active detector ran over this bundle and did not fire"
+                )
         carried.append(record)
 
     return {
@@ -1681,8 +1845,15 @@ def build_l4(findings, run_id):
 # ---------------------------------------------------------------------------
 
 def _single_value(loaded, column, roles):
-    """Distinct non-empty values of a column across roles."""
+    """(distinct non-empty values, count of rows where it was blank).
+
+    The blank count is RETURNED, not discarded. Dropping blanks made a column
+    that only some rows carry look unanimous, which for ConfigHash means rows
+    from an unidentified configuration get attributed to a known one -- the
+    exact drift the fingerprint exists to catch.
+    """
     values = set()
+    blank_rows = 0
     for role in roles:
         role_data = loaded.get(role)
         if role_data is None or column not in role_data["fieldnames"]:
@@ -1692,14 +1863,26 @@ def _single_value(loaded, column, roles):
             text = "" if raw is None else str(raw).strip()
             if text:
                 values.add(text)
-    return sorted(values)
+            else:
+                blank_rows += 1
+    return sorted(values), blank_rows
 
 
 def build_l0(loaded, resolved, run_ids, checksums, i2, declared, diagnostics):
-    config_hashes = _single_value(loaded, "ConfigHash",
-                                  ("views_core", "views_vop"))
-    exporter_versions = _single_value(loaded, "ExporterVersion",
-                                      ("views_core", "views_vop"))
+    config_hashes, config_hash_blanks = _single_value(
+        loaded, "ConfigHash", ("views_core", "views_vop"))
+    exporter_versions, _ = _single_value(
+        loaded, "ExporterVersion", ("views_core", "views_vop"))
+    if config_hashes and config_hash_blanks:
+        raise Refusal(
+            "INCOMPLETE_CONFIGURATION_IDENTITY: {0} row(s) across "
+            "views_core/views_vop carry no ConfigHash while {1} distinct "
+            "hash(es) appear on the others. Assigning the observed hash to "
+            "the bundle would attribute measurements from an unidentified "
+            "configuration to a known one, which is drift going unreported. "
+            "Populate ConfigHash on every row.".format(
+                config_hash_blanks, len(config_hashes))
+        )
     if len(config_hashes) > 1:
         # Reuses the EXISTING campaign-fingerprint drift semantics by name.
         # A bundle spanning two configurations is not one run, and verifying
@@ -1844,12 +2027,19 @@ def verify(bundle_dir, path, cache_mode, document=None,
     findings.extend(i8_findings)
 
     l1 = build_l1(retained_by_role, cell_totals_by_view)
-    l2 = build_l2(l1)
+    vop_fields = loaded["views_vop"]["fieldnames"]
+    absent_categories = tuple(
+        c for c in ANNO_CATEGORIES if ("AnnoCells_" + c) not in vop_fields)
+    l2 = build_l2(l1, absent_categories=absent_categories)
     l3 = build_l3(l1, findings)
 
     run_ids = i1["distinct_run_ids"]
     run_id = run_ids[0] if len(run_ids) == 1 else None
-    l4 = build_l4(findings, run_id)
+    detector_status = {
+        "I1": i1["status"], "I2": i2["status"], "I3": i3["status"],
+        "I4": i4["status"], "I7": i7["status"], "I8": i8["status"],
+    }
+    l4 = build_l4(findings, run_id, detector_status=detector_status)
 
     checksums = {}
     for role in REQUIRED_ROLES + OPTIONAL_ROLES:
@@ -1991,11 +2181,20 @@ def main(argv=None):
 
     text = json.dumps(bundle, indent=2, sort_keys=True)
     if args.out:
-        out_dir = os.path.dirname(os.path.abspath(args.out))
-        if out_dir and not os.path.isdir(out_dir):
-            os.makedirs(out_dir)
-        with open(args.out, "w", encoding="utf-8") as handle:
-            handle.write(text + "\n")
+        # Exit 1 is reserved for --fail-on-new. An uncaught OSError here would
+        # exit 1 on an unwritable path, letting automation read "could not
+        # write the file" as "verification found a new violation".
+        try:
+            out_dir = os.path.dirname(os.path.abspath(args.out))
+            if out_dir and not os.path.isdir(out_dir):
+                os.makedirs(out_dir)
+            with open(args.out, "w", encoding="utf-8") as handle:
+                handle.write(text + "\n")
+        except OSError as exc:
+            sys.stderr.write(
+                "REFUSED: could not write {0!r}: {1}: {2}\n".format(
+                    args.out, type(exc).__name__, exc))
+            return 2
     else:
         sys.stdout.write(text + "\n")
 

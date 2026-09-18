@@ -1298,3 +1298,181 @@ def test_l1_carries_the_cell_total_components_not_only_the_sum(bundle_dir):
     components = row["cell_total_b_components"]
     assert set(components) == {"ModelOnly", "Overlap", "AnnoOnly"}
     assert sum(components.values()) == row["cell_total_b_sum"]
+
+
+# ---------------------------------------------------------------------------
+# Codex rounds 3-6 (6046569, 0adde33, 4c7f3b9, 55bd07d). All reproduced first.
+# ---------------------------------------------------------------------------
+
+def test_i3_unknown_antecedent_on_a_sheeted_row_is_indeterminate(bundle_dir):
+    """P1. A blank CapTriggered read as False EXCLUDED the row -- and an
+    excluded on-sheet row is exactly one that might satisfy the antecedent and
+    violate, so excluding it can only ever produce a false clean."""
+    def blank_cap_on_a_sheeted_row(rows):
+        for row in rows:
+            if row["IsOnSheet"] == "True" and row["CapTriggered"] == "False":
+                row["CapTriggered"] = ""
+                return
+        raise AssertionError("fixture has no sheeted, uncapped row")
+    mutate(bundle_dir, "views_core", blank_cap_on_a_sheeted_row)
+    record = run_verify(bundle_dir)["invariants"]["I3"]["per_cap"]["CELL_SIZE_CAP"]
+    assert record["status"] == V.STATUS_NOT_EVALUABLE
+    assert record["antecedent_rows_indeterminate"] == 1
+
+
+def test_i3_blank_resolution_mode_on_a_sheeted_row_is_indeterminate(bundle_dir):
+    """The other half of the same antecedent."""
+    def blank_mode(rows):
+        for row in rows:
+            if row["IsOnSheet"] == "True" and row["CapTriggered"] == "False":
+                row["ResolutionMode"] = ""
+                return
+    mutate(bundle_dir, "views_core", blank_mode)
+    record = run_verify(bundle_dir)["invariants"]["I3"]["per_cap"]["CELL_SIZE_CAP"]
+    assert record["status"] == V.STATUS_NOT_EVALUABLE
+
+
+def test_i3_unknown_antecedent_off_sheet_is_not_indeterminate(bundle_dir):
+    """Control: with IsOnSheet False the consequent holds either way, so an
+    unknown antecedent decides nothing and must not block the invariant."""
+    def blank_cap_off_sheet(rows):
+        for row in rows:
+            if row["IsOnSheet"] == "False":
+                row["CapTriggered"] = ""
+                row["ResolutionMode"] = "canonical"
+                return
+    mutate(bundle_dir, "views_core", blank_cap_off_sheet)
+    record = run_verify(bundle_dir)["invariants"]["I3"]["per_cap"]["CELL_SIZE_CAP"]
+    assert record["status"] == V.STATUS_HOLDS
+
+
+def test_i4_blank_effective_cell_is_a_violation(bundle_dir):
+    """P1. Header presence is not shipment: a populated requested value whose
+    effective cell is blank did not ship an effective value."""
+    mutate(bundle_dir, "views_core",
+           lambda rows: rows[0].__setitem__("CellSizeEffective_ft", ""))
+    bundle = run_verify(bundle_dir)
+    assert "I4.REQUESTED_WITHOUT_EFFECTIVE" in violation_ids(bundle)
+    record = bundle["invariants"]["I4"]["per_role"]["views_core"]
+    assert record["status"] == V.STATUS_VIOLATED
+    assert record["rows_missing_effective"][0]["rows"][0]["requested"] == 0.5
+
+
+def test_l4_propagates_a_detector_that_could_not_evaluate(bundle_dir):
+    """P1. An invariant that declined to decide must not be reported in the
+    register as having decided."""
+    mutate(bundle_dir, "views_core",
+           lambda rows: rows[4].__setitem__("ViewFrameHash", ""))
+    bundle = run_verify(bundle_dir)
+    assert bundle["invariants"]["I8"]["status"] == V.STATUS_NOT_EVALUABLE
+    entry = [e for e in bundle["L4_violation_register"]["carried_from_baseline"]
+             if e["violation_id"] == "I8.VIEW_FRAME_HASH_COLLISION"][0]
+    assert entry["baseline_status"] == "KNOWN_OPEN_NOT_EVALUABLE"
+    assert entry["absence_means"].startswith("NOTHING")
+
+
+def test_l4_still_reports_a_detector_that_did_run(bundle_dir):
+    """Control: the propagation must not blanket every baseline entry."""
+    entry = [e for e in run_verify(bundle_dir)["L4_violation_register"][
+        "carried_from_baseline"]
+        if e["violation_id"] == "I8.VIEW_FRAME_HASH_COLLISION"][0]
+    assert entry["baseline_status"] == "NOT_OBSERVED_THIS_RUN"
+    assert entry["detector_status"] == V.STATUS_HOLDS
+
+
+def test_refuses_partial_configuration_identity(bundle_dir):
+    """P1. Discarding blanks made a partly-populated column look unanimous, so
+    rows from an unidentified configuration were attributed to a known one."""
+    mutate(bundle_dir, "views_core",
+           lambda rows: rows[3].__setitem__("ConfigHash", ""))
+    with pytest.raises(V.Refusal) as excinfo:
+        run_verify(bundle_dir)
+    assert "INCOMPLETE_CONFIGURATION_IDENTITY" in str(excinfo.value)
+
+
+def test_l2_absent_annotation_column_is_not_an_observed_zero(bundle_dir):
+    """P2. A deleted column reported n=0 and rolled up, presenting a schema
+    change as a category with no contributing views."""
+    drop_column(bundle_dir, "views_vop", "AnnoCells_TAG")
+    cells = run_verify(bundle_dir)["L2_per_category"]["FloorPlan"]["cells"]
+    assert cells["TAG"]["status"] == V.STATUS_NOT_EVALUABLE
+    assert "TAG" not in cells[V.L2_ROLLUP_KEY].get("per_category_n", {})
+
+
+def test_parse_int_is_exact_for_float_formatted_identifiers(bundle_dir):
+    """P2. The "80.0" allowance still routed 9007199254740993.0 through
+    float()."""
+    big = "9007199254740993.0"
+    for role in ("views_core", "views_vop", "views_perf", "views_occlusion"):
+        mutate(bundle_dir, role, lambda rows: rows[0].__setitem__("ViewId", big))
+    view_ids = {r["view_id"] for r in run_verify(bundle_dir)["L1_per_view"]}
+    assert 9007199254740993 in view_ids
+    assert 9007199254740992 not in view_ids
+
+
+def test_refuses_a_fractional_cell_count(bundle_dir):
+    """P2. FilledCells is a count; 1.5 is malformed, not a measurement."""
+    mutate(bundle_dir, "views_perf",
+           lambda rows: rows[1].__setitem__("FilledCells", "1.5"))
+    with pytest.raises(V.Refusal) as excinfo:
+        run_verify(bundle_dir)
+    assert "not an integer" in str(excinfo.value)
+
+
+def test_refuses_a_non_finite_aggregate_sum(bundle_dir):
+    """P2. Three individually finite components overflow their sum, and
+    _ratio returns None before it would ever see the numerator."""
+    def overflow(rows):
+        for column in ("ModelOnly", "Overlap", "AnnoOnly"):
+            rows[0][column] = "1e308"
+    mutate(bundle_dir, "views_vop", overflow)
+    with pytest.raises(V.Refusal) as excinfo:
+        run_verify(bundle_dir)
+    assert "overflow" in str(excinfo.value).lower()
+
+
+def test_refuses_a_duplicated_csv_header(bundle_dir):
+    """P2. DictReader keeps only the last column of a repeated name."""
+    path = role_path(bundle_dir, "views_core")
+    with open(path, newline="") as handle:
+        lines = handle.read().splitlines()
+    lines[0] = lines[0] + ",ViewId"
+    for index in range(1, len(lines)):
+        lines[index] = lines[index] + ",999"
+    with open(path, "w", newline="") as handle:
+        handle.write("\n".join(lines) + "\n")
+    with pytest.raises(V.Refusal) as excinfo:
+        run_verify(bundle_dir)
+    assert "repeats the header" in str(excinfo.value)
+
+
+def test_refuses_an_unreadable_csv(bundle_dir):
+    """P2. An OSError/UnicodeError exiting 1 would let automation read
+    'could not open the file' as 'found a new violation'."""
+    with open(role_path(bundle_dir, "views_vop"), "wb") as handle:
+        handle.write(b"Date,RunId\n\xff\xfe not utf 8\n")
+    with pytest.raises(V.Refusal) as excinfo:
+        run_verify(bundle_dir)
+    assert "could not be read" in str(excinfo.value)
+
+
+def test_cli_refuses_an_unwritable_out_path(bundle_dir):
+    """P2. Exit 1 is reserved for --fail-on-new."""
+    result = _cli(bundle_dir, "--out", str(bundle_dir))
+    assert result.returncode == 2
+    assert result.stderr.startswith("REFUSED:")
+    assert "Traceback" not in result.stderr
+
+
+def test_l3_selection_identity_includes_the_run(bundle_dir):
+    """P2. Verification continues after an I1 violation, so a bundle can hold
+    one ViewId under two runs; keying on view_id alone collapsed the second."""
+    def second_run(rows):
+        clone = dict(rows[0])
+        clone["RunId"] = "20260918T999999"
+        rows.append(clone)
+    for role in ("views_core", "views_vop", "views_perf", "views_occlusion"):
+        mutate(bundle_dir, role, second_run)
+    exemplars = run_verify(bundle_dir)["L3_exemplars"]["exemplars"]
+    runs = {e["run_id"] for e in exemplars if e["view_id"] == 500000}
+    assert len(runs) == 2
