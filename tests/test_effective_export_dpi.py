@@ -24,23 +24,22 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools import decode_stage_a_color_id as dsc  # noqa: E402
+from vop_interwoven.resolution_contract import (  # noqa: E402
+    effective_export_dpi as _production_effective_export_dpi,
+)
 
 
 def producer_effective_dpi(crop, actual, view_scale):
-    """color_id_buffer.py's rule, replicated.
+    """Adapter onto the PRODUCTION function -- signature only, no arithmetic.
 
-    Paper inches along an axis are model feet * 12 / view scale, and the
-    achieved dpi is that axis's measured pixel count over it -- computed for
-    BOTH axes, smaller wins. The padded axis carries more pixels than its
-    extent warrants and so always reports the larger figure; the minimum
-    selects the unpadded one without needing the aspect limit or the pad.
+    This file used to carry its own copy of the formula. Review on PR #202
+    pointed out what that costs: a test that reimplements the producer binds
+    the decoder to the test's copy, so production could regress to the
+    fitted-axis or grid-extent form with every assertion here still green.
+    The copy is gone; only the call shape remains.
     """
     aw, ah = actual
-    crop_u_ft = float(crop[2]) - float(crop[0])
-    crop_v_ft = float(crop[3]) - float(crop[1])
-    dpi_u = float(aw) / (crop_u_ft * 12.0 / float(view_scale))
-    dpi_v = float(ah) / (crop_v_ft * 12.0 / float(view_scale))
-    return min(dpi_u, dpi_v)
+    return _production_effective_export_dpi(crop, aw, ah, view_scale)
 
 
 # (label, crop rect, actual px, fitted axis, view scale)
@@ -110,20 +109,38 @@ def test_dividing_by_the_grid_extent_under_reports(label, crop, actual, axis, sc
         assert from_grid < truth, "a case with slack must actually discriminate"
 
 
-def test_the_two_axis_cap_makes_the_same_choice():
-    """Not a new rule: color_id_buffer.py:1694-1703 already resolves
-    compute_model_crop() rather than using the grid's paper extents, because
-    the grid 'would understate the derived axis by exactly the amount the
-    crop narrows'. This pins that the same source is used for both, so the
-    cap and the reported dpi cannot disagree about what was rendered."""
+def test_color_id_buffer_calls_the_shared_function_and_does_not_recompute():
+    """The achieved dpi must be measured against the RENDERED CROP, and there
+    must be exactly one implementation of that.
+
+    This replaces a source-text scan that asserted `crop_bounds_xy` appeared
+    near an inline `effective_export_dpi = None`. That scan was brittle -- it
+    broke the moment the arithmetic was extracted, which is the improvement it
+    was meant to protect -- and it approximated the real guarantee instead of
+    stating it.
+
+    The real guarantee is structural, and the extraction is what makes it
+    checkable: the production function takes `crop_bounds_xy` and nothing
+    grid-shaped, so a grid extent cannot reach it without changing a
+    signature; and color_id_buffer must CALL it rather than recompute dpi
+    locally, or the binding in this file is against a copy again.
+    """
+    import inspect
+    from vop_interwoven import resolution_contract
+
+    params = list(inspect.signature(
+        resolution_contract.effective_export_dpi).parameters)
+    assert params[0] == "crop_bounds_xy", (
+        "the denominator must be the rendered crop; a grid extent must not be "
+        "expressible as the first argument")
+    assert not any("paper" in p or "grid" in p or "raster" in p for p in params)
+
     src = (Path(__file__).resolve().parent.parent
            / "vop_interwoven" / "color_id_buffer.py").read_text(encoding="utf-8")
-    i = src.index("effective_export_dpi = None")
-    window = src[i - 2000:i + 500]
-    assert "crop_bounds_xy" in window, (
-        "the achieved dpi must be measured against the rendered crop, not "
-        "paper_fit_in / the grid extent")
-    assert "paper_fit_in" not in window.split("_crop_fit_ft = None")[-1]
+    assert "_effective_export_dpi(" in src, (
+        "color_id_buffer must call resolution_contract.effective_export_dpi")
+    assert "effective_export_dpi = min(" not in src, (
+        "dpi recomputed inline; there must be one implementation, not two")
 
 
 @pytest.mark.parametrize("label,crop,actual,axis,scale,grid_ft",

@@ -265,6 +265,123 @@ cfg = Config(
 
 Check the strategy tracker output for extraction method usage and failures.
 
+## Recurring Defect Classes
+
+Six real defects shipped across PRs #200–#202 and were found by review, not by
+any check in this repo. They fall into three classes that keep recurring. Read
+this before writing a fix, not after.
+
+### 1. A quantity computed in two places, never composed
+
+`feet_per_pixel` existed as five copies; the forward and inverse uv↔pixel
+mappings drifted apart because nothing ran them back to back; the achieved-dpi
+figure disagreed with the decoder's twice in a row. `TINY/LINEAR/AREAL` is
+currently implemented three times and they disagree (issue #203).
+
+**Rule.** When two pieces of code must agree, a test must *compose* them.
+Testing each alone binds each to its own copy — see
+`tests/test_uv_pixel_round_trip.py` and `tests/test_effective_export_dpi.py`
+for the shape.
+
+**Corollary, learned the hard way.** A test that *reimplements* the thing it
+checks proves nothing: production can regress and the test stays green because
+it only ever ran its own copy. If production's arithmetic is not callable,
+**extract it** — that is what `resolution_contract.effective_export_dpi()` and
+`view_raster_export._crop_uv_frame()` are, and both extractions are what made
+the defect visible.
+
+**Second corollary, because the first one was not enough.** Extracting the
+formula binds the *formula*. It does not bind the *arguments* production
+passes. After `effective_export_dpi()` was extracted and every property bound
+to it, the original grid-extent defect could still be reinstated at the call
+site — `_effective_export_dpi(<grid tuple>, ...)` — with all 981 tests green,
+because the properties supply their own crop bounds and never see production's.
+A signature check cannot close this: the grid rectangle and the render crop are
+both four-value tuples. **Exercise the call site**
+(`tests/test_effective_dpi_call_site.py`), and make the two candidate
+arguments produce visibly different answers so the fixture discriminates.
+
+### 2. An identity claimed in prose and never asserted
+
+Every one of the six violated an invariant already written in a comment above
+the code that broke it. Two of those comments (`resolution_contract.py:91`,
+`:112`) turned out to be *overstated* — both fail below the one-pixel floor.
+
+**Rule.** If a comment claims an identity, a universal ("always", "never",
+"identically", "cannot"), assert it over generated inputs. Property tests live
+in `tests/test_invariants_*.py`. A comment that *argues* why something is safe
+is an unasserted proof obligation, not documentation.
+
+### 3. Test infrastructure that nothing tests
+
+`tests/conftest.py` decides whether failures are reported at all, so nothing
+running inside it can observe it. Two defects shipped there — a quarantine that
+absorbed any exception, and a check that made a quarantined file unrunnable by
+node id — both invisible to the 959 tests it governed.
+
+**Rule.** Harness behaviour is checked by running pytest as a subprocess and
+asserting on its exit code: `tests/test_harness_contract.py`. Any such file
+needs a **control** asserting the unmutated copy is green, or every scenario
+would also pass against a harness broken outright.
+
+### The discipline that actually caught things
+
+- **Prove a check against a known-positive commit.** A rule you have not
+  falsified is a hope. A `semgrep` rule here returned `0` and looked clean; it
+  was verified against the wrong commit, then against the right one, where it
+  found 4. Record the SHA a check was proven against.
+- **Mutate production, not the test.** If reinstating the original defect does
+  not turn the suite red, the test is not wired to it.
+- **Watch the test count.** Rewriting a test file once truncated it, silently
+  deleting 7 cases. The suite went green at 974. Only the total dropping from
+  981 caught it.
+- **Green means nothing until you know what ran.** `no-bare-except` is scoped
+  to `pipeline.py`, `revit/` and `core/`; it passed on a 21-file PR touching
+  none of them.
+- **A count is a claim about what the pattern matched, not about the repo.**
+  The `except X: pass` sweep below was first reported as 86 and proposed as a
+  ratchet baseline. The real population is 179: semgrep's `except $E:` does not
+  match `except X as e:` (90 here) or `except (A, B):` (3). Baselining at 86
+  would have grandfathered 93 live violations silently. Before a number becomes
+  a baseline, enumerate the shapes the pattern *cannot* see — an independent
+  count (an AST walk) is cheap and is what caught this.
+- **Know what the fake harness does NOT provide.** The shared fake
+  `Autodesk.Revit.DB` had no `XYZ`/`BoundingBoxXYZ`, so
+  `crop_box_from_uv_bounds()` raised `ImportError` and every end-to-end test
+  ran with `bounds_xy=None` — the crop path was never exercised at all. A
+  test that cannot reach the code it names is worth less than no test, so
+  pin reachability with a control case.
+
+### Tooling that found real defects here
+
+Not installed by default; install when reviewing:
+
+```bash
+pip install vulture
+pip install --ignore-installed PyJWT semgrep   # plain install hits a Debian PyJWT conflict
+```
+
+- **`semgrep`** found the hardcoded classification threshold
+  (`pipeline.py:2396`, `:2398`) with zero false positives, and **179** handlers
+  that discard the exception (`except …: pass` / `continue`) — a Refactor
+  Rule #1 violation that `check_no_bare_except.py` does not catch, because it
+  only looks for bare `except:`. The rule must spell out every handler form or
+  it undercounts badly:
+
+  | handler shape | count | matched by `except $E:` alone |
+  |---|---|---|
+  | `except X:` | 86 | yes |
+  | `except X as e:` | 90 | **no** — needs `except $E as $X:` |
+  | `except (A, B):` | 3 | **no** — needs its own pattern |
+
+  Proven at `e7808d9`: 86 with the `except $E:` pattern alone, 176 once the
+  `as $X` variants are added, against an AST total of 179. Runtime is 2–3 min
+  over `vop_interwoven/` + `tools/`.
+- **`vulture --min-confidence 80`** for dead code. At 60 it false-positives on
+  Revit API attributes set dynamically.
+- Update these rules when a new defect class appears, and record what each was
+  proven against.
+
 ## Code Quality Checks
 
 ```bash

@@ -17,6 +17,7 @@ from .resolution_contract import (
     DEFAULT_COLOR_ID_EXPORT_DPI,
     MAX_STAGE_A_AXIS_PX,
     cap_axes,
+    effective_export_dpi as _effective_export_dpi,
 )
 
 NEUTRAL_PHASE_FILTER_NAME = "VOP_NeutralPhaseFilter"
@@ -2635,67 +2636,19 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             restore_tx.RollBack()
             raise
 
-    # The dpi this capture ACHIEVED along the fitted axis, as opposed to the
-    # dpi that was asked for. They come apart three ways, all of them in the
-    # sizing path above: the max(64, ...) floor on pre_cap_px, the two-axis
-    # cap, and the dimension-mismatch backoff.
+    # The dpi this capture ACHIEVED, as opposed to the dpi that was asked
+    # for. They come apart three ways, all in the sizing path above: the
+    # max(64, ...) floor on pre_cap_px, the two-axis cap, and the
+    # dimension-mismatch backoff.
     #
-    # THE DENOMINATOR IS THE RENDERED CROP, NOT paper_fit_in. paper_fit_in is
-    # raster.W (or H) * cell_size_ft, and raster.W is ceil(extent / cell)
-    # (view_basis.py:1183-1184), so it is the extent rounded UP to whole cells
-    # and OVERSTATES the rectangle the TIFF actually spans -- by up to one
-    # cell even with no narrowing, and by the whole narrowing when
-    # model_clip_bounds applies. tools/decode_stage_a_color_id.py records the
-    # same slack from the other side: 97.0 ft reported against a 96.38 ft crop
-    # on Elev 5 of the 2026-09-17 byColor run, 0.64% over. Dividing by it
-    # UNDER-reports the achieved dpi.
-    #
-    # The cap above already refuses this substitution for the same reason
-    # (:1694-1703: using the grid's paper extents "would understate the
-    # derived axis by exactly the amount the crop narrows"). crop_bounds_xy is
-    # the rectangle the view was actually cropped to and is the same value
-    # written to the sidecar's "bounds_xy", which is what a decoder derives
-    # feet_per_pixel from -- so taking it here is what makes this field
-    # equal view_scale / (12 * feet_per_pixel) rather than merely close to it.
-    #
-    # BOTH AXES, AND THE SMALLER ANSWER WINS. requested_axis must NOT select
-    # the axis here. ExportImage's aspect clamp pads the short axis, and the
-    # fitted axis can BE the short one: an 80 x 4 ft crop under vertical fit
-    # comes back 400 x 40 px, where the 40 px height is the axis PixelSize
-    # set AND the axis carrying 10 px of pad on each side. The dimension
-    # check passes -- the padded height is exactly the requested 40 -- so it
-    # cannot be used to argue the fitted axis is unpadded. Dividing by the
-    # fitted axis there counts pad as rendered crop and reports 80 dpi where
-    # the truth is 40.
-    #
-    # The padded axis carries more pixels than its extent warrants, so it
-    # always reports the LARGER dpi; the unpadded axis is the truth. Taking
-    # the minimum of the two per-axis figures selects the unpadded one
-    # without needing the aspect limit, the pad, or which axis was fitted.
-    #
-    # This is the same selection tools/clamp_pad_geometry.py makes as
-    # max(crop_u/w, crop_v/h) -- stated in dpi rather than feet-per-pixel,
-    # since min(a/x, b/y) is the reciprocal of max(x/a, y/b). It is written
-    # out rather than imported because vop_interwoven is deployed by copying
-    # the package into Revit/Dynamo (see README) and must not depend on
-    # tools/. The equality with the decoder is pinned by
-    # tests/test_effective_export_dpi.py rather than left to this comment.
-    #
-    # None whenever any term is missing -- either dimension could not be
-    # read, or no crop could be applied (FitToPage's auto extent, which this
-    # code never learns). There is then no measurement to report, and
-    # substituting the request is the exact confusion this field exists to
-    # end.
-    effective_export_dpi = None
-    _aw_px, _ah_px = dim_report.get("actual_w"), dim_report.get("actual_h")
-    if crop_bounds_xy is not None and _aw_px and _ah_px and scale > 0:
-        _crop_u_ft = float(crop_bounds_xy[2]) - float(crop_bounds_xy[0])
-        _crop_v_ft = float(crop_bounds_xy[3]) - float(crop_bounds_xy[1])
-        if _crop_u_ft > 0.0 and _crop_v_ft > 0.0:
-            # paper inches along an axis = model feet * 12 / view scale
-            _dpi_u = float(_aw_px) / (_crop_u_ft * 12.0 / scale)
-            _dpi_v = float(_ah_px) / (_crop_v_ft * 12.0 / scale)
-            effective_export_dpi = min(_dpi_u, _dpi_v)
+    # The arithmetic lives in resolution_contract.effective_export_dpi() and is
+    # CALLED, not replicated: a test that reimplements the formula binds itself
+    # to its own copy, so production could regress to the fitted-axis or
+    # grid-extent form with the test still green. That is a review finding on
+    # PR #202, not a hypothetical. See that function for why the denominator is
+    # the rendered crop and why BOTH axes are used with the smaller winning.
+    effective_export_dpi = _effective_export_dpi(
+        crop_bounds_xy, dim_report.get("actual_w"), dim_report.get("actual_h"), scale)
 
     state_out = {
         "view_id": view_id,

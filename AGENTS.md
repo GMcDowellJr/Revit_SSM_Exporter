@@ -42,6 +42,22 @@ Rules:
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 
+## Recurring defect classes — read before fixing
+
+Three classes account for every defect review has caught in this repo:
+a quantity computed in two places and never composed; an identity claimed in a
+comment and never asserted; test infrastructure that nothing tests.
+
+`CLAUDE.md` ("Recurring Defect Classes") has the rules, the verification
+discipline, and the `semgrep` / `vulture` install lines. The short version:
+
+- a test that reimplements what it checks proves nothing — bind to production,
+  extracting it if it is not callable;
+- mutate production and confirm the suite goes red, or the test is not wired to
+  the defect;
+- watch the test COUNT, not just the colour;
+- a lint rule unfalsified against a known-positive commit is a hope, not a rule.
+
 ## Core architecture constraints
 
 See `CLAUDE.md` for the full list. The non-negotiable ones:
