@@ -5,6 +5,64 @@ Quality assurance and testing utilities for the SSM/VOP exporter.
 ## Scripts
 
 
+### `verify_invariant_core.py` - Path-independent verification invariant core
+
+Reads a run bundle (`views_core` / `views_vop` / `views_perf` /
+`views_occlusion`) and emits ONE JSON verification bundle carrying eight
+numbered invariants, the L0-L4 layering, and a violation register scored
+against a known-open baseline.
+
+The invariants read only quantities BOTH extraction paths emit, so they
+survive the classification-surface deletion untouched. That is the point: it
+is the instrument that makes the post-deletion read "new violations only".
+
+**It is not a gate.** The output is a register. The exit code reports whether
+the tool could DECIDE, not whether the data was good:
+
+| exit | meaning |
+|---|---|
+| 0 | a bundle was produced |
+| 1 | `--fail-on-new` only, and only for a violation the baseline does not carry |
+| 2 | REFUSAL - it could not identify something it needs |
+
+Exit 1 is opt-in so the default can never be silently read as pass/fail.
+
+**What it refuses** (rather than guessing): a missing or ambiguous CSV role, a
+missing directory, an empty scan, a boolean token outside the declared
+vocabulary (`bool("False")` is `True`, and coercing it would invert invariant
+3 with no symptom), an unparseable number, a row with no `ViewId`, a bundle
+carrying two `ConfigHash` values (`CONFIGURATION_DRIFT`, reusing the existing
+campaign-fingerprint semantics), and an unsupported bundle schema version on
+read.
+
+**Declared, not defaulted.** `--path` and `--cache-mode` have no defaults. No
+CSV column discriminates the extraction path - `RowSource` is a hardcoded
+constant written by both - so the operator declares it and L0 records that it
+was declared. No cache-row count is expected in either direction.
+
+`N_MIN_ORDER_STATISTIC = 8` is the only threshold in the file. It governs
+medians and quantiles only; counts, sums, ratios, min and max are reported at
+any `n`, always with `n` alongside. Invariant 7 compares two cell totals and
+asserts NOTHING about their agreement - they count different populations by
+construction, and a tolerance would launder a definitional gap.
+
+**Usage:**
+```bash
+python tools/verify_invariant_core.py ~/Documents/_metrics \
+    --path geometry --cache-mode unknown --out bundle.json
+
+# CI, once a capture is expected to stay clean:
+python tools/verify_invariant_core.py <dir> --path color-id \
+    --cache-mode enabled --fail-on-new
+```
+
+Tests: `tests/test_verify_invariant_core.py` (80 cases). Every scenario has a
+control asserting the unmutated fixture is clean, because otherwise each one
+would also pass against a tool that refused, or violated, everything.
+
+---
+
+
 ### `stage_a_cycle.py` - One-command Stage A campaign advance
 
 A thin, idempotent wrapper that composes `campaign_planner.py` and

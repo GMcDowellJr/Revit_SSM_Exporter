@@ -1,0 +1,1478 @@
+"""Tests for tools/verify_invariant_core.py.
+
+WHAT THESE BIND, AND WHAT THEY DELIBERATELY DO NOT
+--------------------------------------------------
+Nothing here reimplements the tool's arithmetic. Every assertion is made
+against the bundle the production entry point produced, so a test cannot pass
+by running its own copy of the logic.
+
+The fixtures are built from the PRODUCTION header functions in
+``vop_interwoven.csv_export``, not from a hand-written column list. That
+coupling is deliberate: when the classification surface is deleted, these
+fixtures change with the emitters, and any invariant that quietly depended on
+a deleted column stops being satisfiable instead of silently reading empty.
+
+THE CONTROL MATTERS AS MUCH AS THE SCENARIOS. ``test_control_*`` assert that
+the unmutated fixture is clean and does NOT refuse. Without them, every
+refusal test below would also pass against a tool that refused everything,
+and every violation test against a tool that reported every invariant
+violated.
+
+Two tests exist specifically to exercise a CALL SITE rather than a formula,
+because extracting a formula binds the formula and not the arguments
+production passes to it. Both are built so the two candidate arguments give
+visibly different answers -- see their own docstrings.
+"""
+import csv
+import json
+import os
+import subprocess
+import sys
+
+import pytest
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TOOLS_DIR = os.path.join(REPO_ROOT, "tools")
+if TOOLS_DIR not in sys.path:
+    sys.path.insert(0, TOOLS_DIR)
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+
+import verify_invariant_core as V  # noqa: E402
+
+from vop_interwoven.csv_export import (  # noqa: E402
+    get_core_csv_header,
+    get_occlusion_csv_header,
+    get_perf_csv_header,
+    get_vop_csv_header,
+)
+
+RUN_ID = "20260918T090000"
+DATE = "2026-09-18"
+TOOL_PATH = os.path.join(TOOLS_DIR, "verify_invariant_core.py")
+
+
+def _view_rows(index, view_type):
+    """One view's four rows. Adaptive/capped views are deliberately off-sheet."""
+    view_id = 500000 + index * 137
+    adaptive = (index % 3 == 0)
+    common = {
+        "Date": DATE, "RunId": RUN_ID, "ViewId": view_id,
+        "ViewUniqueId": "uid-%d" % view_id, "ViewName": "View %d" % index,
+        "ViewType": view_type,
+    }
+    core = dict(common)
+    core.update({
+        "SheetNumber": "" if adaptive else "A-10%d" % index,
+        "IsOnSheet": "False" if adaptive else "True",
+        "Scale": 96, "Discipline": "Architectural", "Phase": "New",
+        "ViewTemplate_Name": "", "IsTemplate": "False",
+        "ExporterVersion": "v1", "ConfigHash": "cfg-abc",
+        "ViewFrameHash": "hash%04d" % index, "FromCache": "N",
+        "ElapsedSec": 1.5, "CellSize_ft": 0.5,
+        "CellSizeRequested_ft": 0.5,
+        "CellSizeEffective_ft": 0.75 if adaptive else 0.5,
+        "ResolutionMode": "adaptive" if adaptive else "canonical",
+        "CapTriggered": "True" if adaptive else "False",
+        "AnnoExpanded": "False",
+    })
+    vop = dict(common)
+    vop.update({
+        "TotalCells": 500, "Empty": 380,
+        "ModelOnly": 100, "AnnoOnly": 5, "Overlap": 10,
+        "Ext_Cells_Any": 0, "Ext_Cells_Only": 0,
+        "Ext_Cells_DWG": 0, "Ext_Cells_RVT": 0,
+        # TEXT is present in every view; REGION only in the first five. That
+        # asymmetry is what the L2 call-site test discriminates on.
+        "AnnoCells_TEXT": 40 + index,
+        "AnnoCells_TAG": 30 + index,
+        "AnnoCells_DIM": 20 + index,
+        "AnnoCells_DETAIL": 10 + index,
+        "AnnoCells_LINES": 5 + index,
+        "AnnoCells_REGION": 3 + index if index < 5 else 0,
+        "AnnoCells_OTHER": 0,
+        "CellSize_ft": 0.5, "CellSizeRequested_ft": 0.5,
+        "CellSizeEffective_ft": 0.75 if adaptive else 0.5,
+        "ResolutionMode": "adaptive" if adaptive else "canonical",
+        "CapTriggered": "True" if adaptive else "False",
+        "RowSource": "vop_interwoven", "ExporterVersion": "v1",
+        "ConfigHash": "cfg-abc", "FromCache": "N", "ElapsedSec": 1.5,
+    })
+    perf = dict(common)
+    perf.update({
+        "Success": "True", "TotalMs": 1500,
+        "Width": 50 + index, "Height": 80 + index * 2,
+        "TotalElements": 500,
+        # 120, while ModelOnly+Overlap+AnnoOnly is 115. They MUST differ:
+        # equal totals would let an I7 that summed the wrong columns pass.
+        "FilledCells": 120,
+    })
+    occlusion = dict(common)
+    occlusion.update({"coverage_pct": 55.0})
+    return core, vop, perf, occlusion
+
+
+def write_bundle(directory, n_views=12, view_types=None):
+    os.makedirs(str(directory), exist_ok=True)
+    buckets = {"views_core": [], "views_vop": [],
+               "views_perf": [], "views_occlusion": []}
+    for index in range(n_views):
+        if view_types is None:
+            view_type = "FloorPlan"
+        else:
+            view_type = view_types[index % len(view_types)]
+        core, vop, perf, occlusion = _view_rows(index, view_type)
+        buckets["views_core"].append(core)
+        buckets["views_vop"].append(vop)
+        buckets["views_perf"].append(perf)
+        buckets["views_occlusion"].append(occlusion)
+    headers = {
+        "views_core": get_core_csv_header(),
+        "views_vop": get_vop_csv_header(),
+        "views_perf": get_perf_csv_header(),
+        "views_occlusion": get_occlusion_csv_header(),
+    }
+    for role, rows in buckets.items():
+        path = os.path.join(str(directory), "%s_%s.csv" % (role, DATE))
+        with open(path, "w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=headers[role],
+                                    extrasaction="ignore")
+            writer.writeheader()
+            for row in rows:
+                writer.writerow(row)
+    return str(directory)
+
+
+def role_path(directory, role):
+    matches = [f for f in os.listdir(directory) if f.startswith(role + "_")]
+    assert len(matches) == 1, matches
+    return os.path.join(directory, matches[0])
+
+
+def read_role(directory, role):
+    with open(role_path(directory, role), newline="") as handle:
+        reader = csv.DictReader(handle)
+        return list(reader.fieldnames), list(reader)
+
+
+def write_role(directory, role, fields, rows):
+    # Written through a closed handle. An unflushed writer makes the file look
+    # empty to a subprocess, and the tool then refuses for "no header row" --
+    # which would let a refusal test pass while proving nothing about the
+    # refusal it names.
+    with open(role_path(directory, role), "w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+
+
+def drop_column(directory, role, column):
+    """Remove a column from the header AND from every row.
+
+    A dedicated helper so ``write_role`` can stay strict: an extrasaction of
+    "ignore" there would silently swallow a row key the test did not mean to
+    leave behind, which is how a fixture stops describing what it claims to.
+    """
+    fields, rows = read_role(directory, role)
+    assert column in fields, column
+    for row in rows:
+        row.pop(column, None)
+    write_role(directory, role, [f for f in fields if f != column], rows)
+
+
+def mutate(directory, role, mutator):
+    fields, rows = read_role(directory, role)
+    mutator(rows)
+    write_role(directory, role, fields, rows)
+
+
+def run_verify(directory, path="geometry", cache_mode="disabled", **kwargs):
+    return V.verify(str(directory), path, cache_mode, **kwargs)
+
+
+def violation_ids(bundle):
+    return [entry["violation_id"]
+            for entry in bundle["L4_violation_register"]["observed"]]
+
+
+@pytest.fixture
+def bundle_dir(tmp_path):
+    return write_bundle(tmp_path / "bundle")
+
+
+# ---------------------------------------------------------------------------
+# Controls. Without these the scenarios below prove nothing.
+# ---------------------------------------------------------------------------
+
+def test_control_unmutated_bundle_reports_no_violations(bundle_dir):
+    bundle = run_verify(bundle_dir)
+    assert violation_ids(bundle) == []
+    assert bundle["L4_violation_register"]["new_violation_count"] == 0
+
+
+def test_control_unmutated_bundle_does_not_refuse(bundle_dir):
+    run_verify(bundle_dir)  # a Refusal here fails the test by propagating
+
+
+def test_control_asserting_invariants_hold_on_clean_data(bundle_dir):
+    invariants = run_verify(bundle_dir)["invariants"]
+    for key in ("I1", "I2", "I3", "I4", "I8"):
+        assert invariants[key]["status"] == V.STATUS_HOLDS, key
+
+
+def test_control_report_only_invariants_never_claim_to_hold(bundle_dir):
+    invariants = run_verify(bundle_dir)["invariants"]
+    for key in ("I5", "I6", "I7"):
+        assert invariants[key]["status"] == V.STATUS_REPORT_ONLY, key
+
+
+# ---------------------------------------------------------------------------
+# I1
+# ---------------------------------------------------------------------------
+
+def test_i1_multiple_run_ids_violates(bundle_dir):
+    mutate(bundle_dir, "views_core",
+           lambda rows: rows[3].__setitem__("RunId", "20260918T999999"))
+    bundle = run_verify(bundle_dir)
+    assert "I1.MULTIPLE_RUN_IDS" in violation_ids(bundle)
+    assert bundle["invariants"]["I1"]["status"] == V.STATUS_VIOLATED
+    assert bundle["L0_manifest"]["run_id"] is None
+
+
+# ---------------------------------------------------------------------------
+# I2
+# ---------------------------------------------------------------------------
+
+def test_i2_duplicate_view_row_violates(bundle_dir):
+    mutate(bundle_dir, "views_vop", lambda rows: rows.append(dict(rows[2])))
+    bundle = run_verify(bundle_dir)
+    assert "I2.DUPLICATE_VIEW_ROW" in violation_ids(bundle)
+
+
+def test_i2_from_cache_rows_are_dropped_and_counted(bundle_dir):
+    def flag(rows):
+        for index in (1, 4, 7):
+            rows[index]["FromCache"] = "Y"
+    mutate(bundle_dir, "views_core", flag)
+    record = run_verify(bundle_dir)["invariants"]["I2"]["per_role"]["views_core"]
+    assert record["rows_dropped_from_cache"] == 3
+    assert record["rows_retained"] == record["rows_read"] - 3
+
+
+def test_i2_declares_no_expected_cache_count(bundle_dir):
+    """The check reports on the cache; it must not encode its behaviour."""
+    i2 = run_verify(bundle_dir, cache_mode="enabled")["invariants"]["I2"]
+    assert i2["declared_cache_mode"] == "enabled"
+    assert "NONE DECLARED" in i2["cache_expectation"]
+
+
+def test_i2_unpopulated_from_cache_is_retained_not_dropped(bundle_dir):
+    """An unwritten flag must not silently shrink the population."""
+    mutate(bundle_dir, "views_core",
+           lambda rows: rows[0].__setitem__("FromCache", ""))
+    record = run_verify(bundle_dir)["invariants"]["I2"]["per_role"]["views_core"]
+    assert record["rows_dropped_from_cache"] == 0
+    assert record["rows_retained"] == record["rows_read"]
+
+
+def test_i2_role_without_from_cache_column_reports_unknown_not_zero(bundle_dir):
+    record = run_verify(bundle_dir)["invariants"]["I2"]["per_role"]["views_perf"]
+    assert record["from_cache_column_present"] is False
+    assert record["rows_dropped_from_cache"] is None
+    assert "not zero" in record["from_cache_note"]
+
+
+# ---------------------------------------------------------------------------
+# I3
+# ---------------------------------------------------------------------------
+
+def test_i3_capped_view_on_sheet_violates(bundle_dir):
+    def put_capped_view_on_a_sheet(rows):
+        for row in rows:
+            if row["CapTriggered"] == "True":
+                row["IsOnSheet"] = "True"
+                return
+        raise AssertionError("fixture carries no capped row to mutate")
+    mutate(bundle_dir, "views_core", put_capped_view_on_a_sheet)
+    bundle = run_verify(bundle_dir)
+    assert "I3.CAPPED_VIEW_ON_SHEET" in violation_ids(bundle)
+
+
+def test_i3_not_exercised_when_no_row_is_on_a_sheet(bundle_dir):
+    """A uniform IsOnSheet cannot distinguish 'not sheeted' from 'never set'."""
+    def clear(rows):
+        for row in rows:
+            row["IsOnSheet"] = "False"
+    mutate(bundle_dir, "views_core", clear)
+    record = run_verify(bundle_dir)["invariants"]["I3"]["per_cap"]["CELL_SIZE_CAP"]
+    assert record["status"] == V.STATUS_NOT_EXERCISED
+    assert record["antecedent_rows"] > 0, (
+        "the antecedent must be non-empty, or this passes for the wrong reason")
+
+
+def test_i3_not_exercised_self_retires_on_the_first_true(bundle_dir):
+    def clear_all_but_one(rows):
+        for row in rows:
+            row["IsOnSheet"] = "False"
+        for row in rows:
+            if row["CapTriggered"] != "True":
+                row["IsOnSheet"] = "True"
+                return
+    mutate(bundle_dir, "views_core", clear_all_but_one)
+    record = run_verify(bundle_dir)["invariants"]["I3"]["per_cap"]["CELL_SIZE_CAP"]
+    assert record["status"] == V.STATUS_HOLDS
+
+
+def test_i3_does_not_truthy_coerce_the_string_false(bundle_dir):
+    """bool("False") is True. A sheet flag read that way inverts I3 silently."""
+    def clear(rows):
+        for row in rows:
+            row["IsOnSheet"] = "False"
+    mutate(bundle_dir, "views_core", clear)
+    bundle = run_verify(bundle_dir)
+    record = bundle["invariants"]["I3"]["per_cap"]["CELL_SIZE_CAP"]
+    assert record["is_on_sheet_true_count"] == 0
+    assert record["is_on_sheet_false_count"] == record["is_on_sheet_false_count"]
+    assert "I3.CAPPED_VIEW_ON_SHEET" not in violation_ids(bundle)
+
+
+def test_i3_adaptive_resolution_mode_alone_is_an_antecedent(bundle_dir):
+    """Capped OR adaptive. Dropping either half narrows the invariant."""
+    def adaptive_but_uncapped_and_sheeted(rows):
+        rows[1]["CapTriggered"] = "False"
+        rows[1]["ResolutionMode"] = "adaptive"
+        rows[1]["IsOnSheet"] = "True"
+    mutate(bundle_dir, "views_core", adaptive_but_uncapped_and_sheeted)
+    assert "I3.CAPPED_VIEW_ON_SHEET" in violation_ids(run_verify(bundle_dir))
+
+
+def test_i3_names_both_caps_and_never_conflates_them(bundle_dir):
+    per_cap = run_verify(bundle_dir)["invariants"]["I3"]["per_cap"]
+    assert per_cap["CELL_SIZE_CAP"]["cap_field"] == "CapTriggered"
+    assert per_cap["EXPORT_PIXEL_CAP"]["cap_field"] == "cap_applied"
+    assert per_cap["EXPORT_PIXEL_CAP"]["status"] == V.STATUS_NOT_EVALUABLE
+
+
+def test_i3_never_asserts_the_converse(bundle_dir):
+    record = run_verify(bundle_dir)["invariants"]["I3"]["per_cap"]["CELL_SIZE_CAP"]
+    assert "NOT ASSERTED AND NOT INFERRED" in record["converse"]
+
+
+# ---------------------------------------------------------------------------
+# I4
+# ---------------------------------------------------------------------------
+
+def test_i4_requested_without_effective_violates(bundle_dir):
+    drop_column(bundle_dir, "views_core", "CellSizeEffective_ft")
+    assert "I4.REQUESTED_WITHOUT_EFFECTIVE" in violation_ids(run_verify(bundle_dir))
+
+
+def test_i4_detects_the_class_not_the_known_incidents(bundle_dir):
+    """A NEW Requested column with no partner must fire with no edit to I4."""
+    fields, rows = read_role(bundle_dir, "views_core")
+    for row in rows:
+        row["ExportDpiRequested_x"] = 300
+    write_role(bundle_dir, "views_core", fields + ["ExportDpiRequested_x"], rows)
+    bundle = run_verify(bundle_dir)
+    assert "I4.REQUESTED_WITHOUT_EFFECTIVE" in violation_ids(bundle)
+    unpaired = bundle["invariants"]["I4"]["per_role"]["views_core"][
+        "unpaired_requested_columns"]
+    assert unpaired[0]["expected_effective"] == "ExportDpiEffective_x"
+
+
+def test_i4_does_not_assert_requested_equals_effective(bundle_dir):
+    """Requested != effective on the adaptive views is the MEASUREMENT."""
+    bundle = run_verify(bundle_dir)
+    assert bundle["invariants"]["I4"]["status"] == V.STATUS_HOLDS
+    measured = bundle["invariants"]["I4"]["per_role"]["views_core"]["measured"][0]
+    assert measured["ratio_summary"]["max"] == 1.5
+    assert violation_ids(bundle) == []
+
+
+def test_i4_emits_a_ratio_for_every_requested_value(bundle_dir):
+    row = run_verify(bundle_dir)["L1_per_view"][0]
+    assert row["cell_size_requested_ft"] is not None
+    assert row["cell_size_effective_ft"] is not None
+    assert row["cell_size_ratio_effective_over_requested"] is not None
+
+
+# ---------------------------------------------------------------------------
+# I5 -- n_min governs order statistics ONLY
+# ---------------------------------------------------------------------------
+
+def test_i5_order_statistics_suppressed_below_the_floor():
+    result = V.summarize(list(range(V.N_MIN_ORDER_STATISTIC - 1)), "x")
+    assert "order_statistics" not in result
+    assert "suppressed" in result
+    assert result["n"] == V.N_MIN_ORDER_STATISTIC - 1
+
+
+def test_i5_order_statistics_present_at_the_floor():
+    result = V.summarize(list(range(V.N_MIN_ORDER_STATISTIC)), "x")
+    assert "order_statistics" in result
+    assert "suppressed" not in result
+
+
+def test_i5_counts_and_range_survive_below_the_floor():
+    """A count is not an order statistic; suppressing it hides the sparseness."""
+    result = V.summarize([7.0], "x")
+    assert result["n"] == 1
+    assert result["min"] == 7.0 and result["max"] == 7.0
+    assert "suppressed" in result
+
+
+def test_i5_suppression_is_visible_not_absent():
+    result = V.summarize([1.0, 2.0], "x")
+    assert "n=2" in result["suppressed"]["reason"]
+    assert str(V.N_MIN_ORDER_STATISTIC) in result["suppressed"]["reason"]
+
+
+def test_i5_median_binds_a_known_value():
+    result = V.summarize([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], "x")
+    assert result["order_statistics"]["median"] == 5.5
+
+
+def test_i5_is_declared_not_to_be_a_tolerance(bundle_dir):
+    assert run_verify(bundle_dir)["invariants"]["I5"]["is_a_tolerance"] is False
+
+
+# ---------------------------------------------------------------------------
+# I6
+# ---------------------------------------------------------------------------
+
+def test_i6_checksums_every_input_file(bundle_dir):
+    per_role = run_verify(bundle_dir)["invariants"]["I6"]["per_role"]
+    for role in ("views_core", "views_vop", "views_perf", "views_occlusion"):
+        assert len(per_role[role]["sha256"]) == 64
+        assert per_role[role]["bytes"] > 0
+        assert per_role[role]["rows_read"] == 12
+
+
+def test_i6_checksum_tracks_the_file_contents(bundle_dir, tmp_path):
+    before = run_verify(bundle_dir)["invariants"]["I6"]["per_role"]["views_core"]
+    mutate(bundle_dir, "views_core",
+           lambda rows: rows[0].__setitem__("ViewName", "renamed"))
+    after = run_verify(bundle_dir)["invariants"]["I6"]["per_role"]["views_core"]
+    assert before["sha256"] != after["sha256"]
+
+
+# ---------------------------------------------------------------------------
+# I7 -- report only, and the call site that decides WHICH columns are summed
+# ---------------------------------------------------------------------------
+
+def test_i7_reports_both_totals_and_the_ratio_without_asserting(bundle_dir):
+    bundle = run_verify(bundle_dir)
+    i7 = bundle["invariants"]["I7"]
+    assert i7["status"] == V.STATUS_REPORT_ONLY
+    assert i7["views_where_totals_are_equal"] == 0
+    assert violation_ids(bundle) == [], "I7 must never emit a violation"
+
+
+def test_i7_call_site_sums_the_declared_columns():
+    """Exercises the CALL SITE, not a formula.
+
+    The fixture is built so the candidate sums are all DIFFERENT:
+    ModelOnly+Overlap+AnnoOnly = 115, FilledCells = 120, TotalCells-Empty = 120,
+    ModelOnly+Overlap = 110, TotalCells = 500. Only the declared triple yields
+    115, so a call site that summed a different set of columns changes this
+    number instead of passing.
+    """
+    import tempfile
+    with tempfile.TemporaryDirectory() as directory:
+        write_bundle(directory)
+        per_view = run_verify(directory)["L1_per_view"][0]
+    assert per_view["cell_total_b_sum"] == 115.0
+    assert per_view["cell_total_a_filled_cells"] == 120.0
+    assert per_view["cell_total_ratio_b_over_a"] == round(115.0 / 120.0, 6)
+
+
+def test_i7_records_unjoinable_views_rather_than_dropping_them(bundle_dir):
+    fields, rows = read_role(bundle_dir, "views_perf")
+    write_role(bundle_dir, "views_perf", fields, rows[:-1])
+    i7 = run_verify(bundle_dir)["invariants"]["I7"]
+    assert len(i7["views_in_vop_only"]) == 1
+    assert i7["views_joined"] == 11
+
+
+def test_i7_declares_that_it_asserts_nothing(bundle_dir):
+    assert run_verify(bundle_dir)["invariants"]["I7"]["assertion"].startswith("NONE")
+
+
+# ---------------------------------------------------------------------------
+# I8
+# ---------------------------------------------------------------------------
+
+def test_i8_frame_hash_collision_violates(bundle_dir):
+    def collide(rows):
+        rows[5]["ViewFrameHash"] = rows[2]["ViewFrameHash"]
+    mutate(bundle_dir, "views_core", collide)
+    bundle = run_verify(bundle_dir)
+    assert "I8.VIEW_FRAME_HASH_COLLISION" in violation_ids(bundle)
+    collisions = bundle["invariants"]["I8"]["collisions"]
+    assert len(list(collisions.values())[0]) == 2
+
+
+def test_i8_collision_is_reported_even_when_grid_dims_differ(bundle_dir):
+    """The baseline's collisions had DIFFERENT dims; a uniqueness check keyed
+    on (hash, dims) rather than on hash alone would have missed them."""
+    def collide_with_different_dims(rows):
+        rows[5]["ViewFrameHash"] = rows[2]["ViewFrameHash"]
+    mutate(bundle_dir, "views_core", collide_with_different_dims)
+    bundle = run_verify(bundle_dir)
+    entries = list(bundle["invariants"]["I8"]["collisions"].values())[0]
+    assert entries[0]["cells"] != entries[1]["cells"]
+    assert "I8.VIEW_FRAME_HASH_COLLISION" in violation_ids(bundle)
+
+
+def test_i8_not_evaluable_without_grid_dimensions(bundle_dir):
+    drop_column(bundle_dir, "views_perf", "Width")
+    i8 = run_verify(bundle_dir)["invariants"]["I8"]
+    assert i8["status"] == V.STATUS_NOT_EVALUABLE
+    assert "views_perf.Width" in i8["reason"]
+
+
+def test_i8_not_evaluable_is_not_holds(bundle_dir):
+    """The distinction this whole tool exists for."""
+    drop_column(bundle_dir, "views_perf", "Width")
+    assert run_verify(bundle_dir)["invariants"]["I8"]["status"] != V.STATUS_HOLDS
+
+
+# ---------------------------------------------------------------------------
+# L0
+# ---------------------------------------------------------------------------
+
+def test_l0_records_the_declared_path_and_its_provenance(bundle_dir):
+    l0 = run_verify(bundle_dir, path="color-id")["L0_manifest"]
+    assert l0["path"] == "color-id"
+    assert "RowSource is a hardcoded constant" in l0["path_provenance"]
+
+
+def test_l0_states_the_bundle_is_lossy(bundle_dir):
+    l0 = run_verify(bundle_dir)["L0_manifest"]
+    assert "LOSSY" in l0["lossiness"]
+    assert l0["source_artifacts"]["files"]["views_core"]["sha256"]
+
+
+def test_l0_does_not_invent_a_document_identity(bundle_dir):
+    l0 = run_verify(bundle_dir)["L0_manifest"]
+    assert l0["document"] is None
+    assert "NOT DECLARED" in l0["document_provenance"]
+    declared = run_verify(bundle_dir, document="Hospital.rvt")["L0_manifest"]
+    assert declared["document"] == "Hospital.rvt"
+
+
+def test_l0_reuses_the_existing_configuration_drift_scheme(bundle_dir):
+    mutate(bundle_dir, "views_core",
+           lambda rows: rows[4].__setitem__("ConfigHash", "cfg-zzz"))
+    with pytest.raises(V.Refusal) as excinfo:
+        run_verify(bundle_dir)
+    assert "CONFIGURATION_DRIFT" in str(excinfo.value)
+
+
+def test_l0_records_diagnostics_json_without_parsing_it(bundle_dir, tmp_path):
+    diagnostics = tmp_path / "diag.json"
+    diagnostics.write_text(json.dumps({"anything": 1}))
+    l0 = run_verify(bundle_dir,
+                    diagnostics_json=str(diagnostics))["L0_manifest"]
+    record = l0["source_artifacts"]["diagnostics_json"]
+    assert record["parsed"] is False
+    assert len(record["sha256"]) == 64
+
+
+# ---------------------------------------------------------------------------
+# L2 -- the rollup, and the call site that decides what n counts
+# ---------------------------------------------------------------------------
+
+def test_l2_call_site_counts_contributing_views_not_rows():
+    """Exercises the CALL SITE with two visibly different candidate arguments.
+
+    The fixture has 12 views of one ViewType. TEXT is non-zero in all 12;
+    REGION is non-zero in 5. n_min is 8.
+
+      - n over CONTRIBUTING values (correct): TEXT n=12 keeps its own cell,
+        REGION n=5 rolls into OTHER_ROLLUP.
+      - n over ALL ROWS (the defect): both would be n=12 and NOTHING would
+        roll up.
+
+    The two answers differ in which keys exist, so this discriminates rather
+    than merely re-deriving the count.
+    """
+    import tempfile
+    with tempfile.TemporaryDirectory() as directory:
+        write_bundle(directory, n_views=12, view_types=["FloorPlan"])
+        cells = run_verify(directory)["L2_per_category"]["FloorPlan"]["cells"]
+    assert cells["TEXT"]["n"] == 12
+    assert "REGION" not in cells
+    assert "REGION" in cells[V.L2_ROLLUP_KEY]["categories_rolled_in"]
+    assert cells[V.L2_ROLLUP_KEY]["per_category_n"]["REGION"] == 5
+
+
+def test_l2_rollup_retains_n(bundle_dir):
+    rollup = run_verify(bundle_dir)["L2_per_category"]["FloorPlan"]["cells"][
+        V.L2_ROLLUP_KEY]
+    assert rollup["n"] == sum(rollup["per_category_n"].values())
+
+
+def test_l2_rollup_key_is_distinct_from_the_other_category():
+    """AnnoCells_OTHER is a real bucket. Two things must not share a name."""
+    assert V.L2_ROLLUP_KEY != "OTHER"
+    assert "OTHER" in V.ANNO_CATEGORIES
+
+
+def test_l2_rollup_floor_is_the_same_constant_as_n_min():
+    assert V.N_MIN_L2_ROLLUP == V.N_MIN_ORDER_STATISTIC
+
+
+def test_l2_labels_an_unset_view_type(bundle_dir):
+    def blank(rows):
+        for row in rows:
+            row["ViewType"] = ""
+    mutate(bundle_dir, "views_core", blank)
+    mutate(bundle_dir, "views_vop", blank)
+    assert V.VIEWTYPE_UNSET in run_verify(bundle_dir)["L2_per_category"]
+
+
+# ---------------------------------------------------------------------------
+# L3
+# ---------------------------------------------------------------------------
+
+def test_l3_selects_by_rule_and_labels_every_exemplar(bundle_dir):
+    l3 = run_verify(bundle_dir)["L3_exemplars"]
+    assert l3["selected"] > 0
+    for exemplar in l3["exemplars"]:
+        assert exemplar["selection_reason"]
+
+
+def test_l3_includes_every_view_named_by_a_violation(bundle_dir):
+    def collide(rows):
+        rows[5]["ViewFrameHash"] = rows[2]["ViewFrameHash"]
+    mutate(bundle_dir, "views_core", collide)
+    bundle = run_verify(bundle_dir)
+    named = {e["view_id"] for e in bundle["L3_exemplars"]["exemplars"]
+             if e["selection_reason"] == "named by a violation"}
+    assert len(named) == 2
+
+
+def test_l3_records_truncation_rather_than_hiding_it(bundle_dir):
+    l3 = run_verify(bundle_dir)["L3_exemplars"]
+    assert l3["truncated"] == 0
+    assert l3["selected"] <= V.L3_TARGET_MAX
+
+
+def test_l3_does_not_pad_to_reach_the_target(tmp_path):
+    directory = write_bundle(tmp_path / "small", n_views=2)
+    l3 = run_verify(directory)["L3_exemplars"]
+    assert l3["below_target_min"] is True
+    assert l3["selected"] < V.L3_TARGET_MIN
+
+
+# ---------------------------------------------------------------------------
+# L4 -- the register and its known-open baseline
+# ---------------------------------------------------------------------------
+
+def test_l4_classifies_a_baselined_violation_as_known_open(bundle_dir):
+    mutate(bundle_dir, "views_core",
+           lambda rows: rows[5].__setitem__("ViewFrameHash",
+                                            rows[2]["ViewFrameHash"]))
+    register = run_verify(bundle_dir)["L4_violation_register"]
+    assert register["new_violation_count"] == 0
+    observed = register["observed"][0]
+    assert observed["baseline_status"] == "KNOWN_OPEN"
+    assert observed["first_observed_run"] == "20260917T112500"
+
+
+def test_l4_classifies_an_unbaselined_violation_as_new(bundle_dir):
+    mutate(bundle_dir, "views_core",
+           lambda rows: rows[3].__setitem__("RunId", "20260918T999999"))
+    register = run_verify(bundle_dir)["L4_violation_register"]
+    assert [e["violation_id"] for e in register["new_violations"]] == [
+        "I1.MULTIPLE_RUN_IDS"]
+
+
+def test_l4_separates_new_from_known_open_in_one_run(bundle_dir):
+    """The post-deletion read is 'new violations only'. It must survive a run
+    that carries both kinds at once, or the baseline buys nothing."""
+    def both(rows):
+        rows[5]["ViewFrameHash"] = rows[2]["ViewFrameHash"]
+        rows[3]["RunId"] = "20260918T999999"
+    mutate(bundle_dir, "views_core", both)
+    register = run_verify(bundle_dir)["L4_violation_register"]
+    assert register["new_violation_count"] == 1
+    assert "I8.VIEW_FRAME_HASH_COLLISION" in [
+        e["violation_id"] for e in register["observed"]]
+
+
+def test_l4_carries_undetected_baseline_entries_forward(bundle_dir):
+    carried = {e["violation_id"]: e for e in
+               run_verify(bundle_dir)["L4_violation_register"][
+                   "carried_from_baseline"]}
+    entry = carried["I2.CACHE_REHYDRATION_PROVENANCE"]
+    assert entry["baseline_status"] == "KNOWN_OPEN_UNDETECTED"
+    assert entry["absence_means"].startswith("NOTHING")
+
+
+def test_l4_marks_the_report_only_baseline_entry_as_unassertable(bundle_dir):
+    carried = {e["violation_id"]: e for e in
+               run_verify(bundle_dir)["L4_violation_register"][
+                   "carried_from_baseline"]}
+    entry = carried["I7.CELL_TOTAL_DISAGREEMENT"]
+    assert entry["baseline_status"] == "KNOWN_OPEN_REPORT_ONLY"
+    assert entry["absence_means"].startswith("NOTHING")
+
+
+def test_l4_is_a_register_not_a_verdict(bundle_dir):
+    register = run_verify(bundle_dir)["L4_violation_register"]
+    assert register["reported_as"] == "register"
+    assert register["not_reported_as"] == "pass/fail"
+
+
+def test_l4_baseline_seed_is_marked_dirty(bundle_dir):
+    register = run_verify(bundle_dir)["L4_violation_register"]
+    assert register["baseline_seed_run"] == "20260917T112500"
+    assert "DIRTY" in register["baseline_seed_warning"]
+
+
+def test_baseline_entries_declare_a_detector_or_declare_they_have_none():
+    for violation_id, entry in V.KNOWN_OPEN_BASELINE.items():
+        assert "first_observed_run" in entry, violation_id
+        assert "detector" in entry, violation_id
+        if entry["detector"] is None:
+            assert entry["why_no_detector"], violation_id
+
+
+# ---------------------------------------------------------------------------
+# Refusals. Each asserts on the MESSAGE: exit code 2 alone proves nothing,
+# because every one of these would also "pass" against a tool that refused
+# for an unrelated reason.
+# ---------------------------------------------------------------------------
+
+def test_refuses_a_missing_required_role(bundle_dir):
+    os.remove(role_path(bundle_dir, "views_perf"))
+    with pytest.raises(V.Refusal) as excinfo:
+        run_verify(bundle_dir)
+    assert "views_perf" in str(excinfo.value)
+
+
+def test_tolerates_the_optional_occlusion_role(bundle_dir):
+    os.remove(role_path(bundle_dir, "views_occlusion"))
+    bundle = run_verify(bundle_dir)
+    assert "views_occlusion" in bundle["L0_manifest"]["source_artifacts"][
+        "roles_absent"]
+
+
+def test_refuses_a_missing_directory(tmp_path):
+    with pytest.raises(V.Refusal) as excinfo:
+        run_verify(tmp_path / "nope")
+    assert "does not exist" in str(excinfo.value)
+
+
+def test_refuses_an_empty_scan(bundle_dir):
+    """glob on a mistyped path yields nothing and raises nothing."""
+    path = role_path(bundle_dir, "views_vop")
+    with open(path) as handle:
+        header = handle.readline()
+    with open(path, "w") as handle:
+        handle.write(header)
+    with pytest.raises(V.Refusal) as excinfo:
+        run_verify(bundle_dir)
+    assert "zero data rows" in str(excinfo.value)
+
+
+def test_refuses_two_files_for_one_role(bundle_dir):
+    import shutil
+    shutil.copy(role_path(bundle_dir, "views_core"),
+                os.path.join(bundle_dir, "views_core_2026-09-19.csv"))
+    with pytest.raises(V.Refusal) as excinfo:
+        run_verify(bundle_dir)
+    assert "matches 2 files" in str(excinfo.value)
+
+
+def test_refuses_an_unknown_boolean_token(bundle_dir):
+    mutate(bundle_dir, "views_core",
+           lambda rows: rows[0].__setitem__("IsOnSheet", "MAYBE"))
+    with pytest.raises(V.Refusal) as excinfo:
+        run_verify(bundle_dir)
+    assert "declared boolean vocabulary" in str(excinfo.value)
+
+
+def test_refuses_an_unparseable_number(bundle_dir):
+    mutate(bundle_dir, "views_perf",
+           lambda rows: rows[1].__setitem__("Width", "wide"))
+    with pytest.raises(V.Refusal) as excinfo:
+        run_verify(bundle_dir)
+    assert "is not a number" in str(excinfo.value)
+
+
+def test_refuses_a_fractional_grid_dimension(bundle_dir):
+    mutate(bundle_dir, "views_perf",
+           lambda rows: rows[1].__setitem__("Height", "80.5"))
+    with pytest.raises(V.Refusal) as excinfo:
+        run_verify(bundle_dir)
+    assert "not an integer" in str(excinfo.value)
+
+
+def test_refuses_an_unkeyable_row(bundle_dir):
+    mutate(bundle_dir, "views_core",
+           lambda rows: rows[2].__setitem__("ViewId", ""))
+    with pytest.raises(V.Refusal) as excinfo:
+        run_verify(bundle_dir)
+    assert "cannot be keyed" in str(excinfo.value)
+
+
+def test_refuses_an_undeclared_path(bundle_dir):
+    with pytest.raises(V.Refusal) as excinfo:
+        V.verify(str(bundle_dir), "sideways", "disabled")
+    assert "--path" in str(excinfo.value)
+
+
+def test_refuses_an_undeclared_cache_mode(bundle_dir):
+    with pytest.raises(V.Refusal) as excinfo:
+        V.verify(str(bundle_dir), "geometry", "sometimes")
+    assert "--cache-mode" in str(excinfo.value)
+
+
+def test_refuses_a_diagnostics_path_that_names_nothing(bundle_dir, tmp_path):
+    with pytest.raises(V.Refusal) as excinfo:
+        run_verify(bundle_dir, diagnostics_json=str(tmp_path / "absent.json"))
+    assert "does not exist" in str(excinfo.value)
+
+
+def test_refuses_an_unsupported_bundle_schema_version(tmp_path):
+    path = tmp_path / "bundle.json"
+    path.write_text(json.dumps({"bundle_schema_version": "9.9"}))
+    with pytest.raises(V.Refusal) as excinfo:
+        V.load_verification_bundle(str(path))
+    assert "UNSUPPORTED_BUNDLE_SCHEMA_VERSION" in str(excinfo.value)
+
+
+def test_refuses_an_unversioned_bundle(tmp_path):
+    path = tmp_path / "bundle.json"
+    path.write_text(json.dumps({}))
+    with pytest.raises(V.Refusal) as excinfo:
+        V.load_verification_bundle(str(path))
+    assert "no bundle_schema_version" in str(excinfo.value)
+
+
+def test_round_trips_its_own_bundle(bundle_dir, tmp_path):
+    path = tmp_path / "out.json"
+    path.write_text(json.dumps(run_verify(bundle_dir)))
+    assert V.load_verification_bundle(str(path))["bundle_schema_version"] == \
+        V.BUNDLE_SCHEMA_VERSION
+
+
+# ---------------------------------------------------------------------------
+# CLI contract, as a subprocess. Exit codes cannot be observed in-process.
+# ---------------------------------------------------------------------------
+
+def _cli(directory, *extra):
+    return subprocess.run(
+        [sys.executable, TOOL_PATH, str(directory), "--path", "geometry",
+         "--cache-mode", "disabled", "--quiet"] + list(extra),
+        capture_output=True, text=True)
+
+
+def test_cli_control_exits_zero_on_a_clean_bundle(bundle_dir):
+    assert _cli(bundle_dir).returncode == 0
+
+
+def test_cli_exits_two_on_a_refusal(bundle_dir):
+    os.remove(role_path(bundle_dir, "views_perf"))
+    result = _cli(bundle_dir)
+    assert result.returncode == 2
+    assert result.stderr.startswith("REFUSED:")
+
+
+def test_cli_default_is_not_a_gate(bundle_dir):
+    """A register read as pass/fail is the failure mode this guards."""
+    mutate(bundle_dir, "views_core",
+           lambda rows: rows[3].__setitem__("RunId", "20260918T999999"))
+    assert _cli(bundle_dir).returncode == 0
+
+
+def test_cli_fail_on_new_is_opt_in(bundle_dir):
+    mutate(bundle_dir, "views_core",
+           lambda rows: rows[3].__setitem__("RunId", "20260918T999999"))
+    assert _cli(bundle_dir, "--fail-on-new").returncode == 1
+
+
+def test_cli_fail_on_new_ignores_known_open_violations(bundle_dir):
+    mutate(bundle_dir, "views_core",
+           lambda rows: rows[5].__setitem__("ViewFrameHash",
+                                            rows[2]["ViewFrameHash"]))
+    assert _cli(bundle_dir, "--fail-on-new").returncode == 0
+
+
+def test_cli_writes_a_readable_bundle(bundle_dir, tmp_path):
+    out = tmp_path / "nested" / "bundle.json"
+    assert _cli(bundle_dir, "--out", str(out)).returncode == 0
+    assert V.load_verification_bundle(str(out))["L0_manifest"]["run_id"] == RUN_ID
+
+
+def test_i7_totals_are_keyed_by_run_and_view_not_view_alone(bundle_dir):
+    """Discriminates the two candidate keyings, rather than re-deriving one.
+
+    The bundle is given a SECOND row for the SAME ViewId under a second RunId,
+    carrying a different FilledCells. Keyed by (RunId, ViewId) the two L1 rows
+    carry 120 and 999; keyed by ViewId alone they collapse and both carry
+    whichever was written last. An earlier version of this test varied only
+    the RunId on a view no other row shared, so both keyings agreed and it
+    stayed green against the defect.
+    """
+    def add_second_run(rows, filled=None):
+        clone = dict(rows[0])
+        clone["RunId"] = "20260918T999999"
+        if filled is not None:
+            clone["FilledCells"] = filled
+        rows.append(clone)
+    mutate(bundle_dir, "views_core", add_second_run)
+    mutate(bundle_dir, "views_vop", add_second_run)
+    mutate(bundle_dir, "views_perf", lambda rows: add_second_run(rows, 999))
+
+    by_run = {row["run_id"]: row for row in run_verify(bundle_dir)["L1_per_view"]
+              if row["view_id"] == 500000}
+    assert set(by_run) == {RUN_ID, "20260918T999999"}
+    assert by_run[RUN_ID]["cell_total_a_filled_cells"] == 120.0
+    assert by_run["20260918T999999"]["cell_total_a_filled_cells"] == 999.0
+
+
+def test_l3_can_reach_the_views_a_duplication_names(bundle_dir):
+    mutate(bundle_dir, "views_vop", lambda rows: rows.append(dict(rows[2])))
+    bundle = run_verify(bundle_dir)
+    named = {e["view_id"] for e in bundle["L3_exemplars"]["exemplars"]
+             if e["selection_reason"] == "named by a violation"}
+    assert named, "a duplicate-row violation must reach L3"
+
+
+# ---------------------------------------------------------------------------
+# Codex review on a671f71. Both reproduced before being fixed.
+# ---------------------------------------------------------------------------
+
+def test_i3_unpopulated_antecedent_cannot_certify_the_invariant(bundle_dir):
+    """P1. An antecedent row with an UNPOPULATED IsOnSheet is undecidable.
+
+    parse_tribool preserves an empty cell as None precisely so "never written"
+    stays distinguishable from "written false" -- and the I3 call site then
+    threw that distinction away, reporting HOLDS. Extracting the parser bound
+    the parser, not its caller: the repo's own second corollary.
+    """
+    def blank_a_capped_row(rows):
+        for row in rows:
+            if row["CapTriggered"] == "True":
+                row["IsOnSheet"] = ""
+                return
+        raise AssertionError("fixture carries no capped row to blank")
+    mutate(bundle_dir, "views_core", blank_a_capped_row)
+    record = run_verify(bundle_dir)["invariants"]["I3"]["per_cap"]["CELL_SIZE_CAP"]
+    assert record["status"] == V.STATUS_NOT_EVALUABLE
+    assert record["antecedent_rows_indeterminate"] == 1
+    assert record["is_on_sheet_true_count"] > 0, (
+        "another row must be on a sheet, or this passes via NOT_EXERCISED "
+        "instead of via the indeterminate branch it is meant to exercise")
+
+
+def test_i3_explicit_false_antecedent_still_holds(bundle_dir):
+    """The control for the fix above: it must not swallow a real False."""
+    def set_false(rows):
+        for row in rows:
+            if row["CapTriggered"] == "True":
+                row["IsOnSheet"] = "False"
+                return
+    mutate(bundle_dir, "views_core", set_false)
+    record = run_verify(bundle_dir)["invariants"]["I3"]["per_cap"]["CELL_SIZE_CAP"]
+    assert record["status"] == V.STATUS_HOLDS
+    assert record["antecedent_rows_indeterminate"] == 0
+
+
+def test_i3_observed_violation_outranks_an_indeterminate_row(bundle_dir):
+    """A violation is a fact; an unpopulated row is merely undecidable."""
+    def one_of_each(rows):
+        seen = 0
+        for row in rows:
+            if row["CapTriggered"] == "True":
+                seen += 1
+                if seen == 1:
+                    row["IsOnSheet"] = "True"
+                elif seen == 2:
+                    row["IsOnSheet"] = ""
+                    return
+        raise AssertionError("fixture needs two capped rows")
+    mutate(bundle_dir, "views_core", one_of_each)
+    bundle = run_verify(bundle_dir)
+    record = bundle["invariants"]["I3"]["per_cap"]["CELL_SIZE_CAP"]
+    assert record["status"] == V.STATUS_VIOLATED
+    assert len(record["indeterminate_rows"]) == 1
+    assert "I3.CAPPED_VIEW_ON_SHEET" in violation_ids(bundle)
+
+
+@pytest.mark.parametrize("token", ["nan", "inf", "-inf", "Infinity", "1e9999"])
+def test_refuses_a_non_finite_number(bundle_dir, token):
+    """P2. float() accepts all of these; int() then raises, and json.dumps
+    emits non-standard NaN/Infinity tokens that strict consumers reject."""
+    mutate(bundle_dir, "views_perf",
+           lambda rows: rows[1].__setitem__("Width", token))
+    with pytest.raises(V.Refusal) as excinfo:
+        run_verify(bundle_dir)
+    assert "non-finite float" in str(excinfo.value)
+
+
+def test_non_finite_refusal_uses_the_documented_exit_code(bundle_dir):
+    """Not merely 'an error': an uncaught OverflowError exits 1 with a
+    traceback, which is not the exit 2 this tool documents for a refusal."""
+    mutate(bundle_dir, "views_perf",
+           lambda rows: rows[1].__setitem__("Width", "1e9999"))
+    result = _cli(bundle_dir)
+    assert result.returncode == 2
+    assert result.stderr.startswith("REFUSED:")
+    assert "Traceback" not in result.stderr
+
+
+def test_emitted_bundle_is_strict_json(bundle_dir):
+    """A non-finite float would reach json.dumps as NaN / Infinity."""
+    mutate(bundle_dir, "views_perf",
+           lambda rows: rows[1].__setitem__("FilledCells", "120"))
+    text = json.dumps(run_verify(bundle_dir))
+
+    def reject(constant):
+        raise AssertionError("non-standard JSON token emitted: " + constant)
+
+    json.loads(text, parse_constant=reject)
+
+
+def test_finite_numbers_are_unaffected(bundle_dir):
+    """Control: the refusal must not catch ordinary values."""
+    mutate(bundle_dir, "views_perf",
+           lambda rows: rows[1].__setitem__("FilledCells", "1e6"))
+    row = [r for r in run_verify(bundle_dir)["L1_per_view"]
+           if r["cell_total_a_filled_cells"] == 1000000.0]
+    assert len(row) == 1
+
+
+# ---------------------------------------------------------------------------
+# Codex review on 20e7958. All five reproduced before being fixed.
+# ---------------------------------------------------------------------------
+
+def test_i2_detects_a_fresh_row_plus_a_cached_row(bundle_dir):
+    """P1. The exact shape the I2 baseline seeds: one view emitted twice, once
+    fresh and once cached. Filtering cached rows FIRST leaves one row and
+    reports HOLDS -- and the register then states that the ACTIVE detector ran
+    and did not fire, which is worse than having no detector."""
+    def add_cached_twin(rows):
+        clone = dict(rows[2])
+        clone["FromCache"] = "Y"
+        rows.append(clone)
+    mutate(bundle_dir, "views_core", add_cached_twin)
+    mutate(bundle_dir, "views_vop", add_cached_twin)
+    bundle = run_verify(bundle_dir, cache_mode="enabled")
+    assert "I2.DUPLICATE_VIEW_ROW" in violation_ids(bundle)
+    record = bundle["invariants"]["I2"]["per_role"]["views_vop"]
+    assert record["status"] == V.STATUS_VIOLATED
+    pair = list(record["duplicate_keys"].values())[0]
+    assert sorted(pair["from_cache"]) == [False, True], (
+        "the finding must show the pair was one fresh and one cached row")
+    assert record["rows_dropped_from_cache"] == 1, (
+        "the cached row is still dropped from the measured population")
+
+
+def test_i2_duplicate_of_two_fresh_rows_still_fires(bundle_dir):
+    """Control: counting before the filter must not lose the plain case."""
+    mutate(bundle_dir, "views_vop", lambda rows: rows.append(dict(rows[2])))
+    assert "I2.DUPLICATE_VIEW_ROW" in violation_ids(run_verify(bundle_dir))
+
+
+def test_i8_unjoinable_rows_prevent_certification(bundle_dir):
+    """P1. Uniqueness is a claim about a POPULATION; rows that could not be
+    keyed are not in it, so HOLDS would certify over the rows nothing checked."""
+    mutate(bundle_dir, "views_core",
+           lambda rows: rows[4].__setitem__("ViewFrameHash", ""))
+    record = run_verify(bundle_dir)["invariants"]["I8"]
+    assert record["status"] == V.STATUS_NOT_EVALUABLE
+    assert record["rows_evaluated"] > 0, (
+        "other rows must be evaluable, or this passes via NOT_EXERCISED")
+    assert len(record["rows_unjoinable"]) == 1
+
+
+def test_i8_collision_outranks_an_unjoinable_row(bundle_dir):
+    """An observed collision is a fact; an unjoinable row is undecidable."""
+    def collide_and_blank(rows):
+        rows[5]["ViewFrameHash"] = rows[2]["ViewFrameHash"]
+        rows[7]["ViewFrameHash"] = ""
+    mutate(bundle_dir, "views_core", collide_and_blank)
+    bundle = run_verify(bundle_dir)
+    assert bundle["invariants"]["I8"]["status"] == V.STATUS_VIOLATED
+    assert "I8.VIEW_FRAME_HASH_COLLISION" in violation_ids(bundle)
+
+
+def test_l3_truncation_never_drops_a_violation_exemplar(tmp_path):
+    """P2. 30 views yields 60+ candidates against a cap of 40. Sorting by
+    view_id and slicing kept the collision's first view and discarded its
+    last -- contradicting the selection rule printed beside it."""
+    directory = write_bundle(tmp_path / "wide", n_views=30)
+    mutate(directory, "views_core",
+           lambda rows: rows[29].__setitem__("ViewFrameHash",
+                                             rows[0]["ViewFrameHash"]))
+    bundle = run_verify(directory)
+    l3 = bundle["L3_exemplars"]
+    assert l3["truncated"] > 0, "the cap must actually bind, or this is vacuous"
+    colliding = {entry["view_id"]
+                 for group in bundle["invariants"]["I8"]["collisions"].values()
+                 for entry in group}
+    assert len(colliding) == 2
+    named = {e["view_id"] for e in l3["exemplars"]
+             if e["selection_reason"] == "named by a violation"}
+    assert colliding <= named
+    assert l3["violation_exemplars"] == len(named)
+
+
+def test_parse_int_is_exact_above_the_float_mantissa(bundle_dir):
+    """P2. float() collapses 9007199254740992 and ...93 onto one value, which
+    merges two distinct views and fabricates duplicate-key findings. This repo
+    reads Revit 2025's 64-bit ElementId.Value, so the magnitude is reachable."""
+    low, high = 9007199254740992, 9007199254740993
+    assert float(str(low)) == float(str(high)), (
+        "premise: these are indistinguishable as floats")
+
+    def big_ids(rows):
+        rows[0]["ViewId"] = str(low)
+        rows[1]["ViewId"] = str(high)
+    for role in ("views_core", "views_vop", "views_perf", "views_occlusion"):
+        mutate(bundle_dir, role, big_ids)
+    bundle = run_verify(bundle_dir)
+    view_ids = {row["view_id"] for row in bundle["L1_per_view"]}
+    assert {low, high} <= view_ids
+    assert len(view_ids) == 12
+    assert violation_ids(bundle) == [], "no duplicate may be fabricated"
+
+
+def test_parse_int_still_accepts_a_float_formatted_integer(bundle_dir):
+    """Control: the exact path must not reject "80.0"."""
+    mutate(bundle_dir, "views_perf",
+           lambda rows: rows[1].__setitem__("Width", "80.0"))
+    assert run_verify(bundle_dir)["L1_per_view"][1]["grid_width"] == 80
+
+
+def test_refuses_a_ratio_that_overflows_from_finite_operands(bundle_dir):
+    """P2. Refusing non-finite INPUTS is not enough -- a derived value reaches
+    json.dumps just the same and emits the non-standard token Infinity."""
+    def extremes(rows):
+        rows[0]["CellSizeRequested_ft"] = "1e-308"
+        rows[0]["CellSizeEffective_ft"] = "1e308"
+    mutate(bundle_dir, "views_core", extremes)
+    with pytest.raises(V.Refusal) as excinfo:
+        run_verify(bundle_dir)
+    assert "is not finite" in str(excinfo.value)
+    assert "CellSizeRequested_ft" in str(excinfo.value), (
+        "the refusal must name which quantity overflowed")
+
+
+def test_ordinary_ratios_are_unaffected(bundle_dir):
+    """Control: the overflow guard must not catch a real measurement."""
+    row = run_verify(bundle_dir)["L1_per_view"][0]
+    assert row["cell_size_ratio_effective_over_requested"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Found by running the tool on a real capture: a bundle could not say which
+# build produced it, and the build had changed the schema without the version
+# moving. A 1.0 bundle read under 1.1 assumptions raised KeyError.
+# ---------------------------------------------------------------------------
+
+def test_l0_records_the_producing_build(bundle_dir):
+    """Without this a bundle cannot say which semantics it carries."""
+    import hashlib
+    l0 = run_verify(bundle_dir)["L0_manifest"]
+    digest = hashlib.sha256(
+        open(os.path.join(TOOLS_DIR, "verify_invariant_core.py"), "rb").read()
+    ).hexdigest()
+    assert l0["tool_sha256"] == digest
+
+
+def test_refuses_the_superseded_schema_version_by_name(tmp_path):
+    """1.0 is refused, not read: its duplicate_keys held a different shape AND
+    counted a different quantity, so reading it under 1.1 understates I2."""
+    path = tmp_path / "old.json"
+    path.write_text(json.dumps({"bundle_schema_version": "1.0"}))
+    with pytest.raises(V.Refusal) as excinfo:
+        V.load_verification_bundle(str(path))
+    message = str(excinfo.value)
+    assert "UNSUPPORTED_BUNDLE_SCHEMA_VERSION" in message
+    assert "LOWER BOUND" in message, (
+        "the refusal must say what the old figure actually was")
+    assert "Re-run" in message
+
+
+def test_current_bundles_declare_the_current_version(bundle_dir):
+    assert run_verify(bundle_dir)["bundle_schema_version"] == "1.1"
+    assert V.BUNDLE_SCHEMA_VERSION not in V.SUPERSEDED_SCHEMA_VERSIONS
+
+
+def test_every_superseded_version_is_refused(tmp_path):
+    """A version listed as superseded must not also be listed as supported."""
+    assert not (V.SUPERSEDED_SCHEMA_VERSIONS.keys()
+                & V.SUPPORTED_BUNDLE_SCHEMA_VERSIONS)
+
+
+# ---------------------------------------------------------------------------
+# Found on the real 20260917T112500 capture: views_perf has no FromCache
+# column, so a cached view's perf row is retained beside its fresh one and a
+# last-wins join silently made the CACHED row -- counters zeroed by
+# rehydration -- the view's measurement.
+# ---------------------------------------------------------------------------
+
+def _add_cached_twin_everywhere(bundle_dir, index=2, filled=0):
+    """Reproduce the capture's shape: core/vop mark the twin FromCache, perf
+    cannot (no such column) and carries the rehydrated zeros."""
+    def core_vop(rows):
+        clone = dict(rows[index])
+        clone["FromCache"] = "Y"
+        rows.append(clone)
+
+    def perf(rows):
+        clone = dict(rows[index])
+        clone["FilledCells"] = str(filled)
+        rows.append(clone)
+    mutate(bundle_dir, "views_core", core_vop)
+    mutate(bundle_dir, "views_vop", core_vop)
+    mutate(bundle_dir, "views_perf", perf)
+
+
+def test_i7_excludes_a_view_whose_perf_row_is_ambiguous(bundle_dir):
+    """The cached row's zeroed FilledCells must not become the measurement."""
+    _add_cached_twin_everywhere(bundle_dir)
+    i7 = run_verify(bundle_dir, cache_mode="enabled")["invariants"]["I7"]
+    assert len(i7["views_ambiguous"]) == 1
+    assert i7["views_joined"] == 11
+    for view in i7.get("views_in_perf_only", []):
+        assert view is not None
+    assert "EXCLUDED" in i7["views_ambiguous_note"]
+
+
+def test_l1_never_resolves_an_ambiguous_row_by_position(bundle_dir):
+    """A last-wins dict comprehension would have silently reported 0 here."""
+    _add_cached_twin_everywhere(bundle_dir)
+    rows = [r for r in run_verify(bundle_dir, cache_mode="enabled")["L1_per_view"]
+            if "views_perf" in r["ambiguous_in"]]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["present_in"]["views_perf"] is False
+    assert row["cell_total_a_filled_cells"] is None, (
+        "neither candidate row may supply the value")
+    assert row["grid_width"] is None and row["grid_height"] is None
+
+
+def test_i8_treats_an_ambiguous_perf_row_as_unjoinable(bundle_dir):
+    """Grid dimensions from one of two candidate rows are not the view's."""
+    _add_cached_twin_everywhere(bundle_dir)
+    i8 = run_verify(bundle_dir, cache_mode="enabled")["invariants"]["I8"]
+    assert i8["status"] == V.STATUS_NOT_EVALUABLE
+    reasons = [r["reason"] for r in i8["rows_unjoinable"]]
+    assert any("ambiguous" in r for r in reasons)
+
+
+def test_index_by_key_reports_rather_than_picks():
+    """Binds the helper directly: the defect was a silent choice, so the
+    contract is that it makes none."""
+    entries = [
+        {"run_id": "R", "view_id": 1, "row_index": 1},
+        {"run_id": "R", "view_id": 2, "row_index": 2},
+        {"run_id": "R", "view_id": 2, "row_index": 9},
+    ]
+    by_key, ambiguous = V.index_by_key(entries)
+    assert set(by_key) == {("R", 1)}
+    assert ambiguous == {("R", 2): [2, 9]}
+
+
+def test_control_unambiguous_join_is_unaffected(bundle_dir):
+    """Every view keeps its measurement when no key repeats."""
+    bundle = run_verify(bundle_dir)
+    assert bundle["invariants"]["I7"]["views_ambiguous"] == {}
+    assert bundle["invariants"]["I7"]["views_joined"] == 12
+    assert all(r["ambiguous_in"] == [] for r in bundle["L1_per_view"])
+    assert bundle["invariants"]["I8"]["status"] == V.STATUS_HOLDS
+
+
+def test_l1_carries_the_cell_total_components_not_only_the_sum(bundle_dir):
+    """I7 says THAT the totals disagree; only the addends say where the
+    difference lives, which is the §7.2 definition question."""
+    row = run_verify(bundle_dir)["L1_per_view"][0]
+    components = row["cell_total_b_components"]
+    assert set(components) == {"ModelOnly", "Overlap", "AnnoOnly"}
+    assert sum(components.values()) == row["cell_total_b_sum"]
+
+
+# ---------------------------------------------------------------------------
+# Codex rounds 3-6 (6046569, 0adde33, 4c7f3b9, 55bd07d). All reproduced first.
+# ---------------------------------------------------------------------------
+
+def test_i3_unknown_antecedent_on_a_sheeted_row_is_indeterminate(bundle_dir):
+    """P1. A blank CapTriggered read as False EXCLUDED the row -- and an
+    excluded on-sheet row is exactly one that might satisfy the antecedent and
+    violate, so excluding it can only ever produce a false clean."""
+    def blank_cap_on_a_sheeted_row(rows):
+        for row in rows:
+            if row["IsOnSheet"] == "True" and row["CapTriggered"] == "False":
+                row["CapTriggered"] = ""
+                return
+        raise AssertionError("fixture has no sheeted, uncapped row")
+    mutate(bundle_dir, "views_core", blank_cap_on_a_sheeted_row)
+    record = run_verify(bundle_dir)["invariants"]["I3"]["per_cap"]["CELL_SIZE_CAP"]
+    assert record["status"] == V.STATUS_NOT_EVALUABLE
+    assert record["antecedent_rows_indeterminate"] == 1
+
+
+def test_i3_blank_resolution_mode_on_a_sheeted_row_is_indeterminate(bundle_dir):
+    """The other half of the same antecedent."""
+    def blank_mode(rows):
+        for row in rows:
+            if row["IsOnSheet"] == "True" and row["CapTriggered"] == "False":
+                row["ResolutionMode"] = ""
+                return
+    mutate(bundle_dir, "views_core", blank_mode)
+    record = run_verify(bundle_dir)["invariants"]["I3"]["per_cap"]["CELL_SIZE_CAP"]
+    assert record["status"] == V.STATUS_NOT_EVALUABLE
+
+
+def test_i3_unknown_antecedent_off_sheet_is_not_indeterminate(bundle_dir):
+    """Control: with IsOnSheet False the consequent holds either way, so an
+    unknown antecedent decides nothing and must not block the invariant."""
+    def blank_cap_off_sheet(rows):
+        for row in rows:
+            if row["IsOnSheet"] == "False":
+                row["CapTriggered"] = ""
+                row["ResolutionMode"] = "canonical"
+                return
+    mutate(bundle_dir, "views_core", blank_cap_off_sheet)
+    record = run_verify(bundle_dir)["invariants"]["I3"]["per_cap"]["CELL_SIZE_CAP"]
+    assert record["status"] == V.STATUS_HOLDS
+
+
+def test_i4_blank_effective_cell_is_a_violation(bundle_dir):
+    """P1. Header presence is not shipment: a populated requested value whose
+    effective cell is blank did not ship an effective value."""
+    mutate(bundle_dir, "views_core",
+           lambda rows: rows[0].__setitem__("CellSizeEffective_ft", ""))
+    bundle = run_verify(bundle_dir)
+    assert "I4.REQUESTED_WITHOUT_EFFECTIVE" in violation_ids(bundle)
+    record = bundle["invariants"]["I4"]["per_role"]["views_core"]
+    assert record["status"] == V.STATUS_VIOLATED
+    assert record["rows_missing_effective"][0]["rows"][0]["requested"] == 0.5
+
+
+def test_l4_propagates_a_detector_that_could_not_evaluate(bundle_dir):
+    """P1. An invariant that declined to decide must not be reported in the
+    register as having decided."""
+    mutate(bundle_dir, "views_core",
+           lambda rows: rows[4].__setitem__("ViewFrameHash", ""))
+    bundle = run_verify(bundle_dir)
+    assert bundle["invariants"]["I8"]["status"] == V.STATUS_NOT_EVALUABLE
+    entry = [e for e in bundle["L4_violation_register"]["carried_from_baseline"]
+             if e["violation_id"] == "I8.VIEW_FRAME_HASH_COLLISION"][0]
+    assert entry["baseline_status"] == "KNOWN_OPEN_NOT_EVALUABLE"
+    assert entry["absence_means"].startswith("NOTHING")
+
+
+def test_l4_still_reports_a_detector_that_did_run(bundle_dir):
+    """Control: the propagation must not blanket every baseline entry."""
+    entry = [e for e in run_verify(bundle_dir)["L4_violation_register"][
+        "carried_from_baseline"]
+        if e["violation_id"] == "I8.VIEW_FRAME_HASH_COLLISION"][0]
+    assert entry["baseline_status"] == "NOT_OBSERVED_THIS_RUN"
+    assert entry["detector_status"] == V.STATUS_HOLDS
+
+
+def test_refuses_partial_configuration_identity(bundle_dir):
+    """P1. Discarding blanks made a partly-populated column look unanimous, so
+    rows from an unidentified configuration were attributed to a known one."""
+    mutate(bundle_dir, "views_core",
+           lambda rows: rows[3].__setitem__("ConfigHash", ""))
+    with pytest.raises(V.Refusal) as excinfo:
+        run_verify(bundle_dir)
+    assert "INCOMPLETE_CONFIGURATION_IDENTITY" in str(excinfo.value)
+
+
+def test_l2_absent_annotation_column_is_not_an_observed_zero(bundle_dir):
+    """P2. A deleted column reported n=0 and rolled up, presenting a schema
+    change as a category with no contributing views."""
+    drop_column(bundle_dir, "views_vop", "AnnoCells_TAG")
+    cells = run_verify(bundle_dir)["L2_per_category"]["FloorPlan"]["cells"]
+    assert cells["TAG"]["status"] == V.STATUS_NOT_EVALUABLE
+    assert "TAG" not in cells[V.L2_ROLLUP_KEY].get("per_category_n", {})
+
+
+def test_parse_int_is_exact_for_float_formatted_identifiers(bundle_dir):
+    """P2. The "80.0" allowance still routed 9007199254740993.0 through
+    float()."""
+    big = "9007199254740993.0"
+    for role in ("views_core", "views_vop", "views_perf", "views_occlusion"):
+        mutate(bundle_dir, role, lambda rows: rows[0].__setitem__("ViewId", big))
+    view_ids = {r["view_id"] for r in run_verify(bundle_dir)["L1_per_view"]}
+    assert 9007199254740993 in view_ids
+    assert 9007199254740992 not in view_ids
+
+
+def test_refuses_a_fractional_cell_count(bundle_dir):
+    """P2. FilledCells is a count; 1.5 is malformed, not a measurement."""
+    mutate(bundle_dir, "views_perf",
+           lambda rows: rows[1].__setitem__("FilledCells", "1.5"))
+    with pytest.raises(V.Refusal) as excinfo:
+        run_verify(bundle_dir)
+    assert "not an integer" in str(excinfo.value)
+
+
+def test_refuses_a_non_finite_aggregate_sum(bundle_dir):
+    """P2. Three individually finite components overflow their sum, and
+    _ratio returns None before it would ever see the numerator."""
+    def overflow(rows):
+        for column in ("ModelOnly", "Overlap", "AnnoOnly"):
+            rows[0][column] = "1e308"
+    mutate(bundle_dir, "views_vop", overflow)
+    with pytest.raises(V.Refusal) as excinfo:
+        run_verify(bundle_dir)
+    assert "overflow" in str(excinfo.value).lower()
+
+
+def test_refuses_a_duplicated_csv_header(bundle_dir):
+    """P2. DictReader keeps only the last column of a repeated name."""
+    path = role_path(bundle_dir, "views_core")
+    with open(path, newline="") as handle:
+        lines = handle.read().splitlines()
+    lines[0] = lines[0] + ",ViewId"
+    for index in range(1, len(lines)):
+        lines[index] = lines[index] + ",999"
+    with open(path, "w", newline="") as handle:
+        handle.write("\n".join(lines) + "\n")
+    with pytest.raises(V.Refusal) as excinfo:
+        run_verify(bundle_dir)
+    assert "repeats the header" in str(excinfo.value)
+
+
+def test_refuses_an_unreadable_csv(bundle_dir):
+    """P2. An OSError/UnicodeError exiting 1 would let automation read
+    'could not open the file' as 'found a new violation'."""
+    with open(role_path(bundle_dir, "views_vop"), "wb") as handle:
+        handle.write(b"Date,RunId\n\xff\xfe not utf 8\n")
+    with pytest.raises(V.Refusal) as excinfo:
+        run_verify(bundle_dir)
+    assert "could not be read" in str(excinfo.value)
+
+
+def test_cli_refuses_an_unwritable_out_path(bundle_dir):
+    """P2. Exit 1 is reserved for --fail-on-new."""
+    result = _cli(bundle_dir, "--out", str(bundle_dir))
+    assert result.returncode == 2
+    assert result.stderr.startswith("REFUSED:")
+    assert "Traceback" not in result.stderr
+
+
+def test_l3_selection_identity_includes_the_run(bundle_dir):
+    """P2. Verification continues after an I1 violation, so a bundle can hold
+    one ViewId under two runs; keying on view_id alone collapsed the second."""
+    def second_run(rows):
+        clone = dict(rows[0])
+        clone["RunId"] = "20260918T999999"
+        rows.append(clone)
+    for role in ("views_core", "views_vop", "views_perf", "views_occlusion"):
+        mutate(bundle_dir, role, second_run)
+    exemplars = run_verify(bundle_dir)["L3_exemplars"]["exemplars"]
+    runs = {e["run_id"] for e in exemplars if e["view_id"] == 500000}
+    assert len(runs) == 2

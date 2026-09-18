@@ -1,5 +1,79 @@
 # Stage A excursion snapshot — reference data, NOT a baseline
 
+## `verification_bundle_20260917T112657.json`
+
+| | |
+|---|---|
+| run | byGeom `20260917T112657_2025-02-03.rvt` |
+| produced by | `tools/verify_invariant_core.py` at `2f741bd` |
+| `tool_sha256` | `b10cd46e5d6b39efde1cbf9371bf6435db7d686f889da126889c9b6e6c13d861` |
+| `ConfigHash` | `a493722f` |
+| bundle schema | `1.1` |
+| sha256 | `faaf9554366206f9617cae0b26c1d5da421c6cdb63d08eee5cf7e2296219de32` |
+| bytes | 68,883 |
+
+**This is the PRE-DELETION reference for the classification-surface deletion.**
+It exists so the post-deletion run has something to diff against: new violations
+in the second bundle are collateral damage from the deletion, and everything
+already in this one is not.
+
+Read it with `verify_invariant_core.load_verification_bundle()`, which refuses a
+schema version it was not written for. `tool_sha256` is the producing build: a
+comparison is only meaningful against a bundle from the SAME build, because a
+differ is robust to its own systematic errors only when both sides share them.
+
+### THIS IS NOT A GOLDEN BASELINE. DO NOT ASSERT AGAINST IT.
+
+Same rule as the CSV below, for the same reason. Nothing under `tests/` reads
+it and nothing should start. `§4` of the Stage A handoff defers the golden set
+until after the deletion lands, after vector bbox is validated, and on a capture
+where the invariant core reports no violations. This capture reports two
+known-open violations, so it is not that capture.
+
+### What it records, and what it does not
+
+At the time of capture, `new_violation_count: 0` — every violation observed was
+already in the known-open baseline:
+
+- **I2** — 4 of 8 views emitted twice, each pair one fresh row plus one cached
+  row (`from_cache: [false, true]`). `views_perf` duplicates too, but carries no
+  `FromCache` column, so neither of its rows can be identified as cached.
+- **I8** — two `ViewFrameHash` collisions. `1c1b4f43` covers 542078 and 554620
+  at **identical** 350x288 dims; `6147c316` covers 630733 and 770742 at 97x25
+  (2425 cells) and 52x152 (7904 cells). These are different kinds of thing and
+  the bundle does not adjudicate which is a defect.
+- **I3** — `NOT_EXERCISED`. No row carries `IsOnSheet` True, so the column
+  cannot distinguish "nothing is sheeted" from "the viewport scan never ran".
+- **I7** — report only, and only 4 of 8 views are joinable: the other 4 are the
+  duplicated ones, excluded because nothing says which row is authoritative.
+
+**`Ext_Cells_*` is zero on every view.** External content — linked RVT and DWG —
+is entirely unexercised by this capture, so a before/after against it can say
+nothing about whether external-content emission survived the deletion. That
+needs a separate capture with links visible.
+
+### byColor and byGeom produce identical CSVs
+
+Measured, not assumed. The byColor run `20260917T112500` and the byGeom run
+`20260917T112657` of the same document produce bundles that agree on every
+observable: the same 8 views, the same `FilledCells`, the same cell-total sums,
+the same annotation totals, the same frame hashes, the same invariant statuses
+and the same collisions. They also share `ConfigHash` `a493722f`.
+
+The color-ID capture is an ADDITIONAL output — TIFFs plus sidecars — layered on
+the same pipeline run. It does not change these CSVs. So `--path` records which
+export directory a bundle came from, not a difference in the numbers, and
+`tools/colorid_to_occupancy.py` reads these CSVs as its `geom_csv` input
+regardless of which folder they sit in.
+
+### Real project data
+
+View names come from a live hospital model, as with the CSV below. Relevant if
+this repository's visibility ever changes.
+
+---
+
+
 ## `stage_a_excursion_byColor_20260917T104744.csv`
 
 | | |
