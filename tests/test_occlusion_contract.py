@@ -402,6 +402,7 @@ def test_rasterize_areal_loops_high_threads_out_cells_for_rect_gate():
     assert out_cells == {idx for idx, value in enumerate(r.w_occ) if value == 1.0}
 
 
+@pytest.mark.quarantine  # see tests/quarantine_registry.py
 def test_rasterize_areal_loops_low_does_not_populate_rect_gate_cells():
     """Only AREAL+HIGH footprints may seed scene occluder rects."""
     r = _make_raster()

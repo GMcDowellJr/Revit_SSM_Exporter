@@ -67,14 +67,108 @@ def _dot(a, b):
     return a.X * b.X + a.Y * b.Y + a.Z * b.Z
 
 
-def _prepare_view_for_export(doc, view, W, H, cell_size_ft):
+def _crop_uv_frame(cb, T, U_vec, V_vec, view_origin, make_xyz):
+    """The crop box's rectangle in the VIEW-LOCAL UV frame.
+
+    Returns ``(umin, vmin, u_extent, v_extent)``.
+
+    THE VIEW ORIGIN IS THE WHOLE POINT OF THIS FUNCTION. ``raster.bounds_xy``
+    -- which `_grid_origin_uv()` reads and `_prepare_view_for_export()`
+    anchors to -- is produced by `xy_bounds_from_crop_box_all_corners()`
+    through `ViewBasis.transform_to_view_uvw()`, which projects
+    ``point - basis.origin`` (view_basis.py:91-97), and `make_view_basis()`
+    sets ``basis.origin = view.Origin`` (:151). A bare ``dot(world_pt, right)``
+    is therefore in a DIFFERENT frame, offset by ``dot(view.Origin, right)``.
+
+    Taking a difference of two such projections hides the discrepancy -- the
+    origin term cancels -- which is why the crop's EXTENT was right while its
+    MINIMUM was not. An anchoring shift is not a difference of two values in
+    one frame; it is a difference across two frames, so it carries the offset
+    straight through. On a plan view at the project origin that offset is
+    ~0 and invisible; on an elevation or section whose origin projects onto
+    either axis it is the full projected distance, and anchoring would move
+    the crop farther from the grid than leaving it alone.
+
+    ``make_xyz`` is injected so this stays pure arithmetic over duck-typed
+    points and can be tested without Revit -- which is what the original
+    inline version could not be.
+    """
+    u_vals, v_vals = [], []
+    for lx in (cb.Min.X, cb.Max.X):
+        for ly in (cb.Min.Y, cb.Max.Y):
+            local_pt = make_xyz(lx, ly, cb.Min.Z)
+            world_pt = T.OfPoint(local_pt) if T is not None else local_pt
+            u_vals.append(_dot(world_pt, U_vec))
+            v_vals.append(_dot(world_pt, V_vec))
+
+    # Into the basis frame: subtract the origin's own projection, exactly as
+    # transform_to_view_uvw() does before projecting.
+    u_org = _dot(view_origin, U_vec) if view_origin is not None else 0.0
+    v_org = _dot(view_origin, V_vec) if view_origin is not None else 0.0
+    umin, vmin = min(u_vals) - u_org, min(v_vals) - v_org
+    return (umin, vmin, max(u_vals) - min(u_vals), max(v_vals) - min(v_vals))
+
+
+def _grid_origin_uv(view_data):
+    """(umin, vmin) of the VOP grid this view was rasterized on, or None.
+
+    raster.bounds_xy is the grid's OWN rectangle, which is not the view's crop
+    rectangle whenever a bounds buffer, an annotation expansion or the
+    annotation-clip recentring moved it (view_basis.py:914, :1032-1036,
+    :1056-1068). The model-view crop box has to be anchored to it, not to its
+    own minimum -- see _prepare_view_for_export().
+
+    Returns None rather than a guess when the result dict does not carry it: a
+    fabricated origin would move every element in the exported image, silently
+    and by a plausible-looking amount.
+    """
+    raster = view_data.get("raster")
+    if raster is None:
+        return None
+    bounds = getattr(raster, "bounds_xy", None)
+    if bounds is None and isinstance(raster, dict):
+        bounds = raster.get("bounds_xy")
+    if bounds is None:
+        return None
+    if isinstance(bounds, dict):
+        xmin, ymin = bounds.get("xmin"), bounds.get("ymin")
+    else:
+        xmin, ymin = getattr(bounds, "xmin", None), getattr(bounds, "ymin", None)
+    if xmin is None or ymin is None:
+        return None
+    return (float(xmin), float(ymin))
+
+
+def _prepare_view_for_export(doc, view, W, H, cell_size_ft, grid_origin_uv=None):
     """Start a Transaction that:
       - Hides VOP-excluded categories on the view AND in visible linked models
       - Adjusts the crop box to cover exactly W*cell_size_ft × H*cell_size_ft
+        ANCHORED AT THE VOP GRID'S OWN ORIGIN
 
-    For model views the crop box max corner is expanded by the sub-cell delta.
     For annotation-only views (drafting/legend) the crop box is recomputed from
-    annotation element extents so it matches the VOP grid origin exactly.
+    annotation element extents, which is where that grid's origin comes from.
+
+    For model views, ``grid_origin_uv`` is ``(umin, vmin)`` -- raster.bounds_xy's
+    minimum corner, in the view's own U/V (RightDirection/UpDirection) space.
+    The crop box is PLACED at it. Expanding the max corner alone, which is what
+    this did before, silently assumes the grid's origin is the crop box's own
+    minimum, and it is not:
+
+      1. resolve_view_bounds() takes the crop box inflated by ``buffer_ft``
+         (view_basis.py:914), so a non-zero buffer moves the minimum outward.
+      2. Annotation expansion (view_basis.py:1032-1036) can move it again, on a
+         model view as readily as on any other.
+      3. The annotation-clip recentring (view_basis.py:1056-1068) recomputes
+         ``new_xmin``/``new_ymin`` from a centre outright.
+
+    In all three the grid's origin is not the crop's, and an expansion at the
+    max corner leaves the two images translated by the difference while both
+    measure the same WIDTH -- which is why no size check ever caught it.
+
+    ``grid_origin_uv=None`` keeps the previous expand-only behaviour exactly,
+    for a caller that cannot supply the origin. That case cannot be
+    re-anchored: it is not that the origin is known to be the crop's, it is
+    that it is unknown, and the function says so rather than assuming.
 
     The caller MUST call RollBack() on the returned transaction after
     ExportImage so the view is fully restored.  Returns None if the Revit
@@ -215,49 +309,87 @@ def _prepare_view_for_export(doc, view, W, H, cell_size_ft):
                       "size={:.3f}×{:.3f} ft".format(
                           origin_x, origin_y, W * cell_size_ft, H * cell_size_ft))
             else:
-                # Model view: expand the crop box max corner by the sub-cell
-                # delta so both images cover exactly W*cs × H*cs ft.
-                # VOP uses ceil() so the grid may exceed the crop box by up to
-                # one cell; we only ever expand, never shrink.
                 cb = view.CropBox
                 T = getattr(cb, "Transform", None)
                 U_vec = view.RightDirection
                 V_vec = view.UpDirection
 
-                u_vals, v_vals = [], []
-                for lx in [cb.Min.X, cb.Max.X]:
-                    for ly in [cb.Min.Y, cb.Max.Y]:
-                        local_pt = XYZ(lx, ly, cb.Min.Z)
-                        world_pt = T.OfPoint(local_pt) if T is not None else local_pt
-                        u_vals.append(_dot(world_pt, U_vec))
-                        v_vals.append(_dot(world_pt, V_vec))
+                crop_umin, crop_vmin, crop_w_uv, crop_h_uv = _crop_uv_frame(
+                    cb, T, U_vec, V_vec, getattr(view, "Origin", None), XYZ)
 
-                crop_w_uv = max(u_vals) - min(u_vals)
-                crop_h_uv = max(v_vals) - min(v_vals)
+                if grid_origin_uv is not None:
+                    # Model view, origin known: PLACE the crop box on the VOP
+                    # grid's own rectangle, both corners. Same thing the
+                    # annotation branch above does, for the same reason -- the
+                    # grid's origin is not derivable from the crop box.
+                    grid_umin = float(grid_origin_uv[0])
+                    grid_vmin = float(grid_origin_uv[1])
+                    shift_u = grid_umin - crop_umin
+                    shift_v = grid_vmin - crop_vmin
+                    delta_u = W * cell_size_ft - crop_w_uv
+                    delta_v = H * cell_size_ft - crop_h_uv
 
-                # Clamp to ≥ 0: never shrink the crop box.
-                delta_u = max(0.0, W * cell_size_ft - crop_w_uv)
-                delta_v = max(0.0, H * cell_size_ft - crop_h_uv)
-
-                if delta_u > 1e-6 or delta_v > 1e-6:
+                    min_world = T.OfPoint(cb.Min) if T is not None else cb.Min
+                    new_min_world = XYZ(
+                        min_world.X + shift_u * U_vec.X + shift_v * V_vec.X,
+                        min_world.Y + shift_u * U_vec.Y + shift_v * V_vec.Y,
+                        min_world.Z + shift_u * U_vec.Z + shift_v * V_vec.Z,
+                    )
+                    # The max corner moves by the origin shift AND by the
+                    # size delta, so the span lands on exactly W*cs x H*cs.
                     max_world = T.OfPoint(cb.Max) if T is not None else cb.Max
+                    mu, mv = shift_u + delta_u, shift_v + delta_v
                     new_max_world = XYZ(
-                        max_world.X + delta_u * U_vec.X + delta_v * V_vec.X,
-                        max_world.Y + delta_u * U_vec.Y + delta_v * V_vec.Y,
-                        max_world.Z + delta_u * U_vec.Z + delta_v * V_vec.Z,
+                        max_world.X + mu * U_vec.X + mv * V_vec.X,
+                        max_world.Y + mu * U_vec.Y + mv * V_vec.Y,
+                        max_world.Z + mu * U_vec.Z + mv * V_vec.Z,
                     )
                     T_inv = T.Inverse if T is not None else None
+                    new_min_local = T_inv.OfPoint(new_min_world) if T_inv is not None else new_min_world
                     new_max_local = T_inv.OfPoint(new_max_world) if T_inv is not None else new_max_world
 
                     new_cb = BoundingBoxXYZ()
                     if T is not None:
                         new_cb.Transform = T
-                    new_cb.Min = cb.Min
+                    new_cb.Min = XYZ(new_min_local.X, new_min_local.Y, cb.Min.Z)
                     new_cb.Max = XYZ(new_max_local.X, new_max_local.Y, cb.Max.Z)
                     view.CropBox = new_cb
                     view.CropBoxActive = True
-                    print("[view_raster] Expanded crop box by ({:.4f}, {:.4f}) ft".format(
-                        delta_u, delta_v))
+                    print("[view_raster] Model view crop anchored to VOP grid: "
+                          "origin shift ({:.4f}, {:.4f}) ft, size delta "
+                          "({:.4f}, {:.4f}) ft, size={:.3f}×{:.3f} ft".format(
+                              shift_u, shift_v, delta_u, delta_v,
+                              W * cell_size_ft, H * cell_size_ft))
+                else:
+                    # Origin NOT supplied, so it is unknown -- not known to be
+                    # the crop's. Previous behaviour, unchanged: expand the max
+                    # corner by the sub-cell delta and leave the origin alone.
+                    # VOP uses ceil() so the grid may exceed the crop box by up
+                    # to one cell; this path only ever expands, never shrinks,
+                    # and cannot correct a translation.
+                    delta_u = max(0.0, W * cell_size_ft - crop_w_uv)
+                    delta_v = max(0.0, H * cell_size_ft - crop_h_uv)
+
+                    if delta_u > 1e-6 or delta_v > 1e-6:
+                        max_world = T.OfPoint(cb.Max) if T is not None else cb.Max
+                        new_max_world = XYZ(
+                            max_world.X + delta_u * U_vec.X + delta_v * V_vec.X,
+                            max_world.Y + delta_u * U_vec.Y + delta_v * V_vec.Y,
+                            max_world.Z + delta_u * U_vec.Z + delta_v * V_vec.Z,
+                        )
+                        T_inv = T.Inverse if T is not None else None
+                        new_max_local = T_inv.OfPoint(new_max_world) if T_inv is not None else new_max_world
+
+                        new_cb = BoundingBoxXYZ()
+                        if T is not None:
+                            new_cb.Transform = T
+                        new_cb.Min = cb.Min
+                        new_cb.Max = XYZ(new_max_local.X, new_max_local.Y, cb.Max.Z)
+                        view.CropBox = new_cb
+                        view.CropBoxActive = True
+                        print("[view_raster] Expanded crop box by ({:.4f}, {:.4f}) ft "
+                              "(no grid origin supplied; origin NOT re-anchored)".format(
+                                  delta_u, delta_v))
 
         except Exception as e:
             print("[view_raster] WARNING: crop box adjustment failed: {}".format(e))
@@ -286,7 +418,12 @@ def export_view_image(doc, view_id, output_path, width_px, height_px,
         width_px:    Target width in pixels  (= grid_W * pixels_per_cell).
         height_px:   Target height in pixels (= grid_H * pixels_per_cell).
         vop_grid:    Optional dict with keys ``W``, ``H``, ``cell_size_ft``
-                     used to align the crop box to the VOP grid extent.
+                     used to align the crop box to the VOP grid extent, and
+                     optionally ``origin_uv`` -- raster.bounds_xy's (umin,
+                     vmin). Without ``origin_uv`` a model view's crop box can
+                     only be resized, not re-anchored, so an image whose grid
+                     origin differs from its crop origin stays translated
+                     against its vop_raster counterpart.
                      If None, crop box is exported as-is (may have sub-cell
                      misalignment at edges).
         diag:        Optional Diagnostics instance.
@@ -325,14 +462,19 @@ def export_view_image(doc, view_id, output_path, width_px, height_px,
 
         # Extract VOP grid parameters for crop box alignment.
         W = H = cell_size_ft = 0
+        grid_origin_uv = None
         if vop_grid is not None:
             W = int(vop_grid.get("W", 0) or 0)
             H = int(vop_grid.get("H", 0) or 0)
             cell_size_ft = float(vop_grid.get("cell_size_ft", 0) or 0)
+            origin = vop_grid.get("origin_uv")
+            if origin is not None and len(origin) >= 2:
+                grid_origin_uv = (float(origin[0]), float(origin[1]))
 
         t = None
         if view is not None:
-            t = _prepare_view_for_export(doc, view, W, H, cell_size_ft)
+            t = _prepare_view_for_export(
+                doc, view, W, H, cell_size_ft, grid_origin_uv=grid_origin_uv)
 
         try:
             before = _snapshot(out_dir)
@@ -403,7 +545,29 @@ def _resize_to_exact(path, width_px, height_px, diag=None):
     already have the correct aspect ratio and this call is a no-op.  It guards
     against any residual floating-point discrepancy.
 
+    THAT PREMISE ONLY BECAME TRUE WITH A4.  Until the model-view branch of
+    _prepare_view_for_export() was anchored to the VOP grid's own origin, the
+    two images could be translated against each other by (crop_min -
+    grid_min) -- and this function could not have detected it, because a
+    translated image is exactly the right SIZE.  A size check is not an
+    alignment check, and the no-op claim above is a claim about the crop box,
+    not about this function.  It holds while ``vop_grid["origin_uv"]`` is
+    supplied; on the fallback path that cannot re-anchor, it does not.
+
+    NEVER CALL THIS ON A COLOR-ID RASTER.  Both backends RESAMPLE --
+    Image.LANCZOS here, Graphics.DrawImage below -- and interpolation invents
+    intermediate RGB values that map to no element ID, which silently
+    destroys exact-match decoding.  On a view_raster comparison PNG that is
+    cosmetic; on a Stage A capture it would be total.  Stage A does not reach
+    this module (it goes through color_id_buffer.export_color_id_buffer_view),
+    and nothing in this function's name or signature says so, which is the
+    reason the prohibition is written down here.
+
     Tries Pillow first (CPython), then System.Drawing (IronPython/Revit).
+    Both fallbacks swallow their exceptions, so a failure in each leaves the
+    ORIGINAL mismatched image on disk and reports only through the warning at
+    the end.  That is a No-Silent-Failure violation; it predates A4 and is
+    left alone deliberately rather than mixed into a logic change.
     """
     try:
         from vop_interwoven.np_backend import PILLOW_AVAILABLE
@@ -521,8 +685,10 @@ def export_pipeline_views_to_pngs(doc, pipeline_result, output_dir, pixels_per_c
                 except Exception:
                     eid = view_id_raw
 
-            vop_grid = {"W": W, "H": H, "cell_size_ft": cell_size_ft} \
-                if cell_size_ft > 0 else None
+            vop_grid = None
+            if cell_size_ft > 0:
+                vop_grid = {"W": W, "H": H, "cell_size_ft": cell_size_ft,
+                            "origin_uv": _grid_origin_uv(view_data)}
 
             t0 = time.perf_counter()
             png_path = export_view_image(

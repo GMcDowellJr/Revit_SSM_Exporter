@@ -68,7 +68,14 @@ def test_the_accepted_pair_is_what_the_export_will_actually_be(requested, derive
     assert out["accepted_px"] <= MAX_STAGE_A_AXIS_PX
     assert real_derived <= MAX_STAGE_A_AXIS_PX + 1e-6
     # And the recorded prediction matches what that request really derives.
-    assert abs(out["accepted_derived_px"] - real_derived) <= 0.5 + 1e-9
+    #
+    # Retargeted with D5, intent preserved and one side TIGHTENED. The bound
+    # was +/-0.5, which is half-up's error band. The derived axis now floors,
+    # so the band is [0, 1): the prediction can sit up to a pixel low, and can
+    # NEVER sit high. Never-high is the property that matters -- an
+    # over-prediction is what drives the backoff to spend half the resolution
+    # to save one pixel.
+    assert 0.0 <= real_derived - out["accepted_derived_px"] < 1.0
 
 
 def test_capping_never_returns_the_uncapped_request(  ):

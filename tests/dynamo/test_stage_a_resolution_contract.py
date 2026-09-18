@@ -49,9 +49,25 @@ def test_width_only_cap_and_effective_dpi():
 
 
 def test_height_driven_cap():
+    """The HEIGHT is what the cap binds on, and it lands at or under it.
+
+    This asserted ``== 1000`` and had been failing since the fitted axis
+    started flooring: 1800 px scaled by 1000/5400 floors to 333, and 333 at
+    this view's 3.0 aspect derives exactly 999.0, not 1000. The test was
+    pinning a height that only ever arose from rounding the request UP to
+    reach the cap -- the behaviour that floor was introduced to stop. It is
+    not a D5 regression; it fails identically with D5 reverted.
+
+    It stayed invisible because tests/dynamo/ is collected only under
+    VOP_RUN_DYNAMO_TESTS=1.
+
+    Intent preserved: the cap must be BINDING on the height (within one
+    pixel of it, not slack) and must not be exceeded.
+    """
     r = calculate_paper_space_resolution(100, 300, 100, 150, "resolved_model_bounds")
     capped = apply_resolution_cap(r, 1000)
-    assert capped["predicted_height_px"] == 1000
+    assert capped["predicted_height_px"] <= 1000
+    assert 1000 - capped["predicted_height_px"] <= 1
     assert capped["accepted_width_px"] < r["requested_width_px"]
 
 

@@ -194,6 +194,11 @@ from vop_interwoven.color_id_buffer import (
 )
 from vop_interwoven.resolution_contract import DEFAULT_COLOR_ID_EXPORT_DPI
 
+# The ONE copy of ExportImage's aspect-clamp frame arithmetic. Leaf module,
+# standard library only, so tools/link_identity_resolver.py shares it without
+# taking on this module's vop_interwoven dependency.
+from tools.clamp_pad_geometry import clamp_pad_geometry as _shared_clamp_pad_geometry
+
 TOOL_VERSION = "1.0.0"
 SCHEMA_VERSION = "1.0"
 BACKGROUND_ELEMENT_ID = 0
@@ -602,6 +607,12 @@ def _clamp_pad_geometry(
 ) -> tuple[float, float, float]:
     """Return (feet_per_pixel, pad_x, pad_y) for a crop rendered into an image.
 
+    Thin delegation to tools/clamp_pad_geometry.py, which is now the ONE
+    copy of this arithmetic. The name is kept because this module's callers
+    and tests/test_decode_stage_a_clamp_pad.py address it by this name; the
+    model, the two denominators and the degenerate-geometry ValueError are
+    unchanged and are documented there.
+
     Revit's ExportImage clamps a capture's aspect ratio at 10:1 and pads the
     short axis to reach it -- Section 1 of the 2026-09-17 byColor run came
     back 9960x996, exactly 10.000. The clamp is ExportImage's own behaviour,
@@ -629,27 +640,10 @@ def _clamp_pad_geometry(
     which is the signal, not an artefact: the image is not the size the
     producer says it is, and no pad model can reconcile that silently.
     """
-    xmin, ymin, xmax, ymax = (float(c) for c in bounds_uv)
-    crop_u_ft = xmax - xmin
-    crop_v_ft = ymax - ymin
-    fit_w = float(measured_w) if measured_w else float(image_w)
-    fit_h = float(measured_h) if measured_h else float(image_h)
-    if (
-        crop_u_ft <= 0.0
-        or crop_v_ft <= 0.0
-        or fit_w <= 0.0
-        or fit_h <= 0.0
-        or float(image_w) <= 0.0
-        or float(image_h) <= 0.0
-    ):
-        raise ValueError(
-            "degenerate capture geometry: crop {0}x{1} ft rendered into {2}x{3} px "
-            "(feet-per-pixel measured against {4}x{5} px)".format(
-                crop_u_ft, crop_v_ft, image_w, image_h, fit_w, fit_h))
-    feet_per_pixel = max(crop_u_ft / fit_w, crop_v_ft / fit_h)
-    pad_x = (float(image_w) - crop_u_ft / feet_per_pixel) / 2.0
-    pad_y = (float(image_h) - crop_v_ft / feet_per_pixel) / 2.0
-    return (feet_per_pixel, pad_x, pad_y)
+    return _shared_clamp_pad_geometry(
+        bounds_uv, image_w, image_h,
+        measured_w=measured_w, measured_h=measured_h,
+    )
 
 
 def _pixel_corner_to_uv(
@@ -842,8 +836,15 @@ def build_decoded_document(
             # The DPI the producer actually used, not the one this tool
             # would default to -- a capture exported at 200 DPI divided by
             # 150 reports an extent a third too large.
-            export_dpi = resolution.get("export_dpi")
-            dpi_basis = "sidecar_export_dpi"
+            # "requested_export_dpi" is the current name; "export_dpi" is the
+            # same value under the name sidecars written before the rename
+            # carry. Neither is a measurement -- both record what was ASKED
+            # for -- which is why the basis string below says "requested".
+            export_dpi = resolution.get("requested_export_dpi")
+            dpi_basis = "sidecar_requested_export_dpi"
+            if not export_dpi:
+                export_dpi = resolution.get("export_dpi")
+                dpi_basis = "sidecar_legacy_export_dpi"
             if not export_dpi:
                 export_dpi = DEFAULT_COLOR_ID_EXPORT_DPI
                 dpi_basis = "default_export_dpi"

@@ -49,6 +49,12 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+# Repo root (parent of tools/) on sys.path so the sibling leaf module below is
+# importable however this tool is invoked.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from tools.clamp_pad_geometry import clamp_pad_geometry  # noqa: E402
+
 Image.MAX_IMAGE_PIXELS = None
 
 # vop_raster PNGs come from either of TWO exporters with DIFFERENT palettes,
@@ -123,16 +129,16 @@ def frame_from_capture(sidecar, img_w, img_h):
         raise ValueError("sidecar has no usable bounds_xy")
     cxmin, cymin, cxmax, cymax = (float(v) for v in bounds)
 
-    crop_u = cxmax - cxmin
-    crop_v = cymax - cymin
-    if crop_u <= 0 or crop_v <= 0:
-        raise ValueError("degenerate crop extent")
-
-    # The padded axis has more pixels than its extent warrants, so it reports a
-    # SMALLER ft/px. The unpadded axis is the truth.
-    fpp = max(crop_u / float(img_w), crop_v / float(img_h))
-    pad_x = (float(img_w) - crop_u / fpp) / 2.0
-    pad_y = (float(img_h) - crop_v / fpp) / 2.0
+    # The clamp model itself lives in tools/clamp_pad_geometry.py -- one copy,
+    # shared with decode and with the LINK resolver. It raises ValueError on a
+    # degenerate crop, which is the same refusal this function already made.
+    #
+    # No producer-recorded export size is passed: this tool reads the TIFF it
+    # was pointed at, so both of the helper's denominators are that image's own
+    # dimensions. A dim_check mismatch is not detectable here and is decode's
+    # Guard 1 to catch.
+    fpp, pad_x, pad_y = clamp_pad_geometry(
+        (cxmin, cymin, cxmax, cymax), img_w, img_h)
     return fpp, pad_x, pad_y, (cxmin, cymin, cxmax, cymax)
 
 
