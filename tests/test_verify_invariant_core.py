@@ -1289,3 +1289,12 @@ def test_control_unambiguous_join_is_unaffected(bundle_dir):
     assert bundle["invariants"]["I7"]["views_joined"] == 12
     assert all(r["ambiguous_in"] == [] for r in bundle["L1_per_view"])
     assert bundle["invariants"]["I8"]["status"] == V.STATUS_HOLDS
+
+
+def test_l1_carries_the_cell_total_components_not_only_the_sum(bundle_dir):
+    """I7 says THAT the totals disagree; only the addends say where the
+    difference lives, which is the §7.2 definition question."""
+    row = run_verify(bundle_dir)["L1_per_view"][0]
+    components = row["cell_total_b_components"]
+    assert set(components) == {"ModelOnly", "Overlap", "AnnoOnly"}
+    assert sum(components.values()) == row["cell_total_b_sum"]

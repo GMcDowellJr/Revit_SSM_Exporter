@@ -1393,6 +1393,13 @@ def build_l1(retained_by_role, cell_totals_by_view):
                 vop["row_index"] if vop else 0),
             "cell_total_a_filled_cells": totals.get("total_a_filled_cells"),
             "cell_total_b_sum": totals.get("total_b_sum"),
+            # The three addends, not just their sum. I7 reports THAT the two
+            # totals disagree; only the components say WHICH population the
+            # difference lives in, and that is the declared-definition
+            # question invariant 7 deliberately does not answer. Computing
+            # them and dropping them left the next question unanswerable from
+            # the bundle, sending a reader back to the CSVs.
+            "cell_total_b_components": totals.get("total_b_components"),
             "cell_total_ratio_b_over_a": totals.get("ratio_b_over_a"),
             "anno_cells": {k: _round6(v) for k, v in anno.items()},
         })
