@@ -45,6 +45,69 @@ def _positive(value, name):
     return float(value)
 
 
+def effective_export_dpi(crop_bounds_xy, actual_w_px, actual_h_px, view_scale):
+    """The dpi an exported capture ACTUALLY carries, or None if unknowable.
+
+    BOTH AXES, AND THE SMALLER ANSWER WINS. The fitted axis must NOT be used
+    to select here. ExportImage's aspect clamp pads the SHORT axis, and the
+    fitted axis can BE the short one: an 80 x 4 ft crop under vertical fit
+    comes back 400 x 40 px, where the 40 px height is both the axis PixelSize
+    set AND the axis carrying 10 px of pad on each side. The post-export
+    dimension check passes -- the padded height is exactly the requested 40 --
+    so it cannot be used to argue the fitted axis is unpadded. Dividing by the
+    fitted axis there counts pad as rendered crop and reports 80 dpi where the
+    truth is 40.
+
+    The padded axis carries more pixels than its extent warrants, so it always
+    reports the LARGER dpi; the unpadded axis is the truth. Taking the minimum
+    of the two per-axis figures selects the unpadded one without needing the
+    aspect limit, the pad, or which axis was fitted. It is the same selection
+    tools/clamp_pad_geometry.py makes as max(crop_u/w, crop_v/h), stated in dpi
+    rather than feet-per-pixel, since min(a/x, b/y) is the reciprocal of
+    max(x/a, y/b).
+
+    THE DENOMINATOR IS THE RENDERED CROP, not the grid. raster.W * cell_size_ft
+    is ceil(extent / cell) * cell -- the extent rounded UP to whole cells -- and
+    overstates what the TIFF spans by up to one cell even with no narrowing.
+
+    Args:
+        crop_bounds_xy: (xmin, ymin, xmax, ymax) in view-local feet -- the
+            rectangle the view was actually cropped to, i.e. what the sidecar
+            records as "bounds_xy" and what a decoder derives feet_per_pixel
+            from. None when no crop could be applied.
+        actual_w_px, actual_h_px: the exported file's MEASURED dimensions.
+        view_scale: the view's scale denominator.
+
+    Returns:
+        float dpi, or None when any term is missing or degenerate. None is the
+        honest answer for a capture whose rendered rectangle is unknown
+        (FitToPage's auto extent); substituting the REQUESTED dpi there is the
+        exact confusion the separate requested/effective fields exist to end.
+
+    Lives here, and is called rather than replicated, because a test that
+    reimplements this formula binds itself to its own copy: production could
+    regress to the fitted-axis or grid-extent form and the test would still
+    pass. This module is pure arithmetic with no Revit API and no I/O, so both
+    production and tests can call the one implementation.
+    """
+    if crop_bounds_xy is None or not actual_w_px or not actual_h_px:
+        return None
+    try:
+        scale = float(view_scale)
+        crop_u_ft = float(crop_bounds_xy[2]) - float(crop_bounds_xy[0])
+        crop_v_ft = float(crop_bounds_xy[3]) - float(crop_bounds_xy[1])
+        aw = float(actual_w_px)
+        ah = float(actual_h_px)
+    except (TypeError, ValueError, IndexError):
+        return None
+    if scale <= 0.0 or crop_u_ft <= 0.0 or crop_v_ft <= 0.0 or aw <= 0.0 or ah <= 0.0:
+        return None
+    # paper inches along an axis = model feet * 12 / view scale
+    dpi_u = aw / (crop_u_ft * 12.0 / scale)
+    dpi_v = ah / (crop_v_ft * 12.0 / scale)
+    return min(dpi_u, dpi_v)
+
+
 def cap_axes(requested_px, derived_px, max_axis_px=MAX_STAGE_A_AXIS_PX):
     """Scale a requested fitted-axis pixel count so BOTH axes fit the cap.
 

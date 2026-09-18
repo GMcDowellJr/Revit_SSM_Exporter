@@ -38,6 +38,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
 from tools.clamp_pad_geometry import clamp_pad_geometry  # noqa: E402
 from tools import decode_stage_a_color_id as dsc  # noqa: E402
+from vop_interwoven.resolution_contract import (  # noqa: E402
+    effective_export_dpi as producer_effective_dpi,
+)
 import link_identity_resolver as lir  # noqa: E402
 
 # A Stage A capture: feet of model, pixels of image. Both ends are generous
@@ -107,7 +110,15 @@ def test_effective_dpi_identity(cap, scale):
     """
     cu, cv, w, h = cap
     fpp, _px, _py = _geom(cu, cv, w, h)
-    producer = min(w / (cu * 12.0 / scale), h / (cv * 12.0 / scale))
+    # THE PRODUCTION FUNCTION, not a replica of it. An earlier version of this
+    # test reimplemented the formula here, which bound the decoder to the
+    # TEST's idea of the producer: production could regress to the fitted-axis
+    # or grid-extent form and this property would still pass. That was a review
+    # finding on PR #202, and it is the reason
+    # resolution_contract.effective_export_dpi() exists as a callable function
+    # rather than inline inside a 1,500-line Revit-bound one.
+    producer = producer_effective_dpi((0.0, 0.0, cu, cv), w, h, scale)
+    assert producer is not None
     assert math.isclose(producer, scale / (12.0 * fpp), rel_tol=1e-9)
 
 
