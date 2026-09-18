@@ -440,7 +440,7 @@ an invariant nothing asserts.
 ```bash
 # Check for bare except (forbidden).
 # NOTE: scoped, and narrower than it looks -- see the scope table above.
-python tools/check_no_bare_except.py vop_interwoven/
+python tools/check_no_bare_except.py --paths vop_interwoven tools
 
 # Ground truth for discarded-exception handlers (Refactor Rule #1).
 # This is the NUMBER; the semgrep rule is checked against it, not vice versa.
