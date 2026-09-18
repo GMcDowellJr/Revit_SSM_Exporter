@@ -4,18 +4,28 @@
 pairs, chosen because they were the pairs that had gone wrong. The claims
 themselves are universal, and are written as such in the code:
 
-  - ":91  Flooring can only ever land at or below the cap."
-  - ":112 Flooring also never OVER-predicts: the error against the true
-     derived value is in [0, 1) instead of half-up's (-0.5, 0.5]."
-  - ":68  cap_applied is True only when the cap actually moved the request."
+  - CAP:        "Flooring can only ever land at or below the cap."
+  - PREDICTION: "Flooring also never OVER-predicts: the error against the
+                 true derived value is in [0, 1) instead of half-up's
+                 (-0.5, 0.5]."
+  - CAP_APPLIED: "cap_applied is True only when the cap actually moved the
+                 request."
+
+CITED BY CLAIM TEXT, NOT BY LINE NUMBER. These were first written as ":91",
+":112" and ":68". ":91" was wrong the day it was written -- the cap claim sat
+at :123 -- and c9ebaa0 then inserted effective_export_dpi() above all three
+and moved every one of them by 63 lines. A citation that rots silently is the
+same defect class the file is about, so the claims are now addressed by their
+own words, which grep finds wherever they move to.
 
 TWO OF THOSE CLAIMS TURNED OUT TO BE OVERSTATED, and these tests are how that
-was found -- on their first run, before they were ever committed. Both :91 and
-:112 are written as universals and both fail below the one-pixel floor, in two
-DIFFERENT corners. Neither is a code defect: an image cannot have zero pixels,
-so the floor is a limit of the problem. What was wrong was the prose. The
-exceptions are asserted explicitly below rather than excluded quietly, so the
-boundary is recorded where the next reader will find it.
+was found -- on their first run, before they were ever committed. The CAP and
+PREDICTION claims were both written as universals and both fail below the
+one-pixel floor, in two DIFFERENT corners. Neither is a code defect: an image
+cannot have zero pixels, so the floor is a limit of the problem. What was
+wrong was the prose, and the prose is now corrected at both sites -- the
+boundaries below and the boundaries in resolution_contract.py say the same
+thing, which is the point.
 
 A universal claim checked at eight points is a claim about eight points. The
 D5 change turned on exactly the second of these, and the fixed-case test that
@@ -44,7 +54,7 @@ CAP = st.sampled_from([64, 1000, 4096, MAX_STAGE_A_AXIS_PX, 15000])
 @settings(max_examples=500, deadline=None)
 @given(requested=REQ, aspect=ASPECT, cap=CAP)
 def test_neither_axis_exceeds_the_cap(requested, aspect, cap):
-    """":91 Flooring can only ever land at or below the cap." Both axes --
+    """"CAP: "Flooring can only ever land at or below the cap." Both axes --
     capping only the axis PixelSize sets is what the two-axis cap exists to
     stop, and a fitted axis under the ceiling with a derived axis over it is
     the exact shape the 2026-09-16 runs found."""
@@ -53,7 +63,7 @@ def test_neither_axis_exceeds_the_cap(requested, aspect, cap):
     assert out["accepted_px"] <= cap
 
     # THE ONE-PIXEL FLOOR IS A REAL EXCEPTION, FOUND BY THIS TEST.
-    # The claim at :91 is stated universally but cannot hold below one pixel:
+    # The CAP claim is stated universally but cannot hold below one pixel:
     # the backoff loop is bounded by `while accepted_px > 1`, so on an aspect
     # steeper than the cap itself (cap=64 at aspect 500) the derived axis is
     # over the ceiling at accepted_px == 1 and there is nowhere left to go.
@@ -74,7 +84,7 @@ def test_neither_axis_exceeds_the_cap(requested, aspect, cap):
 @settings(max_examples=500, deadline=None)
 @given(requested=REQ, aspect=ASPECT, cap=CAP)
 def test_the_derived_prediction_never_over_predicts(requested, aspect, cap):
-    """":112 the error against the true derived value is in [0, 1)."
+    """"PREDICTION: "the error against the true derived value is in [0, 1)."
 
     This is D5's whole claim, and the direction matters more than the width:
     an OVER-prediction is what drives the backoff to halve the resolution to
@@ -109,9 +119,11 @@ def test_the_derived_prediction_never_over_predicts(requested, aspect, cap):
 @settings(max_examples=500, deadline=None)
 @given(requested=REQ, aspect=ASPECT, cap=CAP)
 def test_cap_applied_iff_the_cap_moved_the_request(requested, aspect, cap):
-    """":68 cap_applied is True ONLY when the cap actually moved the request."
+    """"CAP_APPLIED: "cap_applied is True ONLY when the cap actually moved the
+    request."
 
-    The failure this guards is recorded at :85 -- cap_axes(501, 10001) once
+    The failure this guards is recorded in cap_axes' FLOOR-not-round-half-up
+    comment -- cap_axes(501, 10001) once
     returned 501 unchanged while reporting itself capped, so the post-export
     check caught the over-ceiling render and the backoff halved the request.
     A cap that "fires" and changes nothing is worse than one that does not
