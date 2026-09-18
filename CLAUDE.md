@@ -398,20 +398,35 @@ pip install --ignore-installed PyJWT semgrep   # plain install hits a Debian PyJ
   are added, **179** with the tuple arities — against an AST total of **179**.
   Runtime is 2–3 min over `vop_interwoven/` + `tools/`.
 
-  **Equal counts are not the proof; equal SETS are — and coverage is not set
-  equality either.** The first version of `--reconcile` checked only that every
-  AST handler fell inside some span. Review showed that certifies an
-  arbitrarily overbroad rule: **one fabricated span per file**, first handler to
-  last, covers all 179 and exits 0 on **29 spans**. It now requires an
-  INJECTIVE assignment of spans to distinct handlers, so it fails on a handler
-  no span covers, a span covering no handler, a duplicate, and the overbroad
-  case. All four were confirmed by mutating the fixture; the real output proves
-  the bijection.
+  **Equal counts are not the proof. Neither is coverage. Neither is a perfect
+  matching.** `--reconcile` took three versions, each defeated by a concrete
+  attack rather than by argument:
 
-  A weaker check that *names itself* after the stronger one is worse than no
-  check, and this one shipped inside the very file that records the defect
-  class. Prose is not a proof, including prose written by whoever just read
-  the rule about prose.
+  | version | what it proved | how it was defeated |
+  |---|---|---|
+  | coverage | every handler falls inside some span | one whole-file span per file — **29 spans certify all 179**, exit 0 |
+  | + perfect matching | each span gets a distinct handler it contains | repeat that span once per handler — **179 spans, matching exists**, exit 0 |
+  | + identification | each span **is** a `try`'s exact extent | — |
+
+  A legitimate semgrep match anchors on a `try`, so its span must equal that
+  statement's first and last line exactly. All 179 real spans do, and each such
+  `try` carries exactly one discarding handler. Anything that is not a `try`'s
+  extent identifies nothing, which is what both fabrications are.
+
+  Positional shortcuts do not work and were tried first: semgrep's span covers
+  the whole `try` including handlers *after* the matched one, so "ends on its
+  own body" holds for 178 of 179 and fails on `entry_dynamo.py`;
+  `extra.metavars` comes back empty in this semgrep version.
+
+  **A parse failure is a failure, not a `SKIP`.** A file the walk cannot parse
+  is absent from the ground truth, and the validator was reporting
+  `BIJECTION: PROVEN` over a directory it had entirely failed to read. It now
+  exits 2. This repo targets IronPython 2 and CPython 3 both, so a file whose
+  syntax the running interpreter rejects is live, not hypothetical.
+
+  Two of those three defects shipped inside the commits that document this
+  section, and review found all three. Prose is not a proof, including prose
+  written by whoever just read the rule about prose.
 
   What the sweep also showed, and neither number says on its own:
 
