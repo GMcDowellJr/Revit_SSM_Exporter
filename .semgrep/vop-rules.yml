@@ -1,0 +1,115 @@
+# Semgrep rules for the recurring defect classes recorded in CLAUDE.md.
+#
+# PROVEN AGAINST: 2e4d67980418dcbb1d722e2fe3b676a7c4ef7ac0 (origin/main).
+# Ground truth for discarded-exception is an independent AST walk, NOT this
+# file -- a count is a claim about what the pattern matched, not about the
+# repo. See CLAUDE.md "Recurring Defect Classes".
+rules:
+  - id: vop-discarded-exception
+    languages: [python]
+    severity: WARNING
+    message: >-
+      Refactor Rule #1 (No Silent Failure): this handler discards the
+      exception. Record it in Diagnostics (phase, view id, element id,
+      source type, exception type, message) or let it propagate.
+    patterns:
+      - pattern-either:
+          # `except X:` -- the ONLY shape the original single-pattern rule saw.
+          - pattern: |
+              try:
+                  ...
+              except $E:
+                  pass
+          - pattern: |
+              try:
+                  ...
+              except $E:
+                  continue
+          # `except X as e:` -- 90 occurrences, invisible to `except $E:`.
+          - pattern: |
+              try:
+                  ...
+              except $E as $X:
+                  pass
+          - pattern: |
+              try:
+                  ...
+              except $E as $X:
+                  continue
+          # `except (A, B):` and `except (A, B) as e:` -- invisible to both
+          # of the above. Enumerated by arity because a tuple metavariable
+          # does not bind a variadic exception list.
+          - pattern: |
+              try:
+                  ...
+              except ($A, $B):
+                  pass
+          - pattern: |
+              try:
+                  ...
+              except ($A, $B):
+                  continue
+          - pattern: |
+              try:
+                  ...
+              except ($A, $B) as $X:
+                  pass
+          - pattern: |
+              try:
+                  ...
+              except ($A, $B) as $X:
+                  continue
+          - pattern: |
+              try:
+                  ...
+              except ($A, $B, $C):
+                  pass
+          - pattern: |
+              try:
+                  ...
+              except ($A, $B, $C):
+                  continue
+          - pattern: |
+              try:
+                  ...
+              except ($A, $B, $C) as $X:
+                  pass
+          - pattern: |
+              try:
+                  ...
+              except ($A, $B, $C) as $X:
+                  continue
+
+  - id: vop-bare-except
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Refactor Rule #1: bare `except:` is forbidden. It swallows
+      KeyboardInterrupt and SystemExit as well as the error you meant.
+    pattern: |
+      try:
+          ...
+      except:
+          ...
+
+  - id: vop-hardcoded-classification-threshold
+    languages: [python]
+    severity: ERROR
+    message: >-
+      TINY/LINEAR/AREAL threshold hardcoded instead of read from
+      cfg.tiny_max / cfg.thin_max. This decision is occlusion authority
+      (CLAUDE.md) and must come from Config. See issue #203.
+    patterns:
+      - pattern-either:
+          - pattern: |
+              if $MAJOR <= 2 and $MINOR <= 2:
+                  return "TINY"
+          - pattern: |
+              if $MINOR <= 2 and $MAJOR > 2:
+                  return "LINEAR"
+          - pattern: |
+              if $MINOR <= 2:
+                  return "LINEAR"
+          - pattern: |
+              if $U <= 2 and $V <= 2:
+                  return $TINY

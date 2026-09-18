@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""
+r"""
 Fail CI on bare `except:` in specified files/dirs.
 
 - Scans only *.py.

@@ -1,0 +1,108 @@
+name: Discarded-exception rule reconciliation
+
+# WHAT THIS GATES ON, AND WHAT IT DELIBERATELY DOES NOT
+# =====================================================
+# GATES:   that `.semgrep/vop-rules.yml` still sees EVERY handler an independent
+#          AST walk finds, and that every span it reports identifies exactly one
+#          of them. Also that every scanned file could be parsed at all.
+#
+# DOES NOT GATE: the NUMBER of discarding handlers. There is no baseline and no
+#          ratchet here. Adding `except Exception: pass` will NOT fail this job.
+#
+# That is a deliberate choice, not an oversight. A ratchet baseline at the
+# current 179 would bless 179 live Refactor Rule #1 violations under a check
+# reporting itself clean -- which is exactly how the sweep came to be reported
+# as 86 and proposed as a baseline, when `except $E:` could not see the 90
+# `except X as e:` or the 3 `except (A, B):` handlers. Baselining there would
+# have grandfathered 93 violations silently. The population is published
+# instead (`CLAUDE.md`, "Tooling that found real defects here").
+#
+# WHAT IT DOES BUY, which is narrow and worth stating plainly:
+#   - the rule cannot go BLIND again without CI going red. If a handler shape
+#     appears that the patterns do not match, the AST walk still counts it, the
+#     bijection breaks, and this job fails.
+#   - a span that identifies nothing, a duplicate, or a dropped handler all
+#     fail, so the rule cannot be "fixed" by widening it into meaninglessness.
+#   - a file that cannot be parsed fails (exit 2) rather than dropping silently
+#     out of the ground truth. This repo targets IronPython 2 and CPython 3
+#     both, so syntax the running interpreter rejects is a supported case.
+#
+# A NEW VIOLATION STILL PASSES. Closing that needs the baseline above, and that
+# decision is recorded in PR #204 rather than made here by default.
+#
+# FALSIFIED, NOT HOPED. Proven at aa51377 by adding a FOUR-tuple handler --
+# `except (A, B, C, D): pass` -- which is a real blind spot, since the rule
+# enumerates arities 2 and 3 only:
+#
+#     AST ground truth handlers      : 180
+#     semgrep match spans            : 179
+#     handlers left unidentified     : 1
+#     BIJECTION: NOT PROVEN                      exit 1
+#
+# and passing on the unmutated tree (179/179, exit 0) as the control. A check
+# that has not been falsified is a hope; this one has been.
+
+on:
+  pull_request:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        # 3.11, matching tests.yml and graphify.yml. NOT a style preference:
+        # the ground truth here is an `ast` walk, and `ast` is version
+        # dependent. Enumerating handlers on a different interpreter from the
+        # one that runs the suite means the two could disagree about what the
+        # source even IS -- and since a parse failure is now a hard exit 2,
+        # a version skew would turn this job red for a reason that has nothing
+        # to do with the rule. The 179 was proven on 3.11.
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install semgrep
+        # PINNED. Semgrep's match SPANS are what the reconciliation identifies
+        # handlers by -- a span must equal a `try` statement's exact extent --
+        # so a version that changes span semantics changes what this proves.
+        # Pinning makes that a deliberate bump with a re-proof attached, rather
+        # than a red build on an unrelated PR at an arbitrary time.
+        #
+        # `--ignore-installed PyJWT` because a plain install collides with a
+        # distro-packaged PyJWT on some images; harmless on a clean one.
+        run: pip install --ignore-installed PyJWT "semgrep==1.177.0"
+
+      - name: Ground truth (printed, NOT gated)
+        # Printed in full because green means nothing until you know what ran.
+        # This step's numbers are evidence, not a threshold: nothing below
+        # compares them to an expected value.
+        run: python tools/count_discarded_handlers.py vop_interwoven tools
+
+      - name: Run the rules
+        # No `--error`: findings are expected (179 of them) and are not a
+        # failure here. Only an internal semgrep error should stop this step.
+        # `--metrics off` and `--disable-version-check` keep the run offline.
+        run: |
+          semgrep --config .semgrep/vop-rules.yml \
+            vop_interwoven tools \
+            --json --quiet --metrics off --disable-version-check \
+            > semgrep-results.json
+
+      - name: Prove the bijection
+        # Exit 1 = the rule and the AST walk disagree about the population.
+        # Exit 2 = a file could not be parsed, so there is no ground truth to
+        #          certify anything against.
+        run: python tools/count_discarded_handlers.py vop_interwoven tools --reconcile semgrep-results.json
+
+      - name: Upload semgrep results
+        # Kept on failure so the disagreement can be read without a re-run.
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-results
+          path: semgrep-results.json

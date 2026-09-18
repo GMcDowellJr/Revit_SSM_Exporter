@@ -172,8 +172,19 @@ def cap_axes(requested_px, derived_px, max_axis_px=MAX_STAGE_A_AXIS_PX):
     # own comment says it is. If the loop is ever given real work to do,
     # this becomes a decision-affecting change and this note is wrong.
     #
-    # Flooring also never OVER-predicts: the error against the true derived
+    # Flooring also never OVER-predicts -- BUT ONLY WHILE THE TRUE DERIVED
+    # AXIS IS AT LEAST ONE PIXEL. There the error against the true derived
     # value is in [0, 1) instead of half-up's (-0.5, 0.5].
+    #
+    # BOUNDARY. Below one pixel the max(1, ...) floor lifts the prediction to
+    # 1, so it necessarily over-predicts: 64 px at aspect 0.005 really derives
+    # 0.32 px and is reported as 1. This needs no extreme accepted_px -- it is
+    # the DERIVED axis that goes sub-pixel -- so it is a different corner from
+    # the cap boundary noted further down. Reporting 1 is the only honest
+    # answer, a zero-pixel axis not being an image, so this is a limit of the
+    # problem and not a defect in the rule. Asserted rather than glossed, in
+    # tests/test_invariants_resolution_cap.py, by
+    # test_the_derived_prediction_never_over_predicts.
     pre_cap_derived_px = max(1, int(math.floor(derived)))
     if factor < 1.0:
         # FLOOR, not round-half-up. Rounding the fitted axis up can hand
@@ -183,7 +194,20 @@ def cap_axes(requested_px, derived_px, max_axis_px=MAX_STAGE_A_AXIS_PX):
         # 10001. The cap then "fired" and changed nothing, the post-export
         # check caught the over-ceiling render, and the backoff halved
         # 501 to 250 -- half the resolution spent to save one pixel.
-        # Flooring can only ever land at or below the cap.
+        # Flooring can only ever land at or below the cap: unconditionally
+        # for accepted_px, and for the DERIVED axis WHILE accepted_px > 1.
+        #
+        # BOUNDARY. The backoff loop below is bounded by `while accepted_px >
+        # 1`, so on an aspect steeper than the cap itself (cap=64 at aspect
+        # 500) the derived axis is over the ceiling at accepted_px == 1 and
+        # there is nowhere left to go. An image cannot have zero pixels, so
+        # that corner is a limit of the problem and not a defect in the rule.
+        # Unreachable on the Stage A path -- ExportImage clamps aspect at 10:1
+        # against a cap of 10000, so escaping it would need a 10000:1 view --
+        # but cap_axes is general and the probe contract passes caps of 1000
+        # and 4000, which is why it is pinned in
+        # tests/test_invariants_resolution_cap.py, by
+        # test_neither_axis_exceeds_the_cap, rather than assumed away.
         accepted_px = max(1, int(math.floor(requested * factor)))
         # And the derived prediction is recomputed from the integer that
         # will actually be requested, not from the unrounded scale. A
