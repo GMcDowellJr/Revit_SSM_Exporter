@@ -12,6 +12,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # NO -Whitelist. tools/bare_except_whitelist.txt has never existed, and
+      # an AST walk of vop_interwoven/ + tools/ at 2e4d679 finds ZERO bare
+      # `except:` anywhere -- so the whitelist would be empty even if it were
+      # written. Naming a missing file made the check STRICTER than configured
+      # (check_no_bare_except.ps1:23 and .py:46 both treat a missing whitelist
+      # as empty), which is the safe direction but not the configured one, and
+      # it left a live hazard: anyone creating that path later would weaken
+      # this check without touching this file. Dropping the flag means
+      # weakening the check now requires an explicit edit here.
+      #
+      # SCOPE IS NOT THE REPO. These three paths hold 99 of the 179 handlers
+      # that discard their exception (Refactor Rule #1); 80 sit outside and
+      # this job never sees them. `.semgrep/vop-rules.yml` covers all of them.
       - name: Run bare-except check (pwsh)
         shell: pwsh
         run: |
@@ -20,5 +33,4 @@ jobs:
               "vop_interwoven/pipeline.py",
               "vop_interwoven/revit",
               "vop_interwoven/core"
-            ) `
-            -Whitelist "tools/bare_except_whitelist.txt"
+            )
