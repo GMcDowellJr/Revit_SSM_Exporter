@@ -89,6 +89,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import sys
 from collections import defaultdict
 
@@ -160,6 +161,14 @@ STATUS_VIOLATED = "VIOLATED"
 STATUS_NOT_EXERCISED = "NOT_EXERCISED"
 STATUS_NOT_EVALUABLE = "NOT_EVALUABLE"
 STATUS_REPORT_ONLY = "REPORT_ONLY"
+
+# Integer syntax, matched BEFORE any float conversion. Routing an identifier
+# through float() silently collapses values above 2**53 --
+# 9007199254740992 and ...93 both become ...92 -- which would merge two
+# distinct views into one key, fabricate duplicate-key findings and corrupt
+# every join. This repository reads Revit 2025's 64-bit ElementId.Value
+# (thinrunner_streaming.py), so those magnitudes are reachable, not theoretical.
+_INTEGER_TEXT = re.compile(r"^[+-]?[0-9]+$")
 
 
 class Refusal(Exception):
@@ -326,6 +335,12 @@ def parse_number(raw, column, role, row_index):
 
 
 def parse_int(raw, column, role, row_index):
+    if raw is not None:
+        text = str(raw).strip()
+        if _INTEGER_TEXT.match(text):
+            # Exact. Python ints are arbitrary precision; the float path below
+            # is only for a value written in float form, such as "80.0".
+            return int(text)
     value = parse_number(raw, column, role, row_index)
     if value is None:
         return None
@@ -344,17 +359,33 @@ def _round6(value):
     return round(float(value), 6)
 
 
-def _ratio(numerator, denominator):
+def _ratio(numerator, denominator, label="ratio"):
     """numerator/denominator, or None when it is not defined.
 
     None -- never 0.0, never 1.0 -- when the denominator is zero or either
     side is absent. A substituted ratio is a fabricated measurement.
+
+    Refuses when two individually finite operands produce a non-finite
+    quotient (1e308 / 1e-308 overflows). Refusing non-finite INPUTS is not
+    enough: a derived value reaches json.dumps just the same, and emits the
+    non-standard token Infinity, which breaks the strict-JSON contract this
+    bundle claims. Derived arithmetic has to be validated where it is
+    produced, not only where it is read.
     """
     if numerator is None or denominator is None:
         return None
     if denominator == 0:
         return None
-    return _round6(float(numerator) / float(denominator))
+    value = float(numerator) / float(denominator)
+    if not math.isfinite(value):
+        raise Refusal(
+            "{0}: {1} / {2} is not finite ({3}). Both operands are finite, so "
+            "this is an overflow in the quotient, and emitting it would put a "
+            "non-standard JSON token in the bundle. Correct the emitting code; "
+            "this tool will not carry a value it cannot represent.".format(
+                label, numerator, denominator, value)
+        )
+    return _round6(value)
 
 
 # ---------------------------------------------------------------------------
@@ -613,15 +644,31 @@ def invariant_2_dedupe(loaded, keyed_by_role, cache_mode):
                 retained.append(entry)
         retained_by_role[role] = retained
 
+        # Counted over EVERY keyed row, before the cache filter -- not over
+        # the retained ones. A view emitted twice as one fresh row plus one
+        # cached row is the double-processing the baseline seeds, and it is
+        # precisely the shape the filter erases: drop the cached row first and
+        # exactly one row remains, so the duplication reports HOLDS and the
+        # register then states that its ACTIVE detector ran and did not fire.
+        # A detector that cannot see its own baselined scenario is worse than
+        # no detector, because its silence is read as evidence.
+        emitted = defaultdict(list)
+        for entry in keyed:
+            emitted[(entry["run_id"], entry["view_id"])].append(entry)
+        dropped_indices = {e["row_index"] for e in dropped}
+        duplicates = {}
+        duplicate_view_ids = []
+        for key, entries in emitted.items():
+            if len(entries) > 1:
+                duplicates["{0}|{1}".format(key[0], key[1])] = {
+                    "row_indices": [e["row_index"] for e in entries],
+                    "from_cache": [e["row_index"] in dropped_indices
+                                   for e in entries],
+                }
+                duplicate_view_ids.append(key[1])
         counts = defaultdict(list)
         for entry in retained:
             counts[(entry["run_id"], entry["view_id"])].append(entry["row_index"])
-        duplicates = {}
-        duplicate_view_ids = []
-        for key, indices in counts.items():
-            if len(indices) > 1:
-                duplicates["{0}|{1}".format(key[0], key[1])] = indices
-                duplicate_view_ids.append(key[1])
 
         record = {
             "rows_read": len(keyed),
@@ -629,7 +676,13 @@ def invariant_2_dedupe(loaded, keyed_by_role, cache_mode):
             "rows_dropped_from_cache": len(dropped) if has_from_cache else None,
             "rows_retained": len(retained),
             "distinct_keys_retained": len(counts),
+            "distinct_keys_emitted": len(emitted),
             "duplicate_keys": duplicates,
+            "duplicate_keys_counted_over": (
+                "every emitted row, BEFORE the FromCache filter: a fresh row "
+                "plus a cached row for one view is a duplicate emission, and "
+                "filtering first would hide exactly that case"
+            ),
         }
         if not has_from_cache:
             # Stated, not assumed to be zero. A cached view's row in this file
@@ -646,8 +699,8 @@ def invariant_2_dedupe(loaded, keyed_by_role, cache_mode):
                 "violation_id": "I2.DUPLICATE_VIEW_ROW",
                 "invariant": "I2",
                 "summary": (
-                    "{0}: {1} (RunId, ViewId) key(s) appear on more than one "
-                    "retained row".format(role, len(duplicates))
+                    "{0}: {1} (RunId, ViewId) key(s) were emitted on more "
+                    "than one row".format(role, len(duplicates))
                 ),
                 # view_ids travels with the detail so L3 can select the
                 # views a duplication names; without it this is the one
@@ -916,7 +969,10 @@ def invariant_4_requested_effective(loaded, retained_by_role):
                     "view_id": entry["view_id"],
                     "requested": _round6(requested),
                     "effective": _round6(effective),
-                    "ratio_effective_over_requested": _ratio(effective, requested),
+                    "ratio_effective_over_requested": _ratio(
+                        effective, requested,
+                        "{0}.{1} effective/requested (view {2})".format(
+                            role, pair["requested"], entry["view_id"])),
                 })
             key = "{0}.{1}".format(role, pair["requested"])
             ratio_series[key] = series
@@ -1057,7 +1113,9 @@ def invariant_7_cell_totals(loaded, retained_by_role):
             "total_a_filled_cells": _round6(total_a),
             "total_b_components": {k: _round6(v) for k, v in parts.items()},
             "total_b_sum": _round6(total_b),
-            "ratio_b_over_a": _ratio(total_b, total_a),
+            "ratio_b_over_a": _ratio(
+                total_b, total_a,
+                "cell totals b/a (view {0})".format(key[1])),
             "difference_b_minus_a": (
                 None if (total_a is None or total_b is None)
                 else _round6(total_b - total_a)),
@@ -1150,6 +1208,8 @@ def invariant_8_frame_hash(loaded, retained_by_role):
             "dimensions, so uniqueness has nothing to range over"
         )
     elif collisions:
+        # An observed collision is a fact and outranks an incomplete
+        # population, exactly as in I3.
         record["status"] = STATUS_VIOLATED
         findings.append({
             "violation_id": "I8.VIEW_FRAME_HASH_COLLISION",
@@ -1160,6 +1220,19 @@ def invariant_8_frame_hash(loaded, retained_by_role):
             ),
             "detail": {"collisions": collisions},
         })
+    elif unjoinable:
+        # Uniqueness is a claim ABOUT A POPULATION. Rows that could not be
+        # keyed are not in it, so reporting HOLDS would certify the claim over
+        # a set that excludes precisely the rows nothing could check -- and a
+        # collision among them would be invisible.
+        record["status"] = STATUS_NOT_EVALUABLE
+        record["reason"] = (
+            "{0} of {1} row(s) could not be joined to a (ViewFrameHash, grid "
+            "dims) key, so uniqueness would be certified over an incomplete "
+            "population. Populate the missing values, or accept that this "
+            "capture cannot decide it.".format(
+                len(unjoinable), len(unjoinable) + evaluated)
+        )
     else:
         record["status"] = STATUS_HOLDS
     return record, findings
@@ -1225,7 +1298,8 @@ def build_l1(retained_by_role, cell_totals_by_view):
             "cell_size_requested_ft": _round6(requested),
             "cell_size_effective_ft": _round6(effective),
             "cell_size_ratio_effective_over_requested": _ratio(
-                effective, requested),
+                effective, requested,
+                "cell size effective/requested (view {0})".format(key[1])),
             "view_frame_hash": core_raw.get("ViewFrameHash"),
             "grid_width": width,
             "grid_height": height,
@@ -1376,12 +1450,22 @@ def build_l3(l1_rows, findings):
         median_row = ordered[len(ordered) // 2]
         add(median_row, "median draw by grid_cells")
 
-    exemplars = sorted(selected.values(),
+    # Violation exemplars are RESERVED before truncation. Sorting everything
+    # by view_id and slicing would drop them by position: a 30-view bundle
+    # whose collision is between its first and last view kept the first
+    # exemplar and silently discarded the second -- contradicting the
+    # selection rule printed alongside it, which promises every violation.
+    ordered = sorted(selected.values(),
+                     key=lambda e: (e["view_id"], e["selection_reason"]))
+    reserved = [e for e in ordered
+                if e["selection_reason"] == "named by a violation"]
+    optional = [e for e in ordered
+                if e["selection_reason"] != "named by a violation"]
+    room = max(L3_TARGET_MAX - len(reserved), 0)
+    exemplars = sorted(reserved + optional[:room],
                        key=lambda e: (e["view_id"], e["selection_reason"]))
-    truncated = 0
-    if len(exemplars) > L3_TARGET_MAX:
-        truncated = len(exemplars) - L3_TARGET_MAX
-        exemplars = exemplars[:L3_TARGET_MAX]
+    truncated = len(optional) - min(len(optional), room)
+    violations_over_cap = max(len(reserved) - L3_TARGET_MAX, 0)
     return {
         "target_range": [L3_TARGET_MIN, L3_TARGET_MAX],
         "selection_rule": (
@@ -1390,6 +1474,14 @@ def build_l3(l1_rows, findings):
         ),
         "selected": len(exemplars),
         "truncated": truncated,
+        "truncated_are_all_lower_priority": True,
+        "violation_exemplars": len(reserved),
+        "violation_exemplars_over_cap": violations_over_cap,
+        "over_cap_note": (
+            "violation exemplars are reserved before truncation, so the cap "
+            "can be exceeded rather than drop one; a non-zero "
+            "violation_exemplars_over_cap records by how much"
+        ),
         "below_target_min": len(exemplars) < L3_TARGET_MIN,
         "below_target_note": (
             "fewer exemplars than the target minimum means the rule yielded "

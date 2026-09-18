@@ -1046,3 +1046,126 @@ def test_finite_numbers_are_unaffected(bundle_dir):
     row = [r for r in run_verify(bundle_dir)["L1_per_view"]
            if r["cell_total_a_filled_cells"] == 1000000.0]
     assert len(row) == 1
+
+
+# ---------------------------------------------------------------------------
+# Codex review on 20e7958. All five reproduced before being fixed.
+# ---------------------------------------------------------------------------
+
+def test_i2_detects_a_fresh_row_plus_a_cached_row(bundle_dir):
+    """P1. The exact shape the I2 baseline seeds: one view emitted twice, once
+    fresh and once cached. Filtering cached rows FIRST leaves one row and
+    reports HOLDS -- and the register then states that the ACTIVE detector ran
+    and did not fire, which is worse than having no detector."""
+    def add_cached_twin(rows):
+        clone = dict(rows[2])
+        clone["FromCache"] = "Y"
+        rows.append(clone)
+    mutate(bundle_dir, "views_core", add_cached_twin)
+    mutate(bundle_dir, "views_vop", add_cached_twin)
+    bundle = run_verify(bundle_dir, cache_mode="enabled")
+    assert "I2.DUPLICATE_VIEW_ROW" in violation_ids(bundle)
+    record = bundle["invariants"]["I2"]["per_role"]["views_vop"]
+    assert record["status"] == V.STATUS_VIOLATED
+    pair = list(record["duplicate_keys"].values())[0]
+    assert sorted(pair["from_cache"]) == [False, True], (
+        "the finding must show the pair was one fresh and one cached row")
+    assert record["rows_dropped_from_cache"] == 1, (
+        "the cached row is still dropped from the measured population")
+
+
+def test_i2_duplicate_of_two_fresh_rows_still_fires(bundle_dir):
+    """Control: counting before the filter must not lose the plain case."""
+    mutate(bundle_dir, "views_vop", lambda rows: rows.append(dict(rows[2])))
+    assert "I2.DUPLICATE_VIEW_ROW" in violation_ids(run_verify(bundle_dir))
+
+
+def test_i8_unjoinable_rows_prevent_certification(bundle_dir):
+    """P1. Uniqueness is a claim about a POPULATION; rows that could not be
+    keyed are not in it, so HOLDS would certify over the rows nothing checked."""
+    mutate(bundle_dir, "views_core",
+           lambda rows: rows[4].__setitem__("ViewFrameHash", ""))
+    record = run_verify(bundle_dir)["invariants"]["I8"]
+    assert record["status"] == V.STATUS_NOT_EVALUABLE
+    assert record["rows_evaluated"] > 0, (
+        "other rows must be evaluable, or this passes via NOT_EXERCISED")
+    assert len(record["rows_unjoinable"]) == 1
+
+
+def test_i8_collision_outranks_an_unjoinable_row(bundle_dir):
+    """An observed collision is a fact; an unjoinable row is undecidable."""
+    def collide_and_blank(rows):
+        rows[5]["ViewFrameHash"] = rows[2]["ViewFrameHash"]
+        rows[7]["ViewFrameHash"] = ""
+    mutate(bundle_dir, "views_core", collide_and_blank)
+    bundle = run_verify(bundle_dir)
+    assert bundle["invariants"]["I8"]["status"] == V.STATUS_VIOLATED
+    assert "I8.VIEW_FRAME_HASH_COLLISION" in violation_ids(bundle)
+
+
+def test_l3_truncation_never_drops_a_violation_exemplar(tmp_path):
+    """P2. 30 views yields 60+ candidates against a cap of 40. Sorting by
+    view_id and slicing kept the collision's first view and discarded its
+    last -- contradicting the selection rule printed beside it."""
+    directory = write_bundle(tmp_path / "wide", n_views=30)
+    mutate(directory, "views_core",
+           lambda rows: rows[29].__setitem__("ViewFrameHash",
+                                             rows[0]["ViewFrameHash"]))
+    bundle = run_verify(directory)
+    l3 = bundle["L3_exemplars"]
+    assert l3["truncated"] > 0, "the cap must actually bind, or this is vacuous"
+    colliding = {entry["view_id"]
+                 for group in bundle["invariants"]["I8"]["collisions"].values()
+                 for entry in group}
+    assert len(colliding) == 2
+    named = {e["view_id"] for e in l3["exemplars"]
+             if e["selection_reason"] == "named by a violation"}
+    assert colliding <= named
+    assert l3["violation_exemplars"] == len(named)
+
+
+def test_parse_int_is_exact_above_the_float_mantissa(bundle_dir):
+    """P2. float() collapses 9007199254740992 and ...93 onto one value, which
+    merges two distinct views and fabricates duplicate-key findings. This repo
+    reads Revit 2025's 64-bit ElementId.Value, so the magnitude is reachable."""
+    low, high = 9007199254740992, 9007199254740993
+    assert float(str(low)) == float(str(high)), (
+        "premise: these are indistinguishable as floats")
+
+    def big_ids(rows):
+        rows[0]["ViewId"] = str(low)
+        rows[1]["ViewId"] = str(high)
+    for role in ("views_core", "views_vop", "views_perf", "views_occlusion"):
+        mutate(bundle_dir, role, big_ids)
+    bundle = run_verify(bundle_dir)
+    view_ids = {row["view_id"] for row in bundle["L1_per_view"]}
+    assert {low, high} <= view_ids
+    assert len(view_ids) == 12
+    assert violation_ids(bundle) == [], "no duplicate may be fabricated"
+
+
+def test_parse_int_still_accepts_a_float_formatted_integer(bundle_dir):
+    """Control: the exact path must not reject "80.0"."""
+    mutate(bundle_dir, "views_perf",
+           lambda rows: rows[1].__setitem__("Width", "80.0"))
+    assert run_verify(bundle_dir)["L1_per_view"][1]["grid_width"] == 80
+
+
+def test_refuses_a_ratio_that_overflows_from_finite_operands(bundle_dir):
+    """P2. Refusing non-finite INPUTS is not enough -- a derived value reaches
+    json.dumps just the same and emits the non-standard token Infinity."""
+    def extremes(rows):
+        rows[0]["CellSizeRequested_ft"] = "1e-308"
+        rows[0]["CellSizeEffective_ft"] = "1e308"
+    mutate(bundle_dir, "views_core", extremes)
+    with pytest.raises(V.Refusal) as excinfo:
+        run_verify(bundle_dir)
+    assert "is not finite" in str(excinfo.value)
+    assert "CellSizeRequested_ft" in str(excinfo.value), (
+        "the refusal must name which quantity overflowed")
+
+
+def test_ordinary_ratios_are_unaffected(bundle_dir):
+    """Control: the overflow guard must not catch a real measurement."""
+    row = run_verify(bundle_dir)["L1_per_view"][0]
+    assert row["cell_size_ratio_effective_over_requested"] is not None
