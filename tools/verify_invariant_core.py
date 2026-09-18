@@ -93,8 +93,29 @@ import re
 import sys
 from collections import defaultdict
 
-BUNDLE_SCHEMA_VERSION = "1.0"
-SUPPORTED_BUNDLE_SCHEMA_VERSIONS = {"1.0"}
+BUNDLE_SCHEMA_VERSION = "1.1"
+
+# 1.1 ONLY. Version 1.0 is refused rather than read, because the change was
+# not additive: I2's ``duplicate_keys`` values went from a list of row indices
+# to a dict, and duplicates began being counted before the FromCache filter
+# rather than after it. A 1.0 bundle therefore reports a DIFFERENT QUANTITY
+# under the same key, and reading one under 1.1 semantics silently understates
+# duplicate emission -- exactly what a schema version exists to stop.
+#
+# That this had to be learned from a real bundle is the point: 6046569 changed
+# the shape and left the version at "1.0". A version that does not move is not
+# a version.
+SUPPORTED_BUNDLE_SCHEMA_VERSIONS = {"1.1"}
+
+SUPERSEDED_SCHEMA_VERSIONS = {
+    "1.0": (
+        "written before 6046569. I2 counted duplicates AFTER the FromCache "
+        "filter, so a view emitted once fresh and once cached was not "
+        "reported at all, and duplicate_keys held a list of row indices "
+        "rather than a dict with per-row from_cache flags. Its I2 figure is "
+        "a LOWER BOUND, not a measurement. Re-run the tool over the same CSVs."
+    ),
+}
 
 TOOL_NAME = "verify_invariant_core"
 
@@ -428,6 +449,14 @@ def resolve_roles(bundle_dir):
             continue
         resolved[role] = matches[0]
     return resolved
+
+
+def _tool_sha256():
+    """sha256 of this source file, or None when it cannot be located."""
+    source = os.path.abspath(__file__)
+    if not os.path.isfile(source):
+        return None
+    return _sha256_and_size(source)[0]
 
 
 def _sha256_and_size(path):
@@ -1643,6 +1672,12 @@ def build_l0(loaded, resolved, run_ids, checksums, i2, declared, diagnostics):
     return {
         "bundle_schema_version": BUNDLE_SCHEMA_VERSION,
         "tool": TOOL_NAME,
+        # The producing build, self-describing and needing no git: hash this
+        # file and compare. Without it a bundle cannot say which semantics it
+        # carries, and a reader diffing two bundles across a tool change
+        # attributes the difference to the DATA. Learned from a real bundle
+        # read under a newer tool's assumptions.
+        "tool_sha256": _tool_sha256(),
         "run_id": run_ids[0] if len(run_ids) == 1 else None,
         "run_ids_observed": run_ids,
         "path": declared["path"],
@@ -1816,8 +1851,10 @@ def load_verification_bundle(path):
         raise Refusal(
             "UNSUPPORTED_BUNDLE_SCHEMA_VERSION: {0} declares {1!r}; this tool "
             "supports {2}. Reading it anyway would interpret its keys under a "
-            "contract it was not written to.".format(
-                path, version, sorted(SUPPORTED_BUNDLE_SCHEMA_VERSIONS))
+            "contract it was not written to.{3}".format(
+                path, version, sorted(SUPPORTED_BUNDLE_SCHEMA_VERSIONS),
+                " " + SUPERSEDED_SCHEMA_VERSIONS[str(version)]
+                if str(version) in SUPERSEDED_SCHEMA_VERSIONS else "")
         )
     return data
 

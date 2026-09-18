@@ -1169,3 +1169,44 @@ def test_ordinary_ratios_are_unaffected(bundle_dir):
     """Control: the overflow guard must not catch a real measurement."""
     row = run_verify(bundle_dir)["L1_per_view"][0]
     assert row["cell_size_ratio_effective_over_requested"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Found by running the tool on a real capture: a bundle could not say which
+# build produced it, and the build had changed the schema without the version
+# moving. A 1.0 bundle read under 1.1 assumptions raised KeyError.
+# ---------------------------------------------------------------------------
+
+def test_l0_records_the_producing_build(bundle_dir):
+    """Without this a bundle cannot say which semantics it carries."""
+    import hashlib
+    l0 = run_verify(bundle_dir)["L0_manifest"]
+    digest = hashlib.sha256(
+        open(os.path.join(TOOLS_DIR, "verify_invariant_core.py"), "rb").read()
+    ).hexdigest()
+    assert l0["tool_sha256"] == digest
+
+
+def test_refuses_the_superseded_schema_version_by_name(tmp_path):
+    """1.0 is refused, not read: its duplicate_keys held a different shape AND
+    counted a different quantity, so reading it under 1.1 understates I2."""
+    path = tmp_path / "old.json"
+    path.write_text(json.dumps({"bundle_schema_version": "1.0"}))
+    with pytest.raises(V.Refusal) as excinfo:
+        V.load_verification_bundle(str(path))
+    message = str(excinfo.value)
+    assert "UNSUPPORTED_BUNDLE_SCHEMA_VERSION" in message
+    assert "LOWER BOUND" in message, (
+        "the refusal must say what the old figure actually was")
+    assert "Re-run" in message
+
+
+def test_current_bundles_declare_the_current_version(bundle_dir):
+    assert run_verify(bundle_dir)["bundle_schema_version"] == "1.1"
+    assert V.BUNDLE_SCHEMA_VERSION not in V.SUPERSEDED_SCHEMA_VERSIONS
+
+
+def test_every_superseded_version_is_refused(tmp_path):
+    """A version listed as superseded must not also be listed as supported."""
+    assert not (V.SUPERSEDED_SCHEMA_VERSIONS.keys()
+                & V.SUPPORTED_BUNDLE_SCHEMA_VERSIONS)
