@@ -1,5 +1,70 @@
 # Stage A excursion snapshot — reference data, NOT a baseline
 
+## `views_core_2025-10-25.csv`
+
+| | |
+|---|---|
+| run | `20251025T000000` — older code, 366 views |
+| rows | 366, all distinct ViewIds |
+| columns | 23 |
+| `ConfigHash` | `c4bd07c2` |
+| sha256 | `450af0c846f6cfcdcae19bea0132f46f9d04f63e1db0387d3cbd35a9a410809c` |
+| bytes | 93,844 |
+
+A `views_core` from an earlier build, kept because it is the only capture in
+this tree that EXERCISES INVARIANT 3, and the only one broad enough to say
+anything about `IsOnSheet` at all.
+
+### It is not a before/after pair with the 2026-09-17 captures
+
+Three reasons, any one of which is sufficient:
+
+- **`ConfigHash` differs** — `c4bd07c2` here against `a493722f` there. Under
+  this repository's campaign-fingerprint semantics that is
+  `CONFIGURATION_DRIFT`, and comparing across it measures the configuration
+  change rather than whatever you meant to measure.
+- **Different view sets** — 366 views against 8. There is no view-level
+  continuity to diff.
+- **`views_core` alone cannot be verified.** `verify_invariant_core.py`
+  requires `views_core` + `views_vop` + `views_perf` and REFUSES without them,
+  because invariants 2 and 6-8 read columns from the others. No verification
+  bundle can be produced from this file.
+
+Treat it as evidence about the emitter and about `IsOnSheet`, not as a
+baseline. Nothing under `tests/` reads it and nothing should start.
+
+### What it establishes
+
+**The viewport scan works.** 193 of 366 views are on sheets, 173 are not, none
+unpopulated. So the all-`False` `IsOnSheet` in the 2026-09-17 captures is a
+property of those 8 views, NOT a broken scan — which is what
+`extract_view_metadata`'s initialise-to-`False` behaviour left genuinely
+ambiguous, and why invariant 3 reports `NOT_EXERCISED` rather than `HOLDS`
+there.
+
+**Invariant 3 holds, measured.** 30 views are capped or adaptive; **zero** of
+them are on a sheet and zero are indeterminate. This is the first and so far
+only capture where the tier implication has a non-empty antecedent AND a
+populated consequent, so it is the only evidence that the invariant is
+satisfied by real data rather than merely untested.
+
+**`views_core`'s schema has been stable.** Exactly one column added since:
+`AnnoExpanded`. Column order otherwise identical.
+
+**`ViewFrameHash` repeats heavily** — 130 distinct hashes over 366 rows, 41 of
+them repeating, the largest group covering 33 views. Whether that is a defect
+is NOT decidable from this file: invariant 8 keys on `(ViewId, grid dims)` and
+the dimensions live in `views_perf`, which is absent. Views with genuinely
+identical frames are expected to share a hash; views with different grids are
+not. Recorded as an observation, not a finding.
+
+### Real project data
+
+366 view names from a live hospital model. Relevant if this repository's
+visibility ever changes.
+
+---
+
 ## `verification_bundle_20260917T112657.json`
 
 | | |
