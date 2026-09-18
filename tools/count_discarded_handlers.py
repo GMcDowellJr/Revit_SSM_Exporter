@@ -91,7 +91,7 @@ def _discards(handler):
 
 
 def walk(roots):
-    """Return (handlers, try_extents, parse_failures).
+    """Return (handlers, try_extents, parse_failures, scanned).
 
     handlers      -- [(path, lineno, shape, body_kind)] for every handler whose
                      body is exactly `pass` or `continue`.
@@ -99,14 +99,27 @@ def walk(roots):
                      for each `try` carrying at least one such handler. This is
                      what a semgrep match is allowed to identify.
     parse_failures-- [(path, reason)]; never silently dropped.
+    scanned       -- how many .py files were actually read.
+
+    A ROOT THAT DOES NOT EXIST IS A HARD ERROR. `Path.rglob` on a missing
+    directory yields nothing and raises nothing, so a misspelled or deleted
+    scan root used to produce an empty ground truth that reconciled against an
+    empty semgrep result and printed BIJECTION: PROVEN. A typo in the CI
+    workflow's paths would have certified a scan of nothing.
     """
+    missing = [str(r) for r in roots if not r.exists()]
+    if missing:
+        raise ValueError("scan root does not exist: %s" % ", ".join(missing))
+
     handlers = []
     try_extents = collections.defaultdict(dict)
     parse_failures = []
+    scanned = 0
 
     for root in roots:
         files = [root] if root.is_file() else sorted(root.rglob("*.py"))
         for path in files:
+            scanned += 1
             try:
                 tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             except (SyntaxError, UnicodeDecodeError, OSError) as exc:
@@ -120,7 +133,7 @@ def walk(roots):
                 if isinstance(node, ast.ExceptHandler) and _discards(node):
                     handlers.append((str(path), node.lineno, handler_shape(node),
                                      type(node.body[0]).__name__.lower()))
-    return handlers, try_extents, parse_failures
+    return handlers, try_extents, parse_failures, scanned
 
 
 def report(handlers):
@@ -166,6 +179,32 @@ def reconcile(handlers, try_extents, semgrep_json):
              for r in data.get("results", [])
              if "discarded" in r["check_id"]]
 
+    # A `try` carrying MORE THAN ONE discarding handler cannot be identified
+    # from a span at all: every span for it is that statement's extent, so two
+    # identical spans match two handlers arbitrarily and nothing establishes
+    # which is which. Two duplicate copies of one span would then certify a
+    # `try` whose second handler the rule never matched.
+    #
+    # There are none today (measured: 179 such `try` statements, all with
+    # exactly one). Rather than let the guarantee quietly depend on that, this
+    # refuses to certify when one appears and says what would have to change.
+    # Refusing to prove what cannot be proven is the point of the file.
+    ambiguous = [(path, extent, lines)
+                 for path, extents in try_extents.items()
+                 for extent, lines in extents.items() if len(lines) > 1]
+    if ambiguous:
+        for path, (first, last), lines in sorted(ambiguous)[:20]:
+            print("AMBIGUOUS %s:%d-%d carries %d discarding handlers (lines %s); "
+                  "a span cannot identify which."
+                  % (path, first, last, len(lines),
+                     ", ".join(str(n) for n in lines)), file=sys.stderr)
+        print("REFUSING: %d `try` statement(s) carry more than one discarding "
+              "handler. Span-based identification cannot distinguish them, so "
+              "no bijection can be proven. Carry handler-specific identity "
+              "(a metavariable binding, or a per-handler rule) before this can "
+              "certify them." % len(ambiguous), file=sys.stderr)
+        return 2
+
     index_of = {(p, ln): i for i, (p, ln, _s, _b) in enumerate(handlers)}
 
     # A span may only identify handlers of the `try` whose extent it EXACTLY is.
@@ -210,7 +249,17 @@ def main(argv=None):
                     help="semgrep --json output to prove a bijection against this walk")
     args = ap.parse_args(argv)
 
-    handlers, try_extents, parse_failures = walk([Path(p) for p in args.paths])
+    try:
+        handlers, try_extents, parse_failures, scanned = walk([Path(p) for p in args.paths])
+    except ValueError as exc:
+        print("REFUSING: %s" % exc, file=sys.stderr)
+        return 2
+
+    if scanned == 0:
+        print("REFUSING: the given paths matched no .py files, so there is "
+              "nothing to certify. Paths given: %s" % ", ".join(args.paths),
+              file=sys.stderr)
+        return 2
 
     if parse_failures:
         # Never a warning. A file that could not be read is a file this tool
@@ -222,6 +271,7 @@ def main(argv=None):
               file=sys.stderr)
         return 2
 
+    print("scanned %d .py file(s) under: %s\n" % (scanned, ", ".join(args.paths)))
     if args.reconcile:
         return reconcile(handlers, try_extents, args.reconcile)
     report(handlers)

@@ -425,7 +425,18 @@ pip install --ignore-installed PyJWT semgrep   # plain install hits a Debian PyJ
   |---|---|---|
   | coverage | every handler falls inside some span | one whole-file span per file — **29 spans certify all 179**, exit 0 |
   | + perfect matching | each span gets a distinct handler it contains | repeat that span once per handler — **179 spans, matching exists**, exit 0 |
-  | + identification | each span **is** a `try`'s exact extent | — |
+  | + identification | each span **is** a `try`'s exact extent | a `try` with **two** discarding handlers — two identical spans match arbitrarily, exit 0 |
+  | + refusal | it declines what it cannot identify | — |
+
+  The fourth version is the one that stops adding properties and starts
+  **refusing**. A `try` carrying more than one discarding handler cannot be
+  identified from a span at all, and there are none today (179 such statements,
+  all with exactly one) — so rather than let the guarantee quietly depend on
+  that, it exits 2 and says what would have to change. Same for a scan root
+  that does not exist: `rglob` on a missing directory yields nothing and raises
+  nothing, so a **typo in the CI workflow's paths** used to certify a scan of
+  zero files as `BIJECTION: PROVEN`. The file count is now printed and an empty
+  scan refuses.
 
   A legitimate semgrep match anchors on a `try`, so its span must equal that
   statement's first and last line exactly. All 179 real spans do, and each such
@@ -443,9 +454,16 @@ pip install --ignore-installed PyJWT semgrep   # plain install hits a Debian PyJ
   exits 2. This repo targets IronPython 2 and CPython 3 both, so a file whose
   syntax the running interpreter rejects is live, not hypothetical.
 
-  Two of those three defects shipped inside the commits that document this
-  section, and review found all three. Prose is not a proof, including prose
+  Four of those five defects shipped inside the commits that document this
+  section, and review found every one. Prose is not a proof, including prose
   written by whoever just read the rule about prose.
+
+  **The pattern across all five is worth more than any of them: each fix added
+  a property and named the result after the guarantee, when what was missing
+  was a REFUSAL.** "Coverage", "a perfect matching" and "identification" all
+  read as set equality while you are writing them. A validator earns its name
+  by declining the cases it cannot decide, not by accumulating checks until no
+  attack comes to mind.
 
   What the sweep also showed, and neither number says on its own:
 
