@@ -55,9 +55,16 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Python
+        # 3.11, matching tests.yml and graphify.yml. NOT a style preference:
+        # the ground truth here is an `ast` walk, and `ast` is version
+        # dependent. Enumerating handlers on a different interpreter from the
+        # one that runs the suite means the two could disagree about what the
+        # source even IS -- and since a parse failure is now a hard exit 2,
+        # a version skew would turn this job red for a reason that has nothing
+        # to do with the rule. The 179 was proven on 3.11.
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.11'
 
       - name: Install semgrep
         # PINNED. Semgrep's match SPANS are what the reconciliation identifies
