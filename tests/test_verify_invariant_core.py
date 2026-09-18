@@ -1210,3 +1210,82 @@ def test_every_superseded_version_is_refused(tmp_path):
     """A version listed as superseded must not also be listed as supported."""
     assert not (V.SUPERSEDED_SCHEMA_VERSIONS.keys()
                 & V.SUPPORTED_BUNDLE_SCHEMA_VERSIONS)
+
+
+# ---------------------------------------------------------------------------
+# Found on the real 20260917T112500 capture: views_perf has no FromCache
+# column, so a cached view's perf row is retained beside its fresh one and a
+# last-wins join silently made the CACHED row -- counters zeroed by
+# rehydration -- the view's measurement.
+# ---------------------------------------------------------------------------
+
+def _add_cached_twin_everywhere(bundle_dir, index=2, filled=0):
+    """Reproduce the capture's shape: core/vop mark the twin FromCache, perf
+    cannot (no such column) and carries the rehydrated zeros."""
+    def core_vop(rows):
+        clone = dict(rows[index])
+        clone["FromCache"] = "Y"
+        rows.append(clone)
+
+    def perf(rows):
+        clone = dict(rows[index])
+        clone["FilledCells"] = str(filled)
+        rows.append(clone)
+    mutate(bundle_dir, "views_core", core_vop)
+    mutate(bundle_dir, "views_vop", core_vop)
+    mutate(bundle_dir, "views_perf", perf)
+
+
+def test_i7_excludes_a_view_whose_perf_row_is_ambiguous(bundle_dir):
+    """The cached row's zeroed FilledCells must not become the measurement."""
+    _add_cached_twin_everywhere(bundle_dir)
+    i7 = run_verify(bundle_dir, cache_mode="enabled")["invariants"]["I7"]
+    assert len(i7["views_ambiguous"]) == 1
+    assert i7["views_joined"] == 11
+    for view in i7.get("views_in_perf_only", []):
+        assert view is not None
+    assert "EXCLUDED" in i7["views_ambiguous_note"]
+
+
+def test_l1_never_resolves_an_ambiguous_row_by_position(bundle_dir):
+    """A last-wins dict comprehension would have silently reported 0 here."""
+    _add_cached_twin_everywhere(bundle_dir)
+    rows = [r for r in run_verify(bundle_dir, cache_mode="enabled")["L1_per_view"]
+            if "views_perf" in r["ambiguous_in"]]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["present_in"]["views_perf"] is False
+    assert row["cell_total_a_filled_cells"] is None, (
+        "neither candidate row may supply the value")
+    assert row["grid_width"] is None and row["grid_height"] is None
+
+
+def test_i8_treats_an_ambiguous_perf_row_as_unjoinable(bundle_dir):
+    """Grid dimensions from one of two candidate rows are not the view's."""
+    _add_cached_twin_everywhere(bundle_dir)
+    i8 = run_verify(bundle_dir, cache_mode="enabled")["invariants"]["I8"]
+    assert i8["status"] == V.STATUS_NOT_EVALUABLE
+    reasons = [r["reason"] for r in i8["rows_unjoinable"]]
+    assert any("ambiguous" in r for r in reasons)
+
+
+def test_index_by_key_reports_rather_than_picks():
+    """Binds the helper directly: the defect was a silent choice, so the
+    contract is that it makes none."""
+    entries = [
+        {"run_id": "R", "view_id": 1, "row_index": 1},
+        {"run_id": "R", "view_id": 2, "row_index": 2},
+        {"run_id": "R", "view_id": 2, "row_index": 9},
+    ]
+    by_key, ambiguous = V.index_by_key(entries)
+    assert set(by_key) == {("R", 1)}
+    assert ambiguous == {("R", 2): [2, 9]}
+
+
+def test_control_unambiguous_join_is_unaffected(bundle_dir):
+    """Every view keeps its measurement when no key repeats."""
+    bundle = run_verify(bundle_dir)
+    assert bundle["invariants"]["I7"]["views_ambiguous"] == {}
+    assert bundle["invariants"]["I7"]["views_joined"] == 12
+    assert all(r["ambiguous_in"] == [] for r in bundle["L1_per_view"])
+    assert bundle["invariants"]["I8"]["status"] == V.STATUS_HOLDS

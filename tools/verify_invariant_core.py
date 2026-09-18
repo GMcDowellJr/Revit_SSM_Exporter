@@ -609,6 +609,35 @@ def key_rows(role_data):
 # I1 -- single RunId per bundle
 # ---------------------------------------------------------------------------
 
+def index_by_key(entries):
+    """(by_key, ambiguous) for a role's retained rows.
+
+    A dict comprehension over rows keyed by (RunId, ViewId) SILENTLY KEEPS THE
+    LAST ROW when a key repeats, and that is not a neutral choice. Measured on
+    the 20260917T112500 capture: views_perf carries no FromCache column, so a
+    cached view's perf row is retained alongside its fresh one, and the cached
+    row -- whose counters rehydration has zeroed -- lands second. Every
+    downstream measurement for those four views then read FilledCells = 0, and
+    I7 reported a cell-total disagreement that was an artifact of this join,
+    not a property of the data.
+
+    A key with more than one retained row is AMBIGUOUS: nothing in the bundle
+    says which row is authoritative. It is excluded from measurement and
+    recorded, never resolved by position.
+    """
+    grouped = defaultdict(list)
+    for entry in entries:
+        grouped[(entry["run_id"], entry["view_id"])].append(entry)
+    by_key = {}
+    ambiguous = {}
+    for key, rows in grouped.items():
+        if len(rows) == 1:
+            by_key[key] = rows[0]
+        else:
+            ambiguous[key] = [row["row_index"] for row in rows]
+    return by_key, ambiguous
+
+
 def invariant_1_single_run_id(keyed_by_role):
     per_role = {}
     everything = set()
@@ -1104,10 +1133,12 @@ def invariant_7_cell_totals(loaded, retained_by_role):
         record["reason"] = "missing column(s): {0}".format(", ".join(missing))
         return record, {}
 
-    perf_by_key = {(e["run_id"], e["view_id"]): e
-                   for e in retained_by_role.get("views_perf", [])}
-    vop_by_key = {(e["run_id"], e["view_id"]): e
-                  for e in retained_by_role.get("views_vop", [])}
+    perf_by_key, perf_ambiguous = index_by_key(
+        retained_by_role.get("views_perf", []))
+    vop_by_key, vop_ambiguous = index_by_key(
+        retained_by_role.get("views_vop", []))
+    ambiguous = dict(perf_ambiguous)
+    ambiguous.update(vop_ambiguous)
 
     per_view = {}
     unjoinable_perf_only = []
@@ -1151,6 +1182,14 @@ def invariant_7_cell_totals(loaded, retained_by_role):
         }
 
     record["views_joined"] = len(per_view)
+    record["views_ambiguous"] = {
+        "{0}|{1}".format(k[0], k[1]): v for k, v in sorted(ambiguous.items())}
+    record["views_ambiguous_note"] = (
+        "a view with more than one retained row in views_perf or views_vop is "
+        "EXCLUDED from these totals: nothing says which row is authoritative, "
+        "and taking either would report one row's counters as the view's. See "
+        "invariant 2."
+    )
     record["views_in_perf_only"] = sorted(unjoinable_perf_only)
     record["views_in_vop_only"] = sorted(unjoinable_vop_only)
     record["ratio_summary"] = summarize(
@@ -1189,8 +1228,8 @@ def invariant_8_frame_hash(loaded, retained_by_role):
         )
         return record, []
 
-    perf_by_key = {(e["run_id"], e["view_id"]): e
-                   for e in retained_by_role.get("views_perf", [])}
+    perf_by_key, perf_ambiguous = index_by_key(
+        retained_by_role.get("views_perf", []))
     by_hash = defaultdict(set)
     unjoinable = []
     evaluated = 0
@@ -1200,11 +1239,14 @@ def invariant_8_frame_hash(loaded, retained_by_role):
         key = (entry["run_id"], entry["view_id"])
         perf_entry = perf_by_key.get(key)
         if frame_hash == "" or perf_entry is None:
-            unjoinable.append({
-                "view_id": entry["view_id"],
-                "reason": ("empty ViewFrameHash" if frame_hash == ""
-                           else "no views_perf row for this key"),
-            })
+            if key in perf_ambiguous:
+                reason = ("more than one retained views_perf row for this "
+                          "key, so its grid dimensions are ambiguous")
+            elif frame_hash == "":
+                reason = "empty ViewFrameHash"
+            else:
+                reason = "no views_perf row for this key"
+            unjoinable.append({"view_id": entry["view_id"], "reason": reason})
             continue
         width = parse_int(perf_entry["raw"].get("Width"), "Width",
                           "views_perf", perf_entry["row_index"])
@@ -1272,16 +1314,23 @@ def invariant_8_frame_hash(loaded, retained_by_role):
 # ---------------------------------------------------------------------------
 
 def build_l1(retained_by_role, cell_totals_by_view):
-    core_by_key = {(e["run_id"], e["view_id"]): e
-                   for e in retained_by_role.get("views_core", [])}
-    vop_by_key = {(e["run_id"], e["view_id"]): e
-                  for e in retained_by_role.get("views_vop", [])}
-    perf_by_key = {(e["run_id"], e["view_id"]): e
-                   for e in retained_by_role.get("views_perf", [])}
+    core_by_key, core_ambiguous = index_by_key(
+        retained_by_role.get("views_core", []))
+    vop_by_key, vop_ambiguous = index_by_key(
+        retained_by_role.get("views_vop", []))
+    perf_by_key, perf_ambiguous = index_by_key(
+        retained_by_role.get("views_perf", []))
+    ambiguous_roles = {
+        "views_core": core_ambiguous,
+        "views_vop": vop_ambiguous,
+        "views_perf": perf_ambiguous,
+    }
 
     rows = []
-    for key in sorted(set(core_by_key) | set(vop_by_key) | set(perf_by_key),
-                      key=lambda k: (k[0], k[1])):
+    all_keys = (set(core_by_key) | set(vop_by_key) | set(perf_by_key)
+                | set(core_ambiguous) | set(vop_ambiguous)
+                | set(perf_ambiguous))
+    for key in sorted(all_keys, key=lambda k: (k[0], k[1])):
         core = core_by_key.get(key)
         vop = vop_by_key.get(key)
         perf = perf_by_key.get(key)
@@ -1317,6 +1366,11 @@ def build_l1(retained_by_role, cell_totals_by_view):
                 "views_vop": vop is not None,
                 "views_perf": perf is not None,
             },
+            # Named, never resolved by position. A role listed here contributed
+            # NOTHING to this row, so every value it would have supplied is
+            # null rather than one of the candidate rows' values.
+            "ambiguous_in": sorted(
+                role for role, keys in ambiguous_roles.items() if key in keys),
             "is_on_sheet": parse_tribool(
                 core_raw.get("IsOnSheet"), "IsOnSheet", "views_core",
                 core["row_index"] if core else 0),
