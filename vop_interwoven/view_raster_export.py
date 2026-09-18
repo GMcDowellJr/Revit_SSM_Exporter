@@ -67,6 +67,48 @@ def _dot(a, b):
     return a.X * b.X + a.Y * b.Y + a.Z * b.Z
 
 
+def _crop_uv_frame(cb, T, U_vec, V_vec, view_origin, make_xyz):
+    """The crop box's rectangle in the VIEW-LOCAL UV frame.
+
+    Returns ``(umin, vmin, u_extent, v_extent)``.
+
+    THE VIEW ORIGIN IS THE WHOLE POINT OF THIS FUNCTION. ``raster.bounds_xy``
+    -- which `_grid_origin_uv()` reads and `_prepare_view_for_export()`
+    anchors to -- is produced by `xy_bounds_from_crop_box_all_corners()`
+    through `ViewBasis.transform_to_view_uvw()`, which projects
+    ``point - basis.origin`` (view_basis.py:91-97), and `make_view_basis()`
+    sets ``basis.origin = view.Origin`` (:151). A bare ``dot(world_pt, right)``
+    is therefore in a DIFFERENT frame, offset by ``dot(view.Origin, right)``.
+
+    Taking a difference of two such projections hides the discrepancy -- the
+    origin term cancels -- which is why the crop's EXTENT was right while its
+    MINIMUM was not. An anchoring shift is not a difference of two values in
+    one frame; it is a difference across two frames, so it carries the offset
+    straight through. On a plan view at the project origin that offset is
+    ~0 and invisible; on an elevation or section whose origin projects onto
+    either axis it is the full projected distance, and anchoring would move
+    the crop farther from the grid than leaving it alone.
+
+    ``make_xyz`` is injected so this stays pure arithmetic over duck-typed
+    points and can be tested without Revit -- which is what the original
+    inline version could not be.
+    """
+    u_vals, v_vals = [], []
+    for lx in (cb.Min.X, cb.Max.X):
+        for ly in (cb.Min.Y, cb.Max.Y):
+            local_pt = make_xyz(lx, ly, cb.Min.Z)
+            world_pt = T.OfPoint(local_pt) if T is not None else local_pt
+            u_vals.append(_dot(world_pt, U_vec))
+            v_vals.append(_dot(world_pt, V_vec))
+
+    # Into the basis frame: subtract the origin's own projection, exactly as
+    # transform_to_view_uvw() does before projecting.
+    u_org = _dot(view_origin, U_vec) if view_origin is not None else 0.0
+    v_org = _dot(view_origin, V_vec) if view_origin is not None else 0.0
+    umin, vmin = min(u_vals) - u_org, min(v_vals) - v_org
+    return (umin, vmin, max(u_vals) - min(u_vals), max(v_vals) - min(v_vals))
+
+
 def _grid_origin_uv(view_data):
     """(umin, vmin) of the VOP grid this view was rasterized on, or None.
 
@@ -272,17 +314,8 @@ def _prepare_view_for_export(doc, view, W, H, cell_size_ft, grid_origin_uv=None)
                 U_vec = view.RightDirection
                 V_vec = view.UpDirection
 
-                u_vals, v_vals = [], []
-                for lx in [cb.Min.X, cb.Max.X]:
-                    for ly in [cb.Min.Y, cb.Max.Y]:
-                        local_pt = XYZ(lx, ly, cb.Min.Z)
-                        world_pt = T.OfPoint(local_pt) if T is not None else local_pt
-                        u_vals.append(_dot(world_pt, U_vec))
-                        v_vals.append(_dot(world_pt, V_vec))
-
-                crop_umin, crop_vmin = min(u_vals), min(v_vals)
-                crop_w_uv = max(u_vals) - crop_umin
-                crop_h_uv = max(v_vals) - crop_vmin
+                crop_umin, crop_vmin, crop_w_uv, crop_h_uv = _crop_uv_frame(
+                    cb, T, U_vec, V_vec, getattr(view, "Origin", None), XYZ)
 
                 if grid_origin_uv is not None:
                     # Model view, origin known: PLACE the crop box on the VOP

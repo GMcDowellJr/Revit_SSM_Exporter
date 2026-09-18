@@ -2638,15 +2638,47 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     # The dpi this capture ACHIEVED along the fitted axis, as opposed to the
     # dpi that was asked for. They come apart three ways, all of them in the
     # sizing path above: the max(64, ...) floor on pre_cap_px, the two-axis
-    # cap, and the dimension-mismatch backoff. None when the exported file's
-    # dimensions could not be read -- there is then no measurement to report,
-    # and reporting the request in its place is the exact confusion this
-    # field exists to end.
+    # cap, and the dimension-mismatch backoff.
+    #
+    # THE DENOMINATOR IS THE RENDERED CROP, NOT paper_fit_in. paper_fit_in is
+    # raster.W (or H) * cell_size_ft, and raster.W is ceil(extent / cell)
+    # (view_basis.py:1183-1184), so it is the extent rounded UP to whole cells
+    # and OVERSTATES the rectangle the TIFF actually spans -- by up to one
+    # cell even with no narrowing, and by the whole narrowing when
+    # model_clip_bounds applies. tools/decode_stage_a_color_id.py records the
+    # same slack from the other side: 97.0 ft reported against a 96.38 ft crop
+    # on Elev 5 of the 2026-09-17 byColor run, 0.64% over. Dividing by it
+    # UNDER-reports the achieved dpi.
+    #
+    # The cap above already refuses this substitution for the same reason
+    # (:1694-1703: using the grid's paper extents "would understate the
+    # derived axis by exactly the amount the crop narrows"). crop_bounds_xy is
+    # the rectangle the view was actually cropped to and is the same value
+    # written to the sidecar's "bounds_xy", which is what a decoder derives
+    # feet_per_pixel from -- so taking it here is what makes this field
+    # equal view_scale / (12 * feet_per_pixel) rather than merely close to it.
+    #
+    # The FITTED axis is the right one to divide: PixelSize sets it and the
+    # post-export dimension check verifies it came back within 1 px of the
+    # request, so a clamp pad on the fitted axis would have failed that check.
+    # The derived axis carries the pad and is not usable here.
+    #
+    # None whenever any term is missing -- the dimensions could not be read,
+    # or no crop could be applied (FitToPage's auto extent, which this code
+    # never learns). There is then no measurement to report, and substituting
+    # the request is the exact confusion this field exists to end.
     _actual_fit_px = (dim_report.get("actual_h") if requested_axis == "height"
                       else dim_report.get("actual_w"))
+    _crop_fit_ft = None
+    if crop_bounds_xy is not None:
+        _crop_fit_ft = (float(crop_bounds_xy[3]) - float(crop_bounds_xy[1])
+                        if requested_axis == "height"
+                        else float(crop_bounds_xy[2]) - float(crop_bounds_xy[0]))
     effective_export_dpi = None
-    if _actual_fit_px and paper_fit_in > 0:
-        effective_export_dpi = float(_actual_fit_px) / float(paper_fit_in)
+    if _actual_fit_px and _crop_fit_ft and _crop_fit_ft > 0 and scale > 0:
+        # paper inches along the fitted axis = model feet * 12 / view scale
+        _paper_rendered_in = _crop_fit_ft * 12.0 / scale
+        effective_export_dpi = float(_actual_fit_px) / _paper_rendered_in
 
     state_out = {
         "view_id": view_id,
@@ -2658,11 +2690,12 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             # been consumed as a measurement once. Nothing here verifies that
             # Revit delivered it; effective_export_dpi below is the measurement.
             "requested_export_dpi": export_dpi,
-            # The dpi the exported file actually carries along requested_axis:
-            # actual_fit_px / paper_fit_in. Identically view_scale / (12 * fpp)
-            # for the feet_per_pixel a decoder derives, since paper_fit_in *
-            # view_scale / 12 IS the fitted axis's model extent -- so this
-            # figure and the decoder's cannot drift apart.
+            # The dpi the exported file actually carries along requested_axis,
+            # measured against the RENDERED CROP (see above). Identically
+            # view_scale / (12 * feet_per_pixel) for the feet_per_pixel a
+            # decoder derives from this same sidecar's "bounds_xy", so the
+            # producer's figure and the decoder's cannot drift apart. None
+            # when the file's dimensions or the crop rectangle are unknown.
             "effective_export_dpi": effective_export_dpi,
             # RETAINED, not renamed away: every sidecar already written carries
             # this name, and tools/decode_stage_a_color_id.py's pixel-space
