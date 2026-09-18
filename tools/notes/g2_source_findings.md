@@ -271,6 +271,12 @@ capability is folded into `tools/notes/g2_bbox_excursion_report.py`
 (A6), and the clamp copy it carried is now the shared leaf module
 `tools/clamp_pad_geometry.py` (A1).*
 
+*The data itself is committed at
+`tools/notes/data/stage_a_excursion_byColor_20260917T104744.csv`, so
+everything below is checkable. Read that directory's README first: it is a
+historical snapshot of six hand-picked views, **not a baseline**, and the
+planned whole-model capture supersedes rather than extends it.*
+
 ## The six recorded per-view figures include clipped elements
 
 PR #200 §1 lists the population as `0.0968 0.1055 0.1056 0.1067 0.1475
