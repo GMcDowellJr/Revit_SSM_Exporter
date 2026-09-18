@@ -338,6 +338,13 @@ would also pass against a harness broken outright.
 - **Green means nothing until you know what ran.** `no-bare-except` is scoped
   to `pipeline.py`, `revit/` and `core/`; it passed on a 21-file PR touching
   none of them.
+- **A count is a claim about what the pattern matched, not about the repo.**
+  The `except X: pass` sweep below was first reported as 86 and proposed as a
+  ratchet baseline. The real population is 179: semgrep's `except $E:` does not
+  match `except X as e:` (90 here) or `except (A, B):` (3). Baselining at 86
+  would have grandfathered 93 live violations silently. Before a number becomes
+  a baseline, enumerate the shapes the pattern *cannot* see — an independent
+  count (an AST walk) is cheap and is what caught this.
 - **Know what the fake harness does NOT provide.** The shared fake
   `Autodesk.Revit.DB` had no `XYZ`/`BoundingBoxXYZ`, so
   `crop_box_from_uv_bounds()` raised `ImportError` and every end-to-end test
@@ -355,10 +362,21 @@ pip install --ignore-installed PyJWT semgrep   # plain install hits a Debian PyJ
 ```
 
 - **`semgrep`** found the hardcoded classification threshold
-  (`pipeline.py:2396`, `:2398`) with zero false positives, and 86 instances of
-  `except X: pass` — a Refactor Rule #1 violation that
-  `check_no_bare_except.py` does not catch, because it only looks for bare
-  `except:`. Runtime is 2–3 min over `vop_interwoven/` + `tools/`.
+  (`pipeline.py:2396`, `:2398`) with zero false positives, and **179** handlers
+  that discard the exception (`except …: pass` / `continue`) — a Refactor
+  Rule #1 violation that `check_no_bare_except.py` does not catch, because it
+  only looks for bare `except:`. The rule must spell out every handler form or
+  it undercounts badly:
+
+  | handler shape | count | matched by `except $E:` alone |
+  |---|---|---|
+  | `except X:` | 86 | yes |
+  | `except X as e:` | 90 | **no** — needs `except $E as $X:` |
+  | `except (A, B):` | 3 | **no** — needs its own pattern |
+
+  Proven at `e7808d9`: 86 with the `except $E:` pattern alone, 176 once the
+  `as $X` variants are added, against an AST total of 179. Runtime is 2–3 min
+  over `vop_interwoven/` + `tools/`.
 - **`vulture --min-confidence 80`** for dead code. At 60 it false-positives on
   Revit API attributes set dynamically.
 - Update these rules when a new defect class appears, and record what each was
