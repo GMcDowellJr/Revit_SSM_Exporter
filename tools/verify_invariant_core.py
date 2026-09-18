@@ -87,6 +87,7 @@ import csv
 import glob
 import hashlib
 import json
+import math
 import os
 import sys
 from collections import defaultdict
@@ -299,7 +300,7 @@ def parse_number(raw, column, role, row_index):
     if text == "":
         return None
     try:
-        return float(text)
+        value = float(text)
     except ValueError:
         raise Refusal(
             "{0} row {1}: column {2} carries {3!r}, which is not a number and "
@@ -307,6 +308,21 @@ def parse_number(raw, column, role, row_index):
             "will not substitute a value for it.".format(
                 role, row_index, column, text)
         )
+    if not math.isfinite(value):
+        # float() accepts "nan", "inf" and an overflowing exponent like
+        # "1e9999" without complaint. Letting one through costs twice: a
+        # non-finite float reaches json.dumps as the non-standard tokens NaN /
+        # Infinity, which strict consumers reject, and an integer field such
+        # as Width reaches int() and raises ValueError or OverflowError --
+        # a traceback and exit 1, not the exit 2 this tool documents for
+        # every input it declines.
+        raise Refusal(
+            "{0} row {1}: column {2} carries {3!r}, which parses as a "
+            "non-finite float ({4}). A measurement is finite; this is an "
+            "emitter defect, not a value to carry. To proceed, correct the "
+            "emitting code.".format(role, row_index, column, text, value)
+        )
+    return value
 
 
 def parse_int(raw, column, role, row_index):
@@ -720,6 +736,7 @@ def invariant_3_tier_one_way(loaded, retained_core):
     sheet_values = []
     antecedent_rows = []
     violating = []
+    indeterminate = []
     for entry in retained_core:
         row = entry["raw"]
         idx = entry["row_index"]
@@ -741,10 +758,18 @@ def invariant_3_tier_one_way(loaded, retained_core):
             })
             if on_sheet is True:
                 violating.append(antecedent_rows[-1])
+            elif on_sheet is None:
+                # parse_tribool preserves an empty cell as None precisely so
+                # that "never written" stays distinguishable from "written
+                # false". Treating it as satisfying the consequent here would
+                # throw that distinction away at the call site and certify an
+                # implication over a row whose consequent was never recorded.
+                indeterminate.append(antecedent_rows[-1])
 
     distinct_sheet = sorted({str(v) for v in sheet_values})
     any_true = any(v is True for v in sheet_values)
     record["antecedent_rows"] = len(antecedent_rows)
+    record["antecedent_rows_indeterminate"] = len(indeterminate)
     record["is_on_sheet_distinct_values"] = distinct_sheet
     record["is_on_sheet_true_count"] = sum(1 for v in sheet_values if v is True)
     record["is_on_sheet_false_count"] = sum(1 for v in sheet_values if v is False)
@@ -779,8 +804,11 @@ def invariant_3_tier_one_way(loaded, retained_core):
             "antecedent to test"
         )
     elif violating:
+        # An observed violation is a fact and outranks an undecidable row.
         record["status"] = STATUS_VIOLATED
         record["violating_rows"] = violating
+        if indeterminate:
+            record["indeterminate_rows"] = indeterminate
         findings.append({
             "violation_id": "I3.CAPPED_VIEW_ON_SHEET",
             "invariant": "I3",
@@ -790,6 +818,17 @@ def invariant_3_tier_one_way(loaded, retained_core):
             ),
             "detail": {"cap_kind": "CELL_SIZE_CAP", "rows": violating},
         })
+    elif indeterminate:
+        record["status"] = STATUS_NOT_EVALUABLE
+        record["indeterminate_rows"] = indeterminate
+        record["reason"] = (
+            "{0} capped/adaptive row(s) carry an UNPOPULATED IsOnSheet. The "
+            "implication requires the consequent to be explicitly False; an "
+            "unwritten cell does not record that it is, so reporting HOLDS "
+            "would certify the invariant over rows whose consequent was never "
+            "captured. Populate IsOnSheet for those rows, or accept that this "
+            "capture cannot decide it.".format(len(indeterminate))
+        )
     else:
         record["status"] = STATUS_HOLDS
 

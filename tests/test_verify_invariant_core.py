@@ -942,3 +942,107 @@ def test_l3_can_reach_the_views_a_duplication_names(bundle_dir):
     named = {e["view_id"] for e in bundle["L3_exemplars"]["exemplars"]
              if e["selection_reason"] == "named by a violation"}
     assert named, "a duplicate-row violation must reach L3"
+
+
+# ---------------------------------------------------------------------------
+# Codex review on a671f71. Both reproduced before being fixed.
+# ---------------------------------------------------------------------------
+
+def test_i3_unpopulated_antecedent_cannot_certify_the_invariant(bundle_dir):
+    """P1. An antecedent row with an UNPOPULATED IsOnSheet is undecidable.
+
+    parse_tribool preserves an empty cell as None precisely so "never written"
+    stays distinguishable from "written false" -- and the I3 call site then
+    threw that distinction away, reporting HOLDS. Extracting the parser bound
+    the parser, not its caller: the repo's own second corollary.
+    """
+    def blank_a_capped_row(rows):
+        for row in rows:
+            if row["CapTriggered"] == "True":
+                row["IsOnSheet"] = ""
+                return
+        raise AssertionError("fixture carries no capped row to blank")
+    mutate(bundle_dir, "views_core", blank_a_capped_row)
+    record = run_verify(bundle_dir)["invariants"]["I3"]["per_cap"]["CELL_SIZE_CAP"]
+    assert record["status"] == V.STATUS_NOT_EVALUABLE
+    assert record["antecedent_rows_indeterminate"] == 1
+    assert record["is_on_sheet_true_count"] > 0, (
+        "another row must be on a sheet, or this passes via NOT_EXERCISED "
+        "instead of via the indeterminate branch it is meant to exercise")
+
+
+def test_i3_explicit_false_antecedent_still_holds(bundle_dir):
+    """The control for the fix above: it must not swallow a real False."""
+    def set_false(rows):
+        for row in rows:
+            if row["CapTriggered"] == "True":
+                row["IsOnSheet"] = "False"
+                return
+    mutate(bundle_dir, "views_core", set_false)
+    record = run_verify(bundle_dir)["invariants"]["I3"]["per_cap"]["CELL_SIZE_CAP"]
+    assert record["status"] == V.STATUS_HOLDS
+    assert record["antecedent_rows_indeterminate"] == 0
+
+
+def test_i3_observed_violation_outranks_an_indeterminate_row(bundle_dir):
+    """A violation is a fact; an unpopulated row is merely undecidable."""
+    def one_of_each(rows):
+        seen = 0
+        for row in rows:
+            if row["CapTriggered"] == "True":
+                seen += 1
+                if seen == 1:
+                    row["IsOnSheet"] = "True"
+                elif seen == 2:
+                    row["IsOnSheet"] = ""
+                    return
+        raise AssertionError("fixture needs two capped rows")
+    mutate(bundle_dir, "views_core", one_of_each)
+    bundle = run_verify(bundle_dir)
+    record = bundle["invariants"]["I3"]["per_cap"]["CELL_SIZE_CAP"]
+    assert record["status"] == V.STATUS_VIOLATED
+    assert len(record["indeterminate_rows"]) == 1
+    assert "I3.CAPPED_VIEW_ON_SHEET" in violation_ids(bundle)
+
+
+@pytest.mark.parametrize("token", ["nan", "inf", "-inf", "Infinity", "1e9999"])
+def test_refuses_a_non_finite_number(bundle_dir, token):
+    """P2. float() accepts all of these; int() then raises, and json.dumps
+    emits non-standard NaN/Infinity tokens that strict consumers reject."""
+    mutate(bundle_dir, "views_perf",
+           lambda rows: rows[1].__setitem__("Width", token))
+    with pytest.raises(V.Refusal) as excinfo:
+        run_verify(bundle_dir)
+    assert "non-finite float" in str(excinfo.value)
+
+
+def test_non_finite_refusal_uses_the_documented_exit_code(bundle_dir):
+    """Not merely 'an error': an uncaught OverflowError exits 1 with a
+    traceback, which is not the exit 2 this tool documents for a refusal."""
+    mutate(bundle_dir, "views_perf",
+           lambda rows: rows[1].__setitem__("Width", "1e9999"))
+    result = _cli(bundle_dir)
+    assert result.returncode == 2
+    assert result.stderr.startswith("REFUSED:")
+    assert "Traceback" not in result.stderr
+
+
+def test_emitted_bundle_is_strict_json(bundle_dir):
+    """A non-finite float would reach json.dumps as NaN / Infinity."""
+    mutate(bundle_dir, "views_perf",
+           lambda rows: rows[1].__setitem__("FilledCells", "120"))
+    text = json.dumps(run_verify(bundle_dir))
+
+    def reject(constant):
+        raise AssertionError("non-standard JSON token emitted: " + constant)
+
+    json.loads(text, parse_constant=reject)
+
+
+def test_finite_numbers_are_unaffected(bundle_dir):
+    """Control: the refusal must not catch ordinary values."""
+    mutate(bundle_dir, "views_perf",
+           lambda rows: rows[1].__setitem__("FilledCells", "1e6"))
+    row = [r for r in run_verify(bundle_dir)["L1_per_view"]
+           if r["cell_total_a_filled_cells"] == 1000000.0]
+    assert len(row) == 1
