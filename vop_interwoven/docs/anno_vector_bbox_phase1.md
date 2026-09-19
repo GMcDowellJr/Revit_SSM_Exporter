@@ -7,6 +7,14 @@ document.
 **Grounding commit:** `d05038a0656d8389915e70a45444bb87ca024c0e`
 (`git rev-parse HEAD`, this working tree, clean).
 
+**Revision 5 — 2026-09-19**, fourth review pass. Q7 answered (AABB for detail
+components for now) — with the consequence that `shape` is a per-element extraction
+*outcome*, so `aabb` means "exact" on a TextNote and "fallback" on a detail component,
+and something must carry the difference. Q3 and Q5 restated as concrete blockers; that
+restatement **corrects a factual error in revision 3**, which claimed `anno_meta` rides
+into the persisted cache — it does not, the cache is metrics-only
+(`root_cache.py:1-6`). D11 added. §0, §4 and §5 unchanged.
+
 **Revision 4 — 2026-09-19**, third review pass. Three coarse-grid compromises are
 released rather than preserved: the keynote TAG collapse (Q6 substance resolved —
 `category` keeps the seven, `channel` carries the richness), the chord approximation
@@ -628,6 +636,26 @@ This lands directly in `AnnoFinalCells_LINES`, which §6 names as the comparison
 so it is worth knowing about before the residual is interpreted. The band's width is
 itself `cfg.linear_band_thickness_cells`, default 1.0 (`config.py:79`, read at
 `annotation.py:1431`) — a quantity in cells, with no model-space meaning. See Q8.
+
+### D11 — the JSON prune level that keeps meta and drops the cell arrays is unreachable
+
+`_prune_view_raster_for_json` (`entry_dynamo.py:57-88`) offers three levels:
+
+| level | behaviour | lines |
+|---|---|---|
+| `full` | prunes nothing; every per-cell array is written | `:70-72` |
+| `medium` | keeps `element_meta`, `anno_meta` and light stats; drops the cell arrays | `:79-83` |
+| `summary` | keeps four scalars; drops `anno_meta` with everything else | `:75-77` |
+
+`debug_json_detail` is **not a field on `Config`** — `grep -c debug_json_detail
+vop_interwoven/config.py` returns `0`. It is read with a `"full"` default
+(`entry_dynamo.py:101`) and assigned in exactly one place, `thinrunner_streaming.py:459`,
+to `"summary"`. **Nothing in this repo produces `"medium"`**, so that branch has never
+executed in any run this tree can perform.
+
+It matters here because `"medium"` is precisely the disposition a per-element vector
+store would want out of `vop_export.json`, and Q3's option of riding `anno_meta` is
+weaker than it looks for exactly that reason. Listed, not fixed.
 ---
 
 ## 4. Invariants asserted in a comment but not in a test
@@ -721,12 +749,12 @@ criterion.
 
 ---
 
-## 6. RAISE — nine questions; four resolved, five open. Defaults still withheld.
+## 6. RAISE — nine questions; five resolved, four open. Defaults still withheld.
 
-Across three review passes on 2026-09-19 Greg answered Q1, closed Q2, largely resolved
-Q4, resolved the substance of Q6, and narrowed Q5 and Q8. Three new questions opened as
-a consequence — Q7, Q8 and Q9 — and I am not answering those by default. Status is
-stated at each head.
+Across four review passes on 2026-09-19 Greg answered Q1, Q2, Q6 (substance), Q7, and
+largely Q4; Q5 and Q8 were narrowed. Q9 opened as a consequence. **Open: Q3, Q5, Q8,
+Q9.** Q3 and Q5 now state the concrete blocker rather than listing options, since that
+is what was asked. Status is at each head.
 
 ### Q1 — the channel vocabulary — **ANSWERED by Greg, 2026-09-19**
 
@@ -793,31 +821,54 @@ Two consequences for Phase 2, both narrowing:
 2. **The emitter gets no threshold, no tolerance and no accumulation rule** — which
    suits the DO-NOT on introducing a constant with no exercising instance.
 
-### Q3 — persistence location and format
+### Q3 — persistence location and format — **still open; the issue stated concretely**
 
-The one precedent in-tree is the Stage A sidecar:
-`<cfg.output_dir>/color_id_buffer/<safe_view_name>_<view_id>.json` +
-`.tiff` (`color_id_buffer.py:1632-1642`), written
-`json.dump(state_out, f, indent=2, sort_keys=True)` (`:2787`), path returned as
-`"sidecar_path"` (`:2819`).
+Greg asked what the actual issue is. It is **grain**, and it is not a preference
+question.
 
-The CSV precedent is the streaming writer: `views_core_{date}.csv`,
-`views_vop_{date}.csv`, `views_occlusion_{date}.csv`, `views_perf_{date}.csv`
-(`streaming.py:231`, `:242`, `:253`, `:266`), consumed by
-`tools/verify_invariant_core.py`'s `ROLE_PATTERNS` (`:158-161`).
+**1. Everything that exists is per-view. The record is per-element.**
+The four streaming CSV roles are one row per view — `views_core_{date}.csv`,
+`views_vop_*`, `views_occlusion_*`, `views_perf_*` (`streaming.py:231`, `:242`, `:253`,
+`:266`) — and `tools/verify_invariant_core.py` keys *every* grouping it does on
+`(run_id, view_id)`: `:698`, `:783`, `:797`, `:1363`, `:1651`, and the L1 row it emits
+at `:1484-1485`. The Stage A sidecar is likewise one JSON per view
+(`color_id_buffer.py:1642`). **There is no per-element grain anywhere in the tooling**,
+so a vector store is either a fifth CSV role with a grain `verify_invariant_core` has
+no model for, or a new artifact outside that tool's role system entirely.
 
-**Question.** Three live options, no default:
-(a) a new per-view JSON sidecar beside the Stage A one — isolated, Phase-2-only, but
-invisible to `verify_invariant_core`'s role model;
-(b) a fifth streaming CSV role (`views_anno_*.csv`) — joins the existing tooling, but
-a vector record per *element* does not fit a per-*view* row, so it would need its own
-grain and `verify_invariant_core` would need a new role;
-(c) ride inside `raster.anno_meta` and out through `to_dict()` (`raster.py:2044`) —
-zero new I/O, and D2 shows the slot already exists; but it lands in the CSV raster
-cache whose size is already a concern, and it is not independently readable.
+**2. The one route `anno_meta` already has to disk is a debug dump, not a data
+product — and this corrects a claim revision 3 made.**
+Rev 3's option (c) said riding `anno_meta` lands the record "in the CSV raster cache
+whose size is already a concern". **That is wrong.** The persisted cache
+(`root_cache.py`, `vop_view_cache.json`) stores metrics only — its own module docstring
+says "never the full raster arrays" (`:1-6`, `:26`). The actual route to disk is
+`vop_export.json` (`entry_dynamo.py:415`, `streaming.py:690`), gated on `export_json`
+and shaped by `_prune_view_raster_for_json` (`:57-88`). So a record riding `anno_meta`
+is persisted **only when a debug flag is on**.
 
-The frame question (§6.4 / Q-frame below) partly decides this: a frame-free record can
-be written once and re-framed by any consumer; a B-framed record cannot.
+**3. And the one disposition such a record would actually want is unreachable.**
+`_prune_view_raster_for_json` has three levels. At `"full"` it prunes nothing and
+writes every per-cell array (`:70-72`). At `"summary"` it keeps four scalars and drops
+`anno_meta` with everything else (`:75-77`). At `"medium"` it keeps `anno_meta` and the
+other meta while dropping the cell arrays (`:79-83`) — **exactly the shape a vector
+store wants.** But `debug_json_detail` is **not a Config field** (0 hits in
+`config.py`); it is read with a `"full"` default at `:101` and set in exactly one place,
+`thinrunner_streaming.py:459`, to `"summary"`. **No code path in this repo produces
+`"medium"`.** See D11.
+
+**4. Magnitude is unmeasured, and it changes the answer.**
+How many annotation elements a real view carries is not knowable from this tree. Store
+checked: no `views_vop_*.csv` exists anywhere in the repo (`find . -name "views_vop*"`
+→ nothing), and `tools/notes/data/` holds only `views_core_2025-10-25.csv`, whose
+header has no `Anno*` column. If it is 10² per view, riding an existing sidecar is
+fine; if it is 10⁵, the format choice is load-bearing. I cannot tell you which.
+
+**Question.** Is the vector store a **data product** — its own artifact, its own
+per-element grain, and eventually its own role in `verify_invariant_core` — or a
+**debug payload** riding `anno_meta` and `vop_export.json`? LOCKED item 6 makes it the
+input to the only comparison that exists, which argues for the first; the second is
+nearly free but is persisted only behind a debug flag and, at the only reachable
+setting, inside a file dominated by arrays the record does not need.
 
 ### Q4 — replace or supplement `_project_element_bbox_to_cell_rect_for_anno`? — **largely resolved by Greg's 2D correction**
 
@@ -882,16 +933,46 @@ time."** So this is not a gap to close in Phase 2 — it is a dimension that doe
 exist yet. What it removes is the only reading of `provenance` that would have matched
 `element_meta`'s. The question below is what is left.
 
-**Question, narrowed.** With source type off the table, does `provenance` mean
-(a) the collector label — which category collector found it, which distinguishes the
-keynote path's different filtering (keynotes bypass the `ViewSpecific` gate entirely);
-(b) the classification route — `forced_region` / `type_override` / `classify_keynote`
-— which is the thing that would actually explain a surprising `category` value; or
-(c) drop the field until a second source exists to distinguish?
+**The issue, stated concretely, since Greg asked.** LOCKED item 3 *mandates* the
+field — "channel + category + provenance" — but the meaning that would have justified
+it (source type: `HOST | LINK | DWG`) is out of scope. A mandated field with no
+established meaning goes one of two ways, and both are bad:
 
-(b) is the only one carrying information the record does not already hold via
-`cat_id`, and Q6's four collapses are exactly what it would make visible. Still not
-adopting it unasked.
+- **It becomes a constant.** Dead weight that every record carries and nothing reads.
+  This repo already demonstrates the failure mode: D2 shows `anno_meta`'s
+  `bbox_min`/`bbox_max` (`annotation.py:1004-1005`) have been written on every
+  annotation since Phase 8a and are read by **nothing** — `grep` over
+  `vop_interwoven/`, `tools/` and `tests/` returns only the two write lines.
+- **It gets filled with whatever is handy.** Which is how a vocabulary rots — and
+  LOCKED item 3's guarantee that "a vocabulary change must be a data migration, not a
+  schema one" only bites if the vocabulary means something to begin with.
+
+**Greg's Q7 answer supplies the candidate, and I think it is the right one.** If
+extraction outcome is family-dependent and AABB is sometimes merely all that could be
+obtained, then `shape = "aabb"` is ambiguous between *exact* (a TextNote's box is its
+geometry) and *degraded* (a detail component that could not be extracted, carrying the
+full §2.6 overstatement). Nothing else in the record can carry that difference, and
+leaving it uncarried puts the overstatement back out of sight.
+
+So: **`provenance` = how this record's geometry was obtained** — e.g.
+`curve_primitive` / `tessellated` / `boundary_loops` / `bbox_exact` / `bbox_fallback`.
+That meaning:
+
+- carries information nothing else in the record holds (unlike the collector label,
+  which `cat_id` (`:1003`) largely duplicates);
+- makes §2.6's arithmetic **auditable per record** rather than a property of the
+  format — a consumer can exclude `bbox_fallback` from an area measure without
+  guessing;
+- is enumerable, so LOCKED item 3's migration guarantee is enforceable;
+- and absorbs Q9's "mixed payload with a flag" into the same field rather than adding
+  a second one.
+
+**Question.** Adopt that reading? The alternatives remain (a) the collector label,
+(b) the classification route — `forced_region` / `type_override` / `classify_keynote`,
+which would make Q6's remaining collapses visible — or (c) drop the field. Note (b) and
+the extraction-outcome reading are not mutually exclusive but are *two different
+facts*, and LOCKED item 3 gives the record one slot; if both are wanted, that is a
+schema change, which item 3 exists to prevent.
 
 ### Q6 — do `classify_annotation`'s buckets map 1:1 onto `category`? — **substance resolved by Greg, 2026-09-19**
 
@@ -946,27 +1027,36 @@ collector.
 element from material keynote does not exist in this package, and which read it is, is
 a probe question. `channel` cannot carry richer keynote data until that is established.
 
-### Q7 — DETAIL components and OTHER: what shape? — **NEW, opened by the §2.6 correction**
+### Q7 — DETAIL components and OTHER: what shape? — **ANSWERED by Greg, 2026-09-19**
 
-Greg's shape list names text (AABB), filled regions (nested boundaries) and lines
-(linear and curved). It does not name **detail components**, and they are neither.
+> *"Detail component extraction is dependent on how the family was made. Sometimes all
+> you can get is the bbox (AABB). For now that's fine."*
 
-Today they fall through every branch to the legacy bbox fill
-(`annotation.py:1269` → `:1313-1328`). A detail component is a family instance whose
-2D content is arbitrary linework — an L-shaped bracket, a hatched section of insulation,
-a diagonal brace. The §2.6 arithmetic applies to it in full: its AABB overstates for
-exactly the same reason a diagonal line's does, and `AnnoFinalCells_DETAIL` currently
-carries that overstatement.
+**Accepted — option (c), AABB now with `shape` making a later extraction non-breaking.**
+Today they fall to the legacy bbox fill (`annotation.py:1269` → `:1313-1328`), so this
+is also the no-change answer for the geometry path.
 
-**Question.** Does `DETAIL` get (a) `aabb`, preserving current behaviour and the
-current overstatement, with the record honestly labelled `aabb` so a consumer knows
-not to read area from it; (b) its own geometry extraction — the family instance's
-view-specific curves, which is the largest single piece of work in Phase 2 and has no
-existing helper in this file; or (c) `aabb` now with the record's `shape` field making
-(b) a later, non-breaking addition?
+**But the answer carries a consequence the schema has to absorb, because it is not
+"DETAIL is always `aabb`".** It is *"AABB is sometimes all you can get"* — a statement
+about extraction **outcome**, which varies per element according to how its family was
+authored. Two things follow:
 
-Same question for `OTHER`, which shares the branch — though §7.Q6 shows `OTHER` is
-unreachable from the current collector, so it may be moot.
+1. **`shape` is a per-element property, not a per-category one.** A record cannot be
+   typed by its category; it is typed by what extraction actually returned for that
+   element. That was already true across families (§2.6) and is now true *within*
+   DETAIL.
+2. **`shape = "aabb"` means two different things, and nothing currently distinguishes
+   them.** On a TextNote the AABB *is* the geometry — exact, no loss. On a detail
+   component it is a **fallback**, carrying the full §2.6 overstatement (up to `L²`
+   for an L-shaped bracket against a figure of far smaller area). Same field, same
+   value, opposite epistemic status.
+
+Leaving those indistinguishable would put the overstatement back where it was before
+§2.6 found it: real, unmarked, and invisible to the consumer. Something must carry the
+difference — and that is exactly the gap Q5 has been unable to name a use for. See Q5.
+
+`OTHER` shares the branch and the answer, though §7.Q6 shows it is unreachable from the
+current collector, so it may be moot.
 
 ### Q8 — a polyline has no area: what is a line's contribution? — **narrowed; one option removed**
 
@@ -1052,7 +1142,7 @@ persistence chosen in Q3, the channel resolver shaped by Q1(b), a comparison har
 that states both collapses of §5 in writing and reports the per-channel residual as
 signal, and a first Revit fake adequate to reach the collection path (§0.3).
 
-**Is not:** any fix to D1–D10. Any change to `classify_annotation`, the strategy
+**Is not:** any fix to D1–D11. Any change to `classify_annotation`, the strategy
 tracker, or geometry extraction. Any deletion. Any golden set. Any new tolerance or
 constant without an exercising instance.
 
