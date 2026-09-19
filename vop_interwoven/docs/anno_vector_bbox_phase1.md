@@ -7,6 +7,14 @@ document.
 **Grounding commit:** `d05038a0656d8389915e70a45444bb87ca024c0e`
 (`git rev-parse HEAD`, this working tree, clean).
 
+**Revision 2 — 2026-09-19**, after Greg's review. Changed: §1.4 and §1.5 are
+withdrawn/retracted as design constraints (grid artifacts, not geometry); §1.6 added
+on A↔B post alignment; §2 retargeted from `project_bbox_uv_and_near_face_w` to
+`project_bbox_corners_uv` because annotations are 2D; §5 restates the comparison
+residual as recovered signal; Q2 closed; Q4 largely resolved; Q1 and Q5 narrowed.
+Nothing in §0, §3, §4, §6.Q3 or §6.Q6 changed. No production file has been touched in
+either revision.
+
 Every claim about current behaviour below carries a `file:line`. Every number names
 the run or file it came from. Every "there is none" names the store that was
 searched.
@@ -162,64 +170,105 @@ So **A ⊆ B by construction**, and annotation lives in B\A. The premise holds.
 
 Same convention at `:422-423`, `:916-917`, `:1498`. Origin is `bounds_xy.min` = B.min.
 
-### 1.4 Grid slack at the max corner — confirmed, **with a documented exception**
+### 1.4 Grid slack at the max corner — confirmed, and **withdrawn as a design constraint**
 
-`view_basis.py:1183-1184`:
+`view_basis.py:1183-1190`:
 
     W = max(1, int(math.ceil(width_ft / cell_size_ft_effective)))
-    H = max(1, int(math.ceil(height_ft / cell_size_ft_effective)))
-
-Ceil, anchored at the min corner ⇒ slack at the max corner. **But the next two lines
-(`:1187-1190`) clamp:**
-
+    ...
     if max_W is not None: W = min(int(W), int(max_W))
-    if max_H is not None: H = min(int(H), int(max_H))
 
-When `max_W`/`max_H` bind, the grid covers **less** than B and the excess at the max
-corner is *cut off*, not slack. The clause "grid slack sits entirely at the max
-corner" is true only for `W == ceil(...)`.
+Ceil anchored at the min corner ⇒ slack at the max corner, unless `max_W`/`max_H`
+bind, in which case the grid covers *less* than B.
 
-### 1.5 **Exception that must be written into the design: B does not always contain the annotation union**
+**Greg's call (2026-09-19), accepted: this is a coarse-grid/set-size artifact and does
+not apply to vector extents.** A vector record has no cell quantum, so neither the ceil
+slack nor the clamp reaches it.
 
-`view_basis.py:1038-1068` applies a cap envelope *after* the annotation union. When
-the expanded bounds exceed `max_W·cell` or `max_H·cell`, it rebuilds `base_bounds`
-**re-centred on `pre_annotation_bounds`** (`:1054-1065`):
+One residue survives, and only on the comparison side: `AnnoFinalCells_*` is a count
+over `W·H` (`final_state_scanner.py:96`, `:136`), so the *old* measurement's domain is
+the ceil'd grid, which spans up to one cell more than B per axis — or less, when the
+clamp binds. When Phase 2 reports a coverage figure against a cell count, that is a
+difference in domain, not in the thing measured. Name it; do not correct for it.
+
+### 1.5 The cap envelope — **retracted as a data-loss risk; restated as a frame-stability one**
+
+What the code does is unchanged: `view_basis.py:1038-1068` applies a cap envelope
+*after* the annotation union, rebuilding `base_bounds` **re-centred on
+`pre_annotation_bounds`** (`:1054-1065`):
 
     center_x = 0.5 * (pre_annotation_bounds.xmin + pre_annotation_bounds.xmax)
     new_xmin = center_x - 0.5 * clipped_w_ft
 
-So under `cap_triggered`, B is re-centred on the *model* crop and can exclude
-annotation content that `compute_annotation_extents` had just unioned in — and can
-even land narrower than `model_clip_bounds` on a side, which is precisely the case
-`compute_model_crop`'s docstring (`color_id_buffer.py:1562-1571`) says it intersects
-defensively against.
+**Greg's call (2026-09-19), accepted:** the cap exists to bound the union of the model
+and annotation *grids* — it is an allocation bound on `W·H`. A vector record is not
+allocated per cell, so the cap clips nothing and loses nothing. My §1.5 as first
+written treated a grid-sizing bound as a geometry bound. That was wrong.
 
-**Consequence for the design:** "annotation lives in B\A" is the *typical* case, not a
-theorem. A vector record framed on B silently loses whatever the cap pushed outside B,
-in exactly the views (large, dense, annotation-heavy) where the measurement matters
-most. Phase 2 must either record each element's frame-relative extent **unclamped**
-(negative and >W coordinates permitted) or record `cap_triggered` alongside and refuse
-to compare capped views. It must not clamp silently.
+**What does survive, and it is smaller and different.** The cap still moves B itself.
+Under LOCKED item 2's framing — origin at B.min, coordinates relative to it — a cap
+that fires re-centres the origin on the model crop, so the same annotation in the same
+view yields *different frame-relative numbers* depending on whether the cap fired. That
+is a reproducibility property of the chosen frame, not a loss of content, and it
+disappears entirely if the record stores absolute view-local UV and lets the consumer
+apply a frame (the `link_identity_resolver` precedent, §2.3). It is one input to Q3/Q4,
+not an objection to the lock.
+
+### 1.6 A↔B alignment in post — already emitted, nothing to build
+
+Greg: *"Relationship of where model crop is relative to annotation extents is still
+important to align them in post."* That relationship is already recorded and does not
+need re-deriving. `compute_model_crop` returns `(render_bounds, offset)` where offset
+is `(dxmin, dymin, dxmax, dymax)` to be **added** to `bounds_xy`'s corners to
+reconstruct A (`color_id_buffer.py:1573-1589`, computed `:1611-1617`), and it ships in
+the Stage A sidecar as `model_crop_offset_uv` (`:2737`) alongside `"bounds_xy"` = A
+(`:2726`).
+
+Two cautions carried from that docstring, both already written down there: the offset
+is rectangle-to-rectangle reconstruction data, **not** a shift to apply a second time
+to UV already decoded against A (`:1585-1589`); and it is `(0,0,0,0)` both when no
+narrowing applied and when the crop could not be applied at all — in the latter case
+`"bounds_xy"` is `None`, which is the only way to tell the two apart (`:2729-2736`).
+
 
 ---
 
-## 2. The highest-risk gate: is `project_bbox_uv_and_near_face_w` valid outside the render crop?
+## 2. The highest-risk gate: is the bbox→UV projection valid outside the render crop?
 
 > *Report whether `project_bbox_uv_and_near_face_w` is valid for content OUTSIDE the
 > render crop.*
 
-**Answer: the function is valid. The assumption that actually needs checking is not
-in that function — it is in the bbox handed to it, and the two annotation paths in
-this repo already disagree about that.**
+**Answer: valid. The assumption that actually needs checking is not in the projection
+— it is in the bbox handed to it, and the two annotation paths in this repo already
+disagree about that.**
 
-### 2.1 The projection itself is crop-independent — verified
+**Correction of target (Greg, 2026-09-19): "Annotations are 2D so W is irrelevant."**
+Accepted, and it improves the design. The reuse target is therefore
+**`project_bbox_corners_uv` (`collection.py:837-893`)**, not
+`project_bbox_uv_and_near_face_w` (`:896`). They are the same projection; the latter
+additionally returns `min(w)` over the corners, which for a view-specific 2D
+annotation is a depth the annotation channel never consults — nothing in
+`rasterize_annotations` or `final_state_scanner` reads a w for an annotation, and
+LOCKED item 1 of CLAUDE.md reserves depth for AREAL model elements.
 
-`revit/collection.py:896-955`. Its whole body is: `_bbox_world_corners(...)` →
-`world_to_view(corner, vb)` per corner (`:932`) → `min`/`max` over the eight results
-(`:944-948`). `world_to_view` (`view_basis.py:115-130`) delegates to
-`transform_to_view_uvw` (`:77-99`), which is a pure affine map: subtract origin, dot
-with `right`/`up`/`forward`. **No reference to `bounds_xy`, `model_clip_bounds`, a
-crop, `W`/`H`, or any clamp.** It is exactly as valid at UV `(-10⁶, -10⁶)` as at the
+Taking the narrower function is not merely "no worse". It is strictly better for
+three reasons, all verified below: it shares `_bbox_world_corners`, so it **applies
+`bbox.Transform`** and dissolves §2.4(a) for the new path; it **refuses** rather than
+returning bbox-local corners when that transform cannot be applied; and unlike
+anything in `annotation.py` it is **already covered** —
+six cases in `tests/test_project_bbox_corners_uv.py`
+(`:46`, `:52`, `:58`, `:63`, `:70`, `:81`), including the `bbox.Transform` path
+(`:70`) and the refusal (`:81`).
+
+### 2.1 The projection itself is crop-independent — verified, for both functions
+
+`project_bbox_corners_uv` (`collection.py:837-893`): `_bbox_world_corners(...)`
+(`:868`) → `world_to_view(corner, vb)` per corner (`:876`) → `min`/`max` over the
+eight results (`:889-893`). `project_bbox_uv_and_near_face_w` (`:896-955`) is the
+same, plus `min(p[2] ...)` (`:948`). `world_to_view` (`view_basis.py:115-130`)
+delegates to `transform_to_view_uvw` (`:77-99`), a pure affine map: subtract origin,
+dot with `right`/`up`/`forward`. **No reference to `bounds_xy`, `model_clip_bounds`, a
+crop, `W`/`H`, or any clamp — in either.** It is exactly as valid at UV `(-10⁶, -10⁶)` as at the
 grid centre. There is no floating-point cliff in B\A either: B\A is bounded by the
 annotation expansion cap, a printed-inches quantity (`annotation.py:184-197`), not an
 unbounded excursion.
@@ -267,8 +316,16 @@ transform before projecting (`annotation.py:332-357`):
 anywhere in the function**. For an annotation whose `BoundingBoxXYZ` carries a
 non-identity `Transform`, the extents pass and the rasterize pass compute different
 rectangles for the same element. This is the identical failure mode
-`project_bbox_uv_and_near_face_w`'s own docstring was written to prevent
-(`collection.py:901-913`).
+`_bbox_world_corners`'s own docstring was written to prevent
+(`collection.py:752-759`).
+
+**This defect does not have to be carried into Phase 2.** `_bbox_world_corners`
+applies `bbox.Transform` at `:780-794` and, when both application attempts fail,
+returns `None` rather than untransformed corners — with the reasoning written out at
+`:805-810`: *"Returning them anyway would silently produce plausible-looking but wrong
+data."* Adopting `project_bbox_corners_uv` therefore gets the correct `Transform`
+handling and the refusal for free. The existing geometry path keeps the defect; that
+is D-list, and LOCKED item 6 says it stays runnable as it is.
 
 **(b) The docstring and the code contradict each other on coordinate space.**
 
@@ -299,16 +356,22 @@ best-effort: a failed restore leaves the view cropped to A, and every subsequent
 
 | question | answer |
 |---|---|
-| Is `project_bbox_uv_and_near_face_w`'s arithmetic valid in B\A? | **Yes** — pure affine, verified `collection.py:896-955` → `view_basis.py:77-99` |
+| Is the bbox→UV projection valid in B\A? | **Yes** — pure affine, verified `collection.py:837-893` and `:896-955` → `view_basis.py:77-99` |
 | Are its production inputs crop-scoped? | **No** — `view=None`, `color_id_buffer.py:995,1060` |
+| Is the `w` half of `project_bbox_uv_and_near_face_w` wanted here? | **No** — annotations are 2D; use `project_bbox_corners_uv` (`:837`) |
 | Is the *annotation* bbox source crop-scoped? | **Yes** — `get_BoundingBox(view)`, `annotation.py:893` |
 | Is `Transform` handled consistently across the annotation paths? | **No** — applied at `:344-350`, absent at `:1766-1781` |
 | Does any consumer already handle out-of-frame correctly? | **Yes** — reject-before-clamp, `link_identity_resolver.py:290-299` |
 
 The risk is real but it is **not** where the prompt expected it. Reusing
-`project_bbox_uv_and_near_face_w` is safe. Reusing `get_annotation_bbox` +
-`_project_element_bbox_to_cell_rect_for_anno` is not, and the reason is `Transform`,
-not the crop.
+`project_bbox_corners_uv` is safe and fixes `Transform` handling on the way. Reusing
+`get_annotation_bbox` + `_project_element_bbox_to_cell_rect_for_anno` is not, and the
+reason is `Transform`, not the crop.
+
+What is **not** dissolved by the change of target: `get_annotation_bbox` is still the
+only bbox source the annotation collector has, and it is still `get_BoundingBox(view)`
+(`annotation.py:893`) under a crop this pipeline mutates and restores best-effort
+(§2.4c). Whichever projection Phase 2 calls, it is fed a view-scoped bbox.
 
 ---
 
@@ -478,27 +541,35 @@ consumer-side collapse has to be written against the real thing:
 6. Domain is `W·H` over B, subject to the `max_W`/`max_H` clamp of §1.4.
 
 **This is what forces LOCKED item 5's written collapse, and it is worse than "binary
-vs continuous".** A continuous per-element fill fraction and a last-writer-wins
-per-cell count differ in *two* independent ways:
+vs continuous".** A per-element vector record and a last-writer-wins per-cell count
+differ in *two* independent ways:
 
 - **binary vs continuous** — the declared `>0` threshold handles this;
-- **union-over-elements vs last-writer-wins** — the threshold does **not** handle this.
-  Where two annotations of different types overlap, the vector record has coverage in
-  both categories for that cell; `AnnoFinalCells_*` credits exactly one, chosen by
-  iteration order.
+- **per-element vs last-writer-wins** — the threshold does **not** handle this. Where
+  two annotations of different types overlap, the vector store holds both records;
+  `AnnoFinalCells_*` credits exactly one, chosen by iteration order.
 
-Phase 2's comparison must state both collapses in writing, or the per-category
-residual will be read as a bug in the new path when it is the old path's tie-break.
-Total `AnnoPresentFinal` is unaffected — only the split across the seven buckets.
+Total `AnnoPresentFinal` is unaffected by the second — only the split across the seven
+buckets. Phase 2's comparison must state both collapses in writing, or the
+per-category residual will be read as a bug in the new path when it is the old path's
+tie-break.
+
+**And this is the point of the exercise, not an inconvenience.** Greg (2026-09-19):
+*"Overlaps will now be managed in channels so the signal can be resurfaced."* The
+signal `anno_key` destroys at `annotation.py:1509` is exactly the thing a per-element
+store keeps and a channelled analysis can recover. So the residual is not noise to
+tolerate — where it is non-zero it is the recovered signal, and Phase 2 should expect
+it and report it per channel rather than treating agreement as the success
+criterion.
 
 ---
 
-## 6. RAISE — six questions. Defaults deliberately withheld.
+## 6. RAISE — six questions, three now answered. Defaults still withheld on the rest.
 
-These are not rhetorical. Each one changes the Phase 2 patch, and I am not choosing
-any of them.
+Greg's 2026-09-19 review closed Q2 and narrowed Q1 and Q5. The status of each is
+stated at its head; the ones still open are still open, and I am not choosing them.
 
-### Q1 — the channel vocabulary
+### Q1 — the channel vocabulary — **narrowed, still open**
 
 **What the repo actually has.** `Model/Anno/Ext` is not a vocabulary in the analysis
 layer; it is the three booleans `has_model`, `has_anno`, `ext` that
@@ -513,32 +584,53 @@ word in this codebase means a raster layer — `anno_key`, `model_edge_key`,
 annotation is collected anywhere in that file. So a record whose `channel` could take
 `Ext` would have a value nothing can ever produce.
 
-**Question.** Given that: does `channel` survive at all? Candidates, no recommendation:
-(a) drop the field — the record is in the annotation store, so `channel` is a constant;
-(b) keep it as the raster-layer name the record targets (`anno`), leaving room for a
-future model-side vector record; (c) keep `Model/Anno/Ext` for continuity with
-downstream tooling **you** have that I cannot see in this repo.
+**Narrowed by Greg (2026-09-19), still open.** Two of his notes bear on this: *"No
+linked annotations scoped at this time"* kills `Ext` as a reachable value, and
+*"Overlaps will now be managed in channels so the signal can be resurfaced"* gives
+`channel` a job — it is the axis along which overlapping annotation is kept apart so
+the collision `anno_key` currently resolves by last-writer-wins can be recovered.
 
-### Q2 — overlap semantics per channel
+**That job does not by itself say what the axis is, and LOCKED item 3 makes the gap
+explicit** by carrying `channel` *and* `category` as two separate strings. If channel
+were the seven `ANNO_BUCKETS`, it would be `category` under another name — and two
+overlapping TEXT annotations would still collide inside the TEXT channel, which is
+precisely the case that motivated the change.
 
-Two annotations covering one cell: **union or sum?**
+**Question, restated.** What is `channel`, given `category` is already a field?
+Candidates, no recommendation:
+(a) **coarser than category** — a grouping of the seven (say text-like / linework /
+region-like), so category stays the fine label and channel is the separation axis;
+(b) **orthogonal to category** — a property category does not carry, e.g. draw order /
+Revit's own layering, so two TEXT annotations *can* occupy different channels;
+(c) **per-element, i.e. no channel at emit time** — the store is per-element already,
+channels are a purely analysis-side grouping, and the field is dropped from the record.
 
-Neither matches the existing path, which is *neither* (§5: last-writer-wins). So this
-is a genuinely new decision, and the three answers are not equivalent:
+(c) is consistent with your *"overlap semantics, if they survive, will be analysis
+side"* and would make (a)/(b) a question for the analysis layer rather than the
+schema. I am not adopting it on that inference.
 
-- **Union** (`max`, clamp at 1.0) — cell coverage never exceeds 1.0, so
-  `Σ fill ≈ AnnoPresentFinal` is meaningful and the cell taxonomy's present/absent
-  reading survives. Loses "how much annotation is stacked here".
-- **Sum** — preserves annotation *density*, which is the thing a fill fraction is for,
-  but `Σ fill` is then no longer comparable to any cell count, and the per-category
-  split double-counts.
-- **Per-category union, cross-category sum** — each of the seven buckets unions within
-  itself, totals sum across buckets. Keeps each `AnnoFinalCells_X` comparable
-  bucket-by-bucket, at the cost of `Σ` over buckets exceeding `AnnoPresentFinal`
-  wherever categories overlap.
+### Q2 — overlap semantics per channel — **CLOSED by Greg, 2026-09-19**
 
-I lean to naming the answer per-bucket rather than globally, but this is yours to
-decide and the record's schema depends on it.
+> *"Overlaps will now be managed in channels so the signal can be resurfaced."*
+> *"Overlap semantics, if they survive, will be analysis side."*
+
+**Accepted, and it dissolves the question at the emitter rather than answering it.**
+The store is one record per annotation element. Two annotations covering the same
+ground produce two records; nothing merges, so there is no union-vs-sum decision to
+make at emit time and no `max`/clamp/accumulate to specify. My framing of Q2 assumed
+the record was a per-cell coverage array, which would have reintroduced the very
+collision the vector form exists to remove.
+
+Two consequences for Phase 2, both narrowing:
+
+1. **LOCKED item 4's "continuous fill fraction" is a derived quantity, not a stored
+   one.** A per-element rectangle in UV yields per-cell coverage by intersection at
+   analysis time, for whatever grid the analysis chooses. Storing a fill fraction
+   would bake in a grid and a cell size, which is what LOCKED item 1 rejected the
+   raster pass for. Phase 2 should store the rectangle; if it also stores coverage,
+   it must say against which grid.
+2. **The emitter gets no threshold, no tolerance and no accumulation rule** — which
+   suits the DO-NOT on introducing a constant with no exercising instance.
 
 ### Q3 — persistence location and format
 
@@ -566,37 +658,36 @@ cache whose size is already a concern, and it is not independently readable.
 The frame question (§6.4 / Q-frame below) partly decides this: a frame-free record can
 be written once and re-framed by any consumer; a B-framed record cannot.
 
-### Q4 — replace or supplement `_project_element_bbox_to_cell_rect_for_anno`; does `rasterize_annotations` survive?
+### Q4 — replace or supplement `_project_element_bbox_to_cell_rect_for_anno`? — **largely resolved by Greg's 2D correction**
 
 LOCKED item 6 says nothing is deleted and the geometry path stays runnable and
-emitting — it is the only comparison target that exists (§0.4 confirms: nothing else
-is committed). So `rasterize_annotations` **survives** as a matter of the lock.
+emitting — it is the only comparison target that exists (§0.4 confirms nothing else is
+committed). So `rasterize_annotations` **survives** as a matter of the lock. That part
+was never open.
 
-The open part is narrower: **does the new vector pass share
-`_project_element_bbox_to_cell_rect_for_anno`, or compute its own projection?** §2.4a
-says that function is wrong about `Transform` and §3/D1 says it is wrong about `int()`
-vs `floor`. Three ways:
+**The open part closed itself once "annotations are 2D so W is irrelevant" picked the
+target.** My three-way (supplement / extract-and-share / extract-and-gate) assumed
+Phase 2 would have to *write* a corrected projection and then decide whether the old
+call site shared it. It does not: `project_bbox_corners_uv` (`collection.py:837-893`)
+already exists, already applies `bbox.Transform` via `_bbox_world_corners`
+(`:780-794`), already refuses rather than returning bbox-local corners (`:805-810`),
+and already has six tests (§2). So:
 
-(a) **supplement** — new independent projection, old one untouched. Safest under
-"nothing is deleted", but installs the fourth copy of a UV→cell mapping in this repo
-(`annotation.py:1790`, `annotation.py:1499`, `raster.py:1279`, + new) — CLAUDE.md
-defect class 1, which is what `resolution_contract.effective_export_dpi()` and
-`view_raster_export._crop_uv_frame()` were extracted to stop.
+- **supplement, by calling an existing helper.** `_project_element_bbox_to_cell_rect_for_anno`
+  is untouched; the new path never calls it.
+- **No fourth copy of a UV→cell mapping is created**, because the new path has no
+  UV→cell step at all. Q2 being closed means the record is the UV rectangle; cells are
+  an analysis-side intersection. The three existing copies (`annotation.py:1790`,
+  `:1499`, `raster.py:1279`) stay at three.
+- **D1 and §2.4(a) are therefore not inherited** by the new path, and not fixed on the
+  old one. They stay on the D-list.
 
-(b) **extract and share** — pull the corner-projection into one callable both paths
-use, fixing `Transform` and `floor` once. Correct by CLAUDE.md's own stated remedy,
-but it *changes the geometry path's output* (rotated annotations move; `[B.min-cell,
-B.min)` content stops being stamped at cell 0), which makes the comparison target move
-under the comparison. That is the opposite of what LOCKED item 6 is protecting.
+**What remains genuinely open is smaller and belongs to Q3:** whether the new record
+is attached to the existing `raster.anno_meta` entry (where D2 shows an unread
+`bbox_min`/`bbox_max` slot already sits) or written to a store of its own. That is a
+persistence question, not a projection one.
 
-(c) **extract, share, but gate the fixes** — shared helper, old call site keeps
-`int()`-truncation and no-`Transform` behind an explicit flag, new path gets the
-correct one. Honest, and it makes the divergence a named, testable thing rather than a
-silent one. Costs a parameter that exists only to preserve a bug.
-
-I lean (c) and will not adopt it without you.
-
-### Q5 — what provenance the collector can honestly distinguish at its own site
+### Q5 — what provenance the collector can honestly distinguish — **narrowed, still open**
 
 Verified at `annotation.py:537-737`. The collector calls `collect_category(...)` once
 per `BuiltInCategory` (`:635-666`), from `FilteredElementCollector(doc, view.Id)` on the host doc.
@@ -615,14 +706,21 @@ At that site it can honestly distinguish:
 There is no linked-document collector in `annotation.py` at all. Every record would
 carry `source_type == "HOST"` (`core/source_identity.py:17`), a constant.
 
-**Question.** Does `provenance` mean (a) `HOST`, a constant, kept for schema symmetry
-with `element_meta`; (b) the collector label — which category collector found it,
-distinguishing the keynote path's different filtering; or (c) the classification route
-— `forced_region` / `type_override` / `classify_annotation` / `classify_keynote`, which
-is the thing that would actually explain a surprising `type` value?
+**Confirmed out of scope by Greg (2026-09-19): "No linked annotations scoped at this
+time."** So this is not a gap to close in Phase 2 — it is a dimension that does not
+exist yet. What it removes is the only reading of `provenance` that would have matched
+`element_meta`'s. The question below is what is left.
 
-(c) is the only one that carries information the record does not already have. I am
-not adopting it unasked.
+**Question, narrowed.** With source type off the table, does `provenance` mean
+(a) the collector label — which category collector found it, which distinguishes the
+keynote path's different filtering (keynotes bypass the `ViewSpecific` gate entirely);
+(b) the classification route — `forced_region` / `type_override` / `classify_keynote`
+— which is the thing that would actually explain a surprising `category` value; or
+(c) drop the field until a second source exists to distinguish?
+
+(b) is the only one carrying information the record does not already hold via
+`cat_id`, and Q6's four collapses are exactly what it would make visible. Still not
+adopting it unasked.
 
 ### Q6 — do `classify_annotation`'s buckets map 1:1 onto `category`?
 
@@ -686,10 +784,12 @@ Not mine to pick.
 
 ## 8. If approved, what Phase 2 is and is not
 
-**Is:** a PATCH to `vop_interwoven/revit/annotation.py` adding a vector record
-alongside the existing stamping, plus the persistence chosen in Q3, plus a comparison
-harness that states both collapses of §5 in writing, plus a first Revit fake adequate
-to reach the collection path (§0.3).
+**Is:** a PATCH to `vop_interwoven/revit/annotation.py` adding a per-element vector
+record alongside the existing stamping — the UV rectangle from
+`project_bbox_corners_uv`, not a coverage array — plus the persistence chosen in Q3,
+plus a comparison harness that states both collapses of §5 in writing and reports the
+per-channel residual as signal, plus a first Revit fake adequate to reach the
+collection path (§0.3).
 
 **Is not:** any fix to D1–D8. Any change to `classify_annotation`, the strategy
 tracker, or geometry extraction. Any deletion. Any golden set. Any new tolerance or
