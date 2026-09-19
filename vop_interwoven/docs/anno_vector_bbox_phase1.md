@@ -7,6 +7,14 @@ document.
 **Grounding commit:** `d05038a0656d8389915e70a45444bb87ca024c0e`
 (`git rev-parse HEAD`, this working tree, clean).
 
+**Revision 3 — 2026-09-19**, second review pass. **Corrects revision 2 on a material
+point:** rev 2 said the record is "the UV rectangle". It is not — the record is
+shape-discriminated (§2.6, now governing), because storing a diagonal or L-shaped line
+as its bounding box overstates its contribution, by `L²/2` at 45° against a figure of
+zero area. §2 retitled and its helper scoped to AABB families only; D9 and D10 added;
+Q1 answered (channel = element type + parameter); Q7 and Q8 opened. §0, §4 and §5
+unchanged.
+
 **Revision 2 — 2026-09-19**, after Greg's review. Changed: §1.4 and §1.5 are
 withdrawn/retracted as design constraints (grid artifacts, not geometry); §1.6 added
 on A↔B post alignment; §2 retargeted from `project_bbox_uv_and_near_face_w` to
@@ -233,7 +241,7 @@ narrowing applied and when the crop could not be applied at all — in the latte
 
 ---
 
-## 2. The highest-risk gate: is the bbox→UV projection valid outside the render crop?
+## 2. The geometry contract: which projection per family, and is it valid outside the render crop?
 
 > *Report whether `project_bbox_uv_and_near_face_w` is valid for content OUTSIDE the
 > render crop.*
@@ -359,6 +367,7 @@ best-effort: a failed restore leaves the view cropped to A, and every subsequent
 | Is the bbox→UV projection valid in B\A? | **Yes** — pure affine, verified `collection.py:837-893` and `:896-955` → `view_basis.py:77-99` |
 | Are its production inputs crop-scoped? | **No** — `view=None`, `color_id_buffer.py:995,1060` |
 | Is the `w` half of `project_bbox_uv_and_near_face_w` wanted here? | **No** — annotations are 2D; use `project_bbox_corners_uv` (`:837`) |
+| Does that helper serve every annotation family? | **No** — AABB families only; polylines and loops need per-point projection (§2.6) |
 | Is the *annotation* bbox source crop-scoped? | **Yes** — `get_BoundingBox(view)`, `annotation.py:893` |
 | Is `Transform` handled consistently across the annotation paths? | **No** — applied at `:344-350`, absent at `:1766-1781` |
 | Does any consumer already handle out-of-frame correctly? | **Yes** — reject-before-clamp, `link_identity_resolver.py:290-299` |
@@ -371,7 +380,58 @@ reason is `Transform`, not the crop.
 What is **not** dissolved by the change of target: `get_annotation_bbox` is still the
 only bbox source the annotation collector has, and it is still `get_BoundingBox(view)`
 (`annotation.py:893`) under a crop this pipeline mutates and restores best-effort
-(§2.4c). Whichever projection Phase 2 calls, it is fed a view-scoped bbox.
+(§2.4c).
+
+### 2.6 Not one shape: what each family actually needs
+
+**Greg, 2026-09-19:** *"The original version made distinctions between annotation
+families and text (AABB), filled regions (nested boundaries), and lines (both linear
+and curved). If an L or diagonal line comes back as a rectangle we'd overstate its
+contribution."*
+
+**Accepted, and it is the correction with the largest effect on the schema.** The
+existing geometry path already makes these distinctions — they are not a new
+requirement, they are an existing behaviour rev 2 would have thrown away. Reading the
+dispatch in `rasterize_annotations` (`annotation.py:1058-1268`):
+
+| family | geometry the current path uses | citation | true vector form |
+|---|---|---|---|
+| TEXT | bbox, filled | `:1136-1152` | **AABB** — bbox is correct |
+| TAG / keynote | bbox, outline only | `:1154-1156` | **AABB** — bbox is correct |
+| DIM | `Dimension.Curve` endpoints → line | `:1065-1066` | **polyline** |
+| LINES | `Location.Curve` endpoints → line + band | `:1167-1168`, band `:1183` | **polyline** |
+| REGION | `GetBoundaries()` → `Tessellate()` → outer minus holes | `:1247-1250`, and `_rasterize_filled_region_shape` `:1622-1640` | **nested loops** |
+| DETAIL | bbox, filled (falls to the `else:`) | `:1269` → `:1313-1328` | **unresolved — see Q7** |
+| OTHER | bbox, filled | same `else:`, `:1313-1328` | **unresolved — see Q7** |
+
+**The overstatement is not marginal, and it is arithmetic rather than measurement.**
+For a straight segment of length L at angle θ to the U axis, the AABB has area
+`L²·|sin θ·cos θ|`, maximised at θ=45° where it is `L²/2`; the segment itself has zero
+area. An L-shaped polyline's AABB additionally covers the empty quadrant — for two
+equal legs of length L, `L²` against a figure with no area at all. Only θ=0 and θ=90°
+give an AABB that does not overstate, and those are exactly the cases where a bbox and
+a polyline agree. So "bbox for everything" is worst precisely for the diagonal and
+dog-leg leaders that tags and dimensions actually produce.
+
+**Schema consequence.** LOCKED item 3 carries channel, category and provenance as
+plain strings; the record needs a fourth discriminant of the same kind — a `shape`
+string over `aabb | polyline | loops` — plus a payload whose form that string selects.
+Storing a bbox for all of them and a shape label beside it would be worse than either,
+because the label would assert a precision the payload does not carry.
+
+**Where each one's UV comes from, and the one place §2's helper does not reach.**
+`project_bbox_corners_uv` serves `aabb` and fixes `bbox.Transform` there (§2). It does
+not serve the other two, and it should not be made to: a polyline and a loop set are
+sequences of curve points, not a box, and they have no `BoundingBoxXYZ` and therefore
+no `Transform` ambiguity to resolve. Their UV is `vb.transform_to_view_uv(pt)` per
+tessellated point — the same call `compute_annotation_extents` already makes at
+`:365` and `_rasterize_filled_region_shape` makes at `:1632`.
+
+**What the vector path must NOT reuse:** `_rasterize_filled_region_shape` tessellates
+straight into *cell* coordinates (`_uv_to_cell` at `:1638`) inside the same loop that
+projects to UV. Sub-cell precision is discarded before anything could record it. The
+vector path has to stop at UV. That is a reason to write a new extraction, not a
+defect in the raster path, which legitimately wants cells. Whichever projection Phase 2 calls, it is fed a view-scoped bbox.
 
 ---
 
@@ -471,6 +531,34 @@ prose pointing at code that has moved out from under it.
 not use `print()` for error reporting."* Several sit in functions that have no `diag`
 in scope and say so (`:33`, `:764`).
 
+
+### D9 — curved detail lines and dimensions are silently reduced to their chord
+
+The LINES branch takes `curve.GetEndPoint(0)` and `GetEndPoint(1)` and nothing else
+(`annotation.py:1167-1168`); the DIM branch does the same (`:1065-1066`). An arc,
+ellipse or spline detail line is therefore rasterized as the straight segment between
+its endpoints. Meanwhile the REGION path on the same `Curve` objects calls
+`c.Tessellate()` (`:1631`) — so the capability is present in this very file and simply
+is not applied to the two line families.
+
+Greg named this shape directly (*"lines (both linear and curved)"*). It is a defect in
+the geometry path, it is on the D-list, and per LOCKED item 6 it is **not** Phase 2's
+to fix — but Phase 2 must not inherit it: the vector polyline has to tessellate, or it
+reproduces the same understatement in the new store while the AABB families overstate
+in the old one, and the comparison would then be measuring two opposite errors at once.
+
+### D10 — the detail-line band tests the cell corner, not the cell centre
+
+`_stamp_detail_line_band` iterates candidate cells and tests `_point_in_quad(cx, cy,
+corners)` (`:1462`) — the cell's **integer corner**. Every other containment test in
+the pipeline uses the centre, `bounds.min + (i + 0.5)·cell` (`raster.py:36-37`,
+`:422-423`, `:916-917`, `:1498`). The band is therefore displaced by half a cell on
+both axes relative to every other channel.
+
+This lands directly in `AnnoFinalCells_LINES`, which §6 names as the comparison target,
+so it is worth knowing about before the residual is interpreted. The band's width is
+itself `cfg.linear_band_thickness_cells`, default 1.0 (`config.py:79`, read at
+`annotation.py:1431`) — a quantity in cells, with no model-space meaning. See Q8.
 ---
 
 ## 4. Invariants asserted in a comment but not in a test
@@ -564,50 +652,53 @@ criterion.
 
 ---
 
-## 6. RAISE — six questions, three now answered. Defaults still withheld on the rest.
+## 6. RAISE — eight questions; three answered, five open. Defaults still withheld.
 
-Greg's 2026-09-19 review closed Q2 and narrowed Q1 and Q5. The status of each is
-stated at its head; the ones still open are still open, and I am not choosing them.
+Greg's 2026-09-19 review answered Q1, closed Q2, largely resolved Q4 and narrowed Q5.
+It also opened two new ones — Q7 and Q8 — that his shape correction exposes and that I
+will not answer by default. Status is stated at each head.
 
-### Q1 — the channel vocabulary — **narrowed, still open**
+### Q1 — the channel vocabulary — **ANSWERED by Greg, 2026-09-19**
 
-**What the repo actually has.** `Model/Anno/Ext` is not a vocabulary in the analysis
-layer; it is the three booleans `has_model`, `has_anno`, `ext` that
-`final_state_scanner.py:137-153` derives per cell to key the 8-way taxonomy, and `Ext`
-there is *linked/DWG model content* (`:150-153`), never annotation. `"channel"` as a
-word in this codebase means a raster layer — `anno_key`, `model_edge_key`,
-`model_proxy_key` (`raster.py:1235`, `:942`, `:1336`; `png_export.py:135-156`).
+> *"Channels element type, parameter, etc. (user keynotes vs element or material
+> keynotes)."*
 
-**And the annotation collector is HOST-only by construction.** Every collector in
-`collect_2d_annotations` is `FilteredElementCollector(doc, view.Id)`
-(`annotation.py:538`, `:670`) over the *host* document. No linked-document or DWG
-annotation is collected anywhere in that file. So a record whose `channel` could take
-`Ext` would have a value nothing can ever produce.
+**So `channel` is finer than `category` and sourced from the element's type and
+parameter values, not from its Revit category.** That resolves the gap rev 2 flagged —
+`channel` and `category` are two fields because they answer different questions:
+category is the Revit-category-derived bucket the old path already emits; channel is
+the type/parameter discriminator that lets two annotations sharing a category be held
+apart, which is what makes the collision recoverable.
 
-**Narrowed by Greg (2026-09-19), still open.** Two of his notes bear on this: *"No
-linked annotations scoped at this time"* kills `Ext` as a reachable value, and
-*"Overlaps will now be managed in channels so the signal can be resurfaced"* gives
-`channel` a job — it is the axis along which overlapping annotation is kept apart so
-the collision `anno_key` currently resolves by last-writer-wins can be recovered.
+**The worked example is a collapse this document already found independently.**
+`classify_keynote` (`annotation.py:820-870`) reads exactly two things:
+`elem.LookupParameter("Keynote").AsString()` (`:842-844`) and
+`elem.TaggedLocalElementId` (`:855-856`). It returns `"TEXT"` when the key is empty
+and `"TAG"` in every other case (`:849`, `:858`, `:864`, `:869`). **Material and
+element keynotes are therefore indistinguishable in the current output** — both land
+in `TAG` — even though the function's own docstring lists them as three kinds
+(`:824-826`). That is §7.Q6's collapse #3, and it is exactly the distinction Greg
+names as a channel.
 
-**That job does not by itself say what the axis is, and LOCKED item 3 makes the gap
-explicit** by carrying `channel` *and* `category` as two separate strings. If channel
-were the seven `ANNO_BUCKETS`, it would be `category` under another name — and two
-overlapping TEXT annotations would still collide inside the TEXT channel, which is
-precisely the case that motivated the change.
+**Two things this does not settle, and I am not deciding either.**
 
-**Question, restated.** What is `channel`, given `category` is already a field?
-Candidates, no recommendation:
-(a) **coarser than category** — a grouping of the seven (say text-like / linework /
-region-like), so category stays the fine label and channel is the separation axis;
-(b) **orthogonal to category** — a property category does not carry, e.g. draw order /
-Revit's own layering, so two TEXT annotations *can* occupy different channels;
-(c) **per-element, i.e. no channel at emit time** — the store is per-element already,
-channels are a purely analysis-side grouping, and the field is dropped from the record.
+**(a) The read that separates them does not exist in this codebase.** Nothing in
+`vop_interwoven/` reads a keynote's kind beyond those two calls; `GetTypeId()` appears
+once in the whole package, in `linked_documents.py:849`, for import instances. So the
+channel resolver needs a Revit-API read that is not written here yet, and which read
+that is — tag family/type name, the tagged reference's own kind, a keynote-table
+lookup — is a Revit-API question no unit test in this repo can settle. It belongs to
+§8's limit #1: a Dynamo probe, not a test. **Which read should the probe establish?**
 
-(c) is consistent with your *"overlap semantics, if they survive, will be analysis
-side"* and would make (a)/(b) a question for the analysis layer rather than the
-schema. I am not adopting it on that inference.
+**(b) "Parameter" is open-ended, and LOCKED item 3 depends on it not being.** Item 3
+says the vocabulary is plain strings so that *"a vocabulary change must be a data
+migration, not a schema one."* That holds only if the set of channel values is
+enumerable. A resolver that does ad-hoc `LookupParameter` calls per element produces an
+unbounded vocabulary and makes item 3 unenforceable in practice. **Should the channel
+resolver be driven by an explicit declared table — (element type or category, parameter
+name, value → channel string) — with anything unmatched resolving to one named
+fallback?** That is the shape that keeps the vocabulary auditable, and it is a design
+commitment I want from you rather than one I install.
 
 ### Q2 — overlap semantics per channel — **CLOSED by Greg, 2026-09-19**
 
@@ -624,11 +715,11 @@ collision the vector form exists to remove.
 Two consequences for Phase 2, both narrowing:
 
 1. **LOCKED item 4's "continuous fill fraction" is a derived quantity, not a stored
-   one.** A per-element rectangle in UV yields per-cell coverage by intersection at
-   analysis time, for whatever grid the analysis chooses. Storing a fill fraction
-   would bake in a grid and a cell size, which is what LOCKED item 1 rejected the
-   raster pass for. Phase 2 should store the rectangle; if it also stores coverage,
-   it must say against which grid.
+   one.** A per-element *shape* in UV (§2.6 — AABB, polyline or loop set, not a
+   rectangle) yields per-cell coverage by intersection at analysis time, for whatever
+   grid the analysis chooses. Storing a fill fraction would bake in a grid and a cell
+   size, which is what LOCKED item 1 rejected the raster pass for. Phase 2 should
+   store the shape; if it also stores coverage, it must say against which grid.
 2. **The emitter gets no threshold, no tolerance and no accumulation rule** — which
    suits the DO-NOT on introducing a constant with no exercising instance.
 
@@ -666,9 +757,10 @@ committed). So `rasterize_annotations` **survives** as a matter of the lock. Tha
 was never open.
 
 **The open part closed itself once "annotations are 2D so W is irrelevant" picked the
-target.** My three-way (supplement / extract-and-share / extract-and-gate) assumed
-Phase 2 would have to *write* a corrected projection and then decide whether the old
-call site shared it. It does not: `project_bbox_corners_uv` (`collection.py:837-893`)
+target — for the AABB families.** My three-way (supplement / extract-and-share /
+extract-and-gate) assumed Phase 2 would have to *write* a corrected projection and then
+decide whether the old call site shared it. For `aabb` it does not:
+`project_bbox_corners_uv` (`collection.py:837-893`)
 already exists, already applies `bbox.Transform` via `_bbox_world_corners`
 (`:780-794`), already refuses rather than returning bbox-local corners (`:805-810`),
 and already has six tests (§2). So:
@@ -676,11 +768,20 @@ and already has six tests (§2). So:
 - **supplement, by calling an existing helper.** `_project_element_bbox_to_cell_rect_for_anno`
   is untouched; the new path never calls it.
 - **No fourth copy of a UV→cell mapping is created**, because the new path has no
-  UV→cell step at all. Q2 being closed means the record is the UV rectangle; cells are
-  an analysis-side intersection. The three existing copies (`annotation.py:1790`,
-  `:1499`, `raster.py:1279`) stay at three.
+  UV→cell step at all. Q2 being closed means the record is the UV *shape* (§2.6);
+  cells are an analysis-side intersection. The three existing copies
+  (`annotation.py:1790`, `:1499`, `raster.py:1279`) stay at three. This survives §2.6
+  unchanged — it is the reason the vector path must not reuse
+  `_rasterize_filled_region_shape`, which folds UV→cell into its tessellation loop
+  (`:1638`).
 - **D1 and §2.4(a) are therefore not inherited** by the new path, and not fixed on the
   old one. They stay on the D-list.
+
+For `polyline` and `loops` there is no existing helper and Phase 2 does write the
+extraction — but it writes a *tessellate-to-UV* walk, not a projection, and the per-
+point call it uses (`vb.transform_to_view_uv`) is already the one both existing
+annotation paths use (`:365`, `:1637`). So still no new mapping, and still nothing
+shared with the old call site.
 
 **What remains genuinely open is smaller and belongs to Q3:** whether the new record
 is attached to the existing `raster.anno_meta` entry (where D2 shows an unread
@@ -764,6 +865,57 @@ at the cost that the comparison to `AnnoFinalCells_*` now needs a stated fold?
 (a) is the cheap answer; (b) is the one that would show whether the collapses matter.
 Not mine to pick.
 
+### Q7 — DETAIL components and OTHER: what shape? — **NEW, opened by the §2.6 correction**
+
+Greg's shape list names text (AABB), filled regions (nested boundaries) and lines
+(linear and curved). It does not name **detail components**, and they are neither.
+
+Today they fall through every branch to the legacy bbox fill
+(`annotation.py:1269` → `:1313-1328`). A detail component is a family instance whose
+2D content is arbitrary linework — an L-shaped bracket, a hatched section of insulation,
+a diagonal brace. The §2.6 arithmetic applies to it in full: its AABB overstates for
+exactly the same reason a diagonal line's does, and `AnnoFinalCells_DETAIL` currently
+carries that overstatement.
+
+**Question.** Does `DETAIL` get (a) `aabb`, preserving current behaviour and the
+current overstatement, with the record honestly labelled `aabb` so a consumer knows
+not to read area from it; (b) its own geometry extraction — the family instance's
+view-specific curves, which is the largest single piece of work in Phase 2 and has no
+existing helper in this file; or (c) `aabb` now with the record's `shape` field making
+(b) a later, non-breaking addition?
+
+Same question for `OTHER`, which shares the branch — though §7.Q6 shows `OTHER` is
+unreachable from the current collector, so it may be moot.
+
+### Q8 — a polyline has no area: what is a line's contribution? — **NEW**
+
+The raster path gives every detail line a band of `cfg.linear_band_thickness_cells`,
+default 1.0 (`config.py:79`, read at `annotation.py:1431`), stamped by
+`_stamp_detail_line_band` (`:1394-1464`). **That width is expressed in cells.** It has
+no model-space meaning: halve the cell size and the line's footprint in feet halves
+with it.
+
+In vector form the problem inverts. A polyline is a 1-dimensional figure with **zero
+area**, so under any area-based coverage measure a detail line contributes nothing at
+all — which understates it as badly as the AABB overstated it. Greg's objection was to
+*overstating* a diagonal; the mirror failure is available here for free and it would be
+just as wrong.
+
+**Question.** For `polyline` records, is the contribution
+(a) **a width carried on the record**, and if so from where — Revit's line weight
+(model-meaningful, but a pen weight is a printed-output property, not a geometric one),
+a config constant (reintroduces the grid-dependence LOCKED item 1 rejected the raster
+pass for), or the annotation's own type;
+(b) **length, not area** — a different unit for this shape kind, which the channel
+separation makes tractable but which means the per-channel totals cannot simply be
+summed; or
+(c) **zero area, reported as such**, treating a line's presence as a count rather than
+a magnitude?
+
+This is the one question where I think the answer changes what the measurement *means*,
+not just how it is stored, so I would rather leave it entirely to you than pick the
+tidiest option.
+
 ---
 
 ## 7. Two things Phase 1 could not settle, stated as limits rather than assumed away
@@ -785,13 +937,14 @@ Not mine to pick.
 ## 8. If approved, what Phase 2 is and is not
 
 **Is:** a PATCH to `vop_interwoven/revit/annotation.py` adding a per-element vector
-record alongside the existing stamping — the UV rectangle from
-`project_bbox_corners_uv`, not a coverage array — plus the persistence chosen in Q3,
-plus a comparison harness that states both collapses of §5 in writing and reports the
-per-channel residual as signal, plus a first Revit fake adequate to reach the
-collection path (§0.3).
+record alongside the existing stamping — a **shape-discriminated** UV figure
+(§2.6: `aabb` via `project_bbox_corners_uv`, `polyline` and `loops` via
+tessellate-to-UV), not a coverage array and not a bbox for everything — plus the
+persistence chosen in Q3, the channel resolver shaped by Q1(b), a comparison harness
+that states both collapses of §5 in writing and reports the per-channel residual as
+signal, and a first Revit fake adequate to reach the collection path (§0.3).
 
-**Is not:** any fix to D1–D8. Any change to `classify_annotation`, the strategy
+**Is not:** any fix to D1–D10. Any change to `classify_annotation`, the strategy
 tracker, or geometry extraction. Any deletion. Any golden set. Any new tolerance or
 constant without an exercising instance.
 
