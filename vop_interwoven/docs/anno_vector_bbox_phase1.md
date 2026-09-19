@@ -7,6 +7,14 @@ document.
 **Grounding commit:** `d05038a0656d8389915e70a45444bb87ca024c0e`
 (`git rev-parse HEAD`, this working tree, clean).
 
+**Revision 4 — 2026-09-19**, third review pass. Three coarse-grid compromises are
+released rather than preserved: the keynote TAG collapse (Q6 substance resolved —
+`category` keeps the seven, `channel` carries the richness), the chord approximation
+(D9 disposition set: capture the curve, not its chord), and `linear_band_thickness_cells`
+(Q8 option (a) withdrawn). New §2.7 and Q9 on what "directly" means — curve primitive
+versus tessellation, where the tessellation inherits an unstated tolerance that all 13
+`Tessellate()` call sites in this repo leave implicit. §0, §4 and §5 unchanged.
+
 **Revision 3 — 2026-09-19**, second review pass. **Corrects revision 2 on a material
 point:** rev 2 said the record is "the UV rectangle". It is not — the record is
 shape-discriminated (§2.6, now governing), because storing a diagonal or L-shaped line
@@ -431,7 +439,65 @@ tessellated point — the same call `compute_annotation_extents` already makes a
 straight into *cell* coordinates (`_uv_to_cell` at `:1638`) inside the same loop that
 projects to UV. Sub-cell precision is discarded before anything could record it. The
 vector path has to stop at UV. That is a reason to write a new extraction, not a
-defect in the raster path, which legitimately wants cells. Whichever projection Phase 2 calls, it is fed a view-scoped bbox.
+defect in the raster path, which legitimately wants cells.
+
+### 2.7 "Capture the curve directly" — preferred, and it is a schema decision, not a detail
+
+**Greg, 2026-09-19:** *"If we could capture the curve or line directly that would be
+preferable to the approximations we were doing with the coarse grid where it was less
+important."*
+
+**Accepted as the direction.** It also names the thing that made the approximations
+tolerable before and does not any more: at 0.125 in/cell the difference between an arc
+and its chord was mostly below a cell, so it did not pay to carry. A vector record has
+no such floor, so the approximation stops being invisible and starts being the error
+bar on the measurement.
+
+**But "directly" admits two readings, and they are not the same record.** This is Q9.
+
+**(a) The curve primitive** — store the curve's own type and defining parameters
+(a line's two endpoints; an arc's centre, radius and end angles), projected to UV.
+Carries **no approximation and no tolerance at all**. Nothing in `vop_interwoven/`
+reads a curve parameter today: `grep -rn "IsBound\|GetEndParameter\|Radius\|Center"`
+over the package returns only `core/geometry.py:150` (a UV-rect centre) and
+`pipeline.py:2902` (a print). So every read is new.
+
+**(b) A tessellated polyline** — `Curve.Tessellate()`, the package's existing idiom.
+Cheaper to write and it reuses a known pattern. It carries two things a record should
+not carry silently:
+
+- **An unstated tolerance.** All 13 `Tessellate()` call sites in `vop_interwoven/` and
+  `tools/` invoke it with **no arguments** (`annotation.py:1286`, `:1631`;
+  `revit/tierb_proxy.py:83`; `core/silhouette.py:248`, `:1217`, `:1238`, `:1699`,
+  `:2635`, `:2829`, `:2902`; `core/face_selection.py:295`). Whatever chord tolerance
+  Revit applies is therefore implicit everywhere in this codebase and characterised
+  nowhere. Putting it inside a measurement record makes it the record's error bar —
+  which is exactly the "tolerance with no exercising instance" the DO-NOT forbids,
+  arriving through the back door rather than as a declared constant.
+- **A silent truncation, if the existing pattern is copied.** `silhouette.py` caps
+  tessellation output at `max_pts` (`:1218`, `:1239`) and says outright that
+  *"Tessellate() cost is outside our point cap, so the time budget above is the real
+  protection against stalls"* (`:1213-1214`). A cap that drops trailing points is
+  acceptable for a silhouette; in a geometry record it is data loss with no marker.
+
+**One argument in favour of (a) being achievable, which I can reason about but not
+verify here.** Everything in scope is view-specific and sketched in the view plane —
+detail lines, dimension lines and filled-region boundaries are all `ViewSpecific=True`
+by the collector's own filter (`annotation.py:546`). Orthographic projection of a
+planar figure onto a parallel plane is an isometry up to the basis rotation, so a
+circular arc in the view plane should stay a circular arc in UV, and the primitive
+should survive projection rather than degenerating into a general conic. **That is a
+Revit-semantics claim, not a repo fact**, and it goes on §8's probe list with the
+others — if it fails, (a) is only available for `Line` and (b) becomes unavoidable for
+the rest.
+
+**Existing idiom to build on either way.** `silhouette.py` already dispatches curves by
+`g.__class__.__name__` rather than `isinstance` (`:1134`, `:1642`, whose
+whitelist at `:1647` is `("Line", "Arc", "NurbSpline", "HermiteSpline", "PolyLine", "Curve")`),
+and already treats `PolyLine` exactly — `GetCoordinates()` (`:1147`, `:1679`), no
+tessellation.
+So type-name dispatch and an exact path for at least two of the types are precedent,
+not invention. Whichever projection Phase 2 calls, it is fed a view-scoped bbox.
 
 ---
 
@@ -541,11 +607,14 @@ its endpoints. Meanwhile the REGION path on the same `Curve` objects calls
 `c.Tessellate()` (`:1631`) — so the capability is present in this very file and simply
 is not applied to the two line families.
 
-Greg named this shape directly (*"lines (both linear and curved)"*). It is a defect in
-the geometry path, it is on the D-list, and per LOCKED item 6 it is **not** Phase 2's
-to fix — but Phase 2 must not inherit it: the vector polyline has to tessellate, or it
-reproduces the same understatement in the new store while the AABB families overstate
-in the old one, and the comparison would then be measuring two opposite errors at once.
+Greg named this shape directly (*"lines (both linear and curved)"*) and has since set
+the disposition: *"if we could capture the curve or line directly that would be
+preferable."* So it is a defect in the geometry path, it stays on the D-list, and per
+LOCKED item 6 it is **not** Phase 2's to fix — but Phase 2 must not inherit it. The
+chord is the one outcome ruled out for the new store: it would understate curves there
+while the AABB families overstate in the old one, and the comparison would be
+measuring two opposite errors at once. Whether the new store carries the primitive or
+a tessellation is Q9.
 
 ### D10 — the detail-line band tests the cell corner, not the cell centre
 
@@ -652,11 +721,12 @@ criterion.
 
 ---
 
-## 6. RAISE — eight questions; three answered, five open. Defaults still withheld.
+## 6. RAISE — nine questions; four resolved, five open. Defaults still withheld.
 
-Greg's 2026-09-19 review answered Q1, closed Q2, largely resolved Q4 and narrowed Q5.
-It also opened two new ones — Q7 and Q8 — that his shape correction exposes and that I
-will not answer by default. Status is stated at each head.
+Across three review passes on 2026-09-19 Greg answered Q1, closed Q2, largely resolved
+Q4, resolved the substance of Q6, and narrowed Q5 and Q8. Three new questions opened as
+a consequence — Q7, Q8 and Q9 — and I am not answering those by default. Status is
+stated at each head.
 
 ### Q1 — the channel vocabulary — **ANSWERED by Greg, 2026-09-19**
 
@@ -823,7 +893,7 @@ keynote path's different filtering (keynotes bypass the `ViewSpecific` gate enti
 `cat_id`, and Q6's four collapses are exactly what it would make visible. Still not
 adopting it unasked.
 
-### Q6 — do `classify_annotation`'s buckets map 1:1 onto `category`?
+### Q6 — do `classify_annotation`'s buckets map 1:1 onto `category`? — **substance resolved by Greg, 2026-09-19**
 
 **Almost, and the exceptions are the interesting part.**
 
@@ -856,14 +926,25 @@ The four exceptions:
    `verify_invariant_core.py:148-150`, `:1601-1605` goes to real trouble to insist
    `AnnoCells_OTHER` is "a real annotation bucket".
 
-**Question.** Does `category` on the new record mean (a) the seven, unchanged, which
-keeps the comparison to `AnnoFinalCells_*` one-to-one and inherits the collapses above;
-or (b) the source `BuiltInCategory`, which is strictly finer, is already captured as
-`cat_id` (`:1003`), and would make the keynote and FilledRegion collapses visible —
-at the cost that the comparison to `AnnoFinalCells_*` now needs a stated fold?
+**Greg, 2026-09-19:** *"TAG for material and element keynotes was the compromise when
+it was binary before I learned about channels. Now it can be richer data."*
 
-(a) is the cheap answer; (b) is the one that would show whether the collapses matter.
-Not mine to pick.
+**That resolves the substance and, usefully, resolves it without a trade-off.** I had
+framed this as (a) keep the seven and inherit the collapses, versus (b) go finer and
+lose the 1:1 comparison. Channels remove the fork: `category` stays the seven, so the
+comparison to `AnnoFinalCells_*` remains one-to-one and §6's collapses are the only
+ones to state; `channel` carries the richness the binary bucket had to throw away. The
+TAG collapse is therefore a **compromise to be superseded, not a behaviour to preserve**
+— which also settles what to do about collapse #3 in the list above.
+
+Collapses #1, #2 and #4 are unaffected and stay as recorded: `classify_annotation` is
+effectively dead in the collection path because every category passes a literal
+override; FilledRegion is forced ahead of category; and `OTHER` is unreachable from the
+collector.
+
+**What is left is mechanical, and it is Q1(a):** the read that separates user from
+element from material keynote does not exist in this package, and which read it is, is
+a probe question. `channel` cannot carry richer keynote data until that is established.
 
 ### Q7 — DETAIL components and OTHER: what shape? — **NEW, opened by the §2.6 correction**
 
@@ -887,34 +968,61 @@ existing helper in this file; or (c) `aabb` now with the record's `shape` field 
 Same question for `OTHER`, which shares the branch — though §7.Q6 shows `OTHER` is
 unreachable from the current collector, so it may be moot.
 
-### Q8 — a polyline has no area: what is a line's contribution? — **NEW**
+### Q8 — a polyline has no area: what is a line's contribution? — **narrowed; one option removed**
 
 The raster path gives every detail line a band of `cfg.linear_band_thickness_cells`,
 default 1.0 (`config.py:79`, read at `annotation.py:1431`), stamped by
-`_stamp_detail_line_band` (`:1394-1464`). **That width is expressed in cells.** It has
-no model-space meaning: halve the cell size and the line's footprint in feet halves
-with it.
+`_stamp_detail_line_band` (`:1394-1464`). That width is expressed in **cells**: halve
+the cell size and the line's footprint in feet halves with it.
 
-In vector form the problem inverts. A polyline is a 1-dimensional figure with **zero
-area**, so under any area-based coverage measure a detail line contributes nothing at
-all — which understates it as badly as the AABB overstated it. Greg's objection was to
-*overstating* a diagonal; the mirror failure is available here for free and it would be
-just as wrong.
+**Greg, 2026-09-19: "Linear band thickness is another result of coarse grid work and
+optimization."** So it is not a quantity to carry forward — it is an artifact of the
+same coarse grid that made the chord approximation tolerable, and my option (a) is
+withdrawn. A config width would have reintroduced exactly the grid-dependence LOCKED
+item 1 rejected the raster pass for, which is the same objection wearing a different
+hat.
 
-**Question.** For `polyline` records, is the contribution
-(a) **a width carried on the record**, and if so from where — Revit's line weight
-(model-meaningful, but a pen weight is a printed-output property, not a geometric one),
-a config constant (reintroduces the grid-dependence LOCKED item 1 rejected the raster
-pass for), or the annotation's own type;
-(b) **length, not area** — a different unit for this shape kind, which the channel
-separation makes tractable but which means the per-channel totals cannot simply be
-summed; or
-(c) **zero area, reported as such**, treating a line's presence as a count rather than
-a magnitude?
+**What remains open.** A polyline is 1-dimensional and has **zero area**, so under any
+area-based coverage measure a line contributes nothing at all — which understates it as
+badly as the AABB overstated the diagonal. The mirror failure is still available for
+free. So:
 
-This is the one question where I think the answer changes what the measurement *means*,
-not just how it is stored, so I would rather leave it entirely to you than pick the
-tidiest option.
+(b) **length, not area** — a genuinely different unit for this shape kind. The channel
+separation makes it tractable (lines never share a channel with regions), but the
+per-channel totals then cannot simply be summed into one number, and the comparison to
+`AnnoFinalCells_LINES` — a cell count produced by a band whose width you have just
+called an artifact — needs its own stated collapse on top of §6's two.
+
+(c) **zero area, reported as such** — a line's presence is a count, not a magnitude.
+Simplest, and honest about what a 1-D figure contributes to a 2-D measure; loses the
+distinction between a 2 ft leader and a 40 ft match line.
+
+(d) **a width from the annotation's own type**, if one exists that is model-meaningful
+rather than a print property. Revit line weight is a pen weight and scales with the
+printed sheet, not the model, so I do not think it qualifies — but I have not
+established that from the API and am not ruling it out on my own reasoning.
+
+This is still the question where the answer changes what the measurement *means*, and
+(b) versus (c) is a decision about the analysis, not the emitter, so it may be one you
+would rather defer past Phase 2 entirely. If so, say that and the record stores the
+geometry with no contribution field at all.
+
+### Q9 — curve primitive or tessellated polyline? — **NEW, opened by the direct-capture preference**
+
+Stated in full at §2.7. The short form: *"capture the curve directly"* can mean the
+primitive (type + parameters, no approximation, every read new to this package) or a
+tessellation (existing idiom, but an **unstated** Revit chord tolerance inherited by
+13 call sites, plus a silent point cap if `silhouette.py`'s pattern is copied).
+
+**Question.** Which, and if the primitive: is the record allowed to carry a *mixed*
+payload — primitives where the type is one the projection preserves, tessellation with
+a **declared** tolerance where it is not — or must one form cover every curve so the
+store is homogeneous?
+
+A mixed payload is more honest and strictly more accurate. It also means a consumer
+must handle two representations, and it makes "is this record exact?" a per-record
+property rather than a property of the format. I lean mixed-with-a-flag and will not
+adopt it without you.
 
 ---
 
@@ -938,8 +1046,8 @@ tidiest option.
 
 **Is:** a PATCH to `vop_interwoven/revit/annotation.py` adding a per-element vector
 record alongside the existing stamping — a **shape-discriminated** UV figure
-(§2.6: `aabb` via `project_bbox_corners_uv`, `polyline` and `loops` via
-tessellate-to-UV), not a coverage array and not a bbox for everything — plus the
+(§2.6: `aabb` via `project_bbox_corners_uv`, `polyline` and `loops` by direct
+curve capture per §2.7/Q9 — not by chord), not a coverage array and not a bbox for everything — plus the
 persistence chosen in Q3, the channel resolver shaped by Q1(b), a comparison harness
 that states both collapses of §5 in writing and reports the per-channel residual as
 signal, and a first Revit fake adequate to reach the collection path (§0.3).
