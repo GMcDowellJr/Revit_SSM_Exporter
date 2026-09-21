@@ -624,7 +624,14 @@ def test_show_shadows_unchanged_does_not_affect_reliability():
 
 class _FakeRaster(object):
     """Minimal raster: grid extents only, no bounds_xy, so the crop and
-    re-collection paths stay out of the way of what this is measuring."""
+    re-collection paths stay out of the way of what this is measuring.
+
+    NOTE: no bounds_xy means no FRAME, so a capture built on this raster
+    takes the sizing path's no-frame fallback. That is a real production
+    branch and worth testing, but it is NOT the frame-derived path -- see
+    _FakeFramedRaster for that. Mixing the two up is how a floor assertion
+    ends up pinning the fallback and reporting it as the contract.
+    """
 
     def __init__(self, W, H, cell_size_ft=1.0):
         self.W = W
@@ -633,6 +640,27 @@ class _FakeRaster(object):
         self.bounds_xy = None
         self.model_clip_bounds = None
         self.view_basis = None
+
+
+class _FakeFramedRaster(object):
+    """A raster that carries a frame, so the capture is sized from it.
+
+    The frame is deliberately non-square and does not match the cell counts,
+    so a sizing path that reached for W/H instead of the bounds produces
+    visibly different numbers.
+    """
+
+    def __init__(self, W, H, bounds, cell_size_ft=1.0):
+        from vop_interwoven.revit.view_basis import ViewBasis
+        self.W = W
+        self.H = H
+        self.cell_size_ft = cell_size_ft
+        self.bounds_xy = bounds
+        self.model_clip_bounds = None
+        self.anno_frame_bounds = None
+        self.anno_cap_envelope_applied = False
+        self.view_basis = ViewBasis(origin=(0, 0, 0), right=(1, 0, 0),
+                                    up=(0, 1, 0), forward=(0, 0, -1))
 
 
 def _run_view_with_raster(tmp_path, doc, view, raster, **cfg_kw):
@@ -645,24 +673,81 @@ def _run_view_with_raster(tmp_path, doc, view, raster, **cfg_kw):
     return result, diag
 
 
-@pytest.mark.parametrize("fit,expected_floor,expected_axis", [
-    ("horizontal", 800, "width"),
-    ("vertical", 250, "height"),
+@pytest.mark.parametrize("fit,expected_axis", [
+    ("horizontal", "width"),
+    ("vertical", "height"),
 ])
-def test_backoff_floor_is_the_grid_extent_on_the_fitted_axis(
-        tmp_path, fit, expected_floor, expected_axis):
-    """H3: the call site must pick raster.H under vertical fit, matching the
-    axis feet_per_pixel divides by. A 800x250 grid makes the two distinct."""
+def test_backoff_floor_is_the_captures_own_minimum_not_the_cell_grid(
+        tmp_path, fit, expected_axis):
+    """The backoff floor is no longer the analysis grid (Stage A step 2).
+
+    H3 originally pinned this to raster.W/raster.H, on the reasoning that an
+    export narrower than the grid could not resolve the grid it fills. The
+    capture does not fill a grid any more -- the analysis grid is derived
+    from the TIFF and the view scale after the fact -- so a cell size
+    measured in model units has no bearing on what the capture must be. The
+    floor is now the capture's own 64 px minimum.
+
+    The 800x250 grid is kept because it is what made the old axis confusion
+    visible, and it still discriminates: both cell counts differ from each
+    other AND from the floor, so a call site that reverted to either axis
+    fails here.
+    """
+    from vop_interwoven.core.math_utils import Bounds2D
     with _install_fake_revit_db():
         doc = _SizedDoc(lambda px: (px, px))
         result, diag = _run_view_with_raster(
-            tmp_path, doc, _FakeView(view_id=110), _FakeRaster(W=800, H=250),
+            tmp_path, doc, _FakeView(view_id=110),
+            _FakeFramedRaster(W=800, H=250,
+                              bounds=Bounds2D(0.0, 0.0, 800.0, 250.0)),
             color_id_buffer_fit_direction=fit)
 
     res = result["metadata"]["resolution"]
     assert res["requested_axis"] == expected_axis
-    assert res["backoff_floor_px"] == expected_floor
+    assert res["backoff_floor_px"] == 64
+    # ... and that is not either grid extent, so the assertion above is not
+    # satisfiable by the retired behaviour.
+    assert res["backoff_floor_px"] not in (800, 250)
     assert res["backoff_max_retries"] == cib.MAX_MISMATCH_RETRIES
+
+
+def test_a_capture_with_no_frame_falls_back_to_the_absolute_floor(tmp_path):
+    """The other branch. A raster with no bounds cannot be frame-sized, so
+    the floor is the absolute lower bound rather than the capture minimum --
+    asserting 64 for this case would be claiming something about a view this
+    code could not size."""
+    with _install_fake_revit_db():
+        doc = _SizedDoc(lambda px: (px, px))
+        result, _diag = _run_view_with_raster(
+            tmp_path, doc, _FakeView(view_id=113), _FakeRaster(W=800, H=250))
+
+    res = result["metadata"]["resolution"]
+    assert res["backoff_floor_px"] == cib._PIXEL_SIZE_BACKOFF_FLOOR
+    assert result["metadata"]["export_frame"]["status"] == "unavailable"
+
+
+def test_the_fitted_axis_is_still_chosen_correctly(tmp_path):
+    """What H3 was really guarding -- that the call site reads the axis the
+    fit direction names -- kept as its own assertion now that the floor no
+    longer carries it. A 800x250 grid makes the two axes distinct."""
+    from vop_interwoven.core.math_utils import Bounds2D
+    seen = {}
+    for fit in ("horizontal", "vertical"):
+        with _install_fake_revit_db():
+            doc = _SizedDoc(lambda px: (px, px))
+            result, _diag = _run_view_with_raster(
+                tmp_path, doc, _FakeView(view_id=110),
+                _FakeFramedRaster(W=800, H=250,
+                                  bounds=Bounds2D(0.0, 0.0, 800.0, 250.0)),
+                color_id_buffer_fit_direction=fit)
+        res = result["metadata"]["resolution"]
+        seen[fit] = (res["requested_axis"], res["paper_fit_in"])
+
+    assert seen["horizontal"][0] == "width"
+    assert seen["vertical"][0] == "height"
+    # The paper extent the request is derived from must differ between the
+    # two, or the fit direction is not reaching the sizing at all.
+    assert seen["horizontal"][1] != seen["vertical"][1]
 
 
 def test_cap_override_above_the_ceiling_warns(tmp_path):

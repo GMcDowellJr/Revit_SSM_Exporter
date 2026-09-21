@@ -2116,23 +2116,29 @@ def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None,
 
     That backoff is bounded on both ends, because an unbounded one is its own
     failure mode: halving a 10000 px request to a hard floor of 16 is ten
-    full exports of a large view, and the last several ask Revit for fewer
-    pixels than the cell grid has cells, where a "successful" export can no
-    longer resolve the grid it exists to fill. So at most
+    full exports of a large view, and the last several produce an image too
+    small to carry the view's content at any useful density. So at most
     ``max_mismatch_retries`` re-exports are attempted, and no request goes
-    below ``grid_axis_px`` -- the view's own grid extent along the fitted
-    axis. Hitting either bound reports the view as a mismatch and the caller
-    fails it. The export never continues silently and never grinds.
+    below the floor the caller supplies. Hitting either bound reports the
+    view as a mismatch and the caller fails it. The export never continues
+    silently and never grinds.
+
+    THE FLOOR IS NO LONGER THE CELL GRID. It was, on the reasoning that an
+    export narrower than the grid cannot resolve the grid it fills; the
+    capture does not fill a grid any more, so its production caller now
+    passes the capture's own 64 px minimum. The parameter keeps its name for
+    the probe contract that calls this directly.
 
     Note ``max_axis_px`` is the VERIFICATION ceiling and stays at the
     measured limit even when a caller raises the sizing cap: a deliberately
     over-cap request is precisely the case this check has to catch.
 
     Args:
-        grid_axis_px: the raster's own cell count along the fitted axis, used
-            as the backoff floor. None means no grid is known, and the floor
-            falls back to ``_PIXEL_SIZE_BACKOFF_FLOOR`` -- an absolute lower
-            bound, not a meaningful one.
+        grid_axis_px: the backoff floor along the fitted axis. Historically
+            the raster's cell count, hence the name; production now passes
+            the capture's own minimum pixel size. None or 0 falls back to
+            ``_PIXEL_SIZE_BACKOFF_FLOOR`` -- an absolute lower bound, not a
+            meaningful one.
 
     Returns ``(output_path, actual_pixel_size, dim_report)``.
     """
@@ -2544,21 +2550,24 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         cap = cap_axes(pre_cap_px, pre_cap_px, cap_axis_px)
         pixel_size = max(64, cap["accepted_px"])
 
-    # The raster's own cell count along the fitted axis, which bounds how
-    # far a dimension mismatch may back off: an export narrower than the
-    # grid it feeds cannot resolve that grid, so there is nothing below it
-    # worth attempting. None when no raster was supplied.
+    # The floor on the dimension-mismatch backoff.
     #
-    # STILL GRID-DERIVED, deliberately: this is the post-export dim_check's
-    # backoff floor, and step 2 leaves the dim_check unchanged. It is a floor
-    # on the RETRY, not on the export size, so it no longer couples the
-    # capture's resolution to the grid -- but it is a residual coupling in
-    # this path and is called out rather than quietly left.
-    if raster is not None:
-        grid_axis_px = getattr(raster, "H", None) if fit_direction == "vertical" else getattr(raster, "W", None)
-        grid_axis_px = int(grid_axis_px) if grid_axis_px else None
-    else:
-        grid_axis_px = None
+    # NOT THE CELL GRID. It used to be the raster's cell count along the
+    # fitted axis, on the reasoning that "an export narrower than the grid it
+    # feeds cannot resolve that grid". That reasoning is void: the capture no
+    # longer feeds the grid. The analysis grid is derived from the TIFF and
+    # the view scale AFTER the fact, so a cell size measured in model units
+    # has no bearing on what the capture has to be -- which is the last place
+    # in this path where one still did.
+    #
+    # A floor is still wanted, to stop the backoff halving its way down to a
+    # useless image, so it is the capture's OWN minimum -- the same 64 px
+    # floor the sizing path applies -- rather than a number borrowed from the
+    # analysis resolution. _PIXEL_SIZE_BACKOFF_FLOOR (16) remains the absolute
+    # bound for a capture with no frame, where 64 would be asserting something
+    # about a view this code could not size.
+    backoff_floor_px = (
+        int(geom["min_axis_px"]) if geom is not None else _PIXEL_SIZE_BACKOFF_FLOOR)
 
     orig_view_template_id = None
     try:
@@ -3446,7 +3455,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         _tiff_path, actual_pixel_size, dim_report = _export_tiff(
             doc, view, tiff_path, pixel_size, diag=diag, view_id=view_id,
             fit_direction=fit_direction, max_axis_px=MAX_STAGE_A_AXIS_PX,
-            grid_axis_px=grid_axis_px,
+            grid_axis_px=backoff_floor_px,
         )
     finally:
         restore_tx = Transaction(doc, "VOP Stage A RESTORE color ID buffer")
@@ -3708,7 +3717,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             "dim_read_error": dim_report.get("dim_read_error"),
             "dim_check_attempts": dim_report.get("attempts"),
             "backoff_stop_reason": dim_report.get("backoff_stop_reason"),
-            "backoff_floor_px": grid_axis_px,
+            "backoff_floor_px": backoff_floor_px,
             "backoff_max_retries": MAX_MISMATCH_RETRIES,
         },
         # Stage A step 2. ADDITIVE: every key above keeps its meaning and its
