@@ -200,7 +200,13 @@ def test_host_element_with_no_bbox_still_gets_an_entry_recorded_as_none():
         )
 
     entry = result["host"]["1001"]
-    assert entry == {"bbox_corners_uv": None, "near_face_w": None, "category": "Walls"}
+    # The PRE-EXISTING keys, asserted by value rather than by freezing the
+    # whole dict: Stage A step 1 adds "source"/"category_state" alongside
+    # them (see test_dwg_source_identity.py, which is where that addition is
+    # pinned). Their meaning is unchanged, which is what this asserts.
+    assert entry["bbox_corners_uv"] is None
+    assert entry["near_face_w"] is None
+    assert entry["category"] == "Walls"
     assert any(w["callsite"] == "near_face_w.host" for w in diag.warnings), (
         "a missing bbox must be recorded, not silently dropped -- CLAUDE.md's no-silent-failure rule"
     )
