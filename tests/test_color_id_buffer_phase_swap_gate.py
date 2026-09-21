@@ -33,6 +33,7 @@ from vop_interwoven.core.math_utils import Bounds2D
 from vop_interwoven.revit.view_basis import ViewBasis
 
 from tests.stage_a_capture_fakes import (
+    FakeBuiltInParameter,
     FakeCategory,
     FakeDiag,
     FakeDoc,
@@ -77,7 +78,6 @@ def _make_world(view_id=42, phase_filter_read_only=False):
     doc.register(original_pf)
 
     view = FakeView(view_id)
-    from tests.stage_a_capture_fakes import FakeBuiltInParameter
     view.params[FakeBuiltInParameter.VIEW_PHASE_FILTER] = FakeParameter(
         original_pf.Id, read_only=phase_filter_read_only)
     return doc, view, pipeline_elements, phase_revealed, original_pf
@@ -97,12 +97,32 @@ def _painted_ids(view):
     return sorted(view.element_overrides)
 
 
-def _spy_recollection(monkeypatch, returns):
+def _spy_recollection(monkeypatch, base_elements, phase_revealed=None):
+    """A collector that HONOURS the view's phase filter at collection time.
+
+    The earlier version returned whatever it was handed, unconditionally. That
+    let a measurement taken without the neutral filter applied still "find" the
+    phase-revealed element -- so an audit that could not possibly see
+    demolished/temporary content in Revit reported that it had. Review caught
+    it on PR #208; the fake was asserting the conclusion.
+
+    Revit's view-scoped collector does not work that way: it respects the phase
+    filter in force when it runs. This one does too, which is what makes the
+    audit's measurement falsifiable.
+    """
     calls = []
 
     def _fake_collect_view_elements(doc, view, raster, diag=None, cfg=None):
-        calls.append({"doc": doc, "view": view, "raster": raster})
-        return list(returns)
+        param = view.params.get(FakeBuiltInParameter.VIEW_PHASE_FILTER)
+        current = doc.GetElement(param.AsElementId()) if param is not None else None
+        on_neutral = (
+            getattr(current, "Name", None)
+            == color_id_buffer.NEUTRAL_PHASE_FILTER_NAME)
+        calls.append({"on_neutral_phase_filter": on_neutral})
+        collected = list(base_elements)
+        if on_neutral and phase_revealed is not None:
+            collected.append(phase_revealed)
+        return collected
 
     monkeypatch.setattr(
         revit_collection, "collect_view_elements", _fake_collect_view_elements)
@@ -122,7 +142,7 @@ def _run(doc, view, elements, cfg, diag, raster):
 
 def test_default_config_does_not_swap_the_phase_filter(tmp_path, monkeypatch):
     doc, view, elements, revealed, original_pf = _make_world()
-    calls = _spy_recollection(monkeypatch, elements + [revealed])
+    calls = _spy_recollection(monkeypatch, elements, revealed)
     cfg = _cfg(tmp_path)
     assert cfg.color_id_neutral_phase_swap is False, "default must be OFF"
     diag = FakeDiag()
@@ -138,7 +158,6 @@ def test_default_config_does_not_swap_the_phase_filter(tmp_path, monkeypatch):
 
     # No neutral filter was ever created, and the view's own filter was never
     # written to -- not merely written and written back.
-    from tests.stage_a_capture_fakes import FakeBuiltInParameter
     assert view.params[FakeBuiltInParameter.VIEW_PHASE_FILTER].set_calls == []
     assert [pf.Name for pf in doc.phase_filters] == ["Show Complete"]
     assert doc.deleted_ids == []
@@ -149,7 +168,7 @@ def test_default_config_does_not_swap_the_phase_filter(tmp_path, monkeypatch):
 
 def test_gate_off_paints_the_pipelines_own_collection(tmp_path, monkeypatch):
     doc, view, elements, revealed, _pf = _make_world()
-    _spy_recollection(monkeypatch, elements + [revealed])
+    _spy_recollection(monkeypatch, elements, revealed)
     diag = FakeDiag()
 
     _run(doc, view, elements, _cfg(tmp_path), diag, _raster())
@@ -165,7 +184,7 @@ def test_swap_on_restores_previous_behaviour(tmp_path, monkeypatch):
     deleted the swap instead of gating it -- which is not what was asked for.
     """
     doc, view, elements, revealed, original_pf = _make_world()
-    calls = _spy_recollection(monkeypatch, elements + [revealed])
+    calls = _spy_recollection(monkeypatch, elements, revealed)
     cfg = _cfg(tmp_path, color_id_neutral_phase_swap=True)
     diag = FakeDiag()
 
@@ -196,7 +215,7 @@ def test_read_only_phase_filter_parameter_is_still_not_swapped_when_gated_off(
     must not be emitted -- it would send a reader looking for a View Template
     problem that is not there."""
     doc, view, elements, revealed, _pf = _make_world(phase_filter_read_only=True)
-    _spy_recollection(monkeypatch, elements + [revealed])
+    _spy_recollection(monkeypatch, elements, revealed)
     diag = FakeDiag()
 
     _run(doc, view, elements, _cfg(tmp_path), diag, _raster())
@@ -209,7 +228,7 @@ def test_read_only_phase_filter_parameter_is_still_not_swapped_when_gated_off(
 
 def test_audit_is_not_applicable_by_default(tmp_path, monkeypatch):
     doc, view, elements, revealed, _pf = _make_world()
-    calls = _spy_recollection(monkeypatch, elements + [revealed])
+    calls = _spy_recollection(monkeypatch, elements, revealed)
     cfg = _cfg(tmp_path)
     assert cfg.color_id_phase_swap_audit is False
 
@@ -226,14 +245,18 @@ def test_audit_reports_the_difference_without_changing_what_is_painted(
     tmp_path, monkeypatch
 ):
     doc, view, elements, revealed, _pf = _make_world()
-    calls = _spy_recollection(monkeypatch, elements + [revealed])
+    calls = _spy_recollection(monkeypatch, elements, revealed)
     cfg = _cfg(tmp_path, color_id_phase_swap_audit=True)
     diag = FakeDiag()
 
     result = _run(doc, view, elements, cfg, diag, _raster())
 
-    # It ran the second collection purely to measure it ...
+    # It ran the second collection purely to measure it, AND under the neutral
+    # phase state -- the property the whole audit rests on. Asserting only the
+    # resulting counts would pass against a measurement taken under the
+    # authored filter that happened to be handed the right list.
     assert len(calls) == 1
+    assert calls[0]["on_neutral_phase_filter"] is True
     audit = result["metadata"]["phase_swap_element_set_audit"]
     assert audit["state"] == "value"
     value = audit["value"]
@@ -245,6 +268,7 @@ def test_audit_reports_the_difference_without_changing_what_is_painted(
     assert value["only_in_recollection_ids"] == [_PHASE_REVEALED_ID]
     assert value["only_in_pipeline_collection_ids"] == []
     assert value["only_in_recollection_ids_truncated"] is False
+    assert value["measured_under"] == "neutral_phase_filter"
 
     # ... and discarded it: the paint set is unchanged by the audit.
     assert _painted_ids(view) == sorted(_PIPELINE_IDS)
@@ -254,6 +278,95 @@ def test_audit_reports_the_difference_without_changing_what_is_painted(
                 if n.get("callsite") == "phase_swap_element_set_audit"]
     assert len(reported) == 1
     assert "only-in-re-collection=1" in reported[0]["message"]
+
+
+def test_audit_reverts_the_measurement_swap_before_anything_is_painted(tmp_path, monkeypatch):
+    """The measurement borrows the view's phase filter; it must give it back.
+
+    Everything after the audit paints and exports under whatever filter is in
+    force, so a measurement swap left in place would export a phase state the
+    caller never asked for -- with no colour assigned to the elements it
+    reveals.
+    """
+    doc, view, elements, revealed, original_pf = _make_world()
+    _spy_recollection(monkeypatch, elements, revealed)
+    cfg = _cfg(tmp_path, color_id_phase_swap_audit=True)
+
+    captured = {}
+
+    def _on_export_image(_opts):
+        param = view.params[FakeBuiltInParameter.VIEW_PHASE_FILTER]
+        captured["phase_filter_at_export"] = param.AsElementId().IntegerValue
+
+    doc.on_export_image = _on_export_image
+
+    result = _run(doc, view, elements, cfg, FakeDiag(), _raster())
+
+    # Back on the view's own filter by export time ...
+    assert captured["phase_filter_at_export"] == original_pf.Id.IntegerValue
+    # ... and the neutral filter this run created was cleaned up.
+    neutral_id = result["metadata"]["phase_filter_state"]["neutral_phase_filter_id"]
+    assert doc.deleted_ids == [neutral_id]
+    # The paint set is still the pipeline's -- measuring changed nothing.
+    assert _painted_ids(view) == sorted(_PIPELINE_IDS)
+
+
+def test_audit_refuses_to_measure_when_the_phase_filter_is_read_only(tmp_path, monkeypatch):
+    """A View Template locking VIEW_PHASE_FILTER makes the measurement
+    impossible. It must read as unavailable, never as a difference of zero --
+    a zero here would be taken as "the swap changes nothing", which is the
+    conclusion the audit exists to test."""
+    doc, view, elements, revealed, _pf = _make_world(phase_filter_read_only=True)
+    calls = _spy_recollection(monkeypatch, elements, revealed)
+    cfg = _cfg(tmp_path, color_id_phase_swap_audit=True)
+    diag = FakeDiag()
+
+    result = _run(doc, view, elements, cfg, diag, _raster())
+
+    audit = result["metadata"]["phase_swap_element_set_audit"]
+    assert audit["state"] == "unavailable"
+    assert "read-only" in audit["reason"]
+    assert "value" not in audit
+    # The collection may still have run, but it never saw the neutral state --
+    # which is exactly why its diff is refused rather than reported.
+    assert all(c["on_neutral_phase_filter"] is False for c in calls)
+    assert any(w.get("callsite") == "phase_swap_audit_measurement"
+               for w in diag.warnings)
+
+
+def test_swap_on_but_read_only_also_refuses_the_measurement(tmp_path, monkeypatch):
+    """Same refusal from the other direction: the swap was requested, the
+    parameter rejected it, so no collection in the capture saw the neutral
+    state."""
+    doc, view, elements, revealed, _pf = _make_world(phase_filter_read_only=True)
+    _spy_recollection(monkeypatch, elements, revealed)
+    cfg = _cfg(tmp_path, color_id_neutral_phase_swap=True,
+               color_id_phase_swap_audit=True)
+
+    result = _run(doc, view, elements, cfg, FakeDiag(), _raster())
+
+    assert result["metadata"]["phase_filter_state"]["swapped"] is False
+    audit = result["metadata"]["phase_swap_element_set_audit"]
+    assert audit["state"] == "unavailable"
+    assert "value" not in audit
+
+
+def test_audit_with_the_swap_on_measures_under_the_swap_already_applied(tmp_path, monkeypatch):
+    """No second, redundant swap when the main one is already in force."""
+    doc, view, elements, revealed, _pf = _make_world()
+    calls = _spy_recollection(monkeypatch, elements, revealed)
+    cfg = _cfg(tmp_path, color_id_neutral_phase_swap=True,
+               color_id_phase_swap_audit=True)
+
+    result = _run(doc, view, elements, cfg, FakeDiag(), _raster())
+
+    assert len(calls) == 1
+    assert calls[0]["on_neutral_phase_filter"] is True
+    audit = result["metadata"]["phase_swap_element_set_audit"]
+    assert audit["state"] == "value"
+    assert audit["value"]["element_set_used_for_paint"] == "in_transaction_recollection"
+    # Swap-on paints the re-collected set, phase-revealed element included.
+    assert _painted_ids(view) == sorted(list(_PIPELINE_IDS) + [_PHASE_REVEALED_ID])
 
 
 def test_audit_records_a_failed_recollection_as_unavailable_not_as_no_difference(
@@ -300,7 +413,7 @@ def test_fake_surface_reaches_the_crop_path(tmp_path, monkeypatch):
     that did not happen here.
     """
     doc, view, elements, revealed, _pf = _make_world()
-    _spy_recollection(monkeypatch, elements + [revealed])
+    _spy_recollection(monkeypatch, elements, revealed)
     diag = FakeDiag()
 
     result = _run(doc, view, elements, _cfg(tmp_path), diag, _raster())

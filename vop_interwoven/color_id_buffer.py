@@ -1596,7 +1596,8 @@ def _element_id_ints(elements):
 
 def _build_phase_swap_audit(
     audit_enabled, swap_enabled, pipeline_elements, recollected_elements,
-    recollection_error, raster_present, diag=None, view_id=None,
+    recollection_error, raster_present, neutral_phase_applied, measurement_error,
+    diag=None, view_id=None,
 ):
     """Three-valued record comparing the two candidate element sets.
 
@@ -1614,6 +1615,16 @@ def _build_phase_swap_audit(
         return _gs_unavailable(
             "no raster was provided, so the in-transaction re-collection could "
             "not be run and there is no second set to compare against")
+    if not neutral_phase_applied:
+        # The measurement that matters is what the NEUTRAL phase state reveals.
+        # A collection taken under the view's authored phase filter cannot see
+        # the demolished/temporary elements that filter hides, so its diff is
+        # not the diff this audit names -- and a zero would be read as "the
+        # swap changes nothing", the very conclusion under test. Refuse it.
+        return _gs_unavailable(
+            "the neutral phase state was never applied, so the comparison "
+            "would be blind to exactly the phase-hidden elements it exists to "
+            "count: {0}".format(measurement_error or "reason not recorded"))
     if recollected_elements is None:
         return _gs_unavailable(
             "the in-transaction re-collection failed: {0}".format(
@@ -1626,6 +1637,9 @@ def _build_phase_swap_audit(
 
     value = {
         "neutral_phase_swap_enabled": bool(swap_enabled),
+        # Always "neutral_phase_filter" when a value exists at all -- the guard
+        # above is what makes that true, rather than a hope.
+        "measured_under": "neutral_phase_filter",
         "element_set_used_for_paint": (
             "in_transaction_recollection" if swap_enabled else "pipeline_collection"),
         "pipeline_collection_count": len(pipeline_ids),
@@ -2802,6 +2816,63 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         recollect_wanted = neutral_phase_swap_enabled or phase_swap_audit_enabled
         neutral_recollection = None
         neutral_recollection_error = None
+
+        # The measurement has to be taken UNDER the neutral phase state, or it
+        # measures nothing it claims to.
+        #
+        # An audit-only run (audit on, swap off) skips the swap branch above,
+        # so without this the re-collection below would run under the view's
+        # AUTHORED phase filter -- which by definition cannot surface the
+        # demolished/temporary elements that filter hides. The audit would then
+        # report a zero difference and be taken as evidence that the swap
+        # changes nothing, which is the exact conclusion it exists to test.
+        # Review caught this on PR #208.
+        #
+        # So: apply the neutral filter for the measurement, revert it
+        # immediately afterwards, and keep discarding the measured set for
+        # painting. When it cannot be applied, the audit records "unavailable"
+        # rather than a difference of zero -- an unmeasurable view must never
+        # read as a view where the two sets agreed.
+        neutral_phase_applied = neutral_phase_swap_enabled and phase_filter_swapped
+        measurement_error = None
+        if neutral_phase_swap_enabled and not phase_filter_swapped:
+            measurement_error = (
+                "the neutral phase filter could not be applied (VIEW_PHASE_FILTER "
+                "is read-only), so no collection in this capture saw the neutral "
+                "phase state")
+        elif phase_swap_audit_enabled and not neutral_phase_swap_enabled:
+            try:
+                audit_pf, audit_pf_created = get_or_create_neutral_phase_filter(doc)
+                phase_filter_state["neutral_phase_filter_id"] = audit_pf.Id.IntegerValue
+                phase_filter_state["neutral_phase_filter_created"] = bool(audit_pf_created)
+                if pf_param is not None and not pf_param.IsReadOnly:
+                    pf_param.Set(audit_pf.Id)
+                    # Mirrored into phase_filter_state so the restore step can
+                    # revert it too: if the inline revert below is skipped by an
+                    # exception, restore is the only thing standing between this
+                    # view and being left on the neutral filter.
+                    phase_filter_state["audit_swap_active"] = True
+                    neutral_phase_applied = True
+                else:
+                    measurement_error = (
+                        "VIEW_PHASE_FILTER is read-only (likely a View Template "
+                        "controlling Phase Filter), so the neutral phase state "
+                        "could not be applied for the measurement")
+            except Exception as ex:
+                measurement_error = "{0}: {1}".format(type(ex).__name__, ex)
+            if measurement_error is not None and diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="phase_swap_audit_measurement",
+                    message="phase-swap audit requested but the neutral phase state "
+                            "could not be applied; the comparison is recorded as "
+                            "unavailable rather than as a zero difference: "
+                            "{0}".format(measurement_error),
+                    view_id=view_id,
+                )
+        phase_filter_state["audit_measurement_applied_neutral_phase"] = bool(
+            phase_swap_audit_enabled and neutral_phase_applied)
+
         if recollect_wanted and raster is not None:
             try:
                 from .revit.collection import collect_view_elements as _collect_view_elements
@@ -2826,6 +2897,31 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 view_id=view_id,
             )
 
+        # Revert the measurement-only swap before anything is painted or
+        # exported. A failure here is NOT recoverable and must not be absorbed:
+        # everything below paints and exports under whatever phase filter is in
+        # force, so continuing would produce a capture of a phase state the
+        # caller never asked for, with no colour assignment for the elements it
+        # reveals -- silently wrong output, which is worse than a failed view.
+        # phase_filter_state["audit_swap_active"] stays True so the restore
+        # step reverts it on the way out.
+        if phase_filter_state.get("audit_swap_active"):
+            try:
+                pf_param.Set(ElementId(int(orig_phase_filter_id)))
+                phase_filter_state["audit_swap_active"] = False
+            except Exception as ex:
+                if diag is not None:
+                    diag.error(
+                        phase="color_id_buffer",
+                        callsite="phase_swap_audit_revert",
+                        message="could not revert the measurement-only phase filter "
+                                "swap; refusing to paint or export this view under a "
+                                "phase state the caller did not ask for",
+                        view_id=view_id,
+                        exc=ex,
+                    )
+                raise
+
         # The paint set. Only the swap path replaces the pipeline's own
         # collection; an audit-only run measures and discards.
         recollected = elements
@@ -2839,6 +2935,8 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             neutral_recollection,
             neutral_recollection_error,
             raster is not None,
+            neutral_phase_applied,
+            measurement_error,
             diag=diag,
             view_id=view_id,
         )
@@ -3197,7 +3295,14 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         _restore_step("restore_filters", _restore_filters)
 
         def _restore_phase_filter():
-            if orig_phase_filter_id is not None and phase_filter_state.get("swapped"):
+            # "audit_swap_active" covers the measurement-only swap: it is
+            # cleared by the inline revert, so it is still True here only when
+            # that revert was skipped or failed. Without this clause a raise
+            # between the two would leave the view on VOP_NeutralPhaseFilter
+            # permanently.
+            if orig_phase_filter_id is not None and (
+                    phase_filter_state.get("swapped")
+                    or phase_filter_state.get("audit_swap_active")):
                 pf_param.Set(ElementId(int(orig_phase_filter_id)))
         _restore_step("restore_phase_filter", _restore_phase_filter)
 
