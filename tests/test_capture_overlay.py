@@ -61,7 +61,10 @@ def _anno_sidecar(rendered_uv, bbox_map, actual=None, view_id=7):
         "resolution": ({"actual_w": actual[0], "actual_h": actual[1]}
                        if actual is not None else {}),
         "annotation_bbox_map": bbox_map,
-        "annotation_bbox_status": {"state": "value", "value": {"elapsed_ms": 1.0}},
+        # production's spelling: a BLOCK carries "status", not "state".
+        # See test_the_real_producers_failed_collection_is_read_as_a_failure
+        # for the binding that keeps this fixture honest.
+        "annotation_bbox_status": {"status": "value", "count": len(bbox_map or {})},
     }
 
 
@@ -80,6 +83,17 @@ def _host_entry(rect, category="Walls", source="HOST", near_face_w=12.5):
 
 def _placed_by_key(placed):
     return {r["key"]: r for r in placed}
+
+
+def _recorded_size(sidecar):
+    """The export size a real producer-written sidecar recorded.
+
+    The producer-bound tests must read the image dimensions the capture
+    actually claims; passing a made-up pair makes the frame refuse on a
+    size mismatch and masks whatever the test was really asking about.
+    """
+    resolution = sidecar["resolution"]
+    return (resolution["actual_w"], resolution["actual_h"])
 
 
 # --- the gate: known pixel positions, unpadded and padded ---------------------
@@ -556,14 +570,164 @@ def test_annotation_pass_with_no_rendered_rectangle_refuses():
 def test_failed_annotation_collection_renders_as_a_record_not_an_empty_view():
     """An annotation map that could not be collected is not a view with no
     annotations. One record stands for the failure so the picture cannot be
-    read as 'there was nothing here'."""
-    sidecar = _anno_sidecar((0.0, 0.0, 100.0, 100.0), None, actual=(100, 100))
-    sidecar["annotation_bbox_map"] = None
-    sidecar["annotation_bbox_status"] = {"state": "unavailable", "reason": "collection raised"}
+    read as 'there was nothing here'.
+
+    The EMPTY MAP is the case that matters and is the one production
+    actually writes: `annotation_bbox_map = {}` alongside the failed
+    status. An empty dict is still a dict, so a reader that tests only the
+    map reads the failure as a view with no annotations -- which is what
+    this tool did until PR #213's review.
+    """
+    sidecar = _anno_sidecar((0.0, 0.0, 100.0, 100.0), {}, actual=(100, 100))
+    sidecar["annotation_bbox_status"] = {
+        "status": "unavailable", "reason": "RuntimeError: collection raised"}
     _kind, placed, _frame = co.plan_overlay(sidecar, 100, 100)
     assert len(placed) == 1
     assert placed[0]["key"] == "<annotation_bbox_map>"
     assert "collection raised" in placed[0]["unplaced_reason"]
+
+
+def test_a_missing_annotation_map_is_also_a_record():
+    sidecar = _anno_sidecar((0.0, 0.0, 100.0, 100.0), None, actual=(100, 100))
+    _kind, placed, _frame = co.plan_overlay(sidecar, 100, 100)
+    assert len(placed) == 1
+    assert "no 'annotation_bbox_map'" in placed[0]["unplaced_reason"]
+
+
+def test_a_block_status_is_not_read_with_the_field_reader():
+    """`{"status": ...}` (a block) and `{"state": ...}` (a field) are two
+    spellings in the same sidecar and are not interchangeable. Reading a
+    block with the field reader classifies an unavailable block as a VALUE
+    whose payload happens to be a dict -- the review finding, in one line.
+    """
+    assert co._status_block_read({"status": "unavailable", "reason": "why"}) == (
+        "unavailable", "why")
+    assert co._status_block_read({"status": "value", "count": 3})[0] == "value"
+    # Absent block: a sidecar predating it is not a failed collection.
+    assert co._status_block_read(None) == ("value", None)
+    # The field reader must NOT be what decides this, and would not:
+    assert co._gs_read({"status": "unavailable", "reason": "why"})[0] == "value"
+
+
+def test_an_empty_annotation_map_is_stated_rather_than_drawn_blank():
+    """Zero records draws no boxes; "not drawn: none" would then read as
+    "everything was drawn"."""
+    sidecar = _anno_sidecar((0.0, 0.0, 100.0, 100.0), {}, actual=(100, 100))
+    _kind, placed, frame = co.plan_overlay(sidecar, 100, 100)
+    assert placed == []
+    lines = co._header_lines(Path("s.json"), Path("s.tiff"), co.PASS_ANNOTATION,
+                             sidecar, frame, None, record_count=0)
+    assert any("carries no records" in text for text, _alert in lines)
+
+
+def test_the_real_producers_failed_collection_is_read_as_a_failure(tmp_path, monkeypatch):
+    """Bind the reader to the sidecar PRODUCTION writes, not to a fixture.
+
+    The review finding was not only that the empty map was mis-read: the
+    fixture above had REIMPLEMENTED the status schema (`state`/`value`
+    instead of production's `status`/`reason`), so it could not have caught
+    it -- CLAUDE.md's "a test that reimplements the thing it checks proves
+    nothing", one layer out from the arithmetic cases it was written for.
+
+    So this drives the real `export_annotation_color_id_buffer_view`, makes
+    its bbox collection raise, and reads the sidecar it actually wrote.
+    """
+    from tests import test_stage_a_annotation_pass as producer
+
+    def _boom(*_a, **_kw):
+        raise RuntimeError("bbox collection exploded")
+
+    monkeypatch.setattr(
+        "vop_interwoven.color_id_buffer._collect_annotation_bbox_data", _boom)
+    _model, anno, _geom, _doc, _view, _diag = producer._run_both_passes(tmp_path)
+
+    sidecar = json.loads(Path(anno["sidecar_path"]).read_text())
+    # The control: this is the shape production really wrote, empty map and
+    # all. If either assertion here stops holding, the reader below is
+    # being tested against something production no longer produces.
+    assert sidecar["annotation_bbox_map"] == {}
+    assert sidecar["annotation_bbox_status"]["status"] == "unavailable"
+
+    _kind, placed, _frame = co.plan_overlay(sidecar, *_recorded_size(sidecar))
+    assert len(placed) == 1, "a failed collection was read as a view with no annotations"
+    assert "bbox collection exploded" in placed[0]["unplaced_reason"]
+
+
+def test_the_real_producers_successful_collection_still_reads_as_records(tmp_path):
+    """The control for the test above. Without it, a reader that reported a
+    failure for EVERY capture would pass it."""
+    from tests import test_stage_a_annotation_pass as producer
+
+    _model, anno, _geom, _doc, _view, _diag = producer._run_both_passes(tmp_path)
+    sidecar = json.loads(Path(anno["sidecar_path"]).read_text())
+    assert sidecar["annotation_bbox_status"]["status"] == "value"
+    assert sidecar["annotation_bbox_map"]
+
+    _kind, placed, _frame = co.plan_overlay(sidecar, *_recorded_size(sidecar))
+    assert len(placed) == len(sidecar["annotation_bbox_map"])
+    assert all(r["key"] != "<annotation_bbox_map>" for r in placed)
+
+
+# --- output names ------------------------------------------------------------
+
+def test_two_sidecars_sharing_a_stem_refuse_rather_than_overwrite(tmp_path):
+    """`run-a/view.json` and `run-b/view.json` both name `view.overlay.png`.
+    With --out-dir the second save used to replace the first while the CLI
+    reported both written -- a batch missing an overlay it claimed. Found by
+    review on PR #213."""
+    for run in ("run-a", "run-b"):
+        run_dir = tmp_path / run
+        run_dir.mkdir()
+        _write_capture(run_dir, _model_sidecar((0.0, 0.0, 100.0, 100.0), host={},
+                                               actual=(100, 100)),
+                       (100, 100), name="view")
+    out_dir = tmp_path / "out"
+
+    rc = co.main([str(tmp_path), "--out-dir", str(out_dir)])
+    assert rc == 1
+    assert not out_dir.exists() or not list(out_dir.iterdir())
+
+
+def test_a_collision_holds_back_only_its_own_claimants(tmp_path):
+    """The rest of the batch is still written."""
+    for run in ("run-a", "run-b"):
+        run_dir = tmp_path / run
+        run_dir.mkdir()
+        _write_capture(run_dir, _model_sidecar((0.0, 0.0, 100.0, 100.0), host={},
+                                               actual=(100, 100)),
+                       (100, 100), name="view")
+    _write_capture(tmp_path, _model_sidecar((0.0, 0.0, 100.0, 100.0), host={},
+                                            actual=(100, 100)),
+                   (100, 100), name="unique")
+    out_dir = tmp_path / "out"
+
+    assert co.main([str(tmp_path), "--out-dir", str(out_dir)]) == 1
+    assert (out_dir / "unique.overlay.png").exists()
+    assert not (out_dir / "view.overlay.png").exists()
+
+
+def test_the_same_sidecar_twice_is_idempotent_not_a_collision(tmp_path):
+    """Re-running a batch over its own previous output is the ordinary case;
+    refusing it would make the tool unrunnable twice."""
+    sp = _write_capture(tmp_path, _model_sidecar((0.0, 0.0, 100.0, 100.0), host={},
+                                                 actual=(100, 100)),
+                        (100, 100), name="view")
+    out_dir = tmp_path / "out"
+    assert co.main([str(sp), "--out-dir", str(out_dir)]) == 0
+    assert co.main([str(sp), "--out-dir", str(out_dir)]) == 0
+    assert (out_dir / "view.overlay.png").exists()
+
+
+def test_planned_target_is_the_path_actually_written(tmp_path):
+    """The collision check and the save must use ONE derivation, or a
+    collision is checked against a path that is not the one written."""
+    sp = _write_capture(tmp_path, _model_sidecar((0.0, 0.0, 100.0, 100.0), host={},
+                                                 actual=(100, 100)),
+                        (100, 100), name="view")
+    out_dir = tmp_path / "out"
+    targets, collisions = co.plan_targets([sp], out_dir)
+    assert collisions == {}
+    assert co.overlay_one(sp, out_dir=out_dir) == targets[sp]
 
 
 # --- filters state themselves on the picture ---------------------------------

@@ -339,13 +339,46 @@ def _read_model_records(sidecar: dict[str, Any]) -> list[dict[str, Any]]:
     return records
 
 
+def _status_block_read(raw: Any) -> tuple[str, str | None]:
+    """Read a sidecar BLOCK-level status, which spells its key "status".
+
+    color_id_buffer.py uses two spellings and they are not
+    interchangeable: a per-FIELD three-valued record carries ``"state"``
+    (``_gs_value``/``_gs_unavailable``/``_gs_not_applicable``), while a
+    whole BLOCK -- ``annotation_bbox_status``, ``export_frame`` -- carries
+    ``"status"``. Reading a block with the field reader silently classifies
+    an "unavailable" block as a VALUE whose payload happens to be a dict,
+    which is precisely the defect PR #213's review found: an annotation
+    collection that raised was read as a successful one.
+
+    Returns ``(status, reason)``; ``status`` is ``"value"`` when the block
+    is absent, since a sidecar written before the block existed is not a
+    failed collection.
+    """
+    if not isinstance(raw, dict):
+        return (_GS_VALUE, None)
+    status = raw.get("status")
+    if status is None or status == _GS_VALUE:
+        return (_GS_VALUE, None)
+    return (str(status), str(raw.get("reason") or "no reason recorded"))
+
+
 def _read_annotation_records(sidecar: dict[str, Any]) -> list[dict[str, Any]]:
-    state, payload = _gs_read(sidecar.get("annotation_bbox_status"))
-    # An annotation map that is itself three-valued-unavailable is not an
-    # empty view: the collection failed. Its records cannot be enumerated,
-    # so one record stands for the failure rather than a blank picture.
+    # An annotation collection that FAILED writes an EMPTY MAP plus a
+    # status block saying so (color_id_buffer.py: `annotation_bbox_map = {}`
+    # and `{"status": "unavailable", "reason": ...}`). An empty dict is
+    # still a dict, so testing the map alone reads that failure as a view
+    # with no annotations -- the exact silence this tool exists to prevent,
+    # and what it did until PR #213's review. The STATUS decides, and it is
+    # read with the block reader above because production spells it
+    # "status", not "state".
+    status, reason = _status_block_read(sidecar.get("annotation_bbox_status"))
     bbox_map = sidecar.get("annotation_bbox_map")
-    if not isinstance(bbox_map, dict):
+    if status != _GS_VALUE or not isinstance(bbox_map, dict):
+        if status != _GS_VALUE:
+            why = "annotation bbox collection reported {0}: {1}".format(status, reason)
+        else:
+            why = "sidecar has no 'annotation_bbox_map' to draw"
         return [{
             "key": "<annotation_bbox_map>",
             "cls": CLASS_UNKNOWN_BASIS,
@@ -353,11 +386,7 @@ def _read_annotation_records(sidecar: dict[str, Any]) -> list[dict[str, Any]]:
             "category": None,
             "bbox_uv": None,
             "bbox_state": _GS_UNAVAILABLE,
-            "bbox_reason": (
-                "sidecar has no 'annotation_bbox_map' to draw"
-                if state == _GS_VALUE else
-                "annotation bbox collection reported {0}: {1}".format(state, payload)
-            ),
+            "bbox_reason": why,
             "detail": "",
         }]
 
@@ -493,10 +522,18 @@ def place_records(
         out = dict(record)
         out["pixel_corners"] = None
         out["unplaced_reason"] = None
-        if frame["refused_reason"] is not None:
-            out["unplaced_reason"] = frame["refused_reason"]
-        elif out["bbox_state"] != _GS_VALUE:
+        # A record's OWN missing bbox is checked first, and deliberately
+        # outranks a frame-level refusal: an element with no rectangle is
+        # unplaceable whatever the frame does, and its own reason -- the
+        # annotation collection that raised, the bbox that would not
+        # resolve -- is the more specific truth. Reporting the frame's
+        # reason over it buries the one that matters, which is how the
+        # collection-failure record came back saying "recorded export size
+        # does not match" while the failure went unmentioned.
+        if out["bbox_state"] != _GS_VALUE:
             out["unplaced_reason"] = out["bbox_reason"] or "no bbox recorded"
+        elif frame["refused_reason"] is not None:
+            out["unplaced_reason"] = frame["refused_reason"]
         elif not out["bbox_uv"]:
             out["unplaced_reason"] = "bbox recorded as an empty corner list"
         else:
@@ -629,6 +666,7 @@ def _header_lines(
     sidecar: dict[str, Any],
     frame: dict[str, Any],
     only: list[str] | None,
+    record_count: int = -1,
 ) -> list[tuple[str, bool]]:
     """Factual lines about the frame the boxes were placed against.
 
@@ -664,6 +702,16 @@ def _header_lines(
     else:
         lines.append(("feet per pixel: {0:.6g}   clamp pad: x {1:.2f} px, y {2:.2f} px".format(
             frame["feet_per_pixel"], frame["pad_x"], frame["pad_y"]), False))
+
+    # A capture whose map carries NO records at all draws no boxes, and the
+    # "not drawn: none" line below would then read as "everything was
+    # drawn". Say which map was empty instead: an empty map is a fact about
+    # the sidecar, not a blank picture.
+    if record_count == 0:
+        which = ("'annotation_bbox_map'" if pass_kind == PASS_ANNOTATION
+                 else "'near_face_w_map'")
+        lines.append(("{0} carries no records: this capture recorded no element "
+                      "bboxes, so there is nothing to draw".format(which), True))
 
     if only:
         lines.append(("FILTERED: --only {0}; records of every other class are listed "
@@ -736,7 +784,8 @@ def render(
         _draw_record(draw, record, label_font, label_mode, image_w, image_h)
         drawn_classes.add(record["cls"])
 
-    header = _header_lines(sidecar_path, tiff_path, pass_kind, sidecar, frame, only)
+    header = _header_lines(sidecar_path, tiff_path, pass_kind, sidecar, frame, only,
+                           record_count=len(placed))
     panel, truncated = _panel_lines(placed, max_panel_lines)
 
     probe = ImageDraw.Draw(overlay)
@@ -827,12 +876,57 @@ def _resolve_tiff_path(sidecar_path: Path, sidecar: dict[str, Any]) -> Path:
     )
 
 
+def target_for(sidecar_path: Path, out_dir: Path | None) -> Path:
+    """The overlay path one sidecar writes to. The ONE derivation.
+
+    ``main()`` plans every target through this before writing any of them
+    (see ``plan_targets``), and ``overlay_one`` derives its own through it
+    when a caller does not supply one -- so the path a collision is checked
+    against is always the path that is written.
+    """
+    return (out_dir or sidecar_path.parent) / (sidecar_path.stem + ".overlay.png")
+
+
+def plan_targets(
+    sidecar_paths: list[Path],
+    out_dir: Path | None,
+) -> tuple[dict[Path, Path], dict[Path, list[Path]]]:
+    """Each sidecar's output path, and the targets more than one claims.
+
+    Output names are built from the sidecar's STEM, so two captures of the
+    same view from different runs -- ``run-a/view.json`` and
+    ``run-b/view.json``, which a recursive scan collects together -- both
+    name ``view.overlay.png``. Left alone with ``--out-dir``, the second
+    save silently replaced the first while the CLI reported both inputs
+    written: a batch missing an overlay it said it produced. Found by
+    review on PR #213.
+
+    Colliding sidecars are REFUSED rather than renamed. Any disambiguation
+    this tool invented (a parent-directory prefix, a counter) would be a
+    guess about what the file should be called, and could collide again at
+    depth. The refusal names every claimant so the caller can re-run them
+    separately or drop ``--out-dir``. Only the colliding ones are held
+    back; the rest of the batch is written.
+
+    Re-running the same batch over its own previous output is NOT a
+    collision: one sidecar overwriting its own overlay is the idempotent
+    case, and refusing it would make the tool unrunnable twice.
+    """
+    claims: dict[Path, list[Path]] = {}
+    for sidecar_path in sidecar_paths:
+        claims.setdefault(target_for(sidecar_path, out_dir), []).append(sidecar_path)
+    targets = {paths[0]: target for target, paths in claims.items() if len(paths) == 1}
+    collisions = {target: paths for target, paths in claims.items() if len(paths) > 1}
+    return (targets, collisions)
+
+
 def overlay_one(
     sidecar_path: Path,
     out_dir: Path | None = None,
     label_mode: str = "full",
     only: list[str] | None = None,
     max_panel_lines: int = DEFAULT_MAX_PANEL_LINES,
+    out_path: Path | None = None,
 ) -> Path:
     sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
     tiff_path = _resolve_tiff_path(sidecar_path, sidecar)
@@ -843,9 +937,9 @@ def overlay_one(
         base, sidecar_path, tiff_path, pass_kind, sidecar, placed, frame,
         label_mode=label_mode, only=only, max_panel_lines=max_panel_lines,
     )
-    target_dir = out_dir or sidecar_path.parent
-    target_dir.mkdir(parents=True, exist_ok=True)
-    out_path = target_dir / (sidecar_path.stem + ".overlay.png")
+    if out_path is None:
+        out_path = target_for(sidecar_path, out_dir)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(out_path)
     return out_path
 
@@ -884,12 +978,26 @@ def main(argv=None):
     ns = ap.parse_args(argv)
 
     out_dir = Path(ns.out_dir) if ns.out_dir else None
+    sidecar_paths = collect(ns.paths)
+    targets, collisions = plan_targets(sidecar_paths, out_dir)
+
     failures = 0
-    for sp in collect(ns.paths):
+    # Refused BEFORE anything is written, so a collision never half-runs a
+    # batch: no claimant of a contested name is drawn at all.
+    for target, claimants in sorted(collisions.items()):
+        failures += 1
+        print("REFUSED {0}: {1} sidecars would write this same file -- {2}. "
+              "Re-run them separately, or drop --out-dir so each overlay lands "
+              "beside its own sidecar.".format(
+                  target, len(claimants), ", ".join(str(c) for c in claimants)))
+
+    for sp in sidecar_paths:
+        if sp not in targets:
+            continue
         try:
             out = overlay_one(
                 sp, out_dir=out_dir, label_mode=ns.labels, only=ns.only,
-                max_panel_lines=ns.max_panel_lines,
+                max_panel_lines=ns.max_panel_lines, out_path=targets[sp],
             )
             print("OK {0} -> {1}".format(sp, out))
         except Exception as e:
