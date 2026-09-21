@@ -997,6 +997,26 @@ def rasterize_annotations(doc, view, raster, cfg, diag=None):
                     )
                 cat_id = None
 
+            # DEFECT, documented rather than patched (Stage A step 4,
+            # decision C salvage; design-branch defect D2).
+            #
+            # These are RAW Min/Max with bbox.Transform DISCARDED, so for any
+            # annotation whose BoundingBoxXYZ carries a non-identity Transform
+            # they are in bbox-local space, not model space -- and nothing
+            # records which. revit/collection.py's _bbox_world_corners()
+            # applies that transform and exists precisely so the two cannot
+            # drift apart; this predates it and does not use it.
+            #
+            # Not patched here, on the standing rule that a defect is patched
+            # at discovery only if load-bearing: `grep -rn "bbox_min\|bbox_max"
+            # vop_interwoven/ tools/ tests/` finds only these two lines and
+            # nothing reads them. It is also unreachable on a Stage A capture
+            # --  pipeline.py's color-ID branch `continue`s before this
+            # function is called -- so Stage A step 4 adds its own annotation
+            # bbox record (color_id_buffer._collect_annotation_bbox_data, in
+            # absolute view UV) rather than reusing or repairing this one.
+            # Changing it would be a behaviour change to the geometry/arbiter
+            # path, which is a separate decision from step 4.
             raster.anno_meta.append({
                 "type": anno_type,
                 "element_id": elem_id,

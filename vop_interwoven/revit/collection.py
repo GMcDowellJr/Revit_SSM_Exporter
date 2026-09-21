@@ -962,6 +962,68 @@ def project_bbox_uv_and_near_face_w(bbox, vb, transform=None, bbox_is_link_space
     return rect, near_face_w
 
 
+def bbox_world_aabb(bbox, transform=None, bbox_is_link_space=False, diag=None, view_id=None, elem_id=None):
+    """Axis-aligned bounding box of a BoundingBoxXYZ's 8 corners in final
+    host/world space, as ``{"min": [x, y, z], "max": [x, y, z]}``.
+
+    Stage A step 4 (decision B, 2026-09-21: 3D AABB, per view, additive)
+    persists this beside the projected ``bbox_corners_uv`` so a consumer can
+    recover a model-space extent -- and from it any view's depth -- in post,
+    rather than only the one projection the capture happened to take.
+
+    Shares ``_bbox_world_corners()`` with project_bbox_corners_uv() and
+    project_bbox_uv_and_near_face_w() rather than re-reading bbox.Min/Max,
+    for the reason that helper exists: the transform ladder (bbox.Transform,
+    then the link transform) has to be applied identically or the 3D extent
+    and the UV footprint end up in different coordinate spaces for a rotated
+    instance. It is also exactly the defect the annotation path already
+    carries -- revit/annotation.py stores raw ``bbox.Min``/``bbox.Max`` with
+    ``Transform`` discarded -- so this must not reproduce it.
+
+    LIMIT, stated because it is not recoverable afterwards: this is the
+    ENCLOSING axis-aligned box of the transformed corners, not the oriented
+    box. For a bbox carrying a rotating Transform it is larger than the
+    element's own extent, and the orientation is NOT stored. Recovering the
+    oriented box would need bbox.Transform persisted alongside; decision B
+    chose min/max. A consumer must therefore read this as an upper bound on
+    where the element is, never as its shape.
+
+    Returns None when ``_bbox_world_corners`` cannot complete (missing bbox,
+    a link-space bbox with no transform, or a Revit API failure), which is
+    the caller's cue to record "unavailable" rather than a zero box.
+    """
+    if bbox is None:
+        return None
+
+    corners = _bbox_world_corners(
+        bbox, transform=transform, bbox_is_link_space=bbox_is_link_space,
+        diag=diag, view_id=view_id, elem_id=elem_id,
+    )
+    if corners is None:
+        return None
+
+    try:
+        return {
+            "min": [min(c[0] for c in corners),
+                    min(c[1] for c in corners),
+                    min(c[2] for c in corners)],
+            "max": [max(c[0] for c in corners),
+                    max(c[1] for c in corners),
+                    max(c[2] for c in corners)],
+        }
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="collection",
+                callsite="bbox_world_aabb",
+                message="Exception reducing transformed corners to an AABB: {}".format(e),
+                exc=e,
+                view_id=view_id,
+                elem_id=elem_id,
+            )
+        return None
+
+
 def _project_element_bbox_to_cell_rect(elem, vb, raster, bbox=None, diag=None, view=None, transform=None, bbox_is_link_space=False):
     """Project element bounding box to cell rectangle using OBB (oriented bounds).
 
