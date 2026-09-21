@@ -74,6 +74,15 @@ class Config:
         max_sheet_height_in=36.0,
         bounds_buffer_in=0.0,
         include_linked_rvt=True,
+        # DEFECT, documented not patched (Stage A step 1, 2026-09-21): this
+        # default is False, while from_dict() below defaults the SAME field to
+        # True and both docstrings say "default: True". So whether a DWG
+        # import is collected and painted at all depends on which
+        # construction path built the Config -- Config(...) says no,
+        # Config.from_dict({}) says yes. Recorded rather than patched because
+        # either correction changes what a capture contains for some caller,
+        # which is a behavior change and Greg's call; the Stage A step 1 DWG
+        # record is additive and works under either.
         include_dwg_imports=False,
         # Detail line rendering (archive parity)
         linear_band_thickness_cells=1.0,

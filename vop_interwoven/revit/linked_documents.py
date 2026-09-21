@@ -830,6 +830,15 @@ def _collect_from_dwg_imports(doc, view, cfg):
     for import_inst in import_instances:
         try:
             # Only include model-level imports (not view-specific)
+            #
+            # OBSERVED (Stage A step 1, 2026-09-21): this is the ONLY place a
+            # view-specific ("this view only") DWG is decided, and it drops
+            # it. revit/collection_policy.py independently excludes every
+            # ImportInstance from the HOST pass by type name, so a
+            # view-specific import reaches NO pass at all today: it is not
+            # painted and gets no record. Which pass should own it -- this
+            # one, or the annotation pass whose OwnerViewId membership would
+            # also claim it -- is open; see the Stage A step 1 RAISE.
             is_view_specific = getattr(import_inst, "ViewSpecific", False)
             if is_view_specific:
                 _log("DEBUG", "Skipping view-specific import {0}".format(import_inst.Id))
@@ -838,7 +847,23 @@ def _collect_from_dwg_imports(doc, view, cfg):
             # Get import geometry bbox (prefer view-specific bbox so crop/section is respected)
             bbox = import_inst.get_BoundingBox(view)
             if bbox is None or bbox.Min is None or bbox.Max is None:
-                # Fallback to model bbox
+                # DEFECT, documented not patched (Stage A step 1, 2026-09-21):
+                # this "fallback" is DEAD. The assignment is followed by an
+                # unconditional `continue`, so the model bbox is computed and
+                # thrown away and the import is dropped from the capture --
+                # never painted, never recorded. The two readings ("fall back
+                # to the model bbox" vs "skip an import with no view bbox")
+                # have opposite outcomes for a DWG that sits outside the
+                # view crop, and which one is wanted is Greg's call, not a
+                # thing to guess while fixing a typo -- it is the open "DWG
+                # outside the crop: record it or omit it?" question. Patching
+                # it would change which DWGs are painted, which is a behavior
+                # change this additive step does not carry.
+                #
+                # UNCONFIRMED: whether get_BoundingBox(view) actually returns
+                # None for an ImportInstance outside the crop (vs returning a
+                # bbox that is simply off-frame) has NOT been run against the
+                # Revit API in this session.
                 bbox = import_inst.get_BoundingBox(None)
                 _log("DEBUG", "Import {0} has no valid bbox".format(import_inst.Id))
                 continue
