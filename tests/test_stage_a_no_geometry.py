@@ -85,6 +85,50 @@ def test_geometry_injected_into_the_stage_a_path_is_caught(mutable_tree):
     assert "get_Geometry" in result.stdout
 
 
+def test_the_annotation_capture_pass_is_inside_the_checked_scope(mutable_tree):
+    """Stage A step 3 added a SECOND capture pass, and the roots did not
+    follow it until step 4.
+
+    The discriminating fixture is the one where the annotation pass is the
+    ONLY route to the injected call -- _collect_annotation_bbox_data is
+    reached from export_annotation_color_id_buffer_view and from nothing
+    else, so a root set missing that entry point reports PROVEN over it.
+    That is what this pins: not that the roots tuple has four entries, but
+    that the fourth one carries weight.
+    """
+    target = mutable_tree / "color_id_buffer.py"
+    source = target.read_text()
+    needle = '    vb = getattr(raster, "view_basis", None) if raster is not None else None\n    out = {}\n'
+    assert source.count(needle) == 1, (
+        "anchor inside _collect_annotation_bbox_data moved; update this test")
+    source = source.replace(
+        needle,
+        "    _leak = view.get_Geometry(None)  # injected by the test\n" + needle,
+    )
+    target.write_text(source)
+
+    result = _run(str(mutable_tree))
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "STAGE A GEOMETRY-FREE: VIOLATED" in result.stdout
+    assert "_collect_annotation_bbox_data" in result.stdout
+
+    # CONTROL: with the annotation entry point removed from the roots, the
+    # SAME mutated tree reads clean. Without this the assertion above would
+    # also pass for a tree where some other root happened to reach the
+    # injected call -- which is exactly how this tool's aliased-import bug
+    # produced a right answer by a wrong method.
+    narrowed = _run(
+        str(mutable_tree),
+        "--root", "export_color_id_buffer_view",
+        "--root", "collect_view_elements",
+        "--root", "init_view_raster",
+    )
+    assert narrowed.returncode == 0, (
+        "fixture does not discriminate: something other than the annotation "
+        "root already reaches the injected call\n" + narrowed.stdout)
+    assert "STAGE A GEOMETRY-FREE: PROVEN" in narrowed.stdout
+
+
 def test_geometry_reached_only_through_an_aliased_import_is_caught(mutable_tree):
     """The bug this tool was born with.
 

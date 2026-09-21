@@ -96,6 +96,21 @@ DEFAULT_ROOTS = (
     "export_color_id_buffer_view",
     "collect_view_elements",
     "init_view_raster",
+    # Stage A step 3 added a SECOND capture pass, and this check did not
+    # follow it: pipeline.py calls export_annotation_color_id_buffer_view on
+    # the same color-ID branch, so it is as much a Stage A entry point as
+    # export_color_id_buffer_view, but it was absent here and everything
+    # reachable only through it went unchecked -- including step 4's
+    # _collect_annotation_bbox_data. The check reported PROVEN over a
+    # capture path it had never walked, which is this repo's recurring
+    # "green means nothing until you know what ran".
+    #
+    # Adding it takes the reachable set from 167 to 182 functions and the
+    # answer does not change: still 23 geometry-using functions in the tree,
+    # still none reachable. So this closes a coverage hole rather than
+    # reporting a new defect -- but had the annotation pass been touching
+    # geometry, nothing here would have said so.
+    "export_annotation_color_id_buffer_view",
 )
 
 
