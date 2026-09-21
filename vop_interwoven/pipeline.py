@@ -1142,9 +1142,17 @@ def process_document_views(
                     # intentionally deferred to Stage B.
                     from .color_id_buffer import export_color_id_buffer_view
                     t0 = _perf_now()
+                    # Stage A step 3: the model pass publishes the lattice it
+                    # sized itself from, so the annotation pass below renders
+                    # frame B against the SAME feet-per-pixel rather than
+                    # deriving its own. Out-parameter, not a return key --
+                    # streaming.py copies every key of `out` into
+                    # full_results, which is serialised.
+                    export_geometry = {}
                     out = export_color_id_buffer_view(
                         doc, view, elements, cfg, diag=diag,
                         raster=raster, elem_cache=elem_cache,
+                        geometry_out=export_geometry,
                     )
                     t1 = _perf_now()
                     _tmark(TIMING_KEYS["RASTER_MODEL_MS"], t0, t1)
@@ -1153,6 +1161,29 @@ def process_document_views(
                         out.setdefault("view_mode_reason", mode_reason)
                         out.setdefault("timings", {}).update(dict(timings))
                     results.append(out)
+
+                    # The annotation capture is a SEPARATE pass with its own
+                    # paint, palette, crop and restore (Greg, 2026-09-21). It
+                    # runs after the model pass and never before it, because
+                    # it is handed that pass's geometry; with no geometry it
+                    # refuses rather than sizing itself independently.
+                    #
+                    # Its result is appended as its own entry rather than
+                    # merged into the model pass's, so a failed annotation
+                    # capture cannot turn a good model capture into a failed
+                    # view, and neither can hide the other.
+                    if getattr(cfg, "color_id_buffer_annotation_pass", False):
+                        from .color_id_buffer import (
+                            export_annotation_color_id_buffer_view,
+                        )
+                        anno_out = export_annotation_color_id_buffer_view(
+                            doc, view, cfg, export_geometry, diag=diag,
+                            raster=raster,
+                        )
+                        if isinstance(anno_out, dict):
+                            anno_out.setdefault("view_mode", view_mode)
+                            anno_out.setdefault("view_mode_reason", mode_reason)
+                        results.append(anno_out)
                     continue
 
                 t0 = _perf_now()
