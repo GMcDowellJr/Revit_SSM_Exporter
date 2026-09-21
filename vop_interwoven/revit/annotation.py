@@ -997,6 +997,26 @@ def rasterize_annotations(doc, view, raster, cfg, diag=None):
                     )
                 cat_id = None
 
+            # DEFECT, documented rather than patched (Stage A step 4,
+            # decision C salvage; design-branch defect D2).
+            #
+            # These are RAW Min/Max with bbox.Transform DISCARDED, so for any
+            # annotation whose BoundingBoxXYZ carries a non-identity Transform
+            # they are in bbox-local space, not model space -- and nothing
+            # records which. revit/collection.py's _bbox_world_corners()
+            # applies that transform and exists precisely so the two cannot
+            # drift apart; this predates it and does not use it.
+            #
+            # Not patched here, on the standing rule that a defect is patched
+            # at discovery only if load-bearing: `grep -rn "bbox_min\|bbox_max"
+            # vop_interwoven/ tools/ tests/` finds only these two lines and
+            # nothing reads them. It is also unreachable on a Stage A capture
+            # --  pipeline.py's color-ID branch `continue`s before this
+            # function is called -- so Stage A step 4 adds its own annotation
+            # bbox record (color_id_buffer._collect_annotation_bbox_data, in
+            # absolute view UV) rather than reusing or repairing this one.
+            # Changing it would be a behaviour change to the geometry/arbiter
+            # path, which is a separate decision from step 4.
             raster.anno_meta.append({
                 "type": anno_type,
                 "element_id": elem_id,
@@ -2070,7 +2090,7 @@ def stage_a_pass_membership(elem, capture_view_id_int=None, datum_category_ids=N
 
 
 def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
-                                  datum_category_ids=None):
+                                  datum_category_ids=None, basis_out=None):
     """Partition ``elements`` into the Stage A model and annotation passes.
 
     Returns ``(model, annotation, unresolved, basis_counts)``. ``unresolved``
@@ -2087,6 +2107,17 @@ def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
     the live enum. A caller that already resolved them passes them in; a
     caller that passes an empty set gets ownership-only placement, which is
     the pre-2026-09-21 behaviour and leaves datums unpainted.
+
+    ``basis_out`` (optional dict) receives ``{element_id_int: basis}`` for
+    every PLACED element, so a caller can tell an element placed by
+    ``owner_view`` from one placed by ``datum_category`` without asking a
+    second time. That distinction is not cosmetic: a view-specific
+    annotation has no model-space extent, while a grid or a level is a
+    document-wide datum that does, and a caller that cannot tell them apart
+    can only guess about one of them. Populated as an out-parameter rather
+    than returned so the existing 4-tuple contract and its callers are
+    unchanged (same shape as ``names_out`` above and ``source_out`` in
+    color_id_buffer's element split).
     """
     datum_error = None
     datum_names = {}
@@ -2130,6 +2161,11 @@ def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
             annotation.append(elem)
         else:
             unresolved.append((elem, record))
+            continue
+        if basis_out is not None:
+            elem_id_int = _stage_a_element_id_int(elem)
+            if elem_id_int is not None:
+                basis_out[elem_id_int] = record["basis"]
 
     if unresolved and diag is not None:
         diag.warn(

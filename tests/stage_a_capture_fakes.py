@@ -71,15 +71,29 @@ class FakeElement(object):
     It is a real attribute rather than an omission because a fake that does
     not expose what production reads does not test production: every element
     would come back "unresolved" and the split under test would never run.
+
+    ``bbox`` mirrors Element.get_BoundingBox(view). It defaults to None, and
+    the method is defined either way: BEFORE it existed this class had no
+    get_BoundingBox at all, so every bbox read in an end-to-end test raised
+    AttributeError and came back None -- which meant the Stage A step 4 bbox
+    records could not be exercised end to end at all, only at the collector.
+    A fake that does not expose what production reads does not test
+    production (same lesson as owner_view_id above, and as the missing
+    XYZ/BoundingBoxXYZ that left crop_box_from_uv_bounds unreachable).
     """
 
-    def __init__(self, elem_id, category=None, name=None, owner_view_id=None):
+    def __init__(self, elem_id, category=None, name=None, owner_view_id=None,
+                 bbox=None):
         self.Id = FakeElementId(elem_id)
         self.Category = category
         self.OwnerViewId = FakeElementId(
             -1 if owner_view_id is None else int(owner_view_id))
+        self._bbox = bbox
         if name is not None:
             self.Name = name
+
+    def get_BoundingBox(self, _view):
+        return self._bbox
 
     def __repr__(self):
         return "FakeElement({0})".format(self.Id.IntegerValue)

@@ -372,6 +372,10 @@ _PRE_CHANGE_HOST_KEYS = ("bbox_corners_uv", "near_face_w", "category")
 _PRE_CHANGE_LINK_KEYS = (
     "bbox_corners_uv", "near_face_w", "category", "link_inst_id", "link_elem_id",
 )
+# Stage A step 1: source identity, host entries only.
+_NEW_HOST_KEYS = {"source", "category_state", "import_symbol_state", "view_specific_state"}
+# Stage A step 4 (decision B, 2026-09-21): the 3D AABB, on host AND link.
+_STEP4_NEW_KEYS = {"bbox_3d"}
 
 
 def test_fixture_without_dwg_is_unchanged_under_the_pre_change_keys(monkeypatch):
@@ -401,15 +405,16 @@ def test_fixture_without_dwg_is_unchanged_under_the_pre_change_keys(monkeypatch)
     assert host_entry["near_face_w"] is not None
 
     link_entry = result["link"]["9001:501"]
-    # The LINK record gains NOTHING at all -- key set frozen, not just values.
-    assert set(link_entry.keys()) == set(_PRE_CHANGE_LINK_KEYS)
+    # The LINK record gained nothing in Stage A step 1 (source identity is a
+    # host-side distinction). Step 4 adds "bbox_3d" to BOTH buckets, because
+    # a link element is model geometry with the same 3D extent to record --
+    # excluding it would leave one half of the model record shaped
+    # differently from the other for no reason anyone could state later.
+    assert set(link_entry.keys()) == set(_PRE_CHANGE_LINK_KEYS) | _STEP4_NEW_KEYS
     assert link_entry["category"] == "Walls"
     assert link_entry["link_inst_id"] == 9001
     assert link_entry["link_elem_id"] == 501
     assert link_entry["bbox_corners_uv"] == [[10, 10], [12, 10], [12, 12], [10, 12]]
-
-
-_NEW_HOST_KEYS = {"source", "category_state", "import_symbol_state", "view_specific_state"}
 
 
 def test_host_record_gains_exactly_the_reviewed_new_keys():
@@ -418,7 +423,8 @@ def test_host_record_gains_exactly_the_reviewed_new_keys():
     doc = _FakeDoc([host_elem])
 
     entry = _collect(doc, [host_elem.Id], {1001: "HOST"})["host"]["1001"]
-    assert set(entry.keys()) == set(_PRE_CHANGE_HOST_KEYS) | _NEW_HOST_KEYS
+    assert set(entry.keys()) == (
+        set(_PRE_CHANGE_HOST_KEYS) | _NEW_HOST_KEYS | _STEP4_NEW_KEYS)
 
 
 # --- both DWG identifiers are recorded, neither chosen ----------------------

@@ -1107,8 +1107,12 @@ def _collect_near_face_w_data(
 
     Returns {"host": {"<elem_id>": entry}, "link": {"<link_inst_id>:<link_elem_id>": entry}}
     where entry is {"bbox_corners_uv": [[u,v],...] | None, "near_face_w": float | None,
-    "category": str | None}; LINK entries additionally carry "link_inst_id"/
-    "link_elem_id" ints for the identity resolver's convenience. A bbox or
+    "category": str | None, "bbox_3d": <three-valued>}; LINK entries additionally
+    carry "link_inst_id"/"link_elem_id" ints for the identity resolver's
+    convenience. "bbox_3d" (Stage A step 4, decision B) is the element's
+    model/host-space axis-aligned extent, three-valued, from the same
+    transformed corner set as bbox_corners_uv -- see bbox_world_aabb() for
+    why it is an upper bound rather than the element's oriented shape. A bbox or
     view basis that cannot be resolved records near_face_w/bbox_corners_uv
     as None rather than omitting the element entirely -- CLAUDE.md's "no
     silent failure": every element in the resolved set gets an entry.
@@ -1134,7 +1138,9 @@ def _collect_near_face_w_data(
     "unavailable" with that as the reason: this function cannot derive a top
     element's source from an element id alone.
     """
-    from .revit.collection import resolve_element_bbox, project_bbox_uv_and_near_face_w
+    from .revit.collection import (
+        resolve_element_bbox, project_bbox_uv_and_near_face_w, bbox_world_aabb,
+    )
 
     vb = getattr(raster, "view_basis", None) if raster is not None else None
 
@@ -1173,6 +1179,7 @@ def _collect_near_face_w_data(
         )
         near_face_w = None
         bbox_corners_uv = None
+        bbox_3d = _gs_unavailable("no bbox resolvable for this element")
         if bbox is not None:
             # Computed together (not via a separate estimate_nearest_depth_
             # from_bbox() call) so near_face_w and bbox_corners_uv are always
@@ -1184,6 +1191,18 @@ def _collect_near_face_w_data(
                 bbox, vb, diag=diag, view_id=view_id, elem_id=elem_id_int,
             )
             near_face_w = _finite_or_none(near_face_w)
+            # Stage A step 4 / decision B: the 3D extent, from the SAME bbox
+            # and the same transform ladder. bbox_world_aabb() shares
+            # _bbox_world_corners() with the projection above precisely so
+            # the two cannot end up in different spaces.
+            aabb = bbox_world_aabb(
+                bbox, diag=diag, view_id=view_id, elem_id=elem_id_int)
+            bbox_3d = (
+                _gs_value(aabb) if aabb is not None
+                else _gs_unavailable(
+                    "bbox present but its corners could not be resolved to "
+                    "host space (see diagnostics for the failing transform)")
+            )
         elif diag is not None:
             diag.warn(
                 phase="collection",
@@ -1196,6 +1215,27 @@ def _collect_near_face_w_data(
             "bbox_corners_uv": bbox_corners_uv,
             "near_face_w": near_face_w,
             "category": category_name,
+            # --- Stage A step 4, additive. Decision B (2026-09-21): the 3D
+            # AABB is captured per view alongside the projection, so depth
+            # and any other view's projection are derivable in post. The
+            # pre-existing bbox_corners_uv/near_face_w above are unchanged
+            # and keep their exact meaning -- near_face_w in particular is
+            # still what tools/link_identity_resolver.py tie-breaks on.
+            #
+            # COST, measured rather than estimated, because file size at
+            # scale was the open half of decision B. Serialising this map
+            # with the same json.dump(indent=2, sort_keys=True) the sidecar
+            # writes, at N=372 host entries -- the largest view's host scope
+            # in tools/notes/data/stage_a_excursion_byColor_20260917T104744
+            # .csv, the only real multi-view Stage A run committed here --
+            # costs +305.5 B/element, +40.1% of that map. Rounding the six
+            # coordinates to 1e-6 ft would make it +258.9 B (+34.0%); no
+            # rounding is applied, because precision is a decision nobody
+            # has taken. Storing the 3D once per RUN instead saves only the
+            # duplication between views, which on that run is 1.17x (800
+            # element slots, 683 distinct elements) = ~15%, and costs a
+            # second artifact and a join -- so it is per-view here.
+            "bbox_3d": bbox_3d,
             # --- Stage A step 1, additive. Pre-existing keys above are
             # untouched; a consumer that does not know these exist reads the
             # same record it always did.
@@ -1256,11 +1296,24 @@ def _collect_near_face_w_data(
             )
             near_face_w = None
             bbox_corners_uv = None
+            bbox_3d = _gs_unavailable("no bbox resolvable for this link element")
             if bbox_host is not None:
                 bbox_corners_uv, near_face_w = project_bbox_uv_and_near_face_w(
                     bbox_host, vb, diag=diag, view_id=view_id, elem_id=link_elem_id_int,
                 )
                 near_face_w = _finite_or_none(near_face_w)
+                # Already host-space (see the note above on
+                # LinkedElementProxy.get_BoundingBox), so no link transform
+                # is passed here either -- the 3D AABB and the UV footprint
+                # go through the identical corner set.
+                aabb = bbox_world_aabb(
+                    bbox_host, diag=diag, view_id=view_id, elem_id=link_elem_id_int)
+                bbox_3d = (
+                    _gs_value(aabb) if aabb is not None
+                    else _gs_unavailable(
+                        "bbox present but its corners could not be resolved to "
+                        "host space (see diagnostics for the failing transform)")
+                )
             elif diag is not None:
                 diag.warn(
                     phase="collection",
@@ -1274,10 +1327,225 @@ def _collect_near_face_w_data(
                 "bbox_corners_uv": bbox_corners_uv,
                 "near_face_w": near_face_w,
                 "category": cat_name,
+                # Stage A step 4, additive -- see the host entry's note.
+                "bbox_3d": bbox_3d,
                 "link_inst_id": link_inst_id_int,
                 "link_elem_id": link_elem_id_int,
             }
     return {"host": host_out, "link": link_out}
+
+
+_ANNOTATION_BBOX_3D_NOT_APPLICABLE = (
+    "annotation is view-specific 2D graphics; it has no model-space extent"
+)
+
+
+def _collect_annotation_bbox_data(doc, view, resolved_ids, raster, diag=None, view_id=None,
+                                  view_basis=None, membership_basis_by_id=None):
+    """Per-annotation bbox records, in ABSOLUTE view UV (Stage A step 4).
+
+    THE POINT OF THE COORDINATE CHOICE. The record stores view-local UV as
+    ``world_to_view()`` produces it -- NOT UV relative to frame B, and not
+    pixels. B is not stable: ``view_basis.py``'s cap envelope
+    (``Keep capped bounds centered on the model-grid basis``) rebuilds the
+    bounds re-centred on the pre-annotation model crop when the grid cap
+    fires, so the same annotation in the same view would otherwise get
+    different numbers depending on whether the cap fired -- a reproducibility
+    property of the chosen frame, not of the drawing. The ViewBasis this
+    projects through comes off ``view.Origin``/``RightDirection``/
+    ``UpDirection``, which the re-centre never touches, so these numbers are
+    invariant under it BY CONSTRUCTION. The consumer applies a frame; the
+    capture does not bake one in. (Same reasoning, and the same precedent,
+    as tools/link_identity_resolver.py consuming absolute-UV host records.)
+
+    ``view_basis`` is the basis resolved ONCE by the caller and shared with
+    the crop that this pass applies, so the record and the rendered frame
+    cannot be projected through two independently-built bases. Falling back
+    to ``raster.view_basis`` keeps a direct caller working; passing neither
+    is not a silent empty record -- every entry reads "unavailable" with the
+    reason, because a capture that quietly carries no bbox payload while
+    reporting success is the failure mode this whole record exists to avoid.
+
+    ``membership_basis_by_id`` is {element_id_int: basis} from
+    split_stage_a_pass_membership's ``basis_out``. IT DECIDES bbox_3d, and
+    the pass is not uniform:
+
+      - "owner_view"      a genuinely view-specific annotation. No
+                          model-space extent exists, so bbox_3d is
+                          "not_applicable" -- a statement about the element,
+                          never "unavailable", which would claim the capture
+                          tried and lost something.
+      - "datum_category"  a GRID or LEVEL. Stage A step 3 paints these in the
+                          annotation pass because that is where they have to
+                          be painted, but they are document-wide datums and
+                          they DO have a model-space extent. Writing
+                          "not_applicable" for them would be a false claim
+                          about the element and would stop a consumer ever
+                          recovering the 3D record for that subset, so they
+                          get a real AABB like any model element.
+      - absent/None       the caller did not say. Neither answer above is
+                          then honest, so bbox_3d is "unavailable" with that
+                          as the reason rather than a guess.
+
+    Returns {"<elem_id>": entry} where entry is:
+
+        bbox_uv           three-valued; value is the 4-corner UV rectangle
+                          [[u_min,v_min],[u_max,v_min],[u_max,v_max],[u_min,v_max]]
+        bbox_3d           three-valued, per membership_basis_by_id above.
+        bbox_source       which rung of resolve_element_bbox's ladder
+                          answered: "view" | "model" | "none". Recorded
+                          because the two are not interchangeable and a
+                          consumer must not have to guess which it got. A
+                          datum's AABB is derived from whichever rung
+                          answered, so this is also that AABB's provenance.
+        membership_basis  which rule put this element in the annotation
+                          pass, so bbox_3d's state is auditable rather than
+                          having to be inferred.
+        category          category name, or None.
+
+    Every resolved id gets an entry -- an element whose bbox cannot be
+    projected records ``unavailable`` with a reason rather than being
+    omitted, so "absent from this map" never silently means "had no bbox"
+    (CLAUDE.md, no silent failure).
+
+    COST, and why it is measured rather than assumed. This walks
+    resolve_element_bbox's view->model->none ladder, whose first rung is
+    ``elem.get_BoundingBox(view)``. That call is recorded (2026-09-21
+    context, §6) as 10-20x slower than ``get_BoundingBox(None)`` on
+    elevations and sections -- UNCONFIRMED here, since nothing in this
+    session ran Revit. Rather than pick a rung on an unverified claim, the
+    caller records this function's elapsed ms and the per-rung split in the
+    sidecar, so the next real capture measures it instead of arguing it.
+    """
+    from .revit.collection import (
+        resolve_element_bbox, project_bbox_corners_uv, bbox_world_aabb,
+    )
+
+    # The caller's basis wins; raster.view_basis is the fallback for a direct
+    # caller. Resolved by the CALLER rather than here so the record and the
+    # crop this pass applies share one basis -- see the docstring.
+    vb = view_basis
+    if vb is None and raster is not None:
+        vb = getattr(raster, "view_basis", None)
+
+    basis_by_id = membership_basis_by_id or {}
+    out = {}
+    source_counts = {"view": 0, "model": 0, "none": 0}
+    basis_counts = {"owner_view": 0, "datum_category": 0, "unknown": 0}
+
+    def _bbox_3d_for(basis, bbox, elem_id_int):
+        """bbox_3d for ONE element, decided by how it entered this pass."""
+        if basis == "datum_category":
+            if bbox is None:
+                return _gs_unavailable(
+                    "datum (grid/level) has a model-space extent but no bbox "
+                    "could be resolved for it")
+            aabb = bbox_world_aabb(
+                bbox, diag=diag, view_id=view_id, elem_id=elem_id_int)
+            if aabb is None:
+                return _gs_unavailable(
+                    "datum (grid/level) bbox present but its corners could "
+                    "not be resolved to host space")
+            return _gs_value(aabb)
+        if basis == "owner_view":
+            return _gs_not_applicable(_ANNOTATION_BBOX_3D_NOT_APPLICABLE)
+        return _gs_unavailable(
+            "membership basis for this element was not supplied, so it "
+            "could not be told apart from a datum; neither a 3D extent nor "
+            "not_applicable can be claimed honestly")
+
+    for eid in resolved_ids:
+        elem_id_int = eid.IntegerValue
+        membership_basis = basis_by_id.get(elem_id_int)
+        basis_counts[membership_basis if membership_basis in basis_counts
+                     else "unknown"] += 1
+        elem = doc.GetElement(eid)
+        if elem is None:
+            out[str(elem_id_int)] = {
+                "bbox_uv": _gs_unavailable(
+                    "no element with this id in the document at bbox collection"),
+                # No element means no bbox to reduce, whatever its basis.
+                "bbox_3d": _bbox_3d_for(membership_basis, None, elem_id_int),
+                "bbox_source": "none",
+                "membership_basis": membership_basis,
+                "category": None,
+            }
+            source_counts["none"] += 1
+            continue
+
+        category_name = None
+        try:
+            category_name = _near_face_w_category_name(elem)
+        except Exception as ex:
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="annotation_bbox.category",
+                    message=str(ex),
+                    view_id=view_id,
+                    elem_id=elem_id_int,
+                )
+
+        # The view rung FIRST: an annotation is view-specific, so
+        # get_BoundingBox(None) is the rung most likely to return nothing
+        # for it. See this function's COST note for what that costs.
+        bbox, bbox_source = resolve_element_bbox(
+            elem, view=view, diag=diag,
+            context={"view_id": view_id, "elem_id": elem_id_int,
+                     "source_type": "HOST"},
+        )
+        if bbox_source not in source_counts:
+            source_counts[bbox_source] = 0
+        source_counts[bbox_source] += 1
+
+        if bbox is None:
+            bbox_uv = _gs_unavailable(
+                "no bbox resolvable from either get_BoundingBox(view) or "
+                "get_BoundingBox(None)")
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="annotation_bbox",
+                    message="No bbox resolvable; annotation bbox recorded as "
+                            "unavailable",
+                    view_id=view_id,
+                    elem_id=elem_id_int,
+                )
+        elif vb is None:
+            bbox_uv = _gs_unavailable(
+                "bbox resolved but this capture has no view basis to project "
+                "it through")
+            if diag is not None:
+                diag.error(
+                    phase="color_id_buffer",
+                    callsite="annotation_bbox_view_basis",
+                    message="no view basis available to the annotation bbox "
+                            "collection; every bbox_uv in this view is "
+                            "recorded unavailable",
+                    view_id=view_id,
+                    elem_id=elem_id_int,
+                )
+        else:
+            rect = project_bbox_corners_uv(
+                bbox, vb, diag=diag, view_id=view_id, elem_id=elem_id_int)
+            bbox_uv = (
+                _gs_value(rect) if rect is not None
+                else _gs_unavailable(
+                    "bbox and view basis both present but the projection "
+                    "failed (see diagnostics)")
+            )
+
+        out[str(elem_id_int)] = {
+            "bbox_uv": bbox_uv,
+            # NOT unconditional: a grid or a level reached this pass by
+            # category, not by view-specificity, and has a real extent.
+            "bbox_3d": _bbox_3d_for(membership_basis, bbox, elem_id_int),
+            "bbox_source": bbox_source,
+            "membership_basis": membership_basis,
+            "category": category_name,
+        }
+
+    return out, source_counts, basis_counts
 
 
 def _try_color_link_element_detailed(view, link_inst_id, link_elem_id, ogs):
@@ -4338,9 +4606,14 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
                     exc=ex,
                 )
 
+    # basis_out: which rule placed each element. The bbox record needs it --
+    # a grid or level reaches this pass by CATEGORY and has a model-space
+    # extent, where a view-specific annotation does not.
+    membership_basis_by_id = {}
     _model_members, anno_elements, unresolved, basis_counts = (
         split_stage_a_pass_membership(
-            elements, capture_view_id_int=view_id, diag=diag))
+            elements, capture_view_id_int=view_id, diag=diag,
+            basis_out=membership_basis_by_id))
     membership = stage_a_pass_membership_summary(
         _model_members, anno_elements, unresolved, basis_counts)
     if membership_error is not None:
@@ -4358,6 +4631,93 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     step = choose_step(global_threshold if count_anno <= global_threshold else count_anno)
     palette = build_palette(count_anno, step=step)
     color_map = {resolved_ids[i].IntegerValue: palette[i] for i in range(count_anno)}
+
+    # ---- bbox records (Stage A step 4) ---------------------------------
+    #
+    # BEFORE the suppress transaction, deliberately. This pass detaches the
+    # view template, hides model categories and REPLACES the crop with frame
+    # B; reading bboxes afterwards would record them against a view this
+    # capture had already modified, and "which state was this measured in"
+    # is exactly the question a record must not leave open. Nothing below
+    # needs the paint to have happened -- a bbox is a property of the
+    # element in the view, not of its colour.
+    #
+    # ONE basis, resolved here. The crop below needs a basis too, and
+    # building it in both places would let the record and the rendered frame
+    # be projected through two independently-constructed bases -- the
+    # "computed in two places, never composed" class CLAUDE.md opens with.
+    # It also fixes the case where the caller passes no raster (the
+    # documented default) or one without a basis: without this the whole
+    # bbox payload would be recorded unavailable while the export still
+    # returned a successful TIFF.
+    annotation_view_basis = getattr(raster, "view_basis", None) if raster is not None else None
+    view_basis_state = (
+        _gs_value("raster") if annotation_view_basis is not None else None)
+    if annotation_view_basis is None:
+        try:
+            from .revit.view_basis import make_view_basis as _make_view_basis
+            annotation_view_basis = _make_view_basis(view, diag=diag)
+            view_basis_state = (
+                _gs_value("make_view_basis")
+                if annotation_view_basis is not None
+                else _gs_unavailable(
+                    "make_view_basis returned None for this view")
+            )
+        except Exception as ex:
+            view_basis_state = _gs_unavailable(
+                "{0}: {1}".format(type(ex).__name__, ex))
+            if diag is not None:
+                diag.error(
+                    phase="color_id_buffer",
+                    callsite="annotation_bbox_view_basis",
+                    message="could not build a view basis for the annotation "
+                            "bbox records; they will all read unavailable",
+                    view_id=view_id,
+                    exc=ex,
+                )
+
+    _bbox_t0 = time.time()
+    annotation_bbox_map = {}
+    annotation_bbox_status = {"status": "value"}
+    try:
+        annotation_bbox_map, _bbox_sources, _bbox_bases = _collect_annotation_bbox_data(
+            doc, view, resolved_ids, raster, diag=diag, view_id=view_id,
+            view_basis=annotation_view_basis,
+            membership_basis_by_id=membership_basis_by_id)
+        annotation_bbox_status = {
+            "status": "value",
+            "count": len(annotation_bbox_map),
+            # Which rung of the ladder answered, per element. This is the
+            # measurement the 10-20x get_BoundingBox(view) claim needs and
+            # has never had -- see _collect_annotation_bbox_data's COST note.
+            "bbox_source_counts": _bbox_sources,
+            # How many entries were view-specific annotations vs datums, so
+            # "every bbox_3d is not_applicable" is a readable fact rather
+            # than an assumption a consumer has to make.
+            "membership_basis_counts": _bbox_bases,
+            # Where the basis came from, or why there is none. Without this
+            # a view whose every bbox_uv is unavailable looks identical to a
+            # view with no annotations.
+            "view_basis_source": view_basis_state,
+            "elapsed_ms": round((time.time() - _bbox_t0) * 1000.0, 3),
+        }
+    except Exception as ex:
+        # A zero here would read like "this view has no annotations".
+        annotation_bbox_map = {}
+        annotation_bbox_status = {
+            "status": "unavailable",
+            "reason": "{0}: {1}".format(type(ex).__name__, ex),
+            "elapsed_ms": round((time.time() - _bbox_t0) * 1000.0, 3),
+        }
+        if diag is not None:
+            diag.error(
+                phase="color_id_buffer",
+                callsite="annotation_bbox_collect",
+                message="annotation bbox collection failed; the capture keeps "
+                        "going but carries no bbox records for this view",
+                view_id=view_id,
+                exc=ex,
+            )
 
     solid_pattern_id = _get_solid_pattern_id(doc)
     if solid_pattern_id is None:
@@ -4458,7 +4818,10 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         # full frame, so every annotation the frame was expanded to hold is
         # inside the rendered rectangle by construction.
         try:
-            basis = getattr(raster, "view_basis", None)
+            # The SAME basis the bbox records were projected through,
+            # resolved once above. Rebuilding it here would let the record
+            # and the frame it is meant to register against disagree.
+            basis = annotation_view_basis
             if basis is None:
                 from .revit.view_basis import make_view_basis as _make_view_basis
                 basis = _make_view_basis(view, diag=diag)
@@ -4817,6 +5180,17 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
             str(eid): list(color_map[eid]) for eid in color_map
         },
         "color_assignment_count": count_anno,
+        # --- Stage A step 4, additive -------------------------------------
+        # Per-annotation bbox in ABSOLUTE view UV, so a cap re-centre of B
+        # cannot change these numbers. bbox_3d is "not_applicable" on every
+        # entry by construction: an annotation has no model-space extent.
+        # See _collect_annotation_bbox_data.
+        "annotation_bbox_map": annotation_bbox_map,
+        # How the map was obtained, incl. which get_BoundingBox rung answered
+        # and what the collection cost. Three-valued: a failed collection is
+        # "unavailable" with a reason, never an empty map that reads like a
+        # view with no annotations.
+        "annotation_bbox_status": annotation_bbox_status,
         "palette_step": step,
         "paint_failures": paint_failures,
         "paint_failed_element_ids": paint_failed_element_ids,
