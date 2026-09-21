@@ -505,9 +505,35 @@ looked for; a fixture with a second path passes either way.
 Proven at `2bf8b2d` against three known-positives (geometry injected into
 `_collect_near_face_w_data`; geometry reachable only via an aliased import;
 geometry added outside the path, which must NOT flag) plus a control on the
-unmutated tree and a second control pinning the 18-function legacy geometry
-population -- because a tree with zero geometry calls would report clean for
-a reason that says nothing about reachability, which the tool now refuses.
+unmutated tree and a second control pinning the legacy geometry population --
+because a tree with zero geometry calls would report clean for a reason that
+says nothing about reachability, which the tool now refuses.
+
+**Then review found two more of the same shape, and the tool had missed both.**
+Re-proven at `e5951ed`:
+
+- **Callback dispatch.** `invoke(hidden_geometry, doc)`, where `invoke` calls
+  `callback(doc)`, exited 0 with `PROVEN`: the walk saw a call to `callback`,
+  which has no definition anywhere, and dropped it. A function passed BY NAME
+  as an argument is now followed as an edge. Same class as the aliased import,
+  found the same way -- by a reviewer, not by the tool.
+- **An incomplete token set is the same defect as an incomplete pattern.**
+  `GetInstanceGeometry`/`GetSymbolGeometry` were absent while both are used
+  throughout `core/silhouette.py` and `revit/collection.py`, so a root calling
+  only `instance.GetInstanceGeometry()` read clean. The population control did
+  *not* catch it: an unrelated `get_Geometry` elsewhere satisfied it while the
+  new token went unrecognised. The population was 18; it is 23.
+
+**Rule.** A control that asserts "the thing being looked for exists somewhere"
+does not test whether each *form* of it is recognised. Falsify every entry in a
+pattern set individually against a reachable known-positive — the same lesson
+as the `except X as e:` undercount, one layer up.
+
+The tool now states a DECLARED LIMIT instead of implying completeness:
+dispatch through a container of functions (`HANDLERS[key]()`) is not followed,
+being syntactically indistinguishable from the .NET generics this repo really
+uses (`SCG.List[ElementId]()`, `NetList[EId]()`), so refusing it would refuse
+the real tree. A test pins that boundary so it stays known rather than silent.
 
 ### A fourth recurring shape: the citation that rots
 
