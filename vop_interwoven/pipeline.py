@@ -1168,10 +1168,23 @@ def process_document_views(
                     # it is handed that pass's geometry; with no geometry it
                     # refuses rather than sizing itself independently.
                     #
-                    # Its result is appended as its own entry rather than
-                    # merged into the model pass's, so a failed annotation
-                    # capture cannot turn a good model capture into a failed
-                    # view, and neither can hide the other.
+                    # Its result rides INSIDE the model pass's entry, under
+                    # "annotation_pass", rather than being appended as a
+                    # second entry. Appending was the first shape and it was
+                    # wrong: both streaming loops take results[0] only
+                    # (streaming.py, the `view_result = results[0]` in each),
+                    # so a second entry never reached on_view_complete,
+                    # full_results, failure accounting or the Stage A
+                    # summary -- an annotation export could fail while the
+                    # run reported success. Nesting keeps every existing
+                    # per-view consumer working unchanged.
+                    #
+                    # The model pass's own `success` is deliberately NOT
+                    # flipped by an annotation failure: the model capture
+                    # either worked or it did not, independently. The
+                    # annotation outcome is surfaced beside it, in the entry
+                    # and in the Stage A summary, so it cannot go unnoticed
+                    # either.
                     if getattr(cfg, "color_id_buffer_annotation_pass", False):
                         from .color_id_buffer import (
                             export_annotation_color_id_buffer_view,
@@ -1180,10 +1193,15 @@ def process_document_views(
                             doc, view, cfg, export_geometry, diag=diag,
                             raster=raster,
                         )
-                        if isinstance(anno_out, dict):
-                            anno_out.setdefault("view_mode", view_mode)
-                            anno_out.setdefault("view_mode_reason", mode_reason)
-                        results.append(anno_out)
+                        if isinstance(out, dict) and isinstance(anno_out, dict):
+                            out["annotation_pass"] = anno_out
+                            out["annotation_pass_success"] = bool(
+                                anno_out.get("success"))
+                            out["annotation_pass_failure_reason"] = anno_out.get(
+                                "failure_reason")
+                            out["annotation_tiff_path"] = anno_out.get("tiff_path")
+                            out["annotation_sidecar_path"] = anno_out.get(
+                                "sidecar_path")
                     continue
 
                 t0 = _perf_now()

@@ -1836,6 +1836,32 @@ def _project_element_bbox_to_cell_rect_for_anno(elem_or_bbox, view_basis, raster
 # are silent, and both are indistinguishable afterwards from a correct read
 # -- which is the coercion the Stage A record shape exists to refuse.
 
+# KNOWN GAP, RAISED NOT CLOSED (PR #211 review, 2026-09-21). An element that
+# is neither view-owned nor model geometry falls into the model bucket here
+# and is painted by NEITHER pass. The clearest case is datum elements --
+# grids and levels:
+#
+#   - OwnerViewId is InvalidElementId (they are document-wide, not
+#     view-specific), so this function calls them model members;
+#   - revit/collection_policy.py's _EXCLUDED_BIC_NAMES_GLOBAL excludes
+#     OST_Grids and OST_Levels outright (:69, :71), so the model pass never
+#     collects or paints them either;
+#   - color_id_buffer._hidden_category_state classifies datums as
+#     CategoryType.Annotation (:1314) and hides them in the model pass, while
+#     _model_category_hidden_state hides only CategoryType.Model -- so they
+#     stay VISIBLE and unpainted in the annotation capture.
+#
+# Net: grids and levels render as unassigned native-color pixels in the
+# annotation TIFF. Same shape as the OST_Lines gap documented on
+# _model_category_hidden_state, but far more common -- they are on nearly
+# every plan and section.
+#
+# NOT fixed here, deliberately. Closing it means either composing membership
+# with the category policy (changing a rule Greg set: "membership uses
+# OwnerViewId") or hiding datums in the annotation pass (dropping them from
+# the capture entirely, when they may well be content he wants). Both are his
+# call, not this function's, and guessing would bake one in silently.
+
 STAGE_A_PASS_MODEL = "model"
 STAGE_A_PASS_ANNOTATION = "annotation"
 STAGE_A_PASS_UNRESOLVED = "unresolved"

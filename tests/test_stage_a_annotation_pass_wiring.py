@@ -126,10 +126,34 @@ def test_the_flag_on_runs_both_passes(monkeypatch, tmp_path):
 
     assert len(model_calls) == 1
     assert len(anno_calls) == 1
-    assert [r["stage"] for r in results] == [
-        "color_id_buffer_stage_a",
-        "color_id_buffer_stage_a_annotation",
-    ]
+    # ONE entry per view, with the annotation result nested. See
+    # test_the_annotation_result_stays_inside_one_per_view_entry for why.
+    assert len(results) == 1
+    assert results[0]["stage"] == "color_id_buffer_stage_a"
+    assert results[0]["annotation_pass"]["stage"] == (
+        "color_id_buffer_stage_a_annotation")
+
+
+def test_the_annotation_result_stays_inside_one_per_view_entry(
+        monkeypatch, tmp_path):
+    """REGRESSION (PR #211 review, chatgpt-codex-connector P1).
+
+    The first shape appended the annotation result as a SECOND entry. Both
+    streaming loops take results[0] only, so that entry reached no consumer
+    at all: not on_view_complete, not full_results, not failure accounting,
+    not the Stage A summary. An annotation export could fail while the run
+    reported success.
+
+    The invariant is therefore about LENGTH, not just content: one entry per
+    view, whatever the annotation pass did.
+    """
+    _m, _a, results_on = _run_one_view(monkeypatch, tmp_path, annotation_pass=True)
+    _m2, _a2, results_off = _run_one_view(monkeypatch, tmp_path, annotation_pass=False)
+
+    assert len(results_on) == len(results_off) == 1
+    assert "annotation_pass" not in results_off[0]
+    assert results_on[0]["annotation_pass_success"] is True
+    assert results_on[0]["annotation_pass_failure_reason"] is None
 
 
 def test_the_annotation_pass_receives_the_model_passs_own_geometry_object(
@@ -211,9 +235,16 @@ def test_a_failed_annotation_pass_does_not_fail_the_model_capture(
     with _fake_revit_db():
         results = pipeline.process_document_views(doc, [VIEW_ID], cfg)
 
-    by_stage = {r["stage"]: r for r in results}
-    assert by_stage["color_id_buffer_stage_a"]["success"] is True
-    assert by_stage["color_id_buffer_stage_a_annotation"]["success"] is False
+    assert len(results) == 1
+    entry = results[0]
+    # The MODEL capture either worked or it did not, independently -- an
+    # annotation failure does not retroactively fail it.
+    assert entry["success"] is True
+    # And the annotation failure is visible beside it rather than swallowed.
+    assert entry["annotation_pass_success"] is False
+    assert entry["annotation_pass_failure_reason"] == (
+        "annotation_pass_no_export_geometry")
+    assert entry["annotation_pass"]["success"] is False
 
 
 def test_the_flag_defaults_off_and_survives_a_dict_round_trip():

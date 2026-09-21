@@ -4547,7 +4547,33 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
 
         suppress_tx.Commit()
     except Exception:
+        # RollBack undoes everything inside suppress_tx, but NOT the template
+        # detach: that was committed in its own transaction above, and the
+        # restore block that would re-attach it lives in the export's
+        # `finally` further down -- which a raise from here never reaches.
+        # Without this, a failure in category, filter or paint setup leaves
+        # the view permanently detached from its template. The detach is the
+        # ONLY committed state at this point, which is why re-attaching it is
+        # the whole recovery rather than a partial one.
         suppress_tx.RollBack()
+        if view_template_detached and orig_view_template_id is not None:
+            reattach_tx = Transaction(doc, "VOP Stage A ANNO REATTACH view template")
+            reattach_tx.Start()
+            try:
+                view.ViewTemplateId = orig_view_template_id
+                reattach_tx.Commit()
+            except Exception as ex:
+                reattach_tx.RollBack()
+                if diag is not None:
+                    diag.error(
+                        phase="color_id_buffer",
+                        callsite="annotation_reattach_view_template",
+                        message="the annotation pass failed during suppression AND could "
+                                "not re-attach the view template it had detached; this "
+                                "view is left detached from its template",
+                        view_id=view_id,
+                        exc=ex,
+                    )
         raise
 
     actual_pixel_size = pixel_size
@@ -4560,6 +4586,9 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         "dim_check_ceiling_px": MAX_STAGE_A_AXIS_PX,
         "attempts": [],
     }
+    # Every restore step that raised. Empty means every step succeeded,
+    # because the restore always runs -- it is never "not measured".
+    restore_failures = []
     override_restore_check = {
         "status": "unavailable",
         "reason": "the restore transaction did not run",
@@ -4575,9 +4604,19 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         restore_tx.Start()
 
         def _restore_step(callsite, fn):
+            # Best-effort by design: one failing step must never RollBack the
+            # whole transaction and undo the steps that already succeeded.
+            # But "kept going" is not "succeeded" -- a swallowed failure here
+            # leaves the document cropped, hidden, filtered or detached, and
+            # failure_reason below saw none of it, so the capture reported
+            # success over a view it had changed. Accumulated and failed on.
             try:
                 fn()
             except Exception as ex:
+                restore_failures.append({
+                    "callsite": callsite,
+                    "error": "{0}: {1}".format(type(ex).__name__, ex),
+                })
                 if diag is not None:
                     diag.error(
                         phase="color_id_buffer",
@@ -4715,6 +4754,10 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         "applied_display_style": applied_display_style,
         # Read back, not assumed. See _verify_annotation_overrides_restored.
         "override_restore_check": override_restore_check,
+        # The steps that raised while putting the view back. A capture with
+        # entries here changed the document and did not fully undo it, which
+        # is a failed capture however good the TIFF is.
+        "restore_failures": restore_failures,
         "tiff_path": tiff_path,
         "view_template_detached": view_template_detached,
         "orig_view_template_id": (
@@ -4756,6 +4799,10 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         # A view left painted is a failed capture even though the TIFF is
         # fine: the document is not as it was found.
         failure_reason = "annotation_overrides_not_restored"
+    elif restore_failures:
+        # Same rule, for the state the read-back does not cover: crop,
+        # category visibility, filters, halftone, display style, template.
+        failure_reason = "annotation_view_state_not_restored"
 
     return {
         "view_id": view_id,

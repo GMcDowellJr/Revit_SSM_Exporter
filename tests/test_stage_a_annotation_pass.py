@@ -78,6 +78,11 @@ class _SizedDoc(FakeDoc):
 
     def ExportImage(self, opts):
         self.export_image_calls.append(opts)
+        # Honour the hook, as FakeDoc does. Dropping it here silently
+        # disarmed every test that used on_export_image to change view state
+        # mid-capture -- the hook looked wired and did nothing.
+        if self.on_export_image is not None:
+            self.on_export_image(opts)
         px = int(opts.PixelSize)
         out_dir = os.path.dirname(opts.FilePath)
         if out_dir and not os.path.isdir(out_dir):
