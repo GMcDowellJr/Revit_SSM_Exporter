@@ -288,3 +288,93 @@ def test_restore_continues_past_a_failing_step(tmp_path):
     check = result["metadata"]["override_restore_check"]
     assert check["verified_cleared_count"] == 3
     assert check["still_set_count"] == 0
+
+
+# ==========================================================================
+# P1 -- an authored override the paint destroys must not read as "restored"
+# ==========================================================================
+
+def _view_with_authored_override(element_id):
+    """A view where one annotation already carries an authored override.
+
+    The blank-restore is unchanged (see the module note: reapplying a
+    captured OverrideGraphicSettings across a transaction boundary is the
+    behaviour this module removed on evidence). What is pinned here is that
+    the capture stops CLAIMING it put the view back as it found it.
+    """
+    class _Authored(FakeViewPlan):
+        def __init__(self, view_id):
+            FakeViewPlan.__init__(self, view_id)
+            self._restored = set()
+
+        def GetElementOverrides(self, eid):
+            ogs = FakeViewPlan.GetElementOverrides(self, eid)
+            if (int(eid.IntegerValue) == element_id
+                    and element_id not in self._restored):
+                ogs.ProjectionLineColor = types.SimpleNamespace(IsValid=True)
+            return ogs
+
+        def SetElementOverrides(self, eid, ogs):
+            # A blank override is the restore; from then on the element reads
+            # clear -- exactly as Revit would, and exactly why the read-back
+            # alone cannot see that something authored was lost.
+            if int(eid.IntegerValue) == element_id and not getattr(ogs, "calls", None):
+                self._restored.add(element_id)
+            FakeViewPlan.SetElementOverrides(self, eid, ogs)
+
+    return _Authored(VIEW_ID)
+
+
+def _capture_with(view, tmp_path):
+    elements = _elements()
+    doc = _SizedDoc(elements=elements, link_instances=[],
+                    categories=[MODEL_CAT, ANNO_CAT, LINES_CAT])
+    cfg = Config()
+    cfg.debug_dump_path = str(tmp_path)
+    diag = FakeDiag()
+    with install_fake_revit_db():
+        result = color_id_buffer.export_annotation_color_id_buffer_view(
+            doc, view, cfg, GEOM, diag=diag, raster=_raster(), elements=elements,
+        )
+    return result, diag
+
+
+def test_an_authored_override_destroyed_by_the_paint_is_recorded(tmp_path):
+    result, diag = _capture_with(_view_with_authored_override(2002), tmp_path)
+
+    authored = result["metadata"]["authored_overrides_replaced"]
+    assert authored["status"] == "value"
+    assert authored["checked_count"] == 3
+    assert authored["replaced_count"] == 1
+    assert authored["replaced_element_ids"] == [2002]
+    assert any(w["callsite"] == "annotation_authored_override_replaced"
+               for w in diag.warnings)
+
+
+def test_the_read_back_alone_cannot_see_it(tmp_path):
+    """THE POINT. This is what makes the record above load-bearing.
+
+    After restore the element reads blank, so the override read-back reports
+    a clean, fully-verified restore -- over a view whose authored override
+    is gone. Two facts, and only one of them was ever recorded.
+    """
+    result, _diag = _capture_with(_view_with_authored_override(2002), tmp_path)
+
+    check = result["metadata"]["override_restore_check"]
+    assert check["verified_cleared_count"] == 3
+    assert check["still_set_count"] == 0
+    # ... and yet:
+    assert result["metadata"]["authored_overrides_replaced"]["replaced_count"] == 1
+
+
+def test_no_authored_overrides_records_zero_not_unavailable(tmp_path):
+    """CONTROL. Without it, an implementation that reported every element as
+    authored -- or none of them, always -- would pass the tests above."""
+    from tests.test_stage_a_annotation_pass import _run_both_passes
+
+    _m, anno_result, _g, _d, _v, _diag = _run_both_passes(tmp_path)
+    authored = anno_result["metadata"]["authored_overrides_replaced"]
+    assert authored["status"] == "value"
+    assert authored["checked_count"] == 3
+    assert authored["replaced_count"] == 0
+    assert authored["replaced_element_ids"] == []

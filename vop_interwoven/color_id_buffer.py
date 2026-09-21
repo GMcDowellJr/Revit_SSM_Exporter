@@ -4425,6 +4425,10 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
 
     state_out = None
     painted_ids = []
+    authored_overrides = {
+        "status": "unavailable",
+        "reason": "the suppression transaction did not reach the override scan",
+    }
     crop_bounds_xy = None
     applied_display_style = "unchanged"
 
@@ -4514,6 +4518,62 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
                         message=str(ex),
                         view_id=view_id,
                     )
+
+        # ---- what the paint is about to overwrite -------------------------
+        #
+        # PR #211 review, P1: painting replaces any AUTHORED per-element
+        # override, and restore writes a blank OverrideGraphicSettings rather
+        # than the author's -- so an authored override is destroyed, and the
+        # read-back below then reads blank and calls the restore verified.
+        # That second half is the part this closes: the capture no longer
+        # claims it returned the view to its authored state when it did not.
+        #
+        # The destruction ITSELF is not fixed here, and that is deliberate
+        # rather than an oversight. The "restore to what it was" behaviour is
+        # exactly what this module removed on evidence -- see the painted_ids
+        # note on export_color_id_buffer_view: a captured
+        # OverrideGraphicSettings reapplied across a Transaction.Commit()
+        # boundary did NOT reliably take effect, and curtain-wall panels
+        # silently kept their paint. Reinstating it would reinstate that bug
+        # in the model pass too. The alternative the review offers -- a
+        # TransactionGroup rolled back around the whole capture -- is sound
+        # in principle but rewrites the suppress/export/restore lifecycle of
+        # BOTH passes, which is a decision for Greg, not a review fix.
+        #
+        # So: counted, named, and reported, on the standing rule that a
+        # failed read is never written as a zero.
+        authored_overrides = {
+            "status": "value",
+            "checked_count": 0,
+            "replaced_count": 0,
+            "replaced_element_ids": [],
+            "unreadable_count": 0,
+            "note": "painting replaces these and restore writes a BLANK override, "
+                    "not the authored one; they are not recoverable from this "
+                    "capture",
+        }
+        for eid in resolved_ids:
+            authored_overrides["checked_count"] += 1
+            state, cleared, _reason = _override_is_cleared(view, eid.IntegerValue)
+            if state != "value":
+                authored_overrides["unreadable_count"] += 1
+            elif not cleared:
+                authored_overrides["replaced_count"] += 1
+                authored_overrides["replaced_element_ids"].append(
+                    int(eid.IntegerValue))
+        if authored_overrides["replaced_count"] and diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="annotation_authored_override_replaced",
+                message="{0} of {1} annotation element(s) carried an AUTHORED "
+                        "graphics override; the annotation pass replaces it and "
+                        "restores a blank override, so the authored setting is lost "
+                        "and cannot be recovered from this capture. First: element "
+                        "{2}".format(authored_overrides["replaced_count"],
+                                     authored_overrides["checked_count"],
+                                     authored_overrides["replaced_element_ids"][0]),
+                view_id=view_id,
+            )
 
         # ---- the paint --------------------------------------------------
         paint_failures = 0
@@ -4754,6 +4814,10 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         "applied_display_style": applied_display_style,
         # Read back, not assumed. See _verify_annotation_overrides_restored.
         "override_restore_check": override_restore_check,
+        # Authored per-element overrides this capture destroyed. See the
+        # block that builds it: the read-back below cannot see these,
+        # because a blank override is what "restored" looks like.
+        "authored_overrides_replaced": authored_overrides,
         # The steps that raised while putting the view back. A capture with
         # entries here changed the document and did not fully undo it, which
         # is a failed capture however good the TIFF is.
