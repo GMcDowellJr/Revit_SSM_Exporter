@@ -1888,18 +1888,43 @@ _INVALID_ELEMENT_ID_INT = -1
 
 
 # The datum categories that join the annotation pass on category rather than
-# ownership. Two entries, both named by Greg.
+# ownership. Grids and levels named by Greg (2026-09-21); their HEADS added
+# on his follow-up, "paint the heads too IF they're separate elements".
 #
-# Grid and level HEADS (OST_GridHeads / OST_LevelHeads) are deliberately
-# absent: a head is an annotation family referenced by the datum's TYPE, not
-# a separately placed element a view collector returns, so there is nothing
-# here to paint. UNCONFIRMED (not run in Revit this session): whether the
-# head therefore takes the painted datum's color, or renders in its own
-# category color and decodes off-palette.
-STAGE_A_DATUM_BIC_NAMES = ("OST_Grids", "OST_Levels")
+# THAT CONDITION IS EVALUATED BY REVIT, NOT GUESSED HERE. Whether a grid or
+# level head is a separately placed element a view collector returns, or
+# merely graphics the datum's TYPE draws via its Symbol parameter, is a
+# Revit API fact this session could not verify -- it was already flagged
+# UNCONFIRMED when the heads were left out. Listing the head categories
+# resolves it at runtime instead of on a guess:
+#
+#   - heads ARE separate elements -> the collector returns them, they are
+#     ownerless, their category matches, and they are painted. Greg's ask.
+#   - heads are NOT separate elements -> nothing in the collection carries
+#     these categories, the entries match nothing, and behaviour is
+#     unchanged. No risk in being wrong.
+#
+# AND THE ANSWER IS MEASURED, not left unknown. Placements are counted per
+# category (basis_counts["datum_category_counts"]), so one Revit run says
+# which case holds: grid heads present with a non-zero count means they are
+# separate elements and are now painted; zero alongside a non-zero grid
+# count means they are not, and the UNCONFIRMED note can be retired against
+# evidence rather than argument. A zero cannot be read as "not measured" --
+# the count is only ever written by a scan that ran.
+#
+# STILL ENUMERATED, NOT DERIVED. _EXCLUDED_BIC_NAMES_GLOBAL also holds
+# section heads, elevation marks, callout heads, viewers, cameras and the
+# sun path. Those are not datums and Greg has not named them.
+
+STAGE_A_DATUM_BIC_NAMES = (
+    "OST_Grids",
+    "OST_Levels",
+    "OST_GridHeads",
+    "OST_LevelHeads",
+)
 
 
-def stage_a_datum_category_ids():
+def stage_a_datum_category_ids(names_out=None):
     """(ids, error) for STAGE_A_DATUM_BIC_NAMES, resolved from the live enum.
 
     Returns a set of category-id ints and None, or an empty set and a reason.
@@ -1907,6 +1932,11 @@ def stage_a_datum_category_ids():
     has no datum categories", and would silently restore the very gap this
     exists to close -- so a failed resolution is reported, and the caller
     puts it in the record.
+
+    ``names_out``, when given, is filled ``{category_id: BIC name}`` from the
+    SAME resolution rather than a second one: a separate name lookup could
+    disagree with the ids actually in use, and the per-category counts these
+    label are the evidence for whether heads are separate elements at all.
     """
     try:
         from Autodesk.Revit.DB import BuiltInCategory
@@ -1922,9 +1952,13 @@ def stage_a_datum_category_ids():
             missing.append(name)
             continue
         try:
-            ids.add(int(bic))
+            cat_id = int(bic)
         except Exception as ex:
             missing.append("{0} ({1}: {2})".format(name, type(ex).__name__, ex))
+            continue
+        ids.add(cat_id)
+        if names_out is not None:
+            names_out[cat_id] = name
     if missing:
         return ids, "datum categories not resolvable on this host: {0}".format(
             ", ".join(missing))
@@ -1977,6 +2011,8 @@ def stage_a_pass_membership(elem, capture_view_id_int=None, datum_category_ids=N
         "state": "unavailable",
         "pass": None,
         "basis": None,
+        # Only read on the ownerless branch, where it decides the answer.
+        "category_id": None,
         "owner_view_id": None,
         "owner_view_matches_capture_view": "unavailable",
         "reason": None,
@@ -2013,6 +2049,7 @@ def stage_a_pass_membership(elem, capture_view_id_int=None, datum_category_ids=N
         # here, on elements ownership has already failed to place.
         record["owner_view_matches_capture_view"] = "not_applicable"
         cat_id = _element_category_id_int(elem)
+        record["category_id"] = cat_id
         if datum_category_ids and cat_id is not None and cat_id in datum_category_ids:
             record["pass"] = STAGE_A_PASS_ANNOTATION
             record["basis"] = "datum_category"
@@ -2052,8 +2089,10 @@ def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
     the pre-2026-09-21 behaviour and leaves datums unpainted.
     """
     datum_error = None
+    datum_names = {}
     if datum_category_ids is None:
-        datum_category_ids, datum_error = stage_a_datum_category_ids()
+        datum_category_ids, datum_error = stage_a_datum_category_ids(
+            names_out=datum_names)
         if datum_error and diag is not None:
             diag.warn(
                 phase="annotation",
@@ -2068,6 +2107,12 @@ def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
     annotation = []
     unresolved = []
     basis_counts = {"owner_view": 0, "datum_category": 0, "no_owner_view": 0}
+    # Seeded with EVERY datum category that resolved, so a category present
+    # in the set but matching nothing reads as 0 rather than being absent.
+    # That distinction is the whole measurement: "OST_GridHeads": 0 beside
+    # "OST_Grids": 12 says heads are not separate elements on this host,
+    # where a missing key would say only that nobody looked.
+    datum_category_counts = dict((name, 0) for name in datum_names.values())
 
     for elem in elements or []:
         record = stage_a_pass_membership(
@@ -2075,6 +2120,10 @@ def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
             datum_category_ids=datum_category_ids)
         if record["basis"] in basis_counts:
             basis_counts[record["basis"]] += 1
+        if record["basis"] == "datum_category":
+            key = datum_names.get(record["category_id"],
+                                  str(record["category_id"]))
+            datum_category_counts[key] = datum_category_counts.get(key, 0) + 1
         if record["pass"] == STAGE_A_PASS_MODEL:
             model.append(elem)
         elif record["pass"] == STAGE_A_PASS_ANNOTATION:
@@ -2097,6 +2146,7 @@ def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
 
     basis_counts["datum_categories_resolved"] = sorted(datum_category_ids or [])
     basis_counts["datum_resolution_error"] = datum_error
+    basis_counts["datum_category_counts"] = datum_category_counts
     return model, annotation, unresolved, basis_counts
 
 

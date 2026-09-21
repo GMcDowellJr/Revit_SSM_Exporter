@@ -282,10 +282,15 @@ def test_an_unreadable_element_id_is_none_not_zero():
 # plan and section. Greg's call: keep them in the annotation pass, paint them.
 # ==========================================================================
 
+# Category ids only need to be internally consistent here: production
+# resolves them off the live BuiltInCategory enum, so these stand in for
+# Revit's values rather than asserting them.
 GRID_CAT_ID = -2000220
 LEVEL_CAT_ID = -2000240
+GRID_HEAD_CAT_ID = -2000221
+LEVEL_HEAD_CAT_ID = -2000241
 WALL_CAT_ID = 10
-DATUMS = {GRID_CAT_ID, LEVEL_CAT_ID}
+DATUMS = {GRID_CAT_ID, LEVEL_CAT_ID, GRID_HEAD_CAT_ID, LEVEL_HEAD_CAT_ID}
 
 
 class _Cat(object):
@@ -439,6 +444,8 @@ def test_the_datum_set_resolves_off_the_live_enum():
     class _BIC(object):
         OST_Grids = GRID_CAT_ID
         OST_Levels = LEVEL_CAT_ID
+        OST_GridHeads = GRID_HEAD_CAT_ID
+        OST_LevelHeads = LEVEL_HEAD_CAT_ID
 
     fake.BuiltInCategory = _BIC
     saved = sys.modules.get("Autodesk.Revit.DB")
@@ -463,6 +470,8 @@ def test_a_host_missing_a_datum_category_reports_which_one():
 
     class _BIC(object):
         OST_Grids = GRID_CAT_ID
+        OST_GridHeads = GRID_HEAD_CAT_ID
+        OST_LevelHeads = LEVEL_HEAD_CAT_ID
         # OST_Levels absent on this host.
 
     fake.BuiltInCategory = _BIC
@@ -477,5 +486,135 @@ def test_a_host_missing_a_datum_category_reports_which_one():
             sys.modules["Autodesk.Revit.DB"] = saved
 
     # Partial, and named. Not an empty set, and not a silent success.
-    assert ids == {GRID_CAT_ID}
+    assert ids == {GRID_CAT_ID, GRID_HEAD_CAT_ID, LEVEL_HEAD_CAT_ID}
     assert "OST_Levels" in error
+
+
+# ==========================================================================
+# Heads: painted IF Revit returns them as separate elements (Greg, follow-up)
+#
+# Whether a grid/level head is a separately placed element or just graphics
+# the datum's TYPE draws is a Revit API fact this session could not verify.
+# Listing the head categories makes REVIT decide it at runtime, and the
+# per-category counts make the answer readable from one capture.
+# ==========================================================================
+
+def _grid_head(elem_id=300):
+    return _CategorisedElem(elem_id, GRID_HEAD_CAT_ID)
+
+
+def _level_head(elem_id=301):
+    return _CategorisedElem(elem_id, LEVEL_HEAD_CAT_ID)
+
+
+@pytest.mark.parametrize("make", [_grid_head, _level_head])
+def test_a_head_that_is_a_separate_element_joins_the_annotation_pass(make):
+    """The case where Greg's condition is TRUE."""
+    record = stage_a_pass_membership(
+        make(), capture_view_id_int=CAPTURE_VIEW_ID, datum_category_ids=DATUMS)
+
+    assert record["pass"] == STAGE_A_PASS_ANNOTATION
+    assert record["basis"] == "datum_category"
+
+
+def test_heads_absent_from_the_collection_change_nothing():
+    """The case where Greg's condition is FALSE, and why listing them is safe.
+
+    If Revit never returns a head as an element, the head categories match
+    nothing: the split is byte-for-byte what it was with only grids and
+    levels listed. Being wrong about the API costs nothing.
+    """
+    grid, wall, anno = _grid(), _wall(), _anno_elem(310)
+    elements = [grid, wall, anno]
+
+    with_heads = split_stage_a_pass_membership(
+        elements, capture_view_id_int=CAPTURE_VIEW_ID, datum_category_ids=DATUMS)
+    without_heads = split_stage_a_pass_membership(
+        elements, capture_view_id_int=CAPTURE_VIEW_ID,
+        datum_category_ids={GRID_CAT_ID, LEVEL_CAT_ID})
+
+    assert with_heads[0] == without_heads[0]      # model
+    assert with_heads[1] == without_heads[1]      # annotation
+    assert with_heads[2] == without_heads[2]      # unresolved
+
+
+def test_the_per_category_counts_answer_the_question():
+    """A zero beside a non-zero is the measurement.
+
+    "OST_GridHeads": 0 next to "OST_Grids": 2 says heads are not separate
+    elements on this host. A MISSING key would say only that nobody looked,
+    which is why every resolved category is seeded to zero.
+    """
+    names = {}
+    import sys
+    import types as _types
+
+    fake = _types.ModuleType("Autodesk.Revit.DB")
+
+    class _BIC(object):
+        OST_Grids = GRID_CAT_ID
+        OST_Levels = LEVEL_CAT_ID
+        OST_GridHeads = GRID_HEAD_CAT_ID
+        OST_LevelHeads = LEVEL_HEAD_CAT_ID
+
+    fake.BuiltInCategory = _BIC
+    fake.ElementId = type("EId", (), {"InvalidElementId": _Id(-1)})
+    saved = sys.modules.get("Autodesk.Revit.DB")
+    sys.modules["Autodesk.Revit.DB"] = fake
+    try:
+        _m, _a, _u, basis = split_stage_a_pass_membership(
+            [_grid(400), _grid(401), _wall(402)],
+            capture_view_id_int=CAPTURE_VIEW_ID)
+    finally:
+        if saved is None:
+            sys.modules.pop("Autodesk.Revit.DB", None)
+        else:
+            sys.modules["Autodesk.Revit.DB"] = saved
+
+    counts = basis["datum_category_counts"]
+    assert counts["OST_Grids"] == 2
+    # Present and zero -- not absent.
+    assert counts["OST_GridHeads"] == 0
+    assert counts["OST_LevelHeads"] == 0
+    assert counts["OST_Levels"] == 0
+    assert basis["datum_resolution_error"] is None
+
+
+def test_a_present_head_is_counted_under_its_own_category():
+    """CONTROL for the test above.
+
+    Without it, an implementation that always reported zero for heads would
+    pass -- and would be indistinguishable from the answer Greg is waiting
+    for.
+    """
+    import sys
+    import types as _types
+
+    fake = _types.ModuleType("Autodesk.Revit.DB")
+
+    class _BIC(object):
+        OST_Grids = GRID_CAT_ID
+        OST_Levels = LEVEL_CAT_ID
+        OST_GridHeads = GRID_HEAD_CAT_ID
+        OST_LevelHeads = LEVEL_HEAD_CAT_ID
+
+    fake.BuiltInCategory = _BIC
+    fake.ElementId = type("EId", (), {"InvalidElementId": _Id(-1)})
+    saved = sys.modules.get("Autodesk.Revit.DB")
+    sys.modules["Autodesk.Revit.DB"] = fake
+    try:
+        _m, annotation, _u, basis = split_stage_a_pass_membership(
+            [_grid(410), _grid_head(411), _grid_head(412), _level_head(413)],
+            capture_view_id_int=CAPTURE_VIEW_ID)
+    finally:
+        if saved is None:
+            sys.modules.pop("Autodesk.Revit.DB", None)
+        else:
+            sys.modules["Autodesk.Revit.DB"] = saved
+
+    counts = basis["datum_category_counts"]
+    assert counts["OST_Grids"] == 1
+    assert counts["OST_GridHeads"] == 2
+    assert counts["OST_LevelHeads"] == 1
+    # And they are in the paint set, not merely counted.
+    assert len(annotation) == 4

@@ -264,9 +264,13 @@ class FakeBuiltInCategory(object):
     # Datum categories. Stage A step 3 resolves these off the enum rather
     # than hardcoding them, so a fake that lacks them makes every datum read
     # as ordinary model geometry -- the pre-2026-09-21 gap -- and the test
-    # for the fix could not reach the branch it names.
+    # for the fix could not reach the branch it names. The values only need
+    # to be internally consistent: they stand in for Revit's, and production
+    # never reads them from here.
     OST_Grids = -2000220
     OST_Levels = -2000240
+    OST_GridHeads = -2000221
+    OST_LevelHeads = -2000241
 
 
 class FakeImageFileType(object):

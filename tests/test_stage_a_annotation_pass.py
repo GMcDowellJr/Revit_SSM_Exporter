@@ -55,6 +55,11 @@ ANNO_CAT = FakeCategory("Door Tags", -2000460, cat_type="Annotation")
 # A datum: CategoryType.Annotation, but document-wide, so OwnerViewId is
 # InvalidElementId. Greg's 2026-09-21 call puts it in the annotation pass.
 GRID_CAT = FakeCategory("Grids", -2000220, cat_type="Annotation")
+# A grid HEAD, here modelled as a separately placed element -- the case
+# Greg's "paint the heads too IF they're separate elements" turns on. Whether
+# Revit actually returns one is decided at runtime by category membership,
+# not by this fixture; what this pins is that IF it does, it gets painted.
+GRID_HEAD_CAT = FakeCategory("Grid Heads", -2000221, cat_type="Annotation")
 # The known gap this pass does NOT close: OST_Lines is Model-typed but is on
 # VIEW_ONLY_MODEL_BIC_NAMES, so neither pass hides it.
 LINES_CAT = FakeCategory("Lines", -2000051, cat_type="Model")
@@ -123,6 +128,7 @@ def _elements():
         FakeElement(1003, MODEL_CAT),                                  # model
         FakeElement(2003, LINES_CAT, owner_view_id=VIEW_ID),           # detail line
         FakeElement(3001, GRID_CAT),                                   # grid: OWNERLESS
+        FakeElement(3002, GRID_HEAD_CAT),                              # grid head
     ]
 
 
@@ -150,7 +156,8 @@ def _run_both_passes(tmp_path, elements=None, view=None):
     elements = _elements() if elements is None else elements
     view = FakeViewPlan(view_id=VIEW_ID) if view is None else view
     doc = _SizedDoc(elements=elements, link_instances=[],
-                    categories=[MODEL_CAT, ANNO_CAT, LINES_CAT, GRID_CAT])
+                    categories=[MODEL_CAT, ANNO_CAT, LINES_CAT, GRID_CAT,
+                                GRID_HEAD_CAT])
     cfg = Config()
     cfg.include_linked_rvt = False
     cfg.debug_dump_path = str(tmp_path)
@@ -242,9 +249,9 @@ def test_the_annotation_pass_paints_view_owned_elements_and_datums(tmp_path):
 
     md = anno_result["metadata"]
     painted = set(int(k) for k in md["color_assignment_map"])
-    assert painted == {2001, 2002, 2003, 3001}
+    assert painted == {2001, 2002, 2003, 3001, 3002}
     assert md["membership"]["membership_rule"] == "OwnerViewId+datum_category"
-    assert md["membership"]["annotation_count"] == 4
+    assert md["membership"]["annotation_count"] == 5
     assert md["membership"]["model_count"] == 3
     assert md["membership"]["unresolved_count"] == 0
 
@@ -252,7 +259,7 @@ def test_the_annotation_pass_paints_view_owned_elements_and_datums(tmp_path):
     # to be read as "was view-owned".
     basis = md["membership"]["basis_counts"]
     assert basis["owner_view"] == 3
-    assert basis["datum_category"] == 1
+    assert basis["datum_category"] == 2
     assert basis["no_owner_view"] == 3
 
 
@@ -274,6 +281,33 @@ def test_the_grid_is_painted_not_merely_classified(tmp_path):
     # And it is not in the MODEL pass's map, so it is painted exactly once
     # across the two captures.
     assert "3001" not in model_result["metadata"]["color_assignment_map"]
+
+
+def test_a_separately_placed_head_is_painted_end_to_end(tmp_path):
+    """Greg's follow-up, in the case where its condition holds.
+
+    3002 is a grid head modelled as a separate element. If Revit returns
+    heads that way, they are painted like any other datum -- and the
+    per-category count says which way it went, so one capture retires the
+    UNCONFIRMED note instead of an argument doing it.
+    """
+    model_result, anno_result, geom, doc, view, diag = _run_both_passes(tmp_path)
+
+    md = anno_result["metadata"]
+    anno_map = md["color_assignment_map"]
+    assert "3002" in anno_map
+    # Its own colour, not shared, and painted exactly once across the passes.
+    assert sum(1 for v in anno_map.values()
+               if list(v) == list(anno_map["3002"])) == 1
+    assert "3002" not in model_result["metadata"]["color_assignment_map"]
+
+    counts = md["membership"]["basis_counts"]["datum_category_counts"]
+    assert counts["OST_Grids"] == 1
+    assert counts["OST_GridHeads"] == 1
+    # Resolved but unmatched categories read as 0, not as absent -- that is
+    # what makes a zero here evidence rather than silence.
+    assert counts["OST_Levels"] == 0
+    assert counts["OST_LevelHeads"] == 0
 
 
 def test_the_datum_is_left_visible_by_the_annotation_pass(tmp_path):
@@ -313,7 +347,7 @@ def test_each_pass_carries_its_own_colour_map(tmp_path):
     # collection_policy (CategoryType.Model only), this one by OwnerViewId.
     assert set(model_map) & set(anno_map) == set()
     assert set(model_map) == {"1001", "1002", "1003"}
-    assert set(anno_map) == {"2001", "2002", "2003", "3001"}
+    assert set(anno_map) == {"2001", "2002", "2003", "3001", "3002"}
     # Colours are allowed to COINCIDE across the two maps -- both passes
     # start from the same palette and neither is ever decoded against the
     # other's map. Asserted rather than left implicit so a future "make them
@@ -356,8 +390,8 @@ def test_restore_is_verified_by_reading_the_overrides_back(tmp_path):
     check = anno_result["metadata"]["override_restore_check"]
     assert check["status"] == "value"
     assert check["method"] == "read_back"
-    assert check["painted_count"] == 4
-    assert check["verified_cleared_count"] == 4
+    assert check["painted_count"] == 5
+    assert check["verified_cleared_count"] == 5
     assert check["still_set_count"] == 0
     assert check["unreadable_count"] == 0
     assert anno_result["success"] is True
@@ -420,7 +454,7 @@ def test_an_unreadable_override_is_neither_cleared_nor_still_set(tmp_path):
     assert check["unreadable_count"] == 1
     assert check["unreadable"][0]["element_id"] == 2001
     # Not counted as cleared, and not counted as still-set.
-    assert check["verified_cleared_count"] == 3
+    assert check["verified_cleared_count"] == 4
     assert check["still_set_count"] == 0
 
 
@@ -431,7 +465,8 @@ def test_the_annotation_pass_refuses_without_the_model_passs_geometry(tmp_path):
     none, because nothing downstream can tell the two apart."""
     elements = _elements()
     doc = _SizedDoc(elements=elements, link_instances=[],
-                    categories=[MODEL_CAT, ANNO_CAT, LINES_CAT, GRID_CAT])
+                    categories=[MODEL_CAT, ANNO_CAT, LINES_CAT, GRID_CAT,
+                                GRID_HEAD_CAT])
     cfg = Config()
     cfg.debug_dump_path = str(tmp_path)
     diag = FakeDiag()
@@ -491,7 +526,8 @@ def test_the_model_pass_still_runs_without_a_geometry_out(tmp_path):
     """CONTROL: the parameter is optional and its absence changes nothing."""
     elements = _elements()
     doc = _SizedDoc(elements=elements, link_instances=[],
-                    categories=[MODEL_CAT, ANNO_CAT, LINES_CAT, GRID_CAT])
+                    categories=[MODEL_CAT, ANNO_CAT, LINES_CAT, GRID_CAT,
+                                GRID_HEAD_CAT])
     cfg = Config()
     cfg.include_linked_rvt = False
     cfg.debug_dump_path = str(tmp_path)
