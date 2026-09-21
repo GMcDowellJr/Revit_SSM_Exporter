@@ -2493,7 +2493,15 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         )
 
     if geom is not None:
-        pixel_size = max(64, int(geom["requested_px"]))
+        # NO max(64, ...) HERE. The floor is enforced inside
+        # frame_export_geometry, which re-derives feet-per-pixel and rebuilds
+        # the whole lattice around it. Raising the number here instead left
+        # Revit rendering at one fpp while the sidecar's crop_px,
+        # achieved_fpp_ft and crop_offset_px described another -- and the
+        # dimension check passed, because the raised number is exactly what
+        # was asked for. A 1 ft crop inside a 100 ft frame put the recorded
+        # fpp out by 3.2x with every check green.
+        pixel_size = int(geom["requested_px"])
         requested_axis = geom["requested_axis"]
         # Paper extents of the FRAME. These sidecar keys keep their documented
         # meaning -- "the view's real paper extent along requested_axis" -- and
@@ -2515,14 +2523,34 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             "scale_factor": geom["achieved_fpp_ft"] and (
                 geom["requested_fpp_ft"] / geom["achieved_fpp_ft"]),
         }
-        if pixel_size != geom["requested_px"] and diag is not None:
+        if geom["floor_applied_to_crop"] and diag is not None:
             diag.warn(
                 phase="color_id_buffer",
                 callsite="pixel_size",
-                message="frame-derived export wanted {0} px on the {1} axis but the 64 px "
-                        "floor overrides it; this capture is ABOVE the requested DPI and "
-                        "the recorded achieved figures describe the pre-floor "
-                        "request".format(geom["requested_px"], requested_axis),
+                message="the rendered crop fell below the {0} px floor on the {1} axis, "
+                        "so feet-per-pixel was re-derived from the crop and the whole "
+                        "lattice rebuilt around it: this capture is ABOVE the requested "
+                        "DPI at {2:.2f} (requested {3:.2f}), and the frame is {4}x{5} "
+                        "px".format(geom["min_axis_px"], requested_axis,
+                                    geom["achieved_export_dpi"],
+                                    geom["requested_export_dpi"],
+                                    geom["frame_px"][0], geom["frame_px"][1]),
+                view_id=view_id,
+            )
+        if (not geom["floor_applied_to_crop"]
+                and geom["requested_px"] < geom["min_axis_px"]
+                and diag is not None):
+            # The ceiling refused the floor. Said out loud rather than left
+            # to be inferred from two numbers in the sidecar.
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="pixel_size",
+                message="the rendered crop is {0} px on the {1} axis, below the {2} px "
+                        "floor, and the floor could NOT be applied: raising resolution "
+                        "far enough would push the frame past the {3} px ceiling. The "
+                        "ceiling is a measured limit and wins; this capture is small by "
+                        "design".format(geom["requested_px"], requested_axis,
+                                        geom["min_axis_px"], geom["max_axis_px"]),
                 view_id=view_id,
             )
         if geom["cap_applied"] and diag is not None:
@@ -3784,6 +3812,16 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 "cap_applied": bool(geom["cap_applied"]),
                 "max_axis_px": geom["max_axis_px"],
                 "min_axis_px": int(geom["min_axis_px"]),
+                # True when the crop fell below the floor and feet-per-pixel
+                # was re-derived from it, putting achieved dpi ABOVE the
+                # request. False both when the floor was not needed and when
+                # the ceiling refused it -- requested_px below min_axis_px
+                # with this False is the refused case.
+                "floor_applied_to_crop": bool(geom["floor_applied_to_crop"]),
+                # Whether the ceiling moved the request through cap_axes
+                # itself, as opposed to through the lattice correction. Both
+                # set cap_applied; this says which.
+                "cap_applied_by_cap_axes": bool(geom["cap_applied_by_cap_axes"]),
                 # How many times the lattice had to step down to keep both of
                 # B's axes inside the ceiling. Normally 0. Non-zero is not an
                 # error, but it means the achieved figures above are a step or

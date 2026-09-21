@@ -279,6 +279,12 @@ def _extent(rect_uv, name):
 _LATTICE_EPS = 1.0e-6
 
 
+def _crop_fit_extent(rect, vertical):
+    """The fitted-axis extent of a rectangle, in feet."""
+    return (float(rect[3]) - float(rect[1])) if vertical else (
+        float(rect[2]) - float(rect[0]))
+
+
 def _lattice_ceil(value):
     """Pixels needed to CONTAIN an extent, with the lattice tolerance applied.
 
@@ -408,16 +414,6 @@ def frame_export_geometry(frame_uv, crop_uv, view_scale, export_dpi,
     # is the BOUNDED one -- neither axis of B exceeds the ceiling WHILE the
     # frame's aspect is shallower than the cap -- together with a case that
     # pins what happens beyond it, rather than a universal that is false.
-    frame_px_u = _lattice_ceil(frame_u_ft / accepted_fpp)
-    frame_px_v = _lattice_ceil(frame_v_ft / accepted_fpp)
-    lattice_corrections = 0
-    while cap is not None and max(frame_px_u, frame_px_v) > cap and accepted_fit_px > 1:
-        accepted_fit_px -= 1
-        accepted_fpp = frame_fit_ft / float(accepted_fit_px)
-        frame_px_u = _lattice_ceil(frame_u_ft / accepted_fpp)
-        frame_px_v = _lattice_ceil(frame_v_ft / accepted_fpp)
-        lattice_corrections += 1
-
     # A, clamped into B. compute_model_crop() already intersects, so a crop
     # outside B should be impossible; clamping here means this function is
     # still total if it ever is, rather than emitting a negative pixel offset.
@@ -449,6 +445,54 @@ def frame_export_geometry(frame_uv, crop_uv, view_scale, export_dpi,
                     abs(frame_rect[3] - frame_rect[1]), 1.0)
     crop_is_frame = all(
         abs(crop_rect[k] - frame_rect[k]) <= 1.0e-9 * _scale_ft for k in range(4))
+
+    frame_px_u = _lattice_ceil(frame_u_ft / accepted_fpp)
+    frame_px_v = _lattice_ceil(frame_v_ft / accepted_fpp)
+    lattice_corrections = 0
+    while cap is not None and max(frame_px_u, frame_px_v) > cap and accepted_fit_px > 1:
+        accepted_fit_px -= 1
+        accepted_fpp = frame_fit_ft / float(accepted_fit_px)
+        frame_px_u = _lattice_ceil(frame_u_ft / accepted_fpp)
+        frame_px_v = _lattice_ceil(frame_v_ft / accepted_fpp)
+        lattice_corrections += 1
+
+    # THE FLOOR APPLIES TO WHAT REVIT IS HANDED, WHICH IS A -- NOT B.
+    #
+    # The floor above bounds B's fitted axis. A is what PixelSize actually
+    # receives, and A can sit far below the floor while B sits above it: a
+    # 1 ft crop inside a 100 ft frame is 20 px at 150 dpi. The caller used to
+    # raise that to 64 on its own, which left Revit rendering at one
+    # feet-per-pixel while crop_px, achieved_fpp_ft and crop_offset_px
+    # described another -- an fpp wrong by 3.2x in that example, and every UV
+    # decoded from the capture wrong with it. The dimension check passes,
+    # because 64 px is exactly what was asked for, so nothing downstream
+    # notices.
+    #
+    # So the floor is enforced HERE, by re-deriving feet-per-pixel from A and
+    # rebuilding the lattice at it. A and B stay on ONE shared fpp, which is
+    # what decision A's registration depends on; B simply gains pixels with A.
+    # Raising resolution can only push achieved dpi ABOVE the request, which
+    # achieved_export_dpi records as faithfully as it records a cap.
+    floor_applied_to_crop = False
+    crop_fit_ft = _crop_fit_extent(crop_rect, vertical)
+    if crop_fit_ft > 0.0:
+        _fit_px_at = lambda fpp: max(1, _lattice_ceil(crop_fit_ft / fpp))
+        if _fit_px_at(accepted_fpp) < floor_px:
+            candidate_fpp = crop_fit_ft / float(floor_px)
+            cand_u = _lattice_ceil(frame_u_ft / candidate_fpp)
+            cand_v = _lattice_ceil(frame_v_ft / candidate_fpp)
+            # THE CEILING WINS A CONFLICT. The floor is a convention; the
+            # ceiling is a measured limit -- exports above it drift. A frame
+            # that cannot hold A at the floor without breaching the ceiling
+            # keeps the capped resolution and reports the floor as not
+            # applied, rather than trading a drifted export for a minimum
+            # pixel count nothing measured.
+            if cap is None or max(cand_u, cand_v) <= cap:
+                accepted_fpp = candidate_fpp
+                frame_px_u = cand_u
+                frame_px_v = cand_v
+                accepted_fit_px = max(1, _lattice_ceil(frame_fit_ft / accepted_fpp))
+                floor_applied_to_crop = True
 
     fx0, fy0 = float(frame_uv[0]), float(frame_uv[1])
     i0 = int(math.floor((crop_rect[0] - fx0) / accepted_fpp + _LATTICE_EPS))
@@ -524,8 +568,22 @@ def frame_export_geometry(frame_uv, crop_uv, view_scale, export_dpi,
         "pre_cap_px": int(cap_result["pre_cap_px"]),
         "pre_cap_derived_px": int(cap_result["pre_cap_derived_px"]),
         "frame_fit_px": int(accepted_fit_px),
-        "cap_applied": bool(cap_result["cap_applied"]),
+        # TRUE WHEN THE CEILING MOVED THE REQUEST, BY EITHER ROUTE.
+        # cap_axes reports only its own decision, and the lattice-correction
+        # loop above can lower the resolution after cap_axes has said no: a
+        # derived extent of 10000.25 px rounds half-up to exactly the cap, so
+        # cap_axes passes it, and the ceil-based lattice then needs 10001 and
+        # steps the fitted axis down. Resolution drops from 150 to 148.5 dpi
+        # while this field said no cap applied -- and this field is what the
+        # sidecar and the capped-export diagnostic both lead with.
+        "cap_applied": bool(cap_result["cap_applied"] or lattice_corrections > 0),
+        # Which route, for a reader that needs to tell them apart.
+        "cap_applied_by_cap_axes": bool(cap_result["cap_applied"]),
         "max_axis_px": cap_result["max_axis_px"],
         "min_axis_px": int(floor_px),
+        # True when the floor was enforced on A and the whole lattice rebuilt
+        # around it, so achieved_export_dpi is ABOVE the request. False both
+        # when the floor was not needed and when the ceiling refused it.
+        "floor_applied_to_crop": bool(floor_applied_to_crop),
         "lattice_corrections": int(lattice_corrections),
     }

@@ -193,3 +193,72 @@ def test_a_narrowed_crop_is_smaller_than_the_frame_in_pixels(tmp_path):
     # Same frame, so the same resolution: narrowing the crop must not change
     # feet-per-pixel. That is the registration guarantee decision A asks for.
     assert narrow["achieved_fpp_ft"] == pytest.approx(wide["achieved_fpp_ft"], rel=1e-12)
+
+
+# --- the floor, at the call site -------------------------------------------
+
+def test_production_hands_revit_exactly_the_geometrys_pixel_count(tmp_path):
+    """The call site must not re-apply the floor itself.
+
+    The floor is enforced inside frame_export_geometry, which rebuilds the
+    whole lattice around it. A second max(64, ...) here would raise the
+    number handed to Revit while leaving the recorded lattice alone -- the
+    P1 defect, exactly.
+
+    THE DISCRIMINATING CASE IS THE ONE WHERE THE CEILING REFUSED THE FLOOR.
+    Everywhere else the geometry already returns >= 64, so a re-applied
+    max(64, ...) is a no-op and every other test passes with it restored --
+    which is what happened when this was checked. Here requested_px is
+    genuinely below the floor and must reach Revit unchanged.
+    """
+    # Same scale caveat as above: the frame has to be large enough in PIXELS
+    # that lifting the crop to 64 px would breach the ceiling.
+    frame = Bounds2D(0.0, 0.0, 5.0, 5.0)
+    raster = types.SimpleNamespace(
+        W=1000, H=1000, cell_size_ft=0.005,
+        bounds_xy=frame,
+        model_clip_bounds=Bounds2D(0.0, 0.0, 0.0008, 0.0008),
+        anno_frame_bounds=None,
+        anno_cap_envelope_applied=False,
+        view_basis=_PLAN_BASIS,
+    )
+    md = _export(tmp_path, raster)["metadata"]
+    ef = md["export_frame"]
+
+    # The fixture must actually reach the refused-floor branch, or this
+    # proves nothing about the call site.
+    assert ef["floor_applied_to_crop"] is False
+    assert ef["requested_px"] < ef["min_axis_px"]
+
+    # ... and production passed that number through untouched.
+    assert md["resolution"]["requested_pixel_size"] == ef["requested_px"]
+    assert md["resolution"]["requested_px"] == ef["requested_px"]
+
+
+def test_the_floor_case_reaches_revit_at_the_rebuilt_count(tmp_path):
+    """The other side: when the floor IS applied, the number handed to Revit
+    is the rebuilt lattice's count, and the recorded fpp describes it."""
+    # Sized against the FAKE VIEW'S OWN SCALE (1.0), not against a plausible
+    # real one. At 150 dpi that is 1/1800 ft per pixel, so a crop has to be
+    # about a hundredth of a foot to fall under 64 px. A fixture written for
+    # a 1:96 view reads convincingly and never reaches the branch -- which is
+    # how the first version of this test passed while testing nothing.
+    frame = Bounds2D(0.0, 0.0, 1.0, 1.0)
+    raster = types.SimpleNamespace(
+        W=800, H=800, cell_size_ft=0.00125,
+        bounds_xy=frame,
+        model_clip_bounds=Bounds2D(0.4, 0.4, 0.411, 0.411),
+        anno_frame_bounds=None,
+        anno_cap_envelope_applied=False,
+        view_basis=_PLAN_BASIS,
+    )
+    md = _export(tmp_path, raster)["metadata"]
+    ef = md["export_frame"]
+
+    assert ef["floor_applied_to_crop"] is True
+    assert md["resolution"]["requested_pixel_size"] == ef["requested_px"]
+    assert ef["requested_px"] >= ef["min_axis_px"]
+    # the recorded rectangle spans exactly that many pixels at the recorded fpp
+    s = ef["crop_snapped_uv"]
+    assert (s[2] - s[0]) == pytest.approx(ef["crop_px"][0] * ef["achieved_fpp_ft"],
+                                          rel=1e-12)
