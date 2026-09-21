@@ -63,7 +63,7 @@ and nothing from ``tools``, so ``tools/link_identity_resolver.py`` can use
 it without putting the package on that standalone tool's dependency path.
 """
 
-__all__ = ["clamp_pad_geometry"]
+__all__ = ["clamp_pad_geometry", "uv_to_pixel"]
 
 
 def clamp_pad_geometry(bounds_uv, image_w, image_h, measured_w=None, measured_h=None):
@@ -104,3 +104,47 @@ def clamp_pad_geometry(bounds_uv, image_w, image_h, measured_w=None, measured_h=
     pad_x = (float(image_w) - crop_u_ft / feet_per_pixel) / 2.0
     pad_y = (float(image_h) - crop_v_ft / feet_per_pixel) / 2.0
     return (feet_per_pixel, pad_x, pad_y)
+
+
+def uv_to_pixel(u, v, bounds_uv, image_w, image_h, geometry=None):
+    """Map one view-local UV coordinate to its FLOAT pixel position.
+
+    The exact algebraic inverse of ``tools/decode_stage_a_color_id.py``'s
+    ``_pixel_corner_to_uv()``::
+
+        u = xmin + (x - pad_x) * fpp        x = (u - xmin) / fpp + pad_x
+        v = ymax - (y - pad_y) * fpp        y = (ymax - v) / fpp + pad_y
+
+    and therefore models the same aspect-clamp pad, from the same single
+    derivation above. It lives HERE, beside ``clamp_pad_geometry()``, for
+    the reason this module exists at all: the uv->pixel direction was
+    already written out inline once (``tools/link_identity_resolver.py``'s
+    ``_uv_rect_to_pixel_bbox``), and a second inline copy in a new tool is
+    exactly how D1 and D8 drifted apart. ``tests/test_capture_overlay.py``
+    composes this against that inline copy so the two cannot diverge
+    unnoticed, and ``tests/test_uv_pixel_round_trip.py`` already composes
+    the inline copy against decode's forward map.
+
+    ``geometry`` is ``clamp_pad_geometry()``'s triple. A caller mapping many
+    points passes it in so every point comes from ONE derivation; omitting
+    it computes the triple here, which keeps a single-point call working.
+
+    Returns a ``(x, y)`` float pair. NOTHING is clamped, rounded or
+    rejected: a point outside the image comes back as the out-of-range
+    float it actually is. A caller that needs integer, image-clamped bounds
+    -- and needs a wholly off-image rectangle reported as such rather than
+    collapsed onto the edge -- must apply that itself; conflating the two
+    is what ``_uv_rect_to_pixel_bbox``'s own off-image guard exists to
+    prevent.
+
+    Raises:
+        ValueError: propagated from ``clamp_pad_geometry()`` on a degenerate
+            crop or a non-positive dimension, when ``geometry`` is omitted.
+    """
+    xmin, _ymin, _xmax, ymax = (float(c) for c in bounds_uv)
+    if geometry is None:
+        geometry = clamp_pad_geometry(bounds_uv, image_w, image_h)
+    feet_per_pixel, pad_x, pad_y = geometry
+    x = (float(u) - xmin) / feet_per_pixel + pad_x
+    y = (ymax - float(v)) / feet_per_pixel + pad_y
+    return (x, y)
