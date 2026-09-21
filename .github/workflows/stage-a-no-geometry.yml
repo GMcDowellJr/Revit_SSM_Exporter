@@ -1,0 +1,84 @@
+name: Stage A geometry-free
+
+on:
+  pull_request:
+  push:
+    branches: [ main, master ]
+
+# Stage A captures a primitive -- frame, pixels, colour-to-element map, bbox --
+# and every element fact it records comes from an AABB (get_BoundingBox) or a
+# parameter read. It must never tessellate or walk geometry. The legacy
+# geometry path is still in the tree and LinkedElementProxy exposes
+# get_Geometry(), which the Stage A path already handles, so the call is one
+# attribute away from compiling and running.
+#
+# This job walks the call graph from the three functions a Stage A run enters
+# and fails if any of them reaches a Revit geometry API.
+
+jobs:
+  stage-a-no-geometry:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # No pip install: tools/check_stage_a_no_geometry.py is stdlib-only
+      # (ast, argparse, collections, os, sys). Nothing to pin, nothing to drift.
+
+      # SCOPE IS NOT THE REPO, and this one is deliberate: the scan covers
+      # vop_interwoven/ because that is where the Stage A runtime lives.
+      # tools/ is excluded because nothing under it runs inside a capture.
+      #
+      # A path typo cannot certify an empty scan here the way it did for the
+      # discarded-handler validator: the tool prints the file count and REFUSES
+      # (exit 2, "NOT PROVEN") on a scan root that does not exist, a scan that
+      # matched zero files, an unparseable file, an unresolvable root, or a
+      # computed callee inside the path. Exit 2 is a failure, not a skip.
+      - name: Prove no geometry is reachable from the Stage A roots
+        run: python tools/check_stage_a_no_geometry.py vop_interwoven
+
+      # The step above passing means "the tool said PROVEN". That is not the
+      # same claim as "the tool can still detect a violation" -- a check that
+      # has quietly stopped working also prints PROVEN, every time, forever.
+      # This repo has shipped that exact failure more than once (a semgrep rule
+      # verified against the wrong commit; a reachability walk whose aliased
+      # imports cut the edges; a token set missing GetInstanceGeometry while
+      # its own population control read clean).
+      #
+      # So the job falsifies itself on every run: inject a real geometry call
+      # into a function the Stage A roots genuinely reach, and require exit 1.
+      # If this step passes, the green above is a measurement rather than a
+      # decoration. The copy is thrown away; the working tree is untouched.
+      - name: Falsify it -- an injected geometry call must fail the check
+        run: |
+          set -euo pipefail
+          MUTANT="$(mktemp -d)/vop_interwoven"
+          cp -r vop_interwoven "$MUTANT"
+          python - "$MUTANT/color_id_buffer.py" <<'PY'
+          import sys
+          path = sys.argv[1]
+          with open(path, encoding="utf-8") as fh:
+              source = fh.read()
+          needle = "    host_out = {}\n"
+          if source.count(needle) != 1:
+              sys.exit("anchor for the injected call moved; update this workflow")
+          source = source.replace(
+              needle, needle + "    _ci_injected = doc.get_Geometry(None)\n")
+          with open(path, "w", encoding="utf-8") as fh:
+              fh.write(source)
+          PY
+          set +e
+          python tools/check_stage_a_no_geometry.py "$MUTANT"
+          status=$?
+          set -e
+          if [ "$status" -ne 1 ]; then
+            echo "::error::The geometry check did not flag an injected get_Geometry call"
+            echo "::error::(exit $status, expected 1). The check above is not live."
+            exit 1
+          fi
+          echo "Known-positive detected as expected (exit 1); the check is live."
