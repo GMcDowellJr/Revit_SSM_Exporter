@@ -484,6 +484,31 @@ pip install --ignore-installed PyJWT semgrep   # plain install hits a Debian PyJ
 - Update these rules when a new defect class appears, and record what each was
   proven against.
 
+### A fifth instance of "green means nothing": the edge that was never walked
+
+`check_stage_a_no_geometry.py` reported the Stage A path geometry-free while
+its first implementation resolved callees by their LOCAL name. `from
+.revit.collection import expand_host_link_import_model_elements as
+_expand_elements` cut the edge outright: `expand_host_link_import_model_
+elements` was absent from the reachable set, and so was everything only it
+reached. The reported answer was correct -- another path happened to reach the
+same module -- and the method that produced it was not. The reachable count
+went 100 -> 136 once aliases were resolved.
+
+**Rule.** A reachability claim is only as good as the edges the walk can see.
+Before trusting one, enumerate what the resolver *cannot* resolve -- aliased
+imports, computed callees, dynamic dispatch -- and make each one a refusal or
+a resolved edge, never a silently dropped one. The discriminating fixture is
+the one where the unresolvable form is the ONLY path to the thing being
+looked for; a fixture with a second path passes either way.
+
+Proven at `2bf8b2d` against three known-positives (geometry injected into
+`_collect_near_face_w_data`; geometry reachable only via an aliased import;
+geometry added outside the path, which must NOT flag) plus a control on the
+unmutated tree and a second control pinning the 18-function legacy geometry
+population -- because a tree with zero geometry calls would report clean for
+a reason that says nothing about reachability, which the tool now refuses.
+
 ### A fourth recurring shape: the citation that rots
 
 `tests/test_invariants_resolution_cap.py` cited its three claims as `:91`,
@@ -512,6 +537,14 @@ python tools/count_discarded_handlers.py vop_interwoven tools
 # (equal counts prove nothing -- two different populations of 179 both pass).
 semgrep --config .semgrep/vop-rules.yml vop_interwoven tools --json -q > /tmp/sg.json
 python tools/count_discarded_handlers.py vop_interwoven tools --reconcile /tmp/sg.json
+
+# Stage A captures AABBs and parameters only -- never geometry.
+# Walks the call graph from the three functions a Stage A run enters and
+# fails if any reaches a Revit geometry API. REFUSES (exit 2) rather than
+# reporting clean on: an unparseable file, an unresolvable root, a missing
+# or empty scan root, a computed callee inside the path, or a tree with no
+# geometry at all (where "clean" would prove nothing about reachability).
+python tools/check_stage_a_no_geometry.py vop_interwoven
 
 # Run linting (if configured)
 python -m flake8 vop_interwoven/ --max-line-length=120
