@@ -236,3 +236,287 @@ def cap_axes(requested_px, derived_px, max_axis_px=MAX_STAGE_A_AXIS_PX):
         "cap_applied": cap_applied,
         "scale_factor": factor,
     }
+
+
+def feet_per_pixel_at_dpi(view_scale, export_dpi):
+    """View-local feet spanned by one exported pixel at a requested dpi.
+
+    One pixel is 1/dpi paper inches and one paper inch is view_scale/12 model
+    feet, so fpp = view_scale / (12 * dpi). Nothing about the analysis grid
+    enters: cell_size_ft is not a term.
+
+    This is the FORWARD mapping. effective_export_dpi() above is its inverse
+    (dpi = scale / (12 * fpp) once fpp is read back off a rendered rectangle),
+    and the two are composed back to back in
+    tests/test_frame_export_geometry.py rather than each being checked against
+    its own copy -- the defect class CLAUDE.md records as "a quantity computed
+    in two places, never composed".
+    """
+    scale = _positive(view_scale, "view_scale")
+    dpi = _positive(export_dpi, "export_dpi")
+    return scale / (12.0 * dpi)
+
+
+def _extent(rect_uv, name):
+    """(u_ft, v_ft) of a (xmin, ymin, xmax, ymax) rectangle, both > 0."""
+    try:
+        u = float(rect_uv[2]) - float(rect_uv[0])
+        v = float(rect_uv[3]) - float(rect_uv[1])
+    except (TypeError, ValueError, IndexError):
+        raise ValueError("{0} must be a 4-tuple (xmin, ymin, xmax, ymax)".format(name))
+    if u <= 0.0 or v <= 0.0:
+        raise ValueError("{0} must have positive extent on both axes".format(name))
+    return u, v
+
+
+# Relative slack used when snapping a rectangle onto a pixel lattice. A crop
+# edge that lands exactly on a lattice line is a float computation away from
+# landing a last-bit above it, and a bare ceil() would then spend a whole
+# extra pixel. The tolerance is relative to the pixel index, so it stays
+# meaningful at index 10 and at index 9999. It only ever suppresses a
+# sub-milli-pixel overshoot; a real fraction of a pixel still snaps outward,
+# because snapping INWARD would clip rendered content off the crop.
+_LATTICE_EPS = 1.0e-6
+
+
+def _lattice_ceil(value):
+    """Pixels needed to CONTAIN an extent, with the lattice tolerance applied.
+
+    ceil, not round: a lattice that must contain the frame cannot round its
+    last fraction of a pixel away. A half-up rule here clipped a frame
+    spanning 47.25 px to 47 and dropped the top quarter pixel -- caught by
+    tests/test_invariants_frame_export_geometry.py's snap property before it
+    reached a commit, not by reasoning about it.
+    """
+    return max(1, int(math.ceil(float(value) - _LATTICE_EPS)))
+
+
+def frame_export_geometry(frame_uv, crop_uv, view_scale, export_dpi,
+                          fit_direction="horizontal",
+                          max_axis_px=MAX_STAGE_A_AXIS_PX,
+                          min_axis_px=64):
+    """Everything a Stage A export needs, derived from frame B and dpi ONLY.
+
+    THE ANALYSIS GRID IS NOT A TERM. The caller passes rectangles in view-local
+    feet and a dpi; no cell count and no cell size reach this function. That is
+    the whole point of Stage A step 2: before it, the export's pixel size came
+    from ``raster.W * raster.cell_size_ft``, which is ceil(extent/cell)*cell --
+    the frame rounded UP to whole cells -- so changing the analysis resolution
+    silently changed the captured image. effective_export_dpi()'s docstring
+    already said the grid was the wrong denominator for the INVERSE mapping;
+    this makes the forward one agree.
+
+    THE CAP OPERATES ON B. When B's pixels exceed the ceiling, B is not
+    clipped and not re-centred: feet-per-pixel grows until B fits, so the
+    frame stays whole and the RESOLUTION is what drops. ``cap_applied`` and
+    the requested/achieved fpp and dpi record the drop.
+
+    REGISTRATION (decision A, 2026-09-21): A is snapped to B's pixel lattice
+    at the shared achieved fpp. A's corners move OUTWARD to the nearest
+    lattice lines, so A's offset within B is an exact whole number of pixels
+    (``crop_offset_px``) and the two frames can be registered by integer
+    translation with no resampling. Snapping outward can only ever add crop,
+    never clip it.
+
+    B.min remains the single origin: the lattice is anchored there, A's offset
+    is expressed against it once, and ``frame_snapped_uv`` grows away from it
+    rather than around it. Nothing here applies the offset a second time and
+    nothing re-centres B.
+
+    Args:
+        frame_uv: B -- (xmin, ymin, xmax, ymax) view-local feet, the frame the
+            capture is sized for (the annotation-expanded bounds).
+        crop_uv: A -- the narrower model-only rectangle actually rendered, or
+            None when no narrowing applies, in which case A is B. Must lie
+            inside B; it is clamped to B if it does not.
+        view_scale: the view's scale denominator.
+        export_dpi: the REQUESTED dpi.
+        fit_direction: "horizontal" or "vertical" -- which axis Revit's
+            PixelSize sets.
+        max_axis_px: per-axis ceiling, or None for no cap.
+        min_axis_px: floor on B's fitted axis, mirroring the shipped
+            ``max(64, ...)``. A floor RAISES resolution, so it can push a
+            tiny frame above the requested dpi; achieved_export_dpi records
+            that as faithfully as it records a cap.
+
+    Returns a dict. ``requested_px`` is what to hand Revit's PixelSize and
+    ``predicted_derived_px`` is what the other axis must come back as -- and
+    unlike the shipped aspect-ratio prediction that figure is EXACT, because
+    both are whole pixel counts of the same snapped rectangle rather than one
+    inferred from the other through a float ratio.
+    """
+    vertical = str(fit_direction or "horizontal").strip().lower() == "vertical"
+    frame_u_ft, frame_v_ft = _extent(frame_uv, "frame_uv")
+    scale = _positive(view_scale, "view_scale")
+    floor_px = max(1, int(min_axis_px or 1))
+    cap = None if max_axis_px is None else int(_positive(max_axis_px, "max_axis_px"))
+
+    requested_fpp = feet_per_pixel_at_dpi(scale, export_dpi)
+    frame_fit_ft = frame_v_ft if vertical else frame_u_ft
+    frame_der_ft = frame_u_ft if vertical else frame_v_ft
+
+    pre_cap_fit_px = max(floor_px, round_half_up_positive(frame_fit_ft / requested_fpp))
+    pre_cap_der_px = max(1, round_half_up_positive(frame_der_ft / requested_fpp))
+
+    # The cap itself is cap_axes, unchanged and uncopied: it is the pinned
+    # implementation of the two-axis ceiling and carries its own invariant
+    # tests. Step 2 changes only WHAT it is handed -- B's two axes, where it
+    # used to be handed the grid's fitted axis and an aspect ratio taken from
+    # the render crop A.
+    cap_result = cap_axes(pre_cap_fit_px, pre_cap_der_px, cap)
+    accepted_fit_px = max(floor_px, cap_result["accepted_px"])
+
+    # B stays whole and the resolution absorbs the cap: fpp is re-derived from
+    # B's own unclipped extent over the pixels it is allowed to have.
+    accepted_fpp = frame_fit_ft / float(accepted_fit_px)
+
+    # B's lattice size on both axes. The fitted axis is accepted_fit_px by
+    # construction; the other is measured off the same fpp.
+    #
+    # THIS LOOP DOES REAL WORK -- it is NOT a float-last-bit backstop, and an
+    # earlier draft of this comment said it was. Measured over 200,000 random
+    # (extent, scale, dpi, fit) cases: it fires 1,378 times, up to 63
+    # iterations. The reason is a deliberate rounding-rule mismatch. cap_axes
+    # FLOORS its derived-axis prediction (its D5 note explains why: that axis
+    # is a prediction of what Revit computes, and flooring never
+    # over-predicts). B's lattice, by contrast, has to CONTAIN B, so it is
+    # CEILED off the achieved fpp. Ceiling can land a pixel above cap_axes'
+    # floored figure, and at the ceiling that one pixel is the difference
+    # between honouring the cap and breaching it. On the FITTED axis the two
+    # agree exactly and cost nothing: accepted_fpp is frame_fit_ft divided by
+    # accepted_fit_px, so ceiling that quotient returns accepted_fit_px.
+    #
+    # BOUNDARY, and it is a real one rather than a hedge. The loop is bounded
+    # by accepted_fit_px > 1, so it CANNOT establish the ceiling on a frame
+    # whose aspect is steeper than the cap itself: at 1 px on the fitted axis
+    # the derived axis is still over, and there is nowhere left to go. This is
+    # the same corner cap_axes documents for its own backoff, inherited rather
+    # than newly introduced, and an image cannot have zero pixels, so it is a
+    # limit of the problem. In the same 200,000-case sweep it is reached 3
+    # times, all at aspects between 10,496:1 and 53,174:1. Over a second
+    # 200,000-case sweep confined to aspects within 20:1 -- the band the
+    # bounded claim is made over -- it is reached 0 times.
+    #
+    # UNCONFIRMED (no Revit run in this session): that corner is believed
+    # unreachable on the Stage A path because ExportImage clamps aspect at
+    # 10:1, which against a 10,000 px cap would need a 10,000:1 view. The
+    # 10:1 constant itself rests on a single observed view and is recorded
+    # elsewhere in this project as unconfirmed, so this is a reason to think
+    # the corner is unreachable -- not a proof that it is.
+    #
+    # So the claim asserted in tests/test_invariants_frame_export_geometry.py
+    # is the BOUNDED one -- neither axis of B exceeds the ceiling WHILE the
+    # frame's aspect is shallower than the cap -- together with a case that
+    # pins what happens beyond it, rather than a universal that is false.
+    frame_px_u = _lattice_ceil(frame_u_ft / accepted_fpp)
+    frame_px_v = _lattice_ceil(frame_v_ft / accepted_fpp)
+    lattice_corrections = 0
+    while cap is not None and max(frame_px_u, frame_px_v) > cap and accepted_fit_px > 1:
+        accepted_fit_px -= 1
+        accepted_fpp = frame_fit_ft / float(accepted_fit_px)
+        frame_px_u = _lattice_ceil(frame_u_ft / accepted_fpp)
+        frame_px_v = _lattice_ceil(frame_v_ft / accepted_fpp)
+        lattice_corrections += 1
+
+    # A, clamped into B. compute_model_crop() already intersects, so a crop
+    # outside B should be impossible; clamping here means this function is
+    # still total if it ever is, rather than emitting a negative pixel offset.
+    if crop_uv is None:
+        crop_rect = (float(frame_uv[0]), float(frame_uv[1]),
+                     float(frame_uv[2]), float(frame_uv[3]))
+        crop_is_frame = True
+    else:
+        _extent(crop_uv, "crop_uv")
+        crop_rect = (
+            max(float(crop_uv[0]), float(frame_uv[0])),
+            max(float(crop_uv[1]), float(frame_uv[1])),
+            min(float(crop_uv[2]), float(frame_uv[2])),
+            min(float(crop_uv[3]), float(frame_uv[3])),
+        )
+        crop_is_frame = False
+        if crop_rect[2] <= crop_rect[0] or crop_rect[3] <= crop_rect[1]:
+            # A degenerate intersection is not a rectangle to render. Fall
+            # back to B rather than inventing one.
+            crop_rect = (float(frame_uv[0]), float(frame_uv[1]),
+                         float(frame_uv[2]), float(frame_uv[3]))
+            crop_is_frame = True
+
+    fx0, fy0 = float(frame_uv[0]), float(frame_uv[1])
+    i0 = int(math.floor((crop_rect[0] - fx0) / accepted_fpp + _LATTICE_EPS))
+    j0 = int(math.floor((crop_rect[1] - fy0) / accepted_fpp + _LATTICE_EPS))
+    i1 = int(math.ceil((crop_rect[2] - fx0) / accepted_fpp - _LATTICE_EPS))
+    j1 = int(math.ceil((crop_rect[3] - fy0) / accepted_fpp - _LATTICE_EPS))
+    i0 = max(0, min(i0, frame_px_u - 1))
+    j0 = max(0, min(j0, frame_px_v - 1))
+    i1 = min(frame_px_u, max(i1, i0 + 1))
+    j1 = min(frame_px_v, max(j1, j0 + 1))
+
+    # The frame the capture actually REALISES. An image is a whole number of
+    # pixels, so when B's extent is not one -- 47.25 px, say -- the rendered
+    # rectangle cannot be B exactly. It is B rounded OUT to the lattice: the
+    # 48-pixel rectangle that contains B and exceeds it by under one pixel per
+    # axis.
+    #
+    # This is the honest resolution of a tension that cannot be wished away,
+    # and both halves of it were falsified as universals before landing here.
+    # "The lattice contains B" and "the snapped crop stays inside B" are not
+    # simultaneously satisfiable off-lattice: rounding the lattice down clips
+    # the frame's far edge, rounding it up overshoots. Containment wins,
+    # because clipping loses rendered content while overshoot adds at most a
+    # sub-pixel margin of background.
+    #
+    # B.min IS STILL THE ORIGIN. The rectangle grows outward from (fx0, fy0)
+    # only; the minimum corner does not move, so nothing here re-centres B and
+    # the frame reconciliation invariant is untouched.
+    frame_snapped_uv = (
+        fx0,
+        fy0,
+        fx0 + frame_px_u * accepted_fpp,
+        fy0 + frame_px_v * accepted_fpp,
+    )
+    crop_snapped_uv = (
+        fx0 + i0 * accepted_fpp,
+        fy0 + j0 * accepted_fpp,
+        fx0 + i1 * accepted_fpp,
+        fy0 + j1 * accepted_fpp,
+    )
+    crop_px_u = i1 - i0
+    crop_px_v = j1 - j0
+
+    requested_px = crop_px_v if vertical else crop_px_u
+    predicted_derived_px = crop_px_u if vertical else crop_px_v
+
+    return {
+        # --- what to hand Revit -------------------------------------------
+        "requested_px": int(requested_px),
+        "predicted_derived_px": int(predicted_derived_px),
+        "requested_axis": "height" if vertical else "width",
+        "crop_snapped_uv": crop_snapped_uv,
+        # A's whole-pixel position inside B, measured from B.min. This is the
+        # registration decision A asks for: an integer translation, no resample.
+        "crop_offset_px": (int(i0), int(j0)),
+        "crop_px": (int(crop_px_u), int(crop_px_v)),
+        "crop_is_frame": bool(crop_is_frame),
+        # --- frame B -------------------------------------------------------
+        "frame_px": (int(frame_px_u), int(frame_px_v)),
+        # B as passed in, unclipped and un-re-centred. This is the value the
+        # "B stays whole" claim is about.
+        "frame_extent_ft": (frame_u_ft, frame_v_ft),
+        # B rounded OUT to the pixel lattice -- what the capture realises, and
+        # what a decoder must use as the frame rectangle. Contains
+        # frame_uv; exceeds it by less than one pixel on each axis, always at
+        # the max corner, never at the min.
+        "frame_snapped_uv": frame_snapped_uv,
+        # --- requested vs achieved, for every value step 2 moves ----------
+        "requested_export_dpi": float(export_dpi),
+        "achieved_export_dpi": scale / (12.0 * accepted_fpp),
+        "requested_fpp_ft": requested_fpp,
+        "achieved_fpp_ft": accepted_fpp,
+        "pre_cap_px": int(cap_result["pre_cap_px"]),
+        "pre_cap_derived_px": int(cap_result["pre_cap_derived_px"]),
+        "frame_fit_px": int(accepted_fit_px),
+        "cap_applied": bool(cap_result["cap_applied"]),
+        "max_axis_px": cap_result["max_axis_px"],
+        "min_axis_px": int(floor_px),
+        "lattice_corrections": int(lattice_corrections),
+    }
