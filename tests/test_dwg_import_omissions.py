@@ -77,6 +77,7 @@ class _FakeView:
 class _FakeCollector:
     """Stands in for FilteredElementCollector(doc, view.Id).OfClass(...)."""
     _payload = []
+    _raises = None
 
     def __init__(self, _doc, _view_id):
         pass
@@ -85,7 +86,21 @@ class _FakeCollector:
         return self
 
     def ToElements(self):
+        if _FakeCollector._raises is not None:
+            raise _FakeCollector._raises
         return list(_FakeCollector._payload)
+
+
+class _FakeDiag:
+    def __init__(self):
+        self.errors = []
+        self.warnings = []
+
+    def error(self, **kwargs):
+        self.errors.append(kwargs)
+
+    def warn(self, **kwargs):
+        self.warnings.append(kwargs)
 
 
 @pytest.fixture
@@ -215,3 +230,74 @@ def test_a_failed_scan_is_distinguishable_from_nothing_dropped(fake_db):
     assert len(omitted) == 1
     assert omitted[0]["element_id"] is None
     assert "RuntimeError" in omitted[0]["reason"]
+
+
+# --- the enumeration failure that used to vanish ----------------------------
+#
+# When FilteredElementCollector construction or ToElements() raised,
+# _collect_from_dwg_imports converted it to an empty result and returned. The
+# caller's element_id-None sentinel is appended from ITS except block, which
+# never fired because nothing propagated -- so the sidecar recorded
+# `dwg_imports_omitted: []`, documented at the top of this file as "every
+# import found was collected", over a scan that examined nothing at all. The
+# failure also only ever reached _log, never Diagnostics (Refactor Rule #1).
+
+def test_an_enumeration_failure_propagates_rather_than_reporting_empty(fake_db):
+    """The inner handler must not convert the failure into [] -- that is
+    indistinguishable from a view with no imports."""
+    from vop_interwoven.revit import linked_documents
+    _FakeCollector._raises = RuntimeError("collector exploded")
+    try:
+        with pytest.raises(RuntimeError):
+            linked_documents._collect_from_dwg_imports(
+                _FakeDoc(), _FakeView(), cfg=object(), omitted_out=[],
+            )
+    finally:
+        _FakeCollector._raises = None
+
+
+def test_an_enumeration_failure_reaches_the_sentinel_and_diagnostics(fake_db):
+    """End-to-end through the real caller: a raising COLLECTOR (not a
+    monkeypatched function) must produce the element_id-None sentinel AND a
+    Diagnostics error, not an empty list and a print."""
+    from vop_interwoven.revit import linked_documents
+    cfg = types.SimpleNamespace(include_linked_rvt=False, include_dwg_imports=True)
+    omitted, diag = [], _FakeDiag()
+
+    _FakeCollector._raises = RuntimeError("collector exploded")
+    try:
+        elements = linked_documents.collect_all_linked_elements(
+            _FakeDoc(), _FakeView(), cfg, diag=diag, dwg_omitted_out=omitted,
+        )
+    finally:
+        _FakeCollector._raises = None
+
+    assert elements == []
+    assert len(omitted) == 1, (
+        "an enumeration failure examined NO imports; an empty omission list "
+        "would read as a successful scan"
+    )
+    assert omitted[0]["element_id"] is None
+    assert "RuntimeError" in omitted[0]["reason"]
+    assert "collector exploded" in omitted[0]["reason"]
+
+    assert len(diag.errors) == 1, "Refactor Rule #1: the failure must be recorded"
+    assert diag.errors[0]["callsite"] == "collect_all_linked_elements.dwg_imports"
+
+
+def test_a_view_with_no_imports_is_still_an_empty_omission_list(fake_db):
+    """The discrimination control. "No imports in this view" is a successful
+    scan and must stay [] -- otherwise the fix above would just relabel every
+    empty view as a failure."""
+    from vop_interwoven.revit import linked_documents
+    cfg = types.SimpleNamespace(include_linked_rvt=False, include_dwg_imports=True)
+    omitted, diag = [], _FakeDiag()
+
+    _FakeCollector._payload = []
+    elements = linked_documents.collect_all_linked_elements(
+        _FakeDoc(), _FakeView(), cfg, diag=diag, dwg_omitted_out=omitted,
+    )
+
+    assert elements == []
+    assert omitted == []
+    assert diag.errors == []

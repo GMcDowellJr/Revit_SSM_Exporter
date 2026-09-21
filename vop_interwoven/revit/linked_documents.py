@@ -237,6 +237,17 @@ def collect_all_linked_elements(doc, view, cfg, diag=None, status=None,
                     "reason": "DWG import scan failed; no import was examined "
                               "({0}: {1})".format(type(e).__name__, e),
                 })
+            if diag is not None:
+                # Refactor Rule #1: recorded in Diagnostics, not only printed.
+                # The RVT branch above already does this; the DWG branch did
+                # not, so a failed DWG scan left no diagnostic at all.
+                diag.error(
+                    phase="linked_documents",
+                    callsite="collect_all_linked_elements.dwg_imports",
+                    message="Error collecting from DWG imports: {0}".format(e),
+                    exc=e,
+                    view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+                )
             _log("ERROR", "Error collecting from DWG imports: {0}".format(e))
 
     return elements
@@ -843,8 +854,18 @@ def _collect_from_dwg_imports(doc, view, cfg, omitted_out=None):
         collector = FilteredElementCollector(doc, view.Id)
         import_instances = collector.OfClass(ImportInstance).ToElements()
     except Exception as e:
+        # RE-RAISED, not converted to an empty result. Returning [] here made
+        # an enumeration failure indistinguishable from "this view has no
+        # imports": the caller's `element_id: None` sentinel is appended from
+        # its own except block, which never fired because nothing propagated,
+        # so the sidecar recorded `dwg_imports_omitted: []` -- which this
+        # module documents as "every import found was collected" -- over a
+        # scan that examined nothing at all. That is the exact coercion the
+        # three-state contract exists to prevent, and swallowing it also
+        # violated Refactor Rule #1 (the failure reached _log, never
+        # Diagnostics). collect_all_linked_elements records both.
         _log("WARN", "Failed to collect ImportInstance elements: {0}".format(e))
-        return proxies
+        raise
 
     if not import_instances:
         _log("DEBUG", "No DWG/DXF imports found in view")
