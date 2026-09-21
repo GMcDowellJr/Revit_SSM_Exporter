@@ -1,6 +1,6 @@
 """Stage A step 4 -- bbox records: annotation (absolute view UV) + model 3D.
 
-Two things are under test, and they fail for different reasons:
+Three things are under test, and they fail for different reasons:
 
 1. ANNOTATION bboxes are recorded in ABSOLUTE view UV, so a cap re-centre of
    frame B cannot change them. The gate. See
@@ -15,6 +15,13 @@ Two things are under test, and they fail for different reasons:
    an identity transform, so an identity-only fixture would pass against the
    exact defect revit/annotation.py already carries (D2 -- raw Min/Max with
    Transform discarded). The rotated case is the one that tells them apart.
+
+3. bbox_3d is NOT uniform across the annotation pass. Grids and levels reach
+   it by category rather than by view-specificity and do have model-space
+   extents, so they carry a real AABB where a text note carries
+   "not_applicable". The fixtures put both kinds side by side, because a
+   datum-only fixture cannot tell "datums get an AABB" from "everything
+   does" -- which was the original bug.
 """
 import contextlib
 import sys
@@ -129,11 +136,19 @@ def _raster(bounds_xy=None):
     return types.SimpleNamespace(view_basis=_PLAN_BASIS, bounds_xy=bounds_xy)
 
 
-def _collect_anno(doc, ids, raster, diag=None):
+def _collect_anno(doc, ids, raster, diag=None, membership="owner_view"):
+    """membership: a basis string applied to every id, or an explicit
+    {id: basis} map, or None to supply no basis at all."""
+    if membership is None:
+        basis_map = None
+    elif isinstance(membership, dict):
+        basis_map = membership
+    else:
+        basis_map = dict((eid.IntegerValue, membership) for eid in ids)
     with _install_fake_revit_db():
         return color_id_buffer._collect_annotation_bbox_data(
             doc, view=object(), resolved_ids=ids, raster=raster,
-            diag=diag, view_id=42,
+            diag=diag, view_id=42, membership_basis_by_id=basis_map,
         )
 
 
@@ -156,8 +171,8 @@ def test_annotation_bbox_is_invariant_under_b_translation():
     b_before = (0.0, 0.0, 100.0, 80.0)
     b_after = (-37.5, 12.25, 62.5, 92.25)
 
-    rec_before, _ = _collect_anno(doc, [elem.Id], _raster(b_before))
-    rec_after, _ = _collect_anno(doc, [elem.Id], _raster(b_after))
+    rec_before, _, _ = _collect_anno(doc, [elem.Id], _raster(b_before))
+    rec_after, _, _ = _collect_anno(doc, [elem.Id], _raster(b_after))
 
     uv_before = rec_before["7001"]["bbox_uv"]
     uv_after = rec_after["7001"]["bbox_uv"]
@@ -189,7 +204,7 @@ def test_annotation_bbox_3d_is_not_applicable_never_unavailable():
     elem = _FakeElement(7002, cat, _FakeBBox((0, 0, 0), (5, 1, 0)))
     doc = _FakeDoc([elem])
 
-    rec, _ = _collect_anno(doc, [elem.Id], _raster())
+    rec, _, _ = _collect_anno(doc, [elem.Id], _raster())
 
     bbox_3d = rec["7002"]["bbox_3d"]
     assert bbox_3d["state"] == "not_applicable"
@@ -204,7 +219,7 @@ def test_annotation_without_a_bbox_is_unavailable_with_a_reason_not_omitted():
     doc = _FakeDoc([elem])
     diag = _FakeDiag()
 
-    rec, sources = _collect_anno(doc, [elem.Id], _raster(), diag=diag)
+    rec, sources, _ = _collect_anno(doc, [elem.Id], _raster(), diag=diag)
 
     assert "7003" in rec, "element with no bbox was dropped from the map"
     assert rec["7003"]["bbox_uv"]["state"] == "unavailable"
@@ -222,7 +237,7 @@ def test_annotation_bbox_records_which_get_boundingbox_rung_answered():
     from_model = _FakeElement(8002, cat, None, model_bbox=_FakeBBox((2, 2, 0), (3, 3, 0)))
     doc = _FakeDoc([from_view, from_model])
 
-    rec, sources = _collect_anno(doc, [from_view.Id, from_model.Id], _raster())
+    rec, sources, _ = _collect_anno(doc, [from_view.Id, from_model.Id], _raster())
 
     assert rec["8001"]["bbox_source"] == "view"
     assert rec["8002"]["bbox_source"] == "model"
@@ -241,10 +256,80 @@ def test_annotation_bbox_unavailable_when_capture_has_no_view_basis():
     elem = _FakeElement(7004, cat, _FakeBBox((0, 0, 0), (1, 1, 0)))
     doc = _FakeDoc([elem])
 
-    rec, _ = _collect_anno(doc, [elem.Id], types.SimpleNamespace(view_basis=None))
+    rec, _, _ = _collect_anno(doc, [elem.Id], types.SimpleNamespace(view_basis=None))
 
     assert rec["7004"]["bbox_uv"]["state"] == "unavailable"
     assert "view basis" in rec["7004"]["bbox_uv"]["reason"]
+
+
+# --- datums are NOT view-specific annotations (Codex P2, verified) --------
+
+def test_a_datum_in_the_annotation_pass_gets_a_real_3d_aabb():
+    """Grids and levels reach the annotation pass by CATEGORY, not by
+    view-specificity (split_stage_a_pass_membership's "datum_category"
+    basis), and they have model-space extents. Writing "not_applicable" for
+    them would be a false claim about the element and would stop a consumer
+    ever recovering the 3D record for that subset.
+    """
+    grid = _FakeElement(9101, _FakeCategory("Grids", 40),
+                        _FakeBBox((0, 0, 0), (100, 0, 12)))
+    text = _FakeElement(9102, _FakeCategory("Text Notes", 11),
+                        _FakeBBox((5, 5, 0), (9, 6, 0)))
+    doc = _FakeDoc([grid, text])
+
+    rec, _, bases = _collect_anno(
+        doc, [grid.Id, text.Id], _raster(),
+        membership={9101: "datum_category", 9102: "owner_view"},
+    )
+
+    # The datum carries a real extent...
+    grid_3d = rec["9101"]["bbox_3d"]
+    assert grid_3d["state"] == "value"
+    assert grid_3d["value"]["min"] == pytest.approx([0.0, 0.0, 0.0])
+    assert grid_3d["value"]["max"] == pytest.approx([100.0, 0.0, 12.0])
+    assert rec["9101"]["membership_basis"] == "datum_category"
+
+    # ...while the true annotation beside it in the SAME pass does not. Both
+    # in one fixture on purpose: a datum-only fixture could not tell "datums
+    # get an AABB" from "everything gets an AABB".
+    assert rec["9102"]["bbox_3d"]["state"] == "not_applicable"
+    assert rec["9102"]["membership_basis"] == "owner_view"
+
+    assert bases == {"owner_view": 1, "datum_category": 1, "unknown": 0}
+
+
+def test_an_unknown_membership_basis_is_unavailable_not_guessed():
+    """Without the basis neither answer is honest, so the record says so
+    rather than defaulting to not_applicable and asserting something false
+    about a possible datum."""
+    elem = _FakeElement(9103, _FakeCategory("Grids", 40),
+                        _FakeBBox((0, 0, 0), (10, 0, 3)))
+    doc = _FakeDoc([elem])
+
+    rec, _, bases = _collect_anno(doc, [elem.Id], _raster(), membership=None)
+
+    bbox_3d = rec["9103"]["bbox_3d"]
+    assert bbox_3d["state"] == "unavailable"
+    assert "membership basis" in bbox_3d["reason"]
+    assert rec["9103"]["membership_basis"] is None
+    assert bases["unknown"] == 1
+    # The UV half is unaffected -- only the 3D claim was undecidable.
+    assert rec["9103"]["bbox_uv"]["state"] == "value"
+
+
+def test_a_datum_whose_bbox_is_missing_is_unavailable_not_not_applicable():
+    """A datum genuinely has an extent, so failing to read it is a failed
+    read -- the one case where "unavailable" is the honest answer for an
+    element in the annotation pass."""
+    grid = _FakeElement(9104, _FakeCategory("Grids", 40), None, model_bbox=None)
+    doc = _FakeDoc([grid])
+
+    rec, _, _ = _collect_anno(
+        doc, [grid.Id], _raster(), membership={9104: "datum_category"})
+
+    bbox_3d = rec["9104"]["bbox_3d"]
+    assert bbox_3d["state"] == "unavailable"
+    assert "datum" in bbox_3d["reason"]
 
 
 # --- 2. MODEL side: the 3D AABB, and the D2 defect it must not reproduce ---

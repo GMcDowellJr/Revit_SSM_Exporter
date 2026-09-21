@@ -2090,7 +2090,7 @@ def stage_a_pass_membership(elem, capture_view_id_int=None, datum_category_ids=N
 
 
 def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
-                                  datum_category_ids=None):
+                                  datum_category_ids=None, basis_out=None):
     """Partition ``elements`` into the Stage A model and annotation passes.
 
     Returns ``(model, annotation, unresolved, basis_counts)``. ``unresolved``
@@ -2107,6 +2107,17 @@ def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
     the live enum. A caller that already resolved them passes them in; a
     caller that passes an empty set gets ownership-only placement, which is
     the pre-2026-09-21 behaviour and leaves datums unpainted.
+
+    ``basis_out`` (optional dict) receives ``{element_id_int: basis}`` for
+    every PLACED element, so a caller can tell an element placed by
+    ``owner_view`` from one placed by ``datum_category`` without asking a
+    second time. That distinction is not cosmetic: a view-specific
+    annotation has no model-space extent, while a grid or a level is a
+    document-wide datum that does, and a caller that cannot tell them apart
+    can only guess about one of them. Populated as an out-parameter rather
+    than returned so the existing 4-tuple contract and its callers are
+    unchanged (same shape as ``names_out`` above and ``source_out`` in
+    color_id_buffer's element split).
     """
     datum_error = None
     datum_names = {}
@@ -2150,6 +2161,11 @@ def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
             annotation.append(elem)
         else:
             unresolved.append((elem, record))
+            continue
+        if basis_out is not None:
+            elem_id_int = _stage_a_element_id_int(elem)
+            if elem_id_int is not None:
+                basis_out[elem_id_int] = record["basis"]
 
     if unresolved and diag is not None:
         diag.warn(

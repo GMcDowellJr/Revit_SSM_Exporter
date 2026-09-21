@@ -113,6 +113,20 @@ def _raster():
     )
 
 
+class _Pt(object):
+    def __init__(self, x, y, z):
+        self.X, self.Y, self.Z = float(x), float(y), float(z)
+
+
+class _BBox(object):
+    """A BoundingBoxXYZ with settable extents (the shared fake is fixed at
+    0..1, which cannot tell one element's record from another's)."""
+    def __init__(self, mn, mx):
+        self.Min = _Pt(*mn)
+        self.Max = _Pt(*mx)
+        self.Transform = None
+
+
 def _elements():
     """Three model elements and three annotations, interleaved.
 
@@ -122,13 +136,21 @@ def _elements():
     """
     return [
         FakeElement(1001, MODEL_CAT),                                  # model
-        FakeElement(2001, ANNO_CAT, owner_view_id=VIEW_ID),            # anno
+        FakeElement(2001, ANNO_CAT, owner_view_id=VIEW_ID,
+                    bbox=_BBox((25, 20, 0), (31, 23, 0))),             # anno
         FakeElement(1002, MODEL_CAT),                                  # model
-        FakeElement(2002, ANNO_CAT, owner_view_id=VIEW_ID),            # anno
+        FakeElement(2002, ANNO_CAT, owner_view_id=VIEW_ID,
+                    bbox=_BBox((40, 30, 0), (47, 34, 0))),             # anno
         FakeElement(1003, MODEL_CAT),                                  # model
-        FakeElement(2003, LINES_CAT, owner_view_id=VIEW_ID),           # detail line
-        FakeElement(3001, GRID_CAT),                                   # grid: OWNERLESS
-        FakeElement(3002, GRID_HEAD_CAT),                              # grid head
+        FakeElement(2003, LINES_CAT, owner_view_id=VIEW_ID,
+                    bbox=_BBox((50, 40, 0), (58, 41, 0))),             # detail line
+        # Datums: OWNERLESS, and with a real model-space extent -- a grid
+        # spans the building and rises through it, which is the whole reason
+        # its bbox_3d is a value and an annotation's is not_applicable.
+        FakeElement(3001, GRID_CAT,
+                    bbox=_BBox((10, 10, 0), (110, 10, 12))),           # grid
+        FakeElement(3002, GRID_HEAD_CAT,
+                    bbox=_BBox((10, 8, 0), (13, 12, 0))),              # grid head
     ]
 
 
@@ -485,6 +507,138 @@ def test_the_annotation_pass_refuses_without_the_model_passs_geometry(tmp_path):
 
 
 # --- outputs do not collide ------------------------------------------------
+
+# --- Stage A step 4 bbox records, end to end (Codex PR #212 review) --------
+
+def test_the_fixture_actually_supplies_bboxes(tmp_path):
+    """CONTROL, and it is not ceremony.
+
+    Before FakeElement grew a get_BoundingBox, every bbox read in this file
+    raised AttributeError and came back None, so the whole bbox payload was
+    "unavailable" and each assertion below would have passed against a
+    capture that collected nothing. Pin reachability first.
+    """
+    _model, anno, _geom, _doc, _view, _diag = _run_both_passes(tmp_path)
+    sidecar = json.load(open(anno["sidecar_path"]))
+    states = [e["bbox_uv"]["state"]
+              for e in sidecar["annotation_bbox_map"].values()]
+    assert states and all(st == "value" for st in states), (
+        "the fake no longer supplies bboxes; the bbox tests below are vacuous")
+
+
+def test_a_datum_carries_a_real_3d_extent_where_an_annotation_does_not(tmp_path):
+    """Grids and levels enter this pass by CATEGORY and have model-space
+    extents; text and dimensions enter by OwnerViewId and do not.
+
+    Both kinds are in one fixture deliberately -- a datum-only fixture could
+    not tell "datums get an AABB" from "everything does", which is exactly
+    the bug this replaced (an unconditional not_applicable).
+    """
+    _model, anno, _geom, _doc, _view, _diag = _run_both_passes(tmp_path)
+    entries = json.load(open(anno["sidecar_path"]))["annotation_bbox_map"]
+
+    grid = entries[str(3001)]
+    assert grid["membership_basis"] == "datum_category"
+    assert grid["bbox_3d"]["state"] == "value"
+    assert grid["bbox_3d"]["value"]["max"][2] == pytest.approx(12.0), (
+        "the datum's model-space height is what makes it a datum")
+
+    text = entries[str(2001)]
+    assert text["membership_basis"] == "owner_view"
+    assert text["bbox_3d"]["state"] == "not_applicable"
+
+    counts = json.load(open(anno["sidecar_path"]))[
+        "annotation_bbox_status"]["membership_basis_counts"]
+    assert counts["datum_category"] == 2 and counts["owner_view"] == 3
+    assert counts["unknown"] == 0
+
+
+def test_a_capture_without_a_raster_still_records_bboxes(tmp_path, monkeypatch):
+    """raster=None is the DOCUMENTED DEFAULT of this entry point.
+
+    Before the fallback, it fixed the basis at None and recorded every
+    bbox_uv unavailable while the export still returned a successful TIFF --
+    a capture that reports success carrying none of the payload it exists to
+    produce.
+
+    make_view_basis is monkeypatched because the shared FakeView exposes no
+    Origin/RightDirection/UpDirection/ViewType, so the real one cannot run
+    here. That means this pins the WIRING -- raster=None reaches the
+    fallback and the capture uses what it returns -- and not the real
+    make_view_basis, which no test in this repo can reach.
+    """
+    calls = []
+
+    def _fake_make_view_basis(view, diag=None):
+        calls.append(view)
+        return _PLAN_BASIS
+
+    monkeypatch.setattr(
+        "vop_interwoven.revit.view_basis.make_view_basis", _fake_make_view_basis)
+
+    elements = _elements()
+    view = FakeViewPlan(view_id=VIEW_ID)
+    doc = _SizedDoc(elements=elements, link_instances=[],
+                    categories=[MODEL_CAT, ANNO_CAT, LINES_CAT, GRID_CAT,
+                                GRID_HEAD_CAT])
+    cfg = Config()
+    cfg.include_linked_rvt = False
+    cfg.debug_dump_path = str(tmp_path)
+    diag = FakeDiag()
+    geom = {}
+
+    with install_fake_revit_db():
+        color_id_buffer.export_color_id_buffer_view(
+            doc, view, elements=_model_pass_elements(elements), cfg=cfg,
+            diag=diag, raster=_raster(), elem_cache=None, geometry_out=geom)
+        anno = color_id_buffer.export_annotation_color_id_buffer_view(
+            doc, view, cfg, geom, diag=diag, raster=None, elements=elements)
+
+    sidecar = json.load(open(anno["sidecar_path"]))
+    status = sidecar["annotation_bbox_status"]
+
+    assert calls, "raster=None did not reach the fallback basis at all"
+    assert status["view_basis_source"] == {
+        "state": "value", "value": "make_view_basis"}
+    states = [e["bbox_uv"]["state"]
+              for e in sidecar["annotation_bbox_map"].values()]
+    assert states and all(st == "value" for st in states), (
+        "raster=None still produced an empty bbox payload")
+
+
+def test_an_unavailable_view_basis_is_reported_not_silently_empty(tmp_path):
+    """The other half of the same defect: when no basis can be built at all,
+    the status must SAY so. Otherwise a view whose every bbox_uv is
+    unavailable is indistinguishable from a view with no annotations.
+
+    The fakes expose no ViewType, so the real make_view_basis raises here --
+    which makes this the natural unmutated fixture for the failure path.
+    """
+    elements = _elements()
+    view = FakeViewPlan(view_id=VIEW_ID)
+    doc = _SizedDoc(elements=elements, link_instances=[],
+                    categories=[MODEL_CAT, ANNO_CAT, LINES_CAT, GRID_CAT,
+                                GRID_HEAD_CAT])
+    cfg = Config()
+    cfg.include_linked_rvt = False
+    cfg.debug_dump_path = str(tmp_path)
+    diag = FakeDiag()
+    geom = {}
+
+    with install_fake_revit_db():
+        color_id_buffer.export_color_id_buffer_view(
+            doc, view, elements=_model_pass_elements(elements), cfg=cfg,
+            diag=diag, raster=_raster(), elem_cache=None, geometry_out=geom)
+        anno = color_id_buffer.export_annotation_color_id_buffer_view(
+            doc, view, cfg, geom, diag=diag, raster=None, elements=elements)
+
+    status = json.load(open(anno["sidecar_path"]))["annotation_bbox_status"]
+    assert status["view_basis_source"]["state"] == "unavailable"
+    assert status["view_basis_source"]["reason"]
+    # The count is still honest about how many elements were examined, so
+    # "no basis" never reads as "no annotations".
+    assert status["count"] == 5
+
 
 def test_the_two_passes_write_separate_files(tmp_path):
     model_result, anno_result, geom, doc, view, diag = _run_both_passes(tmp_path)

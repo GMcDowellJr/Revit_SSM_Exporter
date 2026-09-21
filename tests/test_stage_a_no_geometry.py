@@ -98,12 +98,12 @@ def test_the_annotation_capture_pass_is_inside_the_checked_scope(mutable_tree):
     """
     target = mutable_tree / "color_id_buffer.py"
     source = target.read_text()
-    needle = '    vb = getattr(raster, "view_basis", None) if raster is not None else None\n    out = {}\n'
+    needle = "    basis_by_id = membership_basis_by_id or {}\n"
     assert source.count(needle) == 1, (
         "anchor inside _collect_annotation_bbox_data moved; update this test")
     source = source.replace(
         needle,
-        "    _leak = view.get_Geometry(None)  # injected by the test\n" + needle,
+        needle + "    _leak = view.get_Geometry(None)  # injected by the test\n",
     )
     target.write_text(source)
 
