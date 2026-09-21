@@ -166,7 +166,8 @@ class LinkCollectionStatus(object):
             )
 
 
-def collect_all_linked_elements(doc, view, cfg, diag=None, status=None):
+def collect_all_linked_elements(doc, view, cfg, diag=None, status=None,
+                                dwg_omitted_out=None):
     """Collect all elements from linked RVT files and DWG imports.
 
     Args:
@@ -174,6 +175,9 @@ def collect_all_linked_elements(doc, view, cfg, diag=None, status=None):
         view: Revit View
         cfg: Config object with linked document settings
         diag: Optional Diagnostics instance
+        dwg_omitted_out: Optional list, passed straight to
+            _collect_from_dwg_imports() so a DWG import the collector drops
+            is recorded rather than silently absent. See that function.
         status: Optional LinkCollectionStatus. When supplied, any RVT
             collection failure that silently shortens the returned list marks
             it incomplete -- required by callers that would otherwise read a
@@ -217,10 +221,22 @@ def collect_all_linked_elements(doc, view, cfg, diag=None, status=None):
     # Collect from DWG/DXF imports
     if getattr(cfg, 'include_dwg_imports', False):
         try:
-            dwg_elements = _collect_from_dwg_imports(doc, view, cfg)
+            dwg_elements = _collect_from_dwg_imports(
+                doc, view, cfg, omitted_out=dwg_omitted_out,
+            )
             elements.extend(dwg_elements)
             _log("INFO", "Collected {0} elements from DWG imports".format(len(dwg_elements)))
         except Exception as e:
+            if dwg_omitted_out is not None:
+                # The whole DWG scan failed, so NO import was examined: an
+                # empty omission list would otherwise read as "nothing was
+                # dropped" when the truth is "nothing was looked at".
+                dwg_omitted_out.append({
+                    "element_id": None,
+                    "state": "unavailable",
+                    "reason": "DWG import scan failed; no import was examined "
+                              "({0}: {1})".format(type(e).__name__, e),
+                })
             _log("ERROR", "Error collecting from DWG imports: {0}".format(e))
 
     return elements
@@ -789,20 +805,30 @@ def _collect_from_revit_links(doc, view, cfg, diag=None, status=None):
     return proxies
 
 
-def _collect_from_dwg_imports(doc, view, cfg):
+def _collect_from_dwg_imports(doc, view, cfg, omitted_out=None):
     """Collect elements from DWG/DXF imports.
 
     Args:
         doc: Revit Document
         view: Revit View
         cfg: Config object
+        omitted_out: Optional list. Every ImportInstance this function finds
+            but does NOT return is appended as
+            {"element_id": int | None, "state": "unavailable", "reason": str}
+            so the omission is visible in the capture record instead of
+            silent. An omitted import painted no pixels, so it is correctly
+            absent from the TIFF -- but "not in the drawing" and "dropped by
+            the collector" must not look the same to whoever reads the
+            sidecar (Greg, 2026-09-21).
 
     Returns:
         List of LinkedElementProxy objects
 
     Commentary:
         DWG imports appear as ImportInstance elements with geometry.
-        Only model-level (non-view-specific) imports contribute to 3D occupancy.
+        Both model-level and view-specific ("this view only") imports are
+        collected; view-specificity is recorded as a tag on the capture
+        record rather than used to drop the import.
     """
     from Autodesk.Revit.DB import (
         FilteredElementCollector,
@@ -829,42 +855,48 @@ def _collect_from_dwg_imports(doc, view, cfg):
     # Process each import
     for import_inst in import_instances:
         try:
-            # Only include model-level imports (not view-specific)
+            # View-specific ("this view only") imports are COLLECTED, not
+            # dropped (Greg, 2026-09-21). This was the only place such an
+            # import was decided, and it used to skip them; revit/collection_
+            # policy.py independently excludes every ImportInstance from the
+            # HOST pass by type name, so a view-specific DWG previously
+            # reached no pass at all -- never painted, no record. It is now
+            # painted like any other import and TAGGED, so post can attribute
+            # it and the Step 3 annotation pass (whose OwnerViewId membership
+            # would also claim it) can recognise what this pass already has.
+            # The tag is read off the element in color_id_buffer.py's
+            # _near_face_w_view_specific, not carried on the proxy.
             #
-            # OBSERVED (Stage A step 1, 2026-09-21): this is the ONLY place a
-            # view-specific ("this view only") DWG is decided, and it drops
-            # it. revit/collection_policy.py independently excludes every
-            # ImportInstance from the HOST pass by type name, so a
-            # view-specific import reaches NO pass at all today: it is not
-            # painted and gets no record. Which pass should own it -- this
-            # one, or the annotation pass whose OwnerViewId membership would
-            # also claim it -- is open; see the Stage A step 1 RAISE.
-            is_view_specific = getattr(import_inst, "ViewSpecific", False)
-            if is_view_specific:
-                _log("DEBUG", "Skipping view-specific import {0}".format(import_inst.Id))
-                continue
+            # UNCONFIRMED: that get_BoundingBox(view) behaves the same for a
+            # view-specific import as for a model-space one has not been run.
 
             # Get import geometry bbox (prefer view-specific bbox so crop/section is respected)
             bbox = import_inst.get_BoundingBox(view)
             if bbox is None or bbox.Min is None or bbox.Max is None:
-                # DEFECT, documented not patched (Stage A step 1, 2026-09-21):
-                # this "fallback" is DEAD. The assignment is followed by an
-                # unconditional `continue`, so the model bbox is computed and
-                # thrown away and the import is dropped from the capture --
-                # never painted, never recorded. The two readings ("fall back
-                # to the model bbox" vs "skip an import with no view bbox")
-                # have opposite outcomes for a DWG that sits outside the
-                # view crop, and which one is wanted is Greg's call, not a
-                # thing to guess while fixing a typo -- it is the open "DWG
-                # outside the crop: record it or omit it?" question. Patching
-                # it would change which DWGs are painted, which is a behavior
-                # change this additive step does not carry.
+                # The import is OMITTED from the paint set -- it contributes
+                # no pixels, matching the locked "a DWG outside the crop is
+                # not in the TIFF and not analyzed" decision -- but the
+                # omission is RECORDED rather than silent (Greg, 2026-09-21).
+                #
+                # The model-bbox fallback that used to sit here was dead code:
+                # it assigned `bbox` and then fell straight into this same
+                # unconditional `continue`, so it never took effect. Reviving
+                # it would start painting DWGs that have no view bbox, which
+                # is the opposite decision; it is deleted rather than fixed.
                 #
                 # UNCONFIRMED: whether get_BoundingBox(view) actually returns
                 # None for an ImportInstance outside the crop (vs returning a
                 # bbox that is simply off-frame) has NOT been run against the
-                # Revit API in this session.
-                bbox = import_inst.get_BoundingBox(None)
+                # Revit API in this session. If it is the latter, this branch
+                # is not the off-crop path and off-crop imports are painted.
+                if omitted_out is not None:
+                    omitted_out.append({
+                        "element_id": getattr(getattr(import_inst, "Id", None),
+                                              "IntegerValue", None),
+                        "state": "unavailable",
+                        "reason": "view bounding box unusable (None or with a None "
+                                  "corner); import omitted from the paint set",
+                    })
                 _log("DEBUG", "Import {0} has no valid bbox".format(import_inst.Id))
                 continue
 
@@ -904,6 +936,13 @@ def _collect_from_dwg_imports(doc, view, cfg):
             proxies.append(proxy)
 
         except Exception as e:
+            if omitted_out is not None:
+                omitted_out.append({
+                    "element_id": getattr(getattr(import_inst, "Id", None),
+                                          "IntegerValue", None),
+                    "state": "unavailable",
+                    "reason": "{0}: {1}".format(type(e).__name__, e),
+                })
             _log("ERROR", "Error processing import instance {0}: {1}".format(import_inst.Id, e))
             continue
 

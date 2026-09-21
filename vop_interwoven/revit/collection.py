@@ -327,11 +327,15 @@ def is_element_visible_in_view(elem, view):
     return True
 
 
-def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None, elem_cache=None):
+def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None,
+                                           elem_cache=None, dwg_omitted_out=None):
     """Expand element list to include linked/imported model elements.
 
     Args:
         elem_cache: Optional ElementCache for bbox reuse (Phase 2)
+        dwg_omitted_out: Optional list, passed through to
+            collect_all_linked_elements() so a dropped DWG import is recorded
+            in the capture instead of being silently absent.
 
     Returns:
         List of element wrappers with transform info plus bbox provenance.
@@ -418,7 +422,9 @@ def expand_host_link_import_model_elements(doc, view, elements, cfg, diag=None, 
 
     # Collect and add linked/imported elements
     try:
-        linked_proxies = collect_all_linked_elements(doc, view, cfg, diag=diag)
+        linked_proxies = collect_all_linked_elements(
+            doc, view, cfg, diag=diag, dwg_omitted_out=dwg_omitted_out,
+        )
 
         for proxy in linked_proxies:
             bbox, bbox_source = resolve_element_bbox(
