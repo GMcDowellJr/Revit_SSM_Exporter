@@ -11,10 +11,13 @@ the whole record rather than field by field:
      ``test_a_failed_read_is_unavailable_never_false`` is the one that matters:
      a read that RAISES must never come back as ``False`` -- that coercion is
      what made ``applied_smooth_edges``'s "unchanged" unreadable, per CLAUDE.md.
-  2. **Additive only.** ``test_sidecar_gains_exactly_two_top_level_keys``
+  2. **Additive only.** ``test_sidecar_top_level_keys_are_additive_only``
      compares the written sidecar's top-level keys against the frozen
      pre-change set, so an "additive" change that renamed or dropped an
-     existing key fails here rather than downstream in the decoder.
+     existing key fails here rather than downstream in the decoder. Its
+     name used to carry a count ("exactly_two") that was stale by the
+     time a third key landed -- the same way a line-number citation rots,
+     so the count now lives only in the assertion.
 
 ``test_record_is_captured_before_the_view_template_is_detached`` is the
 ordering pin. Stage A detaches the view template early on; a record captured
@@ -565,7 +568,7 @@ def test_record_survives_a_total_capture_failure_as_unavailable(tmp_path, monkey
 # --- additive-only ----------------------------------------------------------
 
 
-def test_sidecar_gains_exactly_two_top_level_keys(tmp_path):
+def test_sidecar_top_level_keys_are_additive_only(tmp_path):
     doc, view, elements = _furnished_world()
     result = _export(doc, view, elements, _cfg(tmp_path), FakeDiag(), _raster())
 
@@ -579,7 +582,23 @@ def test_sidecar_gains_exactly_two_top_level_keys(tmp_path):
         "phase_swap_element_set_audit",
         # Stage A step 1.
         "dwg_imports_omitted",
+        # Stage A step 2: the frame-derived export geometry, including the
+        # requested-vs-achieved dpi/px/fpp triple and decision A's
+        # whole-pixel registration offset.
+        "export_frame",
     }
+
+
+def test_the_frozen_key_set_is_not_vacuous(tmp_path):
+    """Control for the test above. If the export ever stopped writing a
+    sidecar, or the fixture stopped reaching the record, both of its
+    assertions would hold over an empty key set and report additive-only
+    forever. This repo has shipped a check that passed by not running."""
+    doc, view, elements = _furnished_world()
+    result = _export(doc, view, elements, _cfg(tmp_path), FakeDiag(), _raster())
+    keys = set(result["metadata"])
+    assert len(SIDECAR_KEYS_BEFORE) >= 10
+    assert len(keys) > len(SIDECAR_KEYS_BEFORE)
 
 
 def test_record_round_trips_through_the_written_sidecar_file(tmp_path):

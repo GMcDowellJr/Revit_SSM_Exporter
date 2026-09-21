@@ -265,6 +265,40 @@ def _view_signature(doc_obj, view_obj, view_mode_val, cfg_obj=None, elem_cache=N
     """Enhanced signature with element fingerprints for position/size tracking.
 
     Must be module-level: imported by vop_interwoven.streaming.
+
+    KNOWN GAP, DOCUMENTED NOT PATCHED: THE SIGNATURE DOES NOT COVER THE
+    ANNOTATION FRAME.
+
+    What it does cover is more than it looks: view_mode, the view's Scale, a
+    crop-box fingerprint and the config hash all feed the blob below, so a
+    re-cropped, re-scaled or re-configured view does invalidate.
+
+    What it does not cover is annotation. The element fingerprints come from
+    a collector filtered by collection_policy.should_include_element, whose
+    step 4 admits CategoryType.Model and excludes every other category type
+    -- verified, not inferred: Text Notes, Dimensions and Generic Annotations
+    all come back (False, "non_model_category"). But the raster's bounds are
+    the ANNOTATION-expanded frame (view_basis.resolve_view_bounds ->
+    compute_annotation_extents), and Stage A now sizes its capture from that
+    frame directly.
+
+    So moving, adding or deleting a tag, dimension or text note changes the
+    frame, changes the exported image, and does not change this signature. A
+    cached capture can be served for a view whose frame has moved. This
+    predates Stage A step 2 -- the grid's W/H derived from the same bounds --
+    but step 2 makes the frame the capture's defining quantity rather than an
+    input to a cell count, so the consequence is larger now.
+
+    NOT PATCHED HERE because cache policy is deferred until timing data
+    exists, and widening this signature is a cache decision with a cost this
+    repo cannot yet measure. The cheap first pass, if it is wanted, is a
+    COARSE check on the resolved bounds rectangle -- it is already computed
+    by the time a capture runs, it is four floats, and it catches an
+    annotation-driven frame change without fingerprinting every annotation in
+    the view. That is a proposal, not a decision.
+
+    tests/test_view_signature_annotation_gap.py pins this as it stands, so
+    the boundary changes loudly rather than silently.
     """
     import json
     import hashlib
@@ -1793,6 +1827,22 @@ def init_view_raster(doc, view, cfg, diag=None):
                 phase="pipeline",
                 callsite="init_view_raster",
                 message="Exception in init_view_raster: {}".format(e),
+                exc=e,
+            )
+    # The annotation frame as computed, before the cap envelope clipped and
+    # re-centred it. Stage A sizes its capture against this; the grid above
+    # keeps bounds_xy exactly as it always had, so the geometry path's frame
+    # is untouched. None when no annotation expansion applied.
+    try:
+        raster.anno_frame_bounds = bounds_result.get("anno_bounds_uncapped_uv", None)
+        raster.anno_cap_envelope_applied = bool(
+            bounds_result.get("anno_cap_envelope_applied", False))
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="pipeline",
+                callsite="init_view_raster",
+                message="Exception threading the uncapped annotation frame: {}".format(e),
                 exc=e,
             )
     # Persist bounds/resolution metadata for export diagnostics (never silent)
