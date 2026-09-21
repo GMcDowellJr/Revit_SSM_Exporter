@@ -1142,9 +1142,17 @@ def process_document_views(
                     # intentionally deferred to Stage B.
                     from .color_id_buffer import export_color_id_buffer_view
                     t0 = _perf_now()
+                    # Stage A step 3: the model pass publishes the lattice it
+                    # sized itself from, so the annotation pass below renders
+                    # frame B against the SAME feet-per-pixel rather than
+                    # deriving its own. Out-parameter, not a return key --
+                    # streaming.py copies every key of `out` into
+                    # full_results, which is serialised.
+                    export_geometry = {}
                     out = export_color_id_buffer_view(
                         doc, view, elements, cfg, diag=diag,
                         raster=raster, elem_cache=elem_cache,
+                        geometry_out=export_geometry,
                     )
                     t1 = _perf_now()
                     _tmark(TIMING_KEYS["RASTER_MODEL_MS"], t0, t1)
@@ -1153,6 +1161,79 @@ def process_document_views(
                         out.setdefault("view_mode_reason", mode_reason)
                         out.setdefault("timings", {}).update(dict(timings))
                     results.append(out)
+
+                    # The annotation capture is a SEPARATE pass with its own
+                    # paint, palette, crop and restore (Greg, 2026-09-21). It
+                    # runs after the model pass and never before it, because
+                    # it is handed that pass's geometry; with no geometry it
+                    # refuses rather than sizing itself independently.
+                    #
+                    # Its result rides INSIDE the model pass's entry, under
+                    # "annotation_pass", rather than being appended as a
+                    # second entry. Appending was the first shape and it was
+                    # wrong: both streaming loops take results[0] only
+                    # (streaming.py, the `view_result = results[0]` in each),
+                    # so a second entry never reached on_view_complete,
+                    # full_results, failure accounting or the Stage A
+                    # summary -- an annotation export could fail while the
+                    # run reported success. Nesting keeps every existing
+                    # per-view consumer working unchanged.
+                    #
+                    # The model pass's own `success` is deliberately NOT
+                    # flipped by an annotation failure: the model capture
+                    # either worked or it did not, independently. The
+                    # annotation outcome is surfaced beside it, in the entry
+                    # and in the Stage A summary, so it cannot go unnoticed
+                    # either.
+                    if getattr(cfg, "color_id_buffer_annotation_pass", False):
+                        from .color_id_buffer import (
+                            export_annotation_color_id_buffer_view,
+                        )
+                        # The call is GUARDED because the model result is
+                        # already in `results` by this point. An exception
+                        # here -- collection, transaction setup, ExportImage
+                        # -- used to unwind to the outer per-view handler,
+                        # which appends its own failure stub as a SECOND
+                        # entry; and consumers take results[0], so they saw
+                        # a clean model capture and the annotation failure
+                        # was discarded entirely. The nesting below only
+                        # ever ran when the call RETURNED. (PR #211 review.)
+                        try:
+                            anno_out = export_annotation_color_id_buffer_view(
+                                doc, view, cfg, export_geometry, diag=diag,
+                                raster=raster,
+                            )
+                        except Exception as _anno_ex:
+                            if diag is not None:
+                                diag.error(
+                                    phase="pipeline",
+                                    callsite="annotation_color_id_buffer",
+                                    message="the annotation capture raised; the model "
+                                            "capture for this view stands and the "
+                                            "annotation outcome is recorded as failed",
+                                    view_id=view_id_int,
+                                    exc=_anno_ex,
+                                )
+                            anno_out = {
+                                "view_id": view_id_int,
+                                "view_name": getattr(view, "Name", None),
+                                "success": False,
+                                "failure_reason": "annotation_pass_raised",
+                                "error": "{0}: {1}".format(
+                                    type(_anno_ex).__name__, _anno_ex),
+                                "stage": "color_id_buffer_stage_a_annotation",
+                                "tiff_path": None,
+                                "sidecar_path": None,
+                            }
+                        if isinstance(out, dict) and isinstance(anno_out, dict):
+                            out["annotation_pass"] = anno_out
+                            out["annotation_pass_success"] = bool(
+                                anno_out.get("success"))
+                            out["annotation_pass_failure_reason"] = anno_out.get(
+                                "failure_reason")
+                            out["annotation_tiff_path"] = anno_out.get("tiff_path")
+                            out["annotation_sidecar_path"] = anno_out.get(
+                                "sidecar_path")
                     continue
 
                 t0 = _perf_now()

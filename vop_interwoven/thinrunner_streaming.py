@@ -432,7 +432,14 @@ def _relocate_batch_stage_a_outputs(batch_output_dir, output_dir, batch_view_sum
     for view_data in batch_view_summaries:
         if view_data.get("stage") != "color_id_buffer_stage_a":
             continue
-        for path_key in ("tiff_path", "sidecar_path"):
+        # Stage A step 3: the annotation pass writes its own two files into
+        # the same batch directory, so they move with everything else and
+        # their recorded paths must be rewritten with everything else.
+        # Rewriting only the model pair left the annotation paths pointing
+        # into an emptied batch directory -- present in view_summaries, and
+        # resolving to nothing. (PR #211 review.)
+        for path_key in ("tiff_path", "sidecar_path",
+                         "annotation_tiff_path", "annotation_sidecar_path"):
             old_path = view_data.get(path_key)
             if old_path:
                 view_data[path_key] = os.path.join(final_stage_a_dir, os.path.basename(old_path))
@@ -534,6 +541,7 @@ try:
             merged = {
                 "views_processed": 0,
                 "views_failed": 0,
+                "annotation_passes_failed": 0,
                 "png_files": [],
                 "view_raster_files": [],
                 "csv_rows_written": 0,
@@ -569,6 +577,8 @@ try:
 
                 merged["views_processed"] += batch_result.get("views_processed", 0)
                 merged["views_failed"] += batch_result.get("views_failed", 0)
+                merged["annotation_passes_failed"] += batch_result.get(
+                    "annotation_passes_failed", 0)
                 merged["csv_rows_written"] += batch_result.get("csv_rows_written", 0)
                 merged["view_summaries"].extend(batch_result.get("view_summaries", []))
                 merged["png_files"].extend(batch_result.get("png_files", []))

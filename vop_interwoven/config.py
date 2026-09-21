@@ -174,6 +174,14 @@ class Config:
         color_id_buffer_global_assignment_threshold=32767,
         color_id_buffer_fit_direction="horizontal",
         color_id_buffer_cap_axis_px=None,
+        # Stage A step 3: capture a SECOND, annotation-only color ID buffer
+        # over frame B, registered against the model capture.
+        #
+        # Default OFF, and deliberately so: it is a second ExportImage per
+        # view and it has not been run in Revit. Purely additive when on --
+        # the model TIFF and its sidecar are byte-for-byte what they are with
+        # it off, and the annotation pass writes its own "_anno" files.
+        color_id_buffer_annotation_pass=False,
         # Stage A: swap the view onto a neutral phase filter for the capture.
         # Default OFF -- the swap shows phase-hidden content the view as
         # authored does not show, so the ID buffer would describe a phase
@@ -369,6 +377,7 @@ class Config:
         self.enable_color_id_buffer_stage_a = bool(enable_color_id_buffer_stage_a)
         self.color_id_buffer_export_dpi = float(color_id_buffer_export_dpi)
         self.color_id_buffer_global_assignment_threshold = int(color_id_buffer_global_assignment_threshold)
+        self.color_id_buffer_annotation_pass = bool(color_id_buffer_annotation_pass)
         # Which axis ImageExportOptions.PixelSize sets. "horizontal" is the
         # shipped behaviour and the default; nothing changes unless a caller
         # asks for "vertical".
@@ -634,6 +643,7 @@ class Config:
             "color_id_buffer_export_dpi": self.color_id_buffer_export_dpi,
             "color_id_buffer_fit_direction": self.color_id_buffer_fit_direction,
             "color_id_buffer_cap_axis_px": self.color_id_buffer_cap_axis_px,
+            "color_id_buffer_annotation_pass": self.color_id_buffer_annotation_pass,
             "color_id_buffer_global_assignment_threshold": (
                 self.color_id_buffer_global_assignment_threshold
             ),
@@ -712,6 +722,8 @@ class Config:
             enable_color_id_buffer_stage_a=d.get("enable_color_id_buffer_stage_a", False),
             color_id_buffer_export_dpi=d.get(
                 "color_id_buffer_export_dpi", DEFAULT_COLOR_ID_EXPORT_DPI),
+            color_id_buffer_annotation_pass=d.get(
+                "color_id_buffer_annotation_pass", False),
             color_id_buffer_cap_axis_px=d.get("color_id_buffer_cap_axis_px"),
             color_id_buffer_fit_direction=d.get("color_id_buffer_fit_direction", "horizontal"),
             color_id_neutral_phase_swap=d.get("color_id_neutral_phase_swap", False),

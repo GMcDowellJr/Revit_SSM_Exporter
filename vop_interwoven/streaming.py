@@ -112,6 +112,34 @@ def process_with_streaming(doc, view_ids, cfg, on_view_complete, root_cache=None
     
     return summaries
     
+def _stage_a_annotation_summary(view_result):
+    """The annotation capture's outcome, for a Stage A view summary.
+
+    THREE-VALUED, and that is the point. The annotation pass is opt-in
+    (Config.color_id_buffer_annotation_pass), so a Stage A view has three
+    genuinely different states and a bool can only carry two:
+
+      - the pass did not run          -> "not_applicable"
+      - it ran and succeeded          -> True
+      - it ran and failed             -> False, plus the reason
+
+    Reporting "did not run" as False would inventory every ordinary
+    model-only capture as a failed annotation capture; reporting it as True
+    would claim an annotation TIFF that does not exist. Returned as a dict to
+    merge, so the keys are simply absent from summaries written before this
+    existed rather than present and meaningless.
+    """
+    if "annotation_pass" not in view_result:
+        return {"annotation_pass_success": "not_applicable"}
+    return {
+        "annotation_pass_success": bool(view_result.get("annotation_pass_success")),
+        "annotation_pass_failure_reason": view_result.get(
+            "annotation_pass_failure_reason"),
+        "annotation_tiff_path": view_result.get("annotation_tiff_path"),
+        "annotation_sidecar_path": view_result.get("annotation_sidecar_path"),
+    }
+
+
 class StreamingExporter:
     """Manages incremental export of pipeline results."""
     
@@ -153,6 +181,14 @@ class StreamingExporter:
         # Stats
         self.views_processed = 0
         self.views_failed = 0
+        # Stage A step 3. Counted SEPARATELY from views_failed, which means
+        # "the view's model capture failed" and keeps doing so: a view whose
+        # model TIFF is good and whose annotation TIFF is not has not failed
+        # in that sense, and folding the two would misreport it. But the run
+        # is not clean either, and finalize() reads both. (PR #211 review:
+        # the nested result reached the consumer and was never composed into
+        # its failure accounting.)
+        self.annotation_passes_failed = 0
         self.png_files = []
         self.view_raster_files = []
         self.csv_rows_written = 0
@@ -313,6 +349,7 @@ class StreamingExporter:
                     "tiff_path": view_result.get("tiff_path"),
                     "sidecar_path": view_result.get("sidecar_path"),
                 })
+                summary.update(_stage_a_annotation_summary(view_result))
             self.view_summaries.append(summary)
             return
 
@@ -320,14 +357,24 @@ class StreamingExporter:
             # Stage A already wrote its own TIFF + JSON sidecar directly to disk in
             # export_color_id_buffer_view(); it has no raster/CSV-row data for the
             # legacy PNG/CSV writers below, so record it as a processed success and stop.
-            self.view_summaries.append({
+            stage_a_summary = {
                 "view_id": view_result.get("view_id"),
                 "view_name": view_result.get("view_name"),
                 "success": True,
                 "stage": "color_id_buffer_stage_a",
                 "tiff_path": view_result.get("tiff_path"),
                 "sidecar_path": view_result.get("sidecar_path"),
-            })
+            }
+            # Stage A step 3. The MODEL capture succeeding is what "success"
+            # above reports, and that stays true. But a view whose annotation
+            # capture failed must not be inventoried as if nothing had, so
+            # the annotation outcome rides alongside rather than folding into
+            # it -- an absent annotation pass is distinguishable from a
+            # failed one, which a bare False could not express.
+            stage_a_summary.update(_stage_a_annotation_summary(view_result))
+            if stage_a_summary.get("annotation_pass_success") is False:
+                self.annotation_passes_failed += 1
+            self.view_summaries.append(stage_a_summary)
             if self.full_results is not None:
                 self.full_results.append({
                     k: v for k, v in view_result.items()
@@ -674,7 +721,11 @@ class StreamingExporter:
             
             from vop_interwoven.entry_dynamo import _pipeline_result_for_json
             pipeline_result = {
-                "success": self.views_failed == 0,
+                # An annotation capture that failed makes the RUN unclean
+                # even when every model capture succeeded -- see
+                # annotation_passes_failed.
+                "success": (self.views_failed == 0
+                            and self.annotation_passes_failed == 0),
                 "views": self.full_results,
                 "config": self.cfg.to_dict(),
                 "errors": [],
@@ -694,6 +745,7 @@ class StreamingExporter:
         return {
             "views_processed": self.views_processed,
             "views_failed": self.views_failed,
+            "annotation_passes_failed": self.annotation_passes_failed,
             "png_files": self.png_files,
             "view_raster_files": self.view_raster_files,
             "core_csv_path": getattr(self, 'core_csv_path', None),
