@@ -165,7 +165,18 @@ class Config:
         color_id_buffer_global_assignment_threshold=32767,
         color_id_buffer_fit_direction="horizontal",
         color_id_buffer_cap_axis_px=None,
-        
+        # Stage A: swap the view onto a neutral phase filter for the capture.
+        # Default OFF -- the swap shows phase-hidden content the view as
+        # authored does not show, so the ID buffer would describe a phase
+        # state that only exists during the capture. The code path is kept
+        # intact; setting this True restores the previous behaviour exactly.
+        color_id_neutral_phase_swap=False,
+        # Stage A: run the in-transaction re-collection for MEASUREMENT only
+        # and record how its element-id set differs from the pipeline's own
+        # collection (sidecar key "phase_swap_element_set_audit"). Costs one
+        # extra collection per view when the swap is off, so default OFF.
+        color_id_phase_swap_audit=False,
+
     ):
         """Initialize VOP configuration.
 
@@ -377,6 +388,8 @@ class Config:
         if (self.color_id_buffer_cap_axis_px is not None
                 and self.color_id_buffer_cap_axis_px <= 0):
             raise ValueError("color_id_buffer_cap_axis_px must be positive or None")
+        self.color_id_neutral_phase_swap = bool(color_id_neutral_phase_swap)
+        self.color_id_phase_swap_audit = bool(color_id_phase_swap_audit)
         self.color_id_buffer_fit_direction = str(color_id_buffer_fit_direction).strip().lower()
         if self.color_id_buffer_fit_direction not in ("horizontal", "vertical"):
             raise ValueError(
@@ -615,6 +628,8 @@ class Config:
             "color_id_buffer_global_assignment_threshold": (
                 self.color_id_buffer_global_assignment_threshold
             ),
+            "color_id_neutral_phase_swap": self.color_id_neutral_phase_swap,
+            "color_id_phase_swap_audit": self.color_id_phase_swap_audit,
         }
 
     @classmethod
@@ -690,6 +705,8 @@ class Config:
                 "color_id_buffer_export_dpi", DEFAULT_COLOR_ID_EXPORT_DPI),
             color_id_buffer_cap_axis_px=d.get("color_id_buffer_cap_axis_px"),
             color_id_buffer_fit_direction=d.get("color_id_buffer_fit_direction", "horizontal"),
+            color_id_neutral_phase_swap=d.get("color_id_neutral_phase_swap", False),
+            color_id_phase_swap_audit=d.get("color_id_phase_swap_audit", False),
             color_id_buffer_global_assignment_threshold=d.get(
                 "color_id_buffer_global_assignment_threshold", 32767
             ),

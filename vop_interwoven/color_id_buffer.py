@@ -1155,6 +1155,531 @@ def _hidden_category_state(doc, view):
     return state
 
 
+# --- Per-view graphics-state record (additive Stage A sidecar section) ------
+#
+# Every field is THREE-VALUED: a real value, "not_applicable" (the setting
+# does not exist for this view -- a section view has no underlay, a view with
+# no template has no template id), or "unavailable" with the reason a read
+# failed. The shape is what makes that structural rather than a convention:
+# _gs_capture() is the only writer, and it cannot emit a value for a reader
+# that raised. A failed read coerced to False/0 -- the exact silent coercion
+# that made applied_smooth_edges's "unchanged" unreadable, and that
+# orig_show_shadows's _MISSING sentinel exists to refuse -- is unreachable
+# here by construction, not by remembering to check.
+
+_GS_VALUE = "value"
+_GS_NOT_APPLICABLE = "not_applicable"
+_GS_UNAVAILABLE = "unavailable"
+
+# Distinguishes "the host does not expose this member at all" from "the member
+# read back as None/False". getattr(obj, name, None) collapses the two.
+_GS_MISSING = object()
+
+VIEW_GRAPHICS_STATE_SCHEMA = "vop.stage_a.view_graphics_state.v1"
+
+# The ElementOnPhaseStatus members a PhaseFilter carries a presentation for,
+# named rather than enumerated off the enum so a host missing one degrades
+# that ONE status to "unavailable" instead of losing the whole record.
+_PHASE_STATUS_NAMES = ("New", "Existing", "Demolished", "Temporary")
+
+
+class _GsNotApplicable(object):
+    """Returned BY a reader to mean "this view has no such setting".
+
+    Distinct from raising, which means the setting exists but could not be
+    read. _gs_capture() maps the two onto "not_applicable" and "unavailable".
+    """
+
+    def __init__(self, reason):
+        self.reason = reason
+
+
+def _gs_value(value):
+    return {"state": _GS_VALUE, "value": value}
+
+
+def _gs_not_applicable(reason):
+    return {"state": _GS_NOT_APPLICABLE, "reason": str(reason)}
+
+
+def _gs_unavailable(reason):
+    return {"state": _GS_UNAVAILABLE, "reason": str(reason)}
+
+
+def _gs_capture(reader, diag=None, callsite=None, view_id=None):
+    """Run ``reader`` and wrap its outcome in the three-valued envelope."""
+    try:
+        value = reader()
+    except Exception as ex:
+        if diag is not None and callsite is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite=callsite,
+                message=str(ex),
+                view_id=view_id,
+            )
+        return _gs_unavailable("{0}: {1}".format(type(ex).__name__, ex))
+    if isinstance(value, _GsNotApplicable):
+        return _gs_not_applicable(value.reason)
+    return _gs_value(value)
+
+
+def _gs_element_name(doc, element_id):
+    """Reader (raises on failure) for an element's Name, for _gs_capture."""
+    el = doc.GetElement(element_id)
+    if el is None:
+        return _GsNotApplicable("no element with this id in the document")
+    name = getattr(el, "Name", _GS_MISSING)
+    if name is _GS_MISSING:
+        return _GsNotApplicable("element exposes no Name property")
+    return name
+
+
+def _gs_element_ref(doc, element_id, diag=None, callsite=None, view_id=None):
+    """``{"id": int, "name": <three-valued>}`` for an ElementId."""
+    return {
+        "id": int(element_id.IntegerValue),
+        "name": _gs_capture(
+            lambda: _gs_element_name(doc, element_id),
+            diag=diag, callsite=callsite, view_id=view_id,
+        ),
+    }
+
+
+def _capture_view_graphics_state(doc, view, elements, diag=None, view_id=None):
+    """Read-only record of the graphics state that governs THIS view.
+
+    Captured BEFORE Stage A detaches the view template and before any
+    suppression runs, so it records the state that actually governed what the
+    view rendered -- template-applied values included -- rather than the
+    instance-level residue the rest of this function works against once the
+    template is detached. That ordering is the whole point of the record: it
+    is evidence about the view as authored, not about Stage A's scratch state.
+
+    Purely additive: nothing here mutates the document, and nothing here feeds
+    the paint/export path.
+    """
+    from Autodesk.Revit.DB import BuiltInParameter, ElementId
+
+    def cap(callsite, reader):
+        return _gs_capture(reader, diag=diag, callsite=callsite, view_id=view_id)
+
+    def _param_element_id(bip_name):
+        bip = getattr(BuiltInParameter, bip_name, _GS_MISSING)
+        if bip is _GS_MISSING:
+            return _GsNotApplicable(
+                "this Revit host exposes no BuiltInParameter.{0}".format(bip_name))
+        param = view.get_Parameter(bip)
+        if param is None:
+            return _GsNotApplicable(
+                "view exposes no {0} parameter".format(bip_name))
+        eid = param.AsElementId()
+        if eid is None or eid == ElementId.InvalidElementId:
+            return _GsNotApplicable("parameter is unset on this view")
+        return eid
+
+    def _read_view_phase():
+        eid = _param_element_id("VIEW_PHASE")
+        if isinstance(eid, _GsNotApplicable):
+            return eid
+        return _gs_element_ref(
+            doc, eid, diag=diag, callsite="graphics_state_view_phase", view_id=view_id)
+
+    def _read_phase_filter():
+        eid = _param_element_id("VIEW_PHASE_FILTER")
+        if isinstance(eid, _GsNotApplicable):
+            return eid
+        return _gs_element_ref(
+            doc, eid, diag=diag, callsite="graphics_state_phase_filter", view_id=view_id)
+
+    def _read_phase_status_presentation():
+        from Autodesk.Revit.DB import ElementOnPhaseStatus
+        eid = _param_element_id("VIEW_PHASE_FILTER")
+        if isinstance(eid, _GsNotApplicable):
+            return eid
+        pf = doc.GetElement(eid)
+        if pf is None:
+            return _GsNotApplicable("phase filter id does not resolve to an element")
+        out = {}
+        for status_name in _PHASE_STATUS_NAMES:
+            def _read_one(status_name=status_name):
+                status = getattr(ElementOnPhaseStatus, status_name, _GS_MISSING)
+                if status is _GS_MISSING:
+                    return _GsNotApplicable(
+                        "ElementOnPhaseStatus has no member {0} on this Revit "
+                        "host".format(status_name))
+                return str(pf.GetPhaseStatusPresentation(status))
+            out[status_name] = cap(
+                "graphics_state_phase_status_presentation", _read_one)
+        return out
+
+    def _read_category_overrides():
+        # TWO sources, because neither alone can explain the view.
+        #
+        # (a) The categories of the elements the pipeline collected. That is
+        #     what is on screen -- but it is blind in exactly the case this
+        #     record exists to explain. collect_view_elements() is
+        #     view-scoped (FilteredElementCollector(doc, view.Id)), so Revit
+        #     has already dropped every element of a hidden category before
+        #     this function is handed the list. Derive "categories present"
+        #     from it alone and a category hidden in the authored view is
+        #     simply ABSENT, with no "hidden": true anywhere to say why --
+        #     the record would be silent precisely where it is needed.
+        #
+        # (b) Every top-level category this view reports hidden, read off the
+        #     view and independent of any element. This is the source that
+        #     explains an absence.
+        #
+        # Each entry names the source(s) that put it there, so a reader can
+        # tell "present and visible" from "hidden, nothing collected". The
+        # document scan costs one pass over doc.Settings.Categories per view,
+        # the same order as _hidden_category_state()'s existing pass.
+        present = {}
+        names = {}
+        unreadable = 0
+        for elem in (elements or []):
+            try:
+                cat = elem.Category
+                if cat is None:
+                    continue
+                cat_id_int = int(cat.Id.IntegerValue)
+                present[cat_id_int] = True
+                names[cat_id_int] = getattr(cat, "Name", _GS_MISSING)
+            except Exception:
+                # Counted, then reported below and in the record -- a stale or
+                # disposed element is not a reason to lose the whole section,
+                # but it is not allowed to vanish silently either.
+                unreadable += 1
+        if unreadable and diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="graphics_state_category_overrides",
+                message="{0} collected element(s) would not report a Category; their "
+                        "categories are absent from the graphics-state record".format(
+                            unreadable),
+                view_id=view_id,
+            )
+
+        hidden_ids = set()
+        scan_unreadable = 0
+        scan_error = None
+        try:
+            doc_categories = list(doc.Settings.Categories)
+        except Exception as ex:
+            doc_categories = []
+            scan_error = "{0}: {1}".format(type(ex).__name__, ex)
+        for cat in doc_categories:
+            try:
+                cat_id = cat.Id
+                if not view.GetCategoryHidden(cat_id):
+                    continue
+                cat_id_int = int(cat_id.IntegerValue)
+                hidden_ids.add(cat_id_int)
+                if cat_id_int not in names:
+                    names[cat_id_int] = getattr(cat, "Name", _GS_MISSING)
+            except Exception:
+                scan_unreadable += 1
+        if scan_unreadable and diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="graphics_state_category_overrides",
+                message="{0} document categor(ies) would not report a hidden state; a "
+                        "category hidden in this view may be missing from the "
+                        "graphics-state record".format(scan_unreadable),
+                view_id=view_id,
+            )
+
+        categories = {}
+        for cat_id_int in sorted(set(present) | hidden_ids):
+            raw_name = names.get(cat_id_int, _GS_MISSING)
+            if cat_id_int in present and cat_id_int in hidden_ids:
+                source = "collected_element+hidden_in_view"
+            elif cat_id_int in present:
+                source = "collected_element"
+            else:
+                source = "hidden_in_view"
+            categories[str(cat_id_int)] = {
+                "source": source,
+                "name": (
+                    _gs_not_applicable("category exposes no Name property")
+                    if raw_name is _GS_MISSING else _gs_value(raw_name)),
+                "halftone": cap(
+                    "graphics_state_category_halftone",
+                    lambda cid=cat_id_int: bool(
+                        view.GetCategoryOverrides(ElementId(int(cid))).Halftone),
+                ),
+                "hidden": cap(
+                    "graphics_state_category_hidden",
+                    lambda cid=cat_id_int: bool(
+                        view.GetCategoryHidden(ElementId(int(cid)))),
+                ),
+            }
+        return {
+            "basis": "categories of the elements the pipeline collected, UNION every "
+                     "top-level category this view reports hidden; the second source "
+                     "is what explains an absence, since a hidden category's elements "
+                     "never reach the view-scoped collection",
+            "elements_with_unreadable_category": unreadable,
+            "categories_unreadable_in_document_scan": scan_unreadable,
+            "document_categories_scanned": (
+                _gs_unavailable(scan_error) if scan_error is not None
+                else _gs_value(len(doc_categories))),
+            "categories": categories,
+        }
+
+    def _read_view_filters():
+        fids = list(view.GetFilters())
+        if not fids:
+            return _GsNotApplicable("no view filters are applied to this view")
+        out = []
+        for fid in fids:
+            entry = _gs_element_ref(
+                doc, fid, diag=diag, callsite="graphics_state_view_filters",
+                view_id=view_id)
+            entry["enabled"] = cap(
+                "graphics_state_filter_enabled",
+                lambda f=fid: bool(view.GetIsFilterEnabled(f)))
+            entry["visible"] = cap(
+                "graphics_state_filter_visibility",
+                lambda f=fid: bool(view.GetFilterVisibility(f)))
+            entry["halftone"] = cap(
+                "graphics_state_filter_halftone",
+                lambda f=fid: bool(view.GetFilterOverrides(f).Halftone))
+            out.append(entry)
+        return out
+
+    def _read_underlay():
+        from Autodesk.Revit.DB import ViewPlan
+        if not isinstance(view, ViewPlan):
+            return _GsNotApplicable(
+                "underlay is a plan-view setting; this view is a {0}".format(
+                    type(view).__name__))
+
+        def _read_level(getter_name):
+            getter = getattr(view, getter_name, _GS_MISSING)
+            if getter is _GS_MISSING:
+                return _GsNotApplicable(
+                    "this Revit host exposes no View.{0}".format(getter_name))
+            eid = getter()
+            if eid is None or eid == ElementId.InvalidElementId:
+                return _GsNotApplicable("no underlay level is set on this view")
+            return _gs_element_ref(
+                doc, eid, diag=diag, callsite="graphics_state_underlay",
+                view_id=view_id)
+
+        def _read_orientation():
+            getter = getattr(view, "GetUnderlayOrientation", _GS_MISSING)
+            if getter is _GS_MISSING:
+                return _GsNotApplicable(
+                    "this Revit host exposes no View.GetUnderlayOrientation")
+            return str(getter())
+
+        return {
+            "base_level": cap(
+                "graphics_state_underlay_base",
+                lambda: _read_level("GetUnderlayBaseLevel")),
+            "top_level": cap(
+                "graphics_state_underlay_top",
+                lambda: _read_level("GetUnderlayTopLevel")),
+            # LookingUp vs LookingDown changes what the underlay actually
+            # draws while base and top can be identical, so without this two
+            # materially different views produce the same underlay record --
+            # which defeats the point of recording the underlay at all.
+            # Confirmed present on the target install by Run 1 (Revit 2025
+            # 25.4.41.14); see tests/dynamo/PROBE_STAGE_A_COLOR_ID_ANOMALIES.md,
+            # "Underlay / blend", the GetUnderlayBaseLevel/GetUnderlayTopLevel/
+            # GetUnderlayOrientation item.
+            "orientation": cap(
+                "graphics_state_underlay_orientation", _read_orientation),
+        }
+
+    def _read_view_template():
+        tid = view.ViewTemplateId
+        if tid is None or tid == ElementId.InvalidElementId:
+            return _GsNotApplicable("view has no view template applied")
+        return _gs_element_ref(
+            doc, tid, diag=diag, callsite="graphics_state_view_template",
+            view_id=view_id)
+
+    def _read_enum_property(name):
+        value = getattr(view, name, _GS_MISSING)
+        if value is _GS_MISSING:
+            return _GsNotApplicable(
+                "view exposes no {0} property on this Revit host".format(name))
+        return str(value)
+
+    def _read_link_ogs_halftone(link_id):
+        getter = getattr(view, "GetLinkOverrides", _GS_MISSING)
+        if getter is _GS_MISSING:
+            return _GsNotApplicable(
+                "this Revit host exposes no View.GetLinkOverrides "
+                "(RevitLinkGraphicsSettings, Revit 2018+)")
+        settings = getter(link_id)
+        if settings is None:
+            return _GsNotApplicable(
+                "no RevitLinkGraphicsSettings for this link in this view")
+        halftone = getattr(settings, "Halftone", _GS_MISSING)
+        if halftone is _GS_MISSING:
+            return _GsNotApplicable(
+                "RevitLinkGraphicsSettings exposes no Halftone")
+        return bool(halftone)
+
+    def _read_link_instances():
+        from Autodesk.Revit.DB import FilteredElementCollector, RevitLinkInstance
+        links = list(FilteredElementCollector(doc, view.Id).OfClass(RevitLinkInstance))
+        if not links:
+            return _GsNotApplicable("no RevitLinkInstance is visible in this view")
+        out = []
+        for link in links:
+            link_id = link.Id
+            entry = _gs_element_ref(
+                doc, link_id, diag=diag, callsite="graphics_state_link_instances",
+                view_id=view_id)
+            # Two different overrides, both named "halftone" in the Revit UI and
+            # reported separately because they are set in different dialogs and
+            # either one alone can halftone the link.
+            entry["element_override_halftone"] = cap(
+                "graphics_state_link_element_halftone",
+                lambda lid=link_id: bool(view.GetElementOverrides(lid).Halftone))
+            entry["link_override_halftone"] = cap(
+                "graphics_state_link_override_halftone",
+                lambda lid=link_id: _read_link_ogs_halftone(lid))
+            # Recorded as a field rather than omitted so a reader can tell
+            # "Revit has no such setting" from "this capture forgot to look".
+            entry["underlay"] = _gs_not_applicable(
+                "Revit exposes no per-link-instance underlay setting; underlay is a "
+                "host plan-view property (see the record's own 'underlay' field)")
+            out.append(entry)
+        return out
+
+    return {
+        "schema": VIEW_GRAPHICS_STATE_SCHEMA,
+        "captured_at": "before_view_template_detach_and_suppression",
+        "view_phase": cap("graphics_state_view_phase", _read_view_phase),
+        "phase_filter": cap("graphics_state_phase_filter", _read_phase_filter),
+        "phase_status_presentation": cap(
+            "graphics_state_phase_status_presentation",
+            _read_phase_status_presentation),
+        "category_overrides": cap(
+            "graphics_state_category_overrides", _read_category_overrides),
+        "view_filters": cap("graphics_state_view_filters", _read_view_filters),
+        "underlay": cap("graphics_state_underlay", _read_underlay),
+        "view_template_id": cap("graphics_state_view_template", _read_view_template),
+        "detail_level": cap(
+            "graphics_state_detail_level", lambda: _read_enum_property("DetailLevel")),
+        "display_style": cap(
+            "graphics_state_display_style", lambda: _read_enum_property("DisplayStyle")),
+        "link_instances": cap("graphics_state_link_instances", _read_link_instances),
+    }
+
+
+# --- Neutral-phase-swap element-set audit -----------------------------------
+
+# Cap on how many differing element ids the audit writes per side. The audit
+# is opt-in and meant to be read, so the ids themselves matter -- but a view
+# with a six-figure element count must not turn the sidecar into a dump.
+PHASE_SWAP_AUDIT_MAX_IDS = 1000
+
+
+def _element_id_ints(elements):
+    """``(set_of_int_ids, unreadable_count)`` for a collection of elements."""
+    ids = set()
+    unreadable = 0
+    for elem in (elements or []):
+        try:
+            ids.add(int(elem.Id.IntegerValue))
+        except Exception:
+            # Counted and reported by the caller, never dropped silently.
+            unreadable += 1
+    return ids, unreadable
+
+
+def _build_phase_swap_audit(
+    audit_enabled, swap_enabled, pipeline_elements, recollected_elements,
+    recollection_error, raster_present, neutral_phase_applied, measurement_error,
+    diag=None, view_id=None,
+):
+    """Three-valued record comparing the two candidate element sets.
+
+    The comparison this exists for: the set the PIPELINE collected for this
+    view (handed in as ``elements``, collected before Stage A touched
+    anything) against the set a re-collection sees from inside the suppress
+    transaction. Gating the neutral-phase swap off means the paint pass stops
+    relying on the second one, so the difference between them is the thing
+    that has to be measured on a real view before the reliance is dropped for
+    good -- not argued about.
+    """
+    if not audit_enabled:
+        return _gs_not_applicable("color_id_phase_swap_audit=False")
+    if not raster_present:
+        return _gs_unavailable(
+            "no raster was provided, so the in-transaction re-collection could "
+            "not be run and there is no second set to compare against")
+    if not neutral_phase_applied:
+        # The measurement that matters is what the NEUTRAL phase state reveals.
+        # A collection taken under the view's authored phase filter cannot see
+        # the demolished/temporary elements that filter hides, so its diff is
+        # not the diff this audit names -- and a zero would be read as "the
+        # swap changes nothing", the very conclusion under test. Refuse it.
+        return _gs_unavailable(
+            "the neutral phase state was never applied, so the comparison "
+            "would be blind to exactly the phase-hidden elements it exists to "
+            "count: {0}".format(measurement_error or "reason not recorded"))
+    if recollected_elements is None:
+        return _gs_unavailable(
+            "the in-transaction re-collection failed: {0}".format(
+                recollection_error or "reason not recorded"))
+
+    pipeline_ids, pipeline_unreadable = _element_id_ints(pipeline_elements)
+    recollected_ids, recollected_unreadable = _element_id_ints(recollected_elements)
+    only_recollected = sorted(recollected_ids - pipeline_ids)
+    only_pipeline = sorted(pipeline_ids - recollected_ids)
+
+    value = {
+        "neutral_phase_swap_enabled": bool(swap_enabled),
+        # Always "neutral_phase_filter" when a value exists at all -- the guard
+        # above is what makes that true, rather than a hope.
+        "measured_under": "neutral_phase_filter",
+        "element_set_used_for_paint": (
+            "in_transaction_recollection" if swap_enabled else "pipeline_collection"),
+        "pipeline_collection_count": len(pipeline_ids),
+        "in_transaction_recollection_count": len(recollected_ids),
+        "common_count": len(pipeline_ids & recollected_ids),
+        "only_in_recollection_count": len(only_recollected),
+        "only_in_pipeline_collection_count": len(only_pipeline),
+        "only_in_recollection_ids": only_recollected[:PHASE_SWAP_AUDIT_MAX_IDS],
+        "only_in_pipeline_collection_ids": only_pipeline[:PHASE_SWAP_AUDIT_MAX_IDS],
+        "only_in_recollection_ids_truncated": (
+            len(only_recollected) > PHASE_SWAP_AUDIT_MAX_IDS),
+        "only_in_pipeline_collection_ids_truncated": (
+            len(only_pipeline) > PHASE_SWAP_AUDIT_MAX_IDS),
+        "pipeline_elements_with_unreadable_id": pipeline_unreadable,
+        "recollected_elements_with_unreadable_id": recollected_unreadable,
+    }
+    if diag is not None:
+        # Reported, not just written to the sidecar: a run with the audit on is
+        # a run someone is watching the log of. info() where available so a
+        # zero-difference audit does not cry wolf; warn() is the fallback for
+        # diagnostics shims that only implement warn/error.
+        report = (
+            "phase-swap element-set audit (swap={0}): pipeline={1}, "
+            "re-collected={2}, common={3}, only-in-re-collection={4}, "
+            "only-in-pipeline={5}".format(
+                bool(swap_enabled), value["pipeline_collection_count"],
+                value["in_transaction_recollection_count"], value["common_count"],
+                value["only_in_recollection_count"],
+                value["only_in_pipeline_collection_count"])
+        )
+        notify = getattr(diag, "info", None) or diag.warn
+        notify(
+            phase="color_id_buffer",
+            callsite="phase_swap_element_set_audit",
+            message=report,
+            view_id=view_id,
+        )
+    return _gs_value(value)
+
+
 # TIFF tag numbers for the two fields this module needs, and the scalar
 # field types they are allowed to carry (BYTE/SHORT/LONG). Anything else is
 # refused rather than guessed at -- a misread dimension is worse than an
@@ -1793,6 +2318,30 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 view_id=view_id,
             )
 
+    # The per-view graphics-state record is read HERE, before the detach below
+    # and before any suppression, because it is evidence about the view as
+    # authored -- template-applied phase filter, category overrides, filters,
+    # underlay and display settings included. Read it after the detach and it
+    # would describe Stage A's own scratch state instead. Purely additive: it
+    # feeds one sidecar key and nothing else.
+    try:
+        view_graphics_state = _capture_view_graphics_state(
+            doc, view, elements, diag=diag, view_id=view_id)
+    except Exception as ex:
+        # A record that could not be built at all is itself three-valued
+        # rather than absent -- a missing key would be indistinguishable from
+        # a capture written before this section existed.
+        view_graphics_state = _gs_unavailable(
+            "{0}: {1}".format(type(ex).__name__, ex))
+        view_graphics_state["schema"] = VIEW_GRAPHICS_STATE_SCHEMA
+        if diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="capture_view_graphics_state",
+                message=str(ex),
+                view_id=view_id,
+            )
+
     # Detach the view template (if any) before reading any V/G-controlled state
     # below. A template that controls Phase Filter, category visibility,
     # filters, or display style locks those read-only/non-overridable on the
@@ -1995,29 +2544,50 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         for fid_int, fstate in filter_state.items():
             if fstate["was_enabled"] and fstate["was_visible"]:
                 view.SetIsFilterEnabled(ElementId(int(fid_int)), False)
-        neutral_pf, pf_created = get_or_create_neutral_phase_filter(doc)
-        phase_filter_state["neutral_phase_filter_id"] = neutral_pf.Id.IntegerValue
-        phase_filter_state["neutral_phase_filter_created"] = bool(pf_created)
-        # VIEW_PHASE_FILTER is commonly locked read-only by a View Template that
-        # controls Phase Filter -- Parameter.Set() raises InvalidOperationException
-        # in that case. That must not abort the whole view: fall back to the
-        # view's existing phase filter (phase-hidden elements like New/Demolished/
-        # Temporary will be absent from this view's ID buffer, which is a
-        # completeness gap, not an occlusion-truth violation).
-        phase_filter_swapped = bool(pf_param is not None and not pf_param.IsReadOnly)
-        if phase_filter_swapped:
-            pf_param.Set(neutral_pf.Id)
-        elif diag is not None:
-            diag.warn(
-                phase="color_id_buffer",
-                callsite="phase_filter_swap",
-                message="VIEW_PHASE_FILTER is read-only (likely a View Template "
-                        "controlling Phase Filter); continuing with the view's "
-                        "existing phase filter. Elements the original phase filter "
-                        "hides (e.g. New/Demolished/Temporary) will be missing "
-                        "from this view's color ID buffer.",
-                view_id=view_id,
-            )
+        # The neutral-phase-filter swap is GATED, not deleted. Swapping the
+        # view onto VOP_NeutralPhaseFilter shows phase-hidden content
+        # (Demolished/Temporary) that the view as authored does not show, so
+        # the ID buffer stops describing the view and starts describing a
+        # phase state that exists only during the capture. Default OFF; the
+        # whole path below is intact and turning the flag back on restores the
+        # previous behaviour exactly. color_id_phase_swap_audit measures what
+        # the difference actually is on a given view -- see
+        # _build_phase_swap_audit.
+        neutral_phase_swap_enabled = bool(
+            getattr(cfg, "color_id_neutral_phase_swap", False))
+        phase_filter_state["swap_requested"] = neutral_phase_swap_enabled
+        if neutral_phase_swap_enabled:
+            neutral_pf, pf_created = get_or_create_neutral_phase_filter(doc)
+            phase_filter_state["neutral_phase_filter_id"] = neutral_pf.Id.IntegerValue
+            phase_filter_state["neutral_phase_filter_created"] = bool(pf_created)
+            # VIEW_PHASE_FILTER is commonly locked read-only by a View Template that
+            # controls Phase Filter -- Parameter.Set() raises InvalidOperationException
+            # in that case. That must not abort the whole view: fall back to the
+            # view's existing phase filter (phase-hidden elements like New/Demolished/
+            # Temporary will be absent from this view's ID buffer, which is a
+            # completeness gap, not an occlusion-truth violation).
+            phase_filter_swapped = bool(pf_param is not None and not pf_param.IsReadOnly)
+            if phase_filter_swapped:
+                pf_param.Set(neutral_pf.Id)
+            elif diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="phase_filter_swap",
+                    message="VIEW_PHASE_FILTER is read-only (likely a View Template "
+                            "controlling Phase Filter); continuing with the view's "
+                            "existing phase filter. Elements the original phase filter "
+                            "hides (e.g. New/Demolished/Temporary) will be missing "
+                            "from this view's color ID buffer.",
+                    view_id=view_id,
+                )
+        else:
+            # No neutral filter is created, so restore has none to delete and
+            # none to revert -- both restore steps key off the two fields left
+            # False/None here.
+            phase_filter_swapped = False
+            phase_filter_state["swap_skipped_reason"] = (
+                "color_id_neutral_phase_swap=False; the view keeps its own phase "
+                "filter and the capture reflects the view as authored")
         phase_filter_state["swapped"] = phase_filter_swapped
         for cat_id_int, hstate in category_hidden_state.items():
             view.SetCategoryHidden(ElementId(int(cat_id_int)), True)
@@ -2233,12 +2803,83 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # Re-collect under the neutral phase state: elements the view's original
         # phase filter hid (e.g. demolished/temporary) but the neutral filter shows
         # would otherwise be rendered by ExportImage without a color assignment.
-        recollected = elements
-        if raster is not None:
+        #
+        # GATED alongside the swap itself. With no swap applied there is no
+        # phase-revealed content for this re-collection to find, so its only
+        # remaining effect would be re-running collection against the narrowed
+        # crop -- which is a different change, not this one. The path is kept
+        # and still runs verbatim when color_id_neutral_phase_swap is on, and
+        # runs for measurement only (its result discarded) when
+        # color_id_phase_swap_audit is on.
+        phase_swap_audit_enabled = bool(
+            getattr(cfg, "color_id_phase_swap_audit", False))
+        recollect_wanted = neutral_phase_swap_enabled or phase_swap_audit_enabled
+        neutral_recollection = None
+        neutral_recollection_error = None
+
+        # The measurement has to be taken UNDER the neutral phase state, or it
+        # measures nothing it claims to.
+        #
+        # An audit-only run (audit on, swap off) skips the swap branch above,
+        # so without this the re-collection below would run under the view's
+        # AUTHORED phase filter -- which by definition cannot surface the
+        # demolished/temporary elements that filter hides. The audit would then
+        # report a zero difference and be taken as evidence that the swap
+        # changes nothing, which is the exact conclusion it exists to test.
+        # Review caught this on PR #208.
+        #
+        # So: apply the neutral filter for the measurement, revert it
+        # immediately afterwards, and keep discarding the measured set for
+        # painting. When it cannot be applied, the audit records "unavailable"
+        # rather than a difference of zero -- an unmeasurable view must never
+        # read as a view where the two sets agreed.
+        neutral_phase_applied = neutral_phase_swap_enabled and phase_filter_swapped
+        measurement_error = None
+        if neutral_phase_swap_enabled and not phase_filter_swapped:
+            measurement_error = (
+                "the neutral phase filter could not be applied (VIEW_PHASE_FILTER "
+                "is read-only), so no collection in this capture saw the neutral "
+                "phase state")
+        elif phase_swap_audit_enabled and not neutral_phase_swap_enabled:
+            try:
+                audit_pf, audit_pf_created = get_or_create_neutral_phase_filter(doc)
+                phase_filter_state["neutral_phase_filter_id"] = audit_pf.Id.IntegerValue
+                phase_filter_state["neutral_phase_filter_created"] = bool(audit_pf_created)
+                if pf_param is not None and not pf_param.IsReadOnly:
+                    pf_param.Set(audit_pf.Id)
+                    # Mirrored into phase_filter_state so the restore step can
+                    # revert it too: if the inline revert below is skipped by an
+                    # exception, restore is the only thing standing between this
+                    # view and being left on the neutral filter.
+                    phase_filter_state["audit_swap_active"] = True
+                    neutral_phase_applied = True
+                else:
+                    measurement_error = (
+                        "VIEW_PHASE_FILTER is read-only (likely a View Template "
+                        "controlling Phase Filter), so the neutral phase state "
+                        "could not be applied for the measurement")
+            except Exception as ex:
+                measurement_error = "{0}: {1}".format(type(ex).__name__, ex)
+            if measurement_error is not None and diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="phase_swap_audit_measurement",
+                    message="phase-swap audit requested but the neutral phase state "
+                            "could not be applied; the comparison is recorded as "
+                            "unavailable rather than as a zero difference: "
+                            "{0}".format(measurement_error),
+                    view_id=view_id,
+                )
+        phase_filter_state["audit_measurement_applied_neutral_phase"] = bool(
+            phase_swap_audit_enabled and neutral_phase_applied)
+
+        if recollect_wanted and raster is not None:
             try:
                 from .revit.collection import collect_view_elements as _collect_view_elements
-                recollected = _collect_view_elements(doc, view, raster, diag=diag, cfg=cfg)
+                neutral_recollection = _collect_view_elements(
+                    doc, view, raster, diag=diag, cfg=cfg)
             except Exception as ex:
+                neutral_recollection_error = "{0}: {1}".format(type(ex).__name__, ex)
                 if diag is not None:
                     diag.warn(
                         phase="color_id_buffer",
@@ -2246,8 +2887,8 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                         message=str(ex),
                         view_id=view_id,
                     )
-                recollected = elements
-        elif diag is not None:
+        elif recollect_wanted and diag is not None:
+            neutral_recollection_error = "raster not provided"
             diag.warn(
                 phase="color_id_buffer",
                 callsite="recollect_under_neutral_phase",
@@ -2255,6 +2896,50 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                         "(may miss phase-revealed elements)",
                 view_id=view_id,
             )
+
+        # Revert the measurement-only swap before anything is painted or
+        # exported. A failure here is NOT recoverable and must not be absorbed:
+        # everything below paints and exports under whatever phase filter is in
+        # force, so continuing would produce a capture of a phase state the
+        # caller never asked for, with no colour assignment for the elements it
+        # reveals -- silently wrong output, which is worse than a failed view.
+        # phase_filter_state["audit_swap_active"] stays True so the restore
+        # step reverts it on the way out.
+        if phase_filter_state.get("audit_swap_active"):
+            try:
+                pf_param.Set(ElementId(int(orig_phase_filter_id)))
+                phase_filter_state["audit_swap_active"] = False
+            except Exception as ex:
+                if diag is not None:
+                    diag.error(
+                        phase="color_id_buffer",
+                        callsite="phase_swap_audit_revert",
+                        message="could not revert the measurement-only phase filter "
+                                "swap; refusing to paint or export this view under a "
+                                "phase state the caller did not ask for",
+                        view_id=view_id,
+                        exc=ex,
+                    )
+                raise
+
+        # The paint set. Only the swap path replaces the pipeline's own
+        # collection; an audit-only run measures and discards.
+        recollected = elements
+        if neutral_phase_swap_enabled and neutral_recollection is not None:
+            recollected = neutral_recollection
+
+        phase_swap_element_set_audit = _build_phase_swap_audit(
+            phase_swap_audit_enabled,
+            neutral_phase_swap_enabled,
+            elements,
+            neutral_recollection,
+            neutral_recollection_error,
+            raster is not None,
+            neutral_phase_applied,
+            measurement_error,
+            diag=diag,
+            view_id=view_id,
+        )
 
         try:
             from .revit.collection import expand_host_link_import_model_elements as _expand_elements
@@ -2610,7 +3295,14 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         _restore_step("restore_filters", _restore_filters)
 
         def _restore_phase_filter():
-            if orig_phase_filter_id is not None and phase_filter_state.get("swapped"):
+            # "audit_swap_active" covers the measurement-only swap: it is
+            # cleared by the inline revert, so it is still True here only when
+            # that revert was skipped or failed. Without this clause a raise
+            # between the two would leave the view on VOP_NeutralPhaseFilter
+            # permanently.
+            if orig_phase_filter_id is not None and (
+                    phase_filter_state.get("swapped")
+                    or phase_filter_state.get("audit_swap_active")):
                 pf_param.Set(ElementId(int(orig_phase_filter_id)))
         _restore_step("restore_phase_filter", _restore_phase_filter)
 
@@ -2773,6 +3465,17 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "categories_hidden": category_hidden_state,
         "filter_state": filter_state,
         "phase_filter_state": phase_filter_state,
+        # ADDITIVE, new top-level key: the graphics state that governed this
+        # view before Stage A touched it. Every field three-valued
+        # (value | not_applicable | unavailable+reason) -- see
+        # _capture_view_graphics_state. Nothing above or below reads it; it
+        # exists so a capture can be explained after the fact.
+        "view_graphics_state": view_graphics_state,
+        # ADDITIVE, new top-level key: the element-set comparison behind the
+        # decision to stop relying on the neutral-phase re-collection.
+        # "not_applicable" unless color_id_phase_swap_audit is on -- see
+        # _build_phase_swap_audit.
+        "phase_swap_element_set_audit": phase_swap_element_set_audit,
         "category_halftone_state": category_halftone_state,
         "palette_step": step,
         "tiff_path": tiff_path,
