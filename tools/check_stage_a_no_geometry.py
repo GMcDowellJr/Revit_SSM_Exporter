@@ -30,6 +30,21 @@ HOW IT CAN BE WRONG, AND WHAT IT DOES ABOUT IT
     3. Name resolution is deliberately OVER-approximate: a bare name binds to
        every function of that name in the tree. That adds edges, never removes
        them, so it can only make the check stricter.
+    4. A function passed BY NAME as an argument is followed as an edge. A
+       callback reached through a parameter (``invoke(fn, doc)`` where
+       ``invoke`` calls ``callback(doc)``) is otherwise invisible: the walk
+       sees a call to ``callback``, which has no definition, and drops it.
+       Following the reference at the call site covers every hop, since
+       reachability is transitive from the root.
+
+    DECLARED LIMIT: a callee obtained without its name ever appearing -- a
+    lookup into a container of functions, or a name built at runtime -- is not
+    followed. The ``getattr(obj, name)()`` form of that is refused outright
+    (2 above). A container dispatch (``HANDLERS[key]()``) is not currently
+    distinguishable from the .NET generic instantiations this repo really uses
+    (``SCG.List[ElementId]()``, ``NetList[EId]()``), so it is stated here
+    rather than claimed as covered. tests/test_stage_a_no_geometry.py pins
+    this boundary explicitly so it stays a known edge rather than a silent one.
 
     A file that cannot be parsed, a root that does not exist, and a scan that
     matched zero files are all refusals. A validator earns its name by
@@ -61,6 +76,13 @@ GEOMETRY_ATTRS = frozenset([
     "get_Geometry", "Tessellate", "Triangulate", "GetCurves", "get_Curves",
     "GetGeometryObjectFromReference", "ComputeReferences",
     "IncludeNonVisibleObjects",
+    # Instance/symbol traversal. Omitting these let a Stage A root containing
+    # only `instance.GetInstanceGeometry()` report clean -- and the
+    # "tree has geometry somewhere" control did NOT catch it, because an
+    # unrelated get_Geometry elsewhere satisfied that control. Both are used
+    # throughout core/silhouette.py and revit/collection.py, so this was a
+    # live hole, not a hypothetical one.
+    "GetInstanceGeometry", "GetSymbolGeometry",
 ])
 GEOMETRY_NAMES = frozenset([
     "Options", "GeometryInstance", "GeometryElement", "Solid", "Face", "Edge",
@@ -137,6 +159,18 @@ def _scan(paths):
                     found.add(sub.attr)
                 if not isinstance(sub, ast.Call):
                     continue
+                # A function passed BY NAME as an argument is an edge, even
+                # though it is never syntactically called here. Without this,
+                # `invoke(hidden_geometry, doc)` -- where `invoke` calls its
+                # parameter -- dropped the edge silently and the tool reported
+                # PROVEN with geometry reachable through the callback. Adding
+                # the edge OVER-approximates (the callee may never actually be
+                # invoked), which can only make the check stricter, and it
+                # resolves the case rather than refusing it.
+                for arg in list(sub.args) + [kw.value for kw in sub.keywords]:
+                    if isinstance(arg, ast.Name):
+                        called.add(aliases.get(arg.id, arg.id))
+
                 func = sub.func
                 if isinstance(func, ast.Attribute):
                     called.add(func.attr)

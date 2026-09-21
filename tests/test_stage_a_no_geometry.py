@@ -48,7 +48,7 @@ def test_the_real_tree_actually_contains_geometry_to_find():
     roots fail to reach. A tree with none would report clean for the wrong
     reason -- so the tool refuses that case, and this pins the population."""
     result = _run(PKG)
-    assert "geometry-using functions in the tree: 18 (none reachable)" in result.stdout, (
+    assert "geometry-using functions in the tree: 23 (none reachable)" in result.stdout, (
         "the legacy geometry path's population changed; if it reached 0 the "
         "clean result would prove nothing and the tool would refuse"
     )
@@ -217,3 +217,168 @@ def test_bbox_and_parameter_calls_are_never_flagged(tmp_path):
     result = _run(str(pkg), "--root", "export_color_id_buffer_view")
     assert result.returncode == 0, result.stdout
     assert "PROVEN" in result.stdout
+
+
+# --- every supported geometry token is falsified, not just get_Geometry -----
+#
+# GetInstanceGeometry and GetSymbolGeometry were MISSING from the set while
+# both are used throughout core/silhouette.py and revit/collection.py, so a
+# Stage A root containing only `instance.GetInstanceGeometry()` reported
+# clean. The "tree contains geometry somewhere" control did not catch it:
+# an unrelated get_Geometry elsewhere satisfied that control while the new
+# token went unrecognised. Testing one token proves one token, so each is
+# now falsified against a reachable known-positive.
+
+def _tool_module():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_stage_a_check", TOOL)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _geometry_attrs():
+    return sorted(_tool_module().GEOMETRY_ATTRS)
+
+
+def _geometry_names():
+    return sorted(_tool_module().GEOMETRY_NAMES)
+
+
+@pytest.mark.parametrize("attr", _geometry_attrs())
+def test_each_geometry_attribute_is_caught_when_reachable(attr, tmp_path):
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "m.py").write_text(
+        "def export_color_id_buffer_view(elem):\n"
+        "    return elem.{0}()\n".format(attr)
+    )
+    result = _run(str(pkg), "--root", "export_color_id_buffer_view")
+    assert result.returncode == 1, (
+        "{0} is in GEOMETRY_ATTRS but a reachable use of it was not flagged:\n{1}"
+        .format(attr, result.stdout))
+    assert attr in result.stdout
+
+
+@pytest.mark.parametrize("name", _geometry_names())
+def test_each_geometry_type_is_caught_when_reachable(name, tmp_path):
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "m.py").write_text(
+        "def export_color_id_buffer_view():\n"
+        "    return {0}()\n".format(name)
+    )
+    result = _run(str(pkg), "--root", "export_color_id_buffer_view")
+    assert result.returncode == 1, (
+        "{0} is in GEOMETRY_NAMES but a reachable use of it was not flagged:\n{1}"
+        .format(name, result.stdout))
+
+
+def test_instance_geometry_is_in_the_supported_set():
+    """Names the two that were missing, so removing them fails here rather
+    than silently narrowing what the invariant covers."""
+    attrs = _tool_module().GEOMETRY_ATTRS
+    assert "GetInstanceGeometry" in attrs
+    assert "GetSymbolGeometry" in attrs
+
+
+# --- callback dispatch ------------------------------------------------------
+
+def test_geometry_reached_only_through_a_callback_is_caught(tmp_path):
+    """The reported hole, reproduced verbatim.
+
+    `invoke(hidden_geometry, doc)` where `invoke` calls `callback(doc)`: the
+    walk saw a call to `callback`, which has no definition anywhere, and
+    dropped the edge -- exit 0, PROVEN, with get_Geometry reachable. A
+    function passed BY NAME as an argument is now followed as an edge.
+
+    The unrelated filler matters: without it the tree would contain no OTHER
+    geometry and the run would refuse for a different reason, so the fixture
+    would not discriminate.
+    """
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "m.py").write_text(
+        "def invoke(callback, doc):\n"
+        "    return callback(doc)\n"
+        "\n"
+        "def hidden_geometry(doc):\n"
+        "    return doc.get_Geometry(None)\n"
+        "\n"
+        "def export_color_id_buffer_view(doc):\n"
+        "    return invoke(hidden_geometry, doc)\n"
+        "\n"
+        "def unrelated_population_filler(elem):\n"
+        "    return elem.get_Geometry(None)\n"
+    )
+    result = _run(str(pkg), "--root", "export_color_id_buffer_view")
+    assert result.returncode == 1, result.stdout
+    assert "hidden_geometry" in result.stdout
+
+
+def test_a_callback_passed_by_keyword_is_also_followed(tmp_path):
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "m.py").write_text(
+        "def invoke(doc, callback=None):\n"
+        "    return callback(doc)\n"
+        "\n"
+        "def hidden_geometry(doc):\n"
+        "    return doc.GetInstanceGeometry()\n"
+        "\n"
+        "def export_color_id_buffer_view(doc):\n"
+        "    return invoke(doc, callback=hidden_geometry)\n"
+        "\n"
+        "def filler(elem):\n"
+        "    return elem.get_Geometry(None)\n"
+    )
+    result = _run(str(pkg), "--root", "export_color_id_buffer_view")
+    assert result.returncode == 1, result.stdout
+    assert "hidden_geometry" in result.stdout
+
+
+def test_a_non_callback_argument_does_not_invent_a_violation(tmp_path):
+    """Discrimination control for the edge above: following NAME arguments
+    must not make every same-named local look like a geometry call."""
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "m.py").write_text(
+        "def helper(value):\n"
+        "    return value\n"
+        "\n"
+        "def export_color_id_buffer_view(doc):\n"
+        "    bbox = doc.get_BoundingBox(None)\n"
+        "    return helper(bbox)\n"
+        "\n"
+        "def unreached(elem):\n"
+        "    return elem.get_Geometry(None)\n"
+    )
+    result = _run(str(pkg), "--root", "export_color_id_buffer_view")
+    assert result.returncode == 0, result.stdout
+
+
+def test_container_dispatch_is_the_declared_limit(tmp_path):
+    """Pins the boundary the tool does NOT cover, so it stays a known edge.
+
+    `HANDLERS[key]()` is syntactically identical to the .NET generic
+    instantiations this repo really uses (SCG.List[ElementId](),
+    NetList[EId]()), so refusing it would refuse the real tree. This asserts
+    the current, documented behaviour -- if it ever becomes distinguishable,
+    this test is the reminder to close it.
+    """
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "m.py").write_text(
+        "def hidden(doc):\n"
+        "    return doc.get_Geometry(None)\n"
+        "\n"
+        "HANDLERS = {'x': hidden}\n"
+        "\n"
+        "def export_color_id_buffer_view(doc):\n"
+        "    return HANDLERS['x'](doc)\n"
+    )
+    result = _run(str(pkg), "--root", "export_color_id_buffer_view")
+    assert result.returncode == 0, (
+        "container dispatch is documented as NOT followed; if this now fails, "
+        "the tool improved and the DECLARED LIMIT in its docstring is stale"
+    )
