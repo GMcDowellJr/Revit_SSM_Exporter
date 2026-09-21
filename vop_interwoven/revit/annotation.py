@@ -1807,3 +1807,194 @@ def _project_element_bbox_to_cell_rect_for_anno(elem_or_bbox, view_basis, raster
     except Exception as e:
         print(f"[WARN] revit.annotation:project_bbox_to_cell_rect failed (input={type(elem_or_bbox).__name__}) ({type(e).__name__}: {e})")
         return None
+
+
+# ---------------------------------------------------------------------------
+# Stage A step 3: capture-pass membership, by OwnerViewId
+# ---------------------------------------------------------------------------
+#
+# WHY OwnerViewId AND NOT CategoryType.
+#
+# The Stage A model pass hides categories (color_id_buffer._hidden_category_
+# state), because category visibility is the only lever Revit gives a view.
+# Membership is a different question: which elements does a pass PAINT, and
+# so which color->element map does its sidecar carry. Answering that by
+# category would re-derive a fact Revit already stores per element, and would
+# get OST_Lines wrong in both directions -- model lines and detail lines share
+# that category and differ only per element.
+#
+# OwnerViewId is that per-element fact: a view-specific element (a tag, a
+# dimension, a detail line, a filled region, a detail component) carries the
+# id of the view that owns it; a model element carries
+# ElementId.InvalidElementId. The split is therefore a read, not a rule.
+#
+# THREE-VALUED, AND AN UNREADABLE OwnerViewId JOINS NEITHER PASS.
+# A failed read is recorded as "unavailable" with the exception that caused
+# it, and the element lands in `unresolved`. Defaulting it into the model
+# pass would paint an annotation into the model TIFF; defaulting it into the
+# annotation pass would drop a model element from the capture entirely. Both
+# are silent, and both are indistinguishable afterwards from a correct read
+# -- which is the coercion the Stage A record shape exists to refuse.
+
+STAGE_A_PASS_MODEL = "model"
+STAGE_A_PASS_ANNOTATION = "annotation"
+STAGE_A_PASS_UNRESOLVED = "unresolved"
+
+STAGE_A_PASS_MEMBERSHIP_SCHEMA = "vop.stage_a.pass_membership.v1"
+
+# ElementId.InvalidElementId.IntegerValue. Resolved from the API when the API
+# is importable and compared numerically otherwise, so the split still works
+# in a host that cannot hand us the class (and in the test harness).
+#
+# UNCONFIRMED: that -1 is Invalid on every targeted Revit version has not been
+# run in this session. It is the documented value and has been stable across
+# every Revit release this repo targets, and the API-resolved path below is
+# preferred whenever it is available, so the constant is a fallback rather
+# than the primary authority.
+_INVALID_ELEMENT_ID_INT = -1
+
+
+def _invalid_element_id_int():
+    """``ElementId.InvalidElementId.IntegerValue``, preferring the live API."""
+    try:
+        from Autodesk.Revit.DB import ElementId
+        return int(ElementId.InvalidElementId.IntegerValue)
+    except Exception:
+        return _INVALID_ELEMENT_ID_INT
+
+
+def stage_a_pass_membership(elem, capture_view_id_int=None):
+    """Which Stage A capture pass ``elem`` belongs to, read from OwnerViewId.
+
+    Returns a three-valued record. ``state`` is ``"value"`` when OwnerViewId
+    was read, ``"unavailable"`` when it was not; ``pass`` is
+    ``STAGE_A_PASS_MODEL``/``STAGE_A_PASS_ANNOTATION`` only in the first case
+    and ``None`` in the second. There is deliberately no third pass value and
+    no default: a caller that cannot read the element cannot place it.
+
+    ``owner_view_matches_capture_view`` is a SEPARATE fact from membership. An
+    element owned by some other view is still an annotation -- it is just not
+    this view's, which a collector scoped to the view should never produce.
+    Recorded rather than acted on, so a capture that somehow sees one says so
+    instead of quietly painting it.
+    """
+    record = {
+        "state": "unavailable",
+        "pass": None,
+        "owner_view_id": None,
+        "owner_view_matches_capture_view": "unavailable",
+        "reason": None,
+    }
+
+    owner = None
+    try:
+        owner = elem.OwnerViewId
+    except Exception as ex:
+        record["reason"] = "OwnerViewId read failed ({0}: {1})".format(
+            type(ex).__name__, ex)
+        return record
+
+    if owner is None:
+        # Not the same as Invalid. Invalid is Revit saying "no owning view";
+        # None is this element not answering the question at all.
+        record["reason"] = "OwnerViewId is None (the element exposes no owning-view id)"
+        return record
+
+    try:
+        owner_int = int(owner.IntegerValue)
+    except Exception as ex:
+        record["reason"] = "OwnerViewId.IntegerValue read failed ({0}: {1})".format(
+            type(ex).__name__, ex)
+        return record
+
+    record["state"] = "value"
+    record["owner_view_id"] = owner_int
+
+    if owner_int == _invalid_element_id_int():
+        record["pass"] = STAGE_A_PASS_MODEL
+        # A model element has no owning view, so "does it match" has no
+        # answer -- not a False one.
+        record["owner_view_matches_capture_view"] = "not_applicable"
+        return record
+
+    record["pass"] = STAGE_A_PASS_ANNOTATION
+    if capture_view_id_int is None:
+        record["owner_view_matches_capture_view"] = "unavailable"
+        record["reason"] = "no capture view id supplied; ownership not compared"
+    else:
+        record["owner_view_matches_capture_view"] = (
+            int(owner_int) == int(capture_view_id_int))
+    return record
+
+
+def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None):
+    """Partition ``elements`` into the Stage A model and annotation passes.
+
+    Returns ``(model, annotation, unresolved)``. ``unresolved`` holds
+    ``(element, record)`` pairs for every element whose OwnerViewId could not
+    be read; it is never empty *and* silent -- each entry carries the reason,
+    and a diagnostic is raised once for the group.
+
+    The three lists partition the input exactly: nothing is dropped and
+    nothing appears twice, which is what makes "the model TIFF has no
+    annotation pixels" checkable rather than asserted.
+    """
+    model = []
+    annotation = []
+    unresolved = []
+
+    for elem in elements or []:
+        record = stage_a_pass_membership(elem, capture_view_id_int=capture_view_id_int)
+        if record["pass"] == STAGE_A_PASS_MODEL:
+            model.append(elem)
+        elif record["pass"] == STAGE_A_PASS_ANNOTATION:
+            annotation.append(elem)
+        else:
+            unresolved.append((elem, record))
+
+    if unresolved and diag is not None:
+        diag.warn(
+            phase="annotation",
+            callsite="split_stage_a_pass_membership",
+            message="{0} of {1} element(s) have no readable OwnerViewId and were "
+                    "placed in NEITHER Stage A capture pass; they are painted by "
+                    "neither and absent from both color maps. First reason: "
+                    "{2}".format(len(unresolved),
+                                 len(model) + len(annotation) + len(unresolved),
+                                 unresolved[0][1]["reason"]),
+            view_id=capture_view_id_int,
+        )
+
+    return model, annotation, unresolved
+
+
+def stage_a_pass_membership_summary(model, annotation, unresolved):
+    """The sidecar record for one split. Counts are always present.
+
+    A zero here means "none of these", because the split always ran; it is
+    never a stand-in for "not measured". A capture that could not split at all
+    writes no summary rather than a summary of zeros.
+    """
+    return {
+        "schema": STAGE_A_PASS_MEMBERSHIP_SCHEMA,
+        "membership_rule": "OwnerViewId",
+        "model_count": len(model),
+        "annotation_count": len(annotation),
+        "unresolved_count": len(unresolved),
+        "unresolved": [
+            {
+                "element_id": _stage_a_element_id_int(elem),
+                "state": record["state"],
+                "reason": record["reason"],
+            }
+            for elem, record in unresolved
+        ],
+    }
+
+
+def _stage_a_element_id_int(elem):
+    """``elem.Id.IntegerValue`` or None -- an id we could not read is not 0."""
+    try:
+        return int(elem.Id.IntegerValue)
+    except Exception:
+        return None
