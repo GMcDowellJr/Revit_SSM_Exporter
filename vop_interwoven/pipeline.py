@@ -1795,6 +1795,22 @@ def init_view_raster(doc, view, cfg, diag=None):
                 message="Exception in init_view_raster: {}".format(e),
                 exc=e,
             )
+    # The annotation frame as computed, before the cap envelope clipped and
+    # re-centred it. Stage A sizes its capture against this; the grid above
+    # keeps bounds_xy exactly as it always had, so the geometry path's frame
+    # is untouched. None when no annotation expansion applied.
+    try:
+        raster.anno_frame_bounds = bounds_result.get("anno_bounds_uncapped_uv", None)
+        raster.anno_cap_envelope_applied = bool(
+            bounds_result.get("anno_cap_envelope_applied", False))
+    except Exception as e:
+        if diag is not None:
+            diag.error(
+                phase="pipeline",
+                callsite="init_view_raster",
+                message="Exception threading the uncapped annotation frame: {}".format(e),
+                exc=e,
+            )
     # Persist bounds/resolution metadata for export diagnostics (never silent)
     raster.bounds_meta = {
         "reason": bounds_result.get("reason"),

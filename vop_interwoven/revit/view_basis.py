@@ -1008,6 +1008,19 @@ def resolve_view_bounds(view, diag=None, policy=None):
     # 2) Annotation-driven expansion (optional)
     anno_expanded = False
     pre_annotation_bounds = base_bounds
+    # The annotation-expanded frame BEFORE the cap envelope below clips and
+    # re-centres it. Stage A captures against this rectangle, because a
+    # capture whose frame has been re-centred on the model no longer contains
+    # the annotation extent it was expanded to hold -- which is the whole
+    # reason the expansion happened.
+    #
+    # ADDITIVE, and deliberately so: "bounds_uv" below is unchanged, so the
+    # geometry path's grid keeps the exact frame it has always had. That path
+    # predates the color-ID capture and the cap envelope is its own
+    # historical behaviour, so Stage A takes a separate rectangle rather than
+    # moving the arbiter's frame underneath it.
+    anno_bounds_uncapped = None
+    anno_cap_envelope_applied = False
     try:
         anno_expand_fn = policy.get("anno_expand_fn", None)
         if anno_expand_fn is None:
@@ -1034,6 +1047,7 @@ def resolve_view_bounds(view, diag=None, policy=None):
         if anno_bounds is not None:
             base_bounds = anno_bounds
             anno_expanded = True
+            anno_bounds_uncapped = anno_bounds
 
         # Apply cap envelope to final annotation-expanded bounds as a hard safety net.
         if (
@@ -1066,6 +1080,7 @@ def resolve_view_bounds(view, diag=None, policy=None):
                     new_xmin + clipped_w_ft,
                     new_ymin + clipped_h_ft,
                 )
+                anno_cap_envelope_applied = True
     except Exception as e:
         # Annotation expansion failing should never block model export.
         if diag is not None:
@@ -1194,6 +1209,19 @@ def resolve_view_bounds(view, diag=None, policy=None):
         # Pre-annotation bounds (crop/extents/fallback). Used by pipeline to clip model ink
         # even when raster bounds are expanded for annotations.
         "model_bounds_uv": model_bounds,
+
+        # The annotation-expanded frame as computed, BEFORE the cap envelope
+        # clipped and re-centred it. None when no annotation expansion
+        # applied, in which case "bounds_uv" already IS the frame and there is
+        # nothing the envelope could have moved.
+        #
+        # None is not "unavailable" here: it means the question does not
+        # arise. anno_cap_envelope_applied distinguishes the two cases a
+        # consumer actually needs to tell apart -- an expansion that the
+        # envelope left alone (False, and this equals bounds_uv) from one it
+        # moved (True, and this differs).
+        "anno_bounds_uncapped_uv": anno_bounds_uncapped,
+        "anno_cap_envelope_applied": bool(anno_cap_envelope_applied),
 
         "reason": reason,
         "confidence": confidence,

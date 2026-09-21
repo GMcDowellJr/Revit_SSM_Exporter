@@ -2410,17 +2410,41 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
 
     geom = None
     frame_uv = None
+    frame_source = "unavailable"
     if raster is not None and getattr(raster, "bounds_xy", None) is not None:
-        _b = raster.bounds_xy
+        # FRAME B IS THE ANNOTATION FRAME AS COMPUTED, not as the cap envelope
+        # left it. view_basis clips the annotation-expanded bounds to a sheet
+        # envelope and re-centres the remainder on the MODEL bounds, so under
+        # that envelope raster.bounds_xy is no longer the annotation extent --
+        # it is a model-centred window. Capturing against it puts annotation
+        # content outside the image on the very views that were expanded to
+        # hold it.
+        #
+        # raster.bounds_xy is still what the analysis grid uses and what the
+        # geometry path renders into; only the capture reads the uncapped
+        # rectangle. Absent (None) means no annotation expansion applied, so
+        # bounds_xy already IS the frame.
+        _b = getattr(raster, "anno_frame_bounds", None) or raster.bounds_xy
         frame_uv = (float(_b.xmin), float(_b.ymin), float(_b.xmax), float(_b.ymax))
+        frame_source = ("anno_uncapped"
+                        if getattr(raster, "anno_frame_bounds", None) is not None
+                        else "raster_bounds")
         try:
             # compute_model_crop is pure, and is resolved here as well as at
             # the crop-application site below for the same reason the shipped
             # code resolved it twice: it costs nothing and keeps the sizing
             # honest about what will actually be rendered. The SNAPPED result
             # computed here is what gets applied, so the two cannot disagree.
+            # Intersected against the FRAME, not against raster.bounds_xy.
+            # compute_model_crop clamps A into whatever rectangle it is given,
+            # and handing it the capped window while B is the uncapped frame
+            # would narrow A to the window -- reintroducing the re-centred
+            # rectangle through the back door on exactly the capped views this
+            # is meant to fix.
+            from .core.math_utils import Bounds2D as _Bounds2D_frame
+            _frame_bounds = _Bounds2D_frame(*frame_uv)
             _render_bounds, _unused_offset = compute_model_crop(
-                getattr(raster, "model_clip_bounds", None), raster.bounds_xy
+                getattr(raster, "model_clip_bounds", None), _frame_bounds
             )
             crop_uv = (float(_render_bounds.xmin), float(_render_bounds.ymin),
                        float(_render_bounds.xmax), float(_render_bounds.ymax))
@@ -3704,6 +3728,27 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 "status": "value",
                 # B as resolved, unclipped and un-re-centred.
                 "frame_uv": [float(v) for v in frame_uv],
+                # Which rectangle B came from. "anno_uncapped" is the
+                # annotation frame as computed; "raster_bounds" means no
+                # annotation expansion applied, so the grid's own rectangle
+                # already IS the frame. Recorded rather than inferable,
+                # because the two are equal whenever the cap envelope did not
+                # fire and a reader cannot otherwise tell which path ran.
+                "frame_source": frame_source,
+                # True when view_basis' cap envelope clipped and re-centred
+                # the grid's bounds. On those views raster.bounds_xy is a
+                # model-centred window rather than the annotation extent, and
+                # the capture is deliberately NOT sized against it.
+                "anno_cap_envelope_applied": bool(
+                    getattr(raster, "anno_cap_envelope_applied", False)),
+                # The grid's own rectangle, for the capped case where it
+                # differs from the frame. model_crop_offset_uv is defined
+                # against THIS rectangle, not against frame_uv.
+                "raster_bounds_uv": (
+                    [float(raster.bounds_xy.xmin), float(raster.bounds_xy.ymin),
+                     float(raster.bounds_xy.xmax), float(raster.bounds_xy.ymax)]
+                    if raster is not None and getattr(raster, "bounds_xy", None) is not None
+                    else None),
                 "frame_extent_ft": [float(v) for v in geom["frame_extent_ft"]],
                 # B rounded OUT to the pixel lattice: what the capture
                 # realises. Grows only at the max corner, so B.min -- the
