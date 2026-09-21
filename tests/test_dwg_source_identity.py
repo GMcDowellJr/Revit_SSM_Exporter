@@ -75,6 +75,20 @@ class ImportInstance(_FakeElement):
     agrees_with_collection_policy below composes the two against this object.
     """
 
+    def __init__(self, elem_id, category, bbox, type_id=None, view_specific=False):
+        _FakeElement.__init__(self, elem_id, category, bbox)
+        self._type_id = type_id
+        self.ViewSpecific = view_specific
+
+    def GetTypeId(self):
+        return self._type_id
+
+
+class _FakeImportType:
+    def __init__(self, elem_id, name):
+        self.Id = _FakeElementId(elem_id)
+        self.Name = name
+
 
 class _FakeLinkedElementProxy:
     def __init__(self, elem_id, link_inst_id, category, bbox, source_type="LINK"):
@@ -395,10 +409,101 @@ def test_fixture_without_dwg_is_unchanged_under_the_pre_change_keys(monkeypatch)
     assert link_entry["bbox_corners_uv"] == [[10, 10], [12, 10], [12, 12], [10, 12]]
 
 
-def test_host_record_gains_exactly_the_two_new_keys():
-    """Names the addition, so a third key cannot arrive unreviewed."""
+_NEW_HOST_KEYS = {"source", "category_state", "import_symbol_state", "view_specific_state"}
+
+
+def test_host_record_gains_exactly_the_reviewed_new_keys():
+    """Names the addition, so a further key cannot arrive unreviewed."""
     host_elem = _FakeElement(1001, _FakeCategory("Walls", 10), _FakeBBox((0, 0, 0), (2, 2, 2)))
     doc = _FakeDoc([host_elem])
 
     entry = _collect(doc, [host_elem.Id], {1001: "HOST"})["host"]["1001"]
-    assert set(entry.keys()) == set(_PRE_CHANGE_HOST_KEYS) | {"source", "category_state"}
+    assert set(entry.keys()) == set(_PRE_CHANGE_HOST_KEYS) | _NEW_HOST_KEYS
+
+
+# --- both DWG identifiers are recorded, neither chosen ----------------------
+
+def test_dwg_records_both_category_and_import_symbol_name():
+    """Which of the two is stable across Revit versions is unverified, so both
+    are captured and post decides (Greg, 2026-09-21). A test that only checked
+    one would let the other rot unnoticed."""
+    import_type = _FakeImportType(4004, "site-plan.dwg")
+    dwg = ImportInstance(2002, _FakeCategory("Imports in Families", 99),
+                         _FakeBBox((5, 5, 0), (9, 9, 1)), type_id=import_type.Id)
+    doc = _FakeDoc([dwg, import_type])
+
+    entry = _collect(doc, [dwg.Id], {2002: "DWG"})["host"]["2002"]
+
+    assert entry["category_state"] == {"state": "value", "value": "Imports in Families"}
+    assert entry["import_symbol_state"] == {"state": "value", "value": "site-plan.dwg"}
+    # The two are DIFFERENT strings in this fixture on purpose: a fixture where
+    # they coincide could not tell the readers apart.
+    assert entry["category_state"]["value"] != entry["import_symbol_state"]["value"]
+
+
+def test_import_symbol_is_not_applicable_for_a_true_host_element():
+    host = _FakeElement(1001, _FakeCategory("Walls", 10), _FakeBBox((0, 0, 0), (2, 2, 2)))
+    doc = _FakeDoc([host])
+
+    entry = _collect(doc, [host.Id], {1001: "HOST"})["host"]["1001"]
+    assert entry["import_symbol_state"]["state"] == "not_applicable"
+    assert entry["view_specific_state"]["state"] == "not_applicable"
+    assert entry["import_symbol_state"]["reason"]
+
+
+def test_import_symbol_unavailable_does_not_infect_the_other_fields():
+    """A failing symbol read must not take the category, the source, or the
+    bbox down with it -- each field carries its own state."""
+    # Named ImportInstance, not a SUBCLASS of it: both detectors match on
+    # type(elem).__name__, so a subclass would answer "not a DWG" and this
+    # test would pass for the wrong reason. See _is_import_instance.
+    class ImportInstance(_FakeElement):  # noqa: F811 - deliberate shadow
+        def GetTypeId(self):
+            raise RuntimeError("type lookup failed")
+
+    dwg = ImportInstance(2002, _FakeCategory("site-plan.dwg", 99), _FakeBBox((5, 5, 0), (9, 9, 1)))
+    doc = _FakeDoc([dwg])
+    diag = _FakeDiag()
+
+    entry = _collect(doc, [dwg.Id], {2002: "DWG"}, diag=diag)["host"]["2002"]
+    assert entry["import_symbol_state"]["state"] == "unavailable"
+    assert "RuntimeError" in entry["import_symbol_state"]["reason"]
+    assert entry["category_state"] == {"state": "value", "value": "site-plan.dwg"}
+    assert entry["source"] == {"state": "value", "value": "DWG"}
+    assert entry["bbox_corners_uv"] == [[5, 5], [9, 5], [9, 9], [5, 9]]
+    assert any(w["callsite"] == "near_face_w.host.import_symbol" for w in diag.warnings)
+
+
+def test_dwg_applicability_is_gated_on_the_element_not_on_the_source_field():
+    """source can itself be "unavailable" (no expansion record). The DWG-only
+    fields must still answer, or one field's failure would silently become
+    another's "not_applicable"."""
+    dwg = ImportInstance(2002, _FakeCategory("site-plan.dwg", 99),
+                         _FakeBBox((5, 5, 0), (9, 9, 1)), view_specific=True)
+    doc = _FakeDoc([dwg])
+
+    entry = _collect(doc, [dwg.Id], None)["host"]["2002"]
+    assert entry["source"]["state"] == "unavailable"
+    assert entry["view_specific_state"] == {"state": "value", "value": True}
+
+
+# --- view-specific DWG is tagged, not dropped -------------------------------
+
+def test_view_specific_dwg_is_recorded_and_tagged():
+    dwg = ImportInstance(2002, _FakeCategory("site-plan.dwg", 99),
+                         _FakeBBox((5, 5, 0), (9, 9, 1)), view_specific=True)
+    doc = _FakeDoc([dwg])
+
+    entry = _collect(doc, [dwg.Id], {2002: "DWG"})["host"]["2002"]
+    assert entry["source"] == {"state": "value", "value": "DWG"}
+    assert entry["view_specific_state"] == {"state": "value", "value": True}
+
+
+def test_model_space_dwg_is_tagged_not_view_specific():
+    """Control: the tag must discriminate, not report True for everything."""
+    dwg = ImportInstance(2002, _FakeCategory("site-plan.dwg", 99),
+                         _FakeBBox((5, 5, 0), (9, 9, 1)), view_specific=False)
+    doc = _FakeDoc([dwg])
+
+    entry = _collect(doc, [dwg.Id], {2002: "DWG"})["host"]["2002"]
+    assert entry["view_specific_state"] == {"state": "value", "value": False}
