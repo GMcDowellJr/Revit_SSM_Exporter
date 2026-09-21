@@ -1314,20 +1314,37 @@ def _capture_view_graphics_state(doc, view, elements, diag=None, view_id=None):
         return out
 
     def _read_category_overrides():
-        # "Categories present" is resolved from the collection the pipeline
-        # already handed this function -- the host-visible elements for this
-        # view -- rather than from doc.Settings.Categories, which would record
-        # every category the DOCUMENT defines whether or not this view shows
-        # one. The basis is named in the record so a reader is never left
-        # guessing which of the two it is looking at.
+        # TWO sources, because neither alone can explain the view.
+        #
+        # (a) The categories of the elements the pipeline collected. That is
+        #     what is on screen -- but it is blind in exactly the case this
+        #     record exists to explain. collect_view_elements() is
+        #     view-scoped (FilteredElementCollector(doc, view.Id)), so Revit
+        #     has already dropped every element of a hidden category before
+        #     this function is handed the list. Derive "categories present"
+        #     from it alone and a category hidden in the authored view is
+        #     simply ABSENT, with no "hidden": true anywhere to say why --
+        #     the record would be silent precisely where it is needed.
+        #
+        # (b) Every top-level category this view reports hidden, read off the
+        #     view and independent of any element. This is the source that
+        #     explains an absence.
+        #
+        # Each entry names the source(s) that put it there, so a reader can
+        # tell "present and visible" from "hidden, nothing collected". The
+        # document scan costs one pass over doc.Settings.Categories per view,
+        # the same order as _hidden_category_state()'s existing pass.
         present = {}
+        names = {}
         unreadable = 0
         for elem in (elements or []):
             try:
                 cat = elem.Category
                 if cat is None:
                     continue
-                present[int(cat.Id.IntegerValue)] = getattr(cat, "Name", None)
+                cat_id_int = int(cat.Id.IntegerValue)
+                present[cat_id_int] = True
+                names[cat_id_int] = getattr(cat, "Name", _GS_MISSING)
             except Exception:
                 # Counted, then reported below and in the record -- a stale or
                 # disposed element is not a reason to lose the whole section,
@@ -1342,10 +1359,50 @@ def _capture_view_graphics_state(doc, view, elements, diag=None, view_id=None):
                             unreadable),
                 view_id=view_id,
             )
+
+        hidden_ids = set()
+        scan_unreadable = 0
+        scan_error = None
+        try:
+            doc_categories = list(doc.Settings.Categories)
+        except Exception as ex:
+            doc_categories = []
+            scan_error = "{0}: {1}".format(type(ex).__name__, ex)
+        for cat in doc_categories:
+            try:
+                cat_id = cat.Id
+                if not view.GetCategoryHidden(cat_id):
+                    continue
+                cat_id_int = int(cat_id.IntegerValue)
+                hidden_ids.add(cat_id_int)
+                if cat_id_int not in names:
+                    names[cat_id_int] = getattr(cat, "Name", _GS_MISSING)
+            except Exception:
+                scan_unreadable += 1
+        if scan_unreadable and diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="graphics_state_category_overrides",
+                message="{0} document categor(ies) would not report a hidden state; a "
+                        "category hidden in this view may be missing from the "
+                        "graphics-state record".format(scan_unreadable),
+                view_id=view_id,
+            )
+
         categories = {}
-        for cat_id_int in sorted(present):
+        for cat_id_int in sorted(set(present) | hidden_ids):
+            raw_name = names.get(cat_id_int, _GS_MISSING)
+            if cat_id_int in present and cat_id_int in hidden_ids:
+                source = "collected_element+hidden_in_view"
+            elif cat_id_int in present:
+                source = "collected_element"
+            else:
+                source = "hidden_in_view"
             categories[str(cat_id_int)] = {
-                "name": present[cat_id_int],
+                "source": source,
+                "name": (
+                    _gs_not_applicable("category exposes no Name property")
+                    if raw_name is _GS_MISSING else _gs_value(raw_name)),
                 "halftone": cap(
                     "graphics_state_category_halftone",
                     lambda cid=cat_id_int: bool(
@@ -1358,8 +1415,15 @@ def _capture_view_graphics_state(doc, view, elements, diag=None, view_id=None):
                 ),
             }
         return {
-            "basis": "categories of the elements the pipeline collected for this view",
+            "basis": "categories of the elements the pipeline collected, UNION every "
+                     "top-level category this view reports hidden; the second source "
+                     "is what explains an absence, since a hidden category's elements "
+                     "never reach the view-scoped collection",
             "elements_with_unreadable_category": unreadable,
+            "categories_unreadable_in_document_scan": scan_unreadable,
+            "document_categories_scanned": (
+                _gs_unavailable(scan_error) if scan_error is not None
+                else _gs_value(len(doc_categories))),
             "categories": categories,
         }
 
@@ -1403,6 +1467,13 @@ def _capture_view_graphics_state(doc, view, elements, diag=None, view_id=None):
                 doc, eid, diag=diag, callsite="graphics_state_underlay",
                 view_id=view_id)
 
+        def _read_orientation():
+            getter = getattr(view, "GetUnderlayOrientation", _GS_MISSING)
+            if getter is _GS_MISSING:
+                return _GsNotApplicable(
+                    "this Revit host exposes no View.GetUnderlayOrientation")
+            return str(getter())
+
         return {
             "base_level": cap(
                 "graphics_state_underlay_base",
@@ -1410,6 +1481,16 @@ def _capture_view_graphics_state(doc, view, elements, diag=None, view_id=None):
             "top_level": cap(
                 "graphics_state_underlay_top",
                 lambda: _read_level("GetUnderlayTopLevel")),
+            # LookingUp vs LookingDown changes what the underlay actually
+            # draws while base and top can be identical, so without this two
+            # materially different views produce the same underlay record --
+            # which defeats the point of recording the underlay at all.
+            # Confirmed present on the target install by Run 1 (Revit 2025
+            # 25.4.41.14); see tests/dynamo/PROBE_STAGE_A_COLOR_ID_ANOMALIES.md,
+            # "Underlay / blend", the GetUnderlayBaseLevel/GetUnderlayTopLevel/
+            # GetUnderlayOrientation item.
+            "orientation": cap(
+                "graphics_state_underlay_orientation", _read_orientation),
         }
 
     def _read_view_template():

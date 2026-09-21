@@ -435,12 +435,16 @@ class FakeViewPlan(FakeView):
         FakeView.__init__(self, view_id, name)
         self.underlay_base = INVALID_ELEMENT_ID
         self.underlay_top = INVALID_ELEMENT_ID
+        self.underlay_orientation = "LookingDown"
 
     def GetUnderlayBaseLevel(self):
         return self.underlay_base
 
     def GetUnderlayTopLevel(self):
         return self.underlay_top
+
+    def GetUnderlayOrientation(self):
+        return self.underlay_orientation
 
 
 class FakeDiag(object):
