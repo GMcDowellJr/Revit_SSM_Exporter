@@ -571,8 +571,15 @@ def test_sidecar_gains_exactly_two_top_level_keys(tmp_path):
 
     keys = set(result["metadata"])
     assert SIDECAR_KEYS_BEFORE <= keys, SIDECAR_KEYS_BEFORE - keys
+    # Each name here is a reviewed addition. The frozen set below it is never
+    # edited: an "additive" change that renamed or dropped a pre-change key
+    # still fails on the subset assertion above.
     assert keys - SIDECAR_KEYS_BEFORE == {
-        "view_graphics_state", "phase_swap_element_set_audit"}
+        "view_graphics_state",
+        "phase_swap_element_set_audit",
+        # Stage A step 1.
+        "dwg_imports_omitted",
+    }
 
 
 def test_record_round_trips_through_the_written_sidecar_file(tmp_path):

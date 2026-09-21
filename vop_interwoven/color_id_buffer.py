@@ -340,7 +340,7 @@ def resolve_all(doc, top_elements):
     return resolved_ids
 
 
-def _split_expanded_elements(expanded_entries):
+def _split_expanded_elements(expanded_entries, source_out=None):
     """Partition expand_host_link_import_model_elements() output.
 
     Returns (host_elements, link_entries):
@@ -349,6 +349,26 @@ def _split_expanded_elements(expanded_entries):
     - link_entries: list of (link_instance_id, link_element_id, proxy) tuples for
       elements that live inside a linked RVT document and require the
       LinkElementId override path.
+
+    ``source_out``: optional dict the caller supplies to have the non-LINK
+    entries' own ``source_type`` PRESERVED across this partition (Stage A
+    step 1). It is filled ``{element_id_int: source_type}`` for exactly the
+    elements returned in ``host_elements`` -- so a DWG ImportInstance, which
+    this function deliberately hands back in the HOST bucket because it is a
+    real element of ``doc`` and overrides the ordinary way, stays
+    distinguishable from a true HOST element downstream. Without it the
+    "HOST bucket" is one-way: source_type is read here and then dropped, and
+    nothing after this point can tell the two apart.
+
+    It is an out-parameter rather than a third return value on purpose: this
+    is the ONE walk that decides which entries are host and which id wins the
+    dedup, so deriving the map from a second walk elsewhere would be the
+    "same quantity computed in two places" defect CLAUDE.md warns about, while
+    a third return value would break every existing 2-tuple call site.
+
+    Note the map is keyed by TOP-LEVEL element id only. resolve_all() later
+    expands Groups and FamilyInstance sub-components into ids that never
+    appear here; see _collect_near_face_w_data() for how those are labelled.
     """
     host_elements = []
     link_entries = []
@@ -371,7 +391,33 @@ def _split_expanded_elements(expanded_entries):
             continue
         seen_host.add(eid.IntegerValue)
         host_elements.append(elem)
+        if source_out is not None:
+            source_out[eid.IntegerValue] = source_type
     return host_elements, link_entries
+
+
+def _is_import_instance(elem):
+    """True when ``elem`` is a DWG/DXF ImportInstance.
+
+    Type-NAME based, deliberately: it is the same test revit/collection_
+    policy.py already applies to keep ImportInstance out of the HOST
+    collection pass ("Belt-and-suspenders: exclude ImportInstance by type
+    name regardless of category name localization"), and it needs no Revit
+    import so it runs outside Revit. tests/test_near_face_w_collection.py
+    COMPOSES the two -- asserting this helper and that policy agree on the
+    same object -- rather than testing each against its own copy of the
+    idiom.
+
+    Used only for ids resolve_all() produced by expansion, where
+    _split_expanded_elements' per-entry source_type is not available.
+
+    Matching on the type NAME means a SUBCLASS of ImportInstance answers
+    False. That is shared with collection_policy.py, so the two stay
+    consistent, and the Revit API exposes ImportInstance as a concrete type
+    rather than something host code subclasses -- but it is a real edge of
+    the idiom, not an oversight.
+    """
+    return type(elem).__name__ == "ImportInstance"
 
 
 def get_or_create_neutral_phase_filter(doc):
@@ -939,9 +985,104 @@ def _collect_view_scoped_link_proxies(doc, view, cfg, diag=None, view_id=None):
     return proxies, status
 
 
+def _near_face_w_category_name(elem):
+    """Reader (raises on failure) for a host element's category name, for
+    _gs_capture. Returns None when the element genuinely has no Category.
+
+    NOTE (Stage A step 1, UNCONFIRMED): for a DWG ImportInstance this is the
+    IMPORT INSTANCE's own Revit category -- typically the "Imports in
+    Families"/"<import file name>.dwg" category Revit creates per imported
+    file. Whether that, or the import SYMBOL (type) name reached via
+    GetTypeId(), is the stable identifier across Revit versions has NOT been
+    verified in this session; no Revit API call was run. The symbol name is
+    deliberately NOT recorded here pending that decision -- see the Stage A
+    step 1 RAISE in the PR description.
+    """
+    cat = getattr(elem, "Category", None)
+    if cat is None:
+        return None
+    return getattr(cat, "Name", None)
+
+
+def _near_face_w_import_symbol_name(doc, elem):
+    """Reader (raises on failure) for a DWG import's SYMBOL (type) name.
+
+    Recorded ALONGSIDE the ImportInstance's own category rather than instead
+    of it (Greg, 2026-09-21): which of the two is stable across Revit versions
+    is unverified, so both are captured and post decides. This is the same
+    GetTypeId() -> Name read revit/linked_documents.py already uses to build a
+    DWG proxy's source_label.
+
+    UNCONFIRMED: no Revit API call was run this session. In particular, that
+    the type element resolves and exposes Name for every import flavour
+    (linked CAD vs imported CAD) is assumed, not verified.
+    """
+    type_id = elem.GetTypeId()
+    if type_id is None:
+        return None
+    import_type = doc.GetElement(type_id)
+    if import_type is None:
+        return None
+    return getattr(import_type, "Name", None)
+
+
+def _near_face_w_view_specific(elem):
+    """Reader (raises on failure) for whether an import is placed "this view
+    only".
+
+    Both passes now record a view-specific DWG, tagged rather than dropped
+    (Greg, 2026-09-21), so this is the tag that lets post attribute it and
+    lets the Step 3 annotation pass recognise what the model pass already
+    claimed.
+    """
+    return bool(elem.ViewSpecific)
+
+
+def _dwg_only_state(elem, reader, diag=None, callsite=None, view_id=None):
+    """Three-valued wrapper for a field that exists only for a DWG import.
+
+    Gated on the ELEMENT, not on the resolved source: source can itself be
+    "unavailable" (no expansion record), and a field's applicability must not
+    inherit another field's failure.
+    """
+    if not _is_import_instance(elem):
+        return _gs_not_applicable("not a DWG ImportInstance")
+    return _gs_capture(reader, diag=diag, callsite=callsite, view_id=view_id)
+
+
+def _host_source_state(elem, elem_id_int, host_source_types):
+    """Three-valued source for one entry in the near_face_w_map "host" bucket.
+
+    The "host" bucket holds true HOST elements AND DWG ImportInstances --
+    both are real elements of ``doc`` (see _split_expanded_elements). This
+    resolves which, without ever defaulting:
+
+    1. ``host_source_types`` is None -> "unavailable". The caller kept no
+       expansion record, and an element id alone does not carry a source.
+    2. The id is IN the map -> that source_type verbatim. The map is the
+       authority: it is what expand_host_link_import_model_elements() read
+       off the element or its LinkedElementProxy at collection time.
+    3. The id is NOT in the map -> it is an id resolve_all() produced by
+       expanding a Group's members or a FamilyInstance's sub-components,
+       which _split_expanded_elements never saw. Those descend from a
+       top-level entry, but NOT necessarily a HOST one: a DWG import placed
+       inside a Group is reached as a group member, so "everything that is
+       not in the map is HOST" would mislabel exactly the case this step
+       exists to make visible. Decided from the element itself instead.
+    """
+    if host_source_types is None:
+        return _gs_unavailable(
+            "no expansion source record supplied to _collect_near_face_w_data; "
+            "an element id alone does not carry HOST vs DWG"
+        )
+    if elem_id_int in host_source_types:
+        return _gs_value(host_source_types[elem_id_int])
+    return _gs_value("DWG" if _is_import_instance(elem) else "HOST")
+
+
 def _collect_near_face_w_data(
     doc, view, raster, cfg, resolved_ids, link_category_color_map,
-    diag=None, view_id=None, link_proxies=None,
+    diag=None, view_id=None, link_proxies=None, host_source_types=None,
 ):
     """Collect near-face-W (nearest projected depth) and a UV bbox footprint
     for every HOST and LINK element resolved by export_color_id_buffer_view,
@@ -975,6 +1116,22 @@ def _collect_near_face_w_data(
     proxy list (export_color_id_buffer_view collects one per capture via
     _collect_view_scoped_link_proxies). Left None, this function collects its
     own -- the standalone behavior its own tests exercise.
+
+    ``host_source_types`` (Stage A step 1) is _split_expanded_elements'
+    source_out map, {top_level_element_id_int: source_type}. It is what makes
+    a painted DWG ImportInstance IDENTIFIABLE in the record: DWG imports are
+    real elements of ``doc`` and so have always been painted and recorded in
+    the "host" bucket, indistinguishable from true HOST elements because
+    source_type was dropped at the partition. HOST and LINK entries keep
+    their existing keys and values unchanged; the distinction is carried by
+    the NEW three-valued "source" key on host entries only.
+
+    "source" is {"state": "value", "value": "HOST"|"DWG"} when it is known,
+    and {"state": "unavailable", "reason": ...} when it is not -- never a
+    guess and never a stand-in default, per the Stage A three-valued rule.
+    Left None (the standalone/legacy call), every host entry records
+    "unavailable" with that as the reason: this function cannot derive a top
+    element's source from an element id alone.
     """
     from .revit.collection import resolve_element_bbox, project_bbox_uv_and_near_face_w
 
@@ -986,8 +1143,29 @@ def _collect_near_face_w_data(
         if elem is None:
             continue
         elem_id_int = eid.IntegerValue
-        cat = getattr(elem, "Category", None)
-        category_name = getattr(cat, "Name", None) if cat is not None else None
+        # Three-valued FIRST, then the pre-existing bare "category" key is
+        # derived FROM it, so the two cannot disagree about what was read
+        # (one read, one place). The legacy key keeps its exact meaning -- a
+        # category name or None -- and gains nothing but the case where the
+        # Name getter RAISES, which getattr(cat, "Name", None) does not catch
+        # and which previously escaped this whole collection.
+        category_state = _gs_capture(
+            lambda e=elem: _near_face_w_category_name(e),
+            diag=diag, callsite="near_face_w.host.category", view_id=view_id,
+        )
+        category_name = (
+            category_state.get("value") if category_state.get("state") == _GS_VALUE
+            else None
+        )
+        source_state = _host_source_state(elem, elem_id_int, host_source_types)
+        import_symbol_state = _dwg_only_state(
+            elem, lambda e=elem: _near_face_w_import_symbol_name(doc, e),
+            diag=diag, callsite="near_face_w.host.import_symbol", view_id=view_id,
+        )
+        view_specific_state = _dwg_only_state(
+            elem, lambda e=elem: _near_face_w_view_specific(e),
+            diag=diag, callsite="near_face_w.host.view_specific", view_id=view_id,
+        )
         bbox, _src = resolve_element_bbox(
             elem, view=None, diag=diag,
             context={"view_id": view_id, "elem_id": elem_id_int, "source_type": "HOST"},
@@ -1017,6 +1195,17 @@ def _collect_near_face_w_data(
             "bbox_corners_uv": bbox_corners_uv,
             "near_face_w": near_face_w,
             "category": category_name,
+            # --- Stage A step 1, additive. Pre-existing keys above are
+            # untouched; a consumer that does not know these exist reads the
+            # same record it always did.
+            "source": source_state,
+            "category_state": category_state,
+            # DWG-only; "not_applicable" for a true HOST element. Both of the
+            # DWG's candidate identifiers are recorded because which one is
+            # stable across Revit versions is unverified -- see
+            # _near_face_w_import_symbol_name.
+            "import_symbol_state": import_symbol_state,
+            "view_specific_state": view_specific_state,
         }
 
     link_out = {}
@@ -2941,6 +3130,11 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             view_id=view_id,
         )
 
+        # Stage A step 1: DWG imports the collector finds but drops (an
+        # unusable view bbox, a per-import failure, or a scan that failed
+        # outright) land here so the sidecar can say an import was omitted
+        # rather than leaving "not in the drawing" and "dropped" identical.
+        dwg_imports_omitted = []
         try:
             from .revit.collection import expand_host_link_import_model_elements as _expand_elements
             # LINK proxies this expansion would build (via linked_documents.py's
@@ -2955,7 +3149,10 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             # before.
             host_only_cfg = copy.copy(cfg)
             host_only_cfg.include_linked_rvt = False
-            expanded = _expand_elements(doc, view, recollected, host_only_cfg, diag=diag, elem_cache=elem_cache)
+            expanded = _expand_elements(
+                doc, view, recollected, host_only_cfg, diag=diag,
+                elem_cache=elem_cache, dwg_omitted_out=dwg_imports_omitted,
+            )
         except Exception as ex:
             if diag is not None:
                 diag.warn(
@@ -2965,8 +3162,21 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                     view_id=view_id,
                 )
             expanded = [{"element": e, "source_type": "HOST"} for e in recollected]
+            dwg_imports_omitted.append({
+                "element_id": None,
+                "state": "unavailable",
+                "reason": "element expansion failed; no DWG import was examined "
+                          "({0}: {1})".format(type(ex).__name__, ex),
+            })
 
-        host_elements, _link_entries = _split_expanded_elements(expanded)
+        # Stage A step 1: keep each non-LINK entry's own source_type across
+        # the partition so a painted DWG ImportInstance stays identifiable in
+        # the sidecar. Nothing about which elements are collected, painted or
+        # colored changes -- this is a read carried alongside the same set.
+        host_source_types = {}
+        host_elements, _link_entries = _split_expanded_elements(
+            expanded, source_out=host_source_types,
+        )
         resolved_ids = resolve_all(doc, host_elements)
         count_host = len(resolved_ids)
 
@@ -3089,6 +3299,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         near_face_w_map = _collect_near_face_w_data(
             doc, view, raster, cfg, resolved_ids, link_category_color_map,
             diag=diag, view_id=view_id, link_proxies=link_proxies,
+            host_source_types=host_source_types,
         )
 
         # Paint per-element, but never let one element's failure (some categories/
@@ -3437,6 +3648,12 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # color_id.py and never modifies color_assignment_map/
         # link_category_color_map above.
         "near_face_w_map": near_face_w_map,
+        # Stage A step 1, additive: DWG ImportInstances the collector found
+        # but did not paint, each with the reason. An EMPTY list means every
+        # import found was collected; it never means "no imports exist" and
+        # never means "not checked" -- those arrive as an entry with
+        # element_id None. See revit/linked_documents._collect_from_dwg_imports.
+        "dwg_imports_omitted": dwg_imports_omitted,
         "applied_display_style": applied_display_style,
         "applied_smooth_edges": applied_smooth_edges,
         # The exception type when the SmoothEdges read raised; None whenever

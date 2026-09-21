@@ -74,7 +74,16 @@ class Config:
         max_sheet_height_in=36.0,
         bounds_buffer_in=0.0,
         include_linked_rvt=True,
-        include_dwg_imports=False,
+        # Was False here while from_dict() defaulted the SAME field to True
+        # and both docstrings claimed True, so whether a DWG import was
+        # collected and painted at all depended on which construction path
+        # built the Config. Aligned on True, the documented value (Greg,
+        # 2026-09-21). This is a BEHAVIOR CHANGE for every Config() caller:
+        # DWG imports are now collected by default, in the geometry pipeline
+        # as well as Stage A. Parity between the two paths is asserted by
+        # tests/test_config_default_parity.py, which also pins the five other
+        # fields that still disagree.
+        include_dwg_imports=True,
         # Detail line rendering (archive parity)
         linear_band_thickness_cells=1.0,
         # Debug and diagnostics
