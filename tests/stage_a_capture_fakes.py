@@ -60,9 +60,24 @@ class FakeCategory(object):
 
 
 class FakeElement(object):
-    def __init__(self, elem_id, category=None, name=None):
+    """A document element.
+
+    ``owner_view_id`` mirrors Revit's ``Element.OwnerViewId``, which Stage A
+    step 3 reads to decide which capture pass an element belongs to. The
+    default is InvalidElementId -- a model element -- which is what every
+    element in this fake was implicitly standing for before the annotation
+    pass existed. Pass a view id to make one view-specific.
+
+    It is a real attribute rather than an omission because a fake that does
+    not expose what production reads does not test production: every element
+    would come back "unresolved" and the split under test would never run.
+    """
+
+    def __init__(self, elem_id, category=None, name=None, owner_view_id=None):
         self.Id = FakeElementId(elem_id)
         self.Category = category
+        self.OwnerViewId = FakeElementId(
+            -1 if owner_view_id is None else int(owner_view_id))
         if name is not None:
             self.Name = name
 
@@ -76,18 +91,79 @@ class FakeColor(object):
 
 
 class FakeOGS(object):
+    """An OverrideGraphicSettings whose SETS are readable back as GETS.
+
+    The recorder ``__getattr__`` alone was enough while every test only ever
+    asked "was Set* called". Stage A step 3's restore check READS the
+    overrides back after the transaction commits -- because "restore ran" and
+    "the override is gone" are different facts, and this module already
+    shipped a bug where they came apart silently. Against the recorder those
+    reads returned bound methods, so a freshly-constructed blank looked
+    UNREADABLE rather than clear and the check under test never ran.
+
+    So the four colour members and the two pattern ids that
+    _build_flat_color_ogs writes are real attributes here: absent/invalid on
+    a blank instance, populated by their setters. Everything else still falls
+    through to the recorder.
+    """
+
     def __init__(self):
         self.Halftone = False
         self.calls = {}
+        # A blank OverrideGraphicSettings: no colours, no patterns.
+        self.ProjectionLineColor = None
+        self.CutLineColor = None
+        self.SurfaceForegroundPatternColor = None
+        self.CutForegroundPatternColor = None
+        self.SurfaceForegroundPatternId = INVALID_ELEMENT_ID
+        self.CutForegroundPatternId = INVALID_ELEMENT_ID
 
     def SetHalftone(self, value):
         self.Halftone = value
         self.calls["SetHalftone"] = (value,)
 
+    def _set(self, attr, value, call_name, args):
+        setattr(self, attr, value)
+        self.calls[call_name] = args
+
+    def SetProjectionLineColor(self, color):
+        self._set("ProjectionLineColor", _as_valid_color(color),
+                  "SetProjectionLineColor", (color,))
+
+    def SetCutLineColor(self, color):
+        self._set("CutLineColor", _as_valid_color(color), "SetCutLineColor", (color,))
+
+    def SetSurfaceForegroundPatternColor(self, color):
+        self._set("SurfaceForegroundPatternColor", _as_valid_color(color),
+                  "SetSurfaceForegroundPatternColor", (color,))
+
+    def SetCutForegroundPatternColor(self, color):
+        self._set("CutForegroundPatternColor", _as_valid_color(color),
+                  "SetCutForegroundPatternColor", (color,))
+
+    def SetSurfaceForegroundPatternId(self, pattern_id):
+        self._set("SurfaceForegroundPatternId", pattern_id,
+                  "SetSurfaceForegroundPatternId", (pattern_id,))
+
+    def SetCutForegroundPatternId(self, pattern_id):
+        self._set("CutForegroundPatternId", pattern_id,
+                  "SetCutForegroundPatternId", (pattern_id,))
+
     def __getattr__(self, name):
         def _record(*args):
             self.calls[name] = args
         return _record
+
+
+def _as_valid_color(color):
+    """Revit's Color exposes IsValid; the fake's does not, so mark it here."""
+    if color is None:
+        return None
+    try:
+        color.IsValid = True
+    except Exception:
+        pass
+    return color
 
 
 class FakeTransaction(object):
@@ -171,7 +247,20 @@ class FakeBuiltInParameter(object):
 
 
 class FakeBuiltInCategory(object):
-    pass
+    """The BuiltInCategory members Stage A actually resolves.
+
+    Empty before: every ``getattr(BuiltInCategory, name, None)`` came back
+    None, so VIEW_ONLY_MODEL_BIC_NAMES resolved to the empty set and the
+    view-only-model exception in _hidden_category_state -- and its mirror in
+    _model_category_hidden_state -- was never exercised by any test. A fake
+    that cannot reach the branch it is standing in for is the failure mode
+    CLAUDE.md records under "know what the fake harness does NOT provide".
+
+    Real BuiltInCategory values: a built-in category's id IS its enum value,
+    so these are the same negative integers a live Revit returns.
+    """
+    OST_DetailComponents = -2000083
+    OST_Lines = -2000051
 
 
 class FakeImageFileType(object):

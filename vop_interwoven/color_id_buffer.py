@@ -2338,7 +2338,8 @@ def compute_model_crop(model_clip_bounds, bounds_xy):
     return render_bounds, offset
 
 
-def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None, elem_cache=None):
+def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None,
+                                elem_cache=None, geometry_out=None):
     """Export one view as a streamed Stage-A color ID buffer and sidecar.
 
     Args:
@@ -2346,6 +2347,18 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         raster: Optional ViewRaster for the view; supplies grid width for pixel-size
             scaling and enables re-collecting elements under the neutral phase filter.
         elem_cache: Optional ElementCache passed through to link/import expansion.
+        geometry_out: Optional dict, FILLED with this capture's
+            frame_export_geometry() result. Stage A step 3's annotation pass is
+            handed this exact object rather than recomputing it, so the two
+            passes cannot land on different lattices -- the defect class
+            CLAUDE.md records as "a quantity computed in two places, never
+            composed". It is an out-parameter, matching this module's
+            source_out=/dwg_omitted_out= idiom, specifically so the returned
+            dict keeps its shape: streaming.py copies every key of that dict
+            into full_results, which entry_dynamo serialises, and geom holds
+            tuples and is not a data product. Left empty when no frame could
+            be resolved -- an empty dict is "this capture had no geometry",
+            which is exactly what the annotation pass must refuse to run on.
     """
     from Autodesk.Revit.DB import Transaction, Color, ElementId, BuiltInParameter
 
@@ -2577,6 +2590,13 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         pre_cap_px = max(64, int(round(export_dpi * paper_fit_in)))
         cap = cap_axes(pre_cap_px, pre_cap_px, cap_axis_px)
         pixel_size = max(64, cap["accepted_px"])
+
+    # Hand the resolved lattice to the caller BEFORE anything is painted or
+    # exported. It is fully determined by this point and nothing below can
+    # change it, so publishing it here keeps the annotation pass reading the
+    # same object this pass sized itself from rather than a later copy.
+    if geometry_out is not None and geom is not None:
+        geometry_out.update(geom)
 
     # The floor on the dimension-mismatch backoff.
     #
@@ -3963,5 +3983,793 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "resolution": state_out["resolution"],
         "color_assignment_count": count_host + count_link_categories,
         "timings": {"color_id_buffer_ms": round((time.time() - t0) * 1000.0, 3)},
+        "metadata": state_out,
+    }
+
+
+# ===========================================================================
+# Stage A step 3 -- the annotation raster pass
+# ===========================================================================
+#
+# A SEPARATE PAINT PER PASS (Greg, 2026-09-21). Not "paint once, export
+# twice". The two passes need different crop boxes -- the model pass renders
+# A, this one renders B -- so an export-twice shape needs its own transaction
+# between the exports anyway, and the only thing it would actually save is
+# re-applying the element overrides. What it costs is holding a painted,
+# half-restored view across two exports and an extra transaction boundary,
+# which is the region this module's curtain-panel restore bug lived in.
+#
+# PER-PASS PALETTES, NOT ONE SHARED PALETTE (Greg, 2026-09-21; this SUPERSEDES
+# the status doc's PROPOSED "one shared palette"). Each pass writes its own
+# color->element map, so the same RGB may mean a wall in the model TIFF and a
+# door tag in the annotation TIFF without ambiguity: the two are never decoded
+# against the same map. The reason that matters is capacity -- a view can hold
+# far more elements than the palette has distinct colors, and splitting the
+# passes splits the demand instead of summing it.
+#
+# ANNOTATION ON WHITE (Greg, 2026-09-21). This pass hides MODEL categories, so
+# the annotation TIFF is annotation color IDs on the reserved near-white
+# background and nothing else. Every non-background pixel is an assigned
+# annotation color, which keeps an off-palette measure on this TIFF meaning
+# the same thing it means on the model one.
+#
+# REGISTRATION IS NOT RECOMPUTED HERE. The caller hands this function the
+# model pass's own frame_export_geometry() result. This pass renders
+# frame_snapped_uv at frame_px; the model pass rendered crop_snapped_uv at
+# crop_px; both at the one achieved_fpp_ft, so the model image sits inside
+# this one at the integer offset crop_offset_px with no resampling. That is
+# decision A, and it holds only because both passes read ONE geom object --
+# extracting the formula would bind the formula but not the arguments, which
+# CLAUDE.md records as the way this exact class of defect survived a fix.
+
+ANNOTATION_PASS_SCHEMA = "vop.stage_a.annotation_pass.v1"
+
+
+def _model_category_hidden_state(doc, view, diag=None, view_id=None):
+    """Categories to hide for the ANNOTATION pass: the model ones.
+
+    The mirror of _hidden_category_state, and deliberately written against the
+    same two sources so the two cannot drift into overlapping or into leaving
+    a gap: this hides every category Revit classifies as CategoryType.Model
+    EXCEPT the VIEW_ONLY_MODEL_BIC_NAMES entries, which carry a Model label
+    but no 3D presence and are annotation content in every sense that matters
+    here (detail items, detail lines).
+
+    Between the two functions every Model and Annotation category is hidden in
+    exactly one pass, which is what makes "the model TIFF holds no annotation
+    pixels" and "the annotation TIFF holds no model pixels" the same claim
+    read from two sides rather than two separate hopes.
+
+    KNOWN GAP, not closed here. OST_Lines carries BOTH model lines and detail
+    lines and is left VISIBLE by this function, because hiding it would take
+    the detail lines with it. Model lines therefore render in this pass with
+    their native color, unpainted -- they are model-pass members by
+    OwnerViewId and get no color from this pass's map. That is the same
+    known-and-accepted off-palette population the LINK/DWG gap already
+    produces in the model pass, and it is contained the same way: on the
+    decode side, by exact-match lookup against the pass's own palette. It is
+    deliberately NOT closed with a force-white category override, which this
+    module tried and removed once already.
+    """
+    from Autodesk.Revit.DB import BuiltInCategory, CategoryType
+    view_only_model_bic_ids = set()
+    for bic_name in VIEW_ONLY_MODEL_BIC_NAMES:
+        bic = getattr(BuiltInCategory, bic_name, None)
+        if bic is not None:
+            view_only_model_bic_ids.add(int(bic))
+
+    # Both handlers below RECORD rather than discard (Refactor Rule #1). A
+    # category skipped here is a category that stays VISIBLE in a pass whose
+    # whole claim is that model content is hidden, so a silent skip is the
+    # difference between "the annotation TIFF is annotation on white" and a
+    # sentence that is no longer true of this capture. _hidden_category_state
+    # discards its equivalents; that is its own pre-existing debt, and
+    # matching it would only add to the ground-truth population.
+    state = {}
+    for cat in doc.Settings.Categories:
+        try:
+            cat_id = cat.Id
+            is_model = cat.CategoryType == CategoryType.Model
+            is_view_only_model = cat_id.IntegerValue in view_only_model_bic_ids
+        except Exception as ex:
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="annotation_model_category_scan",
+                    message="a category could not be classified and is NOT hidden for "
+                            "the annotation pass; anything it draws stays visible in "
+                            "that capture ({0}: {1})".format(type(ex).__name__, ex),
+                    view_id=view_id,
+                )
+            continue
+        if not is_model or is_view_only_model:
+            continue
+        try:
+            if view.CanCategoryBeHidden(cat_id):
+                state[cat_id.IntegerValue] = {
+                    "name": getattr(cat, "Name", None),
+                    "was_hidden": bool(view.GetCategoryHidden(cat_id)),
+                }
+        except Exception as ex:
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="annotation_model_category_hide",
+                    message="model category {0} could not be read for hiding and stays "
+                            "VISIBLE in the annotation capture ({1}: {2})".format(
+                                getattr(cat, "Name", None), type(ex).__name__, ex),
+                    view_id=view_id,
+                )
+            continue
+    return state
+
+
+def _override_is_cleared(view, element_id):
+    """(state, cleared, reason) for one element's overrides, READ BACK.
+
+    The restore step that precedes this one is best-effort and per-element
+    guarded, so "restore ran" and "the override is gone" are different facts.
+    This module already shipped a bug where they came apart silently --
+    curtain wall panels kept their paint color after a restore that raised
+    nothing -- so the annotation pass checks by reading rather than by
+    assuming, which is what step 3 asks for.
+
+    Three-valued. A read that fails is "unavailable" with the reason, never
+    "not cleared" and never "cleared": an override this function could not
+    inspect is not an override it has verified either way.
+    """
+    from Autodesk.Revit.DB import ElementId
+    try:
+        ogs = view.GetElementOverrides(ElementId(int(element_id)))
+    except Exception as ex:
+        return ("unavailable", None,
+                "GetElementOverrides failed ({0}: {1})".format(type(ex).__name__, ex))
+    if ogs is None:
+        return ("unavailable", None, "GetElementOverrides returned None")
+
+    # Exactly the members _build_flat_color_ogs sets, checked one for one. A
+    # subset would pass a restore that cleared the colors and left the solid
+    # fill pattern behind, which still changes what exports.
+    residue = []
+    unreadable = []
+    for name, reader in (
+        ("projection_line_color", lambda o: getattr(o, "ProjectionLineColor", None)),
+        ("cut_line_color", lambda o: getattr(o, "CutLineColor", None)),
+        ("surface_foreground_pattern_color",
+         lambda o: getattr(o, "SurfaceForegroundPatternColor", None)),
+        ("cut_foreground_pattern_color",
+         lambda o: getattr(o, "CutForegroundPatternColor", None)),
+    ):
+        try:
+            value = reader(ogs)
+            if value is not None and bool(getattr(value, "IsValid", False)):
+                residue.append(name)
+        except Exception as ex:
+            unreadable.append("{0} ({1}: {2})".format(name, type(ex).__name__, ex))
+
+    for name, attr in (
+        ("surface_foreground_pattern_id", "SurfaceForegroundPatternId"),
+        ("cut_foreground_pattern_id", "CutForegroundPatternId"),
+    ):
+        try:
+            pattern_id = getattr(ogs, attr, None)
+            if pattern_id is None:
+                continue
+            if int(pattern_id.IntegerValue) != int(ElementId.InvalidElementId.IntegerValue):
+                residue.append(name)
+        except Exception as ex:
+            unreadable.append("{0} ({1}: {2})".format(name, type(ex).__name__, ex))
+
+    if unreadable:
+        # A partial read cannot certify a clear. Reporting "cleared" on the
+        # members that happened to be readable is exactly the coercion the
+        # three-valued shape exists to refuse.
+        return ("unavailable", None,
+                "override members could not be read: {0}".format("; ".join(unreadable)))
+    if residue:
+        return ("value", False,
+                "override still set on: {0}".format(", ".join(sorted(residue))))
+    return ("value", True, None)
+
+
+def _verify_annotation_overrides_restored(view, painted_ids, diag=None, view_id=None):
+    """Read back every painted override after restore and report what is left.
+
+    Counts are always present and a zero means "none of these", because the
+    read always ran. A capture where the read itself could not run writes
+    ``status: "unavailable"`` instead, never a summary of zeros.
+    """
+    verified = 0
+    still_set = []
+    unreadable = []
+    for element_id in painted_ids:
+        state, cleared, reason = _override_is_cleared(view, element_id)
+        if state == "unavailable":
+            unreadable.append({"element_id": int(element_id), "reason": reason})
+        elif cleared:
+            verified += 1
+        else:
+            still_set.append({"element_id": int(element_id), "reason": reason})
+
+    if still_set and diag is not None:
+        diag.error(
+            phase="color_id_buffer",
+            callsite="verify_annotation_overrides_restored",
+            message="{0} of {1} annotation override(s) were STILL SET after the "
+                    "restore transaction committed; this view is left painted. "
+                    "First: element {2} -- {3}".format(
+                        len(still_set), len(painted_ids),
+                        still_set[0]["element_id"], still_set[0]["reason"]),
+            view_id=view_id,
+        )
+    if unreadable and diag is not None:
+        diag.warn(
+            phase="color_id_buffer",
+            callsite="verify_annotation_overrides_restored",
+            message="{0} of {1} annotation override(s) could not be read back after "
+                    "restore, so this capture cannot say whether they were cleared. "
+                    "First: element {2} -- {3}".format(
+                        len(unreadable), len(painted_ids),
+                        unreadable[0]["element_id"], unreadable[0]["reason"]),
+            view_id=view_id,
+        )
+
+    return {
+        "status": "value",
+        "method": "read_back",
+        "painted_count": len(painted_ids),
+        "verified_cleared_count": verified,
+        "still_set_count": len(still_set),
+        "unreadable_count": len(unreadable),
+        "still_set": still_set,
+        "unreadable": unreadable,
+    }
+
+
+def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
+                                           raster=None, elements=None):
+    """Export one view's ANNOTATION color ID buffer, over frame B.
+
+    Args:
+        geom: the MODEL pass's frame_export_geometry() result, handed in
+            rather than recomputed. Required: without it there is no shared
+            lattice and the two captures would not register, so this function
+            REFUSES instead of sizing itself independently. A capture that
+            cannot register is not a degraded capture, it is a misleading one.
+        elements: optional pre-collected candidates. When None, the view is
+            collected here. Either way membership is decided by OwnerViewId,
+            never by which collector produced the element.
+
+    Returns a result dict shaped like export_color_id_buffer_view's, with
+    ``stage`` = "color_id_buffer_stage_a_annotation" and its own TIFF and
+    sidecar paths, so nothing this writes can clobber the model pass's files.
+    """
+    from Autodesk.Revit.DB import (
+        Transaction, Color, ElementId, FilteredElementCollector,
+        OverrideGraphicSettings,
+    )
+    from .revit.annotation import (
+        split_stage_a_pass_membership,
+        stage_a_pass_membership_summary,
+    )
+
+    t0 = time.time()
+    view_id = view.Id.IntegerValue
+
+    if not geom:
+        # Not a warning and not a fallback. See the docstring.
+        if diag is not None:
+            diag.error(
+                phase="color_id_buffer",
+                callsite="annotation_pass_geometry",
+                message="the annotation pass was called without the model pass's export "
+                        "geometry, so frame B and its pixel lattice are unknown. "
+                        "Refusing: an annotation capture that cannot be registered "
+                        "against the model capture is worse than no annotation capture, "
+                        "because nothing downstream can tell the two apart.",
+                view_id=view_id,
+            )
+        return {
+            "view_id": view_id,
+            "view_name": getattr(view, "Name", None),
+            "success": False,
+            "failure_reason": "annotation_pass_no_export_geometry",
+            "stage": "color_id_buffer_stage_a_annotation",
+            "tiff_path": None,
+            "sidecar_path": None,
+            "timings": {"annotation_color_id_buffer_ms": round((time.time() - t0) * 1000.0, 3)},
+        }
+
+    base_output_dir = getattr(cfg, "output_dir", None) or getattr(
+        cfg, "debug_dump_path", "C:\\temp\\vop_output"
+    )
+    out_dir = os.path.join(base_output_dir, "color_id_buffer")
+    safe_name = "".join(
+        c if c.isalnum() or c in (" ", "-", "_") else "_"
+        for c in getattr(view, "Name", "view")
+    )
+    # "_anno" suffix, so the annotation TIFF and sidecar sit beside the model
+    # pass's rather than over them.
+    tiff_path = os.path.join(out_dir, "{0}_{1}_anno.tiff".format(safe_name, view_id))
+    json_path = os.path.join(out_dir, "{0}_{1}_anno.json".format(safe_name, view_id))
+
+    scale = float(getattr(view, "Scale", 1) or 1)
+    fit_direction = str(
+        getattr(cfg, "color_id_buffer_fit_direction", "horizontal") or "horizontal"
+    ).strip().lower()
+    vertical = (fit_direction == "vertical")
+
+    # THE FRAME, not the crop. This is the one line that makes this pass a
+    # different capture from the model one: it renders B whole, at the same
+    # feet-per-pixel the model pass rendered A at.
+    frame_uv = tuple(float(v) for v in geom["frame_snapped_uv"])
+    frame_px = tuple(int(v) for v in geom["frame_px"])
+    pixel_size = frame_px[1] if vertical else frame_px[0]
+    requested_axis = "height" if vertical else "width"
+
+    # ---- collection and membership ------------------------------------
+    membership_error = None
+    if elements is None:
+        try:
+            elements = list(
+                FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType()
+            )
+        except Exception as ex:
+            elements = []
+            membership_error = "{0}: {1}".format(type(ex).__name__, ex)
+            if diag is not None:
+                diag.error(
+                    phase="color_id_buffer",
+                    callsite="annotation_pass_collect",
+                    message="could not collect the view's elements for the annotation "
+                            "pass; it will paint nothing",
+                    view_id=view_id,
+                    exc=ex,
+                )
+
+    _model_members, anno_elements, unresolved = split_stage_a_pass_membership(
+        elements, capture_view_id_int=view_id, diag=diag)
+    membership = stage_a_pass_membership_summary(
+        _model_members, anno_elements, unresolved)
+    if membership_error is not None:
+        # The counts above are all zero, and a zero that means "the collection
+        # failed" must not read like a zero that means "this view has no
+        # annotations".
+        membership["status"] = "unavailable"
+        membership["reason"] = membership_error
+
+    resolved_ids = resolve_all(doc, anno_elements)
+    count_anno = len(resolved_ids)
+
+    # ---- this pass's OWN palette (see the section comment) -------------
+    global_threshold = int(getattr(cfg, "color_id_buffer_global_assignment_threshold", 32767))
+    step = choose_step(global_threshold if count_anno <= global_threshold else count_anno)
+    palette = build_palette(count_anno, step=step)
+    color_map = {resolved_ids[i].IntegerValue: palette[i] for i in range(count_anno)}
+
+    solid_pattern_id = _get_solid_pattern_id(doc)
+    if solid_pattern_id is None:
+        raise RuntimeError("No solid drafting fill pattern found in project")
+
+    # ---- captured state, for restore -----------------------------------
+    orig_view_template_id = None
+    try:
+        orig_view_template_id = view.ViewTemplateId
+    except Exception as ex:
+        if diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="annotation_capture_view_template",
+                message=str(ex),
+                view_id=view_id,
+            )
+
+    view_template_detached = False
+    if orig_view_template_id is not None and orig_view_template_id != ElementId.InvalidElementId:
+        detach_tx = Transaction(doc, "VOP Stage A ANNO DETACH view template")
+        detach_tx.Start()
+        try:
+            view.ViewTemplateId = ElementId.InvalidElementId
+            detach_tx.Commit()
+            view_template_detached = True
+        except Exception as ex:
+            detach_tx.RollBack()
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="annotation_detach_view_template",
+                    message="Could not detach view template before the annotation pass; "
+                            "template-controlled settings may remain locked: {0}".format(ex),
+                    view_id=view_id,
+                )
+
+    filter_state = {}
+    try:
+        for fid in view.GetFilters():
+            filter_state[fid.IntegerValue] = {
+                "was_enabled": view.GetIsFilterEnabled(fid),
+                "was_visible": view.GetFilterVisibility(fid),
+            }
+    except Exception as ex:
+        if diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="annotation_capture_filters",
+                message=str(ex),
+                view_id=view_id,
+            )
+
+    # NOTE: annotation categories the view itself hides are NOT unhidden here.
+    # "If the view hides it, the capture does not unhide it" is a LOCKED
+    # decision, and this pass hides model categories only -- it never touches
+    # an annotation category's visibility in either direction.
+    model_category_hidden_state = _model_category_hidden_state(
+        doc, view, diag=diag, view_id=view_id)
+    category_halftone_state = {}
+
+    orig_crop_box = None
+    orig_crop_box_active = None
+    try:
+        orig_crop_box = view.CropBox
+        orig_crop_box_active = bool(view.CropBoxActive)
+    except Exception as ex:
+        if diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="annotation_capture_crop_box",
+                message=str(ex),
+                view_id=view_id,
+            )
+
+    orig_display_style = getattr(view, "DisplayStyle", None)
+
+    state_out = None
+    painted_ids = []
+    crop_bounds_xy = None
+    applied_display_style = "unchanged"
+
+    suppress_tx = Transaction(doc, "VOP Stage A ANNO SUPPRESS color ID buffer")
+    suppress_tx.Start()
+    try:
+        for fid_int, fstate in filter_state.items():
+            if fstate["was_enabled"] and fstate["was_visible"]:
+                view.SetIsFilterEnabled(ElementId(int(fid_int)), False)
+
+        for cat_id_int in model_category_hidden_state:
+            view.SetCategoryHidden(ElementId(int(cat_id_int)), True)
+
+        # THE CROP IS B. The model pass cropped to A; this one restores the
+        # full frame, so every annotation the frame was expanded to hold is
+        # inside the rendered rectangle by construction.
+        try:
+            basis = getattr(raster, "view_basis", None)
+            if basis is None:
+                from .revit.view_basis import make_view_basis as _make_view_basis
+                basis = _make_view_basis(view, diag=diag)
+            from .revit.view_basis import crop_box_from_uv_bounds as _crop_box_from_uv_bounds
+            new_crop_box = _crop_box_from_uv_bounds(
+                view, basis, frame_uv[0], frame_uv[1], frame_uv[2], frame_uv[3])
+            if new_crop_box is not None:
+                view.CropBox = new_crop_box
+                view.CropBoxActive = True
+                crop_bounds_xy = tuple(float(v) for v in frame_uv)
+            elif diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="annotation_crop_box_set",
+                    message="View has no CropBox; the annotation export falls back to "
+                            "FitToPage's auto-computed extent, which is NOT frame B and "
+                            "will not register against the model capture",
+                    view_id=view_id,
+                )
+        except Exception as ex:
+            crop_bounds_xy = None
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="annotation_crop_box_set",
+                    message=str(ex),
+                    view_id=view_id,
+                )
+
+        if orig_display_style is not None:
+            try:
+                from Autodesk.Revit.DB import DisplayStyle
+                flat_style = getattr(DisplayStyle, "FlatColors", None)
+                if flat_style is not None:
+                    view.DisplayStyle = flat_style
+                    applied_display_style = "FlatColors"
+                else:
+                    view.DisplayStyle = DisplayStyle.Shading
+                    applied_display_style = "Shading"
+            except Exception as ex:
+                applied_display_style = "unavailable"
+                if diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite="annotation_display_style",
+                        message=str(ex),
+                        view_id=view_id,
+                    )
+
+        categories_touched = set()
+        for eid in resolved_ids:
+            elem = doc.GetElement(eid)
+            cat = elem.Category if elem is not None else None
+            if cat is not None:
+                categories_touched.add(cat.Id.IntegerValue)
+
+        for cat_id_int in categories_touched:
+            try:
+                cat_id = ElementId(int(cat_id_int))
+                cat_ogs = view.GetCategoryOverrides(cat_id)
+                category_halftone_state[cat_id_int] = cat_ogs.Halftone
+                cat_ogs.SetHalftone(False)
+                view.SetCategoryOverrides(cat_id, cat_ogs)
+            except Exception as ex:
+                if diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite="annotation_category_halftone",
+                        message=str(ex),
+                        view_id=view_id,
+                    )
+
+        # ---- the paint --------------------------------------------------
+        paint_failures = 0
+        paint_failed_element_ids = []
+        for eid in resolved_ids:
+            rgb = color_map[eid.IntegerValue]
+            try:
+                ogs = _build_flat_color_ogs(
+                    solid_pattern_id, Color(rgb[0], rgb[1], rgb[2]))
+                view.SetElementOverrides(eid, ogs)
+                painted_ids.append(int(eid.IntegerValue))
+            except Exception as ex:
+                paint_failures += 1
+                paint_failed_element_ids.append(eid.IntegerValue)
+                if diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite="annotation_paint_element_override",
+                        message=str(ex),
+                        view_id=view_id,
+                    )
+        if paint_failures and diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="annotation_paint_element_override",
+                message="{0} of {1} annotation element(s) could not be painted; those "
+                        "pixels will be unassigned in the annotation ID buffer".format(
+                            paint_failures, count_anno),
+                view_id=view_id,
+            )
+
+        suppress_tx.Commit()
+    except Exception:
+        suppress_tx.RollBack()
+        raise
+
+    actual_pixel_size = pixel_size
+    dim_report = {
+        "requested_axis": requested_axis,
+        "actual_w": None,
+        "actual_h": None,
+        "dim_check": "read_failed",
+        "dim_read_error": "export did not complete",
+        "dim_check_ceiling_px": MAX_STAGE_A_AXIS_PX,
+        "attempts": [],
+    }
+    override_restore_check = {
+        "status": "unavailable",
+        "reason": "the restore transaction did not run",
+    }
+    try:
+        _tiff_path, actual_pixel_size, dim_report = _export_tiff(
+            doc, view, tiff_path, pixel_size, diag=diag, view_id=view_id,
+            fit_direction=fit_direction, max_axis_px=MAX_STAGE_A_AXIS_PX,
+            grid_axis_px=int(geom.get("min_axis_px") or _PIXEL_SIZE_BACKOFF_FLOOR),
+        )
+    finally:
+        restore_tx = Transaction(doc, "VOP Stage A ANNO RESTORE color ID buffer")
+        restore_tx.Start()
+
+        def _restore_step(callsite, fn):
+            try:
+                fn()
+            except Exception as ex:
+                if diag is not None:
+                    diag.error(
+                        phase="color_id_buffer",
+                        callsite=callsite,
+                        message=str(ex),
+                        view_id=view_id,
+                        exc=ex,
+                    )
+
+        if orig_display_style is not None and applied_display_style not in (
+                "unchanged", "unavailable"):
+            def _restore_display_style():
+                view.DisplayStyle = orig_display_style
+            _restore_step("annotation_restore_display_style", _restore_display_style)
+
+        if orig_crop_box is not None:
+            def _restore_crop_box():
+                view.CropBox = orig_crop_box
+                view.CropBoxActive = orig_crop_box_active
+            _restore_step("annotation_restore_crop_box", _restore_crop_box)
+
+        for cat_id_int, was_halftone in category_halftone_state.items():
+            def _restore_halftone(cat_id_int=cat_id_int, was_halftone=was_halftone):
+                cat_id = ElementId(int(cat_id_int))
+                cat_ogs = view.GetCategoryOverrides(cat_id)
+                cat_ogs.SetHalftone(was_halftone)
+                view.SetCategoryOverrides(cat_id, cat_ogs)
+            _restore_step("annotation_restore_category_halftone", _restore_halftone)
+
+        for cat_id_int, hstate in model_category_hidden_state.items():
+            def _restore_cat_hidden(cat_id_int=cat_id_int, hstate=hstate):
+                view.SetCategoryHidden(ElementId(int(cat_id_int)), bool(hstate["was_hidden"]))
+            _restore_step("annotation_restore_category_hidden", _restore_cat_hidden)
+
+        # Every PAINTED id, reset to a freshly-constructed blank -- never a
+        # captured object reapplied across the transaction boundary (see the
+        # curtain-panel note above this module's painted_ids bookkeeping).
+        for element_id in painted_ids:
+            def _restore_element_override(element_id=element_id):
+                view.SetElementOverrides(ElementId(int(element_id)),
+                                         OverrideGraphicSettings())
+            _restore_step("annotation_restore_element_overrides", _restore_element_override)
+
+        for fid_int, fstate in filter_state.items():
+            def _restore_filter(fid_int=fid_int, fstate=fstate):
+                view.SetIsFilterEnabled(ElementId(int(fid_int)), fstate["was_enabled"])
+            _restore_step("annotation_restore_filter_enabled", _restore_filter)
+
+        if view_template_detached and orig_view_template_id is not None:
+            def _restore_view_template():
+                view.ViewTemplateId = orig_view_template_id
+            _restore_step("annotation_restore_view_template", _restore_view_template)
+
+        try:
+            restore_tx.Commit()
+        except Exception:
+            restore_tx.RollBack()
+            raise
+
+    # READ BACK, do not assume. Outside the transaction, so what it reads is
+    # the committed document rather than uncommitted intent.
+    try:
+        override_restore_check = _verify_annotation_overrides_restored(
+            view, painted_ids, diag=diag, view_id=view_id)
+    except Exception as ex:
+        override_restore_check = {
+            "status": "unavailable",
+            "reason": "{0}: {1}".format(type(ex).__name__, ex),
+        }
+        if diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="annotation_verify_overrides_restored",
+                message=str(ex),
+                view_id=view_id,
+            )
+
+    effective_export_dpi = _effective_export_dpi(
+        crop_bounds_xy, dim_report.get("actual_w"), dim_report.get("actual_h"), scale)
+
+    state_out = {
+        "schema": ANNOTATION_PASS_SCHEMA,
+        "view_id": view_id,
+        "pass": "annotation",
+        # The model pass's companion file. Named rather than inferred from the
+        # "_anno" suffix, so a reader never has to reconstruct a path.
+        "model_pass_tiff_path": os.path.join(
+            out_dir, "{0}_{1}.tiff".format(safe_name, view_id)),
+        "resolution": {
+            "pixel_size": actual_pixel_size,
+            "requested_pixel_size": pixel_size,
+            "requested_export_dpi": float(geom["requested_export_dpi"]),
+            "achieved_export_dpi": float(geom["achieved_export_dpi"]),
+            "effective_export_dpi": effective_export_dpi,
+            "view_scale": scale,
+            "fit_direction": fit_direction,
+            "requested_axis": requested_axis,
+            "actual_w": dim_report.get("actual_w"),
+            "actual_h": dim_report.get("actual_h"),
+            "dim_check": dim_report.get("dim_check"),
+            "dim_check_ceiling_px": dim_report.get("dim_check_ceiling_px"),
+            "dim_read_error": dim_report.get("dim_read_error"),
+            "dim_check_attempts": dim_report.get("attempts"),
+            "backoff_stop_reason": dim_report.get("backoff_stop_reason"),
+        },
+        # Decision A's registration data, copied from the MODEL pass's geom so
+        # a reader has both halves without opening two files. This pass
+        # rendered frame_snapped_uv at frame_px; the model pass rendered
+        # crop_snapped_uv at crop_px; the model image sits inside this one at
+        # crop_offset_px.
+        "registration": {
+            "frame_snapped_uv": [float(v) for v in geom["frame_snapped_uv"]],
+            "frame_px": [int(v) for v in geom["frame_px"]],
+            "model_crop_snapped_uv": [float(v) for v in geom["crop_snapped_uv"]],
+            "model_crop_px": [int(v) for v in geom["crop_px"]],
+            "model_crop_offset_px": [int(v) for v in geom["crop_offset_px"]],
+            "crop_is_frame": bool(geom["crop_is_frame"]),
+            "achieved_fpp_ft": float(geom["achieved_fpp_ft"]),
+            # The rectangle actually handed to Revit for THIS pass. None when
+            # the crop could not be applied, which is the only thing that
+            # distinguishes "B was rendered" from "FitToPage chose something".
+            "rendered_uv": (list(crop_bounds_xy) if crop_bounds_xy is not None else None),
+        },
+        "membership": membership,
+        "color_assignment_map": {
+            str(eid): list(color_map[eid]) for eid in color_map
+        },
+        "color_assignment_count": count_anno,
+        "palette_step": step,
+        "paint_failures": paint_failures,
+        "paint_failed_element_ids": paint_failed_element_ids,
+        "categories_hidden": model_category_hidden_state,
+        "category_halftone_state": category_halftone_state,
+        "filter_state": filter_state,
+        "applied_display_style": applied_display_style,
+        # Read back, not assumed. See _verify_annotation_overrides_restored.
+        "override_restore_check": override_restore_check,
+        "tiff_path": tiff_path,
+        "view_template_detached": view_template_detached,
+        "orig_view_template_id": (
+            orig_view_template_id.IntegerValue
+            if orig_view_template_id is not None else None
+        ),
+        # UNCONFIRMED (no Revit run in this session), and load-bearing for
+        # this pass specifically:
+        #  - Element color overrides are confirmed to work on SOME annotation
+        #    types only. Text, dimensions, tags, revision clouds and detail
+        #    components were not individually tested. An annotation type that
+        #    ignores the override renders in its native color and decodes as
+        #    off-palette -- it does not go missing, but it is not identified.
+        #  - Whether an ACTIVE ANNOTATION CROP clips this export. This pass
+        #    sets view.CropBox to frame B but never touches
+        #    AnnotationCropActive, which revit/annotation.py reads at :165 and
+        #    which no Stage A code path sets. On a view whose annotation crop
+        #    is active, annotations that frame B was expanded to hold may
+        #    still be clipped by it.
+        #  - Whether ExportImage honours a crop LARGER than the model content,
+        #    rather than shrinking to fit what is drawn.
+        "unconfirmed_api_claims": [
+            "element color override coverage for text, dimensions, tags, "
+            "revision clouds and detail components",
+            "whether an active annotation crop clips this export",
+            "whether ExportImage honours a crop larger than the drawn content",
+        ],
+    }
+
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
+    with open(json_path, "w") as f:
+        json.dump(state_out, f, indent=2, sort_keys=True)
+
+    failure_reason = None
+    if dim_report.get("dim_check") == "mismatch":
+        failure_reason = "export_dim_mismatch"
+    elif override_restore_check.get("still_set_count"):
+        # A view left painted is a failed capture even though the TIFF is
+        # fine: the document is not as it was found.
+        failure_reason = "annotation_overrides_not_restored"
+
+    return {
+        "view_id": view_id,
+        "view_name": getattr(view, "Name", None),
+        "success": failure_reason is None,
+        "failure_reason": failure_reason,
+        "stage": "color_id_buffer_stage_a_annotation",
+        "tiff_path": tiff_path,
+        "sidecar_path": json_path,
+        "output_dir": out_dir,
+        "resolution": state_out["resolution"],
+        "color_assignment_count": count_anno,
+        "timings": {
+            "annotation_color_id_buffer_ms": round((time.time() - t0) * 1000.0, 3)
+        },
         "metadata": state_out,
     }
