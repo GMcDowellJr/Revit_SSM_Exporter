@@ -3700,6 +3700,17 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     # grid-extent form with the test still green. That is a review finding on
     # PR #202, not a hypothetical. See that function for why the denominator is
     # the rendered crop and why BOTH axes are used with the smaller winning.
+    # Stage A step 3. The lattice this pass PUBLISHED is a request; what
+    # Revit accepted is a measurement, and only the second one tells the
+    # annotation pass whether the model image is actually on that lattice.
+    # Added after the export for that reason -- the pre-export publish above
+    # is the sizing the annotation pass must share, this is whether the
+    # sizing survived. Same object, more facts; nothing here changes what
+    # the annotation pass renders.
+    if geometry_out is not None and geom is not None:
+        geometry_out["model_accepted_px"] = int(actual_pixel_size)
+        geometry_out["model_dim_check"] = dim_report.get("dim_check")
+
     effective_export_dpi = _effective_export_dpi(
         crop_bounds_xy, dim_report.get("actual_w"), dim_report.get("actual_h"), scale)
 
@@ -4857,17 +4868,106 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     with open(json_path, "w") as f:
         json.dump(state_out, f, indent=2, sort_keys=True)
 
-    failure_reason = None
+    # ------------------------------------------------------------------
+    # Did this capture deliver what it claims? (PR #211 review, round 2)
+    #
+    # ONE LIST, NOT A GROWING elif CHAIN. The chain this replaces checked the
+    # dimension report and the override read-back, and review then found four
+    # more ways to return success=True over a capture that was not what it
+    # said: a collection that inspected nothing, a frame B crop that was
+    # never applied, an export Revit accepted at a different size, and a
+    # read-back that could not certify anything. Those were not four
+    # oversights -- they were one, which is that the success condition was
+    # an allowlist of remembered failures rather than a statement of what
+    # the capture promises. Each new promise now adds a row here, and a
+    # promise with no row is visible as an absence.
+    #
+    # ORDER IS CAUSAL, most upstream first, because failure_reason keeps its
+    # documented single-string contract and should name the earliest thing
+    # that went wrong rather than whichever symptom is checked first.
+    # capture_faults carries ALL of them, so nothing is hidden by the one
+    # that happens to be reported.
+    capture_faults = []
+
+    def _fault(name, detail):
+        capture_faults.append({"fault": name, "detail": detail})
+
+    if membership_error is not None:
+        # An empty annotation TIFF from a collector that threw is
+        # indistinguishable, downstream, from a view that genuinely has no
+        # annotations. It is not the same fact.
+        _fault("annotation_collection_failed", membership_error)
+
+    if crop_bounds_xy is None:
+        # The capture fell back to FitToPage's automatic extent. The
+        # diagnostic above already says that extent is not frame B and will
+        # not register -- so returning it as a successful annotation buffer
+        # hands downstream an image whose scale and origin are unknown while
+        # the sidecar's registration block describes a rectangle that was
+        # never rendered.
+        _fault("annotation_frame_not_applied",
+               "frame B could not be applied as the view crop; the export is "
+               "FitToPage's automatic extent and does not register against the "
+               "model capture")
+
+    # THE SHARED LATTICE IS THE WHOLE PROMISE OF THIS PASS, so a size Revit
+    # accepted that is not the size the lattice requires invalidates it --
+    # even when the post-export dimension check passes, because that check
+    # compares the file against what was ACCEPTED, not against what was
+    # required. _set_pixel_size_with_backoff can lower the request, and the
+    # mismatch backoff halves it; either way achieved_fpp_ft, frame_px and
+    # crop_offset_px in the record below would describe a render that did
+    # not happen.
+    if int(actual_pixel_size) != int(pixel_size):
+        _fault("annotation_lattice_mismatch",
+               "the annotation export was accepted at {0} px on the {1} axis but "
+               "the shared lattice requires {2} px; feet-per-pixel is not the "
+               "model capture's and the two cannot be overlaid by integer "
+               "translation".format(actual_pixel_size, requested_axis, pixel_size))
+
+    # The same question asked of the MODEL capture, which this pass cannot
+    # see except through what that pass published. Registration is a claim
+    # about two images: one of them rendering off-lattice breaks it just as
+    # completely, and this pass is where both halves are finally known.
+    model_accepted_px = geom.get("model_accepted_px")
+    model_requested_px = geom.get("requested_px")
+    if (model_accepted_px is not None and model_requested_px is not None
+            and int(model_accepted_px) != int(model_requested_px)):
+        _fault("annotation_lattice_mismatch",
+               "the MODEL export was accepted at {0} px where the lattice requires "
+               "{1} px, so the model capture is off-lattice and this annotation "
+               "capture cannot register against it".format(
+                   model_accepted_px, model_requested_px))
+
     if dim_report.get("dim_check") == "mismatch":
-        failure_reason = "export_dim_mismatch"
-    elif override_restore_check.get("still_set_count"):
+        _fault("export_dim_mismatch", dim_report.get("dim_read_error"))
+
+    if override_restore_check.get("still_set_count"):
         # A view left painted is a failed capture even though the TIFF is
         # fine: the document is not as it was found.
-        failure_reason = "annotation_overrides_not_restored"
-    elif restore_failures:
+        _fault("annotation_overrides_not_restored",
+               "{0} override(s) still set after restore".format(
+                   override_restore_check.get("still_set_count")))
+
+    if (override_restore_check.get("status") != "value"
+            or override_restore_check.get("unreadable_count")):
+        # "Could not certify" is not "certified clean". The read-back says so
+        # explicitly and this is the only place that consequence can land:
+        # an unreadable override may still be painted, and nothing later
+        # looks again.
+        _fault("annotation_overrides_unverified",
+               override_restore_check.get("reason")
+               or "{0} override(s) could not be read back; the restore is "
+                  "unverified".format(override_restore_check.get("unreadable_count")))
+
+    if restore_failures:
         # Same rule, for the state the read-back does not cover: crop,
         # category visibility, filters, halftone, display style, template.
-        failure_reason = "annotation_view_state_not_restored"
+        _fault("annotation_view_state_not_restored",
+               "{0} restore step(s) raised".format(len(restore_failures)))
+
+    failure_reason = capture_faults[0]["fault"] if capture_faults else None
+    state_out["capture_faults"] = capture_faults
 
     return {
         "view_id": view_id,

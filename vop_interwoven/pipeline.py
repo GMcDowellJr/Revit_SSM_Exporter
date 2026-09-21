@@ -1189,10 +1189,42 @@ def process_document_views(
                         from .color_id_buffer import (
                             export_annotation_color_id_buffer_view,
                         )
-                        anno_out = export_annotation_color_id_buffer_view(
-                            doc, view, cfg, export_geometry, diag=diag,
-                            raster=raster,
-                        )
+                        # The call is GUARDED because the model result is
+                        # already in `results` by this point. An exception
+                        # here -- collection, transaction setup, ExportImage
+                        # -- used to unwind to the outer per-view handler,
+                        # which appends its own failure stub as a SECOND
+                        # entry; and consumers take results[0], so they saw
+                        # a clean model capture and the annotation failure
+                        # was discarded entirely. The nesting below only
+                        # ever ran when the call RETURNED. (PR #211 review.)
+                        try:
+                            anno_out = export_annotation_color_id_buffer_view(
+                                doc, view, cfg, export_geometry, diag=diag,
+                                raster=raster,
+                            )
+                        except Exception as _anno_ex:
+                            if diag is not None:
+                                diag.error(
+                                    phase="pipeline",
+                                    callsite="annotation_color_id_buffer",
+                                    message="the annotation capture raised; the model "
+                                            "capture for this view stands and the "
+                                            "annotation outcome is recorded as failed",
+                                    view_id=view_id_int,
+                                    exc=_anno_ex,
+                                )
+                            anno_out = {
+                                "view_id": view_id_int,
+                                "view_name": getattr(view, "Name", None),
+                                "success": False,
+                                "failure_reason": "annotation_pass_raised",
+                                "error": "{0}: {1}".format(
+                                    type(_anno_ex).__name__, _anno_ex),
+                                "stage": "color_id_buffer_stage_a_annotation",
+                                "tiff_path": None,
+                                "sidecar_path": None,
+                            }
                         if isinstance(out, dict) and isinstance(anno_out, dict):
                             out["annotation_pass"] = anno_out
                             out["annotation_pass_success"] = bool(

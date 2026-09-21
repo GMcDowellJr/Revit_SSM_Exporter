@@ -57,6 +57,7 @@ class _Recorder(streaming.StreamingExporter):
         self.full_results = []
         self.views_processed = 0
         self.views_failed = 0
+        self.annotation_passes_failed = 0
 
 
 def _stage_a_result(annotation=None):

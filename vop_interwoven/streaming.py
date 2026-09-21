@@ -181,6 +181,14 @@ class StreamingExporter:
         # Stats
         self.views_processed = 0
         self.views_failed = 0
+        # Stage A step 3. Counted SEPARATELY from views_failed, which means
+        # "the view's model capture failed" and keeps doing so: a view whose
+        # model TIFF is good and whose annotation TIFF is not has not failed
+        # in that sense, and folding the two would misreport it. But the run
+        # is not clean either, and finalize() reads both. (PR #211 review:
+        # the nested result reached the consumer and was never composed into
+        # its failure accounting.)
+        self.annotation_passes_failed = 0
         self.png_files = []
         self.view_raster_files = []
         self.csv_rows_written = 0
@@ -364,6 +372,8 @@ class StreamingExporter:
             # it -- an absent annotation pass is distinguishable from a
             # failed one, which a bare False could not express.
             stage_a_summary.update(_stage_a_annotation_summary(view_result))
+            if stage_a_summary.get("annotation_pass_success") is False:
+                self.annotation_passes_failed += 1
             self.view_summaries.append(stage_a_summary)
             if self.full_results is not None:
                 self.full_results.append({
@@ -711,7 +721,11 @@ class StreamingExporter:
             
             from vop_interwoven.entry_dynamo import _pipeline_result_for_json
             pipeline_result = {
-                "success": self.views_failed == 0,
+                # An annotation capture that failed makes the RUN unclean
+                # even when every model capture succeeded -- see
+                # annotation_passes_failed.
+                "success": (self.views_failed == 0
+                            and self.annotation_passes_failed == 0),
                 "views": self.full_results,
                 "config": self.cfg.to_dict(),
                 "errors": [],
@@ -731,6 +745,7 @@ class StreamingExporter:
         return {
             "views_processed": self.views_processed,
             "views_failed": self.views_failed,
+            "annotation_passes_failed": self.annotation_passes_failed,
             "png_files": self.png_files,
             "view_raster_files": self.view_raster_files,
             "core_csv_path": getattr(self, 'core_csv_path', None),

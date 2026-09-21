@@ -23,13 +23,73 @@ _RUN_PIPELINE_MARKER = "# RUN PIPELINE\n# ======================================
 
 
 def _load_thinrunner_helpers():
+    """Exec the helper prefix and return its namespace.
+
+    sys.modules IS SNAPSHOTTED AND RESTORED around the exec, and that is not
+    hygiene theatre. The prefix opens with the thinrunner's development-time
+    module reloader, which DELETES every ``vop_interwoven`` entry from
+    sys.modules (thinrunner_streaming.py:34-37) so a Dynamo session picks up
+    edited code. Outside Dynamo that discards the import cache for the whole
+    package: every later import rebuilds a FRESH module object, and any test
+    asserting object identity across two import paths then fails -- for a
+    reason that has nothing to do with what it is testing.
+
+    That was latent for as long as this was the only caller, because this
+    file sorts after the test it breaks. A second caller sorting earlier
+    made it real (tests/test_stage_a_annotation_pass_review_round2.py, and
+    test_stage_a_export_dimension_contract.py's `probe_contract.cap_axes is
+    cap_axes`). Order-dependent pollution is the harness class CLAUDE.md
+    records as invisible to the tests it governs, so it is fixed at the
+    source rather than worked around by renaming a file.
+    """
     with open(_THINRUNNER_PATH, "r", encoding="utf-8") as f:
         src = f.read()
     idx = src.index(_RUN_PIPELINE_MARKER)
     defs_src = src[:idx]
     ns = {}
-    exec(compile(defs_src, _THINRUNNER_PATH, "exec"), ns)
+    import sys as _sys
+    saved_modules = dict(_sys.modules)
+    try:
+        exec(compile(defs_src, _THINRUNNER_PATH, "exec"), ns)
+    finally:
+        # Restore exactly: re-add what was deleted, and drop anything the
+        # exec imported that was not there before.
+        for name in [k for k in _sys.modules if k not in saved_modules]:
+            del _sys.modules[name]
+        _sys.modules.update(saved_modules)
     return ns
+
+
+def test_loading_the_helpers_does_not_discard_the_import_cache():
+    """The helper's own contract, since nothing else can observe it.
+
+    The prefix deletes every vop_interwoven module from sys.modules. If that
+    escapes, later tests get fresh module objects and identity assertions
+    fail for unrelated reasons -- which is exactly what happened.
+    """
+    import sys
+
+    import vop_interwoven.resolution_contract as before
+    assert "vop_interwoven.resolution_contract" in sys.modules
+
+    _load_thinrunner_helpers()
+
+    import vop_interwoven.resolution_contract as after
+    # The SAME object, not merely an importable one.
+    assert after is before
+    assert sys.modules["vop_interwoven.resolution_contract"] is before
+
+
+def test_the_prefix_really_does_delete_the_modules():
+    """CONTROL. Without it, the test above would pass just as well against
+    a prefix that never touched sys.modules -- proving nothing about the
+    restore."""
+    src_head = open(_THINRUNNER_PATH, "r", encoding="utf-8").read()
+    assert "del sys.modules[mod]" in src_head, (
+        "the thinrunner no longer clears sys.modules; if so the snapshot in "
+        "_load_thinrunner_helpers is guarding nothing and the test above is "
+        "vacuous"
+    )
 
 
 @pytest.fixture(scope="module")
