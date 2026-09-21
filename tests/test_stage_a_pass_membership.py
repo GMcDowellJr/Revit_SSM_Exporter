@@ -24,6 +24,7 @@ from vop_interwoven.revit.annotation import (
     STAGE_A_PASS_ANNOTATION,
     STAGE_A_PASS_MODEL,
     split_stage_a_pass_membership,
+    stage_a_datum_category_ids,
     stage_a_pass_membership,
     stage_a_pass_membership_summary,
 )
@@ -109,7 +110,7 @@ def test_the_split_partitions_exactly():
     elements = [model_elems[0], anno_elems[0], model_elems[1],
                 anno_elems[1], model_elems[2]]
 
-    model, annotation, unresolved = split_stage_a_pass_membership(
+    model, annotation, unresolved, _basis = split_stage_a_pass_membership(
         elements, capture_view_id_int=CAPTURE_VIEW_ID)
 
     assert model == model_elems
@@ -138,7 +139,7 @@ def test_an_unreadable_owner_view_joins_neither_pass(broken):
     assert record["pass"] is None
     assert record["reason"]
 
-    model, annotation, unresolved = split_stage_a_pass_membership(
+    model, annotation, unresolved, _basis = split_stage_a_pass_membership(
         [broken], capture_view_id_int=CAPTURE_VIEW_ID)
     assert model == []
     assert annotation == []
@@ -157,7 +158,7 @@ def test_the_unreadable_element_is_absent_from_both_passes_not_just_flagged():
     good_anno = _anno_elem(41)
     broken = _ElemOwnerRaises(42, RuntimeError("boom"))
 
-    model, annotation, unresolved = split_stage_a_pass_membership(
+    model, annotation, unresolved, _basis = split_stage_a_pass_membership(
         [good_model, broken, good_anno], capture_view_id_int=CAPTURE_VIEW_ID)
 
     assert broken not in model
@@ -176,9 +177,13 @@ def test_a_read_failure_is_diagnosed_not_swallowed():
             self.warnings.append(kw)
 
     diag = _Diag()
+    # datum_category_ids given explicitly: this test counts diagnostics, and
+    # outside Revit the default resolution ALSO warns (BuiltInCategory is not
+    # importable). An empty set is ownership-only placement.
     split_stage_a_pass_membership(
         [_model_elem(50), _ElemOwnerRaises(51, RuntimeError("boom"))],
-        capture_view_id_int=CAPTURE_VIEW_ID, diag=diag)
+        capture_view_id_int=CAPTURE_VIEW_ID, diag=diag,
+        datum_category_ids=set())
 
     assert len(diag.warnings) == 1
     warned = diag.warnings[0]
@@ -192,7 +197,7 @@ def test_a_read_failure_is_diagnosed_not_swallowed():
 
 def test_a_plain_model_element_is_not_reported_unresolved():
     """Without this, an all-unresolved implementation passes every test above."""
-    model, annotation, unresolved = split_stage_a_pass_membership(
+    model, annotation, unresolved, _basis = split_stage_a_pass_membership(
         [_model_elem(60), _anno_elem(61)], capture_view_id_int=CAPTURE_VIEW_ID)
     assert unresolved == []
     assert len(model) == 1
@@ -210,7 +215,8 @@ def test_no_diagnostic_when_everything_resolved():
     diag = _Diag()
     split_stage_a_pass_membership(
         [_model_elem(70), _anno_elem(71)],
-        capture_view_id_int=CAPTURE_VIEW_ID, diag=diag)
+        capture_view_id_int=CAPTURE_VIEW_ID, diag=diag,
+        datum_category_ids=set())
     assert diag.warnings == []
 
 
@@ -233,12 +239,12 @@ def test_without_a_capture_view_id_ownership_is_unavailable_not_false():
 # --- the sidecar summary ---------------------------------------------------
 
 def test_summary_counts_are_always_present():
-    model, annotation, unresolved = split_stage_a_pass_membership(
+    model, annotation, unresolved, _basis = split_stage_a_pass_membership(
         [_model_elem(100), _anno_elem(101), _ElemOwnerRaises(102, RuntimeError("x"))],
         capture_view_id_int=CAPTURE_VIEW_ID)
     summary = stage_a_pass_membership_summary(model, annotation, unresolved)
 
-    assert summary["membership_rule"] == "OwnerViewId"
+    assert summary["membership_rule"] == "OwnerViewId+datum_category"
     assert summary["model_count"] == 1
     assert summary["annotation_count"] == 1
     assert summary["unresolved_count"] == 1
@@ -248,7 +254,7 @@ def test_summary_counts_are_always_present():
 
 
 def test_summary_zero_means_none_of_these_because_the_split_ran():
-    model, annotation, unresolved = split_stage_a_pass_membership(
+    model, annotation, unresolved, _basis = split_stage_a_pass_membership(
         [_model_elem(110)], capture_view_id_int=CAPTURE_VIEW_ID)
     summary = stage_a_pass_membership_summary(model, annotation, unresolved)
     assert summary["annotation_count"] == 0
@@ -260,7 +266,216 @@ def test_an_unreadable_element_id_is_none_not_zero():
     class _NoId(object):
         OwnerViewId = None
 
-    model, annotation, unresolved = split_stage_a_pass_membership(
+    model, annotation, unresolved, _basis = split_stage_a_pass_membership(
         [_NoId()], capture_view_id_int=CAPTURE_VIEW_ID)
     summary = stage_a_pass_membership_summary(model, annotation, unresolved)
     assert summary["unresolved"][0]["element_id"] is None
+
+
+# ==========================================================================
+# Datums join the annotation pass on CATEGORY (Greg, 2026-09-21)
+#
+# Found by review on PR #211: grids and levels are ownerless, so ownership
+# alone put them in the model bucket -- where collection_policy excludes them
+# outright, so nothing painted them, while the annotation pass left them
+# visible. They rendered as unassigned native-colour pixels on nearly every
+# plan and section. Greg's call: keep them in the annotation pass, paint them.
+# ==========================================================================
+
+GRID_CAT_ID = -2000220
+LEVEL_CAT_ID = -2000240
+WALL_CAT_ID = 10
+DATUMS = {GRID_CAT_ID, LEVEL_CAT_ID}
+
+
+class _Cat(object):
+    def __init__(self, cat_id):
+        self.Id = _Id(cat_id)
+
+
+class _CategorisedElem(object):
+    """An element with a category AND an owner view, both settable."""
+
+    def __init__(self, elem_id, cat_id, owner_view_id=-1):
+        self.Id = _Id(elem_id)
+        self.Category = _Cat(cat_id)
+        self.OwnerViewId = _Id(owner_view_id)
+
+
+def _grid(elem_id=200):
+    return _CategorisedElem(elem_id, GRID_CAT_ID)
+
+
+def _level(elem_id=201):
+    return _CategorisedElem(elem_id, LEVEL_CAT_ID)
+
+
+def _wall(elem_id=202):
+    return _CategorisedElem(elem_id, WALL_CAT_ID)
+
+
+@pytest.mark.parametrize("make", [_grid, _level])
+def test_an_ownerless_datum_joins_the_annotation_pass(make):
+    record = stage_a_pass_membership(
+        make(), capture_view_id_int=CAPTURE_VIEW_ID, datum_category_ids=DATUMS)
+
+    assert record["pass"] == STAGE_A_PASS_ANNOTATION
+    # Placed by CATEGORY, and the record says so rather than leaving a reader
+    # to infer ownership from the pass name.
+    assert record["basis"] == "datum_category"
+    assert record["owner_view_id"] == -1
+    # It has no owning view at all, so "does it match this view" has no
+    # answer -- explicitly not a False one.
+    assert record["owner_view_matches_capture_view"] == "not_applicable"
+
+
+def test_an_ownerless_non_datum_still_joins_the_model_pass():
+    """CONTROL. Without it, an implementation that sent every ownerless
+    element to the annotation pass would pass the test above -- and would
+    put the whole model into the annotation capture."""
+    record = stage_a_pass_membership(
+        _wall(), capture_view_id_int=CAPTURE_VIEW_ID, datum_category_ids=DATUMS)
+
+    assert record["pass"] == STAGE_A_PASS_MODEL
+    assert record["basis"] == "no_owner_view"
+
+
+def test_ownership_still_wins_where_it_can_answer():
+    """The category is consulted ONLY on elements ownership failed to place.
+    A view-owned element is an annotation on ownership, not on category."""
+    owned = _CategorisedElem(203, WALL_CAT_ID, owner_view_id=CAPTURE_VIEW_ID)
+    record = stage_a_pass_membership(
+        owned, capture_view_id_int=CAPTURE_VIEW_ID, datum_category_ids=DATUMS)
+
+    assert record["pass"] == STAGE_A_PASS_ANNOTATION
+    assert record["basis"] == "owner_view"
+
+
+def test_the_split_sends_datums_to_the_annotation_bucket():
+    grid, level, wall = _grid(), _level(), _wall()
+    anno = _anno_elem(210)
+
+    model, annotation, unresolved, basis = split_stage_a_pass_membership(
+        [wall, grid, anno, level], capture_view_id_int=CAPTURE_VIEW_ID,
+        datum_category_ids=DATUMS)
+
+    assert model == [wall]
+    assert annotation == [grid, anno, level]
+    assert unresolved == []
+    assert basis["datum_category"] == 2
+    assert basis["owner_view"] == 1
+    assert basis["no_owner_view"] == 1
+
+
+def test_an_empty_datum_set_is_the_pre_decision_behaviour():
+    """Pins what the decision actually changed.
+
+    With no datum categories, a grid is ownerless model content again -- the
+    exact state review found. Asserted so the fix cannot be reduced to a
+    no-op without a test saying so.
+    """
+    model, annotation, unresolved, basis = split_stage_a_pass_membership(
+        [_grid()], capture_view_id_int=CAPTURE_VIEW_ID, datum_category_ids=set())
+
+    assert len(model) == 1
+    assert annotation == []
+    assert basis["datum_category"] == 0
+
+
+def test_an_element_with_no_readable_category_is_not_guessed_into_a_datum():
+    """A category that cannot be read is not a datum category.
+
+    It stays model content on ownership, which is the answer ownership
+    actually gave -- rather than being swept into the annotation pass by a
+    failed lookup.
+    """
+    class _NoCategory(object):
+        def __init__(self):
+            self.Id = _Id(220)
+            self.OwnerViewId = _Id(-1)
+
+        @property
+        def Category(self):
+            raise RuntimeError("category unavailable")
+
+    record = stage_a_pass_membership(
+        _NoCategory(), capture_view_id_int=CAPTURE_VIEW_ID,
+        datum_category_ids=DATUMS)
+    assert record["pass"] == STAGE_A_PASS_MODEL
+    assert record["basis"] == "no_owner_view"
+
+
+def test_a_failed_datum_resolution_is_reported_not_silently_empty():
+    """An unresolvable datum set restores the gap, so it must be loud.
+
+    Outside Revit BuiltInCategory is not importable, which is exactly the
+    failure this reports -- so the default path here IS the failure path.
+    """
+    class _Diag2(object):
+        def __init__(self):
+            self.warnings = []
+
+        def warn(self, **kw):
+            self.warnings.append(kw)
+
+    diag = _Diag2()
+    _m, _a, _u, basis = split_stage_a_pass_membership(
+        [_grid()], capture_view_id_int=CAPTURE_VIEW_ID, diag=diag)
+
+    assert basis["datum_resolution_error"]
+    assert any(w["callsite"] == "stage_a_datum_category_ids" for w in diag.warnings)
+    # And it says what the consequence is, not just that a lookup failed.
+    assert "nothing paints them" in diag.warnings[0]["message"]
+
+
+def test_the_datum_set_resolves_off_the_live_enum():
+    """Not hardcoded ints. A wrong constant would leave datums unpainted --
+    silently, which is the failure this decision exists to fix."""
+    import sys
+    import types as _types
+
+    fake = _types.ModuleType("Autodesk.Revit.DB")
+
+    class _BIC(object):
+        OST_Grids = GRID_CAT_ID
+        OST_Levels = LEVEL_CAT_ID
+
+    fake.BuiltInCategory = _BIC
+    saved = sys.modules.get("Autodesk.Revit.DB")
+    sys.modules["Autodesk.Revit.DB"] = fake
+    try:
+        ids, error = stage_a_datum_category_ids()
+    finally:
+        if saved is None:
+            sys.modules.pop("Autodesk.Revit.DB", None)
+        else:
+            sys.modules["Autodesk.Revit.DB"] = saved
+
+    assert error is None
+    assert ids == DATUMS
+
+
+def test_a_host_missing_a_datum_category_reports_which_one():
+    import sys
+    import types as _types
+
+    fake = _types.ModuleType("Autodesk.Revit.DB")
+
+    class _BIC(object):
+        OST_Grids = GRID_CAT_ID
+        # OST_Levels absent on this host.
+
+    fake.BuiltInCategory = _BIC
+    saved = sys.modules.get("Autodesk.Revit.DB")
+    sys.modules["Autodesk.Revit.DB"] = fake
+    try:
+        ids, error = stage_a_datum_category_ids()
+    finally:
+        if saved is None:
+            sys.modules.pop("Autodesk.Revit.DB", None)
+        else:
+            sys.modules["Autodesk.Revit.DB"] = saved
+
+    # Partial, and named. Not an empty set, and not a silent success.
+    assert ids == {GRID_CAT_ID}
+    assert "OST_Levels" in error

@@ -4327,10 +4327,11 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
                     exc=ex,
                 )
 
-    _model_members, anno_elements, unresolved = split_stage_a_pass_membership(
-        elements, capture_view_id_int=view_id, diag=diag)
+    _model_members, anno_elements, unresolved, basis_counts = (
+        split_stage_a_pass_membership(
+            elements, capture_view_id_int=view_id, diag=diag))
     membership = stage_a_pass_membership_summary(
-        _model_members, anno_elements, unresolved)
+        _model_members, anno_elements, unresolved, basis_counts)
     if membership_error is not None:
         # The counts above are all zero, and a zero that means "the collection
         # failed" must not read like a zero that means "this view has no

@@ -27,6 +27,7 @@ from tests.stage_a_capture_fakes import (
 )
 from tests.test_stage_a_annotation_pass import (
     ANNO_CAT,
+    GRID_CAT,
     LINES_CAT,
     MODEL_CAT,
     VIEW_ID,
@@ -171,7 +172,7 @@ def _run_with_failing_suppression(tmp_path):
     view = _SuppressFailsView(VIEW_ID, template_id)
     elements = _elements()
     doc = _SizedDoc(elements=elements, link_instances=[],
-                    categories=[MODEL_CAT, ANNO_CAT, LINES_CAT])
+                    categories=[MODEL_CAT, ANNO_CAT, LINES_CAT, GRID_CAT])
     cfg = Config()
     cfg.debug_dump_path = str(tmp_path)
     diag = FakeDiag()
@@ -227,7 +228,7 @@ def test_a_failed_restore_step_fails_the_capture(tmp_path):
     elements = _elements()
     view = _RestoreFailsView(VIEW_ID)
     doc = _SizedDoc(elements=elements, link_instances=[],
-                    categories=[MODEL_CAT, ANNO_CAT, LINES_CAT])
+                    categories=[MODEL_CAT, ANNO_CAT, LINES_CAT, GRID_CAT])
 
     def _mark(opts):
         object.__setattr__(view, "_exported", True)
@@ -271,7 +272,7 @@ def test_restore_continues_past_a_failing_step(tmp_path):
     elements = _elements()
     view = _RestoreFailsView(VIEW_ID)
     doc = _SizedDoc(elements=elements, link_instances=[],
-                    categories=[MODEL_CAT, ANNO_CAT, LINES_CAT])
+                    categories=[MODEL_CAT, ANNO_CAT, LINES_CAT, GRID_CAT])
     doc.on_export_image = lambda opts: object.__setattr__(view, "_exported", True)
 
     cfg = Config()
@@ -286,7 +287,7 @@ def test_restore_continues_past_a_failing_step(tmp_path):
     # The crop restore failed; the element overrides after it still ran and
     # still verified clean.
     check = result["metadata"]["override_restore_check"]
-    assert check["verified_cleared_count"] == 3
+    assert check["verified_cleared_count"] == 4
     assert check["still_set_count"] == 0
 
 
@@ -328,7 +329,7 @@ def _view_with_authored_override(element_id):
 def _capture_with(view, tmp_path):
     elements = _elements()
     doc = _SizedDoc(elements=elements, link_instances=[],
-                    categories=[MODEL_CAT, ANNO_CAT, LINES_CAT])
+                    categories=[MODEL_CAT, ANNO_CAT, LINES_CAT, GRID_CAT])
     cfg = Config()
     cfg.debug_dump_path = str(tmp_path)
     diag = FakeDiag()
@@ -344,7 +345,7 @@ def test_an_authored_override_destroyed_by_the_paint_is_recorded(tmp_path):
 
     authored = result["metadata"]["authored_overrides_replaced"]
     assert authored["status"] == "value"
-    assert authored["checked_count"] == 3
+    assert authored["checked_count"] == 4
     assert authored["replaced_count"] == 1
     assert authored["replaced_element_ids"] == [2002]
     assert any(w["callsite"] == "annotation_authored_override_replaced"
@@ -361,7 +362,7 @@ def test_the_read_back_alone_cannot_see_it(tmp_path):
     result, _diag = _capture_with(_view_with_authored_override(2002), tmp_path)
 
     check = result["metadata"]["override_restore_check"]
-    assert check["verified_cleared_count"] == 3
+    assert check["verified_cleared_count"] == 4
     assert check["still_set_count"] == 0
     # ... and yet:
     assert result["metadata"]["authored_overrides_replaced"]["replaced_count"] == 1
@@ -375,6 +376,6 @@ def test_no_authored_overrides_records_zero_not_unavailable(tmp_path):
     _m, anno_result, _g, _d, _v, _diag = _run_both_passes(tmp_path)
     authored = anno_result["metadata"]["authored_overrides_replaced"]
     assert authored["status"] == "value"
-    assert authored["checked_count"] == 3
+    assert authored["checked_count"] == 4
     assert authored["replaced_count"] == 0
     assert authored["replaced_element_ids"] == []

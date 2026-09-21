@@ -1836,31 +1836,38 @@ def _project_element_bbox_to_cell_rect_for_anno(elem_or_bbox, view_basis, raster
 # are silent, and both are indistinguishable afterwards from a correct read
 # -- which is the coercion the Stage A record shape exists to refuse.
 
-# KNOWN GAP, RAISED NOT CLOSED (PR #211 review, 2026-09-21). An element that
-# is neither view-owned nor model geometry falls into the model bucket here
-# and is painted by NEITHER pass. The clearest case is datum elements --
-# grids and levels:
+# DATUMS JOIN THE ANNOTATION PASS AND ARE PAINTED (Greg, 2026-09-21).
 #
-#   - OwnerViewId is InvalidElementId (they are document-wide, not
-#     view-specific), so this function calls them model members;
+# OwnerViewId alone does not place them. Grids and levels are document-wide,
+# not view-specific, so OwnerViewId is InvalidElementId -- and before this
+# decision that put them in the model bucket, where nothing painted them:
+#
 #   - revit/collection_policy.py's _EXCLUDED_BIC_NAMES_GLOBAL excludes
 #     OST_Grids and OST_Levels outright (:69, :71), so the model pass never
-#     collects or paints them either;
+#     collects or paints them;
 #   - color_id_buffer._hidden_category_state classifies datums as
 #     CategoryType.Annotation (:1314) and hides them in the model pass, while
 #     _model_category_hidden_state hides only CategoryType.Model -- so they
-#     stay VISIBLE and unpainted in the annotation capture.
+#     were VISIBLE and unpainted in the annotation capture, rendering as
+#     unassigned native-color pixels on nearly every plan and section.
 #
-# Net: grids and levels render as unassigned native-color pixels in the
-# annotation TIFF. Same shape as the OST_Lines gap documented on
-# _model_category_hidden_state, but far more common -- they are on nearly
-# every plan and section.
+# Found by review on PR #211. Greg's call: keep them in the annotation pass
+# and paint them.
 #
-# NOT fixed here, deliberately. Closing it means either composing membership
-# with the category policy (changing a rule Greg set: "membership uses
-# OwnerViewId") or hiding datums in the annotation pass (dropping them from
-# the capture entirely, when they may well be content he wants). Both are his
-# call, not this function's, and guessing would bake one in silently.
+# SO MEMBERSHIP HAS TWO BASES, AND THE RECORD SAYS WHICH. Ownership is still
+# the rule for everything it can answer; a datum joins on its CATEGORY, and
+# `basis` carries that difference rather than letting a reader infer
+# ownership from a pass name. The set is ENUMERATED, not derived from
+# "whatever the model pass excludes" -- _EXCLUDED_BIC_NAMES_GLOBAL also holds
+# section heads, elevation marks, callout heads, viewers, cameras and the sun
+# path, and sweeping those in would be a decision Greg did not make.
+#
+# KEYED BY ID, RESOLVED FROM THE API. Category.Name is localized, so a
+# name-keyed set captured on an English Revit matches nothing on a French
+# one. The ids are BuiltInCategory enum values, and they are read FROM the
+# enum rather than hardcoded: a wrong constant would silently leave datums
+# unpainted, which is the exact failure this decision exists to fix. A
+# resolution that fails is recorded, never treated as an empty set.
 
 STAGE_A_PASS_MODEL = "model"
 STAGE_A_PASS_ANNOTATION = "annotation"
@@ -1880,6 +1887,58 @@ STAGE_A_PASS_MEMBERSHIP_SCHEMA = "vop.stage_a.pass_membership.v1"
 _INVALID_ELEMENT_ID_INT = -1
 
 
+# The datum categories that join the annotation pass on category rather than
+# ownership. Two entries, both named by Greg.
+#
+# Grid and level HEADS (OST_GridHeads / OST_LevelHeads) are deliberately
+# absent: a head is an annotation family referenced by the datum's TYPE, not
+# a separately placed element a view collector returns, so there is nothing
+# here to paint. UNCONFIRMED (not run in Revit this session): whether the
+# head therefore takes the painted datum's color, or renders in its own
+# category color and decodes off-palette.
+STAGE_A_DATUM_BIC_NAMES = ("OST_Grids", "OST_Levels")
+
+
+def stage_a_datum_category_ids():
+    """(ids, error) for STAGE_A_DATUM_BIC_NAMES, resolved from the live enum.
+
+    Returns a set of category-id ints and None, or an empty set and a reason.
+    An empty set with no reason would be indistinguishable from "this host
+    has no datum categories", and would silently restore the very gap this
+    exists to close -- so a failed resolution is reported, and the caller
+    puts it in the record.
+    """
+    try:
+        from Autodesk.Revit.DB import BuiltInCategory
+    except Exception as ex:
+        return set(), "BuiltInCategory unavailable ({0}: {1})".format(
+            type(ex).__name__, ex)
+
+    ids = set()
+    missing = []
+    for name in STAGE_A_DATUM_BIC_NAMES:
+        bic = getattr(BuiltInCategory, name, None)
+        if bic is None:
+            missing.append(name)
+            continue
+        try:
+            ids.add(int(bic))
+        except Exception as ex:
+            missing.append("{0} ({1}: {2})".format(name, type(ex).__name__, ex))
+    if missing:
+        return ids, "datum categories not resolvable on this host: {0}".format(
+            ", ".join(missing))
+    return ids, None
+
+
+def _element_category_id_int(elem):
+    """``elem.Category.Id.IntegerValue``, or None when it cannot be read."""
+    try:
+        return int(elem.Category.Id.IntegerValue)
+    except Exception:
+        return None
+
+
 def _invalid_element_id_int():
     """``ElementId.InvalidElementId.IntegerValue``, preferring the live API."""
     try:
@@ -1889,8 +1948,17 @@ def _invalid_element_id_int():
         return _INVALID_ELEMENT_ID_INT
 
 
-def stage_a_pass_membership(elem, capture_view_id_int=None):
-    """Which Stage A capture pass ``elem`` belongs to, read from OwnerViewId.
+def stage_a_pass_membership(elem, capture_view_id_int=None, datum_category_ids=None):
+    """Which Stage A capture pass ``elem`` belongs to.
+
+    Ownership decides everything it can answer; a DATUM decides on category
+    (see the note above STAGE_A_PASS_MODEL). ``basis`` says which rule placed
+    the element, so a reader never has to infer ownership from a pass name:
+
+      ``owner_view``     -- OwnerViewId is a real view; annotation pass
+      ``datum_category`` -- ownerless, but in ``datum_category_ids``;
+                            annotation pass
+      ``no_owner_view``  -- ownerless and not a datum; model pass
 
     Returns a three-valued record. ``state`` is ``"value"`` when OwnerViewId
     was read, ``"unavailable"`` when it was not; ``pass`` is
@@ -1902,11 +1970,13 @@ def stage_a_pass_membership(elem, capture_view_id_int=None):
     element owned by some other view is still an annotation -- it is just not
     this view's, which a collector scoped to the view should never produce.
     Recorded rather than acted on, so a capture that somehow sees one says so
-    instead of quietly painting it.
+    instead of quietly painting it. A datum has no owning view at all, so for
+    one it is ``"not_applicable"`` -- not ``False``.
     """
     record = {
         "state": "unavailable",
         "pass": None,
+        "basis": None,
         "owner_view_id": None,
         "owner_view_matches_capture_view": "unavailable",
         "reason": None,
@@ -1937,13 +2007,22 @@ def stage_a_pass_membership(elem, capture_view_id_int=None):
     record["owner_view_id"] = owner_int
 
     if owner_int == _invalid_element_id_int():
-        record["pass"] = STAGE_A_PASS_MODEL
-        # A model element has no owning view, so "does it match" has no
-        # answer -- not a False one.
+        # No owning view. Either a datum -- annotation content that happens
+        # to be document-wide -- or model geometry. Ownership cannot tell
+        # them apart, which is why the category is consulted HERE and only
+        # here, on elements ownership has already failed to place.
         record["owner_view_matches_capture_view"] = "not_applicable"
+        cat_id = _element_category_id_int(elem)
+        if datum_category_ids and cat_id is not None and cat_id in datum_category_ids:
+            record["pass"] = STAGE_A_PASS_ANNOTATION
+            record["basis"] = "datum_category"
+            return record
+        record["pass"] = STAGE_A_PASS_MODEL
+        record["basis"] = "no_owner_view"
         return record
 
     record["pass"] = STAGE_A_PASS_ANNOTATION
+    record["basis"] = "owner_view"
     if capture_view_id_int is None:
         record["owner_view_matches_capture_view"] = "unavailable"
         record["reason"] = "no capture view id supplied; ownership not compared"
@@ -1953,24 +2032,49 @@ def stage_a_pass_membership(elem, capture_view_id_int=None):
     return record
 
 
-def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None):
+def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
+                                  datum_category_ids=None):
     """Partition ``elements`` into the Stage A model and annotation passes.
 
-    Returns ``(model, annotation, unresolved)``. ``unresolved`` holds
-    ``(element, record)`` pairs for every element whose OwnerViewId could not
-    be read; it is never empty *and* silent -- each entry carries the reason,
-    and a diagnostic is raised once for the group.
+    Returns ``(model, annotation, unresolved, basis_counts)``. ``unresolved``
+    holds ``(element, record)`` pairs for every element whose OwnerViewId
+    could not be read; it is never empty *and* silent -- each entry carries
+    the reason, and a diagnostic is raised once for the group.
+    ``basis_counts`` says how many elements each rule placed.
 
     The three lists partition the input exactly: nothing is dropped and
     nothing appears twice, which is what makes "the model TIFF has no
     annotation pixels" checkable rather than asserted.
+
+    ``datum_category_ids`` defaults to resolving STAGE_A_DATUM_BIC_NAMES off
+    the live enum. A caller that already resolved them passes them in; a
+    caller that passes an empty set gets ownership-only placement, which is
+    the pre-2026-09-21 behaviour and leaves datums unpainted.
     """
+    datum_error = None
+    if datum_category_ids is None:
+        datum_category_ids, datum_error = stage_a_datum_category_ids()
+        if datum_error and diag is not None:
+            diag.warn(
+                phase="annotation",
+                callsite="stage_a_datum_category_ids",
+                message="{0}; datums in those categories fall back to the model pass, "
+                        "where nothing paints them, and will render unassigned in the "
+                        "annotation capture".format(datum_error),
+                view_id=capture_view_id_int,
+            )
+
     model = []
     annotation = []
     unresolved = []
+    basis_counts = {"owner_view": 0, "datum_category": 0, "no_owner_view": 0}
 
     for elem in elements or []:
-        record = stage_a_pass_membership(elem, capture_view_id_int=capture_view_id_int)
+        record = stage_a_pass_membership(
+            elem, capture_view_id_int=capture_view_id_int,
+            datum_category_ids=datum_category_ids)
+        if record["basis"] in basis_counts:
+            basis_counts[record["basis"]] += 1
         if record["pass"] == STAGE_A_PASS_MODEL:
             model.append(elem)
         elif record["pass"] == STAGE_A_PASS_ANNOTATION:
@@ -1991,19 +2095,25 @@ def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None)
             view_id=capture_view_id_int,
         )
 
-    return model, annotation, unresolved
+    basis_counts["datum_categories_resolved"] = sorted(datum_category_ids or [])
+    basis_counts["datum_resolution_error"] = datum_error
+    return model, annotation, unresolved, basis_counts
 
 
-def stage_a_pass_membership_summary(model, annotation, unresolved):
+def stage_a_pass_membership_summary(model, annotation, unresolved, basis_counts=None):
     """The sidecar record for one split. Counts are always present.
 
     A zero here means "none of these", because the split always ran; it is
     never a stand-in for "not measured". A capture that could not split at all
     writes no summary rather than a summary of zeros.
     """
-    return {
+    summary = {
         "schema": STAGE_A_PASS_MEMBERSHIP_SCHEMA,
-        "membership_rule": "OwnerViewId",
+        # Ownership first, category only for the datums ownership cannot
+        # place. Named as both, because "OwnerViewId" alone stopped being
+        # the whole rule on 2026-09-21 and a stale value here would
+        # misdescribe every record under it.
+        "membership_rule": "OwnerViewId+datum_category",
         "model_count": len(model),
         "annotation_count": len(annotation),
         "unresolved_count": len(unresolved),
@@ -2016,6 +2126,9 @@ def stage_a_pass_membership_summary(model, annotation, unresolved):
             for elem, record in unresolved
         ],
     }
+    if basis_counts is not None:
+        summary["basis_counts"] = basis_counts
+    return summary
 
 
 def _stage_a_element_id_int(elem):
