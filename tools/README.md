@@ -102,6 +102,40 @@ python tools/analyze_stage_a_probe.py path/to/probe.json another/probe.json
 
 ---
 
+### `capture_overlay.py` - Stage A review overlay
+
+Draws a Stage A capture's TIFF with its own sidecar's bboxes, source classes
+and category labels on top, so the capture can be read against the drawing.
+Offline; standard library + Pillow + `clamp_pad_geometry.py`. Handles both
+passes, reading each one's own rendered rectangle (`bounds_xy` for the model
+pass, `registration.rendered_uv` for the annotation pass).
+
+**It emits pictures only** - no score, no tolerance, no pass/fail, no
+aggregate verdict. Validating a capture is a human read of the TIFF and the
+sidecar against the drawing, and a tool that rated the result would replace
+that read rather than support it. The only number it prints is a truncation
+notice, so a capped panel cannot hide records.
+
+Records that reach no pixels are listed under the image with the reason -
+an unavailable bbox, a rectangle wholly off the crop, or a class excluded by
+`--only`. It **refuses** to place anything, and says which, when the pass
+recorded no crop rectangle, when the crop is degenerate, or when the
+producer's recorded export size disagrees with the file being read (decode's
+Guard 1 in a different costume: the clamp pads would go negative and every
+box would land somewhere plausible and wrong).
+
+**Usage:**
+```bash
+python tools/capture_overlay.py path/to/sidecar.json
+python tools/capture_overlay.py path/to/capture_dir/
+python tools/capture_overlay.py sidecar.json --labels id --only host --only dwg
+```
+
+**Output:** `<sidecar-stem>.overlay.png` beside the sidecar (or in
+`--out-dir`). Never overwrites the sidecar or the TIFF.
+
+---
+
 ### `compare_golden.py` - Golden Baseline Comparison
 
 Compares current exporter outputs against golden baseline to detect regressions.
