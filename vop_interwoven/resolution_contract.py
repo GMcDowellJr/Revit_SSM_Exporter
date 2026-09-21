@@ -421,25 +421,34 @@ def frame_export_geometry(frame_uv, crop_uv, view_scale, export_dpi,
     # A, clamped into B. compute_model_crop() already intersects, so a crop
     # outside B should be impossible; clamping here means this function is
     # still total if it ever is, rather than emitting a negative pixel offset.
+    frame_rect = (float(frame_uv[0]), float(frame_uv[1]),
+                  float(frame_uv[2]), float(frame_uv[3]))
     if crop_uv is None:
-        crop_rect = (float(frame_uv[0]), float(frame_uv[1]),
-                     float(frame_uv[2]), float(frame_uv[3]))
-        crop_is_frame = True
+        crop_rect = frame_rect
     else:
         _extent(crop_uv, "crop_uv")
         crop_rect = (
-            max(float(crop_uv[0]), float(frame_uv[0])),
-            max(float(crop_uv[1]), float(frame_uv[1])),
-            min(float(crop_uv[2]), float(frame_uv[2])),
-            min(float(crop_uv[3]), float(frame_uv[3])),
+            max(float(crop_uv[0]), frame_rect[0]),
+            max(float(crop_uv[1]), frame_rect[1]),
+            min(float(crop_uv[2]), frame_rect[2]),
+            min(float(crop_uv[3]), frame_rect[3]),
         )
-        crop_is_frame = False
         if crop_rect[2] <= crop_rect[0] or crop_rect[3] <= crop_rect[1]:
             # A degenerate intersection is not a rectangle to render. Fall
             # back to B rather than inventing one.
-            crop_rect = (float(frame_uv[0]), float(frame_uv[1]),
-                         float(frame_uv[2]), float(frame_uv[3]))
-            crop_is_frame = True
+            crop_rect = frame_rect
+
+    # Whether A IS B, decided by comparing the RECTANGLES -- not by whether
+    # the caller passed None. Production's only caller resolves A through
+    # compute_model_crop(), which returns the frame itself when no narrower
+    # model crop exists rather than returning None, so a None-based test read
+    # False on every capture including the ones where A and B are the same
+    # rectangle. Caught by the call-site test, which is the only place the
+    # difference is visible.
+    _scale_ft = max(abs(frame_rect[2] - frame_rect[0]),
+                    abs(frame_rect[3] - frame_rect[1]), 1.0)
+    crop_is_frame = all(
+        abs(crop_rect[k] - frame_rect[k]) <= 1.0e-9 * _scale_ft for k in range(4))
 
     fx0, fy0 = float(frame_uv[0]), float(frame_uv[1])
     i0 = int(math.floor((crop_rect[0] - fx0) / accepted_fpp + _LATTICE_EPS))

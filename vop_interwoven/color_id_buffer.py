@@ -18,6 +18,7 @@ from .resolution_contract import (
     MAX_STAGE_A_AXIS_PX,
     cap_axes,
     effective_export_dpi as _effective_export_dpi,
+    frame_export_geometry,
 )
 
 NEUTRAL_PHASE_FILTER_NAME = "VOP_NeutralPhaseFilter"
@@ -2363,103 +2364,37 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     fit_direction = str(
         getattr(cfg, "color_id_buffer_fit_direction", "horizontal") or "horizontal"
     ).strip().lower()
-    if raster is not None and getattr(raster, "W", 0) and getattr(raster, "cell_size_ft", 0):
-        paper_width_in = (float(raster.W) * float(raster.cell_size_ft) * 12.0) / max(scale, 1.0e-6)
-        paper_height_in = (float(getattr(raster, "H", 0) or 0) * float(raster.cell_size_ft)
-                           * 12.0) / max(scale, 1.0e-6)
-    else:
-        paper_width_in = 1.0
-        paper_height_in = 1.0
-        if diag is not None:
-            diag.warn(
-                phase="color_id_buffer",
-                callsite="pixel_size",
-                message="raster not provided; falling back to 1 paper-inch width for pixel "
-                        "sizing (export resolution will be far below the requested DPI)",
-                view_id=view_id,
-            )
-    # PixelSize sets the axis Revit is asked to FIT, so the requested size has
-    # to come from that axis's paper dimension. Deriving it from the width
-    # under vertical fit silently scales the whole export by the view's aspect
-    # ratio: a tall view would lose density merely by switching fit direction,
-    # and export_dpi would no longer mean the same thing in the two cases.
-    paper_fit_in = paper_height_in if fit_direction == "vertical" else paper_width_in
-    if paper_fit_in <= 0:
-        paper_fit_in = paper_width_in
-        if diag is not None:
-            diag.warn(
-                phase="color_id_buffer",
-                callsite="pixel_size",
-                message="vertical fit requested but the raster reports no height; "
-                        "sizing from the paper width instead",
-                view_id=view_id,
-            )
-    pre_cap_px = max(64, int(round(export_dpi * paper_fit_in)))
-    requested_axis = "height" if fit_direction == "vertical" else "width"
-
-    # PixelSize bounds the fitted axis ONLY: FitToPage derives the other axis
-    # from the view's extents and bounds it by nothing. Capping the request
-    # therefore needs the ratio between the two axes of the rectangle the
-    # export is actually fitted to -- and that rectangle is the model-only
-    # crop applied further below (compute_model_crop), not raster.bounds_xy,
-    # whenever a narrower model_clip_bounds exists. Using the grid's own
-    # aspect here would understate the derived axis by exactly the amount
-    # the crop narrows. compute_model_crop is pure, so resolving it twice
-    # costs nothing and keeps the cap honest about what will be rendered.
-    aspect_derived_over_fit = None
-    if raster is not None and getattr(raster, "bounds_xy", None) is not None:
-        try:
-            _render_bounds, _unused_offset = compute_model_crop(
-                getattr(raster, "model_clip_bounds", None), raster.bounds_xy
-            )
-            _u = float(_render_bounds.xmax) - float(_render_bounds.xmin)
-            _v = float(_render_bounds.ymax) - float(_render_bounds.ymin)
-            if _u > 0.0 and _v > 0.0:
-                aspect_derived_over_fit = (_u / _v) if fit_direction == "vertical" else (_v / _u)
-        except Exception as ex:
-            if diag is not None:
-                diag.warn(
-                    phase="color_id_buffer",
-                    callsite="pixel_size_aspect",
-                    message="could not resolve the export crop's aspect ratio from the "
-                            "raster ({0}); falling back to the grid's own paper "
-                            "extents for the two-axis cap".format(ex),
-                    view_id=view_id,
-                )
-    if aspect_derived_over_fit is None and paper_fit_in > 0:
-        _paper_derived_in = paper_width_in if fit_direction == "vertical" else paper_height_in
-        if _paper_derived_in > 0:
-            aspect_derived_over_fit = float(_paper_derived_in) / float(paper_fit_in)
-    if aspect_derived_over_fit is None:
-        # Nothing to derive the other axis from, so the cap can only bound
-        # the fitted one. Say so rather than implying both axes are covered:
-        # the post-export dimension check is then the only thing between this
-        # view and an over-limit export.
-        aspect_derived_over_fit = 1.0
-        if diag is not None:
-            diag.warn(
-                phase="color_id_buffer",
-                callsite="pixel_size_aspect",
-                message="no usable view extents; the two-axis cap can bound only the "
-                        "fitted axis for this view, leaving the derived axis "
-                        "unverified until the post-export dimension check",
-                view_id=view_id,
-            )
-
-    # The raster's own cell count along the fitted axis, which bounds how
-    # far a dimension mismatch may back off: an export narrower than the
-    # grid it feeds cannot resolve that grid, so there is nothing below it
-    # worth attempting. None when no raster was supplied.
-    if raster is not None:
-        grid_axis_px = getattr(raster, "H", None) if fit_direction == "vertical" else getattr(raster, "W", None)
-        grid_axis_px = int(grid_axis_px) if grid_axis_px else None
-    else:
-        grid_axis_px = None
-
+    # ------------------------------------------------------------------
+    # Stage A step 2: the export is sized from FRAME B and export_dpi only.
+    #
+    # It used to be sized from raster.W * raster.cell_size_ft -- the analysis
+    # grid's own rectangle, which is the frame rounded UP to whole cells. That
+    # coupled the captured image to a setting that has nothing to do with it:
+    # the same view at a different cell size produced a different export.
+    # resolution_contract.effective_export_dpi() already said the grid was the
+    # wrong denominator for the inverse mapping; this makes the forward one
+    # agree, and the arithmetic is CALLED rather than restated here so the two
+    # cannot drift (the defect class CLAUDE.md records twice over).
+    #
+    # WHAT MOVES, AND IT IS VISIBLE IN EVERY CAPTURE WITH A NARROWED CROP.
+    # Before, the fitted axis was handed B's pixel count while the view was
+    # cropped to the narrower A, so Revit fitted A into B's pixels and the
+    # capture came back over-resolved by B/A. Now feet-per-pixel is fixed by B
+    # and the dpi, and A is rendered AT that fpp -- so a view whose model crop
+    # is half its annotation frame exports about half as wide as it did, at
+    # the dpi that was actually requested. requested vs achieved dpi, px and
+    # fpp are all recorded below.
     # TEST-ONLY. A caller may raise the SIZING cap to prove the post-export
     # check fires (see _export_tiff: the verification ceiling stays at the
-    # measured limit regardless). None/0/absent means the shipped limit,
-    # which is what every production run uses.
+    # measured limit regardless). None/0/absent means the shipped limit, which
+    # is what every production run uses.
+    #
+    # Resolved and announced BEFORE the frame branch below, not inside it: the
+    # override is a property of the config, not of whether this view has a
+    # usable frame. It was briefly inside, where a view with no raster went
+    # silently uncapped-by-request -- caught by
+    # tests/test_stage_a_export_dimension_contract.py, which runs exactly that
+    # case.
     cap_axis_px = getattr(cfg, "color_id_buffer_cap_axis_px", None) or MAX_STAGE_A_AXIS_PX
     if cap_axis_px > MAX_STAGE_A_AXIS_PX and diag is not None:
         diag.warn(
@@ -2472,28 +2407,134 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                         cap_axis_px, MAX_STAGE_A_AXIS_PX),
             view_id=view_id,
         )
-    cap = cap_axes(pre_cap_px, pre_cap_px * aspect_derived_over_fit, cap_axis_px)
-    pixel_size = max(64, cap["accepted_px"])
-    if pixel_size != cap["accepted_px"] and diag is not None:
+
+    geom = None
+    frame_uv = None
+    if raster is not None and getattr(raster, "bounds_xy", None) is not None:
+        _b = raster.bounds_xy
+        frame_uv = (float(_b.xmin), float(_b.ymin), float(_b.xmax), float(_b.ymax))
+        try:
+            # compute_model_crop is pure, and is resolved here as well as at
+            # the crop-application site below for the same reason the shipped
+            # code resolved it twice: it costs nothing and keeps the sizing
+            # honest about what will actually be rendered. The SNAPPED result
+            # computed here is what gets applied, so the two cannot disagree.
+            _render_bounds, _unused_offset = compute_model_crop(
+                getattr(raster, "model_clip_bounds", None), raster.bounds_xy
+            )
+            crop_uv = (float(_render_bounds.xmin), float(_render_bounds.ymin),
+                       float(_render_bounds.xmax), float(_render_bounds.ymax))
+        except Exception as ex:
+            crop_uv = None
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="pixel_size_crop",
+                    message="could not resolve the model crop from the raster ({0}); "
+                            "sizing the export from the frame alone".format(ex),
+                    view_id=view_id,
+                )
+        try:
+            geom = frame_export_geometry(
+                frame_uv, crop_uv, scale, export_dpi,
+                fit_direction=fit_direction, max_axis_px=cap_axis_px,
+            )
+        except ValueError as ex:
+            # A degenerate frame cannot be sized. Refusing beats substituting a
+            # rectangle that would be recorded as if it were the view's.
+            geom = None
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="pixel_size",
+                    message="frame bounds unusable for export sizing ({0}); falling back "
+                            "to the 1 paper-inch minimum (export resolution will be far "
+                            "below the requested DPI)".format(ex),
+                    view_id=view_id,
+                )
+    elif diag is not None:
         diag.warn(
             phase="color_id_buffer",
             callsite="pixel_size",
-            message="two-axis cap wanted {0} px but the 64 px floor overrides it; the "
-                    "derived axis may exceed {1} px for this view".format(
-                        cap["accepted_px"], cap["max_axis_px"]),
+            message="raster/raster.bounds_xy not provided; falling back to 1 paper-inch "
+                    "width for pixel sizing (export resolution will be far below the "
+                    "requested DPI)",
             view_id=view_id,
         )
-    if cap["cap_applied"] and diag is not None:
-        diag.warn(
-            phase="color_id_buffer",
-            callsite="pixel_size",
-            message="Stage A export capped from {0} to {1} px on the {2} axis so BOTH "
-                    "axes stay within {3} px (derived axis predicted at {4} px); the "
-                    "requested export DPI is not met for this view".format(
-                        cap["pre_cap_px"], pixel_size, requested_axis,
-                        cap["max_axis_px"], cap["accepted_derived_px"]),
-            view_id=view_id,
-        )
+
+    if geom is not None:
+        pixel_size = max(64, int(geom["requested_px"]))
+        requested_axis = geom["requested_axis"]
+        # Paper extents of the FRAME. These sidecar keys keep their documented
+        # meaning -- "the view's real paper extent along requested_axis" -- and
+        # in fact now match it: the shipped values came from the grid and so
+        # overstated the frame by up to one cell.
+        paper_width_in = geom["frame_extent_ft"][0] * 12.0 / max(scale, 1.0e-6)
+        paper_height_in = geom["frame_extent_ft"][1] * 12.0 / max(scale, 1.0e-6)
+        paper_fit_in = paper_height_in if fit_direction == "vertical" else paper_width_in
+        # Shaped like cap_axes' return so the sidecar block below is unchanged.
+        # predicted_derived_px is now EXACT rather than an aspect-ratio guess:
+        # both axes are whole pixel counts of one snapped rectangle.
+        cap = {
+            "max_axis_px": geom["max_axis_px"],
+            "pre_cap_px": geom["pre_cap_px"],
+            "pre_cap_derived_px": geom["pre_cap_derived_px"],
+            "accepted_px": geom["requested_px"],
+            "accepted_derived_px": geom["predicted_derived_px"],
+            "cap_applied": geom["cap_applied"],
+            "scale_factor": geom["achieved_fpp_ft"] and (
+                geom["requested_fpp_ft"] / geom["achieved_fpp_ft"]),
+        }
+        if pixel_size != geom["requested_px"] and diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="pixel_size",
+                message="frame-derived export wanted {0} px on the {1} axis but the 64 px "
+                        "floor overrides it; this capture is ABOVE the requested DPI and "
+                        "the recorded achieved figures describe the pre-floor "
+                        "request".format(geom["requested_px"], requested_axis),
+                view_id=view_id,
+            )
+        if geom["cap_applied"] and diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="pixel_size",
+                message="Stage A export capped so BOTH axes of the annotation frame stay "
+                        "within {0} px: the frame is UNCHANGED and the resolution drops "
+                        "from {1:.2f} to {2:.2f} dpi ({3:.6g} to {4:.6g} ft/px); the frame "
+                        "is {5}x{6} px and the rendered crop {7}x{8} px".format(
+                            geom["max_axis_px"], geom["requested_export_dpi"],
+                            geom["achieved_export_dpi"], geom["requested_fpp_ft"],
+                            geom["achieved_fpp_ft"], geom["frame_px"][0],
+                            geom["frame_px"][1], geom["crop_px"][0], geom["crop_px"][1]),
+                view_id=view_id,
+            )
+    else:
+        # No usable frame. Keep the shipped 1 paper-inch fallback rather than
+        # inventing a frame; the diagnostics above say which branch got here.
+        paper_width_in = 1.0
+        paper_height_in = 1.0
+        paper_fit_in = 1.0
+        requested_axis = "height" if fit_direction == "vertical" else "width"
+        pre_cap_px = max(64, int(round(export_dpi * paper_fit_in)))
+        cap = cap_axes(pre_cap_px, pre_cap_px, cap_axis_px)
+        pixel_size = max(64, cap["accepted_px"])
+
+    # The raster's own cell count along the fitted axis, which bounds how
+    # far a dimension mismatch may back off: an export narrower than the
+    # grid it feeds cannot resolve that grid, so there is nothing below it
+    # worth attempting. None when no raster was supplied.
+    #
+    # STILL GRID-DERIVED, deliberately: this is the post-export dim_check's
+    # backoff floor, and step 2 leaves the dim_check unchanged. It is a floor
+    # on the RETRY, not on the export size, so it no longer couples the
+    # capture's resolution to the grid -- but it is a residual coupling in
+    # this path and is called out rather than quietly left.
+    if raster is not None:
+        grid_axis_px = getattr(raster, "H", None) if fit_direction == "vertical" else getattr(raster, "W", None)
+        grid_axis_px = int(grid_axis_px) if grid_axis_px else None
+    else:
+        grid_axis_px = None
 
     orig_view_template_id = None
     try:
@@ -2813,6 +2854,34 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                     getattr(raster, "model_clip_bounds", None), raster.bounds_xy
                 )
                 b = render_bounds
+                # Decision A (2026-09-21): the rectangle actually handed to
+                # Revit is A SNAPPED OUT to B's pixel lattice, so A's offset
+                # within B is a whole number of pixels and the two frames
+                # register by integer translation with no resampling.
+                #
+                # The snapped rectangle comes from the sizing block above --
+                # the same object the pixel count was derived from -- rather
+                # than being recomputed here. Recomputing is how the fitted
+                # pixel count and the rendered rectangle would come to
+                # disagree, which is the whole failure mode step 2 is closing.
+                #
+                # model_crop_offset_uv is recomputed against the SNAPPED
+                # rectangle for the same reason: it is defined as what you ADD
+                # to raster.bounds_xy's corners to reconstruct the crop, so it
+                # has to describe the rectangle that was actually rendered.
+                # Leaving it on the unsnapped one would put every decoded UV
+                # off by up to a pixel per edge.
+                if geom is not None:
+                    _sb = geom["crop_snapped_uv"]
+                    from .core.math_utils import Bounds2D as _Bounds2D_snap
+                    b = _Bounds2D_snap(float(_sb[0]), float(_sb[1]),
+                                       float(_sb[2]), float(_sb[3]))
+                    model_crop_offset_uv = (
+                        float(_sb[0]) - float(raster.bounds_xy.xmin),
+                        float(_sb[1]) - float(raster.bounds_xy.ymin),
+                        float(_sb[2]) - float(raster.bounds_xy.xmax),
+                        float(_sb[3]) - float(raster.bounds_xy.ymax),
+                    )
                 basis = getattr(raster, "view_basis", None)
                 if basis is None:
                     from .revit.view_basis import make_view_basis as _make_view_basis
@@ -3618,6 +3687,67 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             "backoff_floor_px": grid_axis_px,
             "backoff_max_retries": MAX_MISMATCH_RETRIES,
         },
+        # Stage A step 2. ADDITIVE: every key above keeps its meaning and its
+        # name; this records what the frame-derived sizing did, which the
+        # shipped keys have no place for.
+        #
+        # THREE-VALUED, per the standing rule. A capture that could not resolve
+        # a frame carries {"status": "unavailable", "reason": ...} rather than
+        # zeros or a silently absent key -- a zero here would read as "the
+        # frame is degenerate" and an absent key as "written before step 2".
+        #
+        # requested vs achieved is spelled out for dpi, px AND fpp because
+        # this project has misread that distinction four times (dpi, CellSize,
+        # IsOnSheet, cap) and treats it as a class, not as three incidents.
+        "export_frame": (
+            {
+                "status": "value",
+                # B as resolved, unclipped and un-re-centred.
+                "frame_uv": [float(v) for v in frame_uv],
+                "frame_extent_ft": [float(v) for v in geom["frame_extent_ft"]],
+                # B rounded OUT to the pixel lattice: what the capture
+                # realises. Grows only at the max corner, so B.min -- the
+                # single origin the frame-reconciliation invariant rests on --
+                # does not move.
+                "frame_snapped_uv": [float(v) for v in geom["frame_snapped_uv"]],
+                "frame_px": [int(v) for v in geom["frame_px"]],
+                # A snapped onto B's lattice, and its whole-pixel offset from
+                # B.min. This is decision A's registration data: B overlays A
+                # by translating this many pixels, with no resampling.
+                "crop_snapped_uv": [float(v) for v in geom["crop_snapped_uv"]],
+                "crop_px": [int(v) for v in geom["crop_px"]],
+                "crop_offset_px": [int(v) for v in geom["crop_offset_px"]],
+                # True when no narrower model crop applied, so A IS B. Kept
+                # separate from crop_offset_px == [0, 0], which a crop that
+                # starts at B's own corner also produces.
+                "crop_is_frame": bool(geom["crop_is_frame"]),
+                "requested_export_dpi": float(geom["requested_export_dpi"]),
+                "achieved_export_dpi": float(geom["achieved_export_dpi"]),
+                "requested_fpp_ft": float(geom["requested_fpp_ft"]),
+                "achieved_fpp_ft": float(geom["achieved_fpp_ft"]),
+                "requested_px": int(geom["requested_px"]),
+                "pre_cap_px": int(geom["pre_cap_px"]),
+                "cap_applied": bool(geom["cap_applied"]),
+                "max_axis_px": geom["max_axis_px"],
+                "min_axis_px": int(geom["min_axis_px"]),
+                # How many times the lattice had to step down to keep both of
+                # B's axes inside the ceiling. Normally 0. Non-zero is not an
+                # error, but it means the achieved figures above are a step or
+                # more below what the cap alone would predict.
+                "lattice_corrections": int(geom["lattice_corrections"]),
+                # UNCONFIRMED (no Revit run in this session): that Revit
+                # renders the snapped rectangle at exactly crop_px pixels. The
+                # post-export dim_check above is what measures it; these are
+                # the producer's intent, not a measurement.
+                "verified_against_revit": False,
+            }
+            if geom is not None and frame_uv is not None else
+            {
+                "status": "unavailable",
+                "reason": ("no usable frame bounds for this view; the export fell back "
+                           "to the 1 paper-inch minimum and is not frame-derived"),
+            }
+        ),
         # View-local UV rectangle (min_u, min_v, max_u, max_v) the export
         # was cropped to -- the same tuple set as view.CropBox above, not
         # recomputed here. None when the crop could not be applied (no
