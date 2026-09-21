@@ -10,8 +10,11 @@ the record itself.
 
 The 2026-09-21 pass does not add rows. It records that **clause (a) of the test
 is circular** (see the section below), adds a `drops out if` field to every CARRY
-row so each becomes falsifiable, and closes U5 by date. Read the circularity
-section before trusting any CARRY verdict here.
+row so each becomes falsifiable, closes U5 by date, and closes the largest
+method hole by landing the assertion the sweep asked for
+(`tests/test_stage_a_skips_the_model_pass.py`, bidirectional, proven by two
+mutations to `pipeline.py`). Read the circularity section before trusting any
+CARRY verdict here.
 
 Completeness is **bounded, not proven** — see "What the sweep could and could
 not see" at the bottom for the method and its holes.
@@ -117,14 +120,17 @@ the sweep caught one doing exactly that — see row X1. Every `site` cell below 
 a file plus a string that `grep` will find in it.
 
 **That rule is itself checkable, and was checked**: every backtick span in this
-file of 6 characters or more was fed to `grep -rIF` over the repo. 217 resolve; 6
-are excluded by name, and each for a stated reason — `CreepIndex` and
-`DocLoadIndex` because U4's whole point is that they are absent, two commit SHAs
-and two config hashes because they are not file content, and one quotation from
-the seed, which was never committed. A quote that spans a source line break
-cannot be found this way, which is what caught five of them here; when that
-happens, quote the fragment that sits on one line rather than reflowing the
-source.
+file of 6 characters or more was fed to a fixed-string recursive grep over the
+repo, after setting aside 16 spans that are this ledger's own vocabulary and
+notation (`CARRY`, `State`, the column names) rather than citations. **225
+resolve.** 7 are excluded by name, and each for a stated reason —
+`CreepIndex` and `DocLoadIndex` because U4's whole point is that they are absent,
+two commit SHAs and two config hashes because they are not file content, one
+quotation from the seed, which was never committed, and the grep invocation in
+this paragraph, which describes the check rather than citing the tree. A quote
+that spans a source line break cannot be found this way, which is what caught
+five of them here; when that happens, quote the fragment that sits on one line
+rather than reflowing the source.
 
 ---
 
@@ -154,9 +160,10 @@ substrate change, visible in the control flow — but it means most of the R, N
 and A rows are already unproduced under color-ID rather than awaiting a decision
 to stop producing them.
 
-**Two caveats, and they point opposite ways.** This is read off control flow;
-**no test asserts it**, and hole #1 below says what such a test must look like
-(and why the obvious version of it proves nothing). Meanwhile the one committed
+**Two caveats, and they point opposite ways.** This was read off control flow
+until 2026-09-21; it is now asserted, in both directions, by
+`tests/test_stage_a_skips_the_model_pass.py` — see hole #1 below for why the
+one-directional version of that test would have proved nothing. Meanwhile the one committed
 run record that ought to corroborate it appears to contradict it — see X3, where
 a run pair is described as producing identical CSVs from the same pipeline run in
 both modes, which this control flow forbids. The contradiction is unresolved. Do
@@ -251,10 +258,13 @@ locates the artifact but does not decide it.
 Recorded so the next sweep can attack the method rather than repeat it.
 
 **Proven against** `d05038a0656d8389915e70a45444bb87ca024c0e`. Test baseline at
-that commit, before and after this file: **1111 passed, 2 xfailed** (this is a
-docs-only change; the count is recorded so a later claim about it has something
-to fail against). CLAUDE.md's "Recurring Defect Classes" cites 981 — the suite
-has grown since, so 981 is no longer the number to watch.
+that commit: **1111 passed, 2 xfailed** when this file was docs-only, and
+**1114 passed, 2 xfailed** once `tests/test_stage_a_skips_the_model_pass.py`
+added its three. The counts are recorded because CLAUDE.md's "watch the test
+count" caught a silent truncation once: a later claim about the suite needs a
+number to fail against, and +3 for three new tests is the check that nothing else
+moved. CLAUDE.md's "Recurring Defect Classes" cites 981 — the suite has grown
+since, so 981 is no longer the number to watch.
 
 **Method.** (1) Every `site` cell in the seed was opened and the claim checked
 against the code, not against the note. (2) An AST import closure over all 48
@@ -269,25 +279,44 @@ each artifact's names, since the closure does not cover them.
 1. **Module reachability is not branch reachability.** The closure says
    `color_id_buffer` does not import `core/silhouette`; it cannot say which
    *parts of `pipeline.py`* a Stage A run executes, because the model pass and
-   the capture branch live in the same 4271-line module. Every "arbiter path
-   only" State cell above rests on reading one `continue` and the order of
-   statements after it, not on a test. **Nothing in the suite asserts that a
-   Stage A view reaches no geometry pass.**
+   the capture branch live in the same 4271-line module.
 
-   **And do not build that assertion on absence.** "No `geom_silhouette_ms` on a
+   **Closed 2026-09-21** by `tests/test_stage_a_skips_the_model_pass.py`. The
+   "arbiter path only" State cells no longer rest only on reading one `continue`.
+   What that file pins, and how it is allowed to fail, is below; it was proven by
+   two mutations to `pipeline.py` — deleting the `continue` reddens the Stage A
+   direction alone, and renaming `render_model_front_to_back` reddens both
+   runtime tests via `AttributeError` rather than passing over a name that no
+   longer exists.
+
+   **The assertion was not built on absence.** "No `geom_silhouette_ms` on a
    Stage A run" is satisfied by *unreached*, by *renamed*, and by
    *never-emitted-at-all*, alike — the uniformity trap, this time inside the
    test. A one-directional assertion over a key that has stopped existing passes
    forever and proves nothing, which is the same shape as the `--reconcile`
    versions CLAUDE.md records being defeated one by one.
 
-   It needs **both directions, over the same input**: a recorder inside
-   `render_model_front_to_back` asserted **empty** on a Stage A view *and*
-   asserted **non-empty** on a geometry-path view of the same fixture. Only the
-   second direction can fail when the first one is lying — it is the control, and
-   without it the pair is one claim, not two. Note what this also means: the
-   recorder has to be something a rename breaks, i.e. entry into the function,
-   not the presence of a timing key.
+   It needs **both directions, over the same input**, and that is what was
+   built: a recorder on `render_model_front_to_back` asserted **empty** on a
+   Stage A view *and* asserted **non-empty** on a geometry-path view of the same
+   fixture. Only the second direction can fail when the first one is lying — it
+   is the control, and without it the pair is one claim, not two. A failure in
+   the control reads "this file has stopped testing anything", not "the geometry
+   path regressed". Two consequences, both realized in the file:
+
+   - the recorder watches **entry into a named function**, not the presence of a
+     timing key, so a rename fails it (`monkeypatch.setattr` with the default
+     `raising=True`);
+   - "the same input" is asserted, not asserted-by-construction: a third test
+     diffs the two `Config.to_dict()`s and requires the only differing key to be
+     `enable_color_id_buffer_stage_a`.
+
+   What stays faked is upstream of and around the branch —
+   `Autodesk.Revit.DB.ElementId`, `init_view_raster`, `collect_view_elements`,
+   `rasterize_annotations`, `export_color_id_buffer_view` — while the branch, its
+   condition, the `continue`, the call site and `resolve_view_mode` are all
+   production. Stubs cannot make it pass wrongly: if they stubbed the branch into
+   never being reached, the control fails.
 2. **Nothing reached `tools/` systematically.** `tools/` was grepped per
    artifact, not closed over. A tool that reads a capture artifact nobody has
    named is exactly the shape this ledger is meant to catch, and would have been
