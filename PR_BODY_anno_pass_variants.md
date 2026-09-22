@@ -389,18 +389,20 @@ candidates are still worth measuring.
 
 ## Checks, before and after
 
-| | before (`a3cd0b2`) | after (`d9e274d`) |
+| | before (`a3cd0b2`) | after (`eaaae06`) |
 |---|---|---|
-| suite | 1442 passed, 2 xfailed | **1646 passed, 2 xfailed** |
+| suite | 1442 passed, 2 xfailed | **1644 passed, 2 xfailed** |
 | `count_discarded_handlers vop_interwoven tools` | 179 | **179** |
 | `check_stage_a_no_geometry vop_interwoven` | PROVEN | **PROVEN** |
 | `check_no_bare_except --paths vop_interwoven tools` | OK | **OK** |
 | flake8 (`--max-line-length=120`) | — | clean; no new findings in the pre-existing files |
 
-The 204 new tests are **23** production-switch tests
+The 202 new tests are **21** production-switch tests
 (`tests/test_stage_a_annotation_pass_probe_switches.py`), **43** analyzer tests
 (`tests/test_anno_pass_variant_report.py`) and **138** probe helper/adapter tests
-(`tests/test_probe_stage_a_anno_pass_variants.py`).
+(`tests/test_probe_stage_a_anno_pass_variants.py`). Two more went to
+[#216](https://github.com/GMcDowellJr/Revit_SSM_Exporter/pull/216) with the fix
+they bind, where they became three.
 
 **My round-2 tests were weak and mutation found it.** The first set inspected
 **source text**, so four mutations of the real loops — parent-only subcategory
@@ -458,10 +460,14 @@ with the view untouched; only if that is byte-identical does the post-variant
 comparison mean anything. If it is not, the verdict says `not_applicable` with
 that reason rather than reporting the comparison anyway.
 
-**One open decision for you.** The `capture_faults` serialize-before-finalize fix
-below touches **every** Stage A annotation sidecar, not just this probe's. It is
-in this PR because that is where it was found; say the word and it comes out into
-its own commit or PR.
+**The `capture_faults` fix is no longer in this PR.** It touched every Stage A
+annotation sidecar rather than just this probe's, so at your request it is now
+[#216](https://github.com/GMcDowellJr/Revit_SSM_Exporter/pull/216), branched from
+`main`, with the production change, three tests and its own mutation record. This
+branch keeps only a pointer comment at the assignment site. Removing it from here
+was verified not to strand anything else: a scan of every `state_out` assignment
+after each `json.dump` confirms `capture_faults` is the only field left after the
+write, so round 2's own new sidecar fields are unaffected.
 
 ---
 
