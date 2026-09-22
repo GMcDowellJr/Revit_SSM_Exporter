@@ -421,9 +421,13 @@ _WHITE_BLEND_RUNTIME_SETTINGS = frozenset((
 # Runtime kwargs stage_a_anno_pass_variants.run_probe() actually accepts,
 # excluding raw_view/output_dir which the adapter injects.
 _ANNO_PASS_VARIANTS_RUNTIME_SETTINGS = frozenset((
-    "selection", "export_dpi", "expanded_frame_margin_in",
+    "selection", "export_dpi",
     "authored_override_scan_max", "model_reexport_check", "repo_root",
 ))
+# ALSO GONE, in round 2 (revised): expanded_frame_margin_in. It sized B', the
+# expanded frame v6 handed the annotation pass as its CROP -- and the capture
+# no longer modifies the crop, so v6 was dropped and B' deleted with it. Refused
+# by name through the same absence, for the same reason as the setting below.
 # GONE in round 2, not merely unused. The category-based white filter it
 # configured is retired: suppression runs off the membership split now, so
 # "should Detail Items and Lines be included" -- a question only a
@@ -536,7 +540,7 @@ def _anno_pass_variants_adapter(module_name):
                 # absent from variant_plan's membership sets fails here rather
                 # than at export time.
                 module.variant_plan(name)
-        for key in ("export_dpi", "expanded_frame_margin_in"):
+        for key in ("export_dpi",):
             if arguments.get(key) is not None:
                 try:
                     if float(arguments[key]) <= 0:

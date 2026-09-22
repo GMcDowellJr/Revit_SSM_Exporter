@@ -8,75 +8,58 @@ Inputs:
 
 WHAT THIS IS, AND WHAT IT IS NOT
 --------------------------------
-A PROBE. It runs four candidate fixes for the annotation pass beside the
-current pass on the same view, writes what each produced, and stops. It
-changes no production default, it concludes nothing about which fix is right,
-and it emits no pass/fail on the fixes themselves: Greg's read of the output
-is the gate. The only PASS/FAIL this probe makes is about ITSELF -- whether
-each variant ran and whether the view was put back -- because a variant that
+A PROBE. It runs candidate fixes for the annotation pass beside the current
+pass on the same view, writes what each produced, and stops. It changes no
+production default, it concludes nothing about which fix is right, and it
+emits no pass/fail on the fixes themselves: Greg's read of the output is the
+gate. The only PASS/FAIL this probe makes is about ITSELF -- whether each
+variant ran and whether the view was put back -- because a variant that
 silently failed to restore the document is not evidence, it is damage.
 
-THE FOUR CANDIDATES (findings F1-F3 of run 20260922T085737)
-------------------------------------------------------------
-V0  the current annotation pass, unchanged. The control.
-V0-offsets0
-    the same, with the view's four ANNOTATION CROP OFFSETS zeroed first.
-    Isolates Greg's competing hypothesis for F1: that those offsets (1" per
-    side on the run's views) widen what ExportImage fits even though the
-    annotation crop itself is inactive.
-V1  model suppression by a WHITE view filter instead of hiding model
-    categories. F2: hiding model categories takes dependent annotations
-    with it -- tags, and most dimensions. Greg confirmed by hand that a
-    filter setting model lines and fills to white leaves a clean
-    annotation-only view.
-V2  V1 plus SmoothEdges off. F3: the annotation pass never sets it, and
-    ~0.2% of pixels are palette-to-white blends.
-V3  V2 plus an expanded annotation frame B'. F1: B is too small because
-    is_extent_driver_annotation admits only text, dimensions and a fixed tag
-    list -- no grids, levels, viewers, ceiling tags, multi-category tags,
-    detail items or revision clouds. RCP and section got no expansion at all
-    (B == A). B' is B unioned with every annotation-pass member's
-    get_BoundingBox(view) and every rendered viewer element's, plus a 0.5"
-    paper margin.
+ROUND 2 (REVISED): THE CAPTURE DOES NOT MODIFY THE CROP
+------------------------------------------------------
+Round 1 measured that the shipped pass sets view.CropBox to frame B, which is
+wider than the authored crop -- and datum extents clip to the crop, so every
+capture taken so far LENGTHENED level and grid lines, walked their heads
+outward and pulled in content from beyond the authored crop. So the
+candidates no longer move the crop, and registration is MEASURED rather than
+asserted:
 
-WHAT IS NOT TOUCHED
--------------------
-``revit/annotation.py``'s ``compute_annotation_extents`` (:123) and
-``is_extent_driver_annotation`` (:47) -- the geometry path's frame-B
-expansion -- are NOT modified and NOT called differently. That path is the
-retained arbiter; B' is computed by THIS module's own
-``expanded_frame_uv()``, which is a pure function and is unit-tested. A
-probe that edited the arbiter it is measuring against would have nothing
-left to compare to.
+V0  v0_control -- the current annotation pass, unchanged. Still sets the crop
+    to B: it is the control for exactly the behaviour being removed.
+V7  v7_no_crop -- membership white suppression (the model membership set
+    goes white per element; nothing hidden), and production's
+    color_id_buffer_anno_crop_mode = "untouched": no CropBox write, no
+    CropBoxActive write, in either direction.
+V8  v8_no_crop_fiducials -- V7 plus
+      F1  CropBoxVisible on for BOTH passes, so the crop boundary draws at
+          the crop's own UV bounds (read from view.CropBox, never changed).
+          V8 therefore takes its OWN model capture with the boundary
+          visible; the shared model pass stays the shipped one.
+      F2  a fiducial pair: two MODEL elements painted reserved colours
+          instead of white, at known UV. Works with no crop at all, which F1
+          does not.
+      SmoothEdges off.
 
-``dim_check`` (F4) is not modified either. Its call site carries a TODO
-citing F4 and nothing more; the fix lands after Greg reads this probe's
-output, because what the derived axis should be compared against is one of
-the things this probe measures.
+RETIRED: v0_offsets0 (falsified), v1-v3 (category suppression), v4/v5
+(superseded by v7/v8: they still widened the crop to B), v6 (DROPPED: its
+expanded frame B' widened the crop further still, which is the defect).
+The B' code went with it.
 
 PRODUCTION SURFACE THIS USES
 ----------------------------
 The annotation pass itself is PRODUCTION's
 ``export_annotation_color_id_buffer_view`` -- called, never reimplemented.
-Two opt-in switches were added to it, both read with ``getattr`` off the cfg
-object, both defaulting to the shipped behaviour and both absent from
-``Config`` because they are not production settings:
+Three probe-only switches, read with ``getattr`` off the cfg object, each
+defaulting to the shipped behaviour and each absent from ``Config``:
 
-    color_id_buffer_anno_model_suppression = "external"
-        this pass hides no model category and disables no view filter, so
-        the white filter THIS module applies survives into the export. Used
-        by V1/V2/V3.
-    color_id_buffer_anno_smooth_edges_off = True
-        capture/clear/restore SmoothEdges inside the suppress transaction,
-        AFTER the DisplayStyle change. Used by V2/V3.
+    color_id_buffer_anno_model_suppression = "external"   (V7, V8)
+    color_id_buffer_anno_smooth_edges_off = True           (V8)
+    color_id_buffer_anno_crop_mode = "untouched"           (V7, V8)
 
-Both switches exist in production rather than here for the same reason: the
-behaviour they change happens inside that function's own transaction, where
-this module has no window. Everything else a variant does -- the filter, the
-crop offsets, B' -- this module does itself, before and after the call.
-
-V3 needs no switch at all: the annotation pass is HANDED its frame geometry
-by its caller, so V3 simply hands it a different one.
+CropBoxVisible (F1) and the fiducial paint (F2) are NOT production switches:
+a caller can set both from outside the pass's transaction, so this module
+does, and restores and reads back both itself.
 
 RESTORE
 -------
@@ -123,54 +106,47 @@ def _probe_contract():
 
 
 PROBE_NAME = "stage_a_anno_pass_variants"
-PROBE_VERSION = "2026-09-22.1"
+PROBE_VERSION = "2026-09-22.2"
 
 V0 = "v0_control"
-V4 = "v4_white_membership"
-V5 = "v5_white_membership_smooth_edges_off"
-V6 = "v6_white_membership_expanded_frame"
+V7 = "v7_no_crop"
+V8 = "v8_no_crop_fiducials"
 
-SUPPORTED_VARIANTS = (V0, V4, V5, V6)
+SUPPORTED_VARIANTS = (V0, V7, V8)
 
 # WHAT EACH VARIANT CHANGES, as membership sets rather than an if/elif chain per
 # property. A new variant is a row here, and a variant missing from every set is
 # visibly a control rather than silently a no-op.
-WHITE_MEMBERSHIP_VARIANTS = frozenset((V4, V5, V6))
-SMOOTH_EDGES_OFF_VARIANTS = frozenset((V5, V6))
-EXPANDED_FRAME_VARIANTS = frozenset((V6,))
+WHITE_MEMBERSHIP_VARIANTS = frozenset((V7, V8))
+UNTOUCHED_CROP_VARIANTS = frozenset((V7, V8))
+SMOOTH_EDGES_OFF_VARIANTS = frozenset((V8,))
+CROP_BOX_VISIBLE_VARIANTS = frozenset((V8,))
+FIDUCIAL_VARIANTS = frozenset((V8,))
 
-# ROUND-1 VARIANTS THAT ARE GONE, and why. Named rather than deleted silently,
-# because a reader comparing a round-1 combined report against a round-2 one
-# needs to know these were retired on evidence and not lost.
-#
-#   v0_offsets0    FALSIFIED. Byte-identical to v0_control on BOTH round-1 views
-#                  (elevation e9ab768b, plan b047a741). The annotation crop
-#                  offsets changed nothing, so the variant has nothing left to
-#                  measure.
-#   v1_white_filter
-#   v2_white_filter_smooth_edges_off
-#   v3_white_filter_smooth_edges_off_expanded_frame
-#                  SUPERSEDED. These suppressed by CATEGORY -- one rule-less
-#                  ParameterFilterElement over every filterable MODEL category.
-#                  That cannot separate a drafting line from a model line: both
-#                  live in OST_Lines. The candidate is now membership-based
-#                  suppression (v4-v6), which can, so the category-filter
-#                  variants are not a candidate any more.
+# VARIANTS THAT ARE GONE, and why. Named rather than deleted silently, because
+# a reader comparing an earlier combined report against this one needs to know
+# these were retired on evidence and not lost -- and so the registry REFUSES a
+# campaign still asking for one instead of running nothing.
 RETIRED_VARIANTS = {
     "v0_offsets0": "falsified in round 1: byte-identical to v0_control on both views",
-    "v1_white_filter": "superseded by v4_white_membership (category-based "
-                       "suppression cannot separate drafting lines from model "
-                       "lines; both are OST_Lines)",
-    "v2_white_filter_smooth_edges_off": "superseded by v5_white_membership_"
-                                        "smooth_edges_off",
-    "v3_white_filter_smooth_edges_off_expanded_frame": "superseded by "
-                                                       "v6_white_membership_"
-                                                       "expanded_frame",
+    "v1_white_filter": "superseded (category-based suppression cannot separate "
+                       "drafting lines from model lines; both are OST_Lines)",
+    "v2_white_filter_smooth_edges_off": "superseded, as v1_white_filter",
+    "v3_white_filter_smooth_edges_off_expanded_frame": "superseded, as "
+                                                       "v1_white_filter",
+    "v4_white_membership": "superseded by v7_no_crop: it still set the crop to "
+                           "frame B, which lengthens datums and pulls in content "
+                           "from beyond the authored crop",
+    "v5_white_membership_smooth_edges_off": "superseded by v8_no_crop_fiducials, "
+                                            "as v4_white_membership",
+    "v6_white_membership_expanded_frame": "DROPPED: its expanded frame B' widened "
+                                          "the crop further still, which is the "
+                                          "defect round 2 removes. The variant "
+                                          "and the B' code are deleted, not left "
+                                          "un-runnable",
 }
 
 DEFAULT_EXPORT_DPI = 150.0
-# B' adds this much PAPER margin on every side, per the probe brief.
-DEFAULT_EXPANDED_FRAME_MARGIN_IN = 0.5
 # Reading GetElementOverrides for every model element in a large view is
 # thousands of API calls, so the scan is bounded and says so. A capped scan is
 # recorded as capped with both counts -- never as a total.
@@ -178,6 +154,17 @@ DEFAULT_EXPANDED_FRAME_MARGIN_IN = 0.5
 # was CAPPED, so "0 authored overrides" was a prefix rather than an answer. 8000
 # clears both round-1 views outright.
 DEFAULT_AUTHORED_OVERRIDE_SCAN_MAX = 8000
+# Model elements whose bbox is resolved when choosing the F2 fiducial pair.
+# Bounded and recorded the same way; a capped pool is a smaller choice, not a
+# wrong one, and the record says it was capped.
+FIDUCIAL_CANDIDATE_SCAN_MAX = 8000
+
+# F2's two RESERVED colours. Every one has a channel of 251, which is prime and
+# so is not a multiple of any palette step from 2 to 8: build_palette() snaps
+# every colour onto a step lattice, so these can collide with a palette colour
+# only at step 1 (a view of millions of annotations). colour_on_lattice() says
+# which, per capture, and the probe records it rather than assuming it.
+FIDUCIAL_COLOURS = ((251, 11, 139), (11, 139, 251))
 
 # UNCONFIRMED. ViewCropRegionShapeManager's four annotation-crop offset
 # properties, believed to exist on Revit 2025 under these names. Resolved by
@@ -191,26 +178,6 @@ ANNOTATION_CROP_OFFSET_PROPERTIES = (
     "BottomAnnotationCropOffset",
 )
 
-# UNCONFIRMED, and a LIST rather than a guess at the one right category: the
-# probe brief names "section, elevation and callout marks, viewers, view
-# references" and Revit spreads those over several BuiltInCategory members
-# whose presence varies by version. Every name is resolved by reflection and
-# the ones that did NOT resolve are recorded, so a category that contributed
-# nothing because it does not exist on this host is distinguishable from one
-# that contributed nothing because the view holds none of it.
-VIEWER_EXTENT_BIC_NAMES = (
-    "OST_Viewers",
-    "OST_Elev",
-    "OST_ElevationMarks",
-    "OST_Sections",
-    "OST_SectionHeads",
-    "OST_Callouts",
-    "OST_CalloutHeads",
-    "OST_CalloutBoundary",
-    "OST_ReferenceViewer",
-)
-
-
 # ======================================================================
 # PURE HELPERS -- no Revit, no Dynamo, unit-tested in
 # tests/dynamo/test_probe_stage_a_anno_pass_variants.py
@@ -223,7 +190,7 @@ def select_variants(selection="all"):
 
 
 def variant_plan(variant):
-    """What this variant changes, as plain booleans.
+    """What this variant changes, as plain values.
 
     One place, so the probe's records, the production switches it sets and
     the PROBE md's table cannot drift into three different answers.
@@ -235,7 +202,19 @@ def variant_plan(variant):
         "variant": variant,
         "white_membership": variant in WHITE_MEMBERSHIP_VARIANTS,
         "smooth_edges_off": variant in SMOOTH_EDGES_OFF_VARIANTS,
-        "expanded_frame": variant in EXPANDED_FRAME_VARIANTS,
+        # Production's color_id_buffer_anno_crop_mode. "frame_b" is the shipped
+        # crop-to-B behaviour; "untouched" writes neither CropBox nor
+        # CropBoxActive.
+        "crop_mode": ("untouched" if variant in UNTOUCHED_CROP_VARIANTS
+                      else "frame_b"),
+        # F1. Set by THIS module, from outside the pass, and restored by it.
+        "crop_box_visible": variant in CROP_BOX_VISIBLE_VARIANTS,
+        # F2. Painted by THIS module, from outside the pass.
+        "fiducials": variant in FIDUCIAL_VARIANTS,
+        # F1 needs the boundary in BOTH passes, and the shared model pass is the
+        # shipped one with the boundary hidden -- so a CropBoxVisible variant
+        # takes its own model capture into its own directory.
+        "own_model_pass": variant in CROP_BOX_VISIBLE_VARIANTS,
         # Which production suppression mode this variant asks for. A variant
         # that suppresses by membership must ALSO tell the annotation pass not
         # to hide model categories and not to disable filters, or it would
@@ -253,33 +232,28 @@ def variant_plan(variant):
     }
 
 
-def variant_measurement_check(plan, annotation_metadata):
-    """Did production actually apply what this variant ASKED FOR?
+def variant_measurement_check(plan, annotation_metadata, probe_state=None):
+    """Did the variant actually get what it ASKED FOR?
 
-    PURE, and the answer this probe was missing. A TIFF existing proves an
-    export happened; it does not prove the export measured the variant. Both
-    switches can decline:
+    PURE. A TIFF existing proves an export happened; it does not prove the
+    export measured the variant. Every mutation can decline without raising:
 
       * ``applied_smooth_edges`` comes back ``"read_failed"`` or
         ``"unchanged (failed)"`` when the ViewDisplayModel read or write fails.
-        Production does not raise -- correctly, an unconfirmed AA state costs
-        decode confidence, not the export -- so V2/V3 would return a TIFF that
-        measured V1's behaviour under V2/V3's name.
-      * ``model_suppression_mode`` is what production says it did. A V1-V3
-        capture that came back ``"hide_categories"`` hid model categories and
-        disabled the probe's own filter: it measured V0's suppression.
+      * ``model_suppression_mode`` is what production says it did; a white
+        variant that came back ``"hide_categories"`` measured V0's suppression.
+      * ``crop_mode`` is what production says it did with the crop; an
+        untouched variant that came back ``"frame_b"`` moved the crop, which is
+        the one thing it exists not to do.
+      * ``probe_state`` carries what THIS module applied from outside the pass:
+        ``crop_box_visible`` (read back True while the pass ran) and
+        ``fiducials`` (how many were painted). A V8 whose boundary was not on,
+        or whose fiducials did not paint, has no F1 or F2 to measure.
 
-    Either way the variant is not evidence about its candidate, and the failure
-    was previously invisible -- recorded in the sidecar, absent from the
-    conclusion, and never rendered by the analyzer. Three places to look and no
-    place that said so.
-
-    Returns ``{"measured": bool, "unmet": [...], "checked": [...]}``. ``unmet``
-    names each requested mutation production did not confirm, with what it
-    reported instead, so "V2 did not measure AA" is readable without opening
-    the sidecar.
+    Returns ``{"measured": bool, "unmet": [...], "checked": [...]}``.
     """
     metadata = annotation_metadata or {}
+    state = probe_state or {}
     unmet = []
     checked = []
     if plan.get("smooth_edges_off"):
@@ -291,7 +265,7 @@ def variant_measurement_check(plan, annotation_metadata):
                 "production_reported": applied,
                 "why_it_matters": "anti-aliasing was NOT confirmed off, so this "
                                   "capture measures the same behaviour as the "
-                                  "variant without it and cannot speak to F3",
+                                  "variant without it",
             })
     expected_mode = plan.get("model_suppression")
     if expected_mode is not None:
@@ -303,10 +277,47 @@ def variant_measurement_check(plan, annotation_metadata):
                 "production_reported": reported,
                 "why_it_matters": (
                     "the annotation pass hid model categories and disabled the "
-                    "probe's white filter, so this capture measures V0's "
-                    "suppression rather than the variant's"
+                    "view's filters, so this capture measures V0's suppression "
+                    "rather than the variant's"
                     if expected_mode == "external" else
                     "the annotation pass did not apply its own suppression"),
+            })
+    expected_crop = plan.get("crop_mode")
+    if expected_crop is not None:
+        checked.append("crop_mode == {0!r}".format(expected_crop))
+        reported_crop = metadata.get("crop_mode")
+        if reported_crop != expected_crop:
+            unmet.append({
+                "requested": "crop mode {0!r}".format(expected_crop),
+                "production_reported": reported_crop,
+                "why_it_matters": (
+                    "the annotation pass wrote the crop, which is exactly what "
+                    "this variant exists not to do"
+                    if expected_crop == "untouched" else
+                    "the annotation pass did not apply frame B, so this is not "
+                    "the shipped control"),
+            })
+    if plan.get("crop_box_visible"):
+        checked.append("CropBoxVisible read back True while the pass ran")
+        visible = (state.get("crop_box_visible") or {})
+        if visible.get("during_capture") is not True:
+            unmet.append({
+                "requested": "CropBoxVisible on (F1)",
+                "production_reported": visible.get("during_capture"),
+                "why_it_matters": "the crop boundary was not confirmed visible, so "
+                                  "the capture has no F1 fiducial to measure",
+            })
+    if plan.get("fiducials"):
+        checked.append("both F2 fiducials painted")
+        painted = (state.get("fiducials") or {}).get("painted_count")
+        if painted != len(FIDUCIAL_COLOURS):
+            unmet.append({
+                "requested": "{0} fiducials painted (F2)".format(
+                    len(FIDUCIAL_COLOURS)),
+                "production_reported": painted,
+                "why_it_matters": "without both fiducials F2 has no pair to fit, "
+                                  "and on a crop-less view nothing else registers "
+                                  "the capture",
             })
     return {"measured": not unmet, "unmet": unmet, "checked": checked}
 
@@ -362,14 +373,6 @@ def variant_conclusion(document_safe, exceptions, tiff_path, measurement,
     return "RAN"
 
 
-def paper_margin_ft(paper_in, view_scale):
-    """Printed inches -> model feet at this view's scale."""
-    scale = float(view_scale)
-    if scale <= 0.0:
-        raise ValueError("view_scale must be positive, got {0!r}".format(view_scale))
-    return (float(paper_in) / 12.0) * scale
-
-
 def rect_from_corners(corners):
     """``(xmin, ymin, xmax, ymax)`` from a corner list, or None.
 
@@ -396,88 +399,314 @@ def rect_from_corners(corners):
     return (min(us), min(vs), max(us), max(vs))
 
 
-def expanded_frame_uv(frame_uv, driver_rects, margin_ft):
-    """B' = B union every driver rectangle, then a uniform margin.
+# ---- F2: the fiducial pair -------------------------------------------------
 
-    ``driver_rects`` is ``[(key, (xmin, ymin, xmax, ymax)), ...]``. A driver
-    with no rectangle is the CALLER's to record; this function only ever sees
-    rectangles, and every one it sees participates.
+# A fiducial smaller than this, at the capture's feet-per-pixel, is a blob too
+# small to fit an extent to; larger than this fraction of the reference rect
+# on either axis and it is a landmark, not a point.
+FIDUCIAL_MIN_PX = 6.0
+FIDUCIAL_MAX_FRACTION = 0.05
+# Kept this far inside the reference rectangle, as a fraction of its size, so
+# a fiducial is never the element the crop clips.
+FIDUCIAL_INSET_FRACTION = 0.02
 
-    Returns ``(frame_prime_uv, per_side_delta, setters)``:
 
-        per_side_delta  {"left","right","bottom","top"} in feet, each >= 0 --
-                        how far B' extends past B on that side, margin
-                        included.
-        setters         {"left": key or None, ...} -- WHICH driver put the
-                        edge where it is, before the margin was added. None
-                        means no driver reached past B on that side and the
-                        margin alone moved it.
+def colour_on_lattice(rgb, step):
+    """PURE. Could ``build_palette(.., step)`` have produced ``rgb``?
 
-    THE MARGIN IS APPLIED AFTER THE UNION, once, on all four sides. Applying
-    it per driver would scale it by the number of drivers on the extreme,
-    which is the "a quantity computed in two places" shape: the same 0.5"
-    would land as 0.5" on a side with one driver and 0.5" on a side with
-    twelve only by accident of which one won.
+    Every palette colour is snapped onto multiples of ``step`` on all three
+    channels, so a colour with ANY channel off that lattice cannot collide
+    with one. That is the whole reservation argument for FIDUCIAL_COLOURS,
+    stated as a function so it is checked per capture rather than assumed.
     """
-    x0, y0, x1, y1 = (float(v) for v in frame_uv)
-    if x1 <= x0 or y1 <= y0:
-        raise ValueError(
-            "frame_uv is degenerate: {0}".format(tuple(float(v) for v in frame_uv)))
-    margin = float(margin_ft)
-    if margin < 0.0:
-        raise ValueError("margin_ft must be >= 0, got {0!r}".format(margin_ft))
+    step = int(step)
+    if step <= 0:
+        raise ValueError("step must be positive, got {0!r}".format(step))
+    return all(int(channel) % step == 0 for channel in rgb)
 
-    setters = {"left": None, "right": None, "bottom": None, "top": None}
-    ux0, uy0, ux1, uy1 = x0, y0, x1, y1
-    for key, rect in driver_rects or []:
+
+def fiducial_colour_record(step, assigned_colours):
+    """PURE. Per fiducial colour: can it collide with this capture's palette,
+    and did it? ``assigned_colours`` is the annotation sidecar's
+    ``color_assignment_map`` values. ``collides`` is the fact; ``on_lattice``
+    is why it could."""
+    assigned = set(tuple(int(c) for c in rgb) for rgb in (assigned_colours or []))
+    out = []
+    for rgb in FIDUCIAL_COLOURS:
+        out.append({
+            "rgb": list(rgb),
+            "on_palette_lattice": (None if step is None
+                                   else colour_on_lattice(rgb, step)),
+            "collides_with_assigned_colour": tuple(rgb) in assigned,
+        })
+    return {"palette_step": step, "colours": out,
+            "any_collision": any(entry["collides_with_assigned_colour"]
+                                 for entry in out)}
+
+
+def _rect_centre(rect):
+    return ((rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0)
+
+
+def _separated_pair_at(points, threshold):
+    """PURE. A pair whose centres are at least ``threshold`` apart on BOTH
+    axes, or None. ``points`` is ``[(u, v, id, candidate)]`` sorted by u.
+
+    One sweep: for each point q, every p with ``p.u <= q.u - threshold`` is far
+    enough on u, and among those the extreme v (max or min) is the only one
+    worth testing on v. Deterministic: the first q in u order that works, and
+    the lowest-id extreme.
+    """
+    best_hi = None   # the p with the largest v among those far enough on u
+    best_lo = None   # ... and the smallest v
+    j = 0
+    for q in points:
+        while j < len(points) and points[j][0] <= q[0] - threshold:
+            p = points[j]
+            if best_hi is None or (p[1], -p[2]) > (best_hi[1], -best_hi[2]):
+                best_hi = p
+            if best_lo is None or (-p[1], -p[2]) > (-best_lo[1], -best_lo[2]):
+                best_lo = p
+            j += 1
+        if best_hi is not None and best_hi[1] >= q[1] + threshold:
+            return (best_hi, q)
+        if best_lo is not None and best_lo[1] <= q[1] - threshold:
+            return (best_lo, q)
+    return None
+
+
+def _max_min_separation_pair(candidates, iterations=60):
+    """PURE. The pair maximising ``min(|du|, |dv|)`` between rect centres.
+
+    Exact to ``2**-iterations`` of the largest spread: "some pair is separated
+    by >= t on both axes" is monotone in t, so t is bisected and each test is
+    one O(n) sweep (_separated_pair_at) -- rather than the O(n^2) pair search
+    a view of thousands of model elements cannot afford, or a top-k heuristic
+    that would be a claim of optimality nothing asserted. Returns the two
+    candidates, or None when no pair is separated on both axes at all.
+    """
+    points = sorted(
+        ((_rect_centre(c["rect"])[0], _rect_centre(c["rect"])[1], int(c["id"]), c)
+         for c in candidates), key=lambda p: (p[0], p[2]))
+    if len(points) < 2:
+        return None
+    us = [p[0] for p in points]
+    vs = [p[1] for p in points]
+    hi = min(max(us) - min(us), max(vs) - min(vs))
+    if hi <= 0.0:
+        return None
+    lo = 0.0
+    found = None
+    # Strictly positive separation on both axes first, so a pair on one row is
+    # never returned as "separated by 0".
+    tiny = hi * 1.0e-12
+    found = _separated_pair_at(points, tiny)
+    if found is None:
+        return None
+    lo = tiny
+    for _ in range(int(iterations)):
+        mid = (lo + hi) / 2.0
+        pair = _separated_pair_at(points, mid)
+        if pair is not None:
+            lo, found = mid, pair
+        else:
+            hi = mid
+    return (found[0][3], found[1][3])
+
+
+def choose_fiducial_pair(candidates, reference_uv, fpp_ft,
+                         min_px=FIDUCIAL_MIN_PX,
+                         max_fraction=FIDUCIAL_MAX_FRACTION,
+                         inset_fraction=FIDUCIAL_INSET_FRACTION):
+    """PURE. Two model elements to paint as the F2 fiducial pair.
+
+    ``candidates`` is ``[{"id": int, "rect": (u0, v0, u1, v1), ...}, ...]`` in
+    absolute view UV. ``reference_uv`` is the rectangle they must sit inside:
+    the authored crop when it is active, else the model pass's rendered crop.
+
+    A fiducial is kept only when it is
+      * inside the reference, inset by ``inset_fraction`` -- never the element
+        the crop clips;
+      * at least ``min_px`` on both axes at ``fpp_ft`` -- a blob big enough to
+        fit an extent to;
+      * at most ``max_fraction`` of the reference on both axes -- a point, not
+        a landmark.
+
+    THE PAIR maximises ``min(|du|, |dv|)`` between the two centres. Both axes,
+    not the distance: a pair on one row determines nothing about v, which is
+    the case a scale fit silently survives by reporting whatever the noise
+    says. EXACT, not a heuristic: see _max_min_separation_pair.
+
+    Returns a record whose ``state`` is "value" with ``pair`` (two candidates)
+    only when a pair separated on BOTH axes exists; otherwise "unavailable"
+    with the reason and the rejection counts -- never a degenerate pair.
+    """
+    x0, y0, x1, y1 = (float(v) for v in reference_uv)
+    width, height = x1 - x0, y1 - y0
+    if width <= 0.0 or height <= 0.0:
+        return {"state": "unavailable",
+                "reason": "reference rectangle is degenerate: {0}".format(
+                    reference_uv), "rejections": {}}
+    fpp = float(fpp_ft)
+    if not fpp > 0.0:
+        return {"state": "unavailable",
+                "reason": "feet-per-pixel must be positive, got {0!r}".format(fpp_ft),
+                "rejections": {}}
+    ix0, iy0 = x0 + inset_fraction * width, y0 + inset_fraction * height
+    ix1, iy1 = x1 - inset_fraction * width, y1 - inset_fraction * height
+    rejections = {"no_rect": 0, "outside_reference": 0, "too_small": 0,
+                  "too_large": 0}
+    kept = []
+    for candidate in candidates or []:
+        rect = candidate.get("rect")
         if rect is None:
+            rejections["no_rect"] += 1
             continue
-        rx0, ry0, rx1, ry1 = (float(v) for v in rect)
-        if rx0 < ux0:
-            ux0 = rx0
-            setters["left"] = key
-        if ry0 < uy0:
-            uy0 = ry0
-            setters["bottom"] = key
-        if rx1 > ux1:
-            ux1 = rx1
-            setters["right"] = key
-        if ry1 > uy1:
-            uy1 = ry1
-            setters["top"] = key
+        u0, v0, u1, v1 = (float(v) for v in rect)
+        if u0 < ix0 or v0 < iy0 or u1 > ix1 or v1 > iy1:
+            rejections["outside_reference"] += 1
+            continue
+        if (u1 - u0) / fpp < min_px or (v1 - v0) / fpp < min_px:
+            rejections["too_small"] += 1
+            continue
+        if (u1 - u0) > max_fraction * width or (v1 - v0) > max_fraction * height:
+            rejections["too_large"] += 1
+            continue
+        kept.append(candidate)
 
-    prime = (ux0 - margin, uy0 - margin, ux1 + margin, uy1 + margin)
-    delta = {
-        "left": x0 - prime[0],
-        "bottom": y0 - prime[1],
-        "right": prime[2] - x1,
-        "top": prime[3] - y1,
+    best = _max_min_separation_pair(kept)
+    record = {"kept_count": len(kept),
+              "candidate_count": len(candidates or []),
+              "rejections": rejections, "reference_uv": [x0, y0, x1, y1],
+              "fpp_ft": fpp,
+              "criteria": {"min_px": min_px, "max_fraction": max_fraction,
+                           "inset_fraction": inset_fraction}}
+    if best is None:
+        record["state"] = "unavailable"
+        record["reason"] = (
+            "no pair of candidates is separated on BOTH axes ({0} kept of {1})".format(
+                len(kept), len(candidates or [])))
+        return record
+    first, second = best
+    cu1, cv1 = _rect_centre(first["rect"])
+    cu2, cv2 = _rect_centre(second["rect"])
+    record["state"] = "value"
+    record["pair"] = [first, second]
+    record["separation_u_ft"] = abs(cu1 - cu2)
+    record["separation_v_ft"] = abs(cv1 - cv2)
+    record["min_separation_ft"] = min(record["separation_u_ft"],
+                                      record["separation_v_ft"])
+    record["separation_fraction"] = [record["separation_u_ft"] / width,
+                                     record["separation_v_ft"] / height]
+    return record
+
+
+# ---- F1: the crop region's own shape --------------------------------------
+
+def crop_loop_record(loops_uv, tolerance=1.0e-6):
+    """PURE. The crop region's curve loops, described without assuming four
+    straight edges.
+
+    ``loops_uv`` is ``[[(u, v), ...], ...]``: each loop's vertices in order
+    (every curve's start point), in absolute view UV. A NON-RECTANGULAR crop
+    draws its SHAPE, so the decoder must not assume a rectangle -- which is why
+    this reports every edge with its orientation, and the distinct u levels of
+    the vertical edges and v levels of the horizontal ones. Those levels are
+    what a decoder matches detected lines against; an oblique edge is named,
+    and matches nothing.
+    """
+    loops = [[(float(u), float(v)) for u, v in loop] for loop in (loops_uv or [])]
+    edges = []
+    u_levels, v_levels = [], []
+    all_u, all_v = [], []
+    for loop_index, loop in enumerate(loops):
+        for index, (u_a, v_a) in enumerate(loop):
+            u_b, v_b = loop[(index + 1) % len(loop)]
+            all_u.append(u_a)
+            all_v.append(v_a)
+            if abs(u_a - u_b) <= tolerance and abs(v_a - v_b) > tolerance:
+                orientation = "vertical"
+                u_levels.append(u_a)
+            elif abs(v_a - v_b) <= tolerance and abs(u_a - u_b) > tolerance:
+                orientation = "horizontal"
+                v_levels.append(v_a)
+            elif abs(u_a - u_b) <= tolerance and abs(v_a - v_b) <= tolerance:
+                orientation = "degenerate"
+            else:
+                orientation = "oblique"
+            edges.append({"loop": loop_index, "from": [u_a, v_a], "to": [u_b, v_b],
+                          "orientation": orientation,
+                          "length_ft": ((u_b - u_a) ** 2 + (v_b - v_a) ** 2) ** 0.5})
+
+    def _distinct(values):
+        out = []
+        for value in sorted(values):
+            if not out or abs(value - out[-1]) > tolerance:
+                out.append(value)
+        return out
+
+    record = {
+        "loop_count": len(loops),
+        "edge_count": len(edges),
+        "edges": edges,
+        "oblique_edge_count": sum(1 for e in edges if e["orientation"] == "oblique"),
+        "distinct_u_levels": _distinct(u_levels),
+        "distinct_v_levels": _distinct(v_levels),
+        "bounds_uv": ([min(all_u), min(all_v), max(all_u), max(all_v)]
+                      if all_u else None),
     }
-    return (prime, delta, setters)
+    record["is_rectangle"] = bool(
+        len(loops) == 1 and len(edges) == 4
+        and all(e["orientation"] in ("vertical", "horizontal") for e in edges)
+        and len(record["distinct_u_levels"]) == 2
+        and len(record["distinct_v_levels"]) == 2)
+    return record
 
 
-def bbox_excursion_past_frame(frame_uv, rects):
-    """Per side, the FURTHEST any rectangle reaches past the frame, in feet.
+def per_side_delta(inner_uv, outer_uv):
+    """PURE. How far ``outer`` reaches past ``inner`` on each side, in feet.
 
-    0.0 on a side means every rectangle stayed inside it. Reported beside the
-    analyzer's fitted margins so "the boxes say the frame should be this much
-    bigger" and "the image behaves as if it were" are two numbers a reader can
-    put side by side -- which is how F1's per-side margins matched on 10 of 12
-    sides in the first place.
+    Positive means ``outer`` is larger on that side. Used for "how far did V0
+    widen the crop" (inner = authored crop, outer = frame B) and "how far does
+    the model pass's crop A differ from the authored crop".
     """
-    x0, y0, x1, y1 = (float(v) for v in frame_uv)
-    out = {"left": 0.0, "right": 0.0, "bottom": 0.0, "top": 0.0, "count": 0}
-    for rect in rects or []:
-        if rect is None:
-            continue
-        rx0, ry0, rx1, ry1 = (float(v) for v in rect)
-        out["count"] += 1
-        out["left"] = max(out["left"], x0 - rx0)
-        out["bottom"] = max(out["bottom"], y0 - ry0)
-        out["right"] = max(out["right"], rx1 - x1)
-        out["top"] = max(out["top"], ry1 - y1)
-    return out
+    ix0, iy0, ix1, iy1 = (float(v) for v in inner_uv)
+    ox0, oy0, ox1, oy1 = (float(v) for v in outer_uv)
+    return {"left": ix0 - ox0, "bottom": iy0 - oy0,
+            "right": ox1 - ix1, "top": oy1 - iy1}
 
+
+def suppression_cost_record(suppression_ms, element_override_count,
+                            model_pass_ms, model_member_count):
+    """PURE. Membership white suppression's cost against the model pass's.
+
+    The brief's stop-and-raise asks whether per-element white overrides cost
+    MATERIALLY more than the model pass's own paint. Production does not time
+    its paint separately -- only the whole model pass, export included -- so
+    the ratio here is against the WHOLE pass and is therefore a LOWER bound on
+    the ratio against the paint alone. Reported as numbers; the threshold is
+    Greg's.
+    """
+    out = {"suppression_ms": suppression_ms,
+           "element_override_count": element_override_count,
+           "model_pass_total_ms": model_pass_ms,
+           "model_member_count": model_member_count,
+           "note": "model_pass_total_ms includes the export; production does not "
+                   "time its paint separately, so the ratio is a LOWER bound on "
+                   "suppression-vs-paint"}
+    try:
+        out["ratio_to_model_pass_total"] = (
+            float(suppression_ms) / float(model_pass_ms)
+            if model_pass_ms else None)
+    except (TypeError, ValueError):
+        out["ratio_to_model_pass_total"] = None
+    try:
+        out["suppression_ms_per_element"] = (
+            float(suppression_ms) / float(element_override_count)
+            if element_override_count else None)
+    except (TypeError, ValueError):
+        out["suppression_ms_per_element"] = None
+    return out
 
 def _sha256(path):
     """The file's SHA-256, or a reason. Never a None that reads as "same"."""
@@ -751,7 +980,7 @@ def annotation_crop_active(view):
 
 
 # ======================================================================
-# THE WHITE MODEL FILTER (V1/V2/V3)
+# THE WHITE OVERRIDE (V7, V8)
 # ======================================================================
 
 # Every ``OverrideGraphicSettings`` member the white override needs, as a flat
@@ -789,7 +1018,7 @@ def white_override_capability_record(
     """PURE. The capability record, from an OGS-like object and a pattern id.
 
     ``state`` is "value" only when every setter resolves AND a solid pattern id
-    was supplied. Anything else LISTS what is missing, because "V4-V6 were
+    was supplied. Anything else LISTS what is missing, because "V7-V8 were
     skipped" is not actionable and "SetCutBackgroundPatternId is absent on this
     host" is.
     """
@@ -820,7 +1049,7 @@ def white_override_capability(doc):
 
     Opens no transaction and touches no view -- an ``OverrideGraphicSettings``
     is a plain API object -- so this runs before the first variant and decides
-    whether V4-V6 run at all.
+    whether V7-V8 run at all.
 
     A missing pattern setter leaves that pattern UNCHANGED rather than raising
     at the point of use, so suppression built without it would render model
@@ -890,7 +1119,7 @@ def _white_override_settings(doc):
 
 
 # ======================================================================
-# MEMBERSHIP-BASED WHITE SUPPRESSION (V4-V6)
+# MEMBERSHIP-BASED WHITE SUPPRESSION (V7, V8)
 # ======================================================================
 #
 # MEMBERSHIP, NOT CATEGORY, DECIDES WHAT IS SUPPRESSED.
@@ -1312,7 +1541,7 @@ def link_visibility_report(doc, view):
 
     The white filter does not reach a link displayed "By Linked View" or
     "Custom": that link keeps drawing its own model content into the
-    annotation capture. Recorded per instance so a V1 image that is not clean
+    annotation capture. Recorded per instance so a V7 image that is not clean
     has somewhere to point.
 
     UNCONFIRMED: ``View.GetLinkOverrides(ElementId)`` returning a
@@ -1385,123 +1614,241 @@ def authored_override_scan(view, element_ids, scan_max):
 
 
 # ======================================================================
-# B' -- THE EXPANDED ANNOTATION FRAME (V3)
+# F1 / F2 -- REVIT SIDE (V8)
 # ======================================================================
 
-def viewer_extent_elements(doc, view):
-    """Rendered viewer elements whose extent B' must hold.
-
-    Returns ``(elements, report)``. ``report`` names every
-    ``BuiltInCategory`` that did NOT resolve on this host, so a category that
-    contributed nothing because it does not exist is distinguishable from one
-    the view simply has none of -- the "incomplete token set is the same
-    defect as an incomplete pattern" lesson from CLAUDE.md, applied to a
-    category list.
-
-    These are collected SEPARATELY from the annotation-pass members because
-    they are included for EXTENT ONLY: the annotation pass does not paint
-    them, and this function does not make them painted.
-    """
-    from Autodesk.Revit.DB import BuiltInCategory, FilteredElementCollector
-    resolved = {}
-    unresolved = []
-    for name in VIEWER_EXTENT_BIC_NAMES:
-        bic = getattr(BuiltInCategory, name, None)
-        if bic is None:
-            unresolved.append(name)
-            continue
-        resolved[int(bic)] = name
-    report = {"resolved_categories": dict((str(k), v) for k, v in resolved.items()),
-              "unresolved_category_names": unresolved,
-              "per_category_counts": dict((v, 0) for v in resolved.values())}
-    elements = []
-    if not resolved:
-        report["collection"] = _unavailable(
-            "none of the viewer BuiltInCategory names resolved on this Revit "
-            "host, so no viewer element contributes to B'")
-        return (elements, report)
+def crop_box_visible_record(view):
+    """``View.CropBoxVisible``, three-valued. A NEW restore obligation under
+    V8: this module turns it on and must put it back."""
     try:
-        candidates = FilteredElementCollector(
-            doc, view.Id).WhereElementIsNotElementType().ToElements()
+        raw = getattr(view, "CropBoxVisible", _MISSING)
     except Exception as ex:
-        report["collection"] = _unavailable(
-            "FilteredElementCollector over the view raised {0}: {1}".format(
-                type(ex).__name__, ex))
-        return (elements, report)
-    unreadable = 0
-    for elem in candidates:
-        try:
-            cat = elem.Category
-            cat_id = _element_id_int(cat.Id) if cat is not None else None
-        except Exception:
-            unreadable += 1
-            continue
-        if cat_id in resolved:
-            elements.append(elem)
-            report["per_category_counts"][resolved[cat_id]] += 1
-    report["unreadable_category_count"] = unreadable
-    report["collection"] = _value(len(elements))
-    return (elements, report)
+        return _unavailable("{0}: {1}".format(type(ex).__name__, ex))
+    if raw is _MISSING:
+        return _unavailable("View has no CropBoxVisible on this Revit host")
+    return _value(bool(raw))
 
 
-def frame_prime_drivers(doc, view, view_basis, anno_elements, viewer_elements,
-                        diag=None, view_id=None):
-    """Every driver rectangle for B', in absolute view UV, plus the misses.
+def _xyz_tuple(point):
+    return (float(point.X), float(point.Y), float(point.Z))
 
-    ``get_BoundingBox(view)`` and an AABB projection only -- no geometry API
-    is touched, so this stays inside Stage A's geometry-free contract even
-    though the probe is not itself scanned by
-    ``tools/check_stage_a_no_geometry.py``.
 
-    Returns ``(driver_rects, no_bbox)``. ``no_bbox`` lists every element that
-    contributed nothing AND WHY. An element is never dropped silently: an
-    unmeasurable driver is the single most likely way B' comes back too small
-    while looking computed.
+def crop_shape_loops_world(view):
+    """The crop region's curve loops as world-space vertex lists, three-valued.
+
+    UNCONFIRMED: ``View.GetCropRegionShapeManager().GetCropShape()`` returning
+    an iterable of CurveLoops. Read-only; this module never sets a crop shape.
+    Each loop is its curves' start points in order, plus each curve's type
+    name, so an ARC in a crop shape is named rather than flattened to a chord.
+    """
+    try:
+        manager = view.GetCropRegionShapeManager()
+    except Exception as ex:
+        return _unavailable("GetCropRegionShapeManager raised {0}: {1} "
+                            "(UNCONFIRMED API)".format(type(ex).__name__, ex))
+    if manager is None:
+        return _unavailable("GetCropRegionShapeManager returned None")
+    getter = getattr(manager, "GetCropShape", None)
+    if getter is None:
+        return _unavailable("ViewCropRegionShapeManager has no GetCropShape on "
+                            "this Revit host (UNCONFIRMED API)")
+    try:
+        loops = list(getter())
+    except Exception as ex:
+        return _unavailable("GetCropShape raised {0}: {1}".format(
+            type(ex).__name__, ex))
+    out = []
+    curve_types = set()
+    try:
+        for loop in loops:
+            vertices = []
+            for curve in loop:
+                curve_types.add(type(curve).__name__)
+                vertices.append(_xyz_tuple(curve.GetEndPoint(0)))
+            out.append(vertices)
+    except Exception as ex:
+        return _unavailable("reading the crop shape's curves raised {0}: {1}".format(
+            type(ex).__name__, ex))
+    shape_set = getattr(manager, "ShapeSet", _MISSING)
+    return _value({"loops_world": out, "curve_types": sorted(curve_types),
+                   "shape_set": (None if shape_set is _MISSING else bool(shape_set))})
+
+
+def crop_region_record(view, view_basis, diag=None):
+    """Where the crop boundary DRAWS, read from the view WITHOUT changing it.
+
+    The F1 fiducial's known position: ``view.CropBox`` projected into view UV
+    through the same basis the capture uses (transform-aware, via production's
+    ``project_bbox_corners_uv``), plus the crop's SHAPE -- a non-rectangular
+    crop draws its shape, and ``crop_loop_record`` says what that shape is so
+    the decoder never assumes four straight edges.
+    """
+    from vop_interwoven.revit.collection import project_bbox_corners_uv
+    record = {
+        "crop_box_active": None,
+        "crop_box_visible": crop_box_visible_record(view),
+        "crop_box_uv": None,
+        "shape": None,
+    }
+    try:
+        record["crop_box_active"] = _value(bool(view.CropBoxActive))
+    except Exception as ex:
+        record["crop_box_active"] = _unavailable("{0}: {1}".format(
+            type(ex).__name__, ex))
+    try:
+        box = view.CropBox
+    except Exception as ex:
+        box = None
+        record["crop_box_uv"] = _unavailable("view.CropBox raised {0}: {1}".format(
+            type(ex).__name__, ex))
+    if box is not None and view_basis is not None:
+        rect = rect_from_corners(project_bbox_corners_uv(box, view_basis, diag=diag))
+        record["crop_box_uv"] = (_value(list(rect)) if rect is not None else
+                                 _unavailable("the CropBox did not project into UV"))
+    elif box is not None:
+        record["crop_box_uv"] = _unavailable("no view basis to project it through")
+    elif record["crop_box_uv"] is None:
+        record["crop_box_uv"] = _unavailable("the view has no CropBox")
+
+    loops = crop_shape_loops_world(view)
+    if loops.get("state") != "value":
+        record["shape"] = loops
+    elif view_basis is None:
+        record["shape"] = _unavailable("no view basis to project the shape through")
+    else:
+        loops_uv = []
+        for loop in loops["value"]["loops_world"]:
+            loops_uv.append([tuple(view_basis.transform_to_view_uv(p)) for p in loop])
+        shape = crop_loop_record(loops_uv)
+        shape["curve_types"] = loops["value"]["curve_types"]
+        shape["shape_set"] = loops["value"]["shape_set"]
+        record["shape"] = _value(shape)
+    return record
+
+
+def collect_fiducial_candidates(view, view_basis, model_members, scan_max,
+                                diag=None, view_id=None):
+    """Model members with a UV rectangle, bounded, for choose_fiducial_pair.
+
+    ``get_BoundingBox(view)`` and an AABB projection only -- no geometry API.
+    Returns ``(candidates, record)``; the record counts every member that
+    contributed no rectangle and says whether the scan was capped.
     """
     from vop_interwoven.revit.collection import (
         project_bbox_corners_uv, resolve_element_bbox,
     )
+    candidates = []
+    record = {"member_count": len(model_members or []), "scan_max": int(scan_max),
+              "capped": len(model_members or []) > int(scan_max),
+              "no_bbox": 0, "no_projection": 0, "unreadable_id": 0}
+    for elem in list(model_members or [])[:int(scan_max)]:
+        elem_id = _element_id_int(getattr(elem, "Id", None))
+        if elem_id is None:
+            record["unreadable_id"] += 1
+            continue
+        try:
+            bbox, source = resolve_element_bbox(
+                elem, view=view, diag=diag,
+                context={"view_id": view_id, "elem_id": elem_id,
+                         "source_type": "HOST"})
+        except Exception as ex:
+            record["no_bbox"] += 1
+            record.setdefault("bbox_errors", []).append(
+                {"id": elem_id, "error": "{0}: {1}".format(type(ex).__name__, ex)})
+            continue
+        if bbox is None:
+            record["no_bbox"] += 1
+            continue
+        rect = rect_from_corners(project_bbox_corners_uv(
+            bbox, view_basis, diag=diag, view_id=view_id, elem_id=elem_id))
+        if rect is None:
+            record["no_projection"] += 1
+            continue
+        category = None
+        try:
+            category = str(elem.Category.Name) if elem.Category is not None else None
+        except Exception as ex:
+            category = "<unreadable: {0}>".format(type(ex).__name__)
+        candidates.append({"id": elem_id, "rect": rect, "category": category,
+                           "bbox_source": source})
+    record["candidate_count"] = len(candidates)
+    return (candidates, record)
 
-    driver_rects = []
-    no_bbox = []
-    for role, elements in (("annotation_member", anno_elements),
-                           ("viewer", viewer_elements)):
-        for elem in elements or []:
-            elem_id = _element_id_int(getattr(elem, "Id", None))
-            key = "{0}:{1}".format(role, elem_id)
-            try:
-                bbox, bbox_source = resolve_element_bbox(
-                    elem, view=view, diag=diag,
-                    context={"view_id": view_id, "elem_id": elem_id,
-                             "source_type": "HOST"})
-            except Exception as ex:
-                no_bbox.append({"key": key, "role": role, "element_id": elem_id,
-                                "reason": "resolve_element_bbox raised {0}: {1}".format(
-                                    type(ex).__name__, ex)})
-                continue
-            if bbox is None:
-                no_bbox.append({"key": key, "role": role, "element_id": elem_id,
-                                "reason": "no bbox from get_BoundingBox(view) or "
-                                          "get_BoundingBox(None)",
-                                "bbox_source": bbox_source})
-                continue
-            if view_basis is None:
-                no_bbox.append({"key": key, "role": role, "element_id": elem_id,
-                                "reason": "bbox resolved but this run has no view "
-                                          "basis to project it through",
-                                "bbox_source": bbox_source})
-                continue
-            corners = project_bbox_corners_uv(
-                bbox, view_basis, diag=diag, view_id=view_id, elem_id=elem_id)
-            rect = rect_from_corners(corners)
-            if rect is None:
-                no_bbox.append({"key": key, "role": role, "element_id": elem_id,
-                                "reason": "bbox and basis both present but the UV "
-                                          "projection produced no rectangle",
-                                "bbox_source": bbox_source})
-                continue
-            driver_rects.append((key, rect))
-    return (driver_rects, no_bbox)
+
+def paint_fiducials(doc, view, pair):
+    """Paint the chosen pair their RESERVED colours. Inside an open Transaction,
+    AFTER the white suppression, so these two element overrides replace the
+    white ones. Restore is the white suppression's own blank write over every
+    model member, which covers both.
+
+    Uses production's ``_build_flat_color_ogs`` -- the same flat solid paint
+    the passes use -- so a fiducial renders exactly like an ID-buffer element.
+    """
+    from Autodesk.Revit.DB import Color, ElementId
+    from vop_interwoven.color_id_buffer import (
+        _build_flat_color_ogs, _get_solid_pattern_id,
+    )
+    solid = _get_solid_pattern_id(doc)
+    record = {"painted": [], "failed": [], "painted_count": 0}
+    for candidate, rgb in zip(pair or [], FIDUCIAL_COLOURS):
+        entry = {"id": int(candidate["id"]), "rgb": list(rgb),
+                 "rect_uv": [float(v) for v in candidate["rect"]],
+                 "category": candidate.get("category"),
+                 "bbox_source": candidate.get("bbox_source")}
+        try:
+            view.SetElementOverrides(
+                ElementId(int(candidate["id"])),
+                _build_flat_color_ogs(solid, Color(rgb[0], rgb[1], rgb[2])))
+            record["painted"].append(entry)
+        except Exception as ex:
+            entry["error"] = "{0}: {1}".format(type(ex).__name__, ex)
+            record["failed"].append(entry)
+    record["painted_count"] = len(record["painted"])
+    return record
+
+
+def annotate_sidecar(path, key, payload):
+    """Add ``key`` to a production sidecar, REFUSING to overwrite one.
+
+    The probe records F1/F2 facts in the sidecar a consumer reads rather than
+    only in its own combined report -- above all that the crop boundary is
+    PRESENT and must be subtracted, which a consumer reading the capture alone
+    would otherwise never learn. Refusing an existing key keeps production's
+    own fields authoritative. Returns ``None`` on success, else the reason.
+    """
+    try:
+        with open(path) as handle:
+            sidecar = json.load(handle)
+        if key in sidecar:
+            return "the sidecar already carries {0!r}; not overwritten".format(key)
+        sidecar[key] = payload
+        with open(path, "w") as handle:
+            json.dump(sidecar, handle, indent=2, sort_keys=True, default=str)
+        return None
+    except Exception as ex:
+        return "{0}: {1}".format(type(ex).__name__, ex)
+
+
+def crop_boundary_sidecar_payload(drawn_at_uv, shape, pass_name):
+    """What the sidecar says about the F1 boundary. PURE.
+
+    The boundary is NOT documentation content. It is present in this capture
+    because the probe turned it on, and a consumer must subtract it; the
+    recovered pixel position is measured from the image by
+    ``tools/notes/anno_pass_variant_report.py`` (its --json-out), not here,
+    because this module runs inside Revit without reading pixels.
+    """
+    return {
+        "present": True,
+        "must_be_subtracted": True,
+        "is_documentation_content": False,
+        "pass": pass_name,
+        "drawn_at_uv": drawn_at_uv,
+        "shape": shape,
+        "recovered_position": "measured from the pixels by "
+                              "tools/notes/anno_pass_variant_report.py --json-out",
+        "set_by": PROBE_NAME,
+    }
 
 
 # ======================================================================
@@ -1549,7 +1896,7 @@ def _smooth_edges_record(view):
 def _model_category_visibility_record(doc, view):
     """Every MODEL category's hidden state in this view, three-valued.
 
-    The V1-V3 restore contract is that model category visibility is NEVER
+    The V7/V8 restore contract is that model category visibility is NEVER
     WRITTEN, in either direction. That is only checkable against the whole
     map, so the whole map is what is recorded -- a sampled one would leave the
     categories it did not sample able to change unnoticed.
@@ -1591,7 +1938,7 @@ def _view_filter_record(view):
 
 
 def snapshot_view(doc, view):
-    """The five properties the restore contract covers, read in one place.
+    """The properties the restore contract covers, read in one place.
 
     One function, so the "before", "after explicit restore" and "after
     rollback" readings are the SAME reading of the SAME properties. Three
@@ -1600,6 +1947,11 @@ def snapshot_view(doc, view):
     """
     return {
         "crop_box": _crop_box_record(view),
+        # Round 2 (revised). CropBoxVisible is a NEW restore obligation -- V8
+        # turns it on -- and the crop SHAPE is read so "the capture did not
+        # touch the crop" is a read-back, not a claim.
+        "crop_box_visible": crop_box_visible_record(view),
+        "crop_region_shape": crop_shape_loops_world(view),
         "smooth_edges": _smooth_edges_record(view),
         "annotation_crop_offsets": annotation_crop_offsets(view),
         "annotation_crop_active": annotation_crop_active(view),
@@ -1623,7 +1975,8 @@ def restore_readback_verdict(before, after, expect_filters_absent=None,
     override read-back follows.
     """
     verdict = {}
-    for name in ("crop_box", "smooth_edges", "annotation_crop_offsets",
+    for name in ("crop_box", "crop_box_visible", "crop_region_shape",
+                 "smooth_edges", "annotation_crop_offsets",
                  "model_category_visibility"):
         b = before.get(name) or {}
         a = after.get(name) or {}
@@ -1732,7 +2085,7 @@ def restore_readback_verdict(before, after, expect_filters_absent=None,
 # ======================================================================
 
 def _variant_config(base_output_dir, export_dpi, plan):
-    """A Config for one variant, with the two probe-only switches SET.
+    """A Config for one variant, with the three probe-only switches SET.
 
     The switches are assigned as ATTRIBUTES after construction, not passed as
     constructor kwargs, because they are deliberately not Config parameters:
@@ -1748,6 +2101,7 @@ def _variant_config(base_output_dir, export_dpi, plan):
     )
     cfg.color_id_buffer_anno_model_suppression = plan["model_suppression"]
     cfg.color_id_buffer_anno_smooth_edges_off = bool(plan["smooth_edges_off"])
+    cfg.color_id_buffer_anno_crop_mode = plan["crop_mode"]
     return cfg
 
 
@@ -1770,28 +2124,154 @@ def _model_config(base_output_dir, export_dpi):
 # ONE VARIANT
 # ======================================================================
 
+_SHARED_GEOMETRY_KEYS = ("frame_snapped_uv", "frame_px", "crop_snapped_uv",
+                         "crop_px", "crop_offset_px", "achieved_fpp_ft")
+
+
+def _own_model_pass(doc, view, model_context, variant_dir, export_dpi):
+    """A CropBoxVisible variant's own MODEL capture, into ``<variant>/model``.
+
+    F1 needs the boundary in BOTH passes. The shared model pass is the shipped
+    one with the boundary hidden, and it has to stay that way -- it is the
+    foundation every other variant registers against. So this variant takes
+    its own, with the same inputs, and the record says whether its lattice
+    matches the shared one. It does not replace the shared geometry: the
+    annotation pass is still handed the shared model pass's geom, so V8 and V7
+    differ only in what V8 adds.
+
+    Note what the boundary MEANS here: the model pass sets the crop to A (its
+    snapped model crop) for its own export and restores it, so in this capture
+    the boundary draws at A, not at the authored crop.
+    """
+    from vop_interwoven.color_id_buffer import export_color_id_buffer_view
+    record = {"output_directory": os.path.join(variant_dir, "model"),
+              "crop_box_visible_before": crop_box_visible_record(view)}
+    try:
+        _force_close_dynamo_transaction()
+        cfg = _model_config(record["output_directory"], export_dpi)
+        own_geom = {}
+        t0 = time.time()
+        out = export_color_id_buffer_view(
+            doc, view, model_context["elements"], cfg, diag=model_context["diag"],
+            raster=model_context["raster"], geometry_out=own_geom)
+        record["elapsed_ms"] = round((time.time() - t0) * 1000.0, 3)
+        record["success"] = bool(out.get("success"))
+        record["failure_reason"] = out.get("failure_reason")
+        record["tiff_path"] = out.get("tiff_path")
+        record["sidecar_path"] = out.get("sidecar_path")
+        record["tiff_sha256"] = (_sha256(out["tiff_path"]) if out.get("tiff_path")
+                                 else _unavailable("no TIFF path"))
+        shared = model_context["geom"]
+        differences = {}
+        for key in _SHARED_GEOMETRY_KEYS:
+            if key not in own_geom:
+                differences[key] = {"shared": shared.get(key), "own": None}
+                continue
+            if _diff(shared.get(key), own_geom.get(key)):
+                differences[key] = {"shared": shared.get(key), "own": own_geom.get(key)}
+        record["geometry"] = dict((k, own_geom.get(k)) for k in _SHARED_GEOMETRY_KEYS)
+        record["geometry_matches_shared"] = not differences
+        record["geometry_differences"] = differences
+        # Where the boundary draws in THIS capture: crop A, as rendered.
+        record["boundary_drawn_at_uv"] = (
+            [float(v) for v in own_geom["crop_snapped_uv"]]
+            if own_geom.get("crop_snapped_uv") is not None else None)
+    except Exception as ex:
+        record["success"] = False
+        record["error"] = _exception_record("own_model_pass", ex)
+    return record
+
+
+def _annotate_variant_sidecars(plan, anno_out, metadata, model_context, report,
+                               probe_state):
+    """Write the F1/F2 facts into the sidecars a consumer reads.
+
+    Returns ``{"<sidecar>:<key>": None or reason}`` -- a failed annotation is
+    recorded, never silent, because a sidecar without ``probe_crop_boundary``
+    reads as a capture without a boundary in it.
+    """
+    results = {}
+    authored = model_context.get("authored_crop") or {}
+    crop_uv = (authored.get("crop_box_uv") or {})
+    shape = (authored.get("shape") or {})
+    if plan["crop_box_visible"]:
+        payload = crop_boundary_sidecar_payload(
+            crop_uv.get("value") if crop_uv.get("state") == "value" else None,
+            shape.get("value") if shape.get("state") == "value" else None,
+            "annotation")
+        payload["drawn_at"] = ("the view's authored crop, read from view.CropBox "
+                               "without changing it (crop_mode 'untouched')")
+        payload["crop_box_visible_during_capture"] = (
+            probe_state.get("crop_box_visible") or {}).get("during_capture")
+        if anno_out.get("sidecar_path"):
+            results["annotation:probe_crop_boundary"] = annotate_sidecar(
+                anno_out["sidecar_path"], "probe_crop_boundary", payload)
+        own = report.get("own_model_pass") or {}
+        if own.get("sidecar_path"):
+            model_payload = crop_boundary_sidecar_payload(
+                own.get("boundary_drawn_at_uv"), None, "model")
+            model_payload["drawn_at"] = (
+                "crop A -- the model pass sets the crop to its snapped model crop "
+                "for its own export, so the boundary draws there, not at the "
+                "authored crop")
+            model_payload["crop_box_visible_before"] = own.get(
+                "crop_box_visible_before")
+            results["model:probe_crop_boundary"] = annotate_sidecar(
+                own["sidecar_path"], "probe_crop_boundary", model_payload)
+    if plan["fiducials"]:
+        fiducials = probe_state.get("fiducials") or {}
+        colour_check = fiducial_colour_record(
+            metadata.get("palette_step"),
+            (metadata.get("color_assignment_map") or {}).values())
+        report["fiducial_colour_check"] = colour_check
+        payload = {
+            "present": True,
+            "must_be_subtracted": True,
+            "is_documentation_content": False,
+            "fiducials": fiducials.get("painted", []),
+            "failed": fiducials.get("failed", []),
+            "colour_check": colour_check,
+            "note": "two MODEL elements painted reserved colours instead of white; "
+                    "rect_uv is get_BoundingBox(view) projected into view UV",
+            "set_by": PROBE_NAME,
+        }
+        if anno_out.get("sidecar_path"):
+            results["annotation:probe_fiducials"] = annotate_sidecar(
+                anno_out["sidecar_path"], "probe_fiducials", payload)
+    return results
+
+
 def _run_variant(doc, view, variant, model_context, settings):
     """Run one variant end to end, and put the view back.
 
     Structure, in order, and every step is recorded whether or not it
     succeeded:
 
-      1  snapshot BEFORE
-      2  TransactionGroup.Start
-      3  a committed child Transaction applies this variant's PRE-state
-         (zeroed offsets, or the white filter)
-      4  production's export_annotation_color_id_buffer_view runs, with no
-         child transaction open
-      5  a committed child Transaction reverses step 3
-      6  snapshot, and read-back verdict -- THE REAL MEASUREMENT, taken
-         before the rollback so it is a verdict on the explicit restore
-      7  TransactionGroup.RollBack in ``finally``
-      8  snapshot again, and a second read-back verdict -- the safety net
+      1   snapshot BEFORE
+      2   TransactionGroup.Start
+      3a  (V8) a committed child Transaction turns CropBoxVisible ON
+      3b  (V8) this variant's OWN model capture, boundary visible, into
+          ``<variant>/model``. BEFORE the white suppression, deliberately: the
+          model pass paints every model element and restores each to a blank
+          override, which would wipe white overrides applied before it.
+      3c  a committed child Transaction applies the white membership
+          suppression, then (V8) paints the F2 fiducial pair over it
+      4   production's export_annotation_color_id_buffer_view runs, with no
+          child transaction open
+      5   a committed child Transaction reverses 3c and 3a
+      6   snapshot, and read-back verdict -- THE REAL MEASUREMENT, taken
+          before the rollback so it is a verdict on the explicit restore
+      7   TransactionGroup.RollBack in ``finally``
+      8   snapshot again, and a second read-back verdict -- the safety net
 
     Step 6 is the one the restore contract is judged on. Step 8 exists so
     that a failure at step 5 still leaves the document as found, and so the
     two can be told apart: an explicit restore that failed while the rollback
     saved it is a probe defect worth fixing, not a clean run.
+
+    NOTHING HERE WRITES THE CROP. CropBoxVisible is a display property of the
+    crop region, not its extent; the extent is read (crop_region_record) and
+    read back (the crop_box and crop_region_shape obligations), never set.
     """
     from Autodesk.Revit.DB import Transaction, TransactionGroup, TransactionStatus
 
@@ -1808,14 +2288,17 @@ def _run_variant(doc, view, variant, model_context, settings):
         "skipped": False,
         "conclusion": "INCONCLUSIVE",
     }
+    probe_state = {}
 
     group = None
     started = False
     # The link mechanism may create SEVERAL filters (one per linked category), so
-    # the single-filter id round 1 tracked is gone. The created ids live on the
-    # suppression record and the read-back checks every one of them.
+    # the created ids live on the suppression record and the read-back checks
+    # every one of them.
     created_filter_ids = []
     snapshot_before = None
+    crop_box_visible_changed = False
+    crop_box_visible_before = None
 
     try:
         _force_close_dynamo_transaction()
@@ -1844,24 +2327,13 @@ def _run_variant(doc, view, variant, model_context, settings):
                 report["conclusion"] = "UNAVAILABLE"
                 return report
 
-        # ---- the frame this variant hands the annotation pass -----------
-        if plan["expanded_frame"]:
-            frame_record = model_context["frame_prime"]
-            if frame_record.get("state") != "value":
-                report["skipped"] = True
-                report["skip_reason"] = (
-                    "B' could not be computed for this view: {0}".format(
-                        frame_record.get("reason")))
-                report["conclusion"] = "UNAVAILABLE"
-                return report
-            geom = frame_record["geom"]
-            report["frame"] = frame_record["record"]
-        else:
-            geom = model_context["geom"]
-            report["frame"] = {"frame_source": "model_pass_geom",
-                               "frame_snapped_uv": [float(v) for v in
-                                                    geom["frame_snapped_uv"]],
-                               "frame_px": [int(v) for v in geom["frame_px"]]}
+        geom = model_context["geom"]
+        report["frame"] = {"frame_source": "model_pass_geom",
+                           "frame_snapped_uv": [float(v) for v in
+                                                geom["frame_snapped_uv"]],
+                           "frame_px": [int(v) for v in geom["frame_px"]],
+                           "crop_mode": plan["crop_mode"]}
+        variant_dir = os.path.join(settings["probe_dir"], variant)
 
         group = TransactionGroup(doc, "VOP Stage A anno variant: " + variant)
         status = group.Start()
@@ -1870,17 +2342,54 @@ def _run_variant(doc, view, variant, model_context, settings):
         if not started:
             raise RuntimeError("TransactionGroup.Start returned {0}".format(status))
 
-        # ---- 3: this variant's PRE-state, committed ---------------------
+        # ---- 3a: CropBoxVisible ON (F1) ---------------------------------
+        if plan["crop_box_visible"]:
+            crop_box_visible_before = crop_box_visible_record(view)
+            visible_record = {"before": crop_box_visible_before}
+            vis_tx = Transaction(doc, "VOP Stage A anno variant crop visible: " + variant)
+            vis_tx.Start()
+            try:
+                view.CropBoxVisible = True
+                commit = vis_tx.Commit()
+                visible_record["commit_status"] = str(commit)
+                if commit != TransactionStatus.Committed:
+                    raise RuntimeError(
+                        "CropBoxVisible Transaction.Commit returned {0}".format(commit))
+                crop_box_visible_changed = True
+            except Exception as ex:
+                visible_record["error"] = "{0}: {1}".format(type(ex).__name__, ex)
+                try:
+                    vis_tx.RollBack()
+                except Exception as inner:
+                    report["exceptions"].append(
+                        _exception_record("crop_box_visible_rollback", inner))
+            visible_record["after_set"] = crop_box_visible_record(view)
+            report["pre_state"]["crop_box_visible"] = visible_record
+            probe_state["crop_box_visible"] = visible_record
+
+        # ---- 3b: this variant's OWN model capture (V8) ------------------
+        if plan["own_model_pass"]:
+            report["own_model_pass"] = _own_model_pass(
+                doc, view, model_context, variant_dir, settings["export_dpi"])
+
+        # ---- 3c: white suppression, then the fiducials -------------------
         pre_tx = Transaction(doc, "VOP Stage A anno variant pre-state: " + variant)
         pre_tx.Start()
         try:
             if plan["white_membership"]:
+                t_suppress = time.time()
                 suppression = apply_membership_white_suppression(
                     doc, view, _element_id_int(view.Id),
                     model_context["model_members"],
                     link_categories=model_context.get("link_categories"),
                     diag=model_context["diag"])
+                suppression["elapsed_ms"] = round(
+                    (time.time() - t_suppress) * 1000.0, 3)
                 report["pre_state"]["white_membership_suppression"] = suppression
+                report["pre_state"]["suppression_cost"] = suppression_cost_record(
+                    suppression["elapsed_ms"], suppression.get("element_override_count"),
+                    model_context.get("model_pass_ms"),
+                    len(model_context["model_members"]))
                 report["pre_state"]["membership"] = {
                     "model_count": len(model_context["model_members"]),
                     "annotation_count": len(model_context["annotation_members"]),
@@ -1893,6 +2402,16 @@ def _run_variant(doc, view, variant, model_context, settings):
                     "link_visibility"]
                 report["pre_state"]["authored_model_overrides"] = model_context[
                     "authored_model_overrides"]
+            if plan["fiducials"]:
+                choice = model_context.get("fiducial_choice") or {}
+                if choice.get("state") == "value":
+                    fiducials = paint_fiducials(doc, view, choice["pair"])
+                else:
+                    fiducials = {"painted": [], "failed": [], "painted_count": 0,
+                                 "reason": "no fiducial pair was chosen: {0}".format(
+                                     choice.get("reason"))}
+                report["pre_state"]["fiducials"] = fiducials
+                probe_state["fiducials"] = fiducials
             commit = pre_tx.Commit()
             report["transaction_group"]["pre_state_commit_status"] = str(commit)
             if commit != TransactionStatus.Committed:
@@ -1905,10 +2424,20 @@ def _run_variant(doc, view, variant, model_context, settings):
                 report["exceptions"].append(_exception_record("pre_state_rollback", ex))
             raise
 
+        if plan["crop_box_visible"]:
+            # The last reading before the export. The pass detaches the view
+            # template inside its own transaction and nothing is known to tie
+            # CropBoxVisible to a template, but "on when we set it" is not "on
+            # when the export ran", so the closest reading this module can
+            # take is recorded as the one the measurement check uses.
+            reading = crop_box_visible_record(view)
+            probe_state["crop_box_visible"]["before_annotation_pass"] = reading
+            probe_state["crop_box_visible"]["during_capture"] = (
+                reading.get("state") == "value" and reading.get("value") is True)
+
         # ---- 4: production's annotation pass ---------------------------
         report["transaction_group"]["no_child_transaction_open_at_export"] = (
             not bool(doc.IsModifiable))
-        variant_dir = os.path.join(settings["probe_dir"], variant)
         cfg = _variant_config(variant_dir, settings["export_dpi"], plan)
         t0 = time.time()
         anno_out = None
@@ -1924,6 +2453,8 @@ def _run_variant(doc, view, variant, model_context, settings):
             # reason: an exception here must not cost this variant its
             # restore, which lives below and in ``finally``.
             report["exceptions"].append(_exception_record("annotation_pass", ex))
+        metadata = (anno_out or {}).get("metadata") or {}
+        registration = metadata.get("registration") or {}
         report["annotation_pass"] = {
             "elapsed_ms": round((time.time() - t0) * 1000.0, 3),
             "output_directory": variant_dir,
@@ -1936,27 +2467,37 @@ def _run_variant(doc, view, variant, model_context, settings):
                                        else anno_out.get("color_assignment_count")),
             "resolution": (None if anno_out is None else anno_out.get("resolution")),
             "capture_faults": (None if anno_out is None
-                               else (anno_out.get("metadata") or {}).get(
-                                   "capture_faults")),
+                               else metadata.get("capture_faults")),
             "applied_smooth_edges": (None if anno_out is None
-                                     else (anno_out.get("metadata") or {}).get(
-                                         "applied_smooth_edges")),
+                                     else metadata.get("applied_smooth_edges")),
             "model_suppression_mode": (None if anno_out is None
-                                       else (anno_out.get("metadata") or {}).get(
-                                           "model_suppression_mode")),
+                                       else metadata.get("model_suppression_mode")),
+            # What production says it did with the crop. The measurement check
+            # compares it to the plan: an untouched variant that came back
+            # "frame_b" moved the crop.
+            "crop_mode": (None if anno_out is None else registration.get("crop_mode")),
+            "rendered_uv": registration.get("rendered_uv"),
+            "rendered_uv_reason": registration.get("rendered_uv_reason"),
+            "requested_px_source": registration.get("requested_px_source"),
         }
         if anno_out is not None and anno_out.get("tiff_path"):
             report["annotation_pass"]["tiff_sha256"] = _sha256(anno_out["tiff_path"])
 
-        # ---- 5: reverse step 3, explicitly ----------------------------
+        # ---- F1/F2 facts into the sidecars a consumer reads --------------
+        if anno_out is not None and (plan["crop_box_visible"] or plan["fiducials"]):
+            report["sidecar_annotations"] = _annotate_variant_sidecars(
+                plan, anno_out, metadata, model_context, report, probe_state)
+
+        # ---- 5: reverse 3c and 3a, explicitly --------------------------
         restore_errors = []
         restore_tx = Transaction(doc, "VOP Stage A anno variant restore: " + variant)
         restore_tx.Start()
         suppression = report.get("pre_state", {}).get(
             "white_membership_suppression")
-        if suppression is not None:
+        if suppression is not None or plan["fiducials"]:
             # Element overrides are reversed with a BLANK, exactly as production
-            # does for its own paint, and the pass's own read-back covers them.
+            # does for its own paint. The fiducials are model members, so this
+            # one loop reverses them too.
             from Autodesk.Revit.DB import ElementId, OverrideGraphicSettings
             for elem in model_context["model_members"]:
                 elem_id = _element_id_int(getattr(elem, "Id", None))
@@ -1970,8 +2511,21 @@ def _run_variant(doc, view, variant, model_context, settings):
                         "step": "restore_model_element_override",
                         "element_id": elem_id,
                         "error": "{0}: {1}".format(type(ex).__name__, ex)})
+        if suppression is not None:
             restore_errors.extend(
                 reverse_membership_white_suppression(doc, view, suppression))
+        if crop_box_visible_changed:
+            try:
+                if (crop_box_visible_before or {}).get("state") != "value":
+                    raise RuntimeError(
+                        "CropBoxVisible's pre-variant value was never read, so "
+                        "there is no value to put back: {0}".format(
+                            (crop_box_visible_before or {}).get("reason")))
+                view.CropBoxVisible = bool(crop_box_visible_before["value"])
+            except Exception as ex:
+                restore_errors.append({
+                    "step": "restore_crop_box_visible",
+                    "error": "{0}: {1}".format(type(ex).__name__, ex)})
         try:
             commit = restore_tx.Commit()
             report["transaction_group"]["restore_commit_status"] = str(commit)
@@ -2095,7 +2649,7 @@ def _run_variant(doc, view, variant, model_context, settings):
             # both switches can decline without raising. See
             # variant_measurement_check.
             measurement = variant_measurement_check(
-                plan, (report["annotation_pass"] or {}))
+                plan, (report["annotation_pass"] or {}), probe_state=probe_state)
             report["measurement"] = measurement
 
             report["conclusion"] = variant_conclusion(
@@ -2140,120 +2694,6 @@ def _reject_reason(view):
         return "Could not validate view capability: {0}: {1}".format(
             type(ex).__name__, ex)
     return None
-
-
-def _build_frame_prime(doc, view, geom, view_basis, margin_in, diag, view_id,
-                       cap_axis_px, export_dpi, fit_direction, scale):
-    """B', and the frame geometry V3 hands the annotation pass.
-
-    Returns a record whose ``state`` is "value" only when B' could actually be
-    computed AND sized. Everything about how it was reached is in ``record``:
-    B, B', the per-side delta, which element set each side, every driver that
-    contributed no rectangle and why.
-
-    THE CAP IS NOT RE-IMPLEMENTED. B' goes through production's
-    ``frame_export_geometry`` with the same dpi, the same fit direction and
-    the same per-axis ceiling, so if B' exceeds the ceiling feet-per-pixel
-    grows exactly as it does for B -- "the existing pixel cap on B applies
-    unchanged", by calling the thing that applies it.
-    """
-    from vop_interwoven.resolution_contract import frame_export_geometry
-    from vop_interwoven.revit.annotation import split_stage_a_pass_membership
-    from Autodesk.Revit.DB import FilteredElementCollector
-
-    try:
-        elements = list(FilteredElementCollector(
-            doc, view.Id).WhereElementIsNotElementType())
-    except Exception as ex:
-        return {"state": "unavailable",
-                "reason": "could not collect the view's elements for B': {0}: {1}".format(
-                    type(ex).__name__, ex)}
-
-    _model, anno_elements, _unresolved, _basis = split_stage_a_pass_membership(
-        elements, capture_view_id_int=view_id, diag=diag)
-    viewer_elements, viewer_report = viewer_extent_elements(doc, view)
-
-    driver_rects, no_bbox = frame_prime_drivers(
-        doc, view, view_basis, anno_elements, viewer_elements,
-        diag=diag, view_id=view_id)
-
-    frame_uv = tuple(float(v) for v in geom["frame_snapped_uv"])
-    margin_ft = paper_margin_ft(margin_in, scale)
-    try:
-        prime_uv, delta, setters = expanded_frame_uv(
-            frame_uv, driver_rects, margin_ft)
-    except ValueError as ex:
-        return {"state": "unavailable",
-                "reason": "B' could not be formed: {0}".format(ex)}
-
-    record = {
-        "frame_source": "probe_expanded_frame_uv",
-        "margin_paper_in": float(margin_in),
-        "margin_ft": margin_ft,
-        "frame_b_uv": list(frame_uv),
-        "frame_b_prime_uv": list(prime_uv),
-        "per_side_delta_ft": delta,
-        "per_side_delta_paper_in": dict(
-            (side, value * 12.0 / scale) for side, value in delta.items()),
-        "per_side_set_by": setters,
-        "driver_count": len(driver_rects),
-        "annotation_member_count": len(anno_elements),
-        "viewer_element_count": len(viewer_elements),
-        "viewer_categories": viewer_report,
-        "drivers_without_bbox": no_bbox,
-        "drivers_without_bbox_count": len(no_bbox),
-        "bbox_excursion_past_b_ft": bbox_excursion_past_frame(
-            frame_uv, [rect for _key, rect in driver_rects]),
-    }
-
-    crop_uv = tuple(float(v) for v in geom["crop_snapped_uv"])
-    try:
-        prime_geom = frame_export_geometry(
-            prime_uv, crop_uv, scale, export_dpi,
-            fit_direction=fit_direction, max_axis_px=cap_axis_px)
-    except ValueError as ex:
-        return {"state": "unavailable",
-                "reason": "frame_export_geometry refused B': {0}".format(ex),
-                "record": record}
-
-    prime_geom = dict(prime_geom)
-    # DELIBERATELY None, and this is the one place V3 differs from a shipped
-    # capture in a way a reader must not miss.
-    #
-    # Production's annotation pass raises the `annotation_lattice_mismatch`
-    # fault when geom["model_accepted_px"] != geom["requested_px"] -- "the
-    # model capture is off-lattice, so this annotation capture cannot register
-    # against it". Under V3 those two numbers describe DIFFERENT FRAMES: the
-    # model pass sized itself from B, this geometry is sized from B'. Copying
-    # the model pass's accepted width in here would compare a measurement of
-    # one frame against a request for another and report a fault that means
-    # nothing. Setting it to None makes production skip that check, which is
-    # correct: the question is NOT ANSWERED for V3, and "not answered" is not
-    # "passed". The real relationship between the two lattices is recorded
-    # below, in full, for Greg to read.
-    prime_geom["model_accepted_px"] = None
-    prime_geom["model_dim_check"] = None
-    record["lattice_relationship"] = {
-        "note": "V3 renders B', the model pass rendered from B. These are the two "
-                "lattices; production's model-lattice fault check is passed None "
-                "and therefore skipped, because it would be comparing different "
-                "frames.",
-        "model_frame_px": [int(v) for v in geom["frame_px"]],
-        "model_achieved_fpp_ft": float(geom["achieved_fpp_ft"]),
-        "model_achieved_export_dpi": float(geom["achieved_export_dpi"]),
-        "model_accepted_px": geom.get("model_accepted_px"),
-        "model_requested_px": int(geom["requested_px"]),
-        "b_prime_frame_px": [int(v) for v in prime_geom["frame_px"]],
-        "b_prime_achieved_fpp_ft": float(prime_geom["achieved_fpp_ft"]),
-        "b_prime_achieved_export_dpi": float(prime_geom["achieved_export_dpi"]),
-        "b_prime_requested_px": int(prime_geom["requested_px"]),
-        "b_prime_cap_applied": bool(prime_geom["cap_applied"]),
-        "shared_fpp": (abs(float(geom["achieved_fpp_ft"])
-                           - float(prime_geom["achieved_fpp_ft"])) <= 1.0e-12),
-    }
-    record["frame_snapped_uv"] = [float(v) for v in prime_geom["frame_snapped_uv"]]
-    record["frame_px"] = [int(v) for v in prime_geom["frame_px"]]
-    return {"state": "value", "geom": prime_geom, "record": record}
 
 
 def finalize_native_report(report, paths):
@@ -2331,7 +2771,6 @@ def _write_combined(report, probe_dir, base):
 
 
 def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT_DPI,
-                expanded_frame_margin_in=DEFAULT_EXPANDED_FRAME_MARGIN_IN,
                 authored_override_scan_max=DEFAULT_AUTHORED_OVERRIDE_SCAN_MAX,
                 model_reexport_check=True):
     out_dir = os.path.abspath(str(output_dir or os.getcwd()))
@@ -2369,29 +2808,35 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
             "view_scale": scale,
             "output_directory": out_dir, "probe_directory": probe_dir,
             "selection": list(selected), "export_dpi": float(export_dpi),
-            "expanded_frame_margin_in": float(expanded_frame_margin_in),
             "authored_override_scan_max": int(authored_override_scan_max),
+            "fiducial_candidate_scan_max": FIDUCIAL_CANDIDATE_SCAN_MAX,
             "model_reexport_check": bool(model_reexport_check),
         },
         "model_pass": {},
         "variants": [],
         "unconfirmed_api_claims": [
-            "ViewCropRegionShapeManager.Left/Right/Top/BottomAnnotationCropOffset "
-            "exist and are readable/writable (V0-offsets0 depends entirely on it)",
-            "ParameterFilterUtilities.GetAllFilterableCategories() exists "
-            "(V1-V3 depend on it)",
-            "a rule-less ParameterFilterElement matches every element of its "
-            "categories, so white line and pattern overrides suppress all model "
-            "content the filter reaches",
+            "ImageExportOptions draws the crop boundary when CropBoxVisible is on "
+            "-- F1 depends on it entirely. ImageExportOptions has no "
+            "hide-crop-boundaries flag (Print Setup and PDF export both do), which "
+            "is suggestive, not evidence; the analyzer's crop-boundary detection is "
+            "the evidence either way",
+            "View.GetCropRegionShapeManager().GetCropShape() returns the crop's "
+            "curve loops (F1's shape record)",
+            "View.CropBoxVisible is settable from outside the annotation pass and "
+            "is not reset by the pass detaching the view template",
+            "a white ELEMENT override suppresses a model element's own graphics "
+            "(V7, V8, mechanism 1)",
+            "cat.SubCategories is walked and each subcategory takes a white "
+            "override (mechanism 3) -- and whether that reaches LINKED content",
             "View.GetLinkOverrides(ElementId).LinkVisibilityType exists, so a link "
             "not displayed By Host View can be reported",
             "setting View.DisplayStyle does not replace the ViewDisplayModel and "
             "discard a SmoothEdges written before it -- the production switch "
             "writes SmoothEdges AFTER DisplayStyle so this does not matter, but "
             "the claim is recorded because the ordering is the mitigation",
-            "ExportImage fits the crop box unioned with the extents of annotations "
-            "drawn beyond it -- F1's primary hypothesis, which this probe measures "
-            "rather than assumes",
+            "with the crop untouched, ExportImage renders the authored crop (or the "
+            "content union) at a stable scale -- which F1 and F2 MEASURE rather "
+            "than assume",
         ],
         "conclusion": "INCONCLUSIVE",
     }
@@ -2403,9 +2848,11 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
         raster = init_view_raster(doc, view, model_cfg, diag=diag)
         elements = collect_view_elements(doc, view, raster, diag=diag, cfg=model_cfg)
         geom = {}
+        _model_t0 = time.time()
         model_out = export_color_id_buffer_view(
             doc, view, elements, model_cfg, diag=diag, raster=raster,
             geometry_out=geom)
+        model_pass_ms = round((time.time() - _model_t0) * 1000.0, 3)
     except Exception as ex:
         report["model_pass"] = {"success": False,
                                 "error": _exception_record("model_pass", ex)}
@@ -2479,6 +2926,7 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
         "sidecar_path": model_out.get("sidecar_path"),
         "tiff_sha256": model_tiff_sha,
         "output_directory": model_dir,
+        "elapsed_ms": model_pass_ms,
         "geometry": {
             "frame_snapped_uv": [float(v) for v in geom["frame_snapped_uv"]],
             "frame_px": [int(v) for v in geom["frame_px"]],
@@ -2496,13 +2944,6 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
     }
 
     # ---- everything the variants share, resolved once -----------------
-    fit_direction = str(getattr(model_cfg, "color_id_buffer_fit_direction",
-                                "horizontal") or "horizontal").strip().lower()
-    cap_axis_px = getattr(model_cfg, "color_id_buffer_cap_axis_px", None)
-    if cap_axis_px is None:
-        from vop_interwoven.color_id_buffer import MAX_STAGE_A_AXIS_PX
-        cap_axis_px = MAX_STAGE_A_AXIS_PX
-
     view_basis = getattr(raster, "view_basis", None)
     if view_basis is None:
         try:
@@ -2510,7 +2951,8 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
             view_basis = make_view_basis(view, diag=diag)
         except Exception as ex:
             report.setdefault("warnings", []).append(
-                "no view basis: {0}: {1}; B' cannot be computed".format(
+                "no view basis: {0}: {1}; the authored crop and the fiducials "
+                "cannot be placed in UV".format(
                     type(ex).__name__, ex))
 
     white_capability = white_override_capability(doc)
@@ -2616,24 +3058,67 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
     except Exception as ex:
         authored = _unavailable("{0}: {1}".format(type(ex).__name__, ex))
 
-    frame_prime = {"state": "unavailable",
-                   "reason": "V6 was not requested for this run"}
-    if V6 in selected:
+    # ---- THE AUTHORED CROP, read once and never written ------------------
+    #
+    # Read AFTER the model pass, which sets the crop to A for its own export and
+    # restores it -- so this is the view as authored. It is F1's known position,
+    # the reference rectangle F2's fiducials are chosen inside, and the
+    # reference the analyzer measures an untouched capture's margins against.
+    authored_crop = crop_region_record(view, view_basis, diag=diag)
+    report["authored_crop"] = authored_crop
+    authored_uv = ((authored_crop.get("crop_box_uv") or {}).get("value")
+                   if (authored_crop.get("crop_box_uv") or {}).get("state") == "value"
+                   else None)
+    authored_active = ((authored_crop.get("crop_box_active") or {}).get("value")
+                       if (authored_crop.get("crop_box_active") or {}).get(
+                           "state") == "value" else None)
+    # How far the crop MOVES, for the record. V0 widens it to B; the model pass
+    # sets it to A. Both are reported against the authored crop, because "the
+    # capture does not modify the crop" is only true of the ANNOTATION pass
+    # under V7/V8 -- the model pass still writes A (production is unchanged
+    # there), and on a crop-INACTIVE view it ACTIVATES one.
+    report["crop_relationships"] = {
+        "authored_crop_active": authored_active,
+        "authored_crop_uv": authored_uv,
+        "frame_b_uv": [float(v) for v in geom["frame_snapped_uv"]],
+        "model_crop_a_uv": [float(v) for v in geom["crop_snapped_uv"]],
+        "v0_widens_crop_by_ft": (per_side_delta(authored_uv, geom["frame_snapped_uv"])
+                                 if authored_uv else None),
+        "model_pass_crop_a_minus_authored_ft": (
+            per_side_delta(authored_uv, geom["crop_snapped_uv"])
+            if authored_uv else None),
+        "model_pass_activates_a_crop": (authored_active is False),
+    }
+
+    # ---- F2: the fiducial pair, chosen once --------------------------------
+    fiducial_choice = {"state": "unavailable",
+                       "reason": "{0} was not requested for this run".format(V8)}
+    if V8 in selected:
         if view_basis is None:
-            frame_prime = {"state": "unavailable",
-                           "reason": "no view basis, so no driver bbox can be "
-                                     "projected into UV and B' would be B"}
+            fiducial_choice = {"state": "unavailable",
+                               "reason": "no view basis, so no model element can be "
+                                         "placed in UV"}
         else:
+            # Inside the authored crop when it is active; otherwise inside the
+            # model pass's rendered crop A -- the only rectangle known to be on
+            # screen when there is no crop.
+            reference_uv = (authored_uv if (authored_active and authored_uv)
+                            else [float(v) for v in geom["crop_snapped_uv"]])
             try:
-                frame_prime = _build_frame_prime(
-                    doc, view, geom, view_basis,
-                    expanded_frame_margin_in, diag, view_id, cap_axis_px,
-                    float(export_dpi), fit_direction, scale)
+                candidates, candidate_record = collect_fiducial_candidates(
+                    view, view_basis, model_members, FIDUCIAL_CANDIDATE_SCAN_MAX,
+                    diag=diag, view_id=view_id)
+                fiducial_choice = choose_fiducial_pair(
+                    candidates, reference_uv, float(geom["achieved_fpp_ft"]))
+                fiducial_choice["candidate_collection"] = candidate_record
+                fiducial_choice["reference_source"] = (
+                    "authored_crop" if (authored_active and authored_uv)
+                    else "model_crop_a")
             except Exception as ex:
-                frame_prime = {"state": "unavailable",
-                               "reason": "B' computation raised {0}: {1}".format(
-                                   type(ex).__name__, ex)}
-    report["frame_prime"] = frame_prime
+                fiducial_choice = {"state": "unavailable",
+                                   "reason": "fiducial selection raised {0}: {1}".format(
+                                       type(ex).__name__, ex)}
+    report["fiducial_choice"] = fiducial_choice
 
     model_context = {
         "diag": diag, "raster": raster, "geom": geom,
@@ -2645,7 +3130,10 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
         "link_categories": link_categories,
         "link_visibility": link_visibility_report(doc, view),
         "authored_model_overrides": authored,
-        "frame_prime": frame_prime,
+        "elements": elements,
+        "model_pass_ms": model_pass_ms,
+        "authored_crop": authored_crop,
+        "fiducial_choice": fiducial_choice,
     }
     settings = {"probe_dir": probe_dir, "export_dpi": float(export_dpi)}
 
@@ -2686,6 +3174,19 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
             }
             break
 
+    # ---- the stop-and-raise number, lifted to the top of the report ------
+    #
+    # If per-element white overrides cost MATERIALLY more than the model pass's
+    # own paint, the brief says report the number before running more views.
+    # It lives on each white variant's pre_state; this is the first one, where a
+    # reader looks first. No threshold is applied here -- see
+    # suppression_cost_record for why the ratio is a lower bound.
+    report["suppression_cost"] = next(
+        (entry["pre_state"]["suppression_cost"] for entry in report["variants"]
+         if (entry.get("pre_state") or {}).get("suppression_cost")),
+        {"state": "unavailable",
+         "reason": "no white-suppression variant ran on this view"})
+
     # ---- did the variants change how the MODEL pass renders? ---------
     #
     # The per-variant hash above catches a variant CLOBBERING the model file.
@@ -2724,6 +3225,15 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
         "annotation_sidecars": [entry.get("annotation_pass", {}).get("sidecar_path")
                                 for entry in report["variants"]
                                 if entry.get("annotation_pass", {}).get("sidecar_path")],
+        # V8's own model pair, boundary visible. Its own directory, so it never
+        # collides with the shared model pair above.
+        "variant_model_tiffs": [(entry.get("own_model_pass") or {}).get("tiff_path")
+                                for entry in report["variants"]
+                                if (entry.get("own_model_pass") or {}).get("tiff_path")],
+        "variant_model_sidecars": [
+            (entry.get("own_model_pass") or {}).get("sidecar_path")
+            for entry in report["variants"]
+            if (entry.get("own_model_pass") or {}).get("sidecar_path")],
     })
     # combined_json is the one path that cannot be known before the write, so
     # it is added after and the file is rewritten once with it present -- rather
@@ -2835,7 +3345,6 @@ def model_reexport_verdict(original_sha, control, after_variants):
 
 
 def run_probe(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT_DPI,
-              expanded_frame_margin_in=DEFAULT_EXPANDED_FRAME_MARGIN_IN,
               authored_override_scan_max=DEFAULT_AUTHORED_OVERRIDE_SCAN_MAX,
               model_reexport_check=True, repo_root=None):
     if repo_root:
@@ -2845,7 +3354,7 @@ def run_probe(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT_D
     _ensure_contract_import_path(os.path.abspath(str(output_dir or os.getcwd())))
     started_at = _probe_contract().utc_now_iso()
     native = _run_native(
-        raw_view, output_dir, selection, export_dpi, expanded_frame_margin_in,
+        raw_view, output_dir, selection, export_dpi,
         authored_override_scan_max,
         model_reexport_check)
     variants = native.get("variants", [])
@@ -2863,11 +3372,12 @@ def run_probe(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT_D
             artifacts.append(paths[key])
     artifacts.extend([p for p in paths.get("annotation_tiffs", []) if p])
     artifacts.extend([p for p in paths.get("annotation_sidecars", []) if p])
+    artifacts.extend([p for p in paths.get("variant_model_tiffs", []) if p])
+    artifacts.extend([p for p in paths.get("variant_model_sidecars", []) if p])
     return _probe_contract().execution_envelope(
         PROBE_NAME,
         {"selection": [entry.get("variant") for entry in variants],
          "export_dpi": export_dpi,
-         "expanded_frame_margin_in": expanded_frame_margin_in,
          "authored_override_scan_max": authored_override_scan_max,
          "model_reexport_check": model_reexport_check},
         _probe_contract().view_identity(raw_view), native, artifacts,

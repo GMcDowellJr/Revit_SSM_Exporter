@@ -10,12 +10,12 @@ recorded "green means nothing until you know what ran" failure exactly. The
 Revit-facing half of the probe is not testable here and is not tested here;
 what IS testable runs every time.
 
-What is covered: the variant plan, B' (``expanded_frame_uv``), the per-side
-excursion, the snapshot diff's float tolerance, and the restore read-back
-verdict. Every one of these decides something the probe cannot re-derive later:
-a wrong plan silently measures the wrong variant, a wrong B' silently under-
-expands the frame, and a wrong verdict silently lets a run continue over a
-document it has changed.
+What is covered: the variant plan, the F1/F2 helpers (fiducial colours and
+pair choice, the crop-loop record), the snapshot diff's float tolerance, and
+the restore read-back verdict. Every one of these decides something the probe
+cannot re-derive later: a wrong plan silently measures the wrong variant, a
+wrong fiducial choice silently fits one axis to noise, and a wrong verdict
+silently lets a run continue over a document it has changed.
 """
 import pytest
 
@@ -38,35 +38,62 @@ def test_an_unknown_variant_raises():
     assert "v9_wishful" in str(excinfo.value)
 
 
-def test_the_plan_matches_the_round_2_brief_variant_by_variant():
-    """The round-2 table, spelled out. A membership set edited in one direction
-    only -- V5 gaining the expanded frame, say -- makes two variants the same
-    capture and silently drops a candidate."""
+def test_the_plan_matches_the_round_2_revised_brief_variant_by_variant():
+    """The round-2 (revised) table, spelled out. A membership set edited in one
+    direction only -- V7 gaining the fiducials, say -- makes two variants the
+    same capture and silently drops a candidate."""
     expected = {
         probe.V0: dict(white_membership=False, smooth_edges_off=False,
-                       expanded_frame=False,
+                       crop_mode="frame_b", crop_box_visible=False,
+                       fiducials=False, own_model_pass=False,
                        model_suppression="hide_categories"),
-        probe.V4: dict(white_membership=True, smooth_edges_off=False,
-                       expanded_frame=False, model_suppression="external"),
-        probe.V5: dict(white_membership=True, smooth_edges_off=True,
-                       expanded_frame=False, model_suppression="external"),
-        probe.V6: dict(white_membership=True, smooth_edges_off=True,
-                       expanded_frame=True, model_suppression="external"),
+        probe.V7: dict(white_membership=True, smooth_edges_off=False,
+                       crop_mode="untouched", crop_box_visible=False,
+                       fiducials=False, own_model_pass=False,
+                       model_suppression="external"),
+        probe.V8: dict(white_membership=True, smooth_edges_off=True,
+                       crop_mode="untouched", crop_box_visible=True,
+                       fiducials=True, own_model_pass=True,
+                       model_suppression="external"),
     }
     assert set(expected) == set(probe.SUPPORTED_VARIANTS)
+    assert probe.SUPPORTED_VARIANTS == ("v0_control", "v7_no_crop",
+                                        "v8_no_crop_fiducials")
     for name, fields in expected.items():
         plan = probe.variant_plan(name)
         for key, value in fields.items():
             assert plan[key] == value, (name, key, plan[key], value)
     # The retired variants are NAMED with a reason, not merely absent -- a reader
-    # comparing a round-1 report against a round-2 one needs to know they were
+    # comparing an earlier report against this one needs to know they were
     # dropped on evidence.
     assert set(probe.RETIRED_VARIANTS) == {
         "v0_offsets0", "v1_white_filter", "v2_white_filter_smooth_edges_off",
-        "v3_white_filter_smooth_edges_off_expanded_frame"}
+        "v3_white_filter_smooth_edges_off_expanded_frame",
+        "v4_white_membership", "v5_white_membership_smooth_edges_off",
+        "v6_white_membership_expanded_frame"}
     assert "falsified" in probe.RETIRED_VARIANTS["v0_offsets0"]
+    assert "DROPPED" in probe.RETIRED_VARIANTS["v6_white_membership_expanded_frame"]
     for name in probe.RETIRED_VARIANTS:
         assert name not in probe.SUPPORTED_VARIANTS, name
+
+
+def test_v6_and_b_prime_are_deleted_not_left_unrunnable():
+    """The brief: delete the variant and say so; do not leave it un-runnable.
+    A B' helper still importable would be a variant one edit away from running
+    again with nothing recording that it had been dropped."""
+    for name in ("V4", "V5", "V6", "EXPANDED_FRAME_VARIANTS", "expanded_frame_uv",
+                 "bbox_excursion_past_frame", "frame_prime_drivers",
+                 "viewer_extent_elements", "_build_frame_prime",
+                 "DEFAULT_EXPANDED_FRAME_MARGIN_IN", "paper_margin_ft"):
+        assert not hasattr(probe, name), name
+
+
+def test_only_the_v0_control_still_writes_the_crop():
+    """THE CAPTURE DOES NOT MODIFY THE CROP -- except in the control for exactly
+    that behaviour."""
+    for name in probe.SUPPORTED_VARIANTS:
+        plan = probe.variant_plan(name)
+        assert (plan["crop_mode"] == "frame_b") == (name == probe.V0), name
 
 
 def test_any_variant_suppressing_by_membership_also_asks_for_external_suppression():
@@ -85,26 +112,10 @@ def test_select_variants_defaults_to_all_and_rejects_a_typo():
     assert probe.select_variants("all") == list(probe.SUPPORTED_VARIANTS)
     assert probe.select_variants(None) == list(probe.SUPPORTED_VARIANTS)
     assert probe.select_variants(
-        "v0_control, v5_white_membership_smooth_edges_off") == [probe.V0, probe.V5]
+        "v0_control, v8_no_crop_fiducials") == [probe.V0, probe.V8]
     with pytest.raises(ValueError):
         probe.select_variants("v0_control,v9_wishful")
-    assert probe.select_variants([probe.V5, probe.V0]) == [probe.V5, probe.V0]
-
-
-# ======================================================================
-# paper_margin_ft
-# ======================================================================
-
-def test_paper_margin_converts_printed_inches_to_model_feet():
-    # 0.5 paper inch at 1:96 is 4 model feet.
-    assert probe.paper_margin_ft(0.5, 96.0) == pytest.approx(4.0)
-    # and at 1:48, half that.
-    assert probe.paper_margin_ft(0.5, 48.0) == pytest.approx(2.0)
-
-
-def test_paper_margin_refuses_a_non_positive_scale():
-    with pytest.raises(ValueError):
-        probe.paper_margin_ft(0.5, 0.0)
+    assert probe.select_variants([probe.V7, probe.V0]) == [probe.V7, probe.V0]
 
 
 # ======================================================================
@@ -121,8 +132,8 @@ def test_rect_from_corners_also_reads_a_bare_four_tuple():
 
 
 def test_rect_from_corners_returns_none_rather_than_a_degenerate_rectangle():
-    # None -- never (0,0,0,0), which a caller would union in and which would
-    # silently drag B' out to the view origin.
+    # None -- never (0,0,0,0), which a caller would read as a real rectangle
+    # at the view origin (a fiducial candidate, say).
     assert probe.rect_from_corners(None) is None
     assert probe.rect_from_corners([]) is None
     assert probe.rect_from_corners("nonsense") is None
@@ -130,119 +141,347 @@ def test_rect_from_corners_returns_none_rather_than_a_degenerate_rectangle():
 
 
 # ======================================================================
-# expanded_frame_uv  --  B'
+# F2 -- the reserved fiducial colours
 # ======================================================================
 
-FRAME = (0.0, 0.0, 100.0, 60.0)
+def test_the_fiducial_colours_are_off_every_palette_lattice_but_step_1():
+    """The reservation argument, asserted. Every palette colour is snapped onto
+    multiples of its step, so a colour with any channel off that lattice cannot
+    be one. Both fiducials carry a 251 channel (prime), so only step 1 -- a view
+    of millions of annotations -- could collide."""
+    for rgb in probe.FIDUCIAL_COLOURS:
+        for step in (2, 3, 4, 5, 6, 7, 8):
+            assert probe.colour_on_lattice(rgb, step) is False, (rgb, step)
+        assert probe.colour_on_lattice(rgb, 1) is True
 
 
-def test_b_prime_is_b_plus_the_margin_when_no_driver_reaches_past_it():
-    inside = [("a", (10.0, 10.0, 20.0, 20.0)), ("b", (80.0, 40.0, 90.0, 50.0))]
-    prime, delta, setters = probe.expanded_frame_uv(FRAME, inside, 4.0)
-    assert prime == (-4.0, -4.0, 104.0, 64.0)
-    assert delta == {"left": 4.0, "right": 4.0, "top": 4.0, "bottom": 4.0}
-    # No driver moved an edge, so the margin alone did -- and `setters` says so
-    # by reporting None rather than naming an arbitrary interior element.
-    assert setters == {"left": None, "right": None, "top": None, "bottom": None}
+def test_colour_on_lattice_agrees_with_productions_palette():
+    """Composed with production rather than with a copy of its snapping rule:
+    every colour build_palette() emits is on the lattice, and a FULL palette at
+    step 8 -- every colour it can ever emit -- contains neither fiducial."""
+    from vop_interwoven.color_id_buffer import (
+        _reserved_corner_count, build_palette,
+    )
+    capacity = (256 // 8) ** 3 - _reserved_corner_count(8)
+    full = build_palette(capacity, step=8)
+    assert len(full) == capacity
+    assert all(probe.colour_on_lattice(rgb, 8) for rgb in full)
+    for rgb in probe.FIDUCIAL_COLOURS:
+        assert tuple(rgb) not in set(full)
 
 
-def test_b_prime_unions_every_driver_and_names_which_one_set_each_side():
-    drivers = [
-        ("grid:1", (-12.0, 5.0, 5.0, 55.0)),      # sets left
-        ("tag:2", (50.0, -7.0, 60.0, 3.0)),       # sets bottom
-        ("viewer:3", (95.0, 20.0, 118.0, 30.0)),  # sets right
-        ("text:4", (40.0, 50.0, 45.0, 66.0)),     # sets top
-        ("inside:5", (30.0, 30.0, 35.0, 35.0)),   # sets nothing
+def test_the_fiducial_colours_are_distinct_and_not_reserved_corners():
+    from vop_interwoven.color_id_buffer import _is_reserved_corner
+    assert len(set(probe.FIDUCIAL_COLOURS)) == len(probe.FIDUCIAL_COLOURS) == 2
+    for rgb in probe.FIDUCIAL_COLOURS:
+        assert not _is_reserved_corner(rgb), rgb
+        assert rgb != (255, 255, 255)
+
+
+def test_colour_on_lattice_refuses_a_non_positive_step():
+    with pytest.raises(ValueError):
+        probe.colour_on_lattice((8, 8, 8), 0)
+
+
+def test_the_fiducial_colour_record_reports_an_actual_collision():
+    """on_palette_lattice is why a collision COULD happen; collides is whether
+    it DID. A step-1 capture that happened not to use the colour is not a
+    collision, and one that did must say so."""
+    clean = probe.fiducial_colour_record(8, [[8, 16, 24]])
+    assert clean["any_collision"] is False
+    assert all(entry["on_palette_lattice"] is False for entry in clean["colours"])
+    hit = probe.fiducial_colour_record(1, [list(probe.FIDUCIAL_COLOURS[0])])
+    assert hit["any_collision"] is True
+    assert hit["colours"][0]["collides_with_assigned_colour"] is True
+    assert hit["colours"][1]["collides_with_assigned_colour"] is False
+    unknown = probe.fiducial_colour_record(None, [])
+    assert all(entry["on_palette_lattice"] is None for entry in unknown["colours"])
+
+
+# ======================================================================
+# F2 -- choosing the fiducial pair
+# ======================================================================
+
+REF = (0.0, 0.0, 100.0, 60.0)
+FPP = 0.05  # 6 px minimum -> 0.3 ft
+
+
+def _cand(cid, u, v, half=0.5):
+    return {"id": cid, "rect": (u - half, v - half, u + half, v + half)}
+
+
+def test_the_pair_is_the_one_separated_most_on_the_WORSE_axis():
+    """Opposite corners beat a pair that is further apart overall but on one
+    row: a pair on one row determines nothing about v."""
+    candidates = [
+        _cand(1, 10.0, 10.0), _cand(2, 90.0, 50.0),     # diagonal: 80 / 40
+        _cand(3, 5.0, 30.0), _cand(4, 95.0, 30.5),      # one row: 90 / 0.5
     ]
-    prime, delta, setters = probe.expanded_frame_uv(FRAME, drivers, 2.0)
-    assert prime == (-14.0, -9.0, 120.0, 68.0)
-    assert delta["left"] == pytest.approx(14.0)
-    assert delta["bottom"] == pytest.approx(9.0)
-    assert delta["right"] == pytest.approx(20.0)
-    assert delta["top"] == pytest.approx(8.0)
-    assert setters == {"left": "grid:1", "bottom": "tag:2",
-                       "right": "viewer:3", "top": "text:4"}
+    choice = probe.choose_fiducial_pair(candidates, REF, FPP)
+    assert choice["state"] == "value"
+    assert sorted(c["id"] for c in choice["pair"]) == [1, 2]
+    assert choice["separation_u_ft"] == pytest.approx(80.0)
+    assert choice["separation_v_ft"] == pytest.approx(40.0)
 
 
-def test_the_margin_is_applied_once_after_the_union_not_per_driver():
-    """Twelve drivers on the same extreme must not produce twelve margins.
-
-    Applying the margin per driver would make the same 0.5 inch land as 0.5 on
-    a side with one driver and 6 on a side with twelve -- a quantity whose
-    value depends on how many things happened to be measured, which is not a
-    margin.
-    """
-    one = [("d0", (-10.0, 5.0, 5.0, 55.0))]
-    twelve = [("d{0}".format(i), (-10.0, 5.0, 5.0, 55.0)) for i in range(12)]
-    prime_one, delta_one, _ = probe.expanded_frame_uv(FRAME, one, 3.0)
-    prime_twelve, delta_twelve, _ = probe.expanded_frame_uv(FRAME, twelve, 3.0)
-    assert prime_one == prime_twelve
-    assert delta_one == delta_twelve
-    assert delta_one["left"] == pytest.approx(13.0)
+def test_a_pool_all_on_one_row_is_unavailable_not_a_degenerate_pair():
+    candidates = [_cand(i, 10.0 * i, 30.0) for i in range(1, 9)]
+    choice = probe.choose_fiducial_pair(candidates, REF, FPP)
+    assert choice["state"] == "unavailable"
+    assert "BOTH axes" in choice["reason"]
+    assert "pair" not in choice
 
 
-def test_b_prime_ignores_a_driver_with_no_rectangle_without_failing():
-    """A driver whose bbox would not resolve is the CALLER's to report, by id
-    and reason. It must not take the whole computation down, and it must not
-    contribute a rectangle either."""
-    drivers = [("missing", None), ("real", (-5.0, 0.0, 1.0, 10.0))]
-    prime, delta, setters = probe.expanded_frame_uv(FRAME, drivers, 0.0)
-    assert prime[0] == pytest.approx(-5.0)
-    assert setters["left"] == "real"
+def test_candidates_outside_too_small_or_too_large_are_rejected_and_counted():
+    candidates = [
+        {"id": 1, "rect": None},
+        _cand(2, 0.5, 0.5),                          # inside the inset band
+        _cand(3, 50.0, 30.0, half=0.1),              # 0.2 ft = 4 px < 6
+        _cand(4, 50.0, 30.0, half=4.0),              # 8 ft > 5% of 100 on u
+        _cand(5, 20.0, 15.0), _cand(6, 80.0, 45.0),  # the two that survive
+    ]
+    choice = probe.choose_fiducial_pair(candidates, REF, FPP)
+    assert choice["rejections"] == {"no_rect": 1, "outside_reference": 1,
+                                    "too_small": 1, "too_large": 1}
+    assert choice["kept_count"] == 2
+    assert sorted(c["id"] for c in choice["pair"]) == [5, 6]
 
 
-def test_b_prime_with_a_zero_margin_is_exactly_the_union():
-    drivers = [("a", (-1.0, -2.0, 101.0, 62.0))]
-    prime, delta, _ = probe.expanded_frame_uv(FRAME, drivers, 0.0)
-    assert prime == (-1.0, -2.0, 101.0, 62.0)
-    assert delta == {"left": 1.0, "bottom": 2.0, "right": 1.0, "top": 2.0}
+def test_the_choice_is_deterministic_under_reordering():
+    candidates = [_cand(i, 10.0 + (i * 37) % 80, 5.0 + (i * 23) % 50)
+                  for i in range(1, 40)]
+    first = probe.choose_fiducial_pair(candidates, REF, FPP)
+    second = probe.choose_fiducial_pair(list(reversed(candidates)), REF, FPP)
+    assert [c["id"] for c in first["pair"]] == [c["id"] for c in second["pair"]]
 
 
-def test_b_prime_never_shrinks_b():
-    """Every delta is >= 0 by construction, because B is seeded into the union.
+def test_the_pair_search_is_EXACT_against_brute_force():
+    """The search bisects a threshold instead of trying every pair. That is a
+    claim of optimality, so it is checked against the O(n^2) answer it replaces
+    over generated pools -- a top-k shortcut would pass the hand-made cases
+    above and fail here."""
+    import random
+    rng = random.Random(20260922)
+    for trial in range(40):
+        pool = [_cand(i, rng.uniform(3.0, 97.0), rng.uniform(2.0, 58.0))
+                for i in range(rng.randint(2, 60))]
+        choice = probe.choose_fiducial_pair(pool, REF, FPP)
+        best = 0.0
+        for i, a in enumerate(pool):
+            for b in pool[i + 1:]:
+                ca, cb = probe._rect_centre(a["rect"]), probe._rect_centre(b["rect"])
+                best = max(best, min(abs(ca[0] - cb[0]), abs(ca[1] - cb[1])))
+        if best <= 0.0:
+            assert choice["state"] == "unavailable"
+            continue
+        assert choice["state"] == "value", trial
+        assert choice["min_separation_ft"] == pytest.approx(best, rel=1e-9, abs=1e-9)
 
-    A B' smaller than B on any side would CLIP annotations the current frame
-    already holds -- a regression dressed as a fix.
-    """
-    drivers = [("tiny", (40.0, 30.0, 41.0, 31.0))]
-    prime, delta, _ = probe.expanded_frame_uv(FRAME, drivers, 0.0)
-    assert prime == FRAME
-    assert all(value >= 0.0 for value in delta.values())
 
-
-def test_b_prime_refuses_a_degenerate_frame_and_a_negative_margin():
-    with pytest.raises(ValueError):
-        probe.expanded_frame_uv((0.0, 0.0, 0.0, 10.0), [], 1.0)
-    with pytest.raises(ValueError):
-        probe.expanded_frame_uv(FRAME, [], -1.0)
+def test_a_degenerate_reference_or_fpp_is_unavailable():
+    assert probe.choose_fiducial_pair([], (0, 0, 0, 10), FPP)["state"] == "unavailable"
+    assert probe.choose_fiducial_pair([], REF, 0.0)["state"] == "unavailable"
 
 
 # ======================================================================
-# bbox_excursion_past_frame
+# F1 -- the crop region's shape
 # ======================================================================
 
-def test_excursion_reports_the_furthest_reach_on_each_side_independently():
-    rects = [(-3.0, 10.0, 10.0, 20.0), (-1.0, -6.0, 5.0, 5.0),
-             (90.0, 30.0, 107.0, 70.0)]
-    out = probe.bbox_excursion_past_frame(FRAME, rects)
-    assert out["left"] == pytest.approx(3.0)
-    assert out["bottom"] == pytest.approx(6.0)
-    assert out["right"] == pytest.approx(7.0)
-    assert out["top"] == pytest.approx(10.0)
-    assert out["count"] == 3
+def test_a_rectangular_crop_is_a_rectangle_with_two_levels_per_axis():
+    record = probe.crop_loop_record([[(0, 0), (10, 0), (10, 6), (0, 6)]])
+    assert record["is_rectangle"] is True
+    assert record["distinct_u_levels"] == [0.0, 10.0]
+    assert record["distinct_v_levels"] == [0.0, 6.0]
+    assert record["bounds_uv"] == [0.0, 0.0, 10.0, 6.0]
+    assert record["oblique_edge_count"] == 0
 
 
-def test_excursion_is_zero_not_negative_when_everything_is_inside():
-    out = probe.bbox_excursion_past_frame(FRAME, [(10.0, 10.0, 20.0, 20.0)])
-    assert out == {"left": 0.0, "right": 0.0, "bottom": 0.0, "top": 0.0,
-                   "count": 1}
+def test_a_non_rectangular_crop_is_NOT_read_as_four_edges():
+    """An L-shaped crop draws its shape. Six edges, three levels a side -- a
+    decoder that assumed four would match the wrong lines."""
+    record = probe.crop_loop_record(
+        [[(0, 0), (10, 0), (10, 3), (6, 3), (6, 6), (0, 6)]])
+    assert record["is_rectangle"] is False
+    assert record["edge_count"] == 6
+    assert record["distinct_u_levels"] == [0.0, 6.0, 10.0]
+    assert record["distinct_v_levels"] == [0.0, 3.0, 6.0]
 
 
-def test_excursion_skips_a_null_rectangle_and_does_not_count_it():
-    out = probe.bbox_excursion_past_frame(FRAME, [None, (-2.0, 0.0, 1.0, 1.0)])
-    assert out["count"] == 1
-    assert out["left"] == pytest.approx(2.0)
+def test_an_oblique_edge_is_named_and_matches_no_level():
+    record = probe.crop_loop_record([[(0, 0), (10, 0), (5, 6)]])
+    assert record["is_rectangle"] is False
+    assert record["oblique_edge_count"] == 2
+    assert record["distinct_u_levels"] == []
 
+
+def test_a_split_crop_is_two_loops_not_a_rectangle():
+    record = probe.crop_loop_record([[(0, 0), (4, 0), (4, 6), (0, 6)],
+                                     [(6, 0), (10, 0), (10, 6), (6, 6)]])
+    assert record["loop_count"] == 2
+    assert record["is_rectangle"] is False
+
+
+def test_no_loops_has_no_bounds_rather_than_a_zero_rectangle():
+    record = probe.crop_loop_record([])
+    assert record["bounds_uv"] is None
+    assert record["is_rectangle"] is False
+
+
+def test_per_side_delta_is_positive_where_the_outer_rect_reaches_past():
+    delta = probe.per_side_delta((10, 10, 20, 20), (8, 9, 23, 20))
+    assert delta == {"left": 2.0, "bottom": 1.0, "right": 3.0, "top": 0.0}
+    inside = probe.per_side_delta((10, 10, 20, 20), (11, 10, 20, 19))
+    assert inside["left"] == -1.0 and inside["top"] == -1.0
+
+
+def test_the_suppression_cost_ratio_is_a_lower_bound_and_never_divides_by_zero():
+    record = probe.suppression_cost_record(500.0, 1000, 2000.0, 1000)
+    assert record["ratio_to_model_pass_total"] == pytest.approx(0.25)
+    assert record["suppression_ms_per_element"] == pytest.approx(0.5)
+    assert "LOWER bound" in record["note"]
+    none = probe.suppression_cost_record(500.0, 0, 0.0, 0)
+    assert none["ratio_to_model_pass_total"] is None
+    assert none["suppression_ms_per_element"] is None
+
+
+# ======================================================================
+# F1/F2 -- what goes into the sidecar a consumer reads
+# ======================================================================
+
+def test_the_boundary_payload_says_present_and_must_be_subtracted():
+    payload = probe.crop_boundary_sidecar_payload([0, 0, 10, 6], None, "annotation")
+    assert payload["present"] is True
+    assert payload["must_be_subtracted"] is True
+    assert payload["is_documentation_content"] is False
+    assert payload["drawn_at_uv"] == [0, 0, 10, 6]
+
+
+def test_annotate_sidecar_adds_a_key_and_refuses_to_overwrite_one(tmp_path):
+    import json
+    path = tmp_path / "x_anno.json"
+    path.write_text(json.dumps({"schema": "s", "capture_faults": []}))
+    assert probe.annotate_sidecar(str(path), "probe_crop_boundary", {"a": 1}) is None
+    data = json.loads(path.read_text())
+    assert data["probe_crop_boundary"] == {"a": 1}
+    assert data["schema"] == "s"
+    reason = probe.annotate_sidecar(str(path), "capture_faults", ["forged"])
+    assert "already carries" in reason
+    assert json.loads(path.read_text())["capture_faults"] == []
+
+
+def test_annotate_sidecar_returns_the_reason_when_it_cannot_write(tmp_path):
+    reason = probe.annotate_sidecar(str(tmp_path / "missing.json"), "k", {})
+    assert reason and "Error" in reason
+
+
+# ======================================================================
+# F1/F2 -- the Revit-side readers, against the shared fake DB
+# ======================================================================
+
+class _Loop(list):
+    pass
+
+
+class _Line(object):
+    def __init__(self, a, b):
+        from tests.stage_a_capture_fakes import FakeXYZ
+        self._pts = (FakeXYZ(*a), FakeXYZ(*b))
+
+    def GetEndPoint(self, index):
+        return self._pts[index]
+
+
+class _ShapeManager(object):
+    def __init__(self, loops, has_getter=True):
+        self._loops = loops
+        self.ShapeSet = False
+        if not has_getter:
+            self.GetCropShape = None
+
+    def GetCropShape(self):
+        return self._loops
+
+
+def _crop_view(loops=None, has_getter=True, visible=True):
+    from tests.stage_a_capture_fakes import (
+        FakeBoundingBoxXYZ, FakeViewPlan, FakeXYZ,
+    )
+    view = FakeViewPlan(view_id=77)
+    box = FakeBoundingBoxXYZ()
+    box.Min = FakeXYZ(10.0, 5.0, -1.0)
+    box.Max = FakeXYZ(40.0, 25.0, 1.0)
+    view.CropBox = box
+    if visible is not None:
+        view.CropBoxVisible = visible
+    square = loops if loops is not None else [_Loop([
+        _Line((10, 5, 0), (40, 5, 0)), _Line((40, 5, 0), (40, 25, 0)),
+        _Line((40, 25, 0), (10, 25, 0)), _Line((10, 25, 0), (10, 5, 0))])]
+    manager = _ShapeManager(square, has_getter=has_getter)
+    view.GetCropRegionShapeManager = lambda: manager
+    return view
+
+
+_BASIS = None
+
+
+def _basis():
+    from vop_interwoven.revit.view_basis import ViewBasis
+    return ViewBasis(origin=(0, 0, 0), right=(1, 0, 0), up=(0, 1, 0),
+                     forward=(0, 0, -1))
+
+
+def test_the_crop_region_record_reads_the_crop_without_writing_it():
+    from tests.stage_a_capture_fakes import install_fake_revit_db
+    view = _crop_view()
+    box_before = view.CropBox
+    with install_fake_revit_db():
+        record = probe.crop_region_record(view, _basis())
+    assert view.CropBox is box_before
+    assert record["crop_box_uv"] == {"state": "value", "value": [10.0, 5.0, 40.0, 25.0]}
+    assert record["crop_box_visible"] == {"state": "value", "value": True}
+    shape = record["shape"]["value"]
+    assert shape["is_rectangle"] is True
+    assert shape["bounds_uv"] == [10.0, 5.0, 40.0, 25.0]
+    assert shape["curve_types"] == ["_Line"]
+
+
+def test_a_host_without_GetCropShape_makes_the_shape_unavailable_not_rectangular():
+    from tests.stage_a_capture_fakes import install_fake_revit_db
+    view = _crop_view(has_getter=False)
+    with install_fake_revit_db():
+        record = probe.crop_region_record(view, _basis())
+    assert record["shape"]["state"] == "unavailable"
+    assert "GetCropShape" in record["shape"]["reason"]
+    # The box itself is still read -- one missing reader does not blank the rest.
+    assert record["crop_box_uv"]["state"] == "value"
+
+
+def test_a_host_without_CropBoxVisible_is_unavailable_not_false():
+    view = _crop_view(visible=None)
+    assert probe.crop_box_visible_record(view)["state"] == "unavailable"
+
+
+def test_paint_fiducials_paints_the_reserved_colours_and_records_failures():
+    from tests.stage_a_capture_fakes import (
+        FakeDoc, FakeViewPlan, install_fake_revit_db,
+    )
+
+    class _PickyView(FakeViewPlan):
+        def SetElementOverrides(self, eid, ogs):
+            if int(eid.IntegerValue) == 9:
+                raise RuntimeError("refused")
+            FakeViewPlan.SetElementOverrides(self, eid, ogs)
+
+    view = _PickyView(view_id=77)
+    pair = [{"id": 5, "rect": (1, 1, 2, 2), "category": "Walls"},
+            {"id": 9, "rect": (8, 8, 9, 9), "category": "Doors"}]
+    with install_fake_revit_db():
+        record = probe.paint_fiducials(FakeDoc(elements=[]), view, pair)
+    assert record["painted_count"] == 1
+    assert record["painted"][0]["rgb"] == list(probe.FIDUCIAL_COLOURS[0])
+    assert record["failed"][0]["id"] == 9
+    assert "refused" in record["failed"][0]["error"]
+    assert 5 in view.element_overrides
 
 # ======================================================================
 # _diff  --  the snapshot comparator
@@ -287,11 +526,18 @@ def test_diff_finds_a_change_nested_inside_a_three_valued_record():
 # ======================================================================
 
 def _snapshot(crop_active=True, smooth=False, offsets=(1.0, 1.0, 1.0, 1.0),
-              hidden=None, filters=None, template=-1, style="Wireframe"):
+              hidden=None, filters=None, template=-1, style="Wireframe",
+              crop_visible=False, shape_x=10.0):
     return {
         "crop_box": {"state": "value",
                      "value": {"min": [0.0, 0.0, 0.0], "max": [10.0, 10.0, 0.0],
                                "active": crop_active}},
+        "crop_box_visible": {"state": "value", "value": crop_visible},
+        "crop_region_shape": {
+            "state": "value",
+            "value": {"loops_world": [[(0.0, 0.0, 0.0), (shape_x, 0.0, 0.0),
+                                       (shape_x, 10.0, 0.0), (0.0, 10.0, 0.0)]],
+                      "curve_types": ["Line"], "shape_set": False}},
         "smooth_edges": {"state": "value", "value": smooth},
         "annotation_crop_offsets": {
             "state": "value",
@@ -310,7 +556,8 @@ def _snapshot(crop_active=True, smooth=False, offsets=(1.0, 1.0, 1.0, 1.0),
 def test_an_identical_pair_of_snapshots_is_restored():
     verdict = probe.restore_readback_verdict(_snapshot(), _snapshot())
     assert verdict["overall"] == "restored"
-    for name in ("crop_box", "smooth_edges", "annotation_crop_offsets",
+    for name in ("crop_box", "crop_box_visible", "crop_region_shape",
+                 "smooth_edges", "annotation_crop_offsets",
                  "model_category_visibility", "view_filters",
                  "view_template_id", "display_style",
                  "explicit_restore_steps"):
@@ -319,6 +566,8 @@ def test_an_identical_pair_of_snapshots_is_restored():
 
 @pytest.mark.parametrize("field,kwargs", [
     ("crop_box", {"crop_active": False}),
+    ("crop_box_visible", {"crop_visible": True}),
+    ("crop_region_shape", {"shape_x": 12.0}),
     ("smooth_edges", {"smooth": True}),
     ("annotation_crop_offsets", {"offsets": (0.0, 0.0, 0.0, 0.0)}),
     ("model_category_visibility", {"hidden": {"10": True}}),
@@ -327,7 +576,7 @@ def test_an_identical_pair_of_snapshots_is_restored():
     ("display_style", {"style": "FlatColors"}),
 ])
 def test_each_obligation_fails_on_its_own_and_names_itself(field, kwargs):
-    """Seven obligations, seven independent assertions.
+    """Nine obligations, nine independent assertions.
 
     One rolled-up boolean would make "the restore failed" the whole report,
     and "the crop box came back but the annotation crop offsets did not" is
@@ -466,8 +715,8 @@ def test_the_registry_exposes_the_probe():
 
 def test_validation_accepts_the_probes_real_settings():
     _adapter().validate_settings(
-        {"selection": "{0},{1}".format(probe.V0, probe.V6),
-         "export_dpi": 150, "expanded_frame_margin_in": 0.5,
+        {"selection": "{0},{1}".format(probe.V0, probe.V8),
+         "export_dpi": 150,
          "authored_override_scan_max": 5000,
          "model_reexport_check": True},
         "C:/out")
@@ -488,14 +737,14 @@ def test_validation_rejects_a_misspelled_variant():
 
 
 def test_validation_maps_a_campaign_job_variant_onto_selection():
-    resolved = _adapter().validate_settings({}, "C:/out", variant=probe.V4)
-    assert resolved["selection"] == probe.V4
+    resolved = _adapter().validate_settings({}, "C:/out", variant=probe.V7)
+    assert resolved["selection"] == probe.V7
 
 
 def test_validation_refuses_a_conflicting_variant_and_selection():
     with pytest.raises(ValueError) as excinfo:
-        _adapter().validate_settings({"selection": probe.V4}, "C:/out",
-                                     variant=probe.V5)
+        _adapter().validate_settings({"selection": probe.V7}, "C:/out",
+                                     variant=probe.V8)
     assert "conflicting" in str(excinfo.value)
 
 
@@ -503,7 +752,6 @@ def test_validation_refuses_a_conflicting_variant_and_selection():
     {"export_dpi": 0},
     {"export_dpi": -5},
     {"export_dpi": "big"},
-    {"expanded_frame_margin_in": 0},
     {"authored_override_scan_max": -1},
     {"authored_override_scan_max": True},
     {"authored_override_scan_max": 1.5},
@@ -594,81 +842,117 @@ def test_missing_override_setters_checks_every_name_in_the_set():
 # FINDING 1 (PR #215, P1): did the variant MEASURE its candidate?
 # ======================================================================
 
+_V8_GOOD_METADATA = {"applied_smooth_edges": False,
+                     "model_suppression_mode": "external",
+                     "crop_mode": "untouched"}
+_V8_GOOD_STATE = {"crop_box_visible": {"during_capture": True},
+                  "fiducials": {"painted_count": 2}}
+
+
 def test_a_variant_that_got_what_it_asked_for_is_measured():
-    plan = probe.variant_plan(probe.V5)
+    plan = probe.variant_plan(probe.V8)
     check = probe.variant_measurement_check(
-        plan, {"applied_smooth_edges": False, "model_suppression_mode": "external"})
-    assert check["measured"] is True
+        plan, dict(_V8_GOOD_METADATA), probe_state=dict(_V8_GOOD_STATE))
+    assert check["measured"] is True, check
     assert check["unmet"] == []
     # And it says WHAT it checked, so a mutation that stops checking something
     # is visible in the record rather than only in a boolean.
-    assert any("applied_smooth_edges" in item for item in check["checked"])
-    assert any("model_suppression_mode" in item for item in check["checked"])
+    for fragment in ("applied_smooth_edges", "model_suppression_mode",
+                     "crop_mode", "CropBoxVisible", "fiducials"):
+        assert any(fragment in item for item in check["checked"]), fragment
 
 
 @pytest.mark.parametrize("applied", ["read_failed", "unchanged (failed)",
                                      "not_attempted", None, True])
-def test_v5_did_not_measure_when_smooth_edges_was_not_confirmed_off(applied):
+def test_v8_did_not_measure_when_smooth_edges_was_not_confirmed_off(applied):
     """Production does NOT raise when the ViewDisplayModel read or write fails.
-
-    That is correct -- an unconfirmed AA state costs decode confidence, not the
-    export -- but it means V5/V6 can return a real TIFF that measured the same
-    behaviour as V1. Anything but a confirmed ``False`` is not AA off.
-    """
-    plan = probe.variant_plan(probe.V5)
+    Anything but a confirmed ``False`` is not AA off."""
+    metadata = dict(_V8_GOOD_METADATA, applied_smooth_edges=applied)
     check = probe.variant_measurement_check(
-        plan, {"applied_smooth_edges": applied,
-               "model_suppression_mode": "external"})
+        probe.variant_plan(probe.V8), metadata, probe_state=dict(_V8_GOOD_STATE))
     assert check["measured"] is False
     assert len(check["unmet"]) == 1
     assert check["unmet"][0]["production_reported"] == applied
-    assert "F3" in check["unmet"][0]["why_it_matters"]
 
 
 def test_a_membership_variant_did_not_measure_when_production_hid_categories():
-    """The same defect one switch over, which the review did not name.
-
-    A V4-V6 capture reporting ``hide_categories`` hid model categories and
-    disabled the probe's own white filter: it measured V0's suppression under
-    V1's name. Fixing only the SmoothEdges half would have left this one.
-    """
-    plan = probe.variant_plan(probe.V4)
+    """A V7 capture reporting ``hide_categories`` hid model categories: it
+    measured V0's suppression under V7's name."""
     check = probe.variant_measurement_check(
-        plan, {"model_suppression_mode": "hide_categories"})
+        probe.variant_plan(probe.V7),
+        {"model_suppression_mode": "hide_categories", "crop_mode": "untouched"})
     assert check["measured"] is False
     assert check["unmet"][0]["production_reported"] == "hide_categories"
     assert "V0's suppression" in check["unmet"][0]["why_it_matters"]
 
 
-def test_the_control_variants_are_measured_by_their_own_standard():
-    """V0 asks for no mutation, so it must not be judged against one.
-
-    Without this the fix would mark every control DID_NOT_MEASURE and the
-    baseline every other variant is read against would vanish.
-    """
-    for name in (probe.V0,):
-        check = probe.variant_measurement_check(
-            probe.variant_plan(name),
-            {"model_suppression_mode": "hide_categories",
-             "applied_smooth_edges": "not_attempted"})
-        assert check["measured"] is True, name
-
-
-def test_both_switches_are_checked_independently():
-    plan = probe.variant_plan(probe.V6)
+@pytest.mark.parametrize("reported", ["frame_b", None])
+def test_an_untouched_variant_did_not_measure_when_production_wrote_the_crop(reported):
+    """The one thing V7/V8 exist not to do. A production build without the crop
+    switch reports no crop_mode at all -- None -- and that is not 'untouched'
+    either."""
     check = probe.variant_measurement_check(
-        plan, {"applied_smooth_edges": "read_failed",
-               "model_suppression_mode": "hide_categories"})
+        probe.variant_plan(probe.V7),
+        {"model_suppression_mode": "external", "crop_mode": reported})
     assert check["measured"] is False
-    assert len(check["unmet"]) == 2
+    assert check["unmet"][0]["production_reported"] == reported
+    assert "wrote the crop" in check["unmet"][0]["why_it_matters"]
+
+
+@pytest.mark.parametrize("state", [
+    {},
+    {"crop_box_visible": {"during_capture": False}},
+    {"crop_box_visible": {"during_capture": None}},
+])
+def test_v8_did_not_measure_without_the_crop_boundary_confirmed_on(state):
+    probe_state = dict(_V8_GOOD_STATE)
+    probe_state.pop("crop_box_visible")
+    probe_state.update(state)
+    check = probe.variant_measurement_check(
+        probe.variant_plan(probe.V8), dict(_V8_GOOD_METADATA), probe_state=probe_state)
+    assert check["measured"] is False
+    assert [u["requested"] for u in check["unmet"]] == ["CropBoxVisible on (F1)"]
+
+
+@pytest.mark.parametrize("painted", [0, 1, None])
+def test_v8_did_not_measure_without_both_fiducials_painted(painted):
+    probe_state = dict(_V8_GOOD_STATE, fiducials={"painted_count": painted})
+    check = probe.variant_measurement_check(
+        probe.variant_plan(probe.V8), dict(_V8_GOOD_METADATA), probe_state=probe_state)
+    assert check["measured"] is False
+    assert "fiducials painted" in check["unmet"][0]["requested"]
+
+
+def test_the_control_variant_is_measured_by_its_own_standard():
+    """V0 asks for no mutation, so it must not be judged against one -- but it
+    IS the frame_b control, so a V0 whose crop was NOT written is not the
+    control any more."""
+    plan = probe.variant_plan(probe.V0)
+    check = probe.variant_measurement_check(
+        plan, {"model_suppression_mode": "hide_categories",
+               "applied_smooth_edges": "not_attempted", "crop_mode": "frame_b"})
+    assert check["measured"] is True, check
+    check_moved = probe.variant_measurement_check(
+        plan, {"model_suppression_mode": "hide_categories", "crop_mode": "untouched"})
+    assert check_moved["measured"] is False
+
+
+def test_every_request_is_checked_independently():
+    check = probe.variant_measurement_check(
+        probe.variant_plan(probe.V8),
+        {"applied_smooth_edges": "read_failed",
+         "model_suppression_mode": "hide_categories", "crop_mode": "frame_b"},
+        probe_state={})
+    assert check["measured"] is False
+    assert len(check["unmet"]) == 5
 
 
 def test_missing_metadata_is_not_measured_rather_than_assumed_fine():
     """An annotation pass that raised leaves no metadata at all. That is not
     evidence that the mutation applied."""
-    check = probe.variant_measurement_check(probe.variant_plan(probe.V5), {})
+    check = probe.variant_measurement_check(probe.variant_plan(probe.V7), {})
     assert check["measured"] is False
-    check_none = probe.variant_measurement_check(probe.variant_plan(probe.V5), None)
+    check_none = probe.variant_measurement_check(probe.variant_plan(probe.V7), None)
     assert check_none["measured"] is False
 
 
