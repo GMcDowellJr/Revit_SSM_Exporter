@@ -562,3 +562,64 @@ commit SHAs and `VOP Stage A — Agent Context (snapshot 2026-09-21)`, which is
 the title of Greg's project-memory snapshot and lives outside the repo. Short
 commit SHAs cited for landed work (`e72e276`, `585d858`, `0de6d0e` and the rest)
 are likewise not file content; they resolve with `git show`, not with grep.
+
+---
+
+## Amendment — 2026-09-22
+
+Appended forward-only. Nothing above is edited. Two decisions by Greg, both
+answering items the 2026-09-21 amendment raised rather than resolved.
+
+### M5 is RESOLVED — four primitives, and bbox is one of them
+
+**Decision (Greg, 2026-09-22): four.** The premise in "The test" reads
+
+> **frame, pixels, color-to-element map, bbox**
+
+superseding both the original two (frame+pixels, vector records) and the
+2026-09-20 sweep's proposed three (frame, pixels, identity). S1 is **in** the
+premise; S2 already was.
+
+**The reason, recorded deliberately, because the ledger's objection was that
+promoting bbox would put it beyond question.** That objection rested on one
+premise: that bbox is wiring-required rather than substrate-required, because it
+compensates for *a capture-side coloring choice which is itself still open*. M1
+closed the choice — per-element LINK coloring is not available, by probe. What
+compensates for a permanent property of the API is not a workaround awaiting a
+better route; for as long as capture is `ExportImage` and LINK content is
+painted per category, bbox is how link identity is recovered, and a decode that
+lacks it cannot attribute a link pixel to an element.
+
+**What is still open, so this does not become unquestionable:** §8's UNCONFIRMED
+*filter rules on type/family parameters evaluating against link elements* — a
+possible finer-than-category, still not per-element, link coloring. **That is
+the condition on which this decision should be revisited.** If it lands and
+identity comes off the palette at finer than category grain, bbox's standing in
+the premise weakens to whatever the decode-side cross-check still needs, which
+is not established. Untested; a run decides it, not a reading.
+
+This does **not** change S1's or C3's disposition — M1 already made both
+unconditional CARRY. It changes what the premise claims capture persists.
+
+### M6 — the annotation design branch is dispositioned: merged, superseded
+
+**Decision C (Greg, 2026-09-22):** merge `vop_interwoven/docs/
+anno_vector_bbox_phase1.md` with a supersession banner, rather than leave the
+branch unmerged or delete it.
+
+`claude/youthful-wozniak-gcjsc9` held exactly that one file — 1152 lines, five
+revisions, no PR ever opened, absent from `main` and from this branch. Its
+target was the 2026-09-17 vector direction that M2 records as superseded. The
+hazard was that it **reads as current**; the banner is the fix, and the document
+below it is unedited (39 inserted lines, 0 deleted).
+
+Four sections are named in the banner as outliving the vector approach: **§1.5**
+(absolute view UV, since landed as Stage A step 4), **Q3** persistence — carrying
+its own rev-5 correction that `anno_meta` does *not* ride into the persisted
+cache — **Q5** provenance, and **D2**, which records that `anno_meta` already
+carries a bbox and that it is **unverified**.
+
+D2 is the one with a live consequence and it is **raised, not closed**: M5 has
+just made bbox a primitive, and there is an existing unverified bbox on the
+annotation record. Whether that field is the primitive or merely shares its name
+is not established here.
