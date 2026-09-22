@@ -359,3 +359,267 @@ each artifact's names, since the closure does not cover them.
   acquire a site or be struck.
 - X3 leaves U5's evidence base unsound. Resolving it needs the byColor run's
   actual `Config`, which is not in the repo.
+
+---
+
+## Amendment — 2026-09-21
+
+**Appended forward-only. Nothing above this line was edited**, per this ledger's
+own rule that `Disposition` is superseded by a new dated record and never
+rewritten in place.
+
+**Source.** Greg's 2026-09-21 session decisions, supplied to this session as
+`VOP Stage A — Agent Context (snapshot 2026-09-21)` — a snapshot of the
+Claude.ai project memory "VOP Interwoven Development". That project memory is
+authoritative; this amendment records only what those decisions do to rows
+dispositioned 2026-09-19 and 2026-09-20. It does not restate them.
+
+**Tree.** Re-observations below are at `e73c87d` — this branch, with Stage A
+steps 1–5 landed on top of `main ea05a8e`. Rows not named here keep their
+2026-09-20 `state` **unchecked**: this amendment is not a second sweep.
+
+**Store checked, for the absences claimed below.** `docs/`, `tools/notes/` and
+`tools/notes/data/` in the working tree at `e73c87d`. `tools/notes/data/` holds
+`stage_a_excursion_byColor_20260917T104744.csv`,
+`verification_bundle_20260917T112657.json`, `views_core_2025-10-25.csv` and its
+`README.md` — nothing from 2026-09-21, and no per-element LINK coloring probe
+output anywhere under `tools/notes/`.
+
+### M1 — per-element LINK coloring is CLOSED by probe: it is not possible
+
+The question the 2026-09-20 sweep named as **"the one question whose answer
+moves the most rows"** is answered, and answered **no**.
+
+Greg, §4.2: per-element override in links **CLOSED — probe run, none
+possible**. View filters at category level are the closest available; link
+element bboxes locate elements within the category colors, which is what
+`tools/link_identity_resolver.py` `resolve_category` already does.
+
+**This contradicts what this ledger argued on 2026-09-19/20, and the ledger is
+the side that loses.** C3's and S1's `drops out if` cells both name the same
+condition — "LINK elements get per-element colors" — and both call the route
+`Established, not speculated`, citing `_try_color_link_element_detailed`'s
+`LinkElementId` + `SetElementOverrides`. That was **code reading**. The probe is
+a **run**, and the working rule is that empirical run data beats code reasoning
+when they conflict. The code's own docstring never claimed more than
+reachability: it says `LinkElementId/overload support varies by` version and
+that the function is `Not used by export_color_id_buffer_view's main Stage A
+path`. Reachable in source is not the same as effective in Revit, and the
+ledger read the first as the second.
+
+| row | 2026-09-20 disposition | 2026-09-21 |
+|---|---|---|
+| C3 | CARRY, conditional on per-element LINK colors | **CARRY (2026-09-21)** — the named condition cannot fire. The category-filter machinery and the geometric disambiguation it forces are not a workaround awaiting a better API; they are the only route the API allows |
+| S1 | CARRY-CONDITIONAL on per-category LINK coloring | **CARRY (2026-09-21)** — same reason. S1 survives as substrate for LINK identity, not as geometry surviving on its merits, and the 2026-09-20 note that this is "the third attempt at the same problem" now reads as three attempts at a gap that has no capture-side fix |
+
+**Not closed by this, and it is a different question.** §8 still carries as
+UNCONFIRMED: *filter rules on type/family parameters evaluating against link
+elements* — a possible **finer-than-category**, still not per-element, link
+coloring. Untested. It is not the condition either row names, and neither row
+should be re-opened on it without a run.
+
+**Not re-verified here.** The probe result is Greg's report. The probe itself is
+in the tree (`tests/dynamo/probe_stage_a_external_sources.py`, named by
+`_try_color_link_element_detailed`'s docstring as what keeps that path alive),
+but its **output** is in none of the stores listed above.
+
+### M2 — the 2026-09-17 vector-only direction is superseded by an annotation raster pass
+
+Greg, §4.3: **annotation element color override WORKS** (not every type tested;
+green-lit). §7 lists "annotations as vectors only / no second raster pass
+(2026-09-17)" as SUPERSEDED — do not act on.
+
+**This reaches the ledger's own title and premise**, which are written in the
+09-17 direction: the title says `color-ID + vector annotations`, and primitive 2
+in "The test" says `vector records`. Both now describe one half of the capture,
+not the annotation channel entire.
+
+Re-observed at `e73c87d`: an annotation color-ID raster pass over frame B has
+**landed** on this branch — `0de6d0e`, `6efdddd`, `11fa8d6`, `bd48eb2`,
+`101167d`. It lives in `color_id_buffer.py` and splits pass membership by
+`OwnerViewId`.
+
+**Rows this puts in question, none of which is re-dispositioned here:**
+
+- **S6** (`revit/annotation.py`'s `rasterize_annotations`, NO-ROLE as storage)
+  was dispositioned on the premise that *vector records replace the
+  cell-filling side*. That premise is gone. S6 nevertheless is **not** revived
+  by the new pass: the Stage A annotation raster is a separate path in
+  `color_id_buffer.py`, and `rasterize_annotations` is still imported only by
+  `pipeline.py`'s model pass. Whether its site acquires a forward role is
+  **raised, not answered**.
+- **S5** (annotation extents drive frame B) is untouched and if anything
+  stronger: its `drops out if` — "annotation extents stop driving the capture
+  rectangle" — is further from firing now that annotations are captured.
+- **A3** (`AnnoCells_*` retained until vector bboxes are validated against it)
+  loses its stated purpose twice over: §7 also supersedes cell-count comparison
+  as the validation target in favour of **Greg's read against the drawing**. A3
+  is therefore retained-until a condition that no longer exists. Raised.
+
+### M3 — DWG is CLOSED as element-overridable color-ID, the same as host
+
+Greg, §4.2: DWG takes element-override color-ID **like host**, whether placed in
+model space or "in this view only". Hatches and fills are captured as-is and
+handled in post. DWG outside the crop is not in the TIFF and is not analyzed.
+Occlusion of model-context DWG by elements in front of it is **correct**, not a
+defect. Layer and block internals are not captured. §7 supersedes the earlier
+"DWG via line definitions / grid-cell sampling".
+
+**This ledger has no DWG row.** The 2026-09-20 sweep at `d05038a` produced none,
+and its own "what the sweep could not see" section does not name the omission.
+Recording it here as a **gap in the record**, not as a disposition: the decision
+is capture-side, and these rows disposition the forward role of geometry-path
+artifacts.
+
+Re-observed at `e73c87d`, because it bears on S1's scope: Stage A step 1 carried
+DWG source and identifiers into the capture record (`ae0d661`, `4b94f74`), so
+the 09-21 snapshot's "no source=DWG" gap is closed. The **bbox** half is not:
+`color_id_buffer.py`'s link-proxy loop still reads `DWG imports are explicitly
+out of scope for Phase 1b` and skips any proxy whose `source_type` is not
+`LINK`, so DWG contributes no `near_face_w_map` entry. Painted and labelled;
+still absent from the per-element bbox section.
+
+### M4 — the analysis grid is post-extraction, which gives R1's contradiction a direction
+
+Greg, §4.1: the **analysis grid is post-extraction** — derived from the TIFF
+plus metadata (resolution, view scale). CreepIndex / DocLoadIndex / Stability
+are post-capture work.
+
+**R1** was flagged on 2026-09-21 in the rows above as *a contradiction, not a
+lag* — "Either the consumer changes or the disposition does; leaving both is the
+ledger asserting something its own code denies." §4.1 settles **which**:
+
+> **R1 — RE-DERIVE stands (2026-09-21). The consumer is the end that must
+> change.** `tools/colorid_to_occupancy.py` recovering `W` from
+> `resolution.backoff_floor_px` and stamping `grid_basis="assumed"`, and taking
+> W/H/cell from a geometry run under `--geom-run`, are both the capture-time
+> grid reaching a consumer that was supposed to declare its own. The code change
+> is **not made here** — a record and an edit do not belong in one change
+> (Refactor Rule #5).
+
+**C4** is the capture end of the same coupling (X2 is why they stayed separate
+rows), and its 2026-09-20 `state` is now **out of date in the good direction**.
+That cell said the decode-side quantity had been re-sourced and "the
+capture-side request has not". At `e73c87d` it has: `e72e276` and `585d858`
+landed Stage A step 2, `paper_width_in` is now derived from
+`geom["frame_extent_ft"]`, and the module records the change at the site —
+`It used to be sized from raster.W * raster.cell_size_ft -- the analysis` grid's
+own rectangle. **C4's `CARRY-RESOURCED` re-sourcing is satisfied at the capture
+end.** The row is not rewritten; this is its new dated state.
+
+**U4** (CreepIndex / DocLoadIndex / Stability, "no site in the tree") keeps that
+finding and gains a home: §4.1 places them in post-capture work. Still nothing
+upstream for them to constrain, which was the row's own warning.
+
+### M5 — RAISED, NOT RESOLVED: how many primitives, and whether bbox is one
+
+**This amendment does not decide this, and deliberately does not edit "The test"
+to make it go away.**
+
+Two statements are in the record and they do not agree:
+
+- **This ledger**, in "The test" and again in "Still open after this sweep":
+  > the premise should read **frame, pixels, identity** — three primitives
+  > ... not two and not four. S2 belongs in it; S1 does not, and promoting S1
+  > would write a workaround into the premise where no later sweep would
+  > question it.
+- **Greg, §4.1 (LOCKED):**
+  > **Primitive = data captured:** frame, pixels, color-to-element map, bbox.
+
+Three versus four, and the disputed item is **bbox** (S1 — `near_face_w_map`'s
+`bbox_corners_uv` + `near_face_w`).
+
+What *is* settled, and is not the contradiction: §7 supersedes the ledger's
+original **two**-primitive premise (frame+pixels, vector records) outright. So
+the premise as written above is dead either way. What replaces it is the open
+question.
+
+**Why M1 makes this sharper rather than easier.** The ledger's argument for
+excluding bbox was that it is *wiring-required, not substrate-required* —
+"a capture-side coloring choice which is itself still open (see S1)". M1 closes
+that choice: per-category LINK coloring is not a choice, it is what the API
+permits. An argument that rested on the choice being open cannot be re-run
+unchanged. Whether that makes bbox substrate, or merely makes it a permanent
+workaround that still should not enter the premise, is exactly the judgement
+this amendment has no authority to make — and the ledger's stated fear (that
+promoting it would stop any later sweep questioning it) is a reason to decide it
+deliberately, not a reason to decide it here.
+
+**Raised to Greg. Do not default.**
+
+### The citation rule, applied to this amendment
+
+Every backtick span of 6 characters or more above was fed to a fixed-string
+recursive grep, as the 2026-09-20 sweep did for the rows. **35 checked, 35
+resolve.** Three of them resolve *into this ledger* rather than into the tree —
+`Established, not speculated` (C3's cell), `color-ID + vector annotations` (this
+file's title) and `vector records` (the premise in "The test") — which is
+correct: an amendment that supersedes a record has to quote it.
+
+11 spans are excluded by name, each for a stated reason: 7 are this ledger's
+disposition vocabulary and column names, and 4 are not file content — three
+commit SHAs and `VOP Stage A — Agent Context (snapshot 2026-09-21)`, which is
+the title of Greg's project-memory snapshot and lives outside the repo. Short
+commit SHAs cited for landed work (`e72e276`, `585d858`, `0de6d0e` and the rest)
+are likewise not file content; they resolve with `git show`, not with grep.
+
+---
+
+## Amendment — 2026-09-22
+
+Appended forward-only. Nothing above is edited. Two decisions by Greg, both
+answering items the 2026-09-21 amendment raised rather than resolved.
+
+### M5 is RESOLVED — four primitives, and bbox is one of them
+
+**Decision (Greg, 2026-09-22): four.** The premise in "The test" reads
+
+> **frame, pixels, color-to-element map, bbox**
+
+superseding both the original two (frame+pixels, vector records) and the
+2026-09-20 sweep's proposed three (frame, pixels, identity). S1 is **in** the
+premise; S2 already was.
+
+**The reason, recorded deliberately, because the ledger's objection was that
+promoting bbox would put it beyond question.** That objection rested on one
+premise: that bbox is wiring-required rather than substrate-required, because it
+compensates for *a capture-side coloring choice which is itself still open*. M1
+closed the choice — per-element LINK coloring is not available, by probe. What
+compensates for a permanent property of the API is not a workaround awaiting a
+better route; for as long as capture is `ExportImage` and LINK content is
+painted per category, bbox is how link identity is recovered, and a decode that
+lacks it cannot attribute a link pixel to an element.
+
+**What is still open, so this does not become unquestionable:** §8's UNCONFIRMED
+*filter rules on type/family parameters evaluating against link elements* — a
+possible finer-than-category, still not per-element, link coloring. **That is
+the condition on which this decision should be revisited.** If it lands and
+identity comes off the palette at finer than category grain, bbox's standing in
+the premise weakens to whatever the decode-side cross-check still needs, which
+is not established. Untested; a run decides it, not a reading.
+
+This does **not** change S1's or C3's disposition — M1 already made both
+unconditional CARRY. It changes what the premise claims capture persists.
+
+### M6 — the annotation design branch is dispositioned: merged, superseded
+
+**Decision C (Greg, 2026-09-22):** merge `vop_interwoven/docs/
+anno_vector_bbox_phase1.md` with a supersession banner, rather than leave the
+branch unmerged or delete it.
+
+`claude/youthful-wozniak-gcjsc9` held exactly that one file — 1152 lines, five
+revisions, no PR ever opened, absent from `main` and from this branch. Its
+target was the 2026-09-17 vector direction that M2 records as superseded. The
+hazard was that it **reads as current**; the banner is the fix, and the document
+below it is unedited (39 inserted lines, 0 deleted).
+
+Four sections are named in the banner as outliving the vector approach: **§1.5**
+(absolute view UV, since landed as Stage A step 4), **Q3** persistence — carrying
+its own rev-5 correction that `anno_meta` does *not* ride into the persisted
+cache — **Q5** provenance, and **D2**, which records that `anno_meta` already
+carries a bbox and that it is **unverified**.
+
+D2 is the one with a live consequence and it is **raised, not closed**: M5 has
+just made bbox a primitive, and there is an existing unverified bbox on the
+annotation record. Whether that field is the primitive or merely shares its name
+is not established here.
