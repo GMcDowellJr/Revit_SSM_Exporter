@@ -290,14 +290,20 @@ returned nothing to read it from — is **not** treated as a pass.
 own `success` and `failure_reason`, so a capture production called invalid came
 back `RAN`.)
 
-> **The persisted annotation sidecar now carries `capture_faults`.** Production
-> serialised `state_out` about a hundred lines *before* it computed them, so the
-> file never had them — only the returned in-memory metadata did, and any
-> consumer reading the file saw a faulted capture as a clean one. Fixed at
-> `dcb4e65`+, with `failure_reason` persisted beside the list it is derived
-> from. The analyzer still prefers the probe's combined record and **says which
-> source it used**, because a sidecar written by an earlier build has no such
-> key — and an absent key is reported as `UNKNOWN`, not `none`.
+> **The persisted annotation sidecar does NOT carry `capture_faults`, and that
+> is fixed in its own PR.** Production serialises `state_out` about a hundred
+> lines *before* it computes them, so the file never has them — only the returned
+> in-memory metadata does, and any consumer reading the file sees a faulted
+> capture as a clean one, on every Stage A run rather than just this probe's.
+> Because it is not this probe's defect it was **split out to PR #216**, where it
+> carries its own tests and its own mutation record.
+>
+> **This probe is unaffected either way, which is why the split was free.** The
+> combined record reads `capture_faults` from `anno_out["metadata"]` — the
+> returned value, never the file — and the analyzer prefers the combined record
+> and **says which source it used**. A sidecar with no such key reads `UNKNOWN`,
+> not `none`. So section 0 is correct on a round-2 run whether or not #216 has
+> landed; what the sidecar alone cannot tell you is stated rather than assumed.
 
 ### A variant that did not MEASURE its candidate
 

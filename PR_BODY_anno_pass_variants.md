@@ -203,12 +203,21 @@ Two fixes, and the sidecar says which carries the weight:
 failing is not the same as not happening, and halftone changes exported colour.
 
 Also: the sidecar gains `model_suppression_mode`, `applied_smooth_edges`,
-`smooth_edges_read_error`, `category_halftone_outcomes` and — see review round 2
-below — `capture_faults` and `failure_reason` **persisted**, which had never been
-written to any Stage A annotation sidecar. One **recording**
+`smooth_edges_read_error` and `category_halftone_outcomes`. One **recording**
 `ViewDisplayModel` dispose helper replaces what would have been three more
 `except Exception: pass` copies. And `_export_tiff`'s `dim_check` gets a **TODO
 citing F4 and nothing else**.
+
+**No longer here: the `capture_faults` persistence fix, now
+[PR #216](https://github.com/GMcDowellJr/Revit_SSM_Exporter/pull/216).** Review
+round 2 found that production serialises `state_out` a hundred lines before it
+computes `capture_faults`, so the persisted sidecar never carries them — on every
+Stage A annotation run, not just this probe's. Since it is not this probe's defect
+it was split out at Greg's request, with its own three tests and its own mutation
+record against `main`. **This branch is unaffected:** the combined record reads
+faults from the returned metadata, never the file, and the analyzer prefers the
+combined record while saying which source it used. Only a pointer comment at the
+assignment site remains here, and it goes when #216 lands.
 
 ---
 
@@ -549,17 +558,17 @@ is now checked first, such a variant concludes `CAPTURE_FAILED`, and a
 
 **P1 — the analyzer's section 0 printed `none` for exactly the failed captures
 it exists to expose.** Root cause was a **production** defect, not an analyzer
-one: `export_annotation_color_id_buffer_view` serialised `state_out` about a
-hundred lines before it computed `capture_faults`, so the persisted sidecar never
-carried them — the same serialize-before-finalize shape as round 1's P2, one file
+one: `export_annotation_color_id_buffer_view` serialises `state_out` about a
+hundred lines before it computes `capture_faults`, so the persisted sidecar never
+carries them — the same serialize-before-finalize shape as round 1's P2, one file
 over, and affecting every Stage A annotation sidecar rather than just this
-probe's. Fixed on both sides: production writes the sidecar *after* the faults
-are assigned (with `failure_reason` persisted beside them), and the analyzer
-prefers the probe's combined record while **saying which source it used**,
-because a sidecar from an earlier build has no such key. An absent key reads
-`UNKNOWN`, not `none`. The new test drives the **real** production function,
-forces a lattice mismatch and reads the file back — the review was right that
-injecting faults into a synthetic sidecar binds nothing.
+probe's. **The production half of that fix now lives in
+[PR #216](https://github.com/GMcDowellJr/Revit_SSM_Exporter/pull/216)**, split out
+because it is not this probe's defect; the test that drives the real function and
+reads the file back went with it. What stays here is the analyzer half, which is
+this probe's: it prefers the combined record while **saying which source it
+used**, because a sidecar from an earlier build has no such key, and an absent
+key reads `UNKNOWN`, not `none`.
 
 **P2 — a zero fitted slope raised `ZeroDivisionError`.** Confirmed reachable:
 `fit_axis` returns `None` only when the *sample* values have no spread, and
