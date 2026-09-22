@@ -170,7 +170,7 @@ def _model_pass_elements(elements):
             and int(e.OwnerViewId.IntegerValue) == -1]
 
 
-def _run_both_passes(tmp_path, elements=None, view=None):
+def _run_both_passes(tmp_path, elements=None, view=None, between=None):
     """Run the model pass, then the annotation pass on ITS geometry.
 
     Returns (model_result, anno_result, geom, doc, view, diag).
@@ -191,6 +191,12 @@ def _run_both_passes(tmp_path, elements=None, view=None):
             doc, view, elements=_model_pass_elements(elements), cfg=cfg, diag=diag,
             raster=_raster(), elem_cache=None, geometry_out=geom,
         )
+        # ``between`` runs with the model pass's geometry in hand and before
+        # the annotation pass reads it. It exists so a test can perturb that
+        # handoff -- which is the only place some faults can be provoked from
+        # -- without reimplementing this harness beside it.
+        if between is not None:
+            between(geom)
         # The annotation pass gets the WHOLE view and splits it itself: its
         # membership rule is OwnerViewId, not whatever a collector handed it.
         anno_result = color_id_buffer.export_annotation_color_id_buffer_view(
@@ -691,3 +697,94 @@ def test_the_model_pass_still_runs_without_a_geometry_out(tmp_path):
             diag=FakeDiag(), raster=_raster(), elem_cache=None,
         )
     assert result["success"] is True
+
+
+# --- the PERSISTED sidecar is the same record as the returned metadata ------
+
+def test_the_persisted_annotation_sidecar_carries_capture_faults(tmp_path):
+    """THE PRODUCER/CONSUMER CONTRACT, driven through real production.
+
+    ``state_out`` was serialised 101 lines BEFORE ``capture_faults`` was
+    computed, so the persisted sidecar never carried them: in the FILE, a
+    capture with faults was indistinguishable from one with none. Only the
+    returned in-memory metadata was right, and every consumer that reads the
+    file rather than the return value saw the wrong answer -- for every Stage A
+    annotation run, not just one caller's.
+
+    This drives the real function, forces a fault, and then READS THE FILE
+    BACK. A test that injects ``capture_faults`` into a synthetic sidecar
+    cannot bind this: it asserts on a fixture the producer never wrote. Same
+    reason the write site is exercised rather than the formula -- CLAUDE.md's
+    "exercise the call site" corollary, one file over.
+    """
+    def force_a_lattice_mismatch(geom):
+        # A fault that is neither a restore failure nor anything the caller
+        # configured: tell the annotation pass the model export came back at a
+        # width the shared lattice does not require.
+        geom["model_accepted_px"] = int(geom["requested_px"]) + 7
+
+    model_result, anno_result, geom, doc, view, diag = _run_both_passes(
+        tmp_path, between=force_a_lattice_mismatch)
+
+    assert anno_result["success"] is False
+    assert anno_result["failure_reason"] == "annotation_lattice_mismatch"
+    faults_in_memory = anno_result["metadata"]["capture_faults"]
+    assert faults_in_memory, "the in-memory metadata must carry the fault"
+
+    # AND THE FILE SAYS THE SAME THING. This is the assertion that was false.
+    with open(anno_result["sidecar_path"]) as handle:
+        persisted = json.load(handle)
+    assert persisted["capture_faults"] == faults_in_memory
+    assert persisted["failure_reason"] == "annotation_lattice_mismatch"
+
+
+def test_a_clean_annotation_capture_persists_an_empty_fault_list(tmp_path):
+    """THE CONTROL. An absent key and an empty list are different facts.
+
+    Without this, the assertion above would also pass against a producer that
+    wrote ``capture_faults`` only when non-empty -- and a consumer could not
+    then tell a clean capture from one written by an older build that never
+    wrote the key at all. That is the distinction the reader has to make, so it
+    is the one that needs pinning.
+    """
+    model_result, anno_result, geom, doc, view, diag = _run_both_passes(tmp_path)
+
+    assert anno_result["success"] is True
+    assert anno_result["failure_reason"] is None
+    with open(anno_result["sidecar_path"]) as handle:
+        persisted = json.load(handle)
+    assert "capture_faults" in persisted
+    assert persisted["capture_faults"] == []
+    assert "failure_reason" in persisted
+    assert persisted["failure_reason"] is None
+
+
+def test_the_model_passs_own_sidecar_is_also_final_when_written(tmp_path):
+    """The SAME contract on the OTHER pass, so the pair is checked together.
+
+    The model pass's dump was already after its last ``state_out`` assignment,
+    but "already correct" is not a thing to assume about the file one function
+    over from the one that was wrong -- that is how the defect got its second
+    instance. Asserting it here means a future edit that moves either write
+    above its record has a test to fail.
+    """
+    model_result, anno_result, geom, doc, view, diag = _run_both_passes(tmp_path)
+
+    with open(model_result["sidecar_path"]) as handle:
+        persisted = json.load(handle)
+
+    # Compared THROUGH json, not against the live dict, and the reason is a
+    # real difference a consumer has to know about: this record has INTEGER
+    # dict keys (category ids), and json turns every key into a string. So
+    # ``metadata[-2000460]`` works and ``persisted[-2000460]`` raises KeyError
+    # on the same fact. The round trip is what "the file holds this record"
+    # can honestly mean; naming it here beats a bare == that would fail for a
+    # reason unrelated to whether the write is final.
+    assert persisted == json.loads(json.dumps(model_result["metadata"],
+                                              sort_keys=True))
+
+    # And the same for the annotation pass, which is the one that was wrong.
+    with open(anno_result["sidecar_path"]) as handle:
+        persisted_anno = json.load(handle)
+    assert persisted_anno == json.loads(json.dumps(anno_result["metadata"],
+                                                   sort_keys=True))
