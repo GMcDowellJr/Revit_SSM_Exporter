@@ -4673,7 +4673,24 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     #           transaction and after the DisplayStyle change, which is the
     #           only ordering a caller cannot arrange from outside.
     #
-    # An unknown suppression mode is raised, not defaulted: the mode decides
+    #   color_id_buffer_anno_crop_mode
+    #       "frame_b" (default) -- set view.CropBox to frame B and
+    #           CropBoxActive True for the export, then restore both, as
+    #           shipped.
+    #       "untouched"         -- write NEITHER CropBox NOR CropBoxActive,
+    #           in either direction. Round 1 measured why this exists: datum
+    #           extents clip to the crop, so widening it to B LENGTHENS level
+    #           and grid lines, walks their heads outward and pulls in content
+    #           from beyond the authored crop. A capture that moves the crop
+    #           is not a capture of the drawing. Under this mode B is not an
+    #           instruction to Revit, so the rendered rectangle is Revit's
+    #           choice and is NOT recorded as known: registration.rendered_uv
+    #           is None with the reason, and it has to be MEASURED (the probe
+    #           does that with fiducials). The requested pixel count is the
+    #           model pass's own crop_px on the requested axis, so a render
+    #           that does honour the authored crop lands on the model lattice.
+    #
+    # An unknown suppression or crop mode is raised, not defaulted: the mode decides
     # whether this capture's central claim -- "the annotation TIFF is
     # annotation on white" -- was arranged by this function or by its caller,
     # and a typo silently falling back to "hide_categories" would make a
@@ -4687,14 +4704,31 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     suppress_model_categories_here = (anno_model_suppression == "hide_categories")
     anno_smooth_edges_off = bool(
         getattr(cfg, "color_id_buffer_anno_smooth_edges_off", False))
+    anno_crop_mode = str(getattr(cfg, "color_id_buffer_anno_crop_mode", "frame_b"))
+    if anno_crop_mode not in ("frame_b", "untouched"):
+        raise ValueError(
+            "color_id_buffer_anno_crop_mode must be 'frame_b' or 'untouched', "
+            "got {0!r}".format(anno_crop_mode))
+    write_crop_here = (anno_crop_mode == "frame_b")
 
     # THE FRAME, not the crop. This is the one line that makes this pass a
     # different capture from the model one: it renders B whole, at the same
     # feet-per-pixel the model pass rendered A at.
     frame_uv = tuple(float(v) for v in geom["frame_snapped_uv"])
     frame_px = tuple(int(v) for v in geom["frame_px"])
-    pixel_size = frame_px[1] if vertical else frame_px[0]
     requested_axis = "height" if vertical else "width"
+    if write_crop_here:
+        pixel_size = frame_px[1] if vertical else frame_px[0]
+        requested_px_source = "frame_px"
+    else:
+        # The crop is the view's own, so B's pixel count would describe a
+        # rectangle this capture never asks for. The model pass's crop_px is
+        # the count it rendered the (snapped) authored crop at; requesting it
+        # is what makes "does Revit render the authored crop" answerable as
+        # "does this image land on the model lattice".
+        crop_px = tuple(int(v) for v in geom["crop_px"])
+        pixel_size = crop_px[1] if vertical else crop_px[0]
+        requested_px_source = "model_crop_px"
 
     # ---- collection and membership ------------------------------------
     membership_error = None
@@ -5008,42 +5042,45 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
             for cat_id_int in model_category_hidden_state:
                 view.SetCategoryHidden(ElementId(int(cat_id_int)), True)
 
-        # THE CROP IS B. The model pass cropped to A; this one restores the
-        # full frame, so every annotation the frame was expanded to hold is
-        # inside the rendered rectangle by construction.
-        try:
-            # The SAME basis the bbox records were projected through,
-            # resolved once above. Rebuilding it here would let the record
-            # and the frame it is meant to register against disagree.
-            basis = annotation_view_basis
-            if basis is None:
-                from .revit.view_basis import make_view_basis as _make_view_basis
-                basis = _make_view_basis(view, diag=diag)
-            from .revit.view_basis import crop_box_from_uv_bounds as _crop_box_from_uv_bounds
-            new_crop_box = _crop_box_from_uv_bounds(
-                view, basis, frame_uv[0], frame_uv[1], frame_uv[2], frame_uv[3])
-            if new_crop_box is not None:
-                view.CropBox = new_crop_box
-                view.CropBoxActive = True
-                crop_bounds_xy = tuple(float(v) for v in frame_uv)
-            elif diag is not None:
-                diag.warn(
-                    phase="color_id_buffer",
-                    callsite="annotation_crop_box_set",
-                    message="View has no CropBox; the annotation export falls back to "
-                            "FitToPage's auto-computed extent, which is NOT frame B and "
-                            "will not register against the model capture",
-                    view_id=view_id,
-                )
-        except Exception as ex:
-            crop_bounds_xy = None
-            if diag is not None:
-                diag.warn(
-                    phase="color_id_buffer",
-                    callsite="annotation_crop_box_set",
-                    message=str(ex),
-                    view_id=view_id,
-                )
+        # THE CROP IS B -- under "frame_b" only. The model pass cropped to A;
+        # this one restores the full frame, so every annotation the frame was
+        # expanded to hold is inside the rendered rectangle by construction.
+        # Under "untouched" this block does not run at all: no CropBox write,
+        # no CropBoxActive write, and so nothing for the restore to put back.
+        if write_crop_here:
+            try:
+                # The SAME basis the bbox records were projected through,
+                # resolved once above. Rebuilding it here would let the record
+                # and the frame it is meant to register against disagree.
+                basis = annotation_view_basis
+                if basis is None:
+                    from .revit.view_basis import make_view_basis as _make_view_basis
+                    basis = _make_view_basis(view, diag=diag)
+                from .revit.view_basis import crop_box_from_uv_bounds as _crop_box_from_uv_bounds
+                new_crop_box = _crop_box_from_uv_bounds(
+                    view, basis, frame_uv[0], frame_uv[1], frame_uv[2], frame_uv[3])
+                if new_crop_box is not None:
+                    view.CropBox = new_crop_box
+                    view.CropBoxActive = True
+                    crop_bounds_xy = tuple(float(v) for v in frame_uv)
+                elif diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite="annotation_crop_box_set",
+                        message="View has no CropBox; the annotation export falls back to "
+                                "FitToPage's auto-computed extent, which is NOT frame B and "
+                                "will not register against the model capture",
+                        view_id=view_id,
+                    )
+            except Exception as ex:
+                crop_bounds_xy = None
+                if diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite="annotation_crop_box_set",
+                        message=str(ex),
+                        view_id=view_id,
+                    )
 
         if orig_display_style is not None:
             try:
@@ -5322,7 +5359,10 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
                 view.DisplayStyle = orig_display_style
             _restore_step("annotation_restore_display_style", _restore_display_style)
 
-        if orig_crop_box is not None:
+        # Only a crop this pass WROTE is written back. Under "untouched" the
+        # crop was never touched, and a restore write here would be this pass
+        # writing CropBox in a mode whose whole contract is that it does not.
+        if write_crop_here and orig_crop_box is not None:
             def _restore_crop_box():
                 view.CropBox = orig_crop_box
                 view.CropBoxActive = orig_crop_box_active
@@ -5485,6 +5525,23 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
             # the crop could not be applied, which is the only thing that
             # distinguishes "B was rendered" from "FitToPage chose something".
             "rendered_uv": (list(crop_bounds_xy) if crop_bounds_xy is not None else None),
+            # "frame_b" or "untouched". Under "untouched" rendered_uv is None
+            # BY CONSTRUCTION -- nothing was handed to Revit -- and that is a
+            # different fact from a frame_b crop that failed to apply, which
+            # rendered_uv_reason is what says.
+            "crop_mode": anno_crop_mode,
+            "rendered_uv_reason": (
+                None if crop_bounds_xy is not None else (
+                    "crop_mode 'untouched': the view's authored crop was left as "
+                    "found and no rectangle was handed to Revit, so the rendered "
+                    "rectangle is Revit's choice and must be MEASURED (fiducials), "
+                    "not read from this record"
+                    if not write_crop_here else
+                    "frame B could not be applied as the view crop")),
+            # Which recorded count the requested axis was set from: "frame_px"
+            # (B's, frame_b mode) or "model_crop_px" (the model pass's own
+            # crop count, untouched mode).
+            "requested_px_source": requested_px_source,
         },
         "membership": membership,
         "color_assignment_map": {
@@ -5608,7 +5665,11 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         # annotations. It is not the same fact.
         _fault("annotation_collection_failed", membership_error)
 
-    if crop_bounds_xy is None:
+    if write_crop_here and crop_bounds_xy is None:
+        # Under "untouched" there is no frame to have failed to apply: the
+        # capture never claims to render B, and registration.rendered_uv_reason
+        # says so. Only a frame_b capture that DID claim it can break it.
+        #
         # The capture fell back to FitToPage's automatic extent. The
         # diagnostic above already says that extent is not frame B and will
         # not register -- so returning it as a successful annotation buffer

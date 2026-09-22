@@ -786,3 +786,139 @@ def test_round_ones_refusal_came_after_a_SUCCESSFUL_suppress_write():
     assert record["restore"] == "not_overridable"
     assert anno["metadata"]["restore_failures"] == []
     assert anno["success"] is True
+
+
+# ======================================================================
+# P2 (round 2 revised): color_id_buffer_anno_crop_mode = "untouched"
+# ======================================================================
+#
+# Round 1 measured why this exists: the shipped pass widens view.CropBox to
+# frame B, and datum extents clip to the crop -- so every capture taken so far
+# lengthened level and grid lines and pulled in content from beyond the
+# authored crop. Under "untouched" the pass writes NEITHER CropBox NOR
+# CropBoxActive, in either direction.
+#
+# Wired to these mutations of color_id_buffer.py, each of which turns a test
+# here red: make ``write_crop_here`` unconditionally True (the untouched tests
+# see a write), unconditionally False (the control sees none), drop the guard
+# on the restore step (untouched sees the restore write), or drop the guard on
+# the ``annotation_frame_not_applied`` fault (untouched fails its capture).
+
+class _CropRecordingView(FakeViewPlan):
+    """Records every CropBox / CropBoxActive assignment once ``recording``."""
+
+    def __init__(self, view_id, name="TestPlan"):
+        object.__setattr__(self, "recording", False)
+        object.__setattr__(self, "crop_writes", [])
+        FakeViewPlan.__init__(self, view_id, name)
+
+    def __setattr__(self, name, value):
+        if name in ("CropBox", "CropBoxActive") and self.recording:
+            self.crop_writes.append(name)
+        object.__setattr__(self, name, value)
+
+
+def _run_crop_mode(tmp_path, crop_mode=None, suppression="external"):
+    elements = _elements()
+    view = _CropRecordingView(view_id=VIEW_ID)
+    doc = _SizedDoc(elements=elements, link_instances=[],
+                    categories=[MODEL_CAT, OTHER_MODEL_CAT, ANNO_CAT])
+    cfg = Config()
+    cfg.include_linked_rvt = False
+    cfg.debug_dump_path = str(tmp_path)
+    cfg.color_id_buffer_anno_model_suppression = suppression
+    if crop_mode is not None:
+        cfg.color_id_buffer_anno_crop_mode = crop_mode
+    diag = FakeDiag()
+    geom = {}
+    at_export = {}
+    with install_fake_revit_db():
+        color_id_buffer.export_color_id_buffer_view(
+            doc, view, elements=_model_pass_elements(elements), cfg=cfg,
+            diag=diag, raster=_raster(), elem_cache=None, geometry_out=geom)
+        # The MODEL pass writes and restores the crop too (to A); only the
+        # annotation pass's writes are this switch's business.
+        authored_box = view.CropBox
+        view.recording = True
+
+        def _observe(opts):
+            at_export["crop_box"] = view.CropBox
+            at_export["pixel_size"] = int(opts.PixelSize)
+
+        doc.on_export_image = _observe
+        anno = color_id_buffer.export_annotation_color_id_buffer_view(
+            doc, view, cfg, geom, diag=diag, raster=_raster(), elements=elements)
+    return anno, view, geom, at_export, authored_box
+
+
+def test_control_by_default_the_pass_writes_frame_b_as_the_crop(tmp_path):
+    """The control: the DEFAULT position is the shipped one, which writes the
+    crop and restores it. Without this, every 'untouched' assertion below would
+    also pass against a switch stuck in the untouched position."""
+    anno, view, geom, at_export, authored = _run_crop_mode(tmp_path)
+    assert "CropBox" in view.crop_writes and "CropBoxActive" in view.crop_writes
+    assert at_export["crop_box"] is not authored, (
+        "the shipped pass must have replaced the crop while the export ran")
+    registration = anno["metadata"]["registration"]
+    assert registration["crop_mode"] == "frame_b"
+    assert registration["rendered_uv"] == [float(v) for v in geom["frame_snapped_uv"]]
+    assert registration["requested_px_source"] == "frame_px"
+    assert at_export["pixel_size"] == int(geom["frame_px"][0])
+
+
+def test_untouched_crop_mode_writes_neither_crop_property_in_either_direction(tmp_path):
+    anno, view, geom, at_export, authored = _run_crop_mode(
+        tmp_path, crop_mode="untouched")
+    assert view.crop_writes == [], (
+        "under 'untouched' the annotation pass must not write CropBox or "
+        "CropBoxActive -- not to set frame B and not to restore it")
+    # And the export SAW the authored crop, the only discriminating reading.
+    assert at_export["crop_box"] is authored
+    assert anno["metadata"]["registration"]["crop_mode"] == "untouched"
+
+
+def test_untouched_crop_mode_records_the_rendered_rectangle_as_unknown(tmp_path):
+    """None is the honest value: nothing was handed to Revit. The reason is what
+    separates it from a frame_b crop that failed to apply."""
+    anno, view, geom, at_export, authored = _run_crop_mode(
+        tmp_path, crop_mode="untouched")
+    registration = anno["metadata"]["registration"]
+    assert registration["rendered_uv"] is None
+    assert "untouched" in registration["rendered_uv_reason"]
+    assert "MEASURED" in registration["rendered_uv_reason"]
+
+
+def test_untouched_crop_mode_is_not_an_annotation_frame_not_applied_fault(tmp_path):
+    """The capture never claims to render B, so there is no frame to have failed
+    to apply. A fault here would mark every untouched capture failed."""
+    anno, view, geom, at_export, authored = _run_crop_mode(
+        tmp_path, crop_mode="untouched")
+    faults = [f["fault"] for f in anno["metadata"]["capture_faults"]]
+    assert "annotation_frame_not_applied" not in faults
+    assert anno["success"] is True, anno["metadata"]["capture_faults"]
+
+
+def test_untouched_crop_mode_requests_the_model_pass_crop_pixel_count(tmp_path):
+    """B's pixel count would describe a rectangle this capture never asks for.
+    The fixture's frame and crop differ in width, so the two candidates are
+    distinguishable -- a fixture where they were equal would pass either way."""
+    anno, view, geom, at_export, authored = _run_crop_mode(
+        tmp_path, crop_mode="untouched")
+    assert int(geom["crop_px"][0]) != int(geom["frame_px"][0])
+    assert at_export["pixel_size"] == int(geom["crop_px"][0])
+    assert anno["metadata"]["registration"]["requested_px_source"] == "model_crop_px"
+    assert anno["metadata"]["resolution"]["requested_pixel_size"] == int(geom["crop_px"][0])
+
+
+def test_an_unknown_crop_mode_raises_rather_than_defaulting(tmp_path):
+    with pytest.raises(ValueError) as excinfo:
+        _run_crop_mode(tmp_path, crop_mode="untuoched")
+    assert "color_id_buffer_anno_crop_mode" in str(excinfo.value)
+    assert "untuoched" in str(excinfo.value)
+
+
+def test_crop_mode_is_not_a_config_field():
+    """Probe-only, like the other two switches: no production default, no
+    to_dict() representation, no way to reach a production run."""
+    assert not hasattr(Config(), "color_id_buffer_anno_crop_mode")
+    assert "color_id_buffer_anno_crop_mode" not in Config().to_dict()
