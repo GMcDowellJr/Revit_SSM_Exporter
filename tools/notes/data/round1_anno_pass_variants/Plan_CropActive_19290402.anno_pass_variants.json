@@ -1,0 +1,5003 @@
+{
+  "authored_model_overrides": {
+    "authored_count": 0,
+    "authored_element_ids": [],
+    "candidate_count": 4598,
+    "capped": false,
+    "scan_max": 5000,
+    "scanned_count": 4598,
+    "state": "value",
+    "unreadable_count": 0
+  },
+  "conclusion": "RAN",
+  "frame_prime": {
+    "geom": {
+      "achieved_export_dpi": 149.98981638608365,
+      "achieved_fpp_ft": 0.05333695441967523,
+      "cap_applied": false,
+      "cap_applied_by_cap_axes": false,
+      "crop_is_frame": false,
+      "crop_offset_px": [
+        414,
+        404
+      ],
+      "crop_px": [
+        4820,
+        1625
+      ],
+      "crop_snapped_uv": [
+        -91.54836106589184,
+        2250.701328501089,
+        165.5357592369428,
+        2337.373879433061
+      ],
+      "floor_applied_to_crop": false,
+      "frame_extent_ft": [
+        303.8606293288898,
+        134.1600237653106
+      ],
+      "frame_fit_px": 5697,
+      "frame_px": [
+        5697,
+        2516
+      ],
+      "frame_snapped_uv": [
+        -113.62986019563739,
+        2229.15319891554,
+        190.2307691332524,
+        2363.348976235443
+      ],
+      "lattice_corrections": 0,
+      "max_axis_px": 10000,
+      "min_axis_px": 64,
+      "model_accepted_px": null,
+      "model_dim_check": null,
+      "pre_cap_derived_px": 2516,
+      "pre_cap_px": 5697,
+      "predicted_derived_px": 1625,
+      "requested_axis": "width",
+      "requested_export_dpi": 150.0,
+      "requested_fpp_ft": 0.05333333333333334,
+      "requested_px": 4820
+    },
+    "record": {
+      "annotation_member_count": 283,
+      "bbox_excursion_past_b_ft": {
+        "bottom": 6.864363160987068,
+        "count": 293,
+        "left": 7.079528110580142,
+        "right": 7.48091680016384,
+        "top": 6.007531726025718
+      },
+      "driver_count": 293,
+      "drivers_without_bbox": [
+        {
+          "bbox_source": "none",
+          "element_id": 19290405,
+          "key": "annotation_member:19290405",
+          "reason": "no bbox from get_BoundingBox(view) or get_BoundingBox(None)",
+          "role": "annotation_member"
+        }
+      ],
+      "drivers_without_bbox_count": 1,
+      "frame_b_prime_uv": [
+        -113.62986019563739,
+        2229.15319891554,
+        190.2307691332524,
+        2363.3132226808507
+      ],
+      "frame_b_uv": [
+        -102.55033208505725,
+        2240.017562076527,
+        178.74985233308857,
+        2353.305690954825
+      ],
+      "frame_px": [
+        5697,
+        2516
+      ],
+      "frame_snapped_uv": [
+        -113.62986019563739,
+        2229.15319891554,
+        190.2307691332524,
+        2363.348976235443
+      ],
+      "frame_source": "probe_expanded_frame_uv",
+      "lattice_relationship": {
+        "b_prime_achieved_export_dpi": 149.98981638608365,
+        "b_prime_achieved_fpp_ft": 0.05333695441967523,
+        "b_prime_cap_applied": false,
+        "b_prime_frame_px": [
+          5697,
+          2516
+        ],
+        "b_prime_requested_px": 4820,
+        "model_accepted_px": 4819,
+        "model_achieved_export_dpi": 149.98923689748682,
+        "model_achieved_fpp_ft": 0.05333716048884069,
+        "model_frame_px": [
+          5274,
+          2124
+        ],
+        "model_requested_px": 4819,
+        "note": "V3 renders B', the model pass rendered from B. These are the two lattices; production's model-lattice fault check is passed None and therefore skipped, because it would be comparing different frames.",
+        "shared_fpp": false
+      },
+      "margin_ft": 4.0,
+      "margin_paper_in": 0.5,
+      "per_side_delta_ft": {
+        "bottom": 10.864363160987068,
+        "left": 11.079528110580142,
+        "right": 11.48091680016384,
+        "top": 10.007531726025718
+      },
+      "per_side_delta_paper_in": {
+        "bottom": 1.3580453951233835,
+        "left": 1.3849410138225178,
+        "right": 1.43511460002048,
+        "top": 1.2509414657532147
+      },
+      "per_side_set_by": {
+        "bottom": "annotation_member:3694573",
+        "left": "viewer:6207877",
+        "right": "viewer:6207877",
+        "top": "annotation_member:3694573"
+      },
+      "viewer_categories": {
+        "collection": {
+          "state": "value",
+          "value": 11
+        },
+        "per_category_counts": {
+          "OST_CalloutBoundary": 0,
+          "OST_CalloutHeads": 0,
+          "OST_Callouts": 0,
+          "OST_Elev": 4,
+          "OST_ElevationMarks": 0,
+          "OST_ReferenceViewer": 0,
+          "OST_SectionHeads": 0,
+          "OST_Sections": 0,
+          "OST_Viewers": 7
+        },
+        "resolved_categories": {
+          "-2000198": "OST_ReferenceViewer",
+          "-2000200": "OST_Sections",
+          "-2000278": "OST_Viewers",
+          "-2000400": "OST_SectionHeads",
+          "-2000535": "OST_Elev",
+          "-2000537": "OST_Callouts",
+          "-2000538": "OST_CalloutHeads",
+          "-2000539": "OST_CalloutBoundary",
+          "-2006045": "OST_ElevationMarks"
+        },
+        "unreadable_category_count": 0,
+        "unresolved_category_names": []
+      },
+      "viewer_element_count": 11
+    },
+    "state": "value"
+  },
+  "inputs": {
+    "authored_override_scan_max": 5000,
+    "expanded_frame_margin_in": 0.5,
+    "export_dpi": 150.0,
+    "model_reexport_check": true,
+    "output_directory": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134",
+    "probe_directory": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe",
+    "selection": [
+      "v0_control",
+      "v0_offsets0",
+      "v1_white_filter",
+      "v2_white_filter_smooth_edges_off",
+      "v3_white_filter_smooth_edges_off_expanded_frame"
+    ],
+    "view_id": 19290402,
+    "view_name": "__Plan_CropActive",
+    "view_scale": 96.0,
+    "view_type": "1",
+    "white_filter_include_view_only_model_categories": false
+  },
+  "link_visibility": {
+    "instance_count": 0,
+    "instances": [],
+    "not_by_host_view_count": 0,
+    "state": "value"
+  },
+  "model_pass": {
+    "failure_reason": null,
+    "geometry": {
+      "achieved_export_dpi": 149.98923689748682,
+      "achieved_fpp_ft": 0.05333716048884069,
+      "cap_applied": false,
+      "crop_is_frame": false,
+      "crop_offset_px": [
+        207,
+        201
+      ],
+      "crop_px": [
+        4819,
+        1624
+      ],
+      "crop_snapped_uv": [
+        -91.50953986386723,
+        2250.738331334784,
+        165.52223653185607,
+        2337.3578799686616
+      ],
+      "frame_px": [
+        5274,
+        2124
+      ],
+      "frame_snapped_uv": [
+        -102.55033208505725,
+        2240.017562076527,
+        178.74985233308857,
+        2353.305690954825
+      ],
+      "model_accepted_px": 4819,
+      "model_dim_check": "pass",
+      "requested_px": 4819
+    },
+    "output_directory": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\model",
+    "sidecar_path": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\model\\color_id_buffer\\__Plan_CropActive_19290402.json",
+    "success": true,
+    "tiff_path": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\model\\color_id_buffer\\__Plan_CropActive_19290402.tiff",
+    "tiff_sha256": {
+      "state": "value",
+      "value": "ee9e812769ec2735292b7abd46d48e8f164e8100da927278b3e6cd3fc0b4b934"
+    }
+  },
+  "model_reexport_after_variants": {
+    "after_variants": {
+      "failure_reason": null,
+      "label": "after_variants",
+      "performed": true,
+      "sha256": {
+        "state": "value",
+        "value": "ee9e812769ec2735292b7abd46d48e8f164e8100da927278b3e6cd3fc0b4b934"
+      },
+      "success": true
+    },
+    "control": {
+      "failure_reason": null,
+      "label": "control",
+      "performed": true,
+      "sha256": {
+        "state": "value",
+        "value": "ee9e812769ec2735292b7abd46d48e8f164e8100da927278b3e6cd3fc0b4b934"
+      },
+      "success": true
+    },
+    "verdict": {
+      "after_variants_sha256": "ee9e812769ec2735292b7abd46d48e8f164e8100da927278b3e6cd3fc0b4b934",
+      "control_repeatable": true,
+      "control_sha256": "ee9e812769ec2735292b7abd46d48e8f164e8100da927278b3e6cd3fc0b4b934",
+      "original_sha256": "ee9e812769ec2735292b7abd46d48e8f164e8100da927278b3e6cd3fc0b4b934",
+      "status": "unchanged"
+    }
+  },
+  "model_repeat_control": {
+    "failure_reason": null,
+    "label": "control",
+    "performed": true,
+    "sha256": {
+      "state": "value",
+      "value": "ee9e812769ec2735292b7abd46d48e8f164e8100da927278b3e6cd3fc0b4b934"
+    },
+    "success": true
+  },
+  "paths": {
+    "annotation_sidecars": [
+      "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\v0_control\\color_id_buffer\\__Plan_CropActive_19290402_anno.json",
+      "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\v0_offsets0\\color_id_buffer\\__Plan_CropActive_19290402_anno.json",
+      "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\v1_white_filter\\color_id_buffer\\__Plan_CropActive_19290402_anno.json",
+      "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\v2_white_filter_smooth_edges_off\\color_id_buffer\\__Plan_CropActive_19290402_anno.json",
+      "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\v3_white_filter_smooth_edges_off_expanded_frame\\color_id_buffer\\__Plan_CropActive_19290402_anno.json"
+    ],
+    "annotation_tiffs": [
+      "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\v0_control\\color_id_buffer\\__Plan_CropActive_19290402_anno.tiff",
+      "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\v0_offsets0\\color_id_buffer\\__Plan_CropActive_19290402_anno.tiff",
+      "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\v1_white_filter\\color_id_buffer\\__Plan_CropActive_19290402_anno.tiff",
+      "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\v2_white_filter_smooth_edges_off\\color_id_buffer\\__Plan_CropActive_19290402_anno.tiff",
+      "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\v3_white_filter_smooth_edges_off_expanded_frame\\color_id_buffer\\__Plan_CropActive_19290402_anno.tiff"
+    ],
+    "combined_json": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\__Plan_CropActive_19290402.anno_pass_variants.json",
+    "model_sidecar": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\model\\color_id_buffer\\__Plan_CropActive_19290402.json",
+    "model_tiff": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\model\\color_id_buffer\\__Plan_CropActive_19290402.tiff"
+  },
+  "probe": {
+    "name": "stage_a_anno_pass_variants",
+    "target": "Revit 2025 / Dynamo 3.3 CPython3",
+    "version": "2026-09-22.1"
+  },
+  "report_finalized": true,
+  "unconfirmed_api_claims": [
+    "ViewCropRegionShapeManager.Left/Right/Top/BottomAnnotationCropOffset exist and are readable/writable (V0-offsets0 depends entirely on it)",
+    "ParameterFilterUtilities.GetAllFilterableCategories() exists (V1-V3 depend on it)",
+    "a rule-less ParameterFilterElement matches every element of its categories, so white line and pattern overrides suppress all model content the filter reaches",
+    "View.GetLinkOverrides(ElementId).LinkVisibilityType exists, so a link not displayed By Host View can be reported",
+    "setting View.DisplayStyle does not replace the ViewDisplayModel and discard a SmoothEdges written before it -- the production switch writes SmoothEdges AFTER DisplayStyle so this does not matter, but the claim is recorded because the ordering is the mitigation",
+    "ExportImage fits the crop box unioned with the extents of annotations drawn beyond it -- F1's primary hypothesis, which this probe measures rather than assumes"
+  ],
+  "variants": [
+    {
+      "annotation_pass": {
+        "applied_smooth_edges": "not_attempted",
+        "capture_faults": [
+          {
+            "detail": "2 restore step(s) raised",
+            "fault": "annotation_view_state_not_restored"
+          }
+        ],
+        "color_assignment_count": 283,
+        "elapsed_ms": 6915.4,
+        "failure_reason": "annotation_view_state_not_restored",
+        "model_suppression_mode": "hide_categories",
+        "output_directory": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\v0_control",
+        "resolution": {
+          "achieved_export_dpi": 149.98923689748682,
+          "actual_h": 2248,
+          "actual_w": 5274,
+          "backoff_stop_reason": null,
+          "dim_check": "pass",
+          "dim_check_attempts": [
+            {
+              "accepted_px": 5274,
+              "actual_h": 2248,
+              "actual_w": 5274,
+              "dim_check": "pass",
+              "dim_read_error": null,
+              "requested_px": 5274
+            }
+          ],
+          "dim_check_ceiling_px": 10000,
+          "dim_read_error": null,
+          "effective_export_dpi": 149.98923689748682,
+          "fit_direction": "horizontal",
+          "pixel_size": 5274,
+          "requested_axis": "width",
+          "requested_export_dpi": 150.0,
+          "requested_pixel_size": 5274,
+          "view_scale": 96.0
+        },
+        "sidecar_path": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\v0_control\\color_id_buffer\\__Plan_CropActive_19290402_anno.json",
+        "success": false,
+        "tiff_path": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\v0_control\\color_id_buffer\\__Plan_CropActive_19290402_anno.tiff",
+        "tiff_sha256": {
+          "state": "value",
+          "value": "b047a74190ab756be5bb68b171ae4d39a21ac31b9950cdb4e33a9dc7e6f133ed"
+        }
+      },
+      "conclusion": "RAN",
+      "document_safe": true,
+      "document_safe_detail": {
+        "after_explicit_restore": "restored",
+        "after_rollback": "restored",
+        "rollback_succeeded": true
+      },
+      "exceptions": [],
+      "frame": {
+        "frame_px": [
+          5274,
+          2124
+        ],
+        "frame_snapped_uv": [
+          -102.55033208505725,
+          2240.017562076527,
+          178.74985233308857,
+          2353.305690954825
+        ],
+        "frame_source": "model_pass_geom"
+      },
+      "measurement": {
+        "checked": [
+          "model_suppression_mode == 'hide_categories'"
+        ],
+        "measured": true,
+        "unmet": []
+      },
+      "model_tiff": {
+        "matches_pre_variant": true,
+        "path": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\model\\color_id_buffer\\__Plan_CropActive_19290402.tiff",
+        "sha256": {
+          "state": "value",
+          "value": "ee9e812769ec2735292b7abd46d48e8f164e8100da927278b3e6cd3fc0b4b934"
+        }
+      },
+      "plan": {
+        "expanded_frame": false,
+        "model_suppression": "hide_categories",
+        "smooth_edges_off": false,
+        "variant": "v0_control",
+        "white_filter": false,
+        "zero_annotation_crop_offsets": false
+      },
+      "pre_state": {},
+      "restore": {
+        "after_explicit_restore": {
+          "annotation_crop_offsets": {
+            "status": "restored"
+          },
+          "crop_box": {
+            "status": "restored"
+          },
+          "display_style": {
+            "status": "restored"
+          },
+          "model_category_visibility": {
+            "status": "restored"
+          },
+          "overall": "restored",
+          "smooth_edges": {
+            "status": "restored"
+          },
+          "view_filters": {
+            "status": "restored"
+          },
+          "view_template_id": {
+            "status": "restored"
+          }
+        },
+        "after_rollback": {
+          "annotation_crop_offsets": {
+            "status": "restored"
+          },
+          "crop_box": {
+            "status": "restored"
+          },
+          "display_style": {
+            "status": "restored"
+          },
+          "model_category_visibility": {
+            "status": "restored"
+          },
+          "overall": "restored",
+          "smooth_edges": {
+            "status": "restored"
+          },
+          "view_filters": {
+            "status": "restored"
+          },
+          "view_template_id": {
+            "status": "restored"
+          }
+        },
+        "explicit_step_errors": []
+      },
+      "skipped": false,
+      "snapshot_after_explicit_restore": {
+        "annotation_crop_active": {
+          "reason": "View has no AnnotationCropActive on this Revit host",
+          "state": "unavailable"
+        },
+        "annotation_crop_offsets": {
+          "state": "value",
+          "value": {
+            "BottomAnnotationCropOffset": 0.08333333333333333,
+            "LeftAnnotationCropOffset": 0.08333333333333333,
+            "RightAnnotationCropOffset": 0.08333333333333333,
+            "TopAnnotationCropOffset": 0.08333333333333333
+          }
+        },
+        "crop_box": {
+          "state": "value",
+          "value": {
+            "active": true,
+            "max": [
+              165.49485231475583,
+              2337.3310543423245,
+              -0.0
+            ],
+            "min": [
+              -91.46926561670251,
+              2250.749394451395,
+              -100.0
+            ]
+          }
+        },
+        "display_style": "2",
+        "model_category_visibility": {
+          "state": "value",
+          "value": {
+            "hidden_by_id": {
+              "-2000011": false,
+              "-2000014": false,
+              "-2000023": false,
+              "-2000032": false,
+              "-2000035": false,
+              "-2000038": false,
+              "-2000051": false,
+              "-2000080": true,
+              "-2000100": false,
+              "-2000120": false,
+              "-2000126": false,
+              "-2000151": false,
+              "-2000160": false,
+              "-2000170": false,
+              "-2000171": false,
+              "-2000180": false,
+              "-2000196": true,
+              "-2000269": true,
+              "-2000340": false,
+              "-2000560": false,
+              "-2000996": false,
+              "-2001000": false,
+              "-2001036": false,
+              "-2001039": false,
+              "-2001040": false,
+              "-2001043": false,
+              "-2001046": false,
+              "-2001049": false,
+              "-2001052": false,
+              "-2001055": false,
+              "-2001058": false,
+              "-2001060": false,
+              "-2001079": false,
+              "-2001100": true,
+              "-2001107": false,
+              "-2001120": false,
+              "-2001140": false,
+              "-2001160": false,
+              "-2001180": false,
+              "-2001220": false,
+              "-2001260": false,
+              "-2001300": false,
+              "-2001320": false,
+              "-2001327": false,
+              "-2001330": false,
+              "-2001336": false,
+              "-2001340": true,
+              "-2001350": false,
+              "-2001352": false,
+              "-2001354": false,
+              "-2001360": false,
+              "-2001370": false,
+              "-2002000": false,
+              "-2003200": false,
+              "-2003400": true,
+              "-2003600": false,
+              "-2006130": false,
+              "-2006131": false,
+              "-2006133": false,
+              "-2006135": false,
+              "-2006138": false,
+              "-2006241": false,
+              "-2006261": false,
+              "-2006271": false,
+              "-2006274": false,
+              "-2008000": false,
+              "-2008010": false,
+              "-2008013": false,
+              "-2008016": false,
+              "-2008020": false,
+              "-2008039": false,
+              "-2008044": false,
+              "-2008049": false,
+              "-2008050": false,
+              "-2008055": false,
+              "-2008075": false,
+              "-2008077": false,
+              "-2008079": false,
+              "-2008081": false,
+              "-2008083": true,
+              "-2008085": false,
+              "-2008087": false,
+              "-2008099": false,
+              "-2008107": false,
+              "-2008122": false,
+              "-2008123": false,
+              "-2008124": false,
+              "-2008126": false,
+              "-2008128": false,
+              "-2008130": false,
+              "-2008132": false,
+              "-2008160": false,
+              "-2008161": false,
+              "-2008193": false,
+              "-2008203": false,
+              "-2008208": false,
+              "-2008212": false,
+              "-2008228": false,
+              "-2008231": false,
+              "-2008232": false,
+              "-2008234": false,
+              "-2009000": false,
+              "-2009003": false,
+              "-2009009": false,
+              "-2009016": false,
+              "-2009017": false,
+              "-2009030": false,
+              "-2009060": false,
+              "-2010001": false,
+              "18342394": true,
+              "18342628": true,
+              "18728599": true
+            },
+            "unreadable": []
+          }
+        },
+        "smooth_edges": {
+          "state": "value",
+          "value": false
+        },
+        "view_filters": {
+          "state": "value",
+          "value": {
+            "13659508": {
+              "enabled": true,
+              "visible": false
+            },
+            "1607615": {
+              "enabled": true,
+              "visible": true
+            },
+            "17568058": {
+              "enabled": true,
+              "visible": false
+            },
+            "6673771": {
+              "enabled": true,
+              "visible": true
+            },
+            "7000049": {
+              "enabled": true,
+              "visible": true
+            },
+            "7259245": {
+              "enabled": true,
+              "visible": false
+            },
+            "7600584": {
+              "enabled": true,
+              "visible": false
+            },
+            "7801658": {
+              "enabled": true,
+              "visible": false
+            },
+            "8588944": {
+              "enabled": true,
+              "visible": false
+            }
+          }
+        },
+        "view_template_id": -1
+      },
+      "snapshot_after_rollback": {
+        "annotation_crop_active": {
+          "reason": "View has no AnnotationCropActive on this Revit host",
+          "state": "unavailable"
+        },
+        "annotation_crop_offsets": {
+          "state": "value",
+          "value": {
+            "BottomAnnotationCropOffset": 0.08333333333333333,
+            "LeftAnnotationCropOffset": 0.08333333333333333,
+            "RightAnnotationCropOffset": 0.08333333333333333,
+            "TopAnnotationCropOffset": 0.08333333333333333
+          }
+        },
+        "crop_box": {
+          "state": "value",
+          "value": {
+            "active": true,
+            "max": [
+              165.49485231475583,
+              2337.3310543423245,
+              -0.0
+            ],
+            "min": [
+              -91.46926561670251,
+              2250.749394451395,
+              -100.0
+            ]
+          }
+        },
+        "display_style": "2",
+        "model_category_visibility": {
+          "state": "value",
+          "value": {
+            "hidden_by_id": {
+              "-2000011": false,
+              "-2000014": false,
+              "-2000023": false,
+              "-2000032": false,
+              "-2000035": false,
+              "-2000038": false,
+              "-2000051": false,
+              "-2000080": true,
+              "-2000100": false,
+              "-2000120": false,
+              "-2000126": false,
+              "-2000151": false,
+              "-2000160": false,
+              "-2000170": false,
+              "-2000171": false,
+              "-2000180": false,
+              "-2000196": true,
+              "-2000269": true,
+              "-2000340": false,
+              "-2000560": false,
+              "-2000996": false,
+              "-2001000": false,
+              "-2001036": false,
+              "-2001039": false,
+              "-2001040": false,
+              "-2001043": false,
+              "-2001046": false,
+              "-2001049": false,
+              "-2001052": false,
+              "-2001055": false,
+              "-2001058": false,
+              "-2001060": false,
+              "-2001079": false,
+              "-2001100": true,
+              "-2001107": false,
+              "-2001120": false,
+              "-2001140": false,
+              "-2001160": false,
+              "-2001180": false,
+              "-2001220": false,
+              "-2001260": false,
+              "-2001300": false,
+              "-2001320": false,
+              "-2001327": false,
+              "-2001330": false,
+              "-2001336": false,
+              "-2001340": true,
+              "-2001350": false,
+              "-2001352": false,
+              "-2001354": false,
+              "-2001360": false,
+              "-2001370": false,
+              "-2002000": false,
+              "-2003200": false,
+              "-2003400": true,
+              "-2003600": false,
+              "-2006130": false,
+              "-2006131": false,
+              "-2006133": false,
+              "-2006135": false,
+              "-2006138": false,
+              "-2006241": false,
+              "-2006261": false,
+              "-2006271": false,
+              "-2006274": false,
+              "-2008000": false,
+              "-2008010": false,
+              "-2008013": false,
+              "-2008016": false,
+              "-2008020": false,
+              "-2008039": false,
+              "-2008044": false,
+              "-2008049": false,
+              "-2008050": false,
+              "-2008055": false,
+              "-2008075": false,
+              "-2008077": false,
+              "-2008079": false,
+              "-2008081": false,
+              "-2008083": true,
+              "-2008085": false,
+              "-2008087": false,
+              "-2008099": false,
+              "-2008107": false,
+              "-2008122": false,
+              "-2008123": false,
+              "-2008124": false,
+              "-2008126": false,
+              "-2008128": false,
+              "-2008130": false,
+              "-2008132": false,
+              "-2008160": false,
+              "-2008161": false,
+              "-2008193": false,
+              "-2008203": false,
+              "-2008208": false,
+              "-2008212": false,
+              "-2008228": false,
+              "-2008231": false,
+              "-2008232": false,
+              "-2008234": false,
+              "-2009000": false,
+              "-2009003": false,
+              "-2009009": false,
+              "-2009016": false,
+              "-2009017": false,
+              "-2009030": false,
+              "-2009060": false,
+              "-2010001": false,
+              "18342394": true,
+              "18342628": true,
+              "18728599": true
+            },
+            "unreadable": []
+          }
+        },
+        "smooth_edges": {
+          "state": "value",
+          "value": false
+        },
+        "view_filters": {
+          "state": "value",
+          "value": {
+            "13659508": {
+              "enabled": true,
+              "visible": false
+            },
+            "1607615": {
+              "enabled": true,
+              "visible": true
+            },
+            "17568058": {
+              "enabled": true,
+              "visible": false
+            },
+            "6673771": {
+              "enabled": true,
+              "visible": true
+            },
+            "7000049": {
+              "enabled": true,
+              "visible": true
+            },
+            "7259245": {
+              "enabled": true,
+              "visible": false
+            },
+            "7600584": {
+              "enabled": true,
+              "visible": false
+            },
+            "7801658": {
+              "enabled": true,
+              "visible": false
+            },
+            "8588944": {
+              "enabled": true,
+              "visible": false
+            }
+          }
+        },
+        "view_template_id": -1
+      },
+      "snapshot_before": {
+        "annotation_crop_active": {
+          "reason": "View has no AnnotationCropActive on this Revit host",
+          "state": "unavailable"
+        },
+        "annotation_crop_offsets": {
+          "state": "value",
+          "value": {
+            "BottomAnnotationCropOffset": 0.08333333333333333,
+            "LeftAnnotationCropOffset": 0.08333333333333333,
+            "RightAnnotationCropOffset": 0.08333333333333333,
+            "TopAnnotationCropOffset": 0.08333333333333333
+          }
+        },
+        "crop_box": {
+          "state": "value",
+          "value": {
+            "active": true,
+            "max": [
+              165.49485231475583,
+              2337.3310543423245,
+              -0.0
+            ],
+            "min": [
+              -91.46926561670251,
+              2250.749394451395,
+              -100.0
+            ]
+          }
+        },
+        "display_style": "2",
+        "model_category_visibility": {
+          "state": "value",
+          "value": {
+            "hidden_by_id": {
+              "-2000011": false,
+              "-2000014": false,
+              "-2000023": false,
+              "-2000032": false,
+              "-2000035": false,
+              "-2000038": false,
+              "-2000051": false,
+              "-2000080": true,
+              "-2000100": false,
+              "-2000120": false,
+              "-2000126": false,
+              "-2000151": false,
+              "-2000160": false,
+              "-2000170": false,
+              "-2000171": false,
+              "-2000180": false,
+              "-2000196": true,
+              "-2000269": true,
+              "-2000340": false,
+              "-2000560": false,
+              "-2000996": false,
+              "-2001000": false,
+              "-2001036": false,
+              "-2001039": false,
+              "-2001040": false,
+              "-2001043": false,
+              "-2001046": false,
+              "-2001049": false,
+              "-2001052": false,
+              "-2001055": false,
+              "-2001058": false,
+              "-2001060": false,
+              "-2001079": false,
+              "-2001100": true,
+              "-2001107": false,
+              "-2001120": false,
+              "-2001140": false,
+              "-2001160": false,
+              "-2001180": false,
+              "-2001220": false,
+              "-2001260": false,
+              "-2001300": false,
+              "-2001320": false,
+              "-2001327": false,
+              "-2001330": false,
+              "-2001336": false,
+              "-2001340": true,
+              "-2001350": false,
+              "-2001352": false,
+              "-2001354": false,
+              "-2001360": false,
+              "-2001370": false,
+              "-2002000": false,
+              "-2003200": false,
+              "-2003400": true,
+              "-2003600": false,
+              "-2006130": false,
+              "-2006131": false,
+              "-2006133": false,
+              "-2006135": false,
+              "-2006138": false,
+              "-2006241": false,
+              "-2006261": false,
+              "-2006271": false,
+              "-2006274": false,
+              "-2008000": false,
+              "-2008010": false,
+              "-2008013": false,
+              "-2008016": false,
+              "-2008020": false,
+              "-2008039": false,
+              "-2008044": false,
+              "-2008049": false,
+              "-2008050": false,
+              "-2008055": false,
+              "-2008075": false,
+              "-2008077": false,
+              "-2008079": false,
+              "-2008081": false,
+              "-2008083": true,
+              "-2008085": false,
+              "-2008087": false,
+              "-2008099": false,
+              "-2008107": false,
+              "-2008122": false,
+              "-2008123": false,
+              "-2008124": false,
+              "-2008126": false,
+              "-2008128": false,
+              "-2008130": false,
+              "-2008132": false,
+              "-2008160": false,
+              "-2008161": false,
+              "-2008193": false,
+              "-2008203": false,
+              "-2008208": false,
+              "-2008212": false,
+              "-2008228": false,
+              "-2008231": false,
+              "-2008232": false,
+              "-2008234": false,
+              "-2009000": false,
+              "-2009003": false,
+              "-2009009": false,
+              "-2009016": false,
+              "-2009017": false,
+              "-2009030": false,
+              "-2009060": false,
+              "-2010001": false,
+              "18342394": true,
+              "18342628": true,
+              "18728599": true
+            },
+            "unreadable": []
+          }
+        },
+        "smooth_edges": {
+          "state": "value",
+          "value": false
+        },
+        "view_filters": {
+          "state": "value",
+          "value": {
+            "13659508": {
+              "enabled": true,
+              "visible": false
+            },
+            "1607615": {
+              "enabled": true,
+              "visible": true
+            },
+            "17568058": {
+              "enabled": true,
+              "visible": false
+            },
+            "6673771": {
+              "enabled": true,
+              "visible": true
+            },
+            "7000049": {
+              "enabled": true,
+              "visible": true
+            },
+            "7259245": {
+              "enabled": true,
+              "visible": false
+            },
+            "7600584": {
+              "enabled": true,
+              "visible": false
+            },
+            "7801658": {
+              "enabled": true,
+              "visible": false
+            },
+            "8588944": {
+              "enabled": true,
+              "visible": false
+            }
+          }
+        },
+        "view_template_id": -1
+      },
+      "transaction_group": {
+        "no_child_transaction_open_at_export": true,
+        "pre_state_commit_status": "3",
+        "restore_commit_status": "3",
+        "rollback_attempted": true,
+        "rollback_status": "2",
+        "rollback_succeeded": true,
+        "start_status": "1"
+      },
+      "variant": "v0_control"
+    },
+    {
+      "annotation_pass": {
+        "applied_smooth_edges": "not_attempted",
+        "capture_faults": [
+          {
+            "detail": "2 restore step(s) raised",
+            "fault": "annotation_view_state_not_restored"
+          }
+        ],
+        "color_assignment_count": 283,
+        "elapsed_ms": 7123.432,
+        "failure_reason": "annotation_view_state_not_restored",
+        "model_suppression_mode": "hide_categories",
+        "output_directory": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\v0_offsets0",
+        "resolution": {
+          "achieved_export_dpi": 149.98923689748682,
+          "actual_h": 2248,
+          "actual_w": 5274,
+          "backoff_stop_reason": null,
+          "dim_check": "pass",
+          "dim_check_attempts": [
+            {
+              "accepted_px": 5274,
+              "actual_h": 2248,
+              "actual_w": 5274,
+              "dim_check": "pass",
+              "dim_read_error": null,
+              "requested_px": 5274
+            }
+          ],
+          "dim_check_ceiling_px": 10000,
+          "dim_read_error": null,
+          "effective_export_dpi": 149.98923689748682,
+          "fit_direction": "horizontal",
+          "pixel_size": 5274,
+          "requested_axis": "width",
+          "requested_export_dpi": 150.0,
+          "requested_pixel_size": 5274,
+          "view_scale": 96.0
+        },
+        "sidecar_path": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\v0_offsets0\\color_id_buffer\\__Plan_CropActive_19290402_anno.json",
+        "success": false,
+        "tiff_path": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\v0_offsets0\\color_id_buffer\\__Plan_CropActive_19290402_anno.tiff",
+        "tiff_sha256": {
+          "state": "value",
+          "value": "b047a74190ab756be5bb68b171ae4d39a21ac31b9950cdb4e33a9dc7e6f133ed"
+        }
+      },
+      "conclusion": "RAN",
+      "document_safe": true,
+      "document_safe_detail": {
+        "after_explicit_restore": "restored",
+        "after_rollback": "restored",
+        "rollback_succeeded": true
+      },
+      "exceptions": [],
+      "frame": {
+        "frame_px": [
+          5274,
+          2124
+        ],
+        "frame_snapped_uv": [
+          -102.55033208505725,
+          2240.017562076527,
+          178.74985233308857,
+          2353.305690954825
+        ],
+        "frame_source": "model_pass_geom"
+      },
+      "measurement": {
+        "checked": [
+          "model_suppression_mode == 'hide_categories'"
+        ],
+        "measured": true,
+        "unmet": []
+      },
+      "model_tiff": {
+        "matches_pre_variant": true,
+        "path": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\model\\color_id_buffer\\__Plan_CropActive_19290402.tiff",
+        "sha256": {
+          "state": "value",
+          "value": "ee9e812769ec2735292b7abd46d48e8f164e8100da927278b3e6cd3fc0b4b934"
+        }
+      },
+      "plan": {
+        "expanded_frame": false,
+        "model_suppression": "hide_categories",
+        "smooth_edges_off": false,
+        "variant": "v0_offsets0",
+        "white_filter": false,
+        "zero_annotation_crop_offsets": true
+      },
+      "pre_state": {
+        "annotation_crop_offsets_before": {
+          "BottomAnnotationCropOffset": 0.08333333333333333,
+          "LeftAnnotationCropOffset": 0.08333333333333333,
+          "RightAnnotationCropOffset": 0.08333333333333333,
+          "TopAnnotationCropOffset": 0.08333333333333333
+        },
+        "annotation_crop_offsets_requested": {
+          "BottomAnnotationCropOffset": 0.0,
+          "LeftAnnotationCropOffset": 0.0,
+          "RightAnnotationCropOffset": 0.0,
+          "TopAnnotationCropOffset": 0.0
+        }
+      },
+      "restore": {
+        "after_explicit_restore": {
+          "annotation_crop_offsets": {
+            "status": "restored"
+          },
+          "crop_box": {
+            "status": "restored"
+          },
+          "display_style": {
+            "status": "restored"
+          },
+          "model_category_visibility": {
+            "status": "restored"
+          },
+          "overall": "restored",
+          "smooth_edges": {
+            "status": "restored"
+          },
+          "view_filters": {
+            "status": "restored"
+          },
+          "view_template_id": {
+            "status": "restored"
+          }
+        },
+        "after_rollback": {
+          "annotation_crop_offsets": {
+            "status": "restored"
+          },
+          "crop_box": {
+            "status": "restored"
+          },
+          "display_style": {
+            "status": "restored"
+          },
+          "model_category_visibility": {
+            "status": "restored"
+          },
+          "overall": "restored",
+          "smooth_edges": {
+            "status": "restored"
+          },
+          "view_filters": {
+            "status": "restored"
+          },
+          "view_template_id": {
+            "status": "restored"
+          }
+        },
+        "explicit_step_errors": []
+      },
+      "skipped": false,
+      "snapshot_after_explicit_restore": {
+        "annotation_crop_active": {
+          "reason": "View has no AnnotationCropActive on this Revit host",
+          "state": "unavailable"
+        },
+        "annotation_crop_offsets": {
+          "state": "value",
+          "value": {
+            "BottomAnnotationCropOffset": 0.08333333333333333,
+            "LeftAnnotationCropOffset": 0.08333333333333333,
+            "RightAnnotationCropOffset": 0.08333333333333333,
+            "TopAnnotationCropOffset": 0.08333333333333333
+          }
+        },
+        "crop_box": {
+          "state": "value",
+          "value": {
+            "active": true,
+            "max": [
+              165.49485231475583,
+              2337.3310543423245,
+              -0.0
+            ],
+            "min": [
+              -91.46926561670251,
+              2250.749394451395,
+              -100.0
+            ]
+          }
+        },
+        "display_style": "2",
+        "model_category_visibility": {
+          "state": "value",
+          "value": {
+            "hidden_by_id": {
+              "-2000011": false,
+              "-2000014": false,
+              "-2000023": false,
+              "-2000032": false,
+              "-2000035": false,
+              "-2000038": false,
+              "-2000051": false,
+              "-2000080": true,
+              "-2000100": false,
+              "-2000120": false,
+              "-2000126": false,
+              "-2000151": false,
+              "-2000160": false,
+              "-2000170": false,
+              "-2000171": false,
+              "-2000180": false,
+              "-2000196": true,
+              "-2000269": true,
+              "-2000340": false,
+              "-2000560": false,
+              "-2000996": false,
+              "-2001000": false,
+              "-2001036": false,
+              "-2001039": false,
+              "-2001040": false,
+              "-2001043": false,
+              "-2001046": false,
+              "-2001049": false,
+              "-2001052": false,
+              "-2001055": false,
+              "-2001058": false,
+              "-2001060": false,
+              "-2001079": false,
+              "-2001100": true,
+              "-2001107": false,
+              "-2001120": false,
+              "-2001140": false,
+              "-2001160": false,
+              "-2001180": false,
+              "-2001220": false,
+              "-2001260": false,
+              "-2001300": false,
+              "-2001320": false,
+              "-2001327": false,
+              "-2001330": false,
+              "-2001336": false,
+              "-2001340": true,
+              "-2001350": false,
+              "-2001352": false,
+              "-2001354": false,
+              "-2001360": false,
+              "-2001370": false,
+              "-2002000": false,
+              "-2003200": false,
+              "-2003400": true,
+              "-2003600": false,
+              "-2006130": false,
+              "-2006131": false,
+              "-2006133": false,
+              "-2006135": false,
+              "-2006138": false,
+              "-2006241": false,
+              "-2006261": false,
+              "-2006271": false,
+              "-2006274": false,
+              "-2008000": false,
+              "-2008010": false,
+              "-2008013": false,
+              "-2008016": false,
+              "-2008020": false,
+              "-2008039": false,
+              "-2008044": false,
+              "-2008049": false,
+              "-2008050": false,
+              "-2008055": false,
+              "-2008075": false,
+              "-2008077": false,
+              "-2008079": false,
+              "-2008081": false,
+              "-2008083": true,
+              "-2008085": false,
+              "-2008087": false,
+              "-2008099": false,
+              "-2008107": false,
+              "-2008122": false,
+              "-2008123": false,
+              "-2008124": false,
+              "-2008126": false,
+              "-2008128": false,
+              "-2008130": false,
+              "-2008132": false,
+              "-2008160": false,
+              "-2008161": false,
+              "-2008193": false,
+              "-2008203": false,
+              "-2008208": false,
+              "-2008212": false,
+              "-2008228": false,
+              "-2008231": false,
+              "-2008232": false,
+              "-2008234": false,
+              "-2009000": false,
+              "-2009003": false,
+              "-2009009": false,
+              "-2009016": false,
+              "-2009017": false,
+              "-2009030": false,
+              "-2009060": false,
+              "-2010001": false,
+              "18342394": true,
+              "18342628": true,
+              "18728599": true
+            },
+            "unreadable": []
+          }
+        },
+        "smooth_edges": {
+          "state": "value",
+          "value": false
+        },
+        "view_filters": {
+          "state": "value",
+          "value": {
+            "13659508": {
+              "enabled": true,
+              "visible": false
+            },
+            "1607615": {
+              "enabled": true,
+              "visible": true
+            },
+            "17568058": {
+              "enabled": true,
+              "visible": false
+            },
+            "6673771": {
+              "enabled": true,
+              "visible": true
+            },
+            "7000049": {
+              "enabled": true,
+              "visible": true
+            },
+            "7259245": {
+              "enabled": true,
+              "visible": false
+            },
+            "7600584": {
+              "enabled": true,
+              "visible": false
+            },
+            "7801658": {
+              "enabled": true,
+              "visible": false
+            },
+            "8588944": {
+              "enabled": true,
+              "visible": false
+            }
+          }
+        },
+        "view_template_id": -1
+      },
+      "snapshot_after_rollback": {
+        "annotation_crop_active": {
+          "reason": "View has no AnnotationCropActive on this Revit host",
+          "state": "unavailable"
+        },
+        "annotation_crop_offsets": {
+          "state": "value",
+          "value": {
+            "BottomAnnotationCropOffset": 0.08333333333333333,
+            "LeftAnnotationCropOffset": 0.08333333333333333,
+            "RightAnnotationCropOffset": 0.08333333333333333,
+            "TopAnnotationCropOffset": 0.08333333333333333
+          }
+        },
+        "crop_box": {
+          "state": "value",
+          "value": {
+            "active": true,
+            "max": [
+              165.49485231475583,
+              2337.3310543423245,
+              -0.0
+            ],
+            "min": [
+              -91.46926561670251,
+              2250.749394451395,
+              -100.0
+            ]
+          }
+        },
+        "display_style": "2",
+        "model_category_visibility": {
+          "state": "value",
+          "value": {
+            "hidden_by_id": {
+              "-2000011": false,
+              "-2000014": false,
+              "-2000023": false,
+              "-2000032": false,
+              "-2000035": false,
+              "-2000038": false,
+              "-2000051": false,
+              "-2000080": true,
+              "-2000100": false,
+              "-2000120": false,
+              "-2000126": false,
+              "-2000151": false,
+              "-2000160": false,
+              "-2000170": false,
+              "-2000171": false,
+              "-2000180": false,
+              "-2000196": true,
+              "-2000269": true,
+              "-2000340": false,
+              "-2000560": false,
+              "-2000996": false,
+              "-2001000": false,
+              "-2001036": false,
+              "-2001039": false,
+              "-2001040": false,
+              "-2001043": false,
+              "-2001046": false,
+              "-2001049": false,
+              "-2001052": false,
+              "-2001055": false,
+              "-2001058": false,
+              "-2001060": false,
+              "-2001079": false,
+              "-2001100": true,
+              "-2001107": false,
+              "-2001120": false,
+              "-2001140": false,
+              "-2001160": false,
+              "-2001180": false,
+              "-2001220": false,
+              "-2001260": false,
+              "-2001300": false,
+              "-2001320": false,
+              "-2001327": false,
+              "-2001330": false,
+              "-2001336": false,
+              "-2001340": true,
+              "-2001350": false,
+              "-2001352": false,
+              "-2001354": false,
+              "-2001360": false,
+              "-2001370": false,
+              "-2002000": false,
+              "-2003200": false,
+              "-2003400": true,
+              "-2003600": false,
+              "-2006130": false,
+              "-2006131": false,
+              "-2006133": false,
+              "-2006135": false,
+              "-2006138": false,
+              "-2006241": false,
+              "-2006261": false,
+              "-2006271": false,
+              "-2006274": false,
+              "-2008000": false,
+              "-2008010": false,
+              "-2008013": false,
+              "-2008016": false,
+              "-2008020": false,
+              "-2008039": false,
+              "-2008044": false,
+              "-2008049": false,
+              "-2008050": false,
+              "-2008055": false,
+              "-2008075": false,
+              "-2008077": false,
+              "-2008079": false,
+              "-2008081": false,
+              "-2008083": true,
+              "-2008085": false,
+              "-2008087": false,
+              "-2008099": false,
+              "-2008107": false,
+              "-2008122": false,
+              "-2008123": false,
+              "-2008124": false,
+              "-2008126": false,
+              "-2008128": false,
+              "-2008130": false,
+              "-2008132": false,
+              "-2008160": false,
+              "-2008161": false,
+              "-2008193": false,
+              "-2008203": false,
+              "-2008208": false,
+              "-2008212": false,
+              "-2008228": false,
+              "-2008231": false,
+              "-2008232": false,
+              "-2008234": false,
+              "-2009000": false,
+              "-2009003": false,
+              "-2009009": false,
+              "-2009016": false,
+              "-2009017": false,
+              "-2009030": false,
+              "-2009060": false,
+              "-2010001": false,
+              "18342394": true,
+              "18342628": true,
+              "18728599": true
+            },
+            "unreadable": []
+          }
+        },
+        "smooth_edges": {
+          "state": "value",
+          "value": false
+        },
+        "view_filters": {
+          "state": "value",
+          "value": {
+            "13659508": {
+              "enabled": true,
+              "visible": false
+            },
+            "1607615": {
+              "enabled": true,
+              "visible": true
+            },
+            "17568058": {
+              "enabled": true,
+              "visible": false
+            },
+            "6673771": {
+              "enabled": true,
+              "visible": true
+            },
+            "7000049": {
+              "enabled": true,
+              "visible": true
+            },
+            "7259245": {
+              "enabled": true,
+              "visible": false
+            },
+            "7600584": {
+              "enabled": true,
+              "visible": false
+            },
+            "7801658": {
+              "enabled": true,
+              "visible": false
+            },
+            "8588944": {
+              "enabled": true,
+              "visible": false
+            }
+          }
+        },
+        "view_template_id": -1
+      },
+      "snapshot_before": {
+        "annotation_crop_active": {
+          "reason": "View has no AnnotationCropActive on this Revit host",
+          "state": "unavailable"
+        },
+        "annotation_crop_offsets": {
+          "state": "value",
+          "value": {
+            "BottomAnnotationCropOffset": 0.08333333333333333,
+            "LeftAnnotationCropOffset": 0.08333333333333333,
+            "RightAnnotationCropOffset": 0.08333333333333333,
+            "TopAnnotationCropOffset": 0.08333333333333333
+          }
+        },
+        "crop_box": {
+          "state": "value",
+          "value": {
+            "active": true,
+            "max": [
+              165.49485231475583,
+              2337.3310543423245,
+              -0.0
+            ],
+            "min": [
+              -91.46926561670251,
+              2250.749394451395,
+              -100.0
+            ]
+          }
+        },
+        "display_style": "2",
+        "model_category_visibility": {
+          "state": "value",
+          "value": {
+            "hidden_by_id": {
+              "-2000011": false,
+              "-2000014": false,
+              "-2000023": false,
+              "-2000032": false,
+              "-2000035": false,
+              "-2000038": false,
+              "-2000051": false,
+              "-2000080": true,
+              "-2000100": false,
+              "-2000120": false,
+              "-2000126": false,
+              "-2000151": false,
+              "-2000160": false,
+              "-2000170": false,
+              "-2000171": false,
+              "-2000180": false,
+              "-2000196": true,
+              "-2000269": true,
+              "-2000340": false,
+              "-2000560": false,
+              "-2000996": false,
+              "-2001000": false,
+              "-2001036": false,
+              "-2001039": false,
+              "-2001040": false,
+              "-2001043": false,
+              "-2001046": false,
+              "-2001049": false,
+              "-2001052": false,
+              "-2001055": false,
+              "-2001058": false,
+              "-2001060": false,
+              "-2001079": false,
+              "-2001100": true,
+              "-2001107": false,
+              "-2001120": false,
+              "-2001140": false,
+              "-2001160": false,
+              "-2001180": false,
+              "-2001220": false,
+              "-2001260": false,
+              "-2001300": false,
+              "-2001320": false,
+              "-2001327": false,
+              "-2001330": false,
+              "-2001336": false,
+              "-2001340": true,
+              "-2001350": false,
+              "-2001352": false,
+              "-2001354": false,
+              "-2001360": false,
+              "-2001370": false,
+              "-2002000": false,
+              "-2003200": false,
+              "-2003400": true,
+              "-2003600": false,
+              "-2006130": false,
+              "-2006131": false,
+              "-2006133": false,
+              "-2006135": false,
+              "-2006138": false,
+              "-2006241": false,
+              "-2006261": false,
+              "-2006271": false,
+              "-2006274": false,
+              "-2008000": false,
+              "-2008010": false,
+              "-2008013": false,
+              "-2008016": false,
+              "-2008020": false,
+              "-2008039": false,
+              "-2008044": false,
+              "-2008049": false,
+              "-2008050": false,
+              "-2008055": false,
+              "-2008075": false,
+              "-2008077": false,
+              "-2008079": false,
+              "-2008081": false,
+              "-2008083": true,
+              "-2008085": false,
+              "-2008087": false,
+              "-2008099": false,
+              "-2008107": false,
+              "-2008122": false,
+              "-2008123": false,
+              "-2008124": false,
+              "-2008126": false,
+              "-2008128": false,
+              "-2008130": false,
+              "-2008132": false,
+              "-2008160": false,
+              "-2008161": false,
+              "-2008193": false,
+              "-2008203": false,
+              "-2008208": false,
+              "-2008212": false,
+              "-2008228": false,
+              "-2008231": false,
+              "-2008232": false,
+              "-2008234": false,
+              "-2009000": false,
+              "-2009003": false,
+              "-2009009": false,
+              "-2009016": false,
+              "-2009017": false,
+              "-2009030": false,
+              "-2009060": false,
+              "-2010001": false,
+              "18342394": true,
+              "18342628": true,
+              "18728599": true
+            },
+            "unreadable": []
+          }
+        },
+        "smooth_edges": {
+          "state": "value",
+          "value": false
+        },
+        "view_filters": {
+          "state": "value",
+          "value": {
+            "13659508": {
+              "enabled": true,
+              "visible": false
+            },
+            "1607615": {
+              "enabled": true,
+              "visible": true
+            },
+            "17568058": {
+              "enabled": true,
+              "visible": false
+            },
+            "6673771": {
+              "enabled": true,
+              "visible": true
+            },
+            "7000049": {
+              "enabled": true,
+              "visible": true
+            },
+            "7259245": {
+              "enabled": true,
+              "visible": false
+            },
+            "7600584": {
+              "enabled": true,
+              "visible": false
+            },
+            "7801658": {
+              "enabled": true,
+              "visible": false
+            },
+            "8588944": {
+              "enabled": true,
+              "visible": false
+            }
+          }
+        },
+        "view_template_id": -1
+      },
+      "transaction_group": {
+        "no_child_transaction_open_at_export": true,
+        "pre_state_commit_status": "3",
+        "restore_commit_status": "3",
+        "rollback_attempted": true,
+        "rollback_status": "2",
+        "rollback_succeeded": true,
+        "start_status": "1"
+      },
+      "variant": "v0_offsets0"
+    },
+    {
+      "annotation_pass": {
+        "applied_smooth_edges": "not_attempted",
+        "capture_faults": [
+          {
+            "detail": "2 restore step(s) raised",
+            "fault": "annotation_view_state_not_restored"
+          }
+        ],
+        "color_assignment_count": 283,
+        "elapsed_ms": 7996.525,
+        "failure_reason": "annotation_view_state_not_restored",
+        "model_suppression_mode": "external",
+        "output_directory": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\v1_white_filter",
+        "resolution": {
+          "achieved_export_dpi": 149.98923689748682,
+          "actual_h": 2248,
+          "actual_w": 5274,
+          "backoff_stop_reason": null,
+          "dim_check": "pass",
+          "dim_check_attempts": [
+            {
+              "accepted_px": 5274,
+              "actual_h": 2248,
+              "actual_w": 5274,
+              "dim_check": "pass",
+              "dim_read_error": null,
+              "requested_px": 5274
+            }
+          ],
+          "dim_check_ceiling_px": 10000,
+          "dim_read_error": null,
+          "effective_export_dpi": 149.98923689748682,
+          "fit_direction": "horizontal",
+          "pixel_size": 5274,
+          "requested_axis": "width",
+          "requested_export_dpi": 150.0,
+          "requested_pixel_size": 5274,
+          "view_scale": 96.0
+        },
+        "sidecar_path": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\v1_white_filter\\color_id_buffer\\__Plan_CropActive_19290402_anno.json",
+        "success": false,
+        "tiff_path": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\v1_white_filter\\color_id_buffer\\__Plan_CropActive_19290402_anno.tiff",
+        "tiff_sha256": {
+          "state": "value",
+          "value": "13fc4e90813f6f11a47a76ef265926ef2f7c8df0db041ba4af68e4c9cedff92d"
+        }
+      },
+      "conclusion": "RAN",
+      "document_safe": true,
+      "document_safe_detail": {
+        "after_explicit_restore": "restored",
+        "after_rollback": "restored",
+        "rollback_succeeded": true
+      },
+      "exceptions": [],
+      "frame": {
+        "frame_px": [
+          5274,
+          2124
+        ],
+        "frame_snapped_uv": [
+          -102.55033208505725,
+          2240.017562076527,
+          178.74985233308857,
+          2353.305690954825
+        ],
+        "frame_source": "model_pass_geom"
+      },
+      "measurement": {
+        "checked": [
+          "model_suppression_mode == 'external'"
+        ],
+        "measured": true,
+        "unmet": []
+      },
+      "model_tiff": {
+        "matches_pre_variant": true,
+        "path": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\model\\color_id_buffer\\__Plan_CropActive_19290402.tiff",
+        "sha256": {
+          "state": "value",
+          "value": "ee9e812769ec2735292b7abd46d48e8f164e8100da927278b3e6cd3fc0b4b934"
+        }
+      },
+      "plan": {
+        "expanded_frame": false,
+        "model_suppression": "external",
+        "smooth_edges_off": false,
+        "variant": "v1_white_filter",
+        "white_filter": true,
+        "zero_annotation_crop_offsets": false
+      },
+      "pre_state": {
+        "white_filter": {
+          "authored_model_overrides": {
+            "authored_count": 0,
+            "authored_element_ids": [],
+            "candidate_count": 4598,
+            "capped": false,
+            "scan_max": 5000,
+            "scanned_count": 4598,
+            "state": "value",
+            "unreadable_count": 0
+          },
+          "category_count": 113,
+          "filter_element_id": 19297338,
+          "link_visibility": {
+            "instance_count": 0,
+            "instances": [],
+            "not_by_host_view_count": 0,
+            "state": "value"
+          },
+          "note": "Detail Items and the shared model/detail Lines category carry a Model label but are ANNOTATION content. When included, this filter whites them out and REAL ANNOTATION INK IS LOST. Production's model-category hiding deliberately excludes them. Listed either way so the choice is visible in the record.",
+          "overrides_applied": true,
+          "rejected_non_filterable": [
+            {
+              "id": -2008149,
+              "name": "Conduit Runs"
+            },
+            {
+              "id": -2008163,
+              "name": "Pipe Segments"
+            },
+            {
+              "id": -2000982,
+              "name": "Coordination Model"
+            },
+            {
+              "id": 19290051,
+              "name": "KSRF_Hosp_Interior_AR - Floor Plan - (N) LEVEL 1_GM.dwg"
+            },
+            {
+              "id": -2009013,
+              "name": "Rebar Shape"
+            },
+            {
+              "id": -2000560,
+              "name": "Raster Images"
+            },
+            {
+              "id": -2000985,
+              "name": "Mechanical Equipment Sets"
+            },
+            {
+              "id": 18342394,
+              "name": "XBASE WBLOCK.dwg"
+            },
+            {
+              "id": 18728599,
+              "name": "PBASE Apartments WBLOCK.dwg"
+            },
+            {
+              "id": -2000303,
+              "name": "Analysis Results"
+            },
+            {
+              "id": -2000173,
+              "name": "Curtain Grids"
+            },
+            {
+              "id": -2008037,
+              "name": "Electrical Circuits"
+            },
+            {
+              "id": -2001107,
+              "name": "Data Exchanges"
+            },
+            {
+              "id": -2000196,
+              "name": "Imports in Families"
+            },
+            {
+              "id": -2008125,
+              "name": "Routing Preferences"
+            },
+            {
+              "id": -2000190,
+              "name": "Filled region"
+            },
+            {
+              "id": -2000194,
+              "name": "Masking Region"
+            },
+            {
+              "id": -2001352,
+              "name": "RVT Links"
+            },
+            {
+              "id": 18342628,
+              "name": "XBASE Apartments Phase 1 WBLOCK.dwg"
+            },
+            {
+              "id": -2008152,
+              "name": "Electrical Spare/Space Circuits"
+            },
+            {
+              "id": -2000700,
+              "name": "Materials"
+            },
+            {
+              "id": -2008150,
+              "name": "Cable Tray Runs"
+            },
+            {
+              "id": 19296742,
+              "name": "KSRF_Hosp_Interior_AR - Floor Plan - (N) LEVEL 1_GM.dwg (2)"
+            },
+            {
+              "id": -2000051,
+              "name": "Lines"
+            },
+            {
+              "id": -2010001,
+              "name": "Point Clouds"
+            },
+            {
+              "id": -2003100,
+              "name": "Sheets"
+            },
+            {
+              "id": -2000304,
+              "name": "Analysis Display Style"
+            },
+            {
+              "id": -2003101,
+              "name": "Project Information"
+            }
+          ],
+          "view_only_model_categories_excluded": [
+            {
+              "id": -2002000,
+              "name": "Detail Items"
+            }
+          ],
+          "view_only_model_categories_included": []
+        }
+      },
+      "restore": {
+        "after_explicit_restore": {
+          "annotation_crop_offsets": {
+            "status": "restored"
+          },
+          "crop_box": {
+            "status": "restored"
+          },
+          "display_style": {
+            "status": "restored"
+          },
+          "model_category_visibility": {
+            "status": "restored"
+          },
+          "overall": "restored",
+          "probe_filter_deleted": {
+            "status": "restored"
+          },
+          "smooth_edges": {
+            "status": "restored"
+          },
+          "view_filters": {
+            "status": "restored"
+          },
+          "view_template_id": {
+            "status": "restored"
+          }
+        },
+        "after_rollback": {
+          "annotation_crop_offsets": {
+            "status": "restored"
+          },
+          "crop_box": {
+            "status": "restored"
+          },
+          "display_style": {
+            "status": "restored"
+          },
+          "model_category_visibility": {
+            "status": "restored"
+          },
+          "overall": "restored",
+          "probe_filter_deleted": {
+            "status": "restored"
+          },
+          "smooth_edges": {
+            "status": "restored"
+          },
+          "view_filters": {
+            "status": "restored"
+          },
+          "view_template_id": {
+            "status": "restored"
+          }
+        },
+        "explicit_step_errors": []
+      },
+      "skipped": false,
+      "snapshot_after_explicit_restore": {
+        "annotation_crop_active": {
+          "reason": "View has no AnnotationCropActive on this Revit host",
+          "state": "unavailable"
+        },
+        "annotation_crop_offsets": {
+          "state": "value",
+          "value": {
+            "BottomAnnotationCropOffset": 0.08333333333333333,
+            "LeftAnnotationCropOffset": 0.08333333333333333,
+            "RightAnnotationCropOffset": 0.08333333333333333,
+            "TopAnnotationCropOffset": 0.08333333333333333
+          }
+        },
+        "crop_box": {
+          "state": "value",
+          "value": {
+            "active": true,
+            "max": [
+              165.49485231475583,
+              2337.3310543423245,
+              -0.0
+            ],
+            "min": [
+              -91.46926561670251,
+              2250.749394451395,
+              -100.0
+            ]
+          }
+        },
+        "display_style": "2",
+        "model_category_visibility": {
+          "state": "value",
+          "value": {
+            "hidden_by_id": {
+              "-2000011": false,
+              "-2000014": false,
+              "-2000023": false,
+              "-2000032": false,
+              "-2000035": false,
+              "-2000038": false,
+              "-2000051": false,
+              "-2000080": true,
+              "-2000100": false,
+              "-2000120": false,
+              "-2000126": false,
+              "-2000151": false,
+              "-2000160": false,
+              "-2000170": false,
+              "-2000171": false,
+              "-2000180": false,
+              "-2000196": true,
+              "-2000269": true,
+              "-2000340": false,
+              "-2000560": false,
+              "-2000996": false,
+              "-2001000": false,
+              "-2001036": false,
+              "-2001039": false,
+              "-2001040": false,
+              "-2001043": false,
+              "-2001046": false,
+              "-2001049": false,
+              "-2001052": false,
+              "-2001055": false,
+              "-2001058": false,
+              "-2001060": false,
+              "-2001079": false,
+              "-2001100": true,
+              "-2001107": false,
+              "-2001120": false,
+              "-2001140": false,
+              "-2001160": false,
+              "-2001180": false,
+              "-2001220": false,
+              "-2001260": false,
+              "-2001300": false,
+              "-2001320": false,
+              "-2001327": false,
+              "-2001330": false,
+              "-2001336": false,
+              "-2001340": true,
+              "-2001350": false,
+              "-2001352": false,
+              "-2001354": false,
+              "-2001360": false,
+              "-2001370": false,
+              "-2002000": false,
+              "-2003200": false,
+              "-2003400": true,
+              "-2003600": false,
+              "-2006130": false,
+              "-2006131": false,
+              "-2006133": false,
+              "-2006135": false,
+              "-2006138": false,
+              "-2006241": false,
+              "-2006261": false,
+              "-2006271": false,
+              "-2006274": false,
+              "-2008000": false,
+              "-2008010": false,
+              "-2008013": false,
+              "-2008016": false,
+              "-2008020": false,
+              "-2008039": false,
+              "-2008044": false,
+              "-2008049": false,
+              "-2008050": false,
+              "-2008055": false,
+              "-2008075": false,
+              "-2008077": false,
+              "-2008079": false,
+              "-2008081": false,
+              "-2008083": true,
+              "-2008085": false,
+              "-2008087": false,
+              "-2008099": false,
+              "-2008107": false,
+              "-2008122": false,
+              "-2008123": false,
+              "-2008124": false,
+              "-2008126": false,
+              "-2008128": false,
+              "-2008130": false,
+              "-2008132": false,
+              "-2008160": false,
+              "-2008161": false,
+              "-2008193": false,
+              "-2008203": false,
+              "-2008208": false,
+              "-2008212": false,
+              "-2008228": false,
+              "-2008231": false,
+              "-2008232": false,
+              "-2008234": false,
+              "-2009000": false,
+              "-2009003": false,
+              "-2009009": false,
+              "-2009016": false,
+              "-2009017": false,
+              "-2009030": false,
+              "-2009060": false,
+              "-2010001": false,
+              "18342394": true,
+              "18342628": true,
+              "18728599": true
+            },
+            "unreadable": []
+          }
+        },
+        "smooth_edges": {
+          "state": "value",
+          "value": false
+        },
+        "view_filters": {
+          "state": "value",
+          "value": {
+            "13659508": {
+              "enabled": true,
+              "visible": false
+            },
+            "1607615": {
+              "enabled": true,
+              "visible": true
+            },
+            "17568058": {
+              "enabled": true,
+              "visible": false
+            },
+            "6673771": {
+              "enabled": true,
+              "visible": true
+            },
+            "7000049": {
+              "enabled": true,
+              "visible": true
+            },
+            "7259245": {
+              "enabled": true,
+              "visible": false
+            },
+            "7600584": {
+              "enabled": true,
+              "visible": false
+            },
+            "7801658": {
+              "enabled": true,
+              "visible": false
+            },
+            "8588944": {
+              "enabled": true,
+              "visible": false
+            }
+          }
+        },
+        "view_template_id": -1
+      },
+      "snapshot_after_rollback": {
+        "annotation_crop_active": {
+          "reason": "View has no AnnotationCropActive on this Revit host",
+          "state": "unavailable"
+        },
+        "annotation_crop_offsets": {
+          "state": "value",
+          "value": {
+            "BottomAnnotationCropOffset": 0.08333333333333333,
+            "LeftAnnotationCropOffset": 0.08333333333333333,
+            "RightAnnotationCropOffset": 0.08333333333333333,
+            "TopAnnotationCropOffset": 0.08333333333333333
+          }
+        },
+        "crop_box": {
+          "state": "value",
+          "value": {
+            "active": true,
+            "max": [
+              165.49485231475583,
+              2337.3310543423245,
+              -0.0
+            ],
+            "min": [
+              -91.46926561670251,
+              2250.749394451395,
+              -100.0
+            ]
+          }
+        },
+        "display_style": "2",
+        "model_category_visibility": {
+          "state": "value",
+          "value": {
+            "hidden_by_id": {
+              "-2000011": false,
+              "-2000014": false,
+              "-2000023": false,
+              "-2000032": false,
+              "-2000035": false,
+              "-2000038": false,
+              "-2000051": false,
+              "-2000080": true,
+              "-2000100": false,
+              "-2000120": false,
+              "-2000126": false,
+              "-2000151": false,
+              "-2000160": false,
+              "-2000170": false,
+              "-2000171": false,
+              "-2000180": false,
+              "-2000196": true,
+              "-2000269": true,
+              "-2000340": false,
+              "-2000560": false,
+              "-2000996": false,
+              "-2001000": false,
+              "-2001036": false,
+              "-2001039": false,
+              "-2001040": false,
+              "-2001043": false,
+              "-2001046": false,
+              "-2001049": false,
+              "-2001052": false,
+              "-2001055": false,
+              "-2001058": false,
+              "-2001060": false,
+              "-2001079": false,
+              "-2001100": true,
+              "-2001107": false,
+              "-2001120": false,
+              "-2001140": false,
+              "-2001160": false,
+              "-2001180": false,
+              "-2001220": false,
+              "-2001260": false,
+              "-2001300": false,
+              "-2001320": false,
+              "-2001327": false,
+              "-2001330": false,
+              "-2001336": false,
+              "-2001340": true,
+              "-2001350": false,
+              "-2001352": false,
+              "-2001354": false,
+              "-2001360": false,
+              "-2001370": false,
+              "-2002000": false,
+              "-2003200": false,
+              "-2003400": true,
+              "-2003600": false,
+              "-2006130": false,
+              "-2006131": false,
+              "-2006133": false,
+              "-2006135": false,
+              "-2006138": false,
+              "-2006241": false,
+              "-2006261": false,
+              "-2006271": false,
+              "-2006274": false,
+              "-2008000": false,
+              "-2008010": false,
+              "-2008013": false,
+              "-2008016": false,
+              "-2008020": false,
+              "-2008039": false,
+              "-2008044": false,
+              "-2008049": false,
+              "-2008050": false,
+              "-2008055": false,
+              "-2008075": false,
+              "-2008077": false,
+              "-2008079": false,
+              "-2008081": false,
+              "-2008083": true,
+              "-2008085": false,
+              "-2008087": false,
+              "-2008099": false,
+              "-2008107": false,
+              "-2008122": false,
+              "-2008123": false,
+              "-2008124": false,
+              "-2008126": false,
+              "-2008128": false,
+              "-2008130": false,
+              "-2008132": false,
+              "-2008160": false,
+              "-2008161": false,
+              "-2008193": false,
+              "-2008203": false,
+              "-2008208": false,
+              "-2008212": false,
+              "-2008228": false,
+              "-2008231": false,
+              "-2008232": false,
+              "-2008234": false,
+              "-2009000": false,
+              "-2009003": false,
+              "-2009009": false,
+              "-2009016": false,
+              "-2009017": false,
+              "-2009030": false,
+              "-2009060": false,
+              "-2010001": false,
+              "18342394": true,
+              "18342628": true,
+              "18728599": true
+            },
+            "unreadable": []
+          }
+        },
+        "smooth_edges": {
+          "state": "value",
+          "value": false
+        },
+        "view_filters": {
+          "state": "value",
+          "value": {
+            "13659508": {
+              "enabled": true,
+              "visible": false
+            },
+            "1607615": {
+              "enabled": true,
+              "visible": true
+            },
+            "17568058": {
+              "enabled": true,
+              "visible": false
+            },
+            "6673771": {
+              "enabled": true,
+              "visible": true
+            },
+            "7000049": {
+              "enabled": true,
+              "visible": true
+            },
+            "7259245": {
+              "enabled": true,
+              "visible": false
+            },
+            "7600584": {
+              "enabled": true,
+              "visible": false
+            },
+            "7801658": {
+              "enabled": true,
+              "visible": false
+            },
+            "8588944": {
+              "enabled": true,
+              "visible": false
+            }
+          }
+        },
+        "view_template_id": -1
+      },
+      "snapshot_before": {
+        "annotation_crop_active": {
+          "reason": "View has no AnnotationCropActive on this Revit host",
+          "state": "unavailable"
+        },
+        "annotation_crop_offsets": {
+          "state": "value",
+          "value": {
+            "BottomAnnotationCropOffset": 0.08333333333333333,
+            "LeftAnnotationCropOffset": 0.08333333333333333,
+            "RightAnnotationCropOffset": 0.08333333333333333,
+            "TopAnnotationCropOffset": 0.08333333333333333
+          }
+        },
+        "crop_box": {
+          "state": "value",
+          "value": {
+            "active": true,
+            "max": [
+              165.49485231475583,
+              2337.3310543423245,
+              -0.0
+            ],
+            "min": [
+              -91.46926561670251,
+              2250.749394451395,
+              -100.0
+            ]
+          }
+        },
+        "display_style": "2",
+        "model_category_visibility": {
+          "state": "value",
+          "value": {
+            "hidden_by_id": {
+              "-2000011": false,
+              "-2000014": false,
+              "-2000023": false,
+              "-2000032": false,
+              "-2000035": false,
+              "-2000038": false,
+              "-2000051": false,
+              "-2000080": true,
+              "-2000100": false,
+              "-2000120": false,
+              "-2000126": false,
+              "-2000151": false,
+              "-2000160": false,
+              "-2000170": false,
+              "-2000171": false,
+              "-2000180": false,
+              "-2000196": true,
+              "-2000269": true,
+              "-2000340": false,
+              "-2000560": false,
+              "-2000996": false,
+              "-2001000": false,
+              "-2001036": false,
+              "-2001039": false,
+              "-2001040": false,
+              "-2001043": false,
+              "-2001046": false,
+              "-2001049": false,
+              "-2001052": false,
+              "-2001055": false,
+              "-2001058": false,
+              "-2001060": false,
+              "-2001079": false,
+              "-2001100": true,
+              "-2001107": false,
+              "-2001120": false,
+              "-2001140": false,
+              "-2001160": false,
+              "-2001180": false,
+              "-2001220": false,
+              "-2001260": false,
+              "-2001300": false,
+              "-2001320": false,
+              "-2001327": false,
+              "-2001330": false,
+              "-2001336": false,
+              "-2001340": true,
+              "-2001350": false,
+              "-2001352": false,
+              "-2001354": false,
+              "-2001360": false,
+              "-2001370": false,
+              "-2002000": false,
+              "-2003200": false,
+              "-2003400": true,
+              "-2003600": false,
+              "-2006130": false,
+              "-2006131": false,
+              "-2006133": false,
+              "-2006135": false,
+              "-2006138": false,
+              "-2006241": false,
+              "-2006261": false,
+              "-2006271": false,
+              "-2006274": false,
+              "-2008000": false,
+              "-2008010": false,
+              "-2008013": false,
+              "-2008016": false,
+              "-2008020": false,
+              "-2008039": false,
+              "-2008044": false,
+              "-2008049": false,
+              "-2008050": false,
+              "-2008055": false,
+              "-2008075": false,
+              "-2008077": false,
+              "-2008079": false,
+              "-2008081": false,
+              "-2008083": true,
+              "-2008085": false,
+              "-2008087": false,
+              "-2008099": false,
+              "-2008107": false,
+              "-2008122": false,
+              "-2008123": false,
+              "-2008124": false,
+              "-2008126": false,
+              "-2008128": false,
+              "-2008130": false,
+              "-2008132": false,
+              "-2008160": false,
+              "-2008161": false,
+              "-2008193": false,
+              "-2008203": false,
+              "-2008208": false,
+              "-2008212": false,
+              "-2008228": false,
+              "-2008231": false,
+              "-2008232": false,
+              "-2008234": false,
+              "-2009000": false,
+              "-2009003": false,
+              "-2009009": false,
+              "-2009016": false,
+              "-2009017": false,
+              "-2009030": false,
+              "-2009060": false,
+              "-2010001": false,
+              "18342394": true,
+              "18342628": true,
+              "18728599": true
+            },
+            "unreadable": []
+          }
+        },
+        "smooth_edges": {
+          "state": "value",
+          "value": false
+        },
+        "view_filters": {
+          "state": "value",
+          "value": {
+            "13659508": {
+              "enabled": true,
+              "visible": false
+            },
+            "1607615": {
+              "enabled": true,
+              "visible": true
+            },
+            "17568058": {
+              "enabled": true,
+              "visible": false
+            },
+            "6673771": {
+              "enabled": true,
+              "visible": true
+            },
+            "7000049": {
+              "enabled": true,
+              "visible": true
+            },
+            "7259245": {
+              "enabled": true,
+              "visible": false
+            },
+            "7600584": {
+              "enabled": true,
+              "visible": false
+            },
+            "7801658": {
+              "enabled": true,
+              "visible": false
+            },
+            "8588944": {
+              "enabled": true,
+              "visible": false
+            }
+          }
+        },
+        "view_template_id": -1
+      },
+      "transaction_group": {
+        "no_child_transaction_open_at_export": true,
+        "pre_state_commit_status": "3",
+        "restore_commit_status": "3",
+        "rollback_attempted": true,
+        "rollback_status": "2",
+        "rollback_succeeded": true,
+        "start_status": "1"
+      },
+      "variant": "v1_white_filter"
+    },
+    {
+      "annotation_pass": {
+        "applied_smooth_edges": false,
+        "capture_faults": [
+          {
+            "detail": "2 restore step(s) raised",
+            "fault": "annotation_view_state_not_restored"
+          }
+        ],
+        "color_assignment_count": 283,
+        "elapsed_ms": 8443.624,
+        "failure_reason": "annotation_view_state_not_restored",
+        "model_suppression_mode": "external",
+        "output_directory": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\v2_white_filter_smooth_edges_off",
+        "resolution": {
+          "achieved_export_dpi": 149.98923689748682,
+          "actual_h": 2248,
+          "actual_w": 5274,
+          "backoff_stop_reason": null,
+          "dim_check": "pass",
+          "dim_check_attempts": [
+            {
+              "accepted_px": 5274,
+              "actual_h": 2248,
+              "actual_w": 5274,
+              "dim_check": "pass",
+              "dim_read_error": null,
+              "requested_px": 5274
+            }
+          ],
+          "dim_check_ceiling_px": 10000,
+          "dim_read_error": null,
+          "effective_export_dpi": 149.98923689748682,
+          "fit_direction": "horizontal",
+          "pixel_size": 5274,
+          "requested_axis": "width",
+          "requested_export_dpi": 150.0,
+          "requested_pixel_size": 5274,
+          "view_scale": 96.0
+        },
+        "sidecar_path": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\v2_white_filter_smooth_edges_off\\color_id_buffer\\__Plan_CropActive_19290402_anno.json",
+        "success": false,
+        "tiff_path": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\v2_white_filter_smooth_edges_off\\color_id_buffer\\__Plan_CropActive_19290402_anno.tiff",
+        "tiff_sha256": {
+          "state": "value",
+          "value": "13fc4e90813f6f11a47a76ef265926ef2f7c8df0db041ba4af68e4c9cedff92d"
+        }
+      },
+      "conclusion": "RAN",
+      "document_safe": true,
+      "document_safe_detail": {
+        "after_explicit_restore": "restored",
+        "after_rollback": "restored",
+        "rollback_succeeded": true
+      },
+      "exceptions": [],
+      "frame": {
+        "frame_px": [
+          5274,
+          2124
+        ],
+        "frame_snapped_uv": [
+          -102.55033208505725,
+          2240.017562076527,
+          178.74985233308857,
+          2353.305690954825
+        ],
+        "frame_source": "model_pass_geom"
+      },
+      "measurement": {
+        "checked": [
+          "applied_smooth_edges is False",
+          "model_suppression_mode == 'external'"
+        ],
+        "measured": true,
+        "unmet": []
+      },
+      "model_tiff": {
+        "matches_pre_variant": true,
+        "path": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\model\\color_id_buffer\\__Plan_CropActive_19290402.tiff",
+        "sha256": {
+          "state": "value",
+          "value": "ee9e812769ec2735292b7abd46d48e8f164e8100da927278b3e6cd3fc0b4b934"
+        }
+      },
+      "plan": {
+        "expanded_frame": false,
+        "model_suppression": "external",
+        "smooth_edges_off": true,
+        "variant": "v2_white_filter_smooth_edges_off",
+        "white_filter": true,
+        "zero_annotation_crop_offsets": false
+      },
+      "pre_state": {
+        "white_filter": {
+          "authored_model_overrides": {
+            "authored_count": 0,
+            "authored_element_ids": [],
+            "candidate_count": 4598,
+            "capped": false,
+            "scan_max": 5000,
+            "scanned_count": 4598,
+            "state": "value",
+            "unreadable_count": 0
+          },
+          "category_count": 113,
+          "filter_element_id": 19297339,
+          "link_visibility": {
+            "instance_count": 0,
+            "instances": [],
+            "not_by_host_view_count": 0,
+            "state": "value"
+          },
+          "note": "Detail Items and the shared model/detail Lines category carry a Model label but are ANNOTATION content. When included, this filter whites them out and REAL ANNOTATION INK IS LOST. Production's model-category hiding deliberately excludes them. Listed either way so the choice is visible in the record.",
+          "overrides_applied": true,
+          "rejected_non_filterable": [
+            {
+              "id": -2008149,
+              "name": "Conduit Runs"
+            },
+            {
+              "id": -2008163,
+              "name": "Pipe Segments"
+            },
+            {
+              "id": -2000982,
+              "name": "Coordination Model"
+            },
+            {
+              "id": 19290051,
+              "name": "KSRF_Hosp_Interior_AR - Floor Plan - (N) LEVEL 1_GM.dwg"
+            },
+            {
+              "id": -2009013,
+              "name": "Rebar Shape"
+            },
+            {
+              "id": -2000560,
+              "name": "Raster Images"
+            },
+            {
+              "id": -2000985,
+              "name": "Mechanical Equipment Sets"
+            },
+            {
+              "id": 18342394,
+              "name": "XBASE WBLOCK.dwg"
+            },
+            {
+              "id": 18728599,
+              "name": "PBASE Apartments WBLOCK.dwg"
+            },
+            {
+              "id": -2000303,
+              "name": "Analysis Results"
+            },
+            {
+              "id": -2000173,
+              "name": "Curtain Grids"
+            },
+            {
+              "id": -2008037,
+              "name": "Electrical Circuits"
+            },
+            {
+              "id": -2001107,
+              "name": "Data Exchanges"
+            },
+            {
+              "id": -2000196,
+              "name": "Imports in Families"
+            },
+            {
+              "id": -2008125,
+              "name": "Routing Preferences"
+            },
+            {
+              "id": -2000190,
+              "name": "Filled region"
+            },
+            {
+              "id": -2000194,
+              "name": "Masking Region"
+            },
+            {
+              "id": -2001352,
+              "name": "RVT Links"
+            },
+            {
+              "id": 18342628,
+              "name": "XBASE Apartments Phase 1 WBLOCK.dwg"
+            },
+            {
+              "id": -2008152,
+              "name": "Electrical Spare/Space Circuits"
+            },
+            {
+              "id": -2000700,
+              "name": "Materials"
+            },
+            {
+              "id": -2008150,
+              "name": "Cable Tray Runs"
+            },
+            {
+              "id": 19296742,
+              "name": "KSRF_Hosp_Interior_AR - Floor Plan - (N) LEVEL 1_GM.dwg (2)"
+            },
+            {
+              "id": -2000051,
+              "name": "Lines"
+            },
+            {
+              "id": -2010001,
+              "name": "Point Clouds"
+            },
+            {
+              "id": -2003100,
+              "name": "Sheets"
+            },
+            {
+              "id": -2000304,
+              "name": "Analysis Display Style"
+            },
+            {
+              "id": -2003101,
+              "name": "Project Information"
+            }
+          ],
+          "view_only_model_categories_excluded": [
+            {
+              "id": -2002000,
+              "name": "Detail Items"
+            }
+          ],
+          "view_only_model_categories_included": []
+        }
+      },
+      "restore": {
+        "after_explicit_restore": {
+          "annotation_crop_offsets": {
+            "status": "restored"
+          },
+          "crop_box": {
+            "status": "restored"
+          },
+          "display_style": {
+            "status": "restored"
+          },
+          "model_category_visibility": {
+            "status": "restored"
+          },
+          "overall": "restored",
+          "probe_filter_deleted": {
+            "status": "restored"
+          },
+          "smooth_edges": {
+            "status": "restored"
+          },
+          "view_filters": {
+            "status": "restored"
+          },
+          "view_template_id": {
+            "status": "restored"
+          }
+        },
+        "after_rollback": {
+          "annotation_crop_offsets": {
+            "status": "restored"
+          },
+          "crop_box": {
+            "status": "restored"
+          },
+          "display_style": {
+            "status": "restored"
+          },
+          "model_category_visibility": {
+            "status": "restored"
+          },
+          "overall": "restored",
+          "probe_filter_deleted": {
+            "status": "restored"
+          },
+          "smooth_edges": {
+            "status": "restored"
+          },
+          "view_filters": {
+            "status": "restored"
+          },
+          "view_template_id": {
+            "status": "restored"
+          }
+        },
+        "explicit_step_errors": []
+      },
+      "skipped": false,
+      "snapshot_after_explicit_restore": {
+        "annotation_crop_active": {
+          "reason": "View has no AnnotationCropActive on this Revit host",
+          "state": "unavailable"
+        },
+        "annotation_crop_offsets": {
+          "state": "value",
+          "value": {
+            "BottomAnnotationCropOffset": 0.08333333333333333,
+            "LeftAnnotationCropOffset": 0.08333333333333333,
+            "RightAnnotationCropOffset": 0.08333333333333333,
+            "TopAnnotationCropOffset": 0.08333333333333333
+          }
+        },
+        "crop_box": {
+          "state": "value",
+          "value": {
+            "active": true,
+            "max": [
+              165.49485231475583,
+              2337.3310543423245,
+              -0.0
+            ],
+            "min": [
+              -91.46926561670251,
+              2250.749394451395,
+              -100.0
+            ]
+          }
+        },
+        "display_style": "2",
+        "model_category_visibility": {
+          "state": "value",
+          "value": {
+            "hidden_by_id": {
+              "-2000011": false,
+              "-2000014": false,
+              "-2000023": false,
+              "-2000032": false,
+              "-2000035": false,
+              "-2000038": false,
+              "-2000051": false,
+              "-2000080": true,
+              "-2000100": false,
+              "-2000120": false,
+              "-2000126": false,
+              "-2000151": false,
+              "-2000160": false,
+              "-2000170": false,
+              "-2000171": false,
+              "-2000180": false,
+              "-2000196": true,
+              "-2000269": true,
+              "-2000340": false,
+              "-2000560": false,
+              "-2000996": false,
+              "-2001000": false,
+              "-2001036": false,
+              "-2001039": false,
+              "-2001040": false,
+              "-2001043": false,
+              "-2001046": false,
+              "-2001049": false,
+              "-2001052": false,
+              "-2001055": false,
+              "-2001058": false,
+              "-2001060": false,
+              "-2001079": false,
+              "-2001100": true,
+              "-2001107": false,
+              "-2001120": false,
+              "-2001140": false,
+              "-2001160": false,
+              "-2001180": false,
+              "-2001220": false,
+              "-2001260": false,
+              "-2001300": false,
+              "-2001320": false,
+              "-2001327": false,
+              "-2001330": false,
+              "-2001336": false,
+              "-2001340": true,
+              "-2001350": false,
+              "-2001352": false,
+              "-2001354": false,
+              "-2001360": false,
+              "-2001370": false,
+              "-2002000": false,
+              "-2003200": false,
+              "-2003400": true,
+              "-2003600": false,
+              "-2006130": false,
+              "-2006131": false,
+              "-2006133": false,
+              "-2006135": false,
+              "-2006138": false,
+              "-2006241": false,
+              "-2006261": false,
+              "-2006271": false,
+              "-2006274": false,
+              "-2008000": false,
+              "-2008010": false,
+              "-2008013": false,
+              "-2008016": false,
+              "-2008020": false,
+              "-2008039": false,
+              "-2008044": false,
+              "-2008049": false,
+              "-2008050": false,
+              "-2008055": false,
+              "-2008075": false,
+              "-2008077": false,
+              "-2008079": false,
+              "-2008081": false,
+              "-2008083": true,
+              "-2008085": false,
+              "-2008087": false,
+              "-2008099": false,
+              "-2008107": false,
+              "-2008122": false,
+              "-2008123": false,
+              "-2008124": false,
+              "-2008126": false,
+              "-2008128": false,
+              "-2008130": false,
+              "-2008132": false,
+              "-2008160": false,
+              "-2008161": false,
+              "-2008193": false,
+              "-2008203": false,
+              "-2008208": false,
+              "-2008212": false,
+              "-2008228": false,
+              "-2008231": false,
+              "-2008232": false,
+              "-2008234": false,
+              "-2009000": false,
+              "-2009003": false,
+              "-2009009": false,
+              "-2009016": false,
+              "-2009017": false,
+              "-2009030": false,
+              "-2009060": false,
+              "-2010001": false,
+              "18342394": true,
+              "18342628": true,
+              "18728599": true
+            },
+            "unreadable": []
+          }
+        },
+        "smooth_edges": {
+          "state": "value",
+          "value": false
+        },
+        "view_filters": {
+          "state": "value",
+          "value": {
+            "13659508": {
+              "enabled": true,
+              "visible": false
+            },
+            "1607615": {
+              "enabled": true,
+              "visible": true
+            },
+            "17568058": {
+              "enabled": true,
+              "visible": false
+            },
+            "6673771": {
+              "enabled": true,
+              "visible": true
+            },
+            "7000049": {
+              "enabled": true,
+              "visible": true
+            },
+            "7259245": {
+              "enabled": true,
+              "visible": false
+            },
+            "7600584": {
+              "enabled": true,
+              "visible": false
+            },
+            "7801658": {
+              "enabled": true,
+              "visible": false
+            },
+            "8588944": {
+              "enabled": true,
+              "visible": false
+            }
+          }
+        },
+        "view_template_id": -1
+      },
+      "snapshot_after_rollback": {
+        "annotation_crop_active": {
+          "reason": "View has no AnnotationCropActive on this Revit host",
+          "state": "unavailable"
+        },
+        "annotation_crop_offsets": {
+          "state": "value",
+          "value": {
+            "BottomAnnotationCropOffset": 0.08333333333333333,
+            "LeftAnnotationCropOffset": 0.08333333333333333,
+            "RightAnnotationCropOffset": 0.08333333333333333,
+            "TopAnnotationCropOffset": 0.08333333333333333
+          }
+        },
+        "crop_box": {
+          "state": "value",
+          "value": {
+            "active": true,
+            "max": [
+              165.49485231475583,
+              2337.3310543423245,
+              -0.0
+            ],
+            "min": [
+              -91.46926561670251,
+              2250.749394451395,
+              -100.0
+            ]
+          }
+        },
+        "display_style": "2",
+        "model_category_visibility": {
+          "state": "value",
+          "value": {
+            "hidden_by_id": {
+              "-2000011": false,
+              "-2000014": false,
+              "-2000023": false,
+              "-2000032": false,
+              "-2000035": false,
+              "-2000038": false,
+              "-2000051": false,
+              "-2000080": true,
+              "-2000100": false,
+              "-2000120": false,
+              "-2000126": false,
+              "-2000151": false,
+              "-2000160": false,
+              "-2000170": false,
+              "-2000171": false,
+              "-2000180": false,
+              "-2000196": true,
+              "-2000269": true,
+              "-2000340": false,
+              "-2000560": false,
+              "-2000996": false,
+              "-2001000": false,
+              "-2001036": false,
+              "-2001039": false,
+              "-2001040": false,
+              "-2001043": false,
+              "-2001046": false,
+              "-2001049": false,
+              "-2001052": false,
+              "-2001055": false,
+              "-2001058": false,
+              "-2001060": false,
+              "-2001079": false,
+              "-2001100": true,
+              "-2001107": false,
+              "-2001120": false,
+              "-2001140": false,
+              "-2001160": false,
+              "-2001180": false,
+              "-2001220": false,
+              "-2001260": false,
+              "-2001300": false,
+              "-2001320": false,
+              "-2001327": false,
+              "-2001330": false,
+              "-2001336": false,
+              "-2001340": true,
+              "-2001350": false,
+              "-2001352": false,
+              "-2001354": false,
+              "-2001360": false,
+              "-2001370": false,
+              "-2002000": false,
+              "-2003200": false,
+              "-2003400": true,
+              "-2003600": false,
+              "-2006130": false,
+              "-2006131": false,
+              "-2006133": false,
+              "-2006135": false,
+              "-2006138": false,
+              "-2006241": false,
+              "-2006261": false,
+              "-2006271": false,
+              "-2006274": false,
+              "-2008000": false,
+              "-2008010": false,
+              "-2008013": false,
+              "-2008016": false,
+              "-2008020": false,
+              "-2008039": false,
+              "-2008044": false,
+              "-2008049": false,
+              "-2008050": false,
+              "-2008055": false,
+              "-2008075": false,
+              "-2008077": false,
+              "-2008079": false,
+              "-2008081": false,
+              "-2008083": true,
+              "-2008085": false,
+              "-2008087": false,
+              "-2008099": false,
+              "-2008107": false,
+              "-2008122": false,
+              "-2008123": false,
+              "-2008124": false,
+              "-2008126": false,
+              "-2008128": false,
+              "-2008130": false,
+              "-2008132": false,
+              "-2008160": false,
+              "-2008161": false,
+              "-2008193": false,
+              "-2008203": false,
+              "-2008208": false,
+              "-2008212": false,
+              "-2008228": false,
+              "-2008231": false,
+              "-2008232": false,
+              "-2008234": false,
+              "-2009000": false,
+              "-2009003": false,
+              "-2009009": false,
+              "-2009016": false,
+              "-2009017": false,
+              "-2009030": false,
+              "-2009060": false,
+              "-2010001": false,
+              "18342394": true,
+              "18342628": true,
+              "18728599": true
+            },
+            "unreadable": []
+          }
+        },
+        "smooth_edges": {
+          "state": "value",
+          "value": false
+        },
+        "view_filters": {
+          "state": "value",
+          "value": {
+            "13659508": {
+              "enabled": true,
+              "visible": false
+            },
+            "1607615": {
+              "enabled": true,
+              "visible": true
+            },
+            "17568058": {
+              "enabled": true,
+              "visible": false
+            },
+            "6673771": {
+              "enabled": true,
+              "visible": true
+            },
+            "7000049": {
+              "enabled": true,
+              "visible": true
+            },
+            "7259245": {
+              "enabled": true,
+              "visible": false
+            },
+            "7600584": {
+              "enabled": true,
+              "visible": false
+            },
+            "7801658": {
+              "enabled": true,
+              "visible": false
+            },
+            "8588944": {
+              "enabled": true,
+              "visible": false
+            }
+          }
+        },
+        "view_template_id": -1
+      },
+      "snapshot_before": {
+        "annotation_crop_active": {
+          "reason": "View has no AnnotationCropActive on this Revit host",
+          "state": "unavailable"
+        },
+        "annotation_crop_offsets": {
+          "state": "value",
+          "value": {
+            "BottomAnnotationCropOffset": 0.08333333333333333,
+            "LeftAnnotationCropOffset": 0.08333333333333333,
+            "RightAnnotationCropOffset": 0.08333333333333333,
+            "TopAnnotationCropOffset": 0.08333333333333333
+          }
+        },
+        "crop_box": {
+          "state": "value",
+          "value": {
+            "active": true,
+            "max": [
+              165.49485231475583,
+              2337.3310543423245,
+              -0.0
+            ],
+            "min": [
+              -91.46926561670251,
+              2250.749394451395,
+              -100.0
+            ]
+          }
+        },
+        "display_style": "2",
+        "model_category_visibility": {
+          "state": "value",
+          "value": {
+            "hidden_by_id": {
+              "-2000011": false,
+              "-2000014": false,
+              "-2000023": false,
+              "-2000032": false,
+              "-2000035": false,
+              "-2000038": false,
+              "-2000051": false,
+              "-2000080": true,
+              "-2000100": false,
+              "-2000120": false,
+              "-2000126": false,
+              "-2000151": false,
+              "-2000160": false,
+              "-2000170": false,
+              "-2000171": false,
+              "-2000180": false,
+              "-2000196": true,
+              "-2000269": true,
+              "-2000340": false,
+              "-2000560": false,
+              "-2000996": false,
+              "-2001000": false,
+              "-2001036": false,
+              "-2001039": false,
+              "-2001040": false,
+              "-2001043": false,
+              "-2001046": false,
+              "-2001049": false,
+              "-2001052": false,
+              "-2001055": false,
+              "-2001058": false,
+              "-2001060": false,
+              "-2001079": false,
+              "-2001100": true,
+              "-2001107": false,
+              "-2001120": false,
+              "-2001140": false,
+              "-2001160": false,
+              "-2001180": false,
+              "-2001220": false,
+              "-2001260": false,
+              "-2001300": false,
+              "-2001320": false,
+              "-2001327": false,
+              "-2001330": false,
+              "-2001336": false,
+              "-2001340": true,
+              "-2001350": false,
+              "-2001352": false,
+              "-2001354": false,
+              "-2001360": false,
+              "-2001370": false,
+              "-2002000": false,
+              "-2003200": false,
+              "-2003400": true,
+              "-2003600": false,
+              "-2006130": false,
+              "-2006131": false,
+              "-2006133": false,
+              "-2006135": false,
+              "-2006138": false,
+              "-2006241": false,
+              "-2006261": false,
+              "-2006271": false,
+              "-2006274": false,
+              "-2008000": false,
+              "-2008010": false,
+              "-2008013": false,
+              "-2008016": false,
+              "-2008020": false,
+              "-2008039": false,
+              "-2008044": false,
+              "-2008049": false,
+              "-2008050": false,
+              "-2008055": false,
+              "-2008075": false,
+              "-2008077": false,
+              "-2008079": false,
+              "-2008081": false,
+              "-2008083": true,
+              "-2008085": false,
+              "-2008087": false,
+              "-2008099": false,
+              "-2008107": false,
+              "-2008122": false,
+              "-2008123": false,
+              "-2008124": false,
+              "-2008126": false,
+              "-2008128": false,
+              "-2008130": false,
+              "-2008132": false,
+              "-2008160": false,
+              "-2008161": false,
+              "-2008193": false,
+              "-2008203": false,
+              "-2008208": false,
+              "-2008212": false,
+              "-2008228": false,
+              "-2008231": false,
+              "-2008232": false,
+              "-2008234": false,
+              "-2009000": false,
+              "-2009003": false,
+              "-2009009": false,
+              "-2009016": false,
+              "-2009017": false,
+              "-2009030": false,
+              "-2009060": false,
+              "-2010001": false,
+              "18342394": true,
+              "18342628": true,
+              "18728599": true
+            },
+            "unreadable": []
+          }
+        },
+        "smooth_edges": {
+          "state": "value",
+          "value": false
+        },
+        "view_filters": {
+          "state": "value",
+          "value": {
+            "13659508": {
+              "enabled": true,
+              "visible": false
+            },
+            "1607615": {
+              "enabled": true,
+              "visible": true
+            },
+            "17568058": {
+              "enabled": true,
+              "visible": false
+            },
+            "6673771": {
+              "enabled": true,
+              "visible": true
+            },
+            "7000049": {
+              "enabled": true,
+              "visible": true
+            },
+            "7259245": {
+              "enabled": true,
+              "visible": false
+            },
+            "7600584": {
+              "enabled": true,
+              "visible": false
+            },
+            "7801658": {
+              "enabled": true,
+              "visible": false
+            },
+            "8588944": {
+              "enabled": true,
+              "visible": false
+            }
+          }
+        },
+        "view_template_id": -1
+      },
+      "transaction_group": {
+        "no_child_transaction_open_at_export": true,
+        "pre_state_commit_status": "3",
+        "restore_commit_status": "3",
+        "rollback_attempted": true,
+        "rollback_status": "2",
+        "rollback_succeeded": true,
+        "start_status": "1"
+      },
+      "variant": "v2_white_filter_smooth_edges_off"
+    },
+    {
+      "annotation_pass": {
+        "applied_smooth_edges": false,
+        "capture_faults": [
+          {
+            "detail": "2 restore step(s) raised",
+            "fault": "annotation_view_state_not_restored"
+          }
+        ],
+        "color_assignment_count": 283,
+        "elapsed_ms": 8113.216,
+        "failure_reason": "annotation_view_state_not_restored",
+        "model_suppression_mode": "external",
+        "output_directory": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\v3_white_filter_smooth_edges_off_expanded_frame",
+        "resolution": {
+          "achieved_export_dpi": 149.98981638608365,
+          "actual_h": 2429,
+          "actual_w": 5697,
+          "backoff_stop_reason": null,
+          "dim_check": "pass",
+          "dim_check_attempts": [
+            {
+              "accepted_px": 5697,
+              "actual_h": 2429,
+              "actual_w": 5697,
+              "dim_check": "pass",
+              "dim_read_error": null,
+              "requested_px": 5697
+            }
+          ],
+          "dim_check_ceiling_px": 10000,
+          "dim_read_error": null,
+          "effective_export_dpi": 144.80336407066665,
+          "fit_direction": "horizontal",
+          "pixel_size": 5697,
+          "requested_axis": "width",
+          "requested_export_dpi": 150.0,
+          "requested_pixel_size": 5697,
+          "view_scale": 96.0
+        },
+        "sidecar_path": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\v3_white_filter_smooth_edges_off_expanded_frame\\color_id_buffer\\__Plan_CropActive_19290402_anno.json",
+        "success": false,
+        "tiff_path": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\v3_white_filter_smooth_edges_off_expanded_frame\\color_id_buffer\\__Plan_CropActive_19290402_anno.tiff",
+        "tiff_sha256": {
+          "state": "value",
+          "value": "73cd497738ce1d35d6266fb669f7dbcbb4f2dfe3926d0c974d50d937199bfb68"
+        }
+      },
+      "conclusion": "RAN",
+      "document_safe": true,
+      "document_safe_detail": {
+        "after_explicit_restore": "restored",
+        "after_rollback": "restored",
+        "rollback_succeeded": true
+      },
+      "exceptions": [],
+      "frame": {
+        "annotation_member_count": 283,
+        "bbox_excursion_past_b_ft": {
+          "bottom": 6.864363160987068,
+          "count": 293,
+          "left": 7.079528110580142,
+          "right": 7.48091680016384,
+          "top": 6.007531726025718
+        },
+        "driver_count": 293,
+        "drivers_without_bbox": [
+          {
+            "bbox_source": "none",
+            "element_id": 19290405,
+            "key": "annotation_member:19290405",
+            "reason": "no bbox from get_BoundingBox(view) or get_BoundingBox(None)",
+            "role": "annotation_member"
+          }
+        ],
+        "drivers_without_bbox_count": 1,
+        "frame_b_prime_uv": [
+          -113.62986019563739,
+          2229.15319891554,
+          190.2307691332524,
+          2363.3132226808507
+        ],
+        "frame_b_uv": [
+          -102.55033208505725,
+          2240.017562076527,
+          178.74985233308857,
+          2353.305690954825
+        ],
+        "frame_px": [
+          5697,
+          2516
+        ],
+        "frame_snapped_uv": [
+          -113.62986019563739,
+          2229.15319891554,
+          190.2307691332524,
+          2363.348976235443
+        ],
+        "frame_source": "probe_expanded_frame_uv",
+        "lattice_relationship": {
+          "b_prime_achieved_export_dpi": 149.98981638608365,
+          "b_prime_achieved_fpp_ft": 0.05333695441967523,
+          "b_prime_cap_applied": false,
+          "b_prime_frame_px": [
+            5697,
+            2516
+          ],
+          "b_prime_requested_px": 4820,
+          "model_accepted_px": 4819,
+          "model_achieved_export_dpi": 149.98923689748682,
+          "model_achieved_fpp_ft": 0.05333716048884069,
+          "model_frame_px": [
+            5274,
+            2124
+          ],
+          "model_requested_px": 4819,
+          "note": "V3 renders B', the model pass rendered from B. These are the two lattices; production's model-lattice fault check is passed None and therefore skipped, because it would be comparing different frames.",
+          "shared_fpp": false
+        },
+        "margin_ft": 4.0,
+        "margin_paper_in": 0.5,
+        "per_side_delta_ft": {
+          "bottom": 10.864363160987068,
+          "left": 11.079528110580142,
+          "right": 11.48091680016384,
+          "top": 10.007531726025718
+        },
+        "per_side_delta_paper_in": {
+          "bottom": 1.3580453951233835,
+          "left": 1.3849410138225178,
+          "right": 1.43511460002048,
+          "top": 1.2509414657532147
+        },
+        "per_side_set_by": {
+          "bottom": "annotation_member:3694573",
+          "left": "viewer:6207877",
+          "right": "viewer:6207877",
+          "top": "annotation_member:3694573"
+        },
+        "viewer_categories": {
+          "collection": {
+            "state": "value",
+            "value": 11
+          },
+          "per_category_counts": {
+            "OST_CalloutBoundary": 0,
+            "OST_CalloutHeads": 0,
+            "OST_Callouts": 0,
+            "OST_Elev": 4,
+            "OST_ElevationMarks": 0,
+            "OST_ReferenceViewer": 0,
+            "OST_SectionHeads": 0,
+            "OST_Sections": 0,
+            "OST_Viewers": 7
+          },
+          "resolved_categories": {
+            "-2000198": "OST_ReferenceViewer",
+            "-2000200": "OST_Sections",
+            "-2000278": "OST_Viewers",
+            "-2000400": "OST_SectionHeads",
+            "-2000535": "OST_Elev",
+            "-2000537": "OST_Callouts",
+            "-2000538": "OST_CalloutHeads",
+            "-2000539": "OST_CalloutBoundary",
+            "-2006045": "OST_ElevationMarks"
+          },
+          "unreadable_category_count": 0,
+          "unresolved_category_names": []
+        },
+        "viewer_element_count": 11
+      },
+      "measurement": {
+        "checked": [
+          "applied_smooth_edges is False",
+          "model_suppression_mode == 'external'"
+        ],
+        "measured": true,
+        "unmet": []
+      },
+      "model_tiff": {
+        "matches_pre_variant": true,
+        "path": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_1134\\anno_pass_variants_probe\\model\\color_id_buffer\\__Plan_CropActive_19290402.tiff",
+        "sha256": {
+          "state": "value",
+          "value": "ee9e812769ec2735292b7abd46d48e8f164e8100da927278b3e6cd3fc0b4b934"
+        }
+      },
+      "plan": {
+        "expanded_frame": true,
+        "model_suppression": "external",
+        "smooth_edges_off": true,
+        "variant": "v3_white_filter_smooth_edges_off_expanded_frame",
+        "white_filter": true,
+        "zero_annotation_crop_offsets": false
+      },
+      "pre_state": {
+        "white_filter": {
+          "authored_model_overrides": {
+            "authored_count": 0,
+            "authored_element_ids": [],
+            "candidate_count": 4598,
+            "capped": false,
+            "scan_max": 5000,
+            "scanned_count": 4598,
+            "state": "value",
+            "unreadable_count": 0
+          },
+          "category_count": 113,
+          "filter_element_id": 19297340,
+          "link_visibility": {
+            "instance_count": 0,
+            "instances": [],
+            "not_by_host_view_count": 0,
+            "state": "value"
+          },
+          "note": "Detail Items and the shared model/detail Lines category carry a Model label but are ANNOTATION content. When included, this filter whites them out and REAL ANNOTATION INK IS LOST. Production's model-category hiding deliberately excludes them. Listed either way so the choice is visible in the record.",
+          "overrides_applied": true,
+          "rejected_non_filterable": [
+            {
+              "id": -2008149,
+              "name": "Conduit Runs"
+            },
+            {
+              "id": -2008163,
+              "name": "Pipe Segments"
+            },
+            {
+              "id": -2000982,
+              "name": "Coordination Model"
+            },
+            {
+              "id": 19290051,
+              "name": "KSRF_Hosp_Interior_AR - Floor Plan - (N) LEVEL 1_GM.dwg"
+            },
+            {
+              "id": -2009013,
+              "name": "Rebar Shape"
+            },
+            {
+              "id": -2000560,
+              "name": "Raster Images"
+            },
+            {
+              "id": -2000985,
+              "name": "Mechanical Equipment Sets"
+            },
+            {
+              "id": 18342394,
+              "name": "XBASE WBLOCK.dwg"
+            },
+            {
+              "id": 18728599,
+              "name": "PBASE Apartments WBLOCK.dwg"
+            },
+            {
+              "id": -2000303,
+              "name": "Analysis Results"
+            },
+            {
+              "id": -2000173,
+              "name": "Curtain Grids"
+            },
+            {
+              "id": -2008037,
+              "name": "Electrical Circuits"
+            },
+            {
+              "id": -2001107,
+              "name": "Data Exchanges"
+            },
+            {
+              "id": -2000196,
+              "name": "Imports in Families"
+            },
+            {
+              "id": -2008125,
+              "name": "Routing Preferences"
+            },
+            {
+              "id": -2000190,
+              "name": "Filled region"
+            },
+            {
+              "id": -2000194,
+              "name": "Masking Region"
+            },
+            {
+              "id": -2001352,
+              "name": "RVT Links"
+            },
+            {
+              "id": 18342628,
+              "name": "XBASE Apartments Phase 1 WBLOCK.dwg"
+            },
+            {
+              "id": -2008152,
+              "name": "Electrical Spare/Space Circuits"
+            },
+            {
+              "id": -2000700,
+              "name": "Materials"
+            },
+            {
+              "id": -2008150,
+              "name": "Cable Tray Runs"
+            },
+            {
+              "id": 19296742,
+              "name": "KSRF_Hosp_Interior_AR - Floor Plan - (N) LEVEL 1_GM.dwg (2)"
+            },
+            {
+              "id": -2000051,
+              "name": "Lines"
+            },
+            {
+              "id": -2010001,
+              "name": "Point Clouds"
+            },
+            {
+              "id": -2003100,
+              "name": "Sheets"
+            },
+            {
+              "id": -2000304,
+              "name": "Analysis Display Style"
+            },
+            {
+              "id": -2003101,
+              "name": "Project Information"
+            }
+          ],
+          "view_only_model_categories_excluded": [
+            {
+              "id": -2002000,
+              "name": "Detail Items"
+            }
+          ],
+          "view_only_model_categories_included": []
+        }
+      },
+      "restore": {
+        "after_explicit_restore": {
+          "annotation_crop_offsets": {
+            "status": "restored"
+          },
+          "crop_box": {
+            "status": "restored"
+          },
+          "display_style": {
+            "status": "restored"
+          },
+          "model_category_visibility": {
+            "status": "restored"
+          },
+          "overall": "restored",
+          "probe_filter_deleted": {
+            "status": "restored"
+          },
+          "smooth_edges": {
+            "status": "restored"
+          },
+          "view_filters": {
+            "status": "restored"
+          },
+          "view_template_id": {
+            "status": "restored"
+          }
+        },
+        "after_rollback": {
+          "annotation_crop_offsets": {
+            "status": "restored"
+          },
+          "crop_box": {
+            "status": "restored"
+          },
+          "display_style": {
+            "status": "restored"
+          },
+          "model_category_visibility": {
+            "status": "restored"
+          },
+          "overall": "restored",
+          "probe_filter_deleted": {
+            "status": "restored"
+          },
+          "smooth_edges": {
+            "status": "restored"
+          },
+          "view_filters": {
+            "status": "restored"
+          },
+          "view_template_id": {
+            "status": "restored"
+          }
+        },
+        "explicit_step_errors": []
+      },
+      "skipped": false,
+      "snapshot_after_explicit_restore": {
+        "annotation_crop_active": {
+          "reason": "View has no AnnotationCropActive on this Revit host",
+          "state": "unavailable"
+        },
+        "annotation_crop_offsets": {
+          "state": "value",
+          "value": {
+            "BottomAnnotationCropOffset": 0.08333333333333333,
+            "LeftAnnotationCropOffset": 0.08333333333333333,
+            "RightAnnotationCropOffset": 0.08333333333333333,
+            "TopAnnotationCropOffset": 0.08333333333333333
+          }
+        },
+        "crop_box": {
+          "state": "value",
+          "value": {
+            "active": true,
+            "max": [
+              165.49485231475583,
+              2337.3310543423245,
+              -0.0
+            ],
+            "min": [
+              -91.46926561670251,
+              2250.749394451395,
+              -100.0
+            ]
+          }
+        },
+        "display_style": "2",
+        "model_category_visibility": {
+          "state": "value",
+          "value": {
+            "hidden_by_id": {
+              "-2000011": false,
+              "-2000014": false,
+              "-2000023": false,
+              "-2000032": false,
+              "-2000035": false,
+              "-2000038": false,
+              "-2000051": false,
+              "-2000080": true,
+              "-2000100": false,
+              "-2000120": false,
+              "-2000126": false,
+              "-2000151": false,
+              "-2000160": false,
+              "-2000170": false,
+              "-2000171": false,
+              "-2000180": false,
+              "-2000196": true,
+              "-2000269": true,
+              "-2000340": false,
+              "-2000560": false,
+              "-2000996": false,
+              "-2001000": false,
+              "-2001036": false,
+              "-2001039": false,
+              "-2001040": false,
+              "-2001043": false,
+              "-2001046": false,
+              "-2001049": false,
+              "-2001052": false,
+              "-2001055": false,
+              "-2001058": false,
+              "-2001060": false,
+              "-2001079": false,
+              "-2001100": true,
+              "-2001107": false,
+              "-2001120": false,
+              "-2001140": false,
+              "-2001160": false,
+              "-2001180": false,
+              "-2001220": false,
+              "-2001260": false,
+              "-2001300": false,
+              "-2001320": false,
+              "-2001327": false,
+              "-2001330": false,
+              "-2001336": false,
+              "-2001340": true,
+              "-2001350": false,
+              "-2001352": false,
+              "-2001354": false,
+              "-2001360": false,
+              "-2001370": false,
+              "-2002000": false,
+              "-2003200": false,
+              "-2003400": true,
+              "-2003600": false,
+              "-2006130": false,
+              "-2006131": false,
+              "-2006133": false,
+              "-2006135": false,
+              "-2006138": false,
+              "-2006241": false,
+              "-2006261": false,
+              "-2006271": false,
+              "-2006274": false,
+              "-2008000": false,
+              "-2008010": false,
+              "-2008013": false,
+              "-2008016": false,
+              "-2008020": false,
+              "-2008039": false,
+              "-2008044": false,
+              "-2008049": false,
+              "-2008050": false,
+              "-2008055": false,
+              "-2008075": false,
+              "-2008077": false,
+              "-2008079": false,
+              "-2008081": false,
+              "-2008083": true,
+              "-2008085": false,
+              "-2008087": false,
+              "-2008099": false,
+              "-2008107": false,
+              "-2008122": false,
+              "-2008123": false,
+              "-2008124": false,
+              "-2008126": false,
+              "-2008128": false,
+              "-2008130": false,
+              "-2008132": false,
+              "-2008160": false,
+              "-2008161": false,
+              "-2008193": false,
+              "-2008203": false,
+              "-2008208": false,
+              "-2008212": false,
+              "-2008228": false,
+              "-2008231": false,
+              "-2008232": false,
+              "-2008234": false,
+              "-2009000": false,
+              "-2009003": false,
+              "-2009009": false,
+              "-2009016": false,
+              "-2009017": false,
+              "-2009030": false,
+              "-2009060": false,
+              "-2010001": false,
+              "18342394": true,
+              "18342628": true,
+              "18728599": true
+            },
+            "unreadable": []
+          }
+        },
+        "smooth_edges": {
+          "state": "value",
+          "value": false
+        },
+        "view_filters": {
+          "state": "value",
+          "value": {
+            "13659508": {
+              "enabled": true,
+              "visible": false
+            },
+            "1607615": {
+              "enabled": true,
+              "visible": true
+            },
+            "17568058": {
+              "enabled": true,
+              "visible": false
+            },
+            "6673771": {
+              "enabled": true,
+              "visible": true
+            },
+            "7000049": {
+              "enabled": true,
+              "visible": true
+            },
+            "7259245": {
+              "enabled": true,
+              "visible": false
+            },
+            "7600584": {
+              "enabled": true,
+              "visible": false
+            },
+            "7801658": {
+              "enabled": true,
+              "visible": false
+            },
+            "8588944": {
+              "enabled": true,
+              "visible": false
+            }
+          }
+        },
+        "view_template_id": -1
+      },
+      "snapshot_after_rollback": {
+        "annotation_crop_active": {
+          "reason": "View has no AnnotationCropActive on this Revit host",
+          "state": "unavailable"
+        },
+        "annotation_crop_offsets": {
+          "state": "value",
+          "value": {
+            "BottomAnnotationCropOffset": 0.08333333333333333,
+            "LeftAnnotationCropOffset": 0.08333333333333333,
+            "RightAnnotationCropOffset": 0.08333333333333333,
+            "TopAnnotationCropOffset": 0.08333333333333333
+          }
+        },
+        "crop_box": {
+          "state": "value",
+          "value": {
+            "active": true,
+            "max": [
+              165.49485231475583,
+              2337.3310543423245,
+              -0.0
+            ],
+            "min": [
+              -91.46926561670251,
+              2250.749394451395,
+              -100.0
+            ]
+          }
+        },
+        "display_style": "2",
+        "model_category_visibility": {
+          "state": "value",
+          "value": {
+            "hidden_by_id": {
+              "-2000011": false,
+              "-2000014": false,
+              "-2000023": false,
+              "-2000032": false,
+              "-2000035": false,
+              "-2000038": false,
+              "-2000051": false,
+              "-2000080": true,
+              "-2000100": false,
+              "-2000120": false,
+              "-2000126": false,
+              "-2000151": false,
+              "-2000160": false,
+              "-2000170": false,
+              "-2000171": false,
+              "-2000180": false,
+              "-2000196": true,
+              "-2000269": true,
+              "-2000340": false,
+              "-2000560": false,
+              "-2000996": false,
+              "-2001000": false,
+              "-2001036": false,
+              "-2001039": false,
+              "-2001040": false,
+              "-2001043": false,
+              "-2001046": false,
+              "-2001049": false,
+              "-2001052": false,
+              "-2001055": false,
+              "-2001058": false,
+              "-2001060": false,
+              "-2001079": false,
+              "-2001100": true,
+              "-2001107": false,
+              "-2001120": false,
+              "-2001140": false,
+              "-2001160": false,
+              "-2001180": false,
+              "-2001220": false,
+              "-2001260": false,
+              "-2001300": false,
+              "-2001320": false,
+              "-2001327": false,
+              "-2001330": false,
+              "-2001336": false,
+              "-2001340": true,
+              "-2001350": false,
+              "-2001352": false,
+              "-2001354": false,
+              "-2001360": false,
+              "-2001370": false,
+              "-2002000": false,
+              "-2003200": false,
+              "-2003400": true,
+              "-2003600": false,
+              "-2006130": false,
+              "-2006131": false,
+              "-2006133": false,
+              "-2006135": false,
+              "-2006138": false,
+              "-2006241": false,
+              "-2006261": false,
+              "-2006271": false,
+              "-2006274": false,
+              "-2008000": false,
+              "-2008010": false,
+              "-2008013": false,
+              "-2008016": false,
+              "-2008020": false,
+              "-2008039": false,
+              "-2008044": false,
+              "-2008049": false,
+              "-2008050": false,
+              "-2008055": false,
+              "-2008075": false,
+              "-2008077": false,
+              "-2008079": false,
+              "-2008081": false,
+              "-2008083": true,
+              "-2008085": false,
+              "-2008087": false,
+              "-2008099": false,
+              "-2008107": false,
+              "-2008122": false,
+              "-2008123": false,
+              "-2008124": false,
+              "-2008126": false,
+              "-2008128": false,
+              "-2008130": false,
+              "-2008132": false,
+              "-2008160": false,
+              "-2008161": false,
+              "-2008193": false,
+              "-2008203": false,
+              "-2008208": false,
+              "-2008212": false,
+              "-2008228": false,
+              "-2008231": false,
+              "-2008232": false,
+              "-2008234": false,
+              "-2009000": false,
+              "-2009003": false,
+              "-2009009": false,
+              "-2009016": false,
+              "-2009017": false,
+              "-2009030": false,
+              "-2009060": false,
+              "-2010001": false,
+              "18342394": true,
+              "18342628": true,
+              "18728599": true
+            },
+            "unreadable": []
+          }
+        },
+        "smooth_edges": {
+          "state": "value",
+          "value": false
+        },
+        "view_filters": {
+          "state": "value",
+          "value": {
+            "13659508": {
+              "enabled": true,
+              "visible": false
+            },
+            "1607615": {
+              "enabled": true,
+              "visible": true
+            },
+            "17568058": {
+              "enabled": true,
+              "visible": false
+            },
+            "6673771": {
+              "enabled": true,
+              "visible": true
+            },
+            "7000049": {
+              "enabled": true,
+              "visible": true
+            },
+            "7259245": {
+              "enabled": true,
+              "visible": false
+            },
+            "7600584": {
+              "enabled": true,
+              "visible": false
+            },
+            "7801658": {
+              "enabled": true,
+              "visible": false
+            },
+            "8588944": {
+              "enabled": true,
+              "visible": false
+            }
+          }
+        },
+        "view_template_id": -1
+      },
+      "snapshot_before": {
+        "annotation_crop_active": {
+          "reason": "View has no AnnotationCropActive on this Revit host",
+          "state": "unavailable"
+        },
+        "annotation_crop_offsets": {
+          "state": "value",
+          "value": {
+            "BottomAnnotationCropOffset": 0.08333333333333333,
+            "LeftAnnotationCropOffset": 0.08333333333333333,
+            "RightAnnotationCropOffset": 0.08333333333333333,
+            "TopAnnotationCropOffset": 0.08333333333333333
+          }
+        },
+        "crop_box": {
+          "state": "value",
+          "value": {
+            "active": true,
+            "max": [
+              165.49485231475583,
+              2337.3310543423245,
+              -0.0
+            ],
+            "min": [
+              -91.46926561670251,
+              2250.749394451395,
+              -100.0
+            ]
+          }
+        },
+        "display_style": "2",
+        "model_category_visibility": {
+          "state": "value",
+          "value": {
+            "hidden_by_id": {
+              "-2000011": false,
+              "-2000014": false,
+              "-2000023": false,
+              "-2000032": false,
+              "-2000035": false,
+              "-2000038": false,
+              "-2000051": false,
+              "-2000080": true,
+              "-2000100": false,
+              "-2000120": false,
+              "-2000126": false,
+              "-2000151": false,
+              "-2000160": false,
+              "-2000170": false,
+              "-2000171": false,
+              "-2000180": false,
+              "-2000196": true,
+              "-2000269": true,
+              "-2000340": false,
+              "-2000560": false,
+              "-2000996": false,
+              "-2001000": false,
+              "-2001036": false,
+              "-2001039": false,
+              "-2001040": false,
+              "-2001043": false,
+              "-2001046": false,
+              "-2001049": false,
+              "-2001052": false,
+              "-2001055": false,
+              "-2001058": false,
+              "-2001060": false,
+              "-2001079": false,
+              "-2001100": true,
+              "-2001107": false,
+              "-2001120": false,
+              "-2001140": false,
+              "-2001160": false,
+              "-2001180": false,
+              "-2001220": false,
+              "-2001260": false,
+              "-2001300": false,
+              "-2001320": false,
+              "-2001327": false,
+              "-2001330": false,
+              "-2001336": false,
+              "-2001340": true,
+              "-2001350": false,
+              "-2001352": false,
+              "-2001354": false,
+              "-2001360": false,
+              "-2001370": false,
+              "-2002000": false,
+              "-2003200": false,
+              "-2003400": true,
+              "-2003600": false,
+              "-2006130": false,
+              "-2006131": false,
+              "-2006133": false,
+              "-2006135": false,
+              "-2006138": false,
+              "-2006241": false,
+              "-2006261": false,
+              "-2006271": false,
+              "-2006274": false,
+              "-2008000": false,
+              "-2008010": false,
+              "-2008013": false,
+              "-2008016": false,
+              "-2008020": false,
+              "-2008039": false,
+              "-2008044": false,
+              "-2008049": false,
+              "-2008050": false,
+              "-2008055": false,
+              "-2008075": false,
+              "-2008077": false,
+              "-2008079": false,
+              "-2008081": false,
+              "-2008083": true,
+              "-2008085": false,
+              "-2008087": false,
+              "-2008099": false,
+              "-2008107": false,
+              "-2008122": false,
+              "-2008123": false,
+              "-2008124": false,
+              "-2008126": false,
+              "-2008128": false,
+              "-2008130": false,
+              "-2008132": false,
+              "-2008160": false,
+              "-2008161": false,
+              "-2008193": false,
+              "-2008203": false,
+              "-2008208": false,
+              "-2008212": false,
+              "-2008228": false,
+              "-2008231": false,
+              "-2008232": false,
+              "-2008234": false,
+              "-2009000": false,
+              "-2009003": false,
+              "-2009009": false,
+              "-2009016": false,
+              "-2009017": false,
+              "-2009030": false,
+              "-2009060": false,
+              "-2010001": false,
+              "18342394": true,
+              "18342628": true,
+              "18728599": true
+            },
+            "unreadable": []
+          }
+        },
+        "smooth_edges": {
+          "state": "value",
+          "value": false
+        },
+        "view_filters": {
+          "state": "value",
+          "value": {
+            "13659508": {
+              "enabled": true,
+              "visible": false
+            },
+            "1607615": {
+              "enabled": true,
+              "visible": true
+            },
+            "17568058": {
+              "enabled": true,
+              "visible": false
+            },
+            "6673771": {
+              "enabled": true,
+              "visible": true
+            },
+            "7000049": {
+              "enabled": true,
+              "visible": true
+            },
+            "7259245": {
+              "enabled": true,
+              "visible": false
+            },
+            "7600584": {
+              "enabled": true,
+              "visible": false
+            },
+            "7801658": {
+              "enabled": true,
+              "visible": false
+            },
+            "8588944": {
+              "enabled": true,
+              "visible": false
+            }
+          }
+        },
+        "view_template_id": -1
+      },
+      "transaction_group": {
+        "no_child_transaction_open_at_export": true,
+        "pre_state_commit_status": "3",
+        "restore_commit_status": "3",
+        "rollback_attempted": true,
+        "rollback_status": "2",
+        "rollback_succeeded": true,
+        "start_status": "1"
+      },
+      "variant": "v3_white_filter_smooth_edges_off_expanded_frame"
+    }
+  ],
+  "variants_that_did_not_measure": [],
+  "white_filter_categories": {
+    "category_count": 113,
+    "filterable_model_ids": [
+      -2009060,
+      -2009030,
+      -2009017,
+      -2009016,
+      -2009009,
+      -2009003,
+      -2009000,
+      -2008234,
+      -2008232,
+      -2008231,
+      -2008228,
+      -2008212,
+      -2008208,
+      -2008203,
+      -2008193,
+      -2008161,
+      -2008160,
+      -2008132,
+      -2008130,
+      -2008128,
+      -2008126,
+      -2008124,
+      -2008123,
+      -2008122,
+      -2008107,
+      -2008101,
+      -2008099,
+      -2008087,
+      -2008085,
+      -2008083,
+      -2008081,
+      -2008079,
+      -2008077,
+      -2008075,
+      -2008055,
+      -2008050,
+      -2008049,
+      -2008044,
+      -2008043,
+      -2008039,
+      -2008020,
+      -2008016,
+      -2008015,
+      -2008013,
+      -2008010,
+      -2008000,
+      -2006274,
+      -2006271,
+      -2006261,
+      -2006241,
+      -2006138,
+      -2006135,
+      -2006133,
+      -2006131,
+      -2006130,
+      -2003600,
+      -2003400,
+      -2003200,
+      -2001370,
+      -2001360,
+      -2001354,
+      -2001350,
+      -2001340,
+      -2001336,
+      -2001330,
+      -2001327,
+      -2001320,
+      -2001300,
+      -2001260,
+      -2001220,
+      -2001180,
+      -2001160,
+      -2001140,
+      -2001120,
+      -2001100,
+      -2001098,
+      -2001079,
+      -2001077,
+      -2001060,
+      -2001058,
+      -2001055,
+      -2001052,
+      -2001049,
+      -2001046,
+      -2001043,
+      -2001040,
+      -2001039,
+      -2001036,
+      -2001026,
+      -2001023,
+      -2001021,
+      -2001010,
+      -2001009,
+      -2001008,
+      -2001000,
+      -2000996,
+      -2000340,
+      -2000269,
+      -2000180,
+      -2000171,
+      -2000170,
+      -2000160,
+      -2000151,
+      -2000126,
+      -2000120,
+      -2000100,
+      -2000080,
+      -2000038,
+      -2000035,
+      -2000032,
+      -2000023,
+      -2000014,
+      -2000011
+    ],
+    "filterable_model_names": {
+      "-2000011": "Walls",
+      "-2000014": "Windows",
+      "-2000023": "Doors",
+      "-2000032": "Floors",
+      "-2000035": "Roofs",
+      "-2000038": "Ceilings",
+      "-2000080": "Furniture",
+      "-2000100": "Columns",
+      "-2000120": "Stairs",
+      "-2000126": "Railings",
+      "-2000151": "Generic Models",
+      "-2000160": "Rooms",
+      "-2000170": "Curtain Panels",
+      "-2000171": "Curtain Wall Mullions",
+      "-2000180": "Ramps",
+      "-2000269": "Parts",
+      "-2000340": "Curtain Systems",
+      "-2000996": "Shaft Openings",
+      "-2001000": "Casework",
+      "-2001008": "Air Systems",
+      "-2001009": "Water Loops",
+      "-2001010": "Zone Equipment",
+      "-2001021": "Electrical Analytical Bus",
+      "-2001023": "Electrical Analytical Transfer Switch",
+      "-2001026": "Electrical Analytical Power Source",
+      "-2001036": "Hardscape",
+      "-2001039": "Temporary Structures",
+      "-2001040": "Electrical Equipment",
+      "-2001043": "Food Service Equipment",
+      "-2001046": "Medical Equipment",
+      "-2001049": "Fire Protection",
+      "-2001052": "Vertical Circulation",
+      "-2001055": "Audio Visual Devices",
+      "-2001058": "Signage",
+      "-2001060": "Electrical Fixtures",
+      "-2001077": "Electrical Analytical Transformer",
+      "-2001079": "Toposolid",
+      "-2001098": "Electrical Analytical Load Set",
+      "-2001100": "Furniture Systems",
+      "-2001120": "Lighting Fixtures",
+      "-2001140": "Mechanical Equipment",
+      "-2001160": "Plumbing Fixtures",
+      "-2001180": "Parking",
+      "-2001220": "Roads",
+      "-2001260": "Site",
+      "-2001300": "Structural Foundations",
+      "-2001320": "Structural Framing",
+      "-2001327": "Structural Beam Systems",
+      "-2001330": "Structural Columns",
+      "-2001336": "Structural Trusses",
+      "-2001340": "Topography",
+      "-2001350": "Specialty Equipment",
+      "-2001354": "Structural Stiffeners",
+      "-2001360": "Planting",
+      "-2001370": "Entourage",
+      "-2003200": "Areas",
+      "-2003400": "Mass",
+      "-2003600": "Spaces",
+      "-2006130": "Abutments",
+      "-2006131": "Piers",
+      "-2006133": "Bridge Cables",
+      "-2006135": "Bridge Decks",
+      "-2006138": "Bearings",
+      "-2006241": "Bridge Framing",
+      "-2006261": "Vibration Management",
+      "-2006271": "Expansion Joints",
+      "-2006274": "Structural Tendons",
+      "-2008000": "Ducts",
+      "-2008010": "Duct Fittings",
+      "-2008013": "Air Terminals",
+      "-2008015": "Duct Systems",
+      "-2008016": "Duct Accessories",
+      "-2008020": "Flex Ducts",
+      "-2008039": "Wires",
+      "-2008043": "Piping Systems",
+      "-2008044": "Pipes",
+      "-2008049": "Pipe Fittings",
+      "-2008050": "Flex Pipes",
+      "-2008055": "Pipe Accessories",
+      "-2008075": "Telephone Devices",
+      "-2008077": "Nurse Call Devices",
+      "-2008079": "Security Devices",
+      "-2008081": "Communication Devices",
+      "-2008083": "Data Devices",
+      "-2008085": "Fire Alarm Devices",
+      "-2008087": "Lighting Devices",
+      "-2008099": "Sprinklers",
+      "-2008101": "Switch System",
+      "-2008107": "HVAC Zones",
+      "-2008122": "Pipe Insulations",
+      "-2008123": "Duct Insulations",
+      "-2008124": "Duct Linings",
+      "-2008126": "Cable Tray Fittings",
+      "-2008128": "Conduit Fittings",
+      "-2008130": "Cable Trays",
+      "-2008132": "Conduits",
+      "-2008160": "Duct Placeholders",
+      "-2008161": "Pipe Placeholders",
+      "-2008193": "MEP Fabrication Ductwork",
+      "-2008203": "MEP Fabrication Hangers",
+      "-2008208": "MEP Fabrication Pipework",
+      "-2008212": "MEP Fabrication Containment",
+      "-2008228": "MEP Fabrication Ductwork Stiffeners",
+      "-2008231": "MEP Ancillary Framing",
+      "-2008232": "Mechanical Control Devices",
+      "-2008234": "Plumbing Equipment",
+      "-2009000": "Structural Rebar",
+      "-2009003": "Structural Area Reinforcement",
+      "-2009009": "Structural Path Reinforcement",
+      "-2009016": "Structural Fabric Reinforcement",
+      "-2009017": "Structural Fabric Areas",
+      "-2009030": "Structural Connections",
+      "-2009060": "Structural Rebar Couplers"
+    },
+    "include_view_only_model": false,
+    "rejected_non_filterable": [
+      {
+        "id": -2008149,
+        "name": "Conduit Runs"
+      },
+      {
+        "id": -2008163,
+        "name": "Pipe Segments"
+      },
+      {
+        "id": -2000982,
+        "name": "Coordination Model"
+      },
+      {
+        "id": 19290051,
+        "name": "KSRF_Hosp_Interior_AR - Floor Plan - (N) LEVEL 1_GM.dwg"
+      },
+      {
+        "id": -2009013,
+        "name": "Rebar Shape"
+      },
+      {
+        "id": -2000560,
+        "name": "Raster Images"
+      },
+      {
+        "id": -2000985,
+        "name": "Mechanical Equipment Sets"
+      },
+      {
+        "id": 18342394,
+        "name": "XBASE WBLOCK.dwg"
+      },
+      {
+        "id": 18728599,
+        "name": "PBASE Apartments WBLOCK.dwg"
+      },
+      {
+        "id": -2000303,
+        "name": "Analysis Results"
+      },
+      {
+        "id": -2000173,
+        "name": "Curtain Grids"
+      },
+      {
+        "id": -2008037,
+        "name": "Electrical Circuits"
+      },
+      {
+        "id": -2001107,
+        "name": "Data Exchanges"
+      },
+      {
+        "id": -2000196,
+        "name": "Imports in Families"
+      },
+      {
+        "id": -2008125,
+        "name": "Routing Preferences"
+      },
+      {
+        "id": -2000190,
+        "name": "Filled region"
+      },
+      {
+        "id": -2000194,
+        "name": "Masking Region"
+      },
+      {
+        "id": -2001352,
+        "name": "RVT Links"
+      },
+      {
+        "id": 18342628,
+        "name": "XBASE Apartments Phase 1 WBLOCK.dwg"
+      },
+      {
+        "id": -2008152,
+        "name": "Electrical Spare/Space Circuits"
+      },
+      {
+        "id": -2000700,
+        "name": "Materials"
+      },
+      {
+        "id": -2008150,
+        "name": "Cable Tray Runs"
+      },
+      {
+        "id": 19296742,
+        "name": "KSRF_Hosp_Interior_AR - Floor Plan - (N) LEVEL 1_GM.dwg (2)"
+      },
+      {
+        "id": -2000051,
+        "name": "Lines"
+      },
+      {
+        "id": -2010001,
+        "name": "Point Clouds"
+      },
+      {
+        "id": -2003100,
+        "name": "Sheets"
+      },
+      {
+        "id": -2000304,
+        "name": "Analysis Display Style"
+      },
+      {
+        "id": -2003101,
+        "name": "Project Information"
+      }
+    ],
+    "state": "value",
+    "unreadable": [],
+    "view_only_model_ids": [
+      {
+        "id": -2002000,
+        "name": "Detail Items"
+      }
+    ]
+  },
+  "white_override_capability": {
+    "missing_setters": [],
+    "solid_pattern_id": 20,
+    "state": "value"
+  }
+}

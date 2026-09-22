@@ -436,6 +436,60 @@ def get_or_create_neutral_phase_filter(doc):
     return pf, True
 
 
+# UNCONFIRMED (no Revit run in this session): the markers Revit uses when it
+# REFUSES a category override rather than failing at it. Observed on the
+# 2026-09-22 and round-1 probe runs as the message "Category cannot be
+# overridden"; the exception type is not relied on because it varies by host.
+# A marker miss degrades to "failed", which is the safe direction -- a genuine
+# failure reported as a refusal would hide a real defect, where a refusal
+# reported as a failure only costs a false alarm.
+_CATEGORY_NOT_OVERRIDABLE_MARKERS = (
+    "cannot be overridden",
+    "not overridable",
+    "cannot be overriden",   # Revit has shipped this spelling
+)
+
+
+def _category_override_refused(ex):
+    """True when Revit REFUSED the category override rather than failed at it.
+
+    A category Revit will not let a view override is a property of the
+    category, not a fault in the capture: there is nothing to suppress and
+    nothing to restore. Reporting it as a restore failure is what made five
+    good round-1 captures read as
+    ``annotation_view_state_not_restored``.
+    """
+    text = "{0} {1}".format(type(ex).__name__, ex).lower()
+    return any(marker in text for marker in _CATEGORY_NOT_OVERRIDABLE_MARKERS)
+
+
+def _category_is_overridable(view, cat_id, diag=None, view_id=None):
+    """Three-valued: True / False / None when the host cannot answer.
+
+    Asks ``View.IsCategoryOverridable`` when the host exposes it (UNCONFIRMED
+    on Revit 2025, hence the reflection) so a refusal can be anticipated rather
+    than only classified after it raises. ``None`` means the question could not
+    be asked, and the caller falls back to attempting the write and classifying
+    the exception -- never to assuming it is fine.
+    """
+    probe = getattr(view, "IsCategoryOverridable", None)
+    if probe is None:
+        return None
+    try:
+        return bool(probe(cat_id))
+    except Exception as ex:
+        if diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="category_overridable_probe",
+                message="View.IsCategoryOverridable raised ({0}: {1}); falling back to "
+                        "attempting the override and classifying the "
+                        "result".format(type(ex).__name__, ex),
+                view_id=view_id,
+            )
+        return None
+
+
 def _get_solid_pattern_id(doc):
     from Autodesk.Revit.DB import FilteredElementCollector, FillPatternElement, FillPatternTarget
     for fp in FilteredElementCollector(doc).OfClass(FillPatternElement):
@@ -4833,7 +4887,13 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     # an annotation category's visibility in either direction.
     model_category_hidden_state = _model_category_hidden_state(
         doc, view, diag=diag, view_id=view_id)
+    # Only categories whose halftone write SUCCEEDED, so restore touches exactly
+    # what this pass changed.
     category_halftone_state = {}
+    # Every category considered, three-valued: "applied" / "not_overridable" /
+    # "failed". A category absent from category_halftone_state is not the same
+    # fact as one that was never looked at, and this is what says which.
+    category_halftone_outcomes = {}
 
     orig_crop_box = None
     orig_crop_box_active = None
@@ -5041,19 +5101,51 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
             if cat is not None:
                 categories_touched.add(cat.Id.IntegerValue)
 
+        # THE STATE IS RECORDED ONLY AFTER THE WRITE SUCCEEDS, and that ordering
+        # is the whole fix. It used to be recorded before SetCategoryOverrides,
+        # so a category Revit REFUSES to override was entered into
+        # category_halftone_state anyway -- and the restore loop then dutifully
+        # tried to put back a halftone this pass had never changed, raised the
+        # same refusal, and landed in restore_failures. Every plan variant of
+        # round 1 came back success=false /
+        # annotation_view_state_not_restored with "2 restore step(s) raised"
+        # while all eight read-back obligations said restored, because the two
+        # raisers were restores of writes that never happened.
+        #
+        # A category this pass did not change needs no restore. Nothing is
+        # recorded for it, so the restore loop never sees it.
         for cat_id_int in categories_touched:
+            cat_id = ElementId(int(cat_id_int))
+            overridable = _category_is_overridable(
+                view, cat_id, diag=diag, view_id=view_id)
+            if overridable is False:
+                category_halftone_outcomes[cat_id_int] = {
+                    "outcome": "not_overridable",
+                    "detected": "View.IsCategoryOverridable",
+                }
+                continue
             try:
-                cat_id = ElementId(int(cat_id_int))
                 cat_ogs = view.GetCategoryOverrides(cat_id)
-                category_halftone_state[cat_id_int] = cat_ogs.Halftone
+                was_halftone = cat_ogs.Halftone
                 cat_ogs.SetHalftone(False)
                 view.SetCategoryOverrides(cat_id, cat_ogs)
+                category_halftone_state[cat_id_int] = was_halftone
+                category_halftone_outcomes[cat_id_int] = {"outcome": "applied"}
             except Exception as ex:
+                refused = _category_override_refused(ex)
+                category_halftone_outcomes[cat_id_int] = {
+                    "outcome": "not_overridable" if refused else "failed",
+                    "detected": "exception classification",
+                    "error": "{0}: {1}".format(type(ex).__name__, ex),
+                }
                 if diag is not None:
                     diag.warn(
                         phase="color_id_buffer",
                         callsite="annotation_category_halftone",
-                        message=str(ex),
+                        message="{0}{1}".format(
+                            "Revit refuses category overrides on this category, so "
+                            "its halftone was neither changed nor recorded for "
+                            "restore: " if refused else "", ex),
                         view_id=view_id,
                     )
 
@@ -5236,13 +5328,51 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
                 view.CropBoxActive = orig_crop_box_active
             _restore_step("annotation_restore_crop_box", _restore_crop_box)
 
+        # Only the categories whose suppress-side write SUCCEEDED are in this
+        # map, so anything raising here is a category that accepted the override
+        # on the way in and refuses it on the way out. That is still not a
+        # capture fault when Revit REFUSED it -- there is nothing this pass can
+        # do and nothing it left changed -- so it is recorded three-valued and
+        # kept out of restore_failures. A restore that genuinely FAILED still
+        # fails the capture.
         for cat_id_int, was_halftone in category_halftone_state.items():
-            def _restore_halftone(cat_id_int=cat_id_int, was_halftone=was_halftone):
+            try:
                 cat_id = ElementId(int(cat_id_int))
                 cat_ogs = view.GetCategoryOverrides(cat_id)
                 cat_ogs.SetHalftone(was_halftone)
                 view.SetCategoryOverrides(cat_id, cat_ogs)
-            _restore_step("annotation_restore_category_halftone", _restore_halftone)
+                category_halftone_outcomes.setdefault(cat_id_int, {})[
+                    "restore"] = "restored"
+            except Exception as ex:
+                refused = _category_override_refused(ex)
+                category_halftone_outcomes.setdefault(cat_id_int, {})[
+                    "restore"] = "not_overridable" if refused else "failed"
+                category_halftone_outcomes[cat_id_int]["restore_error"] = (
+                    "{0}: {1}".format(type(ex).__name__, ex))
+                if refused:
+                    if diag is not None:
+                        diag.warn(
+                            phase="color_id_buffer",
+                            callsite="annotation_restore_category_halftone",
+                            message="Revit refused the category override while "
+                                    "restoring halftone; the category is not "
+                                    "overridable and nothing was left changed, so "
+                                    "this is NOT a capture fault: {0}".format(ex),
+                            view_id=view_id,
+                        )
+                else:
+                    restore_failures.append({
+                        "callsite": "annotation_restore_category_halftone",
+                        "error": "{0}: {1}".format(type(ex).__name__, ex),
+                    })
+                    if diag is not None:
+                        diag.error(
+                            phase="color_id_buffer",
+                            callsite="annotation_restore_category_halftone",
+                            message=str(ex),
+                            view_id=view_id,
+                            exc=ex,
+                        )
 
         if orig_smooth_edges is not None and applied_smooth_edges is False:
             def _restore_smooth_edges():
@@ -5381,6 +5511,12 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         # tell "hidden by this capture" from "read and left alone".
         "categories_hidden": model_category_hidden_state,
         "category_halftone_state": category_halftone_state,
+        # Per category: "applied" / "not_overridable" / "failed" on the way in,
+        # and "restored" / "not_overridable" / "failed" on the way out. A
+        # category Revit refuses to override is NOT a capture fault -- there is
+        # nothing to suppress and nothing left changed -- and this is where that
+        # reads as a fact rather than as a missing key.
+        "category_halftone_outcomes": category_halftone_outcomes,
         "filter_state": filter_state,
         # Which side arranged model suppression for this capture. "external"
         # means this pass hid nothing and disabled no filter, so

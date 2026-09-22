@@ -483,3 +483,306 @@ def test_a_clean_capture_persists_an_empty_fault_list_not_a_missing_key(tmp_path
     assert persisted["capture_faults"] == []
     assert "failure_reason" in persisted
     assert persisted["failure_reason"] is None
+
+
+# ======================================================================
+# P1 (round 2 brief, defect R5): a category Revit REFUSES to override is
+# not a capture fault
+# ======================================================================
+
+class _RefusingView(FakeViewPlan):
+    """A view that refuses category overrides on one category.
+
+    Models what Revit does on a non-overridable category: ``SetCategoryOverrides``
+    raises "Category cannot be overridden". Observed on the 2026-09-22 run and
+    on round 1, where it made every plan variant report
+    ``annotation_view_state_not_restored``.
+    """
+
+    def __init__(self, view_id, refuse_ids=(), name="TestPlan"):
+        FakeViewPlan.__init__(self, view_id, name)
+        self._refuse_ids = set(int(v) for v in refuse_ids)
+        self.category_override_writes = []
+
+    def SetCategoryOverrides(self, cat_id, ogs):
+        value = int(cat_id.IntegerValue)
+        self.category_override_writes.append(value)
+        if value in self._refuse_ids:
+            raise Exception("Category cannot be overridden")
+        FakeViewPlan.SetCategoryOverrides(self, cat_id, ogs)
+
+
+def _run_with_view(tmp_path, view, cfg_mutate=None):
+    elements = _elements()
+    doc = _SizedDoc(elements=elements, link_instances=[],
+                    categories=[MODEL_CAT, OTHER_MODEL_CAT, ANNO_CAT])
+    cfg = Config()
+    cfg.include_linked_rvt = False
+    cfg.debug_dump_path = str(tmp_path)
+    if cfg_mutate is not None:
+        cfg_mutate(cfg)
+    diag = FakeDiag()
+    geom = {}
+    with install_fake_revit_db():
+        color_id_buffer.export_color_id_buffer_view(
+            doc, view, elements=_model_pass_elements(elements), cfg=cfg,
+            diag=diag, raster=_raster(), elem_cache=None, geometry_out=geom)
+        anno = color_id_buffer.export_annotation_color_id_buffer_view(
+            doc, view, cfg, geom, diag=diag, raster=_raster(), elements=elements)
+    return anno, doc, view, diag
+
+
+def test_a_non_overridable_category_does_not_fail_the_capture(tmp_path):
+    """R5, the defect this round exists to fix.
+
+    Round 1: every plan variant returned ``success=false`` /
+    ``annotation_view_state_not_restored`` with "2 restore step(s) raised" while
+    all eight read-back obligations said restored and ``document_safe`` was true.
+    Five good captures read as failures.
+    """
+    view = _RefusingView(VIEW_ID, refuse_ids=[ANNO_CAT.Id.IntegerValue])
+    anno, _doc, _view, _diag = _run_with_view(tmp_path, view)
+
+    assert anno["metadata"]["restore_failures"] == [], (
+        "a category Revit refuses to override must not enter restore_failures")
+    faults = [f["fault"] for f in anno["metadata"]["capture_faults"]]
+    assert "annotation_view_state_not_restored" not in faults, faults
+    assert anno["success"] is True, anno["failure_reason"]
+
+
+def test_the_refusal_is_recorded_three_valued_rather_than_silently_skipped(tmp_path):
+    """Not failing is not the same as not happening.
+
+    A capture that quietly skipped the category would be indistinguishable from
+    one where the halftone suppression worked -- and halftone is a graphics
+    setting that changes exported colour, so which it was matters.
+    """
+    view = _RefusingView(VIEW_ID, refuse_ids=[ANNO_CAT.Id.IntegerValue])
+    anno, _doc, _view, _diag = _run_with_view(tmp_path, view)
+
+    outcomes = anno["metadata"]["category_halftone_outcomes"]
+    assert outcomes, "every category considered must be recorded"
+    refused = outcomes[ANNO_CAT.Id.IntegerValue]
+    assert refused["outcome"] == "not_overridable"
+    assert "cannot be overridden" in refused["error"].lower()
+    # And it is NOT in the state map, so restore never tries to put it back.
+    assert ANNO_CAT.Id.IntegerValue not in anno["metadata"][
+        "category_halftone_state"]
+
+
+def test_a_category_that_accepted_the_override_is_recorded_applied(tmp_path):
+    """THE CONTROL. Without it the fix could classify every category as
+    not_overridable and the halftone suppression would silently stop happening
+    while every capture read clean."""
+    view = _RefusingView(VIEW_ID, refuse_ids=[])
+    anno, _doc, _view, _diag = _run_with_view(tmp_path, view)
+
+    outcomes = anno["metadata"]["category_halftone_outcomes"]
+    assert outcomes
+    for cat_id, record in outcomes.items():
+        assert record["outcome"] == "applied", (cat_id, record)
+        assert record.get("restore") == "restored", (cat_id, record)
+    # The state map carries exactly the categories that were changed.
+    assert set(anno["metadata"]["category_halftone_state"]) == set(outcomes)
+
+
+def test_a_genuine_restore_failure_still_fails_the_capture(tmp_path):
+    """The other half of the fix, and the one that keeps it honest.
+
+    A category that accepted the override on the way IN and fails on the way OUT
+    for some other reason has left the view changed. That is still a capture
+    fault -- the fix must not turn every restore error into a shrug.
+    """
+    class _FailsOnRestore(FakeViewPlan):
+        def __init__(self, view_id):
+            FakeViewPlan.__init__(self, view_id)
+            self._suppressed = set()
+
+        def SetCategoryOverrides(self, cat_id, ogs):
+            value = int(cat_id.IntegerValue)
+            if value in self._suppressed:
+                raise Exception("InvalidOperationException: the document is busy")
+            self._suppressed.add(value)
+            FakeViewPlan.SetCategoryOverrides(self, cat_id, ogs)
+
+    view = _FailsOnRestore(VIEW_ID)
+    anno, _doc, _view, _diag = _run_with_view(tmp_path, view)
+
+    assert anno["metadata"]["restore_failures"], (
+        "a genuine restore failure must still be recorded")
+    faults = [f["fault"] for f in anno["metadata"]["capture_faults"]]
+    assert "annotation_view_state_not_restored" in faults
+    assert anno["success"] is False
+    outcomes = anno["metadata"]["category_halftone_outcomes"]
+    assert any(record.get("restore") == "failed" for record in outcomes.values())
+
+
+def test_the_suppress_side_state_is_recorded_only_after_the_write_succeeds(tmp_path):
+    """The ROOT CAUSE, asserted directly.
+
+    ``category_halftone_state`` used to be written before
+    ``SetCategoryOverrides``, so a refused category was entered anyway and the
+    restore loop tried to undo a change that never happened. The map must hold
+    exactly the categories whose write landed.
+    """
+    view = _RefusingView(VIEW_ID, refuse_ids=[ANNO_CAT.Id.IntegerValue])
+    anno, _doc, _view, _diag = _run_with_view(tmp_path, view)
+
+    state = anno["metadata"]["category_halftone_state"]
+    outcomes = anno["metadata"]["category_halftone_outcomes"]
+    applied = {cid for cid, rec in outcomes.items() if rec["outcome"] == "applied"}
+    refused = {cid for cid, rec in outcomes.items()
+               if rec["outcome"] == "not_overridable"}
+    assert set(state) == applied
+    assert refused
+    assert not (set(state) & refused)
+
+
+def test_an_is_category_overridable_probe_short_circuits_the_write(tmp_path):
+    """When the host exposes ``View.IsCategoryOverridable`` (UNCONFIRMED on
+    2025), a refusal is anticipated rather than provoked -- so the write is not
+    even attempted on a category the view has already said no to."""
+    class _ProbeView(_RefusingView):
+        def IsCategoryOverridable(self, cat_id):
+            return int(cat_id.IntegerValue) not in self._refuse_ids
+
+    view = _ProbeView(VIEW_ID, refuse_ids=[ANNO_CAT.Id.IntegerValue])
+    anno, _doc, _view, _diag = _run_with_view(tmp_path, view)
+
+    record = anno["metadata"]["category_halftone_outcomes"][
+        ANNO_CAT.Id.IntegerValue]
+    assert record["outcome"] == "not_overridable"
+    assert record["detected"] == "View.IsCategoryOverridable"
+    assert "error" not in record, "the write must not have been attempted"
+    assert ANNO_CAT.Id.IntegerValue not in view.category_override_writes
+    assert anno["success"] is True
+
+
+def test_a_category_that_accepts_then_refuses_is_a_refusal_not_a_failure(tmp_path):
+    """THE CASE THE RESTORE-SIDE CLASSIFIER EXISTS FOR, and it was unbound.
+
+    The root-cause fix means a category Revit refuses up front never enters
+    ``category_halftone_state``, so the restore loop never sees it -- which made
+    the restore-side classification dead code under every other fixture here.
+    Mutating ``_category_override_refused`` to always-False in the restore loop
+    left the suite green, found by mutating the fix rather than by reading it.
+
+    This fixture accepts the suppress write and refuses the restore write, which
+    is the only way that branch is reachable. Revit refusing means nothing was
+    left changed, so it is not a capture fault.
+    """
+    class _AcceptsThenRefuses(FakeViewPlan):
+        def __init__(self, view_id, target_id):
+            FakeViewPlan.__init__(self, view_id)
+            self._target = int(target_id)
+            self._seen = set()
+
+        def SetCategoryOverrides(self, cat_id, ogs):
+            value = int(cat_id.IntegerValue)
+            if value == self._target and value in self._seen:
+                raise Exception("Category cannot be overridden")
+            self._seen.add(value)
+            FakeViewPlan.SetCategoryOverrides(self, cat_id, ogs)
+
+    view = _AcceptsThenRefuses(VIEW_ID, ANNO_CAT.Id.IntegerValue)
+    anno, _doc, _view, _diag = _run_with_view(tmp_path, view)
+
+    record = anno["metadata"]["category_halftone_outcomes"][
+        ANNO_CAT.Id.IntegerValue]
+    # Accepted going in -- so it IS in the state map, unlike the up-front case.
+    assert record["outcome"] == "applied"
+    assert ANNO_CAT.Id.IntegerValue in anno["metadata"]["category_halftone_state"]
+    # And refused coming out, which is a refusal rather than a failure.
+    assert record["restore"] == "not_overridable"
+    assert "cannot be overridden" in record["restore_error"].lower()
+    assert anno["metadata"]["restore_failures"] == []
+    faults = [f["fault"] for f in anno["metadata"]["capture_faults"]]
+    assert "annotation_view_state_not_restored" not in faults
+    assert anno["success"] is True
+
+
+# The VERBATIM exception Revit raised on the round-1 plan run (2026-09-22,
+# view 19290402). Pasted rather than paraphrased: the classifier's whole job is
+# to recognise THIS string, and a paraphrase would bind it to my wording instead
+# of Revit's.
+_REAL_REFUSAL = (
+    "ArgumentException: Category cannot be overridden.\r\n"
+    "Parameter name: categoryId\n"
+    "   at Autodesk.Revit.DB.View.SetCategoryOverrides(ElementId categoryId, "
+    "OverrideGraphicSettings overrideGraphicSettings)\r\n"
+    "   at InvokeStub_View.SetCategoryOverrides(Object, Span`1)\r\n"
+    "   at System.Reflection.MethodBaseInvoker.InvokeWithFewArgs(Object obj, "
+    "BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)"
+)
+
+
+def test_the_classifier_recognises_the_error_revit_actually_raised():
+    """Bound to the run, not to my guess at the wording.
+
+    Round 1's plan view produced this exact string twice, from
+    ``annotation_restore_category_halftone``. If the marker set does not match
+    it, the R5 fix does nothing on the only view known to trigger R5.
+    """
+    class _Ex(Exception):
+        pass
+
+    assert color_id_buffer._category_override_refused(_Ex(_REAL_REFUSAL)) is True
+
+
+def test_the_classifier_does_not_swallow_an_unrelated_failure():
+    """THE CONTROL, and the one that matters most here: a classifier that
+    returned True for everything would silence every genuine restore failure
+    while making the R5 symptom disappear."""
+    class _Ex(Exception):
+        pass
+
+    for message in (
+            "InvalidOperationException: The document is currently modifiable",
+            "ArgumentException: categoryId is not a valid category",
+            "Autodesk.Revit.Exceptions.ArgumentNullException: value cannot be null",
+            "",
+    ):
+        assert color_id_buffer._category_override_refused(_Ex(message)) is False, message
+
+
+def test_round_ones_refusal_came_after_a_SUCCESSFUL_suppress_write():
+    """WHY THE ROOT-CAUSE FIX ALONE WOULD NOT HAVE FIXED R5.
+
+    Round 1's plan sidecar recorded ELEVEN categories in
+    ``category_halftone_state`` -- meaning eleven suppress writes SUCCEEDED --
+    and two ``annotation_restore_category_halftone`` failures. So the two
+    offenders accepted the override on the way in and refused it on the way out.
+    Recording the state only after a successful write (the root cause of the
+    other failure mode) does not touch that case at all; the restore-side
+    classifier is the load-bearing half, and it was unbound until a mutation
+    showed it.
+
+    This test pins the shape of the real run so that reasoning stays checkable
+    rather than living in a commit message.
+    """
+    class _AcceptsThenRefuses(FakeViewPlan):
+        def __init__(self, view_id, target_id):
+            FakeViewPlan.__init__(self, view_id)
+            self._target = int(target_id)
+            self._seen = set()
+
+        def SetCategoryOverrides(self, cat_id, ogs):
+            value = int(cat_id.IntegerValue)
+            if value == self._target and value in self._seen:
+                raise Exception(_REAL_REFUSAL)
+            self._seen.add(value)
+            FakeViewPlan.SetCategoryOverrides(self, cat_id, ogs)
+
+    import os
+    import tempfile
+    target = ANNO_CAT.Id.IntegerValue
+    with tempfile.TemporaryDirectory() as tmp:
+        view = _AcceptsThenRefuses(VIEW_ID, target)
+        anno, _doc, _view, _diag = _run_with_view(os.path.join(tmp, "x"), view)
+
+    record = anno["metadata"]["category_halftone_outcomes"][target]
+    assert record["outcome"] == "applied", "it must have ACCEPTED the suppress write"
+    assert target in anno["metadata"]["category_halftone_state"]
+    assert record["restore"] == "not_overridable"
+    assert anno["metadata"]["restore_failures"] == []
+    assert anno["success"] is True
