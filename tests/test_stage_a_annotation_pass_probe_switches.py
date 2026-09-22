@@ -1,0 +1,410 @@
+"""The two PROBE-ONLY switches on the Stage A annotation pass.
+
+WHY THESE TESTS EXIST. Both switches are read with ``getattr`` off the cfg
+object and are deliberately absent from ``Config``, so nothing about them is
+reachable from a production run and nothing in the existing 1442 tests sets
+them. That is exactly the shape of a feature that quietly stops working: the
+suite stays green whichever way the switches behave, because the suite never
+asks. So every behaviour each switch is supposed to have is asserted here, in
+BOTH positions, together with a CONTROL pinning that the default position is
+the shipped one -- otherwise a switch wired backwards would pass every
+assertion about its "on" state while breaking every capture that never set it.
+
+The mutation these are wired to: make ``suppress_model_categories_here`` or
+``anno_smooth_edges_off`` unconditionally True or unconditionally False in
+``vop_interwoven/color_id_buffer.py``. Each of those turns a test here red.
+"""
+import math
+import os
+import struct
+import types
+
+import pytest
+
+import vop_interwoven.color_id_buffer as color_id_buffer
+from vop_interwoven.config import Config
+from vop_interwoven.core.math_utils import Bounds2D
+from vop_interwoven.revit.view_basis import ViewBasis
+
+from tests.stage_a_capture_fakes import (
+    FakeCategory,
+    FakeDiag,
+    FakeDoc,
+    FakeElement,
+    FakeElementId,
+    FakeViewPlan,
+    install_fake_revit_db,
+)
+
+_PLAN_BASIS = ViewBasis(origin=(0, 0, 0), right=(1, 0, 0), up=(0, 1, 0),
+                        forward=(0, 0, -1))
+VIEW_ID = 77
+FRAME_BOUNDS = Bounds2D(0.0, 0.0, 120.0, 90.0)
+MODEL_BOUNDS = Bounds2D(20.0, 15.0, 80.0, 60.0)
+CELL = 1.0
+
+MODEL_CAT = FakeCategory("Walls", 10, cat_type="Model")
+OTHER_MODEL_CAT = FakeCategory("Floors", 11, cat_type="Model")
+ANNO_CAT = FakeCategory("Door Tags", -2000460, cat_type="Annotation")
+
+
+def _write_tiff_header(path, width, height):
+    entries = [(256, 3, 1, width), (257, 3, 1, height)]
+    header = struct.pack("<2sHI", b"II", 42, 8)
+    body = struct.pack("<H", len(entries))
+    for tag, typ, count, value in entries:
+        body += struct.pack("<HHIHH", tag, typ, count, value, 0)
+    body += struct.pack("<I", 0)
+    with open(path, "wb") as handle:
+        handle.write(header + body)
+
+
+class _SizedDoc(FakeDoc):
+    def __init__(self, **kw):
+        FakeDoc.__init__(self, **kw)
+        self.exported = []
+
+    def ExportImage(self, opts):
+        self.export_image_calls.append(opts)
+        if self.on_export_image is not None:
+            self.on_export_image(opts)
+        px = int(opts.PixelSize)
+        out_dir = os.path.dirname(opts.FilePath)
+        if out_dir and not os.path.isdir(out_dir):
+            os.makedirs(out_dir)
+        _write_tiff_header(opts.FilePath + ".tiff", px, px)
+        self.exported.append({"pixel_size": px, "path": opts.FilePath})
+
+
+class _Pt(object):
+    def __init__(self, x, y, z):
+        self.X, self.Y, self.Z = float(x), float(y), float(z)
+
+
+class _BBox(object):
+    def __init__(self, mn, mx):
+        self.Min = _Pt(*mn)
+        self.Max = _Pt(*mx)
+        self.Transform = None
+
+
+def _raster():
+    return types.SimpleNamespace(
+        W=max(1, int(math.ceil(FRAME_BOUNDS.width() / CELL))),
+        H=max(1, int(math.ceil(FRAME_BOUNDS.height() / CELL))),
+        cell_size_ft=CELL, bounds_xy=FRAME_BOUNDS,
+        model_clip_bounds=MODEL_BOUNDS, anno_frame_bounds=None,
+        anno_cap_envelope_applied=False, view_basis=_PLAN_BASIS,
+    )
+
+
+def _elements():
+    return [
+        FakeElement(1001, MODEL_CAT),
+        FakeElement(1002, OTHER_MODEL_CAT),
+        FakeElement(2001, ANNO_CAT, owner_view_id=VIEW_ID,
+                    bbox=_BBox((25, 20, 0), (31, 23, 0))),
+        FakeElement(2002, ANNO_CAT, owner_view_id=VIEW_ID,
+                    bbox=_BBox((40, 30, 0), (47, 34, 0))),
+    ]
+
+
+def _model_pass_elements(elements):
+    return [e for e in elements
+            if getattr(e.Category, "CategoryType", None) == "Model"
+            and int(e.OwnerViewId.IntegerValue) == -1]
+
+
+def _run(tmp_path, suppression=None, smooth_edges_off=None,
+         view_filters=None, smooth_edges_initial=False):
+    """Run the model pass, then the annotation pass on ITS geometry.
+
+    ``suppression``/``smooth_edges_off`` are set as ATTRIBUTES, the same way a
+    probe sets them, because that is the only way production can be reached:
+    neither is a Config parameter. Passing None leaves the attribute unset,
+    which is the DEFAULT position and the control.
+    """
+    elements = _elements()
+    view = FakeViewPlan(view_id=VIEW_ID)
+    view._smooth_edges = smooth_edges_initial
+    for filter_id in view_filters or []:
+        view.filters.append(FakeElementId(filter_id))
+        view.filter_enabled[filter_id] = True
+        view.filter_visibility[filter_id] = True
+    doc = _SizedDoc(elements=elements, link_instances=[],
+                    categories=[MODEL_CAT, OTHER_MODEL_CAT, ANNO_CAT])
+    cfg = Config()
+    cfg.include_linked_rvt = False
+    cfg.debug_dump_path = str(tmp_path)
+    if suppression is not None:
+        cfg.color_id_buffer_anno_model_suppression = suppression
+    if smooth_edges_off is not None:
+        cfg.color_id_buffer_anno_smooth_edges_off = smooth_edges_off
+    diag = FakeDiag()
+    geom = {}
+    # STATE AT EXPORT TIME. Everything the annotation pass changes it also
+    # restores, so a post-hoc read of the view cannot tell "never touched it"
+    # from "turned it off and back on" -- and for a view filter those are the
+    # opposite captures. What the export SAW is the only discriminating
+    # observable.
+    at_export = {}
+    with install_fake_revit_db():
+        color_id_buffer.export_color_id_buffer_view(
+            doc, view, elements=_model_pass_elements(elements), cfg=cfg,
+            diag=diag, raster=_raster(), elem_cache=None, geometry_out=geom)
+        # The model pass writes and restores category visibility too, so the
+        # annotation pass's own calls are the ones AFTER this point.
+        view.set_category_hidden_calls = []
+        view._smooth_edges = smooth_edges_initial
+
+        def _observe(_opts):
+            at_export["filter_enabled"] = dict(view.filter_enabled)
+            at_export["category_hidden"] = dict(view.category_hidden)
+            at_export["smooth_edges"] = view._smooth_edges
+
+        doc.on_export_image = _observe
+        anno = color_id_buffer.export_annotation_color_id_buffer_view(
+            doc, view, cfg, geom, diag=diag, raster=_raster(), elements=elements)
+    return anno, doc, view, diag, at_export
+
+
+# ======================================================================
+# CONTROL: the default position is the shipped one
+# ======================================================================
+
+def test_control_by_default_the_pass_hides_model_categories(tmp_path):
+    """The control. Every "external" assertion below would also pass against a
+    switch stuck in the "external" position; this is what says the DEFAULT
+    still hides."""
+    anno, doc, view, diag, at_export = _run(tmp_path)
+    hidden_true = [call for call in view.set_category_hidden_calls if call[1] is True]
+    assert hidden_true, "the shipped annotation pass must hide model categories"
+    # And they were still hidden WHEN THE EXPORT RAN, not merely toggled.
+    assert any(at_export["category_hidden"].get(cat_id) is True
+               for cat_id, _value in hidden_true)
+    assert anno["metadata"]["model_suppression_mode"] == "hide_categories"
+
+
+def test_control_by_default_the_pass_disables_the_views_filters(tmp_path):
+    """The shipped pass turns the view's filters OFF for the export.
+
+    Asserted at EXPORT TIME. The first version of this test read
+    ``view.filter_enabled`` afterwards and passed whichever way the switch
+    behaved, because the restore puts the filter back either way -- a test
+    that could not fail, found by mutating production rather than by reading
+    it.
+    """
+    anno, doc, view, diag, at_export = _run(tmp_path, view_filters=[901, 902])
+    assert set(anno["metadata"]["filter_state"]) == {901, 902}
+    assert at_export["filter_enabled"][901] is False
+    assert at_export["filter_enabled"][902] is False
+    # And restored afterwards.
+    assert view.filter_enabled[901] is True
+    assert view.filter_enabled[902] is True
+
+
+def test_control_by_default_the_pass_does_not_touch_smooth_edges(tmp_path):
+    anno, doc, view, diag, at_export = _run(tmp_path, smooth_edges_initial=True)
+    assert anno["metadata"]["applied_smooth_edges"] == "not_attempted"
+    assert anno["metadata"]["smooth_edges_read_error"] is None
+    # Still ON when the export ran -- which is finding F3 exactly -- and left
+    # as found afterwards.
+    assert at_export["smooth_edges"] is True
+    assert view._smooth_edges is True
+
+
+# ======================================================================
+# color_id_buffer_anno_model_suppression = "external"
+# ======================================================================
+
+def test_external_suppression_writes_no_model_category_visibility(tmp_path):
+    anno, doc, view, diag, at_export = _run(tmp_path, suppression="external")
+    assert view.set_category_hidden_calls == [], (
+        "under 'external' the pass must not write model category visibility in "
+        "EITHER direction -- not to hide, and not to restore")
+    assert not any(value for value in at_export["category_hidden"].values()), (
+        "no model category may be hidden while the export runs under 'external'")
+    assert anno["metadata"]["model_suppression_mode"] == "external"
+
+
+def test_external_suppression_still_records_what_it_read(tmp_path):
+    """Not writing is not the same as not looking.
+
+    A sidecar with an empty ``categories_hidden`` map would be
+    indistinguishable from a project with no model categories, so the read is
+    kept and only the WRITE is skipped.
+    """
+    anno, doc, view, diag, at_export = _run(tmp_path, suppression="external")
+    assert anno["metadata"]["categories_hidden"], (
+        "the model category state must still be READ and recorded under "
+        "'external'")
+
+
+def test_external_suppression_leaves_the_views_filters_enabled(tmp_path):
+    """The whole point: the caller's own white filter must survive the export.
+
+    The shipped pass disables every enabled+visible filter, which would undo
+    exactly the suppression V1-V3 rely on.
+    """
+    anno, doc, view, diag, at_export = _run(tmp_path, suppression="external",
+                                            view_filters=[901])
+    # AT EXPORT TIME, which is the only reading that discriminates: the filter
+    # has to be live while ExportImage runs, and a post-hoc read is True under
+    # both modes.
+    assert at_export["filter_enabled"][901] is True
+    assert view.filter_enabled[901] is True
+    assert not any(entry.get("callsite") == "annotation_restore_filter_enabled"
+                   for entry in anno["metadata"]["restore_failures"])
+
+
+def test_an_unknown_suppression_mode_raises_rather_than_defaulting(tmp_path):
+    """A typo must not silently become the shipped behaviour.
+
+    The mode decides whether "the annotation TIFF is annotation on white" was
+    arranged by this function or by its caller. Falling back would make a
+    variant that measured nothing look exactly like one that did.
+    """
+    with pytest.raises(ValueError) as excinfo:
+        _run(tmp_path, suppression="extrenal")
+    assert "color_id_buffer_anno_model_suppression" in str(excinfo.value)
+    assert "extrenal" in str(excinfo.value)
+
+
+# ======================================================================
+# color_id_buffer_anno_smooth_edges_off = True
+# ======================================================================
+
+def test_smooth_edges_off_clears_it_and_restores_it(tmp_path):
+    anno, doc, view, diag, at_export = _run(tmp_path, smooth_edges_off=True,
+                                            smooth_edges_initial=True)
+    assert anno["metadata"]["applied_smooth_edges"] is False
+    assert anno["metadata"]["smooth_edges_read_error"] is None
+    # OFF while the export ran -- the whole point of V2 -- and restored after.
+    assert at_export["smooth_edges"] is False
+    assert view._smooth_edges is True
+
+
+def test_smooth_edges_off_is_written_after_the_display_style_change(tmp_path):
+    """THE ORDERING IS THE MITIGATION, so the ordering is what is asserted.
+
+    Whether setting ``DisplayStyle`` replaces the ViewDisplayModel -- and with
+    it a SmoothEdges written beforehand -- is UNCONFIRMED on a real host. The
+    switch lives in production precisely so the write lands AFTER that change,
+    where the question cannot bite. A fake view that forgets SmoothEdges on a
+    DisplayStyle write stands in for the worst case: if production wrote it
+    first, the export would see True.
+    """
+    forgetful = {"seen": []}
+
+    class _ForgetfulView(FakeViewPlan):
+        def __setattr__(self, name, value):
+            if name == "DisplayStyle":
+                forgetful["seen"].append(("DisplayStyle", value))
+                # The worst case: the display model is replaced, so anything
+                # written to SmoothEdges before now is lost.
+                object.__setattr__(self, "_smooth_edges", True)
+            FakeViewPlan.__setattr__(self, name, value)
+
+        def SetViewDisplayModel(self, dm):
+            forgetful["seen"].append(("SmoothEdges", dm.SmoothEdges))
+            FakeViewPlan.SetViewDisplayModel(self, dm)
+
+    elements = _elements()
+    view = _ForgetfulView(view_id=VIEW_ID)
+    view._smooth_edges = True
+    doc = _SizedDoc(elements=elements, link_instances=[],
+                    categories=[MODEL_CAT, OTHER_MODEL_CAT, ANNO_CAT])
+    cfg = Config()
+    cfg.include_linked_rvt = False
+    cfg.debug_dump_path = str(tmp_path)
+    cfg.color_id_buffer_anno_smooth_edges_off = True
+    diag = FakeDiag()
+    geom = {}
+    with install_fake_revit_db():
+        color_id_buffer.export_color_id_buffer_view(
+            doc, view, elements=_model_pass_elements(elements), cfg=cfg,
+            diag=diag, raster=_raster(), elem_cache=None, geometry_out=geom)
+        forgetful["seen"] = []
+        view._smooth_edges = True
+        exported_smooth_edges = []
+        doc.on_export_image = lambda opts: exported_smooth_edges.append(
+            view._smooth_edges)
+        color_id_buffer.export_annotation_color_id_buffer_view(
+            doc, view, cfg, geom, diag=diag, raster=_raster(), elements=elements)
+
+    # The suppress transaction's DisplayStyle write comes first, and the
+    # SmoothEdges write after it -- so what ExportImage sees is False.
+    kinds = [name for name, _value in forgetful["seen"]]
+    assert "DisplayStyle" in kinds, forgetful["seen"]
+    display_index = kinds.index("DisplayStyle")
+    smooth_after = [index for index, (name, value) in enumerate(forgetful["seen"])
+                    if name == "SmoothEdges" and value is False
+                    and index > display_index]
+    assert smooth_after, (
+        "SmoothEdges=False must be written AFTER the DisplayStyle change: "
+        "{0}".format(forgetful["seen"]))
+    assert exported_smooth_edges == [False], (
+        "the export must run with SmoothEdges off; saw {0}".format(
+            exported_smooth_edges))
+
+
+def test_smooth_edges_off_reports_an_unreadable_state_rather_than_false(tmp_path):
+    """A host with no ``SmoothEdges`` attribute has an UNKNOWN AA state.
+
+    ``bool(getattr(dm, "SmoothEdges", None))`` would read that as False -- "AA
+    is already off, nothing to do" -- which is the silent coercion the model
+    pass's own sentinel exists to refuse.
+    """
+    class _NoSmoothEdges(object):
+        def __init__(self):
+            self.ShowShadows = False
+
+        def Dispose(self):
+            pass
+
+    class _OldHostView(FakeViewPlan):
+        def GetViewDisplayModel(self):
+            return _NoSmoothEdges()
+
+        def SetViewDisplayModel(self, dm):
+            pass
+
+    elements = _elements()
+    view = _OldHostView(view_id=VIEW_ID)
+    doc = _SizedDoc(elements=elements, link_instances=[],
+                    categories=[MODEL_CAT, OTHER_MODEL_CAT, ANNO_CAT])
+    cfg = Config()
+    cfg.include_linked_rvt = False
+    cfg.debug_dump_path = str(tmp_path)
+    cfg.color_id_buffer_anno_smooth_edges_off = True
+    diag = FakeDiag()
+    geom = {}
+    with install_fake_revit_db():
+        color_id_buffer.export_color_id_buffer_view(
+            doc, view, elements=_model_pass_elements(elements), cfg=cfg,
+            diag=diag, raster=_raster(), elem_cache=None, geometry_out=geom)
+        anno = color_id_buffer.export_annotation_color_id_buffer_view(
+            doc, view, cfg, geom, diag=diag, raster=_raster(), elements=elements)
+
+    assert anno["metadata"]["smooth_edges_read_error"] == "AttributeError"
+    assert anno["metadata"]["applied_smooth_edges"] == "read_failed"
+
+
+def test_the_two_switches_are_independent(tmp_path):
+    """V2 sets both, so neither may imply the other.
+
+    A single knob doing both jobs would make V1 (filter only) and V2 (filter
+    plus AA off) the same capture, and F3 would go unmeasured.
+    """
+    only_filter, _doc, view_a, _diag, at_export_a = _run(
+        tmp_path / "a", suppression="external", smooth_edges_initial=True)
+    assert only_filter["metadata"]["applied_smooth_edges"] == "not_attempted"
+    assert at_export_a["smooth_edges"] is True
+    assert view_a._smooth_edges is True
+
+    only_aa, _doc, view_b, _diag, at_export_b = _run(
+        tmp_path / "b", smooth_edges_off=True, smooth_edges_initial=True)
+    assert only_aa["metadata"]["model_suppression_mode"] == "hide_categories"
+    assert only_aa["metadata"]["applied_smooth_edges"] is False
+    assert at_export_b["smooth_edges"] is False
+    assert [call for call in view_b.set_category_hidden_calls if call[1] is True]

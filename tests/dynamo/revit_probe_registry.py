@@ -16,6 +16,7 @@ PROBE_MODULES = {
     "stage_a_minimum_id_mutations": "tests.dynamo.probe_stage_a_minimum_id_mutations",
     "stage_a_model_linework": "tests.dynamo.probe_stage_a_model_linework",
     "stage_a_transaction_group_export": "tests.dynamo.probe_stage_a_transaction_group_export",
+    "stage_a_anno_pass_variants": "tests.dynamo.probe_stage_a_anno_pass_variants",
 }
 
 
@@ -417,6 +418,15 @@ _WHITE_BLEND_RUNTIME_SETTINGS = frozenset((
     "selection", "element_ids", "export_dpi", "pixel_size", "max_elements", "repo_root",
 ))
 
+# Runtime kwargs stage_a_anno_pass_variants.run_probe() actually accepts,
+# excluding raw_view/output_dir which the adapter injects.
+_ANNO_PASS_VARIANTS_RUNTIME_SETTINGS = frozenset((
+    "selection", "export_dpi", "expanded_frame_margin_in",
+    "authored_override_scan_max",
+    "white_filter_include_view_only_model_categories",
+    "model_reexport_check", "repo_root",
+))
+
 
 def _anomaly_probe_adapter(module_name, allowed, probe_id):
     """Adapter for the Stage A anomaly probes, with real settings validation.
@@ -487,10 +497,80 @@ def _anomaly_probe_adapter(module_name, allowed, probe_id):
     return invoke
 
 
+def _anno_pass_variants_adapter(module_name):
+    """Adapter for stage_a_anno_pass_variants, with real settings validation.
+
+    Validation reuses the probe's OWN ``select_variants`` and ``variant_plan``
+    rather than a second copy of the accepted variant names, so the campaign's
+    dry run cannot go green over a vocabulary the probe no longer has. It opens
+    no transaction and exports nothing, which is what makes it usable as
+    ``validate_settings`` in validation-only mode.
+    """
+    def resolve(settings, output_directory, variant=None):
+        if not output_directory:
+            raise ValueError("output_directory is required")
+        module = __import__(module_name, fromlist=["run_probe"])
+        arguments = dict(settings)
+        unknown = sorted(set(arguments) - _ANNO_PASS_VARIANTS_RUNTIME_SETTINGS)
+        if unknown:
+            raise ValueError(
+                "Unknown settings for stage_a_anno_pass_variants: {0}".format(unknown))
+        # A campaign job's `variant` is this probe's `selection`, the same
+        # mapping stage_a_minimum_id_mutations uses. Conflicting values are
+        # refused rather than silently preferring one.
+        if arguments.get("selection") is None and variant is not None:
+            arguments["selection"] = variant
+        elif (variant is not None and arguments.get("selection") is not None
+                and arguments["selection"] != variant):
+            raise ValueError(
+                "conflicting job variant {0!r} and selection {1!r} for "
+                "stage_a_anno_pass_variants".format(variant, arguments["selection"]))
+        if arguments.get("selection") is not None:
+            for name in module.select_variants(arguments["selection"]):
+                # Not just "is this name known" -- every selected variant's
+                # plan is built, so a variant present in the name list but
+                # absent from variant_plan's membership sets fails here rather
+                # than at export time.
+                module.variant_plan(name)
+        for key in ("export_dpi", "expanded_frame_margin_in"):
+            if arguments.get(key) is not None:
+                try:
+                    if float(arguments[key]) <= 0:
+                        raise ValueError
+                except (TypeError, ValueError):
+                    raise ValueError(
+                        "stage_a_anno_pass_variants.{0} must be a positive "
+                        "number".format(key))
+        if arguments.get("authored_override_scan_max") is not None:
+            value = arguments["authored_override_scan_max"]
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(
+                    "stage_a_anno_pass_variants.authored_override_scan_max must be "
+                    "a non-negative integer")
+        for key in ("white_filter_include_view_only_model_categories",
+                    "model_reexport_check"):
+            if key in arguments and not isinstance(arguments[key], bool):
+                raise ValueError(
+                    "stage_a_anno_pass_variants.{0} must be a boolean".format(key))
+        return arguments
+
+    def invoke(view, settings, output_directory, variant=None):
+        module = __import__(module_name, fromlist=["run_probe"])
+        arguments = resolve(settings, output_directory, variant)
+        return module.run_probe(raw_view=view, output_dir=output_directory,
+                                **arguments)
+
+    invoke.validate_settings = (
+        lambda settings, output_directory, variant=None:
+        resolve(settings, output_directory, variant))
+    return invoke
+
+
 def build_registry(doc=None):
     specialized = {"stage_a_transaction_group_export", "stage_a_minimum_id_mutations", "stage_a_external_sources",
                    "stage_a_image_alignment", "stage_a_model_linework",
-                   "stage_a_drift_onset", "stage_a_white_blend"}
+                   "stage_a_drift_onset", "stage_a_white_blend",
+                   "stage_a_anno_pass_variants"}
     registry = {probe_id: _adapter(module) for probe_id, module in PROBE_MODULES.items()
                 if probe_id not in specialized}
     registry["stage_a_minimum_id_mutations"] = _minimum_id_mutations_adapter(PROBE_MODULES["stage_a_minimum_id_mutations"])
@@ -503,6 +583,8 @@ def build_registry(doc=None):
     transaction_module = PROBE_MODULES["stage_a_transaction_group_export"]
     registry["stage_a_transaction_group_export"] = (_transaction_adapter(doc, transaction_module)
                                                        if doc is not None else _adapter(transaction_module))
+    registry["stage_a_anno_pass_variants"] = _anno_pass_variants_adapter(
+        PROBE_MODULES["stage_a_anno_pass_variants"])
     external_sources_module = PROBE_MODULES["stage_a_external_sources"]
     registry["stage_a_external_sources"] = (_external_sources_adapter(doc, external_sources_module)
                                               if doc is not None else _adapter(external_sources_module))

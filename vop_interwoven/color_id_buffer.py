@@ -2442,6 +2442,16 @@ def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None,
             # over it; this run simply does not know, and says so.
             dim_check = "read_failed"
         else:
+            # TODO (F4, run 20260922T085737): this check looks at the
+            # REQUESTED axis and the per-axis ceiling only. It never compares
+            # the DERIVED axis against what the lattice predicts for it, so it
+            # passed annotation images whose derived axis was up to 440 px away
+            # from the predicted figure. The fix is deliberately NOT made here:
+            # it lands after Greg reads
+            # tests/dynamo/PROBE_ANNO_PASS_VARIANTS.md's output, because what
+            # the derived axis SHOULD be compared against -- geom's
+            # predicted_derived_px, or the frame's other axis -- is one of the
+            # things that probe measures.
             on_axis = actual_w if requested_axis == "width" else actual_h
             axis_ok = abs(int(on_axis) - int(actual_pixel_size)) <= 1
             cap_ok = max(int(actual_w), int(actual_h)) <= int(max_axis_px)
@@ -4578,6 +4588,52 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     ).strip().lower()
     vertical = (fit_direction == "vertical")
 
+    # ---- two PROBE-ONLY opt-in switches -------------------------------
+    #
+    # Read with getattr and defaulted to today's behaviour, and DELIBERATELY
+    # absent from Config: they are not production settings, they have no
+    # to_dict()/from_dict() representation, and a capture that does not set
+    # them behaves exactly as it did before this block existed. A probe sets
+    # the attribute on its own cfg object. Both exist because the behaviour
+    # they change happens INSIDE this function's suppress transaction, where
+    # a caller has no window to do it itself:
+    #
+    #   color_id_buffer_anno_model_suppression
+    #       "hide_categories" (default) -- hide every model category and
+    #           disable the view's filters, as shipped.
+    #       "external"                  -- the CALLER has already suppressed
+    #           model content by some other means (tests/dynamo's
+    #           probe_stage_a_anno_pass_variants.py applies a white-override
+    #           view filter). This pass then touches neither model category
+    #           visibility nor filter enablement in EITHER direction: it does
+    #           not hide, and so has nothing to restore. It still RECORDS the
+    #           model category state it read, so the sidecar says what was
+    #           visible rather than going silent.
+    #
+    #   color_id_buffer_anno_smooth_edges_off
+    #       False (default) -- this pass does not touch SmoothEdges, as
+    #           shipped. applied_smooth_edges reads "not_attempted", which is
+    #           not the same fact as the model pass's "read_failed".
+    #       True            -- capture/clear/restore SmoothEdges the way
+    #           export_color_id_buffer_view does, INSIDE the suppress
+    #           transaction and after the DisplayStyle change, which is the
+    #           only ordering a caller cannot arrange from outside.
+    #
+    # An unknown suppression mode is raised, not defaulted: the mode decides
+    # whether this capture's central claim -- "the annotation TIFF is
+    # annotation on white" -- was arranged by this function or by its caller,
+    # and a typo silently falling back to "hide_categories" would make a
+    # variant that measured nothing indistinguishable from one that did.
+    anno_model_suppression = str(getattr(
+        cfg, "color_id_buffer_anno_model_suppression", "hide_categories"))
+    if anno_model_suppression not in ("hide_categories", "external"):
+        raise ValueError(
+            "color_id_buffer_anno_model_suppression must be 'hide_categories' or "
+            "'external', got {0!r}".format(anno_model_suppression))
+    suppress_model_categories_here = (anno_model_suppression == "hide_categories")
+    anno_smooth_edges_off = bool(
+        getattr(cfg, "color_id_buffer_anno_smooth_edges_off", False))
+
     # THE FRAME, not the crop. This is the one line that makes this pass a
     # different capture from the model one: it renders B whole, at the same
     # feet-per-pixel the model pass rendered A at.
@@ -4795,6 +4851,72 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
 
     orig_display_style = getattr(view, "DisplayStyle", None)
 
+    # SmoothEdges, captured the way export_color_id_buffer_view captures it
+    # and for the same reason: the plain bool only, never the live
+    # ViewDisplayModel held across a transaction boundary. Three-valued by
+    # construction -- a missing attribute is an UNKNOWN AA state, not an off
+    # one, so it is recorded as a read error rather than coerced to False.
+    # Captured only when the caller asked for the change; otherwise the
+    # sidecar says "not_attempted", which is a different fact from the model
+    # pass's "read_failed".
+    def _dispose_view_display_model(dm, callsite):
+        """Dispose a ViewDisplayModel, RECORDING a failure rather than
+        discarding it (Refactor Rule #1). The model pass spells this as a bare
+        ``except Exception: pass`` in three places; copying that idiom into
+        this pass would have added three more discarded handlers to the
+        repository's ground-truth population. A leaked ViewDisplayModel is not
+        a capture failure, so nothing here raises -- but a host on which
+        Dispose raises every time is a fact worth having once."""
+        try:
+            dm.Dispose()
+        except Exception as ex:
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite=callsite,
+                    message="could not dispose the ViewDisplayModel ({0}: {1}); the "
+                            "capture is unaffected".format(type(ex).__name__, ex),
+                    view_id=view_id,
+                )
+
+    orig_smooth_edges = None
+    smooth_edges_read_error = None
+    _MISSING_SMOOTH_EDGES = object()
+    if anno_smooth_edges_off:
+        try:
+            _dm = view.GetViewDisplayModel()
+            try:
+                _raw_smooth_edges = getattr(
+                    _dm, "SmoothEdges", _MISSING_SMOOTH_EDGES)
+                if _raw_smooth_edges is _MISSING_SMOOTH_EDGES:
+                    smooth_edges_read_error = "AttributeError"
+                    if diag is not None:
+                        diag.warn(
+                            phase="color_id_buffer",
+                            callsite="annotation_smooth_edges_capture",
+                            message="ViewDisplayModel has no SmoothEdges attribute on "
+                                    "this Revit host; anti-aliasing cannot be confirmed "
+                                    "off for the annotation pass and decoded edges may "
+                                    "be blended",
+                            view_id=view_id,
+                        )
+                else:
+                    orig_smooth_edges = bool(_raw_smooth_edges)
+            finally:
+                _dispose_view_display_model(
+                    _dm, "annotation_smooth_edges_capture_dispose")
+        except Exception as ex:
+            smooth_edges_read_error = type(ex).__name__
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="annotation_smooth_edges_capture",
+                    message="could not read the view's SmoothEdges state ({0}: {1}); the "
+                            "annotation capture proceeds but anti-aliasing cannot be "
+                            "confirmed off".format(type(ex).__name__, ex),
+                    view_id=view_id,
+                )
+
     state_out = None
     painted_ids = []
     authored_overrides = {
@@ -4803,16 +4925,28 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     }
     crop_bounds_xy = None
     applied_display_style = "unchanged"
+    # "not_attempted" is this pass's shipped state: it has never touched
+    # SmoothEdges. It is NOT "read_failed" and NOT False, and a reader that
+    # cannot tell those apart cannot tell an AA-off capture from one that
+    # never asked.
+    applied_smooth_edges = "not_attempted"
 
     suppress_tx = Transaction(doc, "VOP Stage A ANNO SUPPRESS color ID buffer")
     suppress_tx.Start()
     try:
-        for fid_int, fstate in filter_state.items():
-            if fstate["was_enabled"] and fstate["was_visible"]:
-                view.SetIsFilterEnabled(ElementId(int(fid_int)), False)
+        # Both loops are the "hide_categories" mode's work. Under "external"
+        # the caller's own suppression is what makes this capture annotation-
+        # on-white, and disabling its filter would undo exactly that -- so
+        # neither filter enablement nor model category visibility is written
+        # in either direction, and the restore block below has correspondingly
+        # nothing to put back.
+        if suppress_model_categories_here:
+            for fid_int, fstate in filter_state.items():
+                if fstate["was_enabled"] and fstate["was_visible"]:
+                    view.SetIsFilterEnabled(ElementId(int(fid_int)), False)
 
-        for cat_id_int in model_category_hidden_state:
-            view.SetCategoryHidden(ElementId(int(cat_id_int)), True)
+            for cat_id_int in model_category_hidden_state:
+                view.SetCategoryHidden(ElementId(int(cat_id_int)), True)
 
         # THE CROP IS B. The model pass cropped to A; this one restores the
         # full frame, so every annotation the frame was expanded to hold is
@@ -4870,6 +5004,35 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
                         message=str(ex),
                         view_id=view_id,
                     )
+
+        # AFTER the DisplayStyle change, deliberately and not incidentally.
+        # Whether setting DisplayStyle replaces the view's ViewDisplayModel
+        # -- and with it any SmoothEdges a caller had set beforehand -- is
+        # UNCONFIRMED on this Revit host. Ordering the write after it makes
+        # the question moot rather than leaving a variant that may have
+        # measured nothing, and this ordering is the whole reason the switch
+        # lives in production at all instead of in the probe.
+        if anno_smooth_edges_off:
+            applied_smooth_edges = "read_failed"
+            if orig_smooth_edges is not None:
+                try:
+                    dm = view.GetViewDisplayModel()
+                    try:
+                        dm.SmoothEdges = False
+                        view.SetViewDisplayModel(dm)
+                        applied_smooth_edges = False
+                    finally:
+                        _dispose_view_display_model(
+                            dm, "annotation_smooth_edges_dispose")
+                except Exception as ex:
+                    applied_smooth_edges = "unchanged (failed)"
+                    if diag is not None:
+                        diag.warn(
+                            phase="color_id_buffer",
+                            callsite="annotation_smooth_edges",
+                            message=str(ex),
+                            view_id=view_id,
+                        )
 
         categories_touched = set()
         for eid in resolved_ids:
@@ -5081,10 +5244,27 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
                 view.SetCategoryOverrides(cat_id, cat_ogs)
             _restore_step("annotation_restore_category_halftone", _restore_halftone)
 
-        for cat_id_int, hstate in model_category_hidden_state.items():
-            def _restore_cat_hidden(cat_id_int=cat_id_int, hstate=hstate):
-                view.SetCategoryHidden(ElementId(int(cat_id_int)), bool(hstate["was_hidden"]))
-            _restore_step("annotation_restore_category_hidden", _restore_cat_hidden)
+        if orig_smooth_edges is not None and applied_smooth_edges is False:
+            def _restore_smooth_edges():
+                dm = view.GetViewDisplayModel()
+                try:
+                    dm.SmoothEdges = orig_smooth_edges
+                    view.SetViewDisplayModel(dm)
+                finally:
+                    _dispose_view_display_model(
+                        dm, "annotation_restore_smooth_edges_dispose")
+            _restore_step("annotation_restore_smooth_edges", _restore_smooth_edges)
+
+        # Only what this pass actually hid. Under "external" the loop above
+        # never ran, so writing visibility back here would be this pass
+        # touching model category visibility in a mode whose contract is that
+        # it does not -- a no-op on an intact view and a silent overwrite on
+        # one the caller had changed.
+        if suppress_model_categories_here:
+            for cat_id_int, hstate in model_category_hidden_state.items():
+                def _restore_cat_hidden(cat_id_int=cat_id_int, hstate=hstate):
+                    view.SetCategoryHidden(ElementId(int(cat_id_int)), bool(hstate["was_hidden"]))
+                _restore_step("annotation_restore_category_hidden", _restore_cat_hidden)
 
         # Every PAINTED id, reset to a freshly-constructed blank -- never a
         # captured object reapplied across the transaction boundary (see the
@@ -5095,10 +5275,11 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
                                          OverrideGraphicSettings())
             _restore_step("annotation_restore_element_overrides", _restore_element_override)
 
-        for fid_int, fstate in filter_state.items():
-            def _restore_filter(fid_int=fid_int, fstate=fstate):
-                view.SetIsFilterEnabled(ElementId(int(fid_int)), fstate["was_enabled"])
-            _restore_step("annotation_restore_filter_enabled", _restore_filter)
+        if suppress_model_categories_here:
+            for fid_int, fstate in filter_state.items():
+                def _restore_filter(fid_int=fid_int, fstate=fstate):
+                    view.SetIsFilterEnabled(ElementId(int(fid_int)), fstate["was_enabled"])
+                _restore_step("annotation_restore_filter_enabled", _restore_filter)
 
         if view_template_detached and orig_view_template_id is not None:
             def _restore_view_template():
@@ -5194,10 +5375,27 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         "palette_step": step,
         "paint_failures": paint_failures,
         "paint_failed_element_ids": paint_failed_element_ids,
+        # The model category state this pass READ. Under the "external"
+        # suppression mode nothing in it was written, which
+        # model_suppression_mode below is what says -- the map alone cannot
+        # tell "hidden by this capture" from "read and left alone".
         "categories_hidden": model_category_hidden_state,
         "category_halftone_state": category_halftone_state,
         "filter_state": filter_state,
+        # Which side arranged model suppression for this capture. "external"
+        # means this pass hid nothing and disabled no filter, so
+        # "the annotation TIFF is annotation on white" is the CALLER's claim
+        # here and has to be read against whatever the caller applied.
+        "model_suppression_mode": anno_model_suppression,
         "applied_display_style": applied_display_style,
+        # Four-valued, and the four are different facts:
+        #   "not_attempted"       this pass was not asked to touch AA (shipped)
+        #   "read_failed"         asked, but the pre-state could not be read
+        #   "unchanged (failed)"  read, but the write raised
+        #   False                 AA is confirmed off for this export
+        "applied_smooth_edges": applied_smooth_edges,
+        # The exception TYPE when the SmoothEdges read raised, None otherwise.
+        "smooth_edges_read_error": smooth_edges_read_error,
         # Read back, not assumed. See _verify_annotation_overrides_restored.
         "override_restore_check": override_restore_check,
         # Authored per-element overrides this capture destroyed. See the
