@@ -243,3 +243,41 @@ rather than a prefix.
 found in PR #215 review round 2, visible here in the field: the file was written
 before the faults were computed. Fixed at `ea8297d`; these round-1 sidecars
 predate it, which is why the fault had to be read from the combined report.
+
+---
+
+## Round 2 (revised): the analyzer run over what is committed
+
+`tools/notes/ROUND1_ANNO_PASS_VARIANT_REPORT.md` is
+`anno_pass_variant_report.py` run over `tools/notes/data/round1_anno_pass_variants/`
+at this commit, unedited:
+
+```bash
+python tools/notes/anno_pass_variant_report.py tools/notes/data/round1_anno_pass_variants \
+    --no-overlay --out tools/notes/ROUND1_ANNO_PASS_VARIANT_REPORT.md
+```
+
+**It analyses zero captures, and says so.** Every per-capture measurement
+needs an annotation sidecar AND its TIFF, and the repository holds neither per
+variant: the TIFFs were never committed, and the two sidecars here are V3's,
+filed flat rather than under `<variant>/color_id_buffer/`. So the three things
+the round-2 brief asked this analysis for are **not answerable from the
+repository**:
+
+| asked for | needs | status |
+|---|---|---|
+| fitted px/ft and per-side margins per variant, against each one's own frame | the annotation TIFFs (sections 2, 2b) | NOT MEASURED here |
+| where the 12 px and 87 px derived-axis shortfalls sit, top vs bottom | the fitted mapping (section 2b) | NOT MEASURED here |
+| blend / grey / other split, V1 vs V2 on the elevation | the TIFFs (section 5) | NOT MEASURED here |
+
+The round-2 brief quotes round-1 fits (RCP 18.7396/18.7422 px/ft, plan
+19.2517/19.2471, the section's ~5.5 px residual) that can only have come from
+the TIFFs, so they exist on the machine the run was made on. Running the same
+command there, over the round-1 `anno_pass_variants_probe` directory, produces
+all three -- and now also sections 7-11, of which one is informative even on
+round-1 captures: **section 7 says whether those views already drew their crop
+boundary** before any probe turned CropBoxVisible on.
+
+Nothing in the report above is a zero standing in for a measurement: the
+analyzer prints no table for a view with no analysable capture, precisely so an
+empty heading cannot read as "measured, nothing found".
