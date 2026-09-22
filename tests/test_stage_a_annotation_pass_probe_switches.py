@@ -410,13 +410,18 @@ def test_the_two_switches_are_independent(tmp_path):
     assert [call for call in view_b.set_category_hidden_calls if call[1] is True]
 
 
-# The two tests that pinned the PERSISTED sidecar's capture_faults moved to
-# PR #216, beside the production fix they bind, in
-# tests/test_stage_a_annotation_pass.py. They were never about these two
-# switches: the defect is that the annotation sidecar is written before its own
-# faults are computed, on EVERY Stage A run. Nothing in this probe depends on
-# it -- the combined record reads faults from the RETURNED metadata, not the
-# file, which is why the split costs this branch nothing.
+# The tests that pin the PERSISTED sidecar's capture_faults live in
+# tests/test_stage_a_annotation_pass.py, beside the production fix they bind and
+# the other tests of that same function. They went there with PR #216 (merged at
+# 235562e) and are three, not two -- the third pins the MODEL pass's own dump as
+# final too, since "already correct" is not a thing to assume about the file one
+# function over from the one that was wrong.
+#
+# They were never about these two switches: the defect was that the annotation
+# sidecar was written before its own faults were computed, on EVERY Stage A run.
+# Nothing in this probe ever depended on it -- the combined record reads faults
+# from the RETURNED metadata, not the file -- which is why splitting it out cost
+# this branch nothing. CLAUDE.md records it as defect class 4.
 
 
 # ======================================================================

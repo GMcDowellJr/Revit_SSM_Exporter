@@ -290,20 +290,22 @@ returned nothing to read it from — is **not** treated as a pass.
 own `success` and `failure_reason`, so a capture production called invalid came
 back `RAN`.)
 
-> **The persisted annotation sidecar does NOT carry `capture_faults`, and that
-> is fixed in its own PR.** Production serialises `state_out` about a hundred
-> lines *before* it computes them, so the file never has them — only the returned
-> in-memory metadata does, and any consumer reading the file sees a faulted
-> capture as a clean one, on every Stage A run rather than just this probe's.
-> Because it is not this probe's defect it was **split out to PR #216**, where it
-> carries its own tests and its own mutation record.
+> **The persisted annotation sidecar now carries `capture_faults`, as of PR #216
+> (merged at `235562e`).** Production used to serialise `state_out` about a
+> hundred lines *before* it computed them, so the file never had them — only the
+> returned in-memory metadata did, and any consumer reading the file saw a
+> faulted capture as a clean one, on every Stage A run rather than just this
+> probe's. It was split out of this PR because it is not this probe's defect, and
+> it carries its own three tests and its own mutation record there. CLAUDE.md
+> records it as defect class 4, *"a record serialised before it is finished"*.
 >
-> **This probe is unaffected either way, which is why the split was free.** The
+> **This probe was unaffected either way, which is why the split was free.** The
 > combined record reads `capture_faults` from `anno_out["metadata"]` — the
 > returned value, never the file — and the analyzer prefers the combined record
 > and **says which source it used**. A sidecar with no such key reads `UNKNOWN`,
-> not `none`. So section 0 is correct on a round-2 run whether or not #216 has
-> landed; what the sidecar alone cannot tell you is stated rather than assumed.
+> not `none`. So section 0 was correct on a round-2 run before #216 landed and is
+> correct after; what the sidecar alone could not tell you was stated rather than
+> assumed. A round-2 run now gets the faults in the file as well.
 
 ### A variant that did not MEASURE its candidate
 

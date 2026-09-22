@@ -208,16 +208,16 @@ Also: the sidecar gains `model_suppression_mode`, `applied_smooth_edges`,
 `except Exception: pass` copies. And `_export_tiff`'s `dim_check` gets a **TODO
 citing F4 and nothing else**.
 
-**No longer here: the `capture_faults` persistence fix, now
-[PR #216](https://github.com/GMcDowellJr/Revit_SSM_Exporter/pull/216).** Review
-round 2 found that production serialises `state_out` a hundred lines before it
-computes `capture_faults`, so the persisted sidecar never carries them — on every
-Stage A annotation run, not just this probe's. Since it is not this probe's defect
-it was split out at Greg's request, with its own three tests and its own mutation
-record against `main`. **This branch is unaffected:** the combined record reads
-faults from the returned metadata, never the file, and the analyzer prefers the
-combined record while saying which source it used. Only a pointer comment at the
-assignment site remains here, and it goes when #216 lands.
+**Not from here: the `capture_faults` persistence fix, which is
+[PR #216](https://github.com/GMcDowellJr/Revit_SSM_Exporter/pull/216) and is
+MERGED** (`235562e`). Review round 2 found that production serialised `state_out`
+a hundred lines before it computed `capture_faults`, so the persisted sidecar
+never carried them — on every Stage A annotation run, not just this probe's. Since
+it is not this probe's defect it was split out at Greg's request, with its own
+three tests and its own mutation record against `main`, and CLAUDE.md now records
+it as defect class 4. This branch has merged `main` and so carries the fix from
+there; the pointer comment that stood at the assignment site is gone, as it said
+it would be.
 
 ---
 
@@ -389,9 +389,9 @@ candidates are still worth measuring.
 
 ## Checks, before and after
 
-| | before (`a3cd0b2`) | after (`eaaae06`) |
+| | before (`a3cd0b2`) | after (merged with `main` at `235562e`) |
 |---|---|---|
-| suite | 1442 passed, 2 xfailed | **1644 passed, 2 xfailed** |
+| suite | 1442 passed, 2 xfailed | **1647 passed, 2 xfailed** |
 | `count_discarded_handlers vop_interwoven tools` | 179 | **179** |
 | `check_stage_a_no_geometry vop_interwoven` | PROVEN | **PROVEN** |
 | `check_no_bare_except --paths vop_interwoven tools` | OK | **OK** |
@@ -402,7 +402,8 @@ The 202 new tests are **21** production-switch tests
 (`tests/test_anno_pass_variant_report.py`) and **138** probe helper/adapter tests
 (`tests/test_probe_stage_a_anno_pass_variants.py`). Two more went to
 [#216](https://github.com/GMcDowellJr/Revit_SSM_Exporter/pull/216) with the fix
-they bind, where they became three.
+they bind, where they became three — and since that PR is merged and this branch
+has merged `main`, the suite here is **1647**, which is those three on top.
 
 **My round-2 tests were weak and mutation found it.** The first set inspected
 **source text**, so four mutations of the real loops — parent-only subcategory
@@ -460,14 +461,19 @@ with the view untouched; only if that is byte-identical does the post-variant
 comparison mean anything. If it is not, the verdict says `not_applicable` with
 that reason rather than reporting the comparison anyway.
 
-**The `capture_faults` fix is no longer in this PR.** It touched every Stage A
-annotation sidecar rather than just this probe's, so at your request it is now
-[#216](https://github.com/GMcDowellJr/Revit_SSM_Exporter/pull/216), branched from
-`main`, with the production change, three tests and its own mutation record. This
-branch keeps only a pointer comment at the assignment site. Removing it from here
-was verified not to strand anything else: a scan of every `state_out` assignment
-after each `json.dump` confirms `capture_faults` is the only field left after the
-write, so round 2's own new sidecar fields are unaffected.
+**The `capture_faults` fix came out of this PR and is already merged.** It
+touched every Stage A annotation sidecar rather than just this probe's, so at your
+request it became
+[#216](https://github.com/GMcDowellJr/Revit_SSM_Exporter/pull/216) off `main`,
+with the production change, three tests and its own mutation record; it merged at
+`235562e` and this branch now carries it by having merged `main`.
+
+Both halves of that were verified rather than assumed, using the same walk over
+every `state_out` assignment following each `json.dump`. Taking the fix OUT of
+this branch stranded `capture_faults` and nothing else, so round 2's own new
+sidecar fields were unaffected; putting it back via the base merge leaves **one**
+write per pass with nothing assigned after either. The conflict was the six-line
+pointer comment against #216's block, resolved by taking `main`'s side.
 
 ---
 
@@ -568,13 +574,15 @@ one: `export_annotation_color_id_buffer_view` serialises `state_out` about a
 hundred lines before it computes `capture_faults`, so the persisted sidecar never
 carries them — the same serialize-before-finalize shape as round 1's P2, one file
 over, and affecting every Stage A annotation sidecar rather than just this
-probe's. **The production half of that fix now lives in
-[PR #216](https://github.com/GMcDowellJr/Revit_SSM_Exporter/pull/216)**, split out
-because it is not this probe's defect; the test that drives the real function and
-reads the file back went with it. What stays here is the analyzer half, which is
-this probe's: it prefers the combined record while **saying which source it
-used**, because a sidecar from an earlier build has no such key, and an absent
-key reads `UNKNOWN`, not `none`.
+probe's. **The production half of that fix is
+[PR #216](https://github.com/GMcDowellJr/Revit_SSM_Exporter/pull/216), split out
+because it is not this probe's defect, and merged at `235562e`**; the test that
+drives the real function and reads the file back went with it, and grew a third
+case pinning the model pass's dump as final too. What stays here is the analyzer
+half, which is this probe's: it prefers the combined record while **saying which
+source it used**, because a sidecar from an earlier build has no such key, and an
+absent key reads `UNKNOWN`, not `none` — still worth having, since this tool reads
+files from runs it did not produce.
 
 **P2 — a zero fitted slope raised `ZeroDivisionError`.** Confirmed reachable:
 `fit_axis` returns `None` only when the *sample* values have no spread, and
