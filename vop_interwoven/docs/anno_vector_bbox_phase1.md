@@ -1,5 +1,44 @@
 # Annotation vector bbox — PHASE 1 design, repo-grounded
 
+> # ⚠ SUPERSEDED — 2026-09-21. Do not act on this document.
+>
+> **What superseded it.** This document designs annotations as **vector records
+> with no second raster pass**, the direction set 2026-09-17. On 2026-09-21 Greg
+> confirmed that **annotation element color override works**, and the direction
+> became an **annotation color-ID raster pass** over frame B. That pass has since
+> landed — `color_id_buffer.py`, with capture-pass membership split by
+> `OwnerViewId`. The supersession is recorded in
+> `docs/CARRY_FORWARD_LEDGER.md`, Amendment — 2026-09-21, section M2.
+>
+> **Why it is merged rather than deleted** (decision C, 2026-09-22). It was the
+> only content of the unmerged branch `claude/youthful-wozniak-gcjsc9`, which no
+> PR ever covered. Five revisions of review history are worth more in the tree
+> than on a branch nobody will fetch, and the hazard the branch carried was that
+> the document **reads as current**. This banner is the fix for that hazard; the
+> document below is unedited.
+>
+> **What outlived the vector approach**, and is still worth reading:
+>
+> - **§1.5** — store annotation bboxes in **absolute view UV**, so a cap
+>   re-centre cannot change frame-relative numbers. This survived the substrate
+>   change intact and has landed (Stage A step 4).
+> - **Q3** — persistence. Note its own correction: rev 5 fixed rev 3's claim that
+>   `anno_meta` rides into the persisted cache. It does not; the cache is
+>   metrics-only.
+> - **Q5** — provenance on the record.
+> - **D2** — `anno_meta` already carries a bbox, and it is **unverified**.
+>
+> **What did not.** The shape-discriminated record (§2.6), the curve-versus-chord
+> disposition (D9) and the tessellation-tolerance question (Q9) are all artifacts
+> of deriving occupancy from vectors. Under color-ID, Revit rasterizes and the
+> pipeline reads, so a glyph's contribution is its painted pixels and no shape
+> approximation stands between the two. Annotation bboxes are still captured — as
+> a **floor** where glyphs drop out on capped views (2026-09-21 §4.3), not as the
+> occupancy record this document designs.
+>
+> **Status of everything below:** historical. Its "Grounding commit" is
+> `d05038a`, and the tree has moved.
+
 **Status:** proposal only. No production behaviour change is proposed here and none
 was made. Phase 2 is a separate, PATCH-only task gated on Greg's approval of this
 document.
