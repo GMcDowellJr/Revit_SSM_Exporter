@@ -5,7 +5,8 @@ fix. The probe reports values; your read of the output is the gate. The only
 PASS/FAIL it makes is about **itself** — whether each variant ran, whether it
 measured its candidate, and whether the view was put back.
 
-Branch: `claude/intelligent-faraday-1rbdox`, from `main` at `a3cd0b2`.
+Branch: `claude/intelligent-faraday-1rbdox`, from `main` at `a3cd0b2`; round 2 (revised) on
+`claude/confident-newton-gsgbtx`, from `f92d20f`.
 
 **Round 2.** Round 1 ran on two views and its measured output is in
 `tools/notes/ROUND1_ANNO_PASS_VARIANTS_FINDINGS.md`, with the JSONs it quotes in
@@ -13,6 +14,71 @@ Branch: `claude/intelligent-faraday-1rbdox`, from `main` at `a3cd0b2`.
 answered, the annotation-crop-offset hypothesis is **falsified**, and the
 suppression mechanism changed — it now runs off **membership**, not category. The
 variant set below is round 2's; round 1's is retired by name, with reasons.
+
+---
+
+## Round 2 (revised) — THE CAPTURE DOES NOT MODIFY THE CROP
+
+This supersedes the round-2 variant set further down, which is kept for the
+record. Full detail: `tests/dynamo/PROBE_ANNO_PASS_VARIANTS.md`.
+
+**Why.** The shipped annotation pass sets `view.CropBox` to frame B, wider than
+the authored crop. Datum extents clip to the crop, so widening it lengthens
+level and grid lines, walks their heads outward and pulls in content from beyond
+the crop. Every capture so far, V0 included, moved the crop. The rule: if it is
+in the view and it prints, it counts.
+
+| variant | membership white | crop | CropBoxVisible (F1) | fiducials (F2) | SmoothEdges off |
+|---|---|---|---|---|---|
+| `v0_control` | — | written to B (shipped; the control) | — | — | — |
+| `v7_no_crop` | yes | **untouched** | — | — | — |
+| `v8_no_crop_fiducials` | yes | **untouched** | on, both passes | yes | yes |
+
+Retired and refused: `v4`/`v5` (superseded — still set the crop to B) and `v6`
+(**dropped** — B′ widened it further; the B′ code is deleted and a test asserts
+it). `expanded_frame_margin_in` is refused by name.
+
+**Production (PATCH-only).** P1 was already in at `9d23a99`. **P2** is new:
+`color_id_buffer_anno_crop_mode` = `"frame_b"` (default, shipped) or
+`"untouched"` — no `CropBox`/`CropBoxActive` write in either direction,
+`rendered_uv` `None` by construction with its reason, no
+`annotation_frame_not_applied` fault, requested axis = the model pass's own
+`crop_px`. Unknown modes raise. **P3** stays in the probe: `CropBoxVisible` is
+settable from outside the pass. The model pass still writes crop A — out of
+scope, and recorded per view in `crop_relationships`.
+
+**F1** — `CropBoxVisible` on for both passes, so V8 takes its own model capture
+(before the white suppression, which the model pass's restore would wipe). The
+crop is read from `view.CropBox` and `GetCropShape()` without being changed;
+`CropBoxVisible` and the crop shape are new restore obligations; both V8
+sidecars carry `probe_crop_boundary` (present, must be subtracted).
+**F2** — two model elements painted reserved colours (a 251 channel: off every
+palette lattice from step 2 to 8) at known UV, chosen to maximise
+`min(|du|,|dv|)` — exactly, checked against brute force.
+
+**Analyzer** — sections 7–11: F1 boundary recovery (bands that close into one
+rectangle, or match a non-rectangular shape level by level; `NOT FOUND` with the
+reason), F2 fits (recorded and model-anchored), F1 vs F2 vs bbox-fit
+disagreement in pixels, datum extents against the pre-capture bbox, and model-ink
+residue. `--json-out` writes the boundary rectangles to subtract.
+
+**The brief's "analyse what exists first".** `tools/notes/ROUND1_ANNO_PASS_VARIANT_REPORT.md`
+is the analyzer over the committed round-1 output: it analyses **zero** captures,
+because the TIFFs were never committed. Fitted px/ft and margins per variant,
+where the 12/87 px shortfalls sit, and the elevation's V1-vs-V2 blend split all
+need them; the findings note gives the command for the machine that has them.
+
+**Checks** (baseline `f92d20f` → this branch): suite **1646 → 1707** passed, 2
+xfailed (the brief's "1542" does not match `f92d20f`, which runs 1646);
+`count_discarded_handlers` **179 → 179**; `check_stage_a_no_geometry`
+**PROVEN**; `check_no_bare_except` OK. `_run_variant` is now **driven** by a test
+against the real production passes; of five call-site mutations also run against
+the older source-grep tests, four stayed green there and all turn the new test
+red.
+
+**Run order:** Elevation 19293413, then Plan_CropActive 19290402, then **STOP**
+and send both combined JSONs; then Plan_CropInActive 19291097. A restore
+read-back failure on the first view stops the run.
 
 ---
 
@@ -38,7 +104,7 @@ section.
 
 ---
 
-## What each variant changes — ROUND 2
+## What each variant changes — ROUND 2 (superseded by the revised round above; kept for the record)
 
 | variant | white membership suppression | SmoothEdges off | expanded frame B′ | production suppression mode |
 |---|---|---|---|---|
