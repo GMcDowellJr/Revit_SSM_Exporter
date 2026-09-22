@@ -1545,7 +1545,8 @@ def test_run_native_discovers_link_categories_through_production():
     forming a second opinion about which categories a link contributes."""
     import inspect
 
-    source = inspect.getsource(probe._run_native)
+    assert "discover_link_categories(" in inspect.getsource(probe._run_native)
+    source = inspect.getsource(probe.discover_link_categories)
     assert "_model_categories_in_linked_doc" in source
     assert "_resolve_colorable_category_predicate" in source
     # A view with no links must SAY the mechanism is unexercised rather than
@@ -1877,3 +1878,66 @@ def test_an_excluded_element_gets_no_override_and_lends_no_category():
     assert -2000279 not in view_x.category_override_writes
     assert record_x["excluded_element_ids"] == [8001]
     assert all(entry.get("id") != 8001 for entry in record_x["unreached"])
+
+
+# ======================================================================
+# mechanism 2's discovery, driven (round 2: it never ran)
+# ======================================================================
+
+def test_link_discovery_reaches_production_with_diag_not_the_document():
+    """Round 2 called _resolve_colorable_category_predicate(doc): the document
+    landed in production's ``diag`` slot and every view reported
+    "'Document' object has no attribute 'warn'". Driven here against the fake
+    DB, with a link instance present so the loop body runs. Mutation: pass the
+    document back in."""
+    from tests.stage_a_capture_fakes import (
+        FakeDiag, FakeDoc, FakeRevitLinkInstance, FakeViewPlan, install_fake_revit_db,
+    )
+
+    class _Link(FakeRevitLinkInstance):
+        def GetLinkDocument(self):
+            return None          # unloaded: counted, contributes nothing
+
+    doc = FakeDoc(elements=[], link_instances=[_Link(501, "Arch.rvt")])
+    with install_fake_revit_db():
+        cats, record = probe.discover_link_categories(
+            doc, FakeViewPlan(view_id=77), diag=FakeDiag(), view_id=77)
+    assert record["state"] == "value", record
+    assert record["instances"] == 1
+    assert cats == []
+
+
+def test_the_suppression_times_every_mechanism_and_counts_its_calls():
+    """Round 2 measured the whole suppression at 1.08-1.14x the ENTIRE model
+    pass; one number cannot say which part to make cheaper. Every phase is
+    timed, and the call counts are what separate "slow" from "many"."""
+    record, view, _doc = _suppress()
+    timings = record["timings_ms"]
+    for key in ("build_override_ms", "element_overrides_ms",
+                "link_category_filters_ms", "category_collect_ms",
+                "subcategory_walk_ms", "category_override_reads_ms",
+                "category_override_writes_ms"):
+        assert key in timings and timings[key] >= 0.0, key
+    counts = record["api_call_counts"]
+    assert counts["element_override_writes"] == record["element_overrides"]["attempted"]
+    assert counts["category_override_writes"] == len(view.category_override_writes)
+    # Every category and subcategory considered is read once before any write.
+    assert counts["category_override_reads"] >= counts["category_override_writes"]
+    assert counts["subcategory_lists_read"] == 2   # Roofs, Lines
+
+
+def test_the_crop_lookup_also_searches_OST_Views_and_says_which_matched():
+    """Round 2: Revit refused a category override on "Views" (-2000278) on both
+    views, so OST_Views elements ARE in the model set. The lookup may not assume
+    the documented OST_Viewers is the only home."""
+    from tests.stage_a_capture_fakes import (
+        FakeCategory, FakeDoc, FakeElement, FakeViewPlan, install_fake_revit_db,
+    )
+    view = FakeViewPlan(view_id=77, name="Plan A")
+    views_member = FakeElement(9, FakeCategory("Views", -2000278, cat_type="Annotation"),
+                               name="Plan A")
+    with install_fake_revit_db():
+        record = probe.crop_region_elements(FakeDoc(elements=[views_member]), view,
+                                            [views_member])
+    assert record["crop_element_ids"] == [9]
+    assert record["viewers_in_model_set"][0]["category"] == "OST_Views"

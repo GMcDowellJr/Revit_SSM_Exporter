@@ -2026,6 +2026,25 @@ def _render_crop_context(combined):
                          cost.get("element_override_count"),
                          _fmt(cost.get("model_pass_total_ms"), "{0:.0f}"),
                          _fmt(cost.get("ratio_to_model_pass_total"), "{0:.2f}")))
+    by_mechanism = cost.get("by_mechanism_ms") or {}
+    if by_mechanism:
+        calls = cost.get("api_call_counts") or {}
+        lines.append("  - by mechanism (ms): " + ", ".join(
+            "{0} {1}".format(key.replace("_ms", ""), _fmt(value, "{0:.0f}"))
+            for key, value in sorted(by_mechanism.items(), key=lambda kv: -kv[1])))
+        lines.append("  - API calls: " + ", ".join(
+            "{0} {1}".format(key, value) for key, value in sorted(calls.items())))
+    for entry in combined.get("variants") or []:
+        commit_ms = (entry.get("transaction_group") or {}).get("pre_state_commit_ms")
+        restore = entry.get("restore") or {}
+        if commit_ms is None and not restore.get("element_blank_writes_ms"):
+            continue
+        lines.append("  - `{0}`: pre-state commit {1} ms; restore blank writes {2} "
+                     "ms, category/link reverse {3} ms, restore commit {4} ms".format(
+                         entry.get("variant"), _fmt(commit_ms, "{0:.0f}"),
+                         _fmt(restore.get("element_blank_writes_ms"), "{0:.0f}"),
+                         _fmt(restore.get("reverse_category_and_link_ms"), "{0:.0f}"),
+                         _fmt(restore.get("commit_ms"), "{0:.0f}")))
     choice = combined.get("fiducial_choice") or {}
     if choice.get("state") == "value":
         lines.append("- F2 fiducials: {0}; separated {1} ft on u and {2} ft on v "

@@ -288,6 +288,7 @@ class FakeBuiltInCategory(object):
     # The category of a view's own crop-region element (the annotation-pass
     # probe looks it up so it can leave F1's ruler unsuppressed).
     OST_Viewers = -2000279
+    OST_Views = -2000278
 
 
 class FakeImageFileType(object):

@@ -393,7 +393,10 @@ def _probe_dir(tmp_path, with_tiffs=True):
             "model_pass_activates_a_crop": False},
         "suppression_cost": {"suppression_ms": 120.0, "element_override_count": 50,
                              "model_pass_total_ms": 900.0,
-                             "ratio_to_model_pass_total": 0.1333},
+                             "ratio_to_model_pass_total": 0.1333,
+                             "by_mechanism_ms": {"element_overrides_ms": 90.0,
+                                                 "category_override_reads_ms": 20.0},
+                             "api_call_counts": {"element_override_writes": 50}},
         "fiducial_choice": {"state": "value", "pair": _FIDUCIALS,
                             "separation_u_ft": 21.5, "separation_v_ft": 13.0,
                             "kept_count": 2, "candidate_count": 3,
@@ -411,7 +414,9 @@ def test_end_to_end_the_report_carries_F1_F2_and_their_agreement(tmp_path):
                                json_records=records)
     for heading in ("### 7. F1", "### 8. F2", "### 9. F1 vs F2",
                     "### 10. Datum extents", "### 11. Model-ink residue",
-                    "white-suppression cost", "V0 widens it to frame B"):
+                    "white-suppression cost", "V0 widens it to frame B",
+                    "by mechanism (ms): element_overrides 90",
+                    "API calls: element_override_writes 50"):
         assert heading in text, heading
     [record] = records
     assert record["crop_boundary"]["status"] == "value"

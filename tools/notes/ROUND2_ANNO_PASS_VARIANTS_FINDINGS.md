@@ -46,8 +46,12 @@ element is a model member by membership (no owner view) and took the white
 element override.
 
 That is an inference from four images, not an observation of the element. The
-probe now looks the element up and records it (`crop_region_elements`), and V8
-leaves it untouched — the next run confirms or refutes it.
+combined reports confirm the premise: `snapshot_before.crop_box_visible` is
+**true** on both views, and V8's `crop_box_visible.during_capture` is true —
+the boundary was on and still did not draw. The probe now looks the element up
+(`crop_region_elements`, under OST_Viewers **or** OST_Views — Revit refused a
+category override on "Views" (-2000278) on both views, so such elements are in
+the model set) and V8 leaves it untouched. The next run confirms or refutes it.
 
 V8's elevation MODEL capture also found no closing rectangle (2 row bands, 1
 column band). The model pass paints every model member it collects, so if the
@@ -123,6 +127,14 @@ included** — ≈ 5 ms per element. Production does not time its paint alone, s
 the ratio against the paint is higher still. By the brief's rule this is the
 number to report before running more views.
 
+## A probe defect the combined reports exposed
+
+`link_categories` is `unavailable` on both views: `'Document' object has no
+attribute 'warn'`. The probe passed the document where production expects its
+diagnostics object, so **mechanism 2 (linked RVT) never ran**. Neither view has
+a link, so no capture here is affected; `Plan_RVTLink` would have been. Fixed in
+`2026-09-22.4`, and the discovery is now a function a test drives.
+
 ## Other facts from the run
 
 * Model re-export after the variants: **unchanged** on both views, with the
@@ -150,7 +162,7 @@ Analyzer (`tools/notes/anno_pass_variant_report.py`):
 * F2 model-anchored reports annotation-vs-model ink pixels per fiducial and
   says when the shapes differ.
 
-Probe (`2026-09-22.3`):
+Probe (`2026-09-22.3`, then `.4` for the per-mechanism timing and the link fix):
 
 * fiducials are painted with the full override (projection + cut lines, all
   four patterns) in their reserved colour;

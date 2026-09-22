@@ -106,7 +106,7 @@ def _probe_contract():
 
 
 PROBE_NAME = "stage_a_anno_pass_variants"
-PROBE_VERSION = "2026-09-22.3"
+PROBE_VERSION = "2026-09-22.4"
 
 V0 = "v0_control"
 V7 = "v7_no_crop"
@@ -1257,7 +1257,20 @@ def apply_membership_white_suppression(doc, view, view_id, model_elements,
     """
     from Autodesk.Revit.DB import ElementId
 
+    # PER-MECHANISM TIMING, because round 2 measured the whole suppression at
+    # 1.08-1.14x the ENTIRE model pass and one number cannot say which part to
+    # make cheaper. Wall-clock ms per phase, plus the API call counts that
+    # drive each, so "slow" can be told apart from "many".
+    timings = {"build_override_ms": 0.0, "element_overrides_ms": 0.0,
+               "link_category_filters_ms": 0.0,
+               "category_collect_ms": 0.0, "subcategory_walk_ms": 0.0,
+               "category_override_reads_ms": 0.0,
+               "category_override_writes_ms": 0.0}
+    counts = {"element_override_writes": 0, "category_override_reads": 0,
+              "category_override_writes": 0, "subcategory_lists_read": 0}
+    _t = time.time()
     ogs = _white_override_settings(doc)
+    timings["build_override_ms"] = (time.time() - _t) * 1000.0
     excluded = set(int(v) for v in (exclude_ids or ()))
     model_elements = [
         elem for elem in (model_elements or [])
@@ -1285,6 +1298,7 @@ def apply_membership_white_suppression(doc, view, view_id, model_elements,
     }
 
     # ---- 1: element-level white override on every MODEL member -------
+    _t_mech = time.time()
     dwg_ids = set()
     for elem in model_elements or []:
         elem_id = _element_id_int(getattr(elem, "Id", None))
@@ -1319,8 +1333,11 @@ def apply_membership_white_suppression(doc, view, view_id, model_elements,
             record["category_overrides"]["subcategory_read_errors"].append(
                 {"kind": "dwg_classification", "id": elem_id})
     record["dwg_import_instance_ids"] = sorted(dwg_ids)
+    timings["element_overrides_ms"] = (time.time() - _t_mech) * 1000.0
+    counts["element_override_writes"] = record["element_overrides"]["attempted"]
 
     # ---- 2: linked RVT content, via PRODUCTION's own link mechanism ---
+    _t_mech = time.time()
     if link_categories:
         from vop_interwoven.color_id_buffer import (
             _apply_link_category_filters, _get_solid_pattern_id,
@@ -1357,6 +1374,8 @@ def apply_membership_white_suppression(doc, view, view_id, model_elements,
                           "content was suppressed: {0}: {1}".format(
                               type(ex).__name__, ex)})
 
+    timings["link_category_filters_ms"] = (time.time() - _t_mech) * 1000.0
+
     # ---- 3: category and SUBcategory white overrides ------------------
     #
     # An element override does not govern the element's subcategory linework, so
@@ -1364,6 +1383,7 @@ def apply_membership_white_suppression(doc, view, view_id, model_elements,
     # Element > Category precedence means the annotation pass's own paint still
     # wins for annotation members in a shared category.
     if subcategories:
+        _t_mech = time.time()
         model_cat_ids = {}
         for elem in model_elements or []:
             try:
@@ -1387,8 +1407,12 @@ def apply_membership_white_suppression(doc, view, view_id, model_elements,
                     "reason": "the element's Category could not be read ({0}: {1}), "
                               "so no category or subcategory override was applied "
                               "for it".format(type(ex).__name__, ex)})
+        timings["category_collect_ms"] = (time.time() - _t_mech) * 1000.0
         for cat_id_int, cat in sorted(model_cat_ids.items()):
+            _t = time.time()
             subs, sub_error = _subcategories_of(cat)
+            timings["subcategory_walk_ms"] += (time.time() - _t) * 1000.0
+            counts["subcategory_lists_read"] += 1
             if sub_error is not None:
                 record["category_overrides"]["subcategory_read_errors"].append(
                     {"category_id": cat_id_int,
@@ -1404,7 +1428,10 @@ def apply_membership_white_suppression(doc, view, view_id, model_elements,
                     continue
                 target_id = ElementId(int(target_id_int))
                 name = str(getattr(target, "Name", ""))
+                _t = time.time()
                 state, blank, reason = _category_override_is_blank(view, target_id)
+                timings["category_override_reads_ms"] += (time.time() - _t) * 1000.0
+                counts["category_override_reads"] += 1
                 if state != "value":
                     record["category_overrides"]["failed"].append(
                         {"category_id": target_id_int, "name": name,
@@ -1429,6 +1456,8 @@ def apply_membership_white_suppression(doc, view, view_id, model_elements,
                                   "overwritten, so whatever it draws is "
                                   "unsuppressed".format(reason)})
                     continue
+                _t = time.time()
+                counts["category_override_writes"] += 1
                 try:
                     view.SetCategoryOverrides(target_id, ogs)
                     bucket = ("subcategories_applied" if is_sub
@@ -1458,7 +1487,10 @@ def apply_membership_white_suppression(doc, view, view_id, model_elements,
                             "id": target_id_int,
                             "reason": "SetCategoryOverrides raised {0}: {1}".format(
                                 type(ex).__name__, ex)})
+                timings["category_override_writes_ms"] += (time.time() - _t) * 1000.0
 
+    record["timings_ms"] = dict((k, round(v, 3)) for k, v in timings.items())
+    record["api_call_counts"] = counts
     record["unreached_count"] = len(record["unreached"])
     record["element_override_count"] = record["element_overrides"]["applied"]
     record["category_override_count"] = (
@@ -1760,23 +1792,33 @@ def crop_region_elements(doc, view, model_members):
     view, and ``crop_element_ids`` -- the ones named like this view. An empty
     list is a finding (the lookup did not hold on this host), not a clean one.
     """
-    try:
-        from Autodesk.Revit.DB import BuiltInCategory
-        viewers_id = int(getattr(BuiltInCategory, "OST_Viewers"))
-    except Exception as ex:
+    # BOTH categories, and which one matched is recorded. Round 2's run shows
+    # OST_Views (-2000278) elements ARE in the model set -- Revit refused a
+    # category override on "Views" on both views -- so the lookup is not
+    # allowed to assume the documented OST_Viewers is the only home.
+    from Autodesk.Revit.DB import BuiltInCategory
+    category_ids = {}
+    unresolved = []
+    for bic_name in ("OST_Viewers", "OST_Views"):
+        bic = getattr(BuiltInCategory, bic_name, None)
+        if bic is None:
+            unresolved.append(bic_name)
+        else:
+            category_ids[int(bic)] = bic_name
+    if not category_ids:
         return {"state": "unavailable",
-                "reason": "OST_Viewers did not resolve: {0}: {1}".format(
-                    type(ex).__name__, ex),
+                "reason": "neither OST_Viewers nor OST_Views resolved",
                 "crop_element_ids": []}
     view_name = str(getattr(view, "Name", "") or "")
     viewers = []
     for elem in model_members or []:
         try:
             cat = elem.Category
-            if cat is None or _element_id_int(cat.Id) != viewers_id:
+            if cat is None or _element_id_int(cat.Id) not in category_ids:
                 continue
             viewers.append({
                 "id": _element_id_int(elem.Id),
+                "category": category_ids[_element_id_int(cat.Id)],
                 "name": str(getattr(elem, "Name", "") or ""),
                 "owner_view_id": _element_id_int(getattr(elem, "OwnerViewId", None)),
             })
@@ -1789,8 +1831,9 @@ def crop_region_elements(doc, view, model_members):
             "viewers_in_model_set": viewers,
             "viewers_in_model_set_count": len(viewers),
             "crop_element_ids": crop_ids,
-            "lookup": "model members of OST_Viewers named like the view "
-                      "(UNCONFIRMED API)"}
+            "unresolved_categories": unresolved,
+            "lookup": "model members of OST_Viewers or OST_Views named like "
+                      "the view (UNCONFIRMED API)"}
 
 
 def collect_fiducial_candidates(view, view_basis, model_members, scan_max,
@@ -2465,6 +2508,10 @@ def _run_variant(doc, view, variant, model_context, settings):
                     suppression["elapsed_ms"], suppression.get("element_override_count"),
                     model_context.get("model_pass_ms"),
                     len(model_context["model_members"]))
+                report["pre_state"]["suppression_cost"]["by_mechanism_ms"] = (
+                    suppression.get("timings_ms"))
+                report["pre_state"]["suppression_cost"]["api_call_counts"] = (
+                    suppression.get("api_call_counts"))
                 report["pre_state"]["membership"] = {
                     "model_count": len(model_context["model_members"]),
                     "annotation_count": len(model_context["annotation_members"]),
@@ -2480,14 +2527,21 @@ def _run_variant(doc, view, variant, model_context, settings):
             if plan["fiducials"]:
                 choice = model_context.get("fiducial_choice") or {}
                 if choice.get("state") == "value":
+                    _t = time.time()
                     fiducials = paint_fiducials(doc, view, choice["pair"])
+                    fiducials["elapsed_ms"] = round((time.time() - _t) * 1000.0, 3)
                 else:
                     fiducials = {"painted": [], "failed": [], "painted_count": 0,
                                  "reason": "no fiducial pair was chosen: {0}".format(
                                      choice.get("reason"))}
                 report["pre_state"]["fiducials"] = fiducials
                 probe_state["fiducials"] = fiducials
+            _t = time.time()
             commit = pre_tx.Commit()
+            # Revit regenerates on commit; for thousands of overrides that may
+            # be where the time goes rather than in the Set calls themselves.
+            report["transaction_group"]["pre_state_commit_ms"] = round(
+                (time.time() - _t) * 1000.0, 3)
             report["transaction_group"]["pre_state_commit_status"] = str(commit)
             if commit != TransactionStatus.Committed:
                 raise RuntimeError(
@@ -2565,6 +2619,7 @@ def _run_variant(doc, view, variant, model_context, settings):
 
         # ---- 5: reverse 3c and 3a, explicitly --------------------------
         restore_errors = []
+        _t_restore_tx = time.time()
         restore_tx = Transaction(doc, "VOP Stage A anno variant restore: " + variant)
         restore_tx.Start()
         suppression = report.get("pre_state", {}).get(
@@ -2575,6 +2630,7 @@ def _run_variant(doc, view, variant, model_context, settings):
             # one loop reverses them too.
             from Autodesk.Revit.DB import ElementId, OverrideGraphicSettings
             untouched = set((suppression or {}).get("excluded_element_ids") or [])
+            _t_restore = time.time()
             for elem in model_context["model_members"]:
                 elem_id = _element_id_int(getattr(elem, "Id", None))
                 if elem_id is None or elem_id in untouched:
@@ -2589,9 +2645,14 @@ def _run_variant(doc, view, variant, model_context, settings):
                         "step": "restore_model_element_override",
                         "element_id": elem_id,
                         "error": "{0}: {1}".format(type(ex).__name__, ex)})
+            report["restore"]["element_blank_writes_ms"] = round(
+                (time.time() - _t_restore) * 1000.0, 3)
         if suppression is not None:
+            _t_restore = time.time()
             restore_errors.extend(
                 reverse_membership_white_suppression(doc, view, suppression))
+            report["restore"]["reverse_category_and_link_ms"] = round(
+                (time.time() - _t_restore) * 1000.0, 3)
         if crop_box_visible_changed:
             try:
                 if (crop_box_visible_before or {}).get("state") != "value":
@@ -2605,7 +2666,9 @@ def _run_variant(doc, view, variant, model_context, settings):
                     "step": "restore_crop_box_visible",
                     "error": "{0}: {1}".format(type(ex).__name__, ex)})
         try:
+            _t = time.time()
             commit = restore_tx.Commit()
+            report["restore"]["commit_ms"] = round((time.time() - _t) * 1000.0, 3)
             report["transaction_group"]["restore_commit_status"] = str(commit)
             if commit != TransactionStatus.Committed:
                 restore_errors.append({
@@ -2620,6 +2683,8 @@ def _run_variant(doc, view, variant, model_context, settings):
                                            type(inner).__name__, inner)})
             restore_errors.append({"step": "restore_commit",
                                    "error": "{0}: {1}".format(type(ex).__name__, ex)})
+        report["restore"]["transaction_ms"] = round(
+            (time.time() - _t_restore_tx) * 1000.0, 3)
         report["restore"]["explicit_step_errors"] = restore_errors
 
         # ---- 6: THE MEASUREMENT --------------------------------------
@@ -2848,6 +2913,72 @@ def _write_combined(report, probe_dir, base):
     return json_path
 
 
+def discover_link_categories(doc, view, diag=None, view_id=None):
+    """LINKED RVT categories for mechanism 2, through production's own policy.
+
+    Extracted from ``_run_native`` so it can be DRIVEN by a test: round 2's run
+    called ``_resolve_colorable_category_predicate(doc)`` -- the document where
+    production expects ``diag`` -- and every view reported
+    ``'Document' object has no attribute 'warn'``, so mechanism 2 never ran and
+    nothing said so except a field nobody read. Returns
+    ``(link_categories, link_report)``.
+    """
+    from Autodesk.Revit.DB import FilteredElementCollector as _FEC
+    link_categories = []
+    link_report = {"state": "not_attempted", "instances": 0}
+    try:
+        from Autodesk.Revit.DB import RevitLinkInstance
+        from vop_interwoven.color_id_buffer import (
+            _model_categories_in_linked_doc, _resolve_colorable_category_predicate,
+        )
+        instances = list(_FEC(doc, view.Id).OfClass(RevitLinkInstance))
+        # (diag=, view_id=), NOT (doc): round 2's run passed the document as
+        # the diagnostics object and died on doc.warn, so mechanism 2 never ran.
+        is_colorable, colorable_error = _resolve_colorable_category_predicate(
+            diag=diag, view_id=view_id)
+        seen = {}
+        uncolorable_names = []
+        for instance in instances:
+            linked_doc = None
+            try:
+                linked_doc = instance.GetLinkDocument()
+            except Exception as ex:
+                link_report.setdefault("instance_errors", []).append(
+                    "{0}: {1}".format(type(ex).__name__, ex))
+            if linked_doc is None:
+                continue
+            colorable, uncolorable = _model_categories_in_linked_doc(
+                linked_doc, is_colorable)
+            for cat in colorable:
+                cid = _element_id_int(getattr(cat, "Id", None))
+                if cid is not None and cid not in seen:
+                    seen[cid] = cat
+            uncolorable_names.extend(
+                str(getattr(cat, "Name", cat)) for cat in uncolorable)
+        link_categories = [seen[k] for k in sorted(seen)]
+        link_report = {
+            "state": "value",
+            "instances": len(instances),
+            "colorable_category_count": len(link_categories),
+            "colorable_category_names": [str(getattr(c, "Name", c))
+                                         for c in link_categories],
+            # REPORTING ONLY, and an accepted gap: nothing capture-side
+            # suppresses a category Stage A cannot colour. Named so a
+            # non-white pixel in a linked area has somewhere to point.
+            "uncolorable_category_names": sorted(set(uncolorable_names)),
+            "colorable_predicate_error": colorable_error,
+        }
+        if not instances:
+            link_report["note"] = (
+                "this view has NO linked RVT instances, so mechanism 2 is built "
+                "but UNEXERCISED here. A clean run on this view is not evidence "
+                "that the link path works.")
+    except Exception as ex:
+        link_report = {"state": "unavailable",
+                       "reason": "{0}: {1}".format(type(ex).__name__, ex)}
+    return (link_categories, link_report)
+
+
 def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT_DPI,
                 authored_override_scan_max=DEFAULT_AUTHORED_OVERRIDE_SCAN_MAX,
                 model_reexport_check=True):
@@ -3074,55 +3205,8 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
     # is the one set that needs the category-filter route. Discovered through
     # production's own linked-doc category policy rather than a second opinion
     # about which categories a link contributes.
-    link_categories = []
-    link_report = {"state": "not_attempted", "instances": 0}
-    try:
-        from Autodesk.Revit.DB import RevitLinkInstance
-        from vop_interwoven.color_id_buffer import (
-            _model_categories_in_linked_doc, _resolve_colorable_category_predicate,
-        )
-        instances = list(_FEC(doc, view.Id).OfClass(RevitLinkInstance))
-        is_colorable, colorable_error = _resolve_colorable_category_predicate(doc)
-        seen = {}
-        uncolorable_names = []
-        for instance in instances:
-            linked_doc = None
-            try:
-                linked_doc = instance.GetLinkDocument()
-            except Exception as ex:
-                link_report.setdefault("instance_errors", []).append(
-                    "{0}: {1}".format(type(ex).__name__, ex))
-            if linked_doc is None:
-                continue
-            colorable, uncolorable = _model_categories_in_linked_doc(
-                linked_doc, is_colorable)
-            for cat in colorable:
-                cid = _element_id_int(getattr(cat, "Id", None))
-                if cid is not None and cid not in seen:
-                    seen[cid] = cat
-            uncolorable_names.extend(
-                str(getattr(cat, "Name", cat)) for cat in uncolorable)
-        link_categories = [seen[k] for k in sorted(seen)]
-        link_report = {
-            "state": "value",
-            "instances": len(instances),
-            "colorable_category_count": len(link_categories),
-            "colorable_category_names": [str(getattr(c, "Name", c))
-                                         for c in link_categories],
-            # REPORTING ONLY, and an accepted gap: nothing capture-side
-            # suppresses a category Stage A cannot colour. Named so a
-            # non-white pixel in a linked area has somewhere to point.
-            "uncolorable_category_names": sorted(set(uncolorable_names)),
-            "colorable_predicate_error": colorable_error,
-        }
-        if not instances:
-            link_report["note"] = (
-                "this view has NO linked RVT instances, so mechanism 2 is built "
-                "but UNEXERCISED here. A clean run on this view is not evidence "
-                "that the link path works.")
-    except Exception as ex:
-        link_report = {"state": "unavailable",
-                       "reason": "{0}: {1}".format(type(ex).__name__, ex)}
+    link_categories, link_report = discover_link_categories(
+        doc, view, diag=diag, view_id=view_id)
     report["link_categories"] = link_report
 
     model_element_ids = []
