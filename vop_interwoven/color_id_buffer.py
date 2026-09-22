@@ -4687,8 +4687,12 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     #           choice and is NOT recorded as known: registration.rendered_uv
     #           is None with the reason, and it has to be MEASURED (the probe
     #           does that with fiducials). The requested pixel count is the
-    #           model pass's own crop_px on the requested axis, so a render
-    #           that does honour the authored crop lands on the model lattice.
+    #           model pass's own crop_px on the requested axis. That lands on
+    #           the model lattice ONLY when the export's extent is the crop:
+    #           FitToPage fits each pass's OWN extent to PixelSize, and with
+    #           annotation visible that extent is the union including datum
+    #           heads past the crop (handoff 2026-09-22: 21.4% scale mismatch
+    #           on one section). So the scale is an output here, not a claim.
     #
     # An unknown suppression or crop mode is raised, not defaulted: the mode decides
     # whether this capture's central claim -- "the annotation TIFF is
@@ -4723,9 +4727,10 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     else:
         # The crop is the view's own, so B's pixel count would describe a
         # rectangle this capture never asks for. The model pass's crop_px is
-        # the count it rendered the (snapped) authored crop at; requesting it
-        # is what makes "does Revit render the authored crop" answerable as
-        # "does this image land on the model lattice".
+        # the count it rendered the (snapped) authored crop at. Whether this
+        # capture lands on that lattice depends on its extent, which FitToPage
+        # takes from the drawn content, not the crop -- see the switch
+        # comment above. It is measured (F1/F2), never assumed.
         crop_px = tuple(int(v) for v in geom["crop_px"])
         pixel_size = crop_px[1] if vertical else crop_px[0]
         requested_px_source = "model_crop_px"

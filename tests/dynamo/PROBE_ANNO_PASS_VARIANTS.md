@@ -125,8 +125,12 @@ unexercised on them; its first real test is `Plan_RVTLink` 19293485.
 Production's `color_id_buffer_anno_crop_mode = "untouched"`: no `CropBox`
 write, no `CropBoxActive` write, no crop restore. `registration.rendered_uv` is
 `None` **by construction** with `rendered_uv_reason` saying so, and the capture
-is not faulted for it. The requested axis is the model pass's own `crop_px`, so
-a render that honours the authored crop lands on the model lattice.
+is not faulted for it. The requested axis is the model pass's own `crop_px`.
+That lands on the model lattice **only when the export's extent is the crop**:
+FitToPage fits each pass's own extent, and with annotation visible that extent
+is the union including datum heads past the crop (21.4% scale mismatch on the
+one section measured by hand, 2026-09-22). The scale is an output; F1/F2 measure
+it.
 
 ---
 
@@ -442,6 +446,30 @@ an absent property is `unavailable` **with a reason**, never a 0 or a `False`.
 * whether the datums in V7/V8 look like the drawing, and in V0 like they did;
 * anything visible in V7/V8 that is not white and not annotation — above all
   anything the `unreached` list does not name.
+
+---
+
+## Handoff delta 2026-09-22 — ExportImage registration, checked against this branch
+
+One section view, exported by hand in the UI. Nothing in it is confirmed across
+views. What it changes here, and the §6 code checks answered against the code:
+
+| handoff item | against this branch |
+|---|---|
+| Production ZoomType | **FitToPage**, one-axis `PixelSize`, `FitDirection` from cfg (`_export_one_tiff`). Unchanged by the frame-B sizing. |
+| ExportRange | Production uses **`SetOfViews`**, not `CurrentView`. The handoff's extent findings were measured under `CurrentView`; that they carry over to `SetOfViews` is **UNTESTED**. |
+| decode `fpp = max(crop_u/actual_w, crop_v/actual_h)` on the annotation pass? | `decode_stage_a_color_id.py` and `colorid_to_occupancy.py` read the MODEL sidecar (`bounds_xy`) only; no decoder consumes an annotation capture. The `max()` path does reach annotation captures in **`capture_overlay.py`** (via `registration.rendered_uv`) and in the analyzer's **`frame px/ft`** comparator column. Both assume image extent == the rectangle, which the handoff shows is false whenever annotation extends past the crop. The analyzer's own maps (bbox fit, F1, F2) are measured and do not use it; the overlay is gated on size only and refuses untouched captures (`rendered_uv` is None). |
+| dim_check / `predicted_derived_px` / 10,000 px cap assume FitToPage | Yes, all three. Moving to Zoom would make pixel dimensions an output and all three would need re-deriving. Not changed here. |
+| TIFF resolution tag 1x1; `ImageResolution` likely ignored under FitToPage | Production does not set `ImageResolution`; the sidecar's `achieved_export_dpi` is derived from the frame geometry, not read from the file. Treat it as nominal. |
+| model-pass crop line on the image border, half-clipped | The analyzer now flags border-touching bands (`border_clipped_band_count`) and says to read the model capture against its lattice (the image edges ARE crop A), not the biased centres. |
+| crop line is ink in the annotation pass | Already masked: `boundary_px_rect` excluded from the residue count and written by `--json-out` to subtract. |
+| drawn rectangle = the model crop, not the annotation extent | Holds under V7/V8, which never write the crop: F1 is the authored crop. |
+| crop can be drawn when not expected (`crop_off_test_anno2`) | The analyzer runs boundary detection on EVERY capture, V0 and V7 included, and prints whether the probe turned it on — an authored view that already shows its crop is visible there. |
+| native decode, per-axis affine, no resampling | What sections 7–9 do: per-axis scale + offset fitted per capture, pixels never resampled. |
+
+Still OPEN from the handoff: fiducial edge bias across views, `SetOfViews` vs
+`CurrentView` extent, `ImageResolution` under FitToPage, the two test-set
+anomalies.
 
 ---
 

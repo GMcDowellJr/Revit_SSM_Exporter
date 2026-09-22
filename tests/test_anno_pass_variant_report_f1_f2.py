@@ -445,3 +445,23 @@ def test_a_view_with_no_analysable_capture_prints_no_empty_tables(tmp_path):
     assert "No capture of this view could be analysed" in text
     assert "### 1. Image size" not in text
     assert "could not locate the sidecar or the TIFF" in text
+
+
+def test_a_boundary_on_the_image_edge_is_flagged_half_clipped(tmp_path):
+    """A model capture renders exactly its crop, so the boundary sits on the
+    border with half the stroke clipped. The fit must say so rather than
+    present a biased centre as whole."""
+    img = _canvas()
+    img[0, :] = BLACK
+    img[H - 1, :] = BLACK
+    img[:, 0] = BLACK
+    img[:, W - 1] = BLACK
+    path = _save(img, tmp_path / "edge.tiff")
+    boundary = report.recover_crop_boundary(
+        report.scan_axis_lines(path, []), None, CROP_UV)
+    assert boundary["status"] == "value"
+    assert boundary["border_clipped_band_count"] == 4
+    assert "half-clipped" in boundary["border_clipped_note"]
+    inside = report.recover_crop_boundary(
+        report.scan_axis_lines(_crop_image(tmp_path), []), _RECT_SHAPE, CROP_UV)
+    assert inside["border_clipped_band_count"] == 0

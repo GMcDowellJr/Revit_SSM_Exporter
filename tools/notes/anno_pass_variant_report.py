@@ -794,6 +794,19 @@ def group_bands(runs, min_run):
     return bands
 
 
+def mark_border_clipped(bands, extent):
+    """Flag bands that touch the image border on their own axis.
+
+    A model pass renders exactly its crop, so its boundary sits ON the image
+    edge with half the stroke clipped, and the band's centre is biased inward
+    by up to half a stroke (handoff 2026-09-22: 3042 vs 3039 rows). Flagged,
+    never silently fitted as if whole.
+    """
+    for band in bands:
+        band["border_clipped"] = bool(band["first"] == 0 or band["last"] == extent - 1)
+    return bands
+
+
 def _covers(band, lo, hi, tolerance):
     return band["span"][0] <= lo + tolerance and band["span"][1] + 1 >= hi - tolerance
 
@@ -860,8 +873,10 @@ def recover_crop_boundary(line_scan, shape, crop_uv):
     Returns a record whose ``status`` is "value" only when both axes fitted.
     """
     image_w, image_h = line_scan["image_w"], line_scan["image_h"]
-    row_bands = group_bands(line_scan["rows"], BOUNDARY_MIN_RUN_FRACTION * image_w)
-    col_bands = group_bands(line_scan["cols"], BOUNDARY_MIN_RUN_FRACTION * image_h)
+    row_bands = mark_border_clipped(
+        group_bands(line_scan["rows"], BOUNDARY_MIN_RUN_FRACTION * image_w), image_h)
+    col_bands = mark_border_clipped(
+        group_bands(line_scan["cols"], BOUNDARY_MIN_RUN_FRACTION * image_h), image_w)
     out = {"row_band_count": len(row_bands), "col_band_count": len(col_bands),
            "min_run_fraction": BOUNDARY_MIN_RUN_FRACTION}
     if not row_bands and not col_bands:
@@ -936,6 +951,16 @@ def recover_crop_boundary(line_scan, shape, crop_uv):
     out["residual_max_px"] = {"u": u_fit["residual_max_px"],
                               "v": v_fit["residual_max_px"]}
     out["boundary_px_rect"] = _boundary_pixel_rects(out["bands"])
+    chosen = (list(out["bands"].values()) if "top" in out["bands"]
+              else out["bands"]["cols"] + out["bands"]["rows"])
+    out["border_clipped_band_count"] = sum(1 for b in chosen if b.get("border_clipped"))
+    if out["border_clipped_band_count"]:
+        out["border_clipped_note"] = (
+            "{0} boundary band(s) touch the image border, so their stroke is "
+            "half-clipped and their centres are biased inward by up to half a "
+            "stroke; in a MODEL capture the image edges ARE the crop, so read the "
+            "lattice comparison, not these centres".format(
+                out["border_clipped_band_count"]))
     return out
 
 
