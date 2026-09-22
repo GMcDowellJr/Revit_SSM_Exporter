@@ -98,7 +98,12 @@ def test_the_annotation_capture_pass_is_inside_the_checked_scope(mutable_tree):
     """
     target = mutable_tree / "color_id_buffer.py"
     source = target.read_text()
-    needle = "    basis_by_id = membership_basis_by_id or {}\n"
+    # Anchored on the function's OWN import line, which names the three
+    # helpers only this collector uses -- a line that moves only if the
+    # function's dependencies change, unlike a local whose name a refactor
+    # can retire (this anchor has already been broken once that way).
+    needle = ("        resolve_element_bbox, project_bbox_corners_uv, "
+              "bbox_world_aabb,\n    )\n")
     assert source.count(needle) == 1, (
         "anchor inside _collect_annotation_bbox_data moved; update this test")
     source = source.replace(

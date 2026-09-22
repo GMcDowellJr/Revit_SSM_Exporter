@@ -2090,7 +2090,8 @@ def stage_a_pass_membership(elem, capture_view_id_int=None, datum_category_ids=N
 
 
 def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
-                                  datum_category_ids=None, basis_out=None):
+                                  datum_category_ids=None, basis_out=None,
+                                  datum_category_names=None):
     """Partition ``elements`` into the Stage A model and annotation passes.
 
     Returns ``(model, annotation, unresolved, basis_counts)``. ``unresolved``
@@ -2108,6 +2109,13 @@ def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
     caller that passes an empty set gets ownership-only placement, which is
     the pre-2026-09-21 behaviour and leaves datums unpainted.
 
+    ``datum_category_names`` is that resolution's {category_id: BIC name}
+    map, and a caller supplying ``datum_category_ids`` should supply it too.
+    Without it the per-category counts below fall back to raw category ids,
+    which turns ``"OST_Grids": 12`` into ``"-2000220": 12`` -- still a count,
+    but no longer the measurement it was added to be (see the comment on
+    datum_category_counts).
+
     ``basis_out`` (optional dict) receives ``{element_id_int: basis}`` for
     every PLACED element, so a caller can tell an element placed by
     ``owner_view`` from one placed by ``datum_category`` without asking a
@@ -2120,7 +2128,7 @@ def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
     color_id_buffer's element split).
     """
     datum_error = None
-    datum_names = {}
+    datum_names = dict(datum_category_names or {})
     if datum_category_ids is None:
         datum_category_ids, datum_error = stage_a_datum_category_ids(
             names_out=datum_names)

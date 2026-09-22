@@ -136,9 +136,13 @@ def _raster(bounds_xy=None):
     return types.SimpleNamespace(view_basis=_PLAN_BASIS, bounds_xy=bounds_xy)
 
 
-def _collect_anno(doc, ids, raster, diag=None, membership="owner_view"):
+def _collect_anno(doc, ids, raster, diag=None, membership="owner_view",
+                  datum_category_ids=None):
     """membership: a basis string applied to every id, or an explicit
-    {id: basis} map, or None to supply no basis at all."""
+    {id: basis} map, or None to supply no basis at all.
+
+    Returns (entries, bbox_source_counts, basis_counts, basis_source_counts).
+    """
     if membership is None:
         basis_map = None
     elif isinstance(membership, dict):
@@ -149,6 +153,7 @@ def _collect_anno(doc, ids, raster, diag=None, membership="owner_view"):
         return color_id_buffer._collect_annotation_bbox_data(
             doc, view=object(), resolved_ids=ids, raster=raster,
             diag=diag, view_id=42, membership_basis_by_id=basis_map,
+            datum_category_ids=datum_category_ids,
         )
 
 
@@ -171,8 +176,8 @@ def test_annotation_bbox_is_invariant_under_b_translation():
     b_before = (0.0, 0.0, 100.0, 80.0)
     b_after = (-37.5, 12.25, 62.5, 92.25)
 
-    rec_before, _, _ = _collect_anno(doc, [elem.Id], _raster(b_before))
-    rec_after, _, _ = _collect_anno(doc, [elem.Id], _raster(b_after))
+    rec_before, _, _, _ = _collect_anno(doc, [elem.Id], _raster(b_before))
+    rec_after, _, _, _ = _collect_anno(doc, [elem.Id], _raster(b_after))
 
     uv_before = rec_before["7001"]["bbox_uv"]
     uv_after = rec_after["7001"]["bbox_uv"]
@@ -204,7 +209,7 @@ def test_annotation_bbox_3d_is_not_applicable_never_unavailable():
     elem = _FakeElement(7002, cat, _FakeBBox((0, 0, 0), (5, 1, 0)))
     doc = _FakeDoc([elem])
 
-    rec, _, _ = _collect_anno(doc, [elem.Id], _raster())
+    rec, _, _, _ = _collect_anno(doc, [elem.Id], _raster())
 
     bbox_3d = rec["7002"]["bbox_3d"]
     assert bbox_3d["state"] == "not_applicable"
@@ -219,7 +224,7 @@ def test_annotation_without_a_bbox_is_unavailable_with_a_reason_not_omitted():
     doc = _FakeDoc([elem])
     diag = _FakeDiag()
 
-    rec, sources, _ = _collect_anno(doc, [elem.Id], _raster(), diag=diag)
+    rec, sources, _, _ = _collect_anno(doc, [elem.Id], _raster(), diag=diag)
 
     assert "7003" in rec, "element with no bbox was dropped from the map"
     assert rec["7003"]["bbox_uv"]["state"] == "unavailable"
@@ -237,7 +242,7 @@ def test_annotation_bbox_records_which_get_boundingbox_rung_answered():
     from_model = _FakeElement(8002, cat, None, model_bbox=_FakeBBox((2, 2, 0), (3, 3, 0)))
     doc = _FakeDoc([from_view, from_model])
 
-    rec, sources, _ = _collect_anno(doc, [from_view.Id, from_model.Id], _raster())
+    rec, sources, _, _ = _collect_anno(doc, [from_view.Id, from_model.Id], _raster())
 
     assert rec["8001"]["bbox_source"] == "view"
     assert rec["8002"]["bbox_source"] == "model"
@@ -256,7 +261,7 @@ def test_annotation_bbox_unavailable_when_capture_has_no_view_basis():
     elem = _FakeElement(7004, cat, _FakeBBox((0, 0, 0), (1, 1, 0)))
     doc = _FakeDoc([elem])
 
-    rec, _, _ = _collect_anno(doc, [elem.Id], types.SimpleNamespace(view_basis=None))
+    rec, _, _, _ = _collect_anno(doc, [elem.Id], types.SimpleNamespace(view_basis=None))
 
     assert rec["7004"]["bbox_uv"]["state"] == "unavailable"
     assert "view basis" in rec["7004"]["bbox_uv"]["reason"]
@@ -277,7 +282,7 @@ def test_a_datum_in_the_annotation_pass_gets_a_real_3d_aabb():
                         _FakeBBox((5, 5, 0), (9, 6, 0)))
     doc = _FakeDoc([grid, text])
 
-    rec, _, bases = _collect_anno(
+    rec, _, bases, _ = _collect_anno(
         doc, [grid.Id, text.Id], _raster(),
         membership={9101: "datum_category", 9102: "owner_view"},
     )
@@ -295,7 +300,8 @@ def test_a_datum_in_the_annotation_pass_gets_a_real_3d_aabb():
     assert rec["9102"]["bbox_3d"]["state"] == "not_applicable"
     assert rec["9102"]["membership_basis"] == "owner_view"
 
-    assert bases == {"owner_view": 1, "datum_category": 1, "unknown": 0}
+    assert bases == {"owner_view": 1, "datum_category": 1,
+                     "no_owner_view": 0, "unknown": 0}
 
 
 def test_an_unknown_membership_basis_is_unavailable_not_guessed():
@@ -306,7 +312,7 @@ def test_an_unknown_membership_basis_is_unavailable_not_guessed():
                         _FakeBBox((0, 0, 0), (10, 0, 3)))
     doc = _FakeDoc([elem])
 
-    rec, _, bases = _collect_anno(doc, [elem.Id], _raster(), membership=None)
+    rec, _, bases, _ = _collect_anno(doc, [elem.Id], _raster(), membership=None)
 
     bbox_3d = rec["9103"]["bbox_3d"]
     assert bbox_3d["state"] == "unavailable"
@@ -324,12 +330,107 @@ def test_a_datum_whose_bbox_is_missing_is_unavailable_not_not_applicable():
     grid = _FakeElement(9104, _FakeCategory("Grids", 40), None, model_bbox=None)
     doc = _FakeDoc([grid])
 
-    rec, _, _ = _collect_anno(
+    rec, _, _, _ = _collect_anno(
         doc, [grid.Id], _raster(), membership={9104: "datum_category"})
 
     bbox_3d = rec["9104"]["bbox_3d"]
     assert bbox_3d["state"] == "unavailable"
     assert "datum" in bbox_3d["reason"]
+
+
+# --- expansion: ids resolve_all() produced were never handed to the split --
+
+class _OwnedElement(_FakeElement):
+    """An element that answers OwnerViewId, as stage_a_pass_membership reads.
+
+    The plain _FakeElement above deliberately does NOT, which is what makes
+    it stand for an element the classifier cannot place.
+    """
+    def __init__(self, elem_id, category, bbox, owner_view_id):
+        _FakeElement.__init__(self, elem_id, category, bbox)
+        self.OwnerViewId = _FakeElementId(owner_view_id)
+
+
+def test_an_expanded_group_member_gets_its_basis_from_the_element():
+    """Codex PR #212, third finding.
+
+    split_stage_a_pass_membership sees the COLLECTED top-level elements.
+    resolve_all() then expands a Group's members and a FamilyInstance's
+    sub-components into ids the split never saw -- they are painted and they
+    do appear in this record. Keying only off the split map left every one
+    of them with no basis, so a text note inside a group read "unavailable"
+    when its basis is perfectly knowable from the element.
+
+    Resolved from the ELEMENT rather than inherited from the parent, which
+    is how Stage A step 1 resolves the same shape of problem for HOST/DWG
+    (_host_source_state) and for the same reason: a group can hold a mix.
+    """
+    # In the split map -- a collected top-level annotation.
+    parent = _OwnedElement(7301, _FakeCategory("Text Notes", 11),
+                           _FakeBBox((0, 0, 0), (2, 1, 0)), owner_view_id=42)
+    # NOT in the split map: produced by resolve_all() expanding a group.
+    member = _OwnedElement(7302, _FakeCategory("Text Notes", 11),
+                           _FakeBBox((3, 3, 0), (5, 4, 0)), owner_view_id=42)
+    doc = _FakeDoc([parent, member])
+
+    rec, _sources, bases, basis_sources = _collect_anno(
+        doc, [parent.Id, member.Id], _raster(),
+        membership={7301: "owner_view"},   # only the parent
+    )
+
+    assert rec["7301"]["membership_basis_source"] == "split"
+    # The expanded id is classified, not abandoned.
+    assert rec["7302"]["membership_basis"] == "owner_view"
+    assert rec["7302"]["membership_basis_source"] == "element"
+    assert rec["7302"]["bbox_3d"]["state"] == "not_applicable", (
+        "an expanded annotation must not read 'unavailable' when its basis "
+        "is knowable")
+    assert bases["owner_view"] == 2
+    assert basis_sources == {"split": 1, "element": 1, "unavailable": 0}
+
+
+def test_an_expanded_ownerless_member_gets_a_real_extent_not_not_applicable():
+    """The mixed case the "decide from the element" rule exists for.
+
+    An OWNERLESS element reached by expanding an annotation-pass group is
+    model geometry: it has a model-space extent. Inheriting the parent's
+    "owner_view" would declare not_applicable over an element that has one,
+    which is the same false-claim defect one level down.
+    """
+    ownerless = _OwnedElement(7303, _FakeCategory("Walls", 10),
+                              _FakeBBox((0, 0, 0), (4, 6, 9)), owner_view_id=-1)
+    doc = _FakeDoc([ownerless])
+
+    rec, _s, bases, basis_sources = _collect_anno(
+        doc, [ownerless.Id], _raster(),
+        membership={},            # supplied, but this id is not in it
+        datum_category_ids=set(),  # and it is not a datum either
+    )
+
+    entry = rec["7303"]
+    assert entry["membership_basis"] == "no_owner_view"
+    assert entry["membership_basis_source"] == "element"
+    assert entry["bbox_3d"]["state"] == "value"
+    assert entry["bbox_3d"]["value"]["max"] == pytest.approx([4.0, 6.0, 9.0])
+    assert bases["no_owner_view"] == 1
+    assert basis_sources["element"] == 1
+
+
+def test_an_expanded_datum_member_is_recognised_by_category():
+    """And the datum branch still reaches an expanded id: the category set
+    is consulted for elements the split never classified."""
+    grid = _OwnedElement(7304, _FakeCategory("Grids", 40),
+                         _FakeBBox((0, 0, 0), (80, 0, 14)), owner_view_id=-1)
+    doc = _FakeDoc([grid])
+
+    rec, _s, bases, _bs = _collect_anno(
+        doc, [grid.Id], _raster(), membership={},
+        datum_category_ids={40},
+    )
+
+    assert rec["7304"]["membership_basis"] == "datum_category"
+    assert rec["7304"]["bbox_3d"]["state"] == "value"
+    assert bases["datum_category"] == 1
 
 
 # --- 2. MODEL side: the 3D AABB, and the D2 defect it must not reproduce ---

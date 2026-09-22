@@ -1340,8 +1340,48 @@ _ANNOTATION_BBOX_3D_NOT_APPLICABLE = (
 )
 
 
+def _annotation_pass_basis(elem, elem_id_int, membership_basis_by_id,
+                           datum_category_ids, capture_view_id_int):
+    """Which rule put this element in the annotation pass, and how we know.
+
+    Returns ``(basis, source)`` with source in {"split", "element",
+    "unavailable"}.
+
+    THE EXPANSION PROBLEM. split_stage_a_pass_membership sees the COLLECTED
+    top-level elements; resolve_all() then expands a Group's members and a
+    FamilyInstance's sub-components into ids that were never handed to the
+    split. Those ids are painted and do appear in this record, so keying
+    only off the split map leaves every expanded id with no basis -- and a
+    text note inside a group would read "unavailable" when its basis is
+    perfectly knowable.
+
+    Resolved the same way Stage A step 1 resolves the analogous HOST/DWG
+    question (_host_source_state): the map is the authority where it has an
+    answer, and an expansion-produced id is decided FROM THE ELEMENT, not
+    inherited from its parent. Step 1's reasoning applies unchanged here --
+    a DWG import inside a Group is reached as a group member, so
+    "descendants are whatever the parent was" mislabels exactly the mixed
+    case. stage_a_pass_membership is the same classifier the split itself
+    used, so this is one rule applied twice, not a second rule.
+    """
+    from .revit.annotation import stage_a_pass_membership
+
+    if membership_basis_by_id is None:
+        return None, "unavailable"
+    if elem_id_int in membership_basis_by_id:
+        return membership_basis_by_id[elem_id_int], "split"
+    if elem is None:
+        return None, "unavailable"
+    record = stage_a_pass_membership(
+        elem, capture_view_id_int=capture_view_id_int,
+        datum_category_ids=datum_category_ids)
+    basis = record.get("basis")
+    return basis, ("element" if basis is not None else "unavailable")
+
+
 def _collect_annotation_bbox_data(doc, view, resolved_ids, raster, diag=None, view_id=None,
-                                  view_basis=None, membership_basis_by_id=None):
+                                  view_basis=None, membership_basis_by_id=None,
+                                  datum_category_ids=None):
     """Per-annotation bbox records, in ABSOLUTE view UV (Stage A step 4).
 
     THE POINT OF THE COORDINATE CHOICE. The record stores view-local UV as
@@ -1428,38 +1468,52 @@ def _collect_annotation_bbox_data(doc, view, resolved_ids, raster, diag=None, vi
     if vb is None and raster is not None:
         vb = getattr(raster, "view_basis", None)
 
-    basis_by_id = membership_basis_by_id or {}
     out = {}
     source_counts = {"view": 0, "model": 0, "none": 0}
-    basis_counts = {"owner_view": 0, "datum_category": 0, "unknown": 0}
+    basis_counts = {"owner_view": 0, "datum_category": 0,
+                    "no_owner_view": 0, "unknown": 0}
+    # How the basis was established: off the split map, or from the element
+    # because resolve_all() produced the id by expansion.
+    basis_source_counts = {"split": 0, "element": 0, "unavailable": 0}
 
     def _bbox_3d_for(basis, bbox, elem_id_int):
-        """bbox_3d for ONE element, decided by how it entered this pass."""
-        if basis == "datum_category":
+        """bbox_3d for ONE element, decided by how it entered this pass.
+
+        "not_applicable" holds IFF the element is VIEW-SPECIFIC. Everything
+        ownerless in this pass has a model-space extent -- a datum spans the
+        building, and a "no_owner_view" element is model geometry reached by
+        expanding an annotation-pass Group -- so both get a real AABB.
+        """
+        if basis == "owner_view":
+            return _gs_not_applicable(_ANNOTATION_BBOX_3D_NOT_APPLICABLE)
+        if basis in ("datum_category", "no_owner_view"):
+            what = ("datum (grid/level)" if basis == "datum_category"
+                    else "ownerless element reached by expansion")
             if bbox is None:
                 return _gs_unavailable(
-                    "datum (grid/level) has a model-space extent but no bbox "
-                    "could be resolved for it")
+                    "{0} has a model-space extent but no bbox could be "
+                    "resolved for it".format(what))
             aabb = bbox_world_aabb(
                 bbox, diag=diag, view_id=view_id, elem_id=elem_id_int)
             if aabb is None:
                 return _gs_unavailable(
-                    "datum (grid/level) bbox present but its corners could "
-                    "not be resolved to host space")
+                    "{0} bbox present but its corners could not be resolved "
+                    "to host space".format(what))
             return _gs_value(aabb)
-        if basis == "owner_view":
-            return _gs_not_applicable(_ANNOTATION_BBOX_3D_NOT_APPLICABLE)
         return _gs_unavailable(
-            "membership basis for this element was not supplied, so it "
-            "could not be told apart from a datum; neither a 3D extent nor "
-            "not_applicable can be claimed honestly")
+            "membership basis for this element could not be established, so "
+            "it could not be told apart from a datum; neither a 3D extent "
+            "nor not_applicable can be claimed honestly")
 
     for eid in resolved_ids:
         elem_id_int = eid.IntegerValue
-        membership_basis = basis_by_id.get(elem_id_int)
+        elem = doc.GetElement(eid)
+        membership_basis, membership_basis_source = _annotation_pass_basis(
+            elem, elem_id_int, membership_basis_by_id,
+            datum_category_ids, view_id)
         basis_counts[membership_basis if membership_basis in basis_counts
                      else "unknown"] += 1
-        elem = doc.GetElement(eid)
+        basis_source_counts[membership_basis_source] += 1
         if elem is None:
             out[str(elem_id_int)] = {
                 "bbox_uv": _gs_unavailable(
@@ -1468,6 +1522,7 @@ def _collect_annotation_bbox_data(doc, view, resolved_ids, raster, diag=None, vi
                 "bbox_3d": _bbox_3d_for(membership_basis, None, elem_id_int),
                 "bbox_source": "none",
                 "membership_basis": membership_basis,
+                "membership_basis_source": membership_basis_source,
                 "category": None,
             }
             source_counts["none"] += 1
@@ -1542,10 +1597,11 @@ def _collect_annotation_bbox_data(doc, view, resolved_ids, raster, diag=None, vi
             "bbox_3d": _bbox_3d_for(membership_basis, bbox, elem_id_int),
             "bbox_source": bbox_source,
             "membership_basis": membership_basis,
+            "membership_basis_source": membership_basis_source,
             "category": category_name,
         }
 
-    return out, source_counts, basis_counts
+    return out, source_counts, basis_counts, basis_source_counts
 
 
 def _try_color_link_element_detailed(view, link_inst_id, link_elem_id, ogs):
@@ -4530,6 +4586,7 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     from .revit.annotation import (
         split_stage_a_pass_membership,
         stage_a_pass_membership_summary,
+        stage_a_datum_category_ids,
     )
 
     t0 = time.time()
@@ -4606,6 +4663,27 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
                     exc=ex,
                 )
 
+    # Resolved ONCE and handed to both the split and the bbox collector.
+    # The split would otherwise resolve its own set internally and the
+    # collector would resolve a second one, and a datum recognised by one
+    # but not the other is the "same quantity computed in two places" defect
+    # -- here it would put an element in the annotation pass while denying
+    # it the 3D extent that placement implies.
+    datum_category_names = {}
+    datum_category_ids, _datum_error = stage_a_datum_category_ids(
+        names_out=datum_category_names)
+    if _datum_error and diag is not None:
+        # Same warning the split raises when it resolves these itself --
+        # hoisting the resolution must not hoist away the diagnostic.
+        diag.warn(
+            phase="color_id_buffer",
+            callsite="stage_a_datum_category_ids",
+            message="{0}; datums in those categories fall back to the model "
+                    "pass, where nothing paints them, and will render "
+                    "unassigned in the annotation capture".format(_datum_error),
+            view_id=view_id,
+        )
+
     # basis_out: which rule placed each element. The bbox record needs it --
     # a grid or level reaches this pass by CATEGORY and has a model-space
     # extent, where a view-specific annotation does not.
@@ -4613,6 +4691,8 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     _model_members, anno_elements, unresolved, basis_counts = (
         split_stage_a_pass_membership(
             elements, capture_view_id_int=view_id, diag=diag,
+            datum_category_ids=datum_category_ids,
+            datum_category_names=datum_category_names,
             basis_out=membership_basis_by_id))
     membership = stage_a_pass_membership_summary(
         _model_members, anno_elements, unresolved, basis_counts)
@@ -4680,10 +4760,12 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     annotation_bbox_map = {}
     annotation_bbox_status = {"status": "value"}
     try:
-        annotation_bbox_map, _bbox_sources, _bbox_bases = _collect_annotation_bbox_data(
+        (annotation_bbox_map, _bbox_sources, _bbox_bases,
+         _bbox_basis_sources) = _collect_annotation_bbox_data(
             doc, view, resolved_ids, raster, diag=diag, view_id=view_id,
             view_basis=annotation_view_basis,
-            membership_basis_by_id=membership_basis_by_id)
+            membership_basis_by_id=membership_basis_by_id,
+            datum_category_ids=datum_category_ids)
         annotation_bbox_status = {
             "status": "value",
             "count": len(annotation_bbox_map),
@@ -4695,6 +4777,11 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
             # "every bbox_3d is not_applicable" is a readable fact rather
             # than an assumption a consumer has to make.
             "membership_basis_counts": _bbox_bases,
+            # How each basis was established. resolve_all() expands Groups
+            # and FamilyInstance sub-components into ids the membership
+            # split never saw, so "element" here is the expanded population
+            # -- a number worth watching rather than assuming is zero.
+            "membership_basis_source_counts": _bbox_basis_sources,
             # Where the basis came from, or why there is none. Without this
             # a view whose every bbox_uv is unavailable looks identical to a
             # view with no annotations.
