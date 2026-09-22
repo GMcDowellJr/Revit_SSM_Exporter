@@ -937,7 +937,7 @@ def render_run(run, analyses, overlay_results):
         inputs.get("view_name"), inputs.get("view_id"), inputs.get("view_type"),
         _fmt(inputs.get("view_scale"), "{0:.0f}")))
     lines.append("")
-    lines.append("Probe `{0}` v{1}; combined report `{2}`.".format(
+    lines.append("Probe `{0}` version {1}; combined report `{2}`.".format(
         (combined.get("probe") or {}).get("name"),
         (combined.get("probe") or {}).get("version"), run["combined_path"]))
     model = combined.get("model_pass") or {}
@@ -961,8 +961,9 @@ def render_run(run, analyses, overlay_results):
             missing.get("variant"), missing.get("reason")))
     for item in analyses:
         sidecar = item["analysis"]["sidecar"]
-        for label, records in (("colour map", sidecar.get("malformed_color_entries")),
-                              ("bbox map key", sidecar.get("malformed_bbox_keys"))):
+        for label, records in (
+                ("colour map", sidecar.get("malformed_color_entries")),
+                ("bbox map key", sidecar.get("malformed_bbox_keys"))):
             if records:
                 lines.append("")
                 lines.append("- `{0}`: {1} malformed {2} entr{3} in the sidecar, "
@@ -1161,20 +1162,40 @@ def render_run(run, analyses, overlay_results):
                  "variant CLOBBERING the model artifact -- a path collision, a "
                  "stray write. Whether a variant changed how the model pass "
                  "RENDERS is the probe's own `model_reexport_after_variants` "
-                 "verdict, quoted at the top of this section, which has its own "
-                 "repeatability control.")
+                 "verdict, quoted at the top of this view's section, which has "
+                 "its own repeatability control.")
     lines.append("")
 
     # ---- overlay ----------------------------------------------------
     lines.append("### Overlays")
     lines.append("")
+    lines.append("The gate is measurement 1 only: image size == `frame_px`. IT IS A "
+                 "SIZE GATE AND NOTHING MORE. A capture can be exactly `frame_px` "
+                 "pixels and still have its CONTENT drawn at a different scale or "
+                 "origin -- which is finding F1 -- and `capture_overlay.py` maps UV "
+                 "through the SIDECAR's numbers, so on such a capture its boxes will "
+                 "not land on the ink. Measurement 2's fitted px/ft is echoed beside "
+                 "each line so that is visible here rather than only three sections "
+                 "up.")
+    lines.append("")
+    fits = dict((item["variant"], item["analysis"]["measurements"]["registration"])
+                for item in analyses)
     for entry in overlay_results:
-        if entry["ran"]:
-            lines.append("- `{0}`: overlay written -> {1}".format(
-                entry["variant"], entry.get("stdout_tail") or "(see tool output)"))
+        fit = fits.get(entry["variant"]) or {}
+        if fit.get("status") == "value":
+            context = ("fitted {0} / {1} px/ft against the frame's {2}".format(
+                _fmt(fit.get("px_per_ft_u")), _fmt(fit.get("px_per_ft_v")),
+                _fmt(fit.get("frame_px_per_ft"))))
         else:
-            lines.append("- `{0}`: OVERLAY WITHHELD. {1}".format(
-                entry["variant"], entry["reason"]))
+            context = "measurement 2 did not fit: {0}".format(
+                fit.get("reason") or fit.get("status"))
+        if entry["ran"]:
+            lines.append("- `{0}`: overlay written ({1}) -> {2}".format(
+                entry["variant"], context,
+                entry.get("stdout_tail") or "(see tool output)"))
+        else:
+            lines.append("- `{0}`: OVERLAY WITHHELD ({1}). {2}".format(
+                entry["variant"], context, entry["reason"]))
     lines.append("")
     return lines
 

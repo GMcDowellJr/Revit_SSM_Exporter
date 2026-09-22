@@ -19,8 +19,6 @@ back as the real difference between the two rectangles.
 from __future__ import annotations
 
 import json
-import math
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -642,3 +640,51 @@ def test_a_malformed_sidecar_entry_is_recorded_not_dropped(tmp_path):
     # Each carries a reason, not just a key.
     assert all(entry.get("reason") for entry in record["malformed_color_entries"])
     assert all(entry.get("reason") for entry in record["malformed_bbox_keys"])
+
+
+def test_the_overlay_section_echoes_the_fit_so_the_size_gate_is_not_read_as_a_verdict(tmp_path):
+    """The overlay gate is measurement 1 only, and that is a SIZE gate.
+
+    A capture drawn at a different scale from its sidecar's is exactly
+    ``frame_px`` pixels, so it PASSES the gate and gets an overlay whose boxes,
+    placed through the sidecar's mapping, will not land on the ink. That is the
+    F1 case, and the section has to say so beside the line rather than leaving
+    "overlay written" reading as "this one is fine".
+    """
+    sidecar_fpp = 1.0 / 18.75
+    drawn_fpp = 1.0 / 17.81
+    frame_uv = (0.0, 0.0, 40.0, 30.0)
+    frame_px = (int(round(40.0 / sidecar_fpp)), int(round(30.0 / sidecar_fpp)))
+    probe_dir = tmp_path / "anno_pass_variants_probe"
+    variant_dir = probe_dir / "v0_control" / "color_id_buffer"
+    variant_dir.mkdir(parents=True)
+    elements = [
+        (401, (10, 120, 200), (5.0, 5.0, 9.0, 9.0), "Text Notes"),
+        (402, (200, 60, 10), (25.0, 20.0, 29.0, 24.0), "Grids"),
+        (403, (60, 200, 90), (12.0, 18.0, 16.0, 22.0), "Dimensions"),
+    ]
+    sidecar_path, tiff_path = _build_capture(
+        variant_dir, "Plan_19290402", frame_uv, frame_px, drawn_fpp,
+        (frame_uv[0] - 1.0, frame_uv[3] + 1.0), elements)
+    combined = {
+        "probe": {"name": "stage_a_anno_pass_variants", "version": "test"},
+        "inputs": {"view_name": "Plan", "view_id": 19290402,
+                   "view_type": "FloorPlan", "view_scale": 96.0},
+        "model_pass": {"success": True, "failure_reason": None, "tiff_path": None,
+                       "geometry": {"achieved_export_dpi": 150.0,
+                                    "frame_px": list(frame_px)}},
+        "variants": [{"variant": "v0_control", "skipped": False,
+                      "annotation_pass": {"sidecar_path": str(sidecar_path),
+                                          "tiff_path": str(tiff_path)}}],
+    }
+    (probe_dir / "Plan_19290402.anno_pass_variants.json").write_text(
+        json.dumps(combined), encoding="utf-8")
+
+    text = report.build_report([probe_dir], overlay_enabled=False)
+    overlay_section = text[text.index("### Overlays"):]
+    # The gate's nature is stated, not implied.
+    assert "SIZE GATE AND NOTHING MORE" in overlay_section
+    # And the fitted scale is echoed on the line, so a reader sees 17.8 beside
+    # the frame's 18.7 without scrolling back to section 2.
+    assert "fitted 17." in overlay_section
+    assert "18.7" in overlay_section

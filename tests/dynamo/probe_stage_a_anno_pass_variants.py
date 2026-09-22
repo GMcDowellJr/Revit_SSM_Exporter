@@ -100,7 +100,6 @@ from __future__ import print_function
 
 import hashlib
 import json
-import math
 import os
 import re
 import sys
@@ -477,7 +476,7 @@ def _ensure_repo_import_path(output_dir):
         if root not in sys.path:
             sys.path.insert(0, root)
         try:
-            import vop_interwoven  # noqa: F401
+            import vop_interwoven as _vop_check  # noqa: F401
             return root
         except ImportError as ex:
             checked.append({"root": root,
@@ -705,25 +704,127 @@ def white_filter_categories(doc, include_view_only_model=True):
     return record
 
 
+# Every ``OverrideGraphicSettings`` member the white override needs, as a flat
+# list so a MISSING one is nameable rather than an AttributeError thrown from
+# somewhere inside a loop. UNCONFIRMED as a set on this Revit host, which is
+# exactly why it is preflighted.
+WHITE_OVERRIDE_SETTERS = (
+    "SetProjectionLineColor", "SetCutLineColor",
+    "SetSurfaceForegroundPatternId", "SetSurfaceForegroundPatternColor",
+    "SetSurfaceForegroundPatternVisible",
+    "SetSurfaceBackgroundPatternId", "SetSurfaceBackgroundPatternColor",
+    "SetSurfaceBackgroundPatternVisible",
+    "SetCutForegroundPatternId", "SetCutForegroundPatternColor",
+    "SetCutForegroundPatternVisible",
+    "SetCutBackgroundPatternId", "SetCutBackgroundPatternColor",
+    "SetCutBackgroundPatternVisible",
+    "SetSurfaceTransparency", "SetHalftone",
+)
+
+
+def missing_override_setters(ogs_like, setters=None):
+    """PURE. Which of ``setters`` ``ogs_like`` does not expose.
+
+    Split out of the preflight below so the DECISION is testable without a
+    Revit host -- the preflight's own value is that it decides correctly, and a
+    function that can only be exercised inside Revit is a function whose
+    decision is never checked.
+    """
+    return [name for name in (setters or WHITE_OVERRIDE_SETTERS)
+            if getattr(ogs_like, name, None) is None]
+
+
+def white_override_capability_record(
+        ogs_like, solid_pattern_id, solid_pattern_error=None):
+    """PURE. The capability record, from an OGS-like object and a pattern id.
+
+    ``state`` is "value" only when every setter resolves AND a solid pattern id
+    was supplied. Anything else LISTS what is missing, because "V1-V3 were
+    skipped" is not actionable and "SetCutBackgroundPatternId is absent on this
+    host" is.
+    """
+    missing = missing_override_setters(ogs_like)
+    reason_parts = []
+    if missing:
+        reason_parts.append(
+            "OverrideGraphicSettings is missing: " + ", ".join(missing))
+    if solid_pattern_error:
+        reason_parts.append(str(solid_pattern_error))
+    elif solid_pattern_id is None:
+        reason_parts.append(
+            "no solid DRAFTING fill pattern exists in this project, so a white "
+            "surface/cut pattern override cannot be built")
+    if reason_parts:
+        return {"state": "unavailable", "reason": "; ".join(reason_parts),
+                "missing_setters": missing,
+                "solid_pattern_reason": (
+                    str(solid_pattern_error) if solid_pattern_error
+                    else (None if solid_pattern_id is not None
+                          else reason_parts[-1]))}
+    return {"state": "value", "missing_setters": [],
+            "solid_pattern_id": solid_pattern_id}
+
+
+def white_override_capability(doc):
+    """PREFLIGHT: can a white override actually be built on this host?
+
+    Opens no transaction and touches no view -- an ``OverrideGraphicSettings``
+    is a plain API object -- so this runs before the first variant and decides
+    whether V1-V3 run at all.
+
+    This exists because of what the alternative looks like. A missing pattern
+    setter leaves that pattern UNCHANGED rather than raising at the point of
+    use, so a filter built without it renders model fills in their authored
+    colour while the sidecar says a white filter was applied: a variant that
+    measured nothing and reported success, which is the single worst outcome a
+    probe can produce. Likewise a project with no solid drafting pattern.
+
+    Returns a record. ``state`` is "value" only when every setter in
+    WHITE_OVERRIDE_SETTERS resolves AND a solid pattern was found. Otherwise it
+    LISTS what is missing and V1-V3 are skipped with that list, which is the
+    probe brief's "stop before V2/V3" rather than a best effort.
+    """
+    from Autodesk.Revit.DB import OverrideGraphicSettings
+    from vop_interwoven.color_id_buffer import _get_solid_pattern_id
+
+    try:
+        probe_ogs = OverrideGraphicSettings()
+    except Exception as ex:
+        return {"state": "unavailable",
+                "reason": "OverrideGraphicSettings() raised {0}: {1}".format(
+                    type(ex).__name__, ex),
+                "missing_setters": list(WHITE_OVERRIDE_SETTERS)}
+    solid_id = None
+    solid_error = None
+    try:
+        solid_id = _get_solid_pattern_id(doc)
+    except Exception as ex:
+        solid_error = "_get_solid_pattern_id raised {0}: {1}".format(
+            type(ex).__name__, ex)
+    return white_override_capability_record(
+        probe_ogs,
+        None if solid_id is None else _element_id_int(solid_id),
+        solid_pattern_error=solid_error)
+
+
 def _white_override_settings(doc):
     """A white ``OverrideGraphicSettings``: lines, and all four patterns.
 
-    Raises when no solid fill pattern exists. A "white" override with no
-    pattern id set leaves the surface pattern UNCHANGED, which would render
-    model fills in their authored colour while the sidecar said the filter
-    was applied -- a variant that measured nothing while reporting success.
+    Assumes ``white_override_capability(doc)`` already said "value"; it raises
+    rather than degrading if that is not so, because a partially-applied white
+    override is the failure mode the preflight exists to prevent.
     """
     from Autodesk.Revit.DB import Color, OverrideGraphicSettings
     # Production's lookup, CALLED. A second copy here would be a second answer
     # to "which pattern is the solid one", and this module's whole reason for
     # existing is that the annotation capture and its evidence agree.
     from vop_interwoven.color_id_buffer import _get_solid_pattern_id
-    solid_id = _get_solid_pattern_id(doc)
-    if solid_id is None:
+    capability = white_override_capability(doc)
+    if capability.get("state") != "value":
         raise RuntimeError(
-            "No solid fill pattern found in the project, so a white surface/cut "
-            "pattern override cannot be built; V1-V3 would silently leave model "
-            "fills in their authored colour")
+            "the white override cannot be built on this host: {0}".format(
+                capability.get("reason")))
+    solid_id = _get_solid_pattern_id(doc)
     white = Color(255, 255, 255)
     ogs = OverrideGraphicSettings()
     ogs.SetProjectionLineColor(white)
@@ -1279,6 +1380,17 @@ def _run_variant(doc, view, variant, model_context, settings):
                 return report
 
         if plan["white_filter"]:
+            capability = model_context["white_override_capability"]
+            if capability.get("state") != "value":
+                report["skipped"] = True
+                report["skip_reason"] = (
+                    "the white override cannot be built on this Revit host, so "
+                    "this variant would apply a filter that changes nothing and "
+                    "render an image indistinguishable from V0's: {0}".format(
+                        capability.get("reason")))
+                report["white_override_capability"] = capability
+                report["conclusion"] = "UNAVAILABLE"
+                return report
             categories = model_context["white_filter_categories"]
             if categories.get("state") != "value":
                 report["skipped"] = True
@@ -1581,7 +1693,7 @@ def _reject_reason(view):
     return None
 
 
-def _build_frame_prime(doc, view, geom, raster, view_basis, margin_in, diag, view_id,
+def _build_frame_prime(doc, view, geom, view_basis, margin_in, diag, view_id,
                        cap_axis_px, export_dpi, fit_direction, scale):
     """B', and the frame geometry V3 hands the annotation pass.
 
@@ -1695,6 +1807,25 @@ def _build_frame_prime(doc, view, geom, raster, view_basis, margin_in, diag, vie
     return {"state": "value", "geom": prime_geom, "record": record}
 
 
+def _write_combined(report, probe_dir, base):
+    """Write the combined report, and record where -- on EVERY exit path.
+
+    A failed model pass used to return without writing anything, so the one run
+    most worth reading left nothing on disk: whatever Dynamo's OUT pane happened
+    to show, and only until the session closed. A report is cheap and the
+    failure is the evidence.
+    """
+    json_path = os.path.join(probe_dir, base + ".anno_pass_variants.json")
+    try:
+        with open(json_path, "w") as handle:
+            json.dump(report, handle, indent=2, sort_keys=True, default=str)
+    except Exception as ex:
+        report["combined_json_write_error"] = "{0}: {1}".format(
+            type(ex).__name__, ex)
+        return None
+    return json_path
+
+
 def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT_DPI,
                 expanded_frame_margin_in=DEFAULT_EXPANDED_FRAME_MARGIN_IN,
                 authored_override_scan_max=DEFAULT_AUTHORED_OVERRIDE_SCAN_MAX,
@@ -1781,6 +1912,7 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
         report["reason"] = ("the model pass failed, so there is no frame geometry "
                             "and no annotation variant can register against "
                             "anything")
+        report["paths"] = {"combined_json": _write_combined(report, probe_dir, base)}
         return report
 
     if not geom:
@@ -1793,6 +1925,7 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
         report["reason"] = ("the model pass resolved no frame geometry; the "
                             "annotation pass REFUSES to run without it and this "
                             "probe does not substitute one")
+        report["paths"] = {"combined_json": _write_combined(report, probe_dir, base)}
         return report
 
     model_tiff_path = model_out.get("tiff_path")
@@ -1839,6 +1972,7 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
                 "no view basis: {0}: {1}; B' cannot be computed".format(
                     type(ex).__name__, ex))
 
+    white_capability = white_override_capability(doc)
     white_categories = white_filter_categories(
         doc, include_view_only_model=bool(
             white_filter_include_view_only_model_categories))
@@ -1863,7 +1997,7 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
         else:
             try:
                 frame_prime = _build_frame_prime(
-                    doc, view, geom, raster, view_basis,
+                    doc, view, geom, view_basis,
                     expanded_frame_margin_in, diag, view_id, cap_axis_px,
                     float(export_dpi), fit_direction, scale)
             except Exception as ex:
@@ -1876,6 +2010,7 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
         "diag": diag, "raster": raster, "geom": geom,
         "model_tiff_path": model_tiff_path, "model_tiff_sha256": model_tiff_sha,
         "white_filter_categories": white_categories,
+        "white_override_capability": white_capability,
         "link_visibility": link_visibility_report(doc, view),
         "authored_model_overrides": authored,
         "frame_prime": frame_prime,
@@ -1893,6 +2028,7 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
             doc, view, elements, raster, export_dpi, probe_dir, diag, "control")
     report["model_repeat_control"] = model_repeat_control
     report["white_filter_categories"] = white_categories
+    report["white_override_capability"] = white_capability
     report["link_visibility"] = model_context["link_visibility"]
     report["authored_model_overrides"] = authored
 
@@ -1928,8 +2064,9 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
     # compared. The throwaway file is deleted, which is why the artifact count
     # stays at one model pair per view.
     if model_reexport_check and model_tiff_path and not report.get("stopped_early"):
-        after = _model_repeat_export(doc, view, elements, raster, export_dpi,
-                                    probe_dir, diag, "after_variants")
+        after = _model_repeat_export(
+            doc, view, elements, raster, export_dpi, probe_dir, diag,
+            "after_variants")
         report["model_reexport_after_variants"] = {
             "control": model_repeat_control,
             "after_variants": after,
@@ -1945,9 +2082,7 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
                                   "no TIFF, so no post-variant re-export was taken"},
         }
 
-    json_path = os.path.join(probe_dir, base + ".anno_pass_variants.json")
-    with open(json_path, "w") as handle:
-        json.dump(report, handle, indent=2, sort_keys=True, default=str)
+    json_path = _write_combined(report, probe_dir, base)
     report["paths"] = {
         "combined_json": json_path,
         "model_tiff": model_tiff_path,

@@ -76,12 +76,12 @@
 - `_fit_direction` (function, L2300)
 - `_export_one_tiff` (function, L2318)
 - `_export_tiff` (function, L2368)
-- `compute_model_crop` (function, L2529)
-- `export_color_id_buffer_view` (function, L2609)
-- `_model_category_hidden_state` (function, L4307)
-- `_override_is_cleared` (function, L4386)
-- `_verify_annotation_overrides_restored` (function, L4454)
-- `export_annotation_color_id_buffer_view` (function, L4508)
+- `compute_model_crop` (function, L2539)
+- `export_color_id_buffer_view` (function, L2619)
+- `_model_category_hidden_state` (function, L4317)
+- `_override_is_cleared` (function, L4396)
+- `_verify_annotation_overrides_restored` (function, L4464)
+- `export_annotation_color_id_buffer_view` (function, L4518)
 
 ### `config.py`
 

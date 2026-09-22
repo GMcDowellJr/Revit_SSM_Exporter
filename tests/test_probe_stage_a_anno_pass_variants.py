@@ -510,3 +510,74 @@ def test_validation_rejects_a_malformed_value(settings):
 def test_validation_requires_an_output_directory():
     with pytest.raises(ValueError):
         _adapter().validate_settings({}, "")
+
+
+# ======================================================================
+# the white-override preflight
+# ======================================================================
+
+class _FullOGS(object):
+    """An OverrideGraphicSettings stand-in exposing every needed setter."""
+
+    def __init__(self, omit=()):
+        self._omit = set(omit)
+
+    def __getattr__(self, name):
+        if name in self._omit or name not in probe.WHITE_OVERRIDE_SETTERS:
+            raise AttributeError(name)
+        return lambda *args: None
+
+
+def test_the_preflight_passes_when_every_setter_and_a_solid_pattern_exist():
+    record = probe.white_override_capability_record(_FullOGS(), 4242)
+    assert record["state"] == "value"
+    assert record["missing_setters"] == []
+    assert record["solid_pattern_id"] == 4242
+
+
+def test_the_preflight_names_the_missing_setters_rather_than_just_failing():
+    """"V1-V3 were skipped" is not actionable.
+    "SetCutBackgroundPatternId is absent on this host" is.
+    """
+    record = probe.white_override_capability_record(
+        _FullOGS(omit=("SetCutBackgroundPatternId",
+                       "SetSurfaceBackgroundPatternVisible")), 4242)
+    assert record["state"] == "unavailable"
+    assert set(record["missing_setters"]) == {
+        "SetCutBackgroundPatternId", "SetSurfaceBackgroundPatternVisible"}
+    assert "SetCutBackgroundPatternId" in record["reason"]
+
+
+def test_the_preflight_refuses_a_project_with_no_solid_pattern():
+    """A white override with no pattern id leaves the pattern UNCHANGED.
+
+    That renders model fills in their authored colour while the sidecar says a
+    white filter was applied -- a variant that measured nothing and reported
+    success, which is the single worst outcome a probe can produce.
+    """
+    record = probe.white_override_capability_record(_FullOGS(), None)
+    assert record["state"] == "unavailable"
+    assert "solid" in record["reason"].lower()
+    assert record["missing_setters"] == []
+
+
+def test_the_preflight_carries_a_pattern_lookup_exception_verbatim():
+    record = probe.white_override_capability_record(
+        _FullOGS(), None, solid_pattern_error="RuntimeError: doc is closed")
+    assert record["state"] == "unavailable"
+    assert "doc is closed" in record["reason"]
+
+
+def test_missing_override_setters_checks_every_name_in_the_set():
+    """Each entry in the set is falsified INDIVIDUALLY.
+
+    An "every setter is present" assertion made against a stub that exposes
+    everything cannot tell whether the set has the right names in it -- the
+    same lesson as the `except X as e:` undercount and the missing
+    GetInstanceGeometry token, one layer up.
+    """
+    assert probe.missing_override_setters(_FullOGS()) == []
+    for name in probe.WHITE_OVERRIDE_SETTERS:
+        assert probe.missing_override_setters(_FullOGS(omit=(name,))) == [name], name
+    # And the set is not empty, or the loop above would assert nothing.
+    assert len(probe.WHITE_OVERRIDE_SETTERS) >= 16
