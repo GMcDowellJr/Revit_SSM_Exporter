@@ -5237,11 +5237,13 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         ],
     }
 
-    if not os.path.exists(out_dir):
-        os.makedirs(out_dir)
-    with open(json_path, "w") as f:
-        json.dump(state_out, f, indent=2, sort_keys=True)
-
+    # NOTE: state_out is deliberately NOT serialised here. It used to be --
+    # ~100 lines above the capture_faults computation below -- so the PERSISTED
+    # sidecar never carried capture_faults or failure_reason at all, and every
+    # consumer reading the FILE (rather than the returned in-memory metadata)
+    # saw a capture with faults as a capture with none. The write now happens
+    # after the faults are assigned; see the comment at the write itself.
+    #
     # ------------------------------------------------------------------
     # Did this capture deliver what it claims? (PR #211 review, round 2)
     #
@@ -5342,6 +5344,19 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
 
     failure_reason = capture_faults[0]["fault"] if capture_faults else None
     state_out["capture_faults"] = capture_faults
+    # The single documented contract string, persisted beside the list it is
+    # derived from. A consumer reading the file should not have to re-derive
+    # "which fault is reported" from an ordering rule stated only in a comment.
+    state_out["failure_reason"] = failure_reason
+
+    # THE WRITE, AFTER THE RECORD IS COMPLETE. Everything state_out carries is
+    # assigned by this point, so the file and the returned metadata are the same
+    # facts. They were not: capture_faults and failure_reason were computed
+    # after the old write site and existed only in memory.
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
+    with open(json_path, "w") as f:
+        json.dump(state_out, f, indent=2, sort_keys=True)
 
     return {
         "view_id": view_id,
