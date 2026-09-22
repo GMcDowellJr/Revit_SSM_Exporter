@@ -39,6 +39,25 @@ THE SIX MEASUREMENTS (the probe brief's numbering)
    black/grey, and other, with a top-10 colour list (finding F3).
 6  the model TIFF's hash against V0's.
 
+ROUND 2 (REVISED) ADDS FIVE, because the capture no longer moves the crop and
+registration has to be MEASURED from fiducials rather than read off a frame:
+
+7  F1 -- the crop boundary (V8 turns CropBoxVisible on), recovered from the
+   pixels as bands that close into one rectangle -- or, for a non-rectangular
+   crop, match its shape level by level. "NOT FOUND" on V8 is the answer that
+   ImageExportOptions does not draw it. V8's own model capture is checked
+   too, against the one known answer: its lattice.
+8  F2 -- the fiducial pair's ink edges against their recorded extents, and
+   again against their drawn extents in the model capture.
+9  F1 vs F2 vs the bbox fit. The disagreement is the number.
+10 datum extents: each datum's ink against the bbox recorded before the
+   capture touched the view.
+11 model-ink residue: off-palette pixels outside the fiducials and the
+   recovered boundary.
+
+``--json-out`` writes the recovered boundary rectangles and fiducial
+positions per capture, so a consumer can subtract them.
+
 ``tools/capture_overlay.py`` is invoked ONLY on captures where (1) shows the
 image size equal to ``frame_px``. Otherwise the overlay is withheld and the
 report says so and why: that tool maps UV through the sidecar's recorded
@@ -344,6 +363,21 @@ def fit_registration(samples, frame_uv, image_w, image_h, view_scale,
     out["residual_median_px"] = (residuals[mid] if len(residuals) % 2
                                  else (residuals[mid - 1] + residuals[mid]) / 2.0)
     out["residual_max_px"] = residuals[-1]
+    out["mapping"] = {"a_u": a_u, "b_u": b_u, "a_v": a_v, "b_v": b_v}
+    out["ink_vs_bbox_by_category"] = ink_vs_bbox_geometry(samples, out["mapping"])
+    out["feet_per_pixel_fitted"] = (1.0 / a_u) if a_u else None
+
+    if frame_uv is None:
+        # AN UNTOUCHED CAPTURE OF A CROP-LESS VIEW. No rectangle was handed to
+        # Revit and none is authored, so there is no frame to measure margins
+        # against -- but the SCALE is still measured, which is most of what a
+        # crop-less capture can say. The margins are withheld, not zeroed.
+        out["frame_px_per_ft"] = None
+        out["frame_px_per_ft_reason"] = "no reference rectangle"
+        out["margin_ft"] = None
+        out["margin_paper_in"] = None
+        out["frame_top_left_predicted_px"] = None
+        return out
 
     fx0, fy0, fx1, fy1 = (float(c) for c in frame_uv)
     # THE FRAME'S OWN px/ft, from the sidecar, for the comparison the brief
@@ -383,11 +417,8 @@ def fit_registration(samples, frame_uv, image_w, image_h, view_scale,
     out["margin_ft"] = margins_ft
     out["margin_paper_in"] = dict(
         (side, value * 12.0 / scale) for side, value in margins_ft.items())
-    out["mapping"] = {"a_u": a_u, "b_u": b_u, "a_v": a_v, "b_v": b_v}
-    # The premise, measured -- and measured OUTSIDE the fit, because the fit
-    # absorbs exactly the displacement in question. See ink_vs_bbox_geometry.
-    out["ink_vs_bbox_by_category"] = ink_vs_bbox_geometry(samples, out["mapping"])
-    out["feet_per_pixel_fitted"] = (1.0 / a_u) if a_u else None
+    # The premise (ink_vs_bbox_by_category, above) is measured OUTSIDE the fit,
+    # because the fit absorbs exactly the displacement in question.
     return out
 
 
@@ -476,7 +507,7 @@ def _unpack(key: int) -> tuple[int, int, int]:
     return ((key >> 16) & 0xFF, (key >> 8) & 0xFF, key & 0xFF)
 
 
-def scan_image(path, palette_rgbs):
+def scan_image(path, palette_rgbs, fiducial_rgbs=()):
     """One chunked pass over the TIFF. Everything (2), (4) and (5) need.
 
     Returns a dict with, per palette colour that appears: pixel count, the
@@ -492,9 +523,17 @@ def scan_image(path, palette_rgbs):
     centroid is not its centre, and using it would pull the fit.
 
     Chunked by rows so peak memory does not scale with the capture.
+
+    ``fiducial_rgbs`` (V8's F2 colours) are tracked as blobs like palette
+    colours, but counted as ``fiducial_pixels`` -- neither palette nor
+    off-palette -- because the probe put them there on purpose, and leaving
+    them in the off-palette tally would read as model ink the suppression
+    missed.
     """
-    keys_sorted = np.array(sorted({_pack(rgb) for rgb in palette_rgbs}),
-                           dtype=np.int64)
+    fiducial_keys = {_pack(rgb) for rgb in fiducial_rgbs or ()}
+    keys_sorted = np.array(sorted({_pack(rgb) for rgb in palette_rgbs}
+                                  | fiducial_keys), dtype=np.int64)
+    fiducial_sorted = np.array(sorted(fiducial_keys), dtype=np.int64)
     n_colors = len(keys_sorted)
     counts = np.zeros(n_colors, dtype=np.int64)
     sum_x = np.zeros(n_colors, dtype=np.float64)
@@ -509,6 +548,7 @@ def scan_image(path, palette_rgbs):
     total_pixels = 0
     white_pixels = 0
     palette_pixels = 0
+    fiducial_pixels = 0
     offpalette_tally: Counter[int] = Counter()
     offpalette_capped = False
 
@@ -535,7 +575,12 @@ def scan_image(path, palette_rgbs):
             else:
                 idx_clipped = np.zeros(flat.shape, dtype=np.int64)
                 is_palette = np.zeros(flat.shape, dtype=bool)
-            palette_pixels += int(is_palette.sum())
+            if len(fiducial_sorted):
+                is_fiducial = np.isin(flat, fiducial_sorted)
+                fiducial_pixels += int(is_fiducial.sum())
+                palette_pixels += int((is_palette & ~is_fiducial).sum())
+            else:
+                palette_pixels += int(is_palette.sum())
 
             if is_palette.any():
                 ys, xs = np.divmod(np.nonzero(is_palette)[0], cols)
@@ -586,7 +631,9 @@ def scan_image(path, palette_rgbs):
         "total_pixels": total_pixels,
         "white_pixels": white_pixels,
         "palette_pixels": palette_pixels,
-        "offpalette_pixels": total_pixels - white_pixels - palette_pixels,
+        "fiducial_pixels": fiducial_pixels,
+        "offpalette_pixels": (total_pixels - white_pixels - palette_pixels
+                              - fiducial_pixels),
         "offpalette_tally": offpalette_tally,
         "offpalette_tally_capped": offpalette_capped,
         "blobs": blobs,
@@ -636,6 +683,471 @@ def sha256_of(path) -> str | None:
         return digest.hexdigest()
     except OSError:
         return None
+
+
+# ======================================================================
+# F1 -- THE CROP BOUNDARY, recovered from the pixels
+# ======================================================================
+#
+# ROUND 2 (REVISED). V8 turns CropBoxVisible on, so the crop region draws at
+# the crop's own UV bounds -- read from view.CropBox without changing it --
+# and the capture carries its own ruler. Whether ImageExportOptions draws the
+# boundary AT ALL is unconfirmed; this is the measurement that settles it, so
+# "no boundary found" is reported as a finding with its reason, never papered
+# over.
+#
+# A candidate boundary pixel is any pixel that is not white, not a palette
+# colour and not a fiducial: the boundary is not painted, so it renders in
+# its own line colour. A boundary edge is then a BAND of consecutive rows (or
+# columns) each holding a long straight run of such pixels.
+
+# A run must reach this fraction of the image's extent on its axis to be a
+# boundary candidate. A crop edge spans the whole crop; text and leaders do not.
+BOUNDARY_MIN_RUN_FRACTION = 0.25
+# The longest bands kept per axis before the rectangle search, which is
+# O(n^2) per axis pair.
+BOUNDARY_MAX_BANDS = 12
+# How far a band's span may fall short of the perpendicular pair it must meet,
+# as a fraction of the extent, before the four are not one rectangle.
+BOUNDARY_SPAN_TOLERANCE_FRACTION = 0.02
+BOUNDARY_SPAN_TOLERANCE_MIN_PX = 3.0
+
+
+def _row_longest_run(mask_row: np.ndarray) -> tuple[int, int, int]:
+    """(length, first, last) of the longest True run in a 1-D mask."""
+    if not mask_row.any():
+        return (0, -1, -1)
+    padded = np.concatenate(([0], mask_row.astype(np.int8), [0]))
+    delta = np.diff(padded)
+    starts = np.flatnonzero(delta == 1)
+    ends = np.flatnonzero(delta == -1)
+    lengths = ends - starts
+    index = int(np.argmax(lengths))
+    return (int(lengths[index]), int(starts[index]), int(ends[index]) - 1)
+
+
+def scan_axis_lines(path, excluded_rgbs):
+    """One chunked pass: the longest candidate run in every row and column.
+
+    ``excluded_rgbs`` are the colours that are NOT boundary candidates (the
+    palette, the fiducials); white is always excluded. Returns per-row and
+    per-column ``(length, first, last)`` plus the image size.
+    """
+    keys_sorted = np.array(sorted({_pack(rgb) for rgb in excluded_rgbs}
+                                  | {_pack(WHITE)}), dtype=np.int64)
+    rows = []
+    with Image.open(path) as handle:
+        image = handle.convert("RGB")
+        width, height = image.size
+        col_cur = np.zeros(width, dtype=np.int64)
+        col_cur_start = np.zeros(width, dtype=np.int64)
+        col_best = np.zeros(width, dtype=np.int64)
+        col_best_start = np.full(width, -1, dtype=np.int64)
+        col_best_end = np.full(width, -1, dtype=np.int64)
+        for top in range(0, height, CHUNK_ROWS):
+            bottom = min(height, top + CHUNK_ROWS)
+            block = np.asarray(image.crop((0, top, width, bottom)), dtype=np.uint8)
+            keys = ((block[:, :, 0].astype(np.int64) << 16)
+                    | (block[:, :, 1].astype(np.int64) << 8)
+                    | block[:, :, 2].astype(np.int64))
+            idx = np.clip(np.searchsorted(keys_sorted, keys), 0, len(keys_sorted) - 1)
+            candidate = keys_sorted[idx] != keys
+            for offset in range(candidate.shape[0]):
+                row = candidate[offset]
+                rows.append(_row_longest_run(row))
+                y = top + offset
+                started = row & (col_cur == 0)
+                col_cur_start[started] = y
+                col_cur = np.where(row, col_cur + 1, 0)
+                better = col_cur > col_best
+                col_best[better] = col_cur[better]
+                col_best_start[better] = col_cur_start[better]
+                col_best_end[better] = y
+    cols = [(int(col_best[x]), int(col_best_start[x]), int(col_best_end[x]))
+            for x in range(width)]
+    return {"image_w": width, "image_h": height, "rows": rows, "cols": cols}
+
+
+def group_bands(runs, min_run):
+    """Consecutive indices whose longest run is >= ``min_run``, as bands.
+
+    A band is one drawn line a few pixels thick. ``centre`` is in continuous
+    pixel coordinates -- index i covers [i, i+1) -- so a one-pixel line at
+    index 10 is centred at 10.5, the same convention the UV maps use.
+    """
+    bands = []
+    current = None
+    for index, (length, first, last) in enumerate(runs):
+        if length >= min_run:
+            if current is not None and index == current["last"] + 1:
+                current["last"] = index
+                current["run_max"] = max(current["run_max"], length)
+                current["span"][0] = min(current["span"][0], first)
+                current["span"][1] = max(current["span"][1], last)
+            else:
+                current = {"first": index, "last": index, "run_max": length,
+                           "span": [first, last]}
+                bands.append(current)
+    for band in bands:
+        band["centre"] = (band["first"] + band["last"] + 1) / 2.0
+        band["thickness_px"] = band["last"] - band["first"] + 1
+    return bands
+
+
+def _covers(band, lo, hi, tolerance):
+    return band["span"][0] <= lo + tolerance and band["span"][1] + 1 >= hi - tolerance
+
+
+def pick_rectangle(row_bands, col_bands, image_w, image_h):
+    """The four bands that form ONE rectangle, or None with the reason.
+
+    Consistency, not proximity: the left and right column bands must each span
+    the gap between the top and bottom row bands, and vice versa. Of every
+    consistent quadruple the largest is taken -- the crop is the outermost
+    rectangle a view draws. Returns ``(record, reason)``.
+    """
+    rows = sorted(row_bands, key=lambda b: -b["run_max"])[:BOUNDARY_MAX_BANDS]
+    cols = sorted(col_bands, key=lambda b: -b["run_max"])[:BOUNDARY_MAX_BANDS]
+    tol_x = max(BOUNDARY_SPAN_TOLERANCE_MIN_PX,
+                BOUNDARY_SPAN_TOLERANCE_FRACTION * image_w)
+    tol_y = max(BOUNDARY_SPAN_TOLERANCE_MIN_PX,
+                BOUNDARY_SPAN_TOLERANCE_FRACTION * image_h)
+    best = None
+    for i, top in enumerate(rows):
+        for bottom in rows:
+            if bottom["centre"] <= top["centre"]:
+                continue
+            for left in cols:
+                for right in cols:
+                    if right["centre"] <= left["centre"]:
+                        continue
+                    if not (_covers(top, left["centre"], right["centre"], tol_x)
+                            and _covers(bottom, left["centre"], right["centre"], tol_x)
+                            and _covers(left, top["centre"], bottom["centre"], tol_y)
+                            and _covers(right, top["centre"], bottom["centre"], tol_y)):
+                        continue
+                    area = ((right["centre"] - left["centre"])
+                            * (bottom["centre"] - top["centre"]))
+                    if best is None or area > best[0]:
+                        best = (area, top, bottom, left, right)
+    if best is None:
+        return (None, "{0} row band(s) and {1} column band(s) long enough to be a "
+                      "crop edge, but no four of them close into one "
+                      "rectangle".format(len(row_bands), len(col_bands)))
+    _area, top, bottom, left, right = best
+    return ({"top": top, "bottom": bottom, "left": left, "right": right}, None)
+
+
+def _axis_fit_record(levels, positions):
+    """Least-squares ``position = a * level + b``, with residuals."""
+    fit = fit_axis([float(v) for v in levels], [float(p) for p in positions])
+    if fit is None:
+        return None
+    a, b = fit
+    residuals = [abs(a * lv + b - p) for lv, p in zip(levels, positions)]
+    return {"a": a, "b": b, "residual_max_px": max(residuals) if residuals else None,
+            "points": len(levels)}
+
+
+def recover_crop_boundary(line_scan, shape, crop_uv):
+    """F1: the crop boundary's pixel position, and the UV->pixel map it implies.
+
+    ``shape`` is the probe's ``crop_loop_record`` (or None), ``crop_uv`` the
+    crop's UV bounds read from view.CropBox. A RECTANGULAR crop is matched as
+    one consistent rectangle. A non-rectangular one is matched level by level:
+    the distinct u levels of its vertical edges against the column bands and
+    the v levels against the row bands, in order -- never as four edges.
+    Returns a record whose ``status`` is "value" only when both axes fitted.
+    """
+    image_w, image_h = line_scan["image_w"], line_scan["image_h"]
+    row_bands = group_bands(line_scan["rows"], BOUNDARY_MIN_RUN_FRACTION * image_w)
+    col_bands = group_bands(line_scan["cols"], BOUNDARY_MIN_RUN_FRACTION * image_h)
+    out = {"row_band_count": len(row_bands), "col_band_count": len(col_bands),
+           "min_run_fraction": BOUNDARY_MIN_RUN_FRACTION}
+    if not row_bands and not col_bands:
+        out["status"] = "not_found"
+        out["reason"] = ("no row or column holds a straight non-palette run of "
+                         ">= {0:.0%} of the image: the crop boundary is NOT in this "
+                         "capture".format(BOUNDARY_MIN_RUN_FRACTION))
+        return out
+    is_rectangle = shape.get("is_rectangle") if shape else None
+    if shape is None or is_rectangle:
+        levels_source = ("crop_loop_record" if shape else
+                         "view.CropBox bounds (the crop SHAPE was unavailable, so "
+                         "it is ASSUMED rectangular)")
+        if shape:
+            u_levels = list(shape["distinct_u_levels"])
+            v_levels = list(shape["distinct_v_levels"])
+        elif crop_uv:
+            u_levels = [float(crop_uv[0]), float(crop_uv[2])]
+            v_levels = [float(crop_uv[1]), float(crop_uv[3])]
+        else:
+            out["status"] = "unavailable"
+            out["reason"] = "neither the crop shape nor view.CropBox's UV is known"
+            return out
+        rect, reason = pick_rectangle(row_bands, col_bands, image_w, image_h)
+        if rect is None:
+            out["status"] = "not_found"
+            out["reason"] = reason
+            out["row_bands"] = row_bands[:BOUNDARY_MAX_BANDS]
+            out["col_bands"] = col_bands[:BOUNDARY_MAX_BANDS]
+            return out
+        u_fit = _axis_fit_record(u_levels, [rect["left"]["centre"],
+                                            rect["right"]["centre"]])
+        # v grows UP, rows grow DOWN: the top band is the larger v.
+        v_fit = _axis_fit_record(v_levels, [rect["bottom"]["centre"],
+                                            rect["top"]["centre"]])
+        out["bands"] = rect
+        out["match"] = "one consistent rectangle"
+    else:
+        levels_source = "crop_loop_record (non-rectangular)"
+        u_levels = list(shape["distinct_u_levels"])
+        v_levels = list(shape["distinct_v_levels"])
+        cols = sorted(sorted(col_bands, key=lambda b: -b["run_max"])[:len(u_levels)],
+                      key=lambda b: b["centre"])
+        rows = sorted(sorted(row_bands, key=lambda b: -b["run_max"])[:len(v_levels)],
+                      key=lambda b: -b["centre"])
+        if len(cols) != len(u_levels) or len(rows) != len(v_levels):
+            out["status"] = "not_found"
+            out["reason"] = ("the crop shape has {0} u level(s) and {1} v level(s); "
+                             "the image has {2} column band(s) and {3} row "
+                             "band(s)".format(len(u_levels), len(v_levels),
+                                              len(col_bands), len(row_bands)))
+            return out
+        u_fit = _axis_fit_record(u_levels, [b["centre"] for b in cols])
+        v_fit = _axis_fit_record(v_levels, [b["centre"] for b in rows])
+        out["bands"] = {"cols": cols, "rows": rows}
+        out["match"] = ("matched by RANK of the longest bands to the shape's "
+                        "levels; a residual above a pixel says the rank match "
+                        "picked the wrong line")
+    out["levels_source"] = levels_source
+    if u_fit is None or v_fit is None or u_fit["a"] == 0.0 or v_fit["a"] == 0.0:
+        out["status"] = "unavailable"
+        out["reason"] = "the boundary bands did not determine both axes"
+        return out
+    out["status"] = "value"
+    out["mapping"] = {"a_u": u_fit["a"], "b_u": u_fit["b"],
+                      "a_v": v_fit["a"], "b_v": v_fit["b"]}
+    out["px_per_ft_u"] = u_fit["a"]
+    out["px_per_ft_v"] = abs(v_fit["a"])
+    out["v_axis_sign"] = ("negative (expected)" if v_fit["a"] < 0
+                          else "POSITIVE (flipped)")
+    out["isotropy_u_over_v"] = u_fit["a"] / abs(v_fit["a"])
+    out["residual_max_px"] = {"u": u_fit["residual_max_px"],
+                              "v": v_fit["residual_max_px"]}
+    out["boundary_px_rect"] = _boundary_pixel_rects(out["bands"])
+    return out
+
+
+def _boundary_pixel_rects(bands):
+    """Every recovered band as an integer pixel rectangle (x0, y0, x1, y1),
+    end-exclusive: what a consumer subtracts."""
+    if "top" in bands:
+        rows, cols = [bands["top"], bands["bottom"]], [bands["left"], bands["right"]]
+    else:
+        rows, cols = bands.get("rows", []), bands.get("cols", [])
+    return ([[b["span"][0], b["first"], b["span"][1] + 1, b["last"] + 1] for b in rows]
+            + [[b["first"], b["span"][0], b["last"] + 1, b["span"][1] + 1]
+               for b in cols])
+
+
+# ======================================================================
+# F2 -- THE FIDUCIAL PAIR
+# ======================================================================
+
+def fiducial_fit(fiducials, blobs, image_w, image_h):
+    """F2: fit UV -> pixel from the two fiducials' INK EXTENTS.
+
+    Each fiducial contributes its left and right edge on u and its top and
+    bottom edge on v -- four points per axis for the pair -- matched against
+    its recorded ``rect_uv``. Edges, not centroids, so the fit has a residual
+    that says whether the ink really spans the recorded box (a projected 3D
+    AABB can be looser than the element it bounds). A fiducial whose ink
+    touches the image border is clipped, and is excluded rather than fitted.
+    """
+    per = []
+    us, xs, vs, ys = [], [], [], []
+    for fiducial in fiducials or []:
+        rgb = tuple(int(c) for c in fiducial.get("rgb") or ())
+        rect = fiducial.get("rect_uv")
+        blob = blobs.get(_pack(rgb)) if len(rgb) == 3 else None
+        entry = {"id": fiducial.get("id"), "rgb": list(rgb), "rect_uv": rect,
+                 "found": blob is not None}
+        if blob is not None:
+            entry.update({"pixel_count": blob["pixel_count"],
+                          "pixel_bbox": blob["pixel_bbox"],
+                          "touches_border": blob["touches_border"]})
+        per.append(entry)
+        if blob is None or rect is None or blob["touches_border"]:
+            continue
+        x0, y0, x1, y1 = blob["pixel_bbox"]
+        u0, v0, u1, v1 = (float(v) for v in rect)
+        us += [u0, u1]
+        xs += [x0, x1 + 1.0]
+        vs += [v1, v0]
+        ys += [y0, y1 + 1.0]
+    out = {"fiducials": per,
+           "usable_count": sum(1 for e in per if e["found"]
+                               and not e.get("touches_border"))}
+    if out["usable_count"] < 2:
+        out["status"] = "unavailable"
+        out["reason"] = ("{0} usable fiducial(s) of {1}; F2 needs both, unclipped, "
+                         "in their reserved colours".format(
+                             out["usable_count"], len(per)))
+        return out
+    u_fit = _axis_fit_record(us, xs)
+    v_fit = _axis_fit_record(vs, ys)
+    if u_fit is None or v_fit is None or u_fit["a"] == 0.0 or v_fit["a"] == 0.0:
+        out["status"] = "unavailable"
+        out["reason"] = "the fiducials did not determine both axes"
+        return out
+    out["status"] = "value"
+    out["mapping"] = {"a_u": u_fit["a"], "b_u": u_fit["b"],
+                      "a_v": v_fit["a"], "b_v": v_fit["b"]}
+    out["px_per_ft_u"] = u_fit["a"]
+    out["px_per_ft_v"] = abs(v_fit["a"])
+    out["isotropy_u_over_v"] = u_fit["a"] / abs(v_fit["a"])
+    out["residual_max_px"] = {"u": u_fit["residual_max_px"],
+                              "v": v_fit["residual_max_px"]}
+    return out
+
+
+def mapping_agreement(first, second, probe_uv):
+    """How far two UV->pixel mappings disagree. Deltas only, no verdict.
+
+    ``probe_uv`` is the rectangle whose corners are pushed through both -- the
+    authored crop -- because a disagreement in scale is only meaningful at a
+    place in the image. THE DISAGREEMENT IS THE NUMBER: where F1 and F2 are
+    both available they must agree, and by how much they do not is what this
+    reports.
+    """
+    if not first or not second:
+        return {"status": "unavailable",
+                "reason": "one of the two mappings is not available"}
+    out = {"status": "value",
+           "px_per_ft_u_delta": first["a_u"] - second["a_u"],
+           "px_per_ft_v_delta": abs(first["a_v"]) - abs(second["a_v"]),
+           "corners": []}
+    if probe_uv:
+        u0, v0, u1, v1 = (float(v) for v in probe_uv)
+        worst = 0.0
+        for u, v in ((u0, v1), (u1, v1), (u0, v0), (u1, v0)):
+            dx = (first["a_u"] * u + first["b_u"]) - (second["a_u"] * u + second["b_u"])
+            dy = (first["a_v"] * v + first["b_v"]) - (second["a_v"] * v + second["b_v"])
+            out["corners"].append({"uv": [u, v], "dx_px": dx, "dy_px": dy})
+            worst = max(worst, abs(dx), abs(dy))
+        out["worst_corner_px"] = worst
+    return out
+
+
+def model_lattice_mapping(bounds_uv, image_w, image_h):
+    """The MODEL capture's own UV -> pixel map, from its recorded crop.
+
+    The model capture is the established foundation: it rendered
+    ``bounds_xy`` (crop A) at its own pixel count. That is a PREMISE, and the
+    report labels any figure derived through it as model-anchored.
+    """
+    if not bounds_uv or len(bounds_uv) != 4:
+        return None
+    x0, y0, x1, y1 = (float(v) for v in bounds_uv)
+    if x1 <= x0 or y1 <= y0 or not image_w or not image_h:
+        return None
+    a_u = float(image_w) / (x1 - x0)
+    a_v = -float(image_h) / (y1 - y0)
+    return {"a_u": a_u, "b_u": -a_u * x0, "a_v": a_v, "b_v": -a_v * y1}
+
+
+def pixel_rect_to_uv(pixel_bbox, mapping):
+    """An inclusive pixel bbox -> the UV rectangle it covers, through a map."""
+    x0, y0, x1, y1 = (float(v) for v in pixel_bbox)
+    us = sorted(((x0 - mapping["b_u"]) / mapping["a_u"],
+                 (x1 + 1.0 - mapping["b_u"]) / mapping["a_u"]))
+    vs = sorted(((y0 - mapping["b_v"]) / mapping["a_v"],
+                 (y1 + 1.0 - mapping["b_v"]) / mapping["a_v"]))
+    return (us[0], vs[0], us[1], vs[1])
+
+
+def datum_extents(record, blobs, mapping, view_scale):
+    """Do datum extents in the capture match the drawing? Per datum.
+
+    Each datum's INK extent (its palette colour's pixel bbox) is mapped into
+    UV through ``mapping`` and compared, side by side, with the bbox recorded
+    BEFORE the capture touched the view -- so against the authored crop. Under
+    V0 the crop was widened to B, which lengthens datums; under V7/V8 it was
+    not. Positive ``*_ft`` means the ink reaches FURTHER than the record.
+
+    PREMISE, stated: ``get_BoundingBox(view)`` for a datum is taken as its
+    drawn 2-D extent in this view. Unconfirmed; a datum whose record is its 3-D
+    extent would read long on the axis the view looks along.
+    """
+    rows = []
+    if not mapping:
+        return {"status": "unavailable",
+                "reason": "no mapping from pixels to UV", "datums": rows}
+    for element_id, entry in record["bbox_entries"].items():
+        if entry.get("membership_basis") != "datum_category":
+            continue
+        rect = entry.get("rect_uv")
+        rgb = record["color_map"].get(element_id)
+        blob = blobs.get(_pack(rgb)) if rgb is not None else None
+        row = {"element_id": element_id, "category": entry.get("category"),
+               "recorded_uv": list(rect) if rect else None}
+        if rect is None or blob is None:
+            row["status"] = "unmeasured"
+            row["reason"] = ("no recorded bbox" if rect is None
+                             else "its colour is not in the image")
+            rows.append(row)
+            continue
+        ink = pixel_rect_to_uv(blob["pixel_bbox"], mapping)
+        row["status"] = "value"
+        row["ink_uv"] = list(ink)
+        row["touches_border"] = blob["touches_border"]
+        row["left_ft"] = rect[0] - ink[0]
+        row["bottom_ft"] = rect[1] - ink[1]
+        row["right_ft"] = ink[2] - rect[2]
+        row["top_ft"] = ink[3] - rect[3]
+        horizontal = (rect[2] - rect[0]) >= (rect[3] - rect[1])
+        recorded_len = (rect[2] - rect[0]) if horizontal else (rect[3] - rect[1])
+        ink_len = (ink[2] - ink[0]) if horizontal else (ink[3] - ink[1])
+        row["long_axis"] = "u" if horizontal else "v"
+        row["length_delta_ft"] = ink_len - recorded_len
+        row["length_delta_paper_in"] = (ink_len - recorded_len) * 12.0 / float(
+            view_scale or 1.0)
+        rows.append(row)
+    return {"status": "value", "datums": rows,
+            "premise": "get_BoundingBox(view) of a datum is its drawn extent in "
+                       "this view (UNCONFIRMED)"}
+
+
+def count_offpalette_outside(path, palette_rgbs, excluded_pixel_rects):
+    """Off-palette pixels OUTSIDE the given pixel rectangles.
+
+    The model-ink residue question: under V7/V8 every model member is white, so
+    what is neither white nor palette is model ink the suppression did not
+    reach -- except the pixels this capture put there on purpose (the fiducials,
+    excluded by colour in the palette list, and the crop boundary, excluded by
+    rectangle here).
+    """
+    keys_sorted = np.array(sorted({_pack(rgb) for rgb in palette_rgbs}
+                                  | {_pack(WHITE)}), dtype=np.int64)
+    total = 0
+    with Image.open(path) as handle:
+        image = handle.convert("RGB")
+        width, height = image.size
+        for top in range(0, height, CHUNK_ROWS):
+            bottom = min(height, top + CHUNK_ROWS)
+            block = np.asarray(image.crop((0, top, width, bottom)), dtype=np.uint8)
+            keys = ((block[:, :, 0].astype(np.int64) << 16)
+                    | (block[:, :, 1].astype(np.int64) << 8)
+                    | block[:, :, 2].astype(np.int64))
+            idx = np.clip(np.searchsorted(keys_sorted, keys), 0, len(keys_sorted) - 1)
+            off = keys_sorted[idx] != keys
+            for x0, y0, x1, y1 in excluded_pixel_rects or []:
+                r0, r1 = max(int(y0), top) - top, min(int(y1), bottom) - top
+                if r1 > r0:
+                    off[r0:r1, max(0, int(x0)):max(0, int(x1))] = False
+            total += int(off.sum())
+    return total
 
 
 # ======================================================================
@@ -705,6 +1217,12 @@ def read_annotation_sidecar(path):
         "paint_failed_element_ids": set(
             int(v) for v in (sidecar.get("paint_failed_element_ids") or [])),
         "color_assignment_count": sidecar.get("color_assignment_count"),
+        # Round 2 (revised). "frame_b" or "untouched"; None on a sidecar written
+        # before the switch existed, which behaved as "frame_b".
+        "crop_mode": registration.get("crop_mode"),
+        "rendered_uv_reason": registration.get("rendered_uv_reason"),
+        "probe_crop_boundary": sidecar.get("probe_crop_boundary"),
+        "probe_fiducials": sidecar.get("probe_fiducials"),
     }
 
     # A MALFORMED ENTRY IS RECORDED, NOT SKIPPED. Every count in section 4 is
@@ -749,7 +1267,7 @@ def read_annotation_sidecar(path):
     return record
 
 
-def frame_rect_for(record) -> tuple[Any, str | None]:
+def frame_rect_for(record, authored_crop_uv=None) -> tuple[Any, str | None]:
     """The rectangle this annotation capture RENDERED, or why there is none.
 
     ``registration.rendered_uv`` and nothing else. It is null exactly when the
@@ -759,6 +1277,18 @@ def frame_rect_for(record) -> tuple[Any, str | None]:
     describing a rectangle that was not rendered.
     """
     rendered = record.get("rendered_uv")
+    if (not rendered) and record.get("crop_mode") == "untouched":
+        # ROUND 2 (REVISED). Nothing was handed to Revit, so the reference is
+        # the AUTHORED crop the capture left alone -- the rectangle the
+        # probe's combined report read from view.CropBox. The margins against
+        # it say how far the render grew past the crop the drawing has.
+        if authored_crop_uv and len(authored_crop_uv) == 4:
+            rect = tuple(float(v) for v in authored_crop_uv)
+            if rect[2] > rect[0] and rect[3] > rect[1]:
+                return (rect, None)
+        return (None, "crop_mode 'untouched' and no ACTIVE authored crop was "
+                      "recorded, so there is no rectangle to measure margins "
+                      "against; the scale is still fitted")
     if not rendered or len(rendered) != 4:
         return (None, "registration.rendered_uv is null: frame B was not applied as "
                       "the view crop, so the TIFF's extent is FitToPage's automatic "
@@ -774,8 +1304,17 @@ def frame_rect_for(record) -> tuple[Any, str | None]:
 # ======================================================================
 
 def analyze_capture(sidecar_path, tiff_path, model_tiff_sha=None,
-                    v0_model_tiff_sha=None):
-    """The six measurements for one view x variant capture."""
+                    v0_model_tiff_sha=None, context=None):
+    """The measurements for one view x variant capture.
+
+    ``context`` carries what the probe's combined report knows and the sidecar
+    does not: ``authored_crop_uv`` and ``authored_crop_active``,
+    ``authored_shape`` (crop_loop_record), ``fiducials`` (the painted F2 pair),
+    ``model_sidecar``/``model_tiff`` (the model capture to anchor F2 against)
+    and ``achieved_fpp_ft`` (the lattice). All optional; a capture analysed
+    without it gets the original six measurements.
+    """
+    context = context or {}
     record = read_annotation_sidecar(sidecar_path)
     result: dict[str, Any] = {
         "sidecar_path": str(sidecar_path),
@@ -786,8 +1325,13 @@ def analyze_capture(sidecar_path, tiff_path, model_tiff_sha=None,
     measurements = result["measurements"]
 
     palette = sorted(set(record["color_map"].values()))
-    scan = scan_image(tiff_path, palette)
+    fiducials = context.get("fiducials") or []
+    fiducial_rgbs = [tuple(int(c) for c in f.get("rgb")) for f in fiducials
+                     if f.get("rgb")]
+    scan = scan_image(tiff_path, palette, fiducial_rgbs)
     image_w, image_h = scan["image_w"], scan["image_h"]
+    authored_uv = (context.get("authored_crop_uv")
+                   if context.get("authored_crop_active") else None)
 
     # A FAILED BBOX COLLECTION IS NOT A VIEW WITH NO ANNOTATIONS, and every
     # measurement below is built on that map. read_annotation_sidecar
@@ -827,7 +1371,7 @@ def analyze_capture(sidecar_path, tiff_path, model_tiff_sha=None,
     measurements["size"] = size
 
     # ---- (2) registration fit ----------------------------------------
-    frame_rect, frame_reason = frame_rect_for(record)
+    frame_rect, frame_reason = frame_rect_for(record, authored_uv)
     samples = []
     sample_diagnostics = {"no_rect": 0, "color_absent": 0, "border_clipped": 0,
                           "matched": 0}
@@ -882,7 +1426,7 @@ def analyze_capture(sidecar_path, tiff_path, model_tiff_sha=None,
     if bbox_unavailable is not None:
         fit = dict(bbox_unavailable, sample_count=0)
         alt_fit = dict(bbox_unavailable)
-    elif frame_rect is None:
+    elif frame_rect is None and record.get("crop_mode") != "untouched":
         fit = {"status": "unavailable", "reason": frame_reason,
                "sample_count": len(samples)}
         alt_fit = {"status": "unavailable", "reason": frame_reason}
@@ -898,6 +1442,11 @@ def analyze_capture(sidecar_path, tiff_path, model_tiff_sha=None,
                                    anchor="ink_bbox")
     fit["sample_diagnostics"] = sample_diagnostics
     fit["frame_uv"] = list(frame_rect) if frame_rect else None
+    fit["frame_source"] = (
+        "registration.rendered_uv" if record.get("rendered_uv")
+        else ("the AUTHORED crop (crop_mode untouched)" if frame_rect else None))
+    if frame_rect is None and frame_reason:
+        fit["frame_reason"] = frame_reason
     measurements["registration"] = fit
     measurements["registration_ink_bbox_anchor"] = alt_fit
     measurements["anchor_agreement"] = _anchor_agreement(fit, alt_fit)
@@ -960,6 +1509,72 @@ def analyze_capture(sidecar_path, tiff_path, model_tiff_sha=None,
         if scan["total_pixels"] else None)
     measurements["offpalette"] = off
 
+    # ---- (7) F1: the crop boundary ------------------------------------
+    line_scan = scan_axis_lines(tiff_path, palette + fiducial_rgbs)
+    boundary = recover_crop_boundary(
+        line_scan, context.get("authored_shape"), context.get("authored_crop_uv"))
+    boundary["probe_turned_it_on"] = bool(record.get("probe_crop_boundary"))
+    if context.get("achieved_fpp_ft"):
+        boundary["lattice_px_per_ft"] = 1.0 / float(context["achieved_fpp_ft"])
+    measurements["crop_boundary"] = boundary
+
+    # ---- (8) F2: the fiducial pair --------------------------------------
+    if fiducials:
+        f2 = fiducial_fit(fiducials, scan["blobs"], image_w, image_h)
+        f2["model_anchored"] = _model_anchored_fiducials(
+            fiducials, scan["blobs"], image_w, image_h, context)
+    else:
+        f2 = {"status": "not_applicable",
+              "reason": "this capture has no F2 fiducials (only V8 paints them)"}
+    if context.get("achieved_fpp_ft"):
+        f2["lattice_px_per_ft"] = 1.0 / float(context["achieved_fpp_ft"])
+    measurements["fiducials"] = f2
+
+    # ---- (9) F1 vs F2 vs the bbox fit -----------------------------------
+    maps = {
+        "F1": boundary.get("mapping") if boundary.get("status") == "value" else None,
+        "F2": f2.get("mapping") if f2.get("status") == "value" else None,
+        "bbox_fit": fit.get("mapping") if fit.get("status") == "value" else None,
+    }
+    probe_rect = context.get("authored_crop_uv") or (
+        list(frame_rect) if frame_rect else None)
+    measurements["mapping_agreement"] = {
+        "probe_uv": probe_rect,
+        "F1_vs_F2": mapping_agreement(maps["F1"], maps["F2"], probe_rect),
+        "F1_vs_bbox_fit": mapping_agreement(maps["F1"], maps["bbox_fit"], probe_rect),
+        "F2_vs_bbox_fit": mapping_agreement(maps["F2"], maps["bbox_fit"], probe_rect),
+    }
+
+    # ---- (10) datum extents, through the best available map -------------
+    chosen = next(((name, maps[name]) for name in ("F1", "F2", "bbox_fit")
+                   if maps[name]), (None, None))
+    if bbox_unavailable is not None:
+        datums = dict(bbox_unavailable, datums=[])
+    else:
+        datums = datum_extents(record, scan["blobs"], chosen[1],
+                               record.get("view_scale") or 1.0)
+    datums["mapping_used"] = chosen[0]
+    measurements["datum_extents"] = datums
+
+    # ---- (11) model-ink residue -----------------------------------------
+    excluded = (boundary.get("boundary_px_rect") or []) if boundary.get(
+        "status") == "value" else []
+    residue_pixels = (count_offpalette_outside(tiff_path, palette + fiducial_rgbs,
+                                               excluded)
+                      if excluded else scan["offpalette_pixels"])
+    measurements["model_ink_residue"] = {
+        "offpalette_pixels": scan["offpalette_pixels"],
+        "fiducial_pixels": scan["fiducial_pixels"],
+        "boundary_rects_excluded": len(excluded),
+        "offpalette_outside_boundary": residue_pixels,
+        "suppression_mode": record.get("model_suppression_mode"),
+        "note": "off-palette pixels that are neither the fiducials nor inside a "
+                "recovered crop-boundary band. Under membership suppression "
+                "every model member is white, so these are candidate model ink "
+                "the suppression did not reach -- or annotation the pass could "
+                "not paint. They are counted, not attributed.",
+    }
+
     # ---- (6) model TIFF hash -----------------------------------------
     measurements["model_tiff"] = {
         "sha256": model_tiff_sha,
@@ -968,6 +1583,90 @@ def analyze_capture(sidecar_path, tiff_path, model_tiff_sha=None,
                        else model_tiff_sha == v0_model_tiff_sha),
     }
     return result
+
+
+def _model_anchored_fiducials(fiducials, blobs, image_w, image_h, context):
+    """F2 again, with each fiducial's UV extent taken from the MODEL capture's
+    ink instead of its projected AABB.
+
+    A projected 3-D bounding box can be looser than the element it bounds, so
+    the plain F2 fit rests on "the ink spans the recorded box". The model
+    capture paints the same element flat in its own palette colour, on a
+    lattice whose UV mapping is recorded -- so its ink, mapped through that
+    lattice, is the element's DRAWN extent. Model-anchored: it inherits the
+    premise that the model capture registers.
+    """
+    model_sidecar = context.get("model_sidecar")
+    model_tiff = context.get("model_tiff")
+    if not model_sidecar or not model_tiff:
+        return {"status": "unavailable", "reason": "no model capture located"}
+    try:
+        with open(model_sidecar, encoding="utf-8") as handle:
+            model = json.load(handle)
+    except (OSError, ValueError) as ex:
+        return {"status": "unavailable",
+                "reason": "model sidecar unreadable: {0}: {1}".format(
+                    type(ex).__name__, ex)}
+    colour_map = model.get("color_assignment_map") or {}
+    wanted = {}
+    for fiducial in fiducials:
+        rgb = colour_map.get(str(fiducial.get("id")))
+        if rgb is not None:
+            wanted[int(fiducial["id"])] = tuple(int(c) for c in rgb)
+    if len(wanted) < len(fiducials):
+        return {"status": "unavailable",
+                "reason": "{0} of {1} fiducial(s) have no colour in the model "
+                          "capture".format(len(fiducials) - len(wanted),
+                                           len(fiducials))}
+    model_scan = scan_image(model_tiff, sorted(set(wanted.values())))
+    lattice = model_lattice_mapping(model.get("bounds_xy"), model_scan["image_w"],
+                                    model_scan["image_h"])
+    if lattice is None:
+        return {"status": "unavailable",
+                "reason": "the model sidecar records no usable bounds_xy"}
+    anchored = []
+    for fiducial in fiducials:
+        blob = model_scan["blobs"].get(_pack(wanted[int(fiducial["id"])]))
+        entry = dict(fiducial)
+        entry["rect_uv"] = (list(pixel_rect_to_uv(blob["pixel_bbox"], lattice))
+                            if blob is not None and not blob["touches_border"]
+                            else None)
+        anchored.append(entry)
+    out = fiducial_fit(anchored, blobs, image_w, image_h)
+    out["model_drawn_uv"] = [a["rect_uv"] for a in anchored]
+    out["premise"] = "the model capture registers on its recorded bounds_xy"
+    return out
+
+
+def analyze_model_boundary(model_sidecar, model_tiff):
+    """F1 in the MODEL half of V8: is the boundary there too, and where?
+
+    The model pass sets the crop to its snapped crop A for its own export, so
+    the boundary draws at A -- the sidecar's ``bounds_xy`` -- and the model
+    capture's lattice says exactly where A is in pixels. Comparing the
+    recovered boundary's mapping with that lattice is the ONE place the
+    boundary can be checked against a known answer rather than against another
+    fit. On a capture that renders exactly A the boundary sits on the image
+    edge and may be clipped, which the band record shows.
+    """
+    try:
+        with open(model_sidecar, encoding="utf-8") as handle:
+            model = json.load(handle)
+    except (OSError, ValueError) as ex:
+        return {"status": "unavailable",
+                "reason": "model sidecar unreadable: {0}: {1}".format(
+                    type(ex).__name__, ex)}
+    palette = sorted(set(tuple(int(c) for c in rgb)
+                         for rgb in (model.get("color_assignment_map") or {}).values()))
+    bounds = model.get("bounds_xy")
+    line_scan = scan_axis_lines(model_tiff, palette)
+    out = recover_crop_boundary(line_scan, None, bounds)
+    out["drawn_at_uv"] = bounds
+    out["probe_crop_boundary"] = model.get("probe_crop_boundary")
+    lattice = model_lattice_mapping(bounds, line_scan["image_w"], line_scan["image_h"])
+    out["lattice_mapping"] = lattice
+    out["vs_lattice"] = mapping_agreement(out.get("mapping"), lattice, bounds)
+    return out
 
 
 def _anchor_agreement(primary, secondary):
@@ -1103,19 +1802,49 @@ def discover_runs(target: Path):
                 entry["missing"].append({
                     "variant": variant,
                     "reason": "could not locate the {0}".format(
-                        "sidecar" if sidecar is None else "TIFF"),
+                        " or the ".join(name for name, found in
+                                        (("sidecar", sidecar), ("TIFF", tiff))
+                                        if found is None)),
                     "recorded_sidecar": anno.get("sidecar_path"),
                     "recorded_tiff": anno.get("tiff_path"),
                     "searched_under": str(probe_dir / str(variant)),
                 })
                 continue
+            own = variant_report.get("own_model_pass") or {}
+            own_sidecar = _locate(own.get("sidecar_path"), probe_dir,
+                                  "{0}/model".format(variant))
+            own_tiff = _locate(own.get("tiff_path"), probe_dir,
+                               "{0}/model".format(variant))
             entry["captures"].append({"variant": variant, "sidecar": sidecar,
                                       "tiff": tiff,
-                                      "variant_report": variant_report})
+                                      "variant_report": variant_report,
+                                      "own_model_sidecar": own_sidecar,
+                                      "own_model_tiff": own_tiff})
         model = combined.get("model_pass") or {}
         entry["model_tiff"] = _locate(model.get("tiff_path"), probe_dir, "model")
+        entry["model_sidecar"] = _locate(model.get("sidecar_path"), probe_dir, "model")
         runs.append(entry)
     return runs
+
+
+def capture_context(run, capture):
+    """What the combined report knows about one capture that its sidecar does
+    not: the authored crop, its shape, the fiducials, and the model capture to
+    anchor F2 against (V8's own when it has one, else the shared one)."""
+    combined = run.get("combined") or {}
+    authored = combined.get("authored_crop") or {}
+    variant_report = capture.get("variant_report") or {}
+    geometry = (combined.get("model_pass") or {}).get("geometry") or {}
+    return {
+        "authored_crop_uv": _gs_value(authored.get("crop_box_uv")),
+        "authored_crop_active": _gs_value(authored.get("crop_box_active")),
+        "authored_shape": _gs_value(authored.get("shape")),
+        "fiducials": ((variant_report.get("pre_state") or {}).get("fiducials")
+                      or {}).get("painted") or [],
+        "model_sidecar": capture.get("own_model_sidecar") or run.get("model_sidecar"),
+        "model_tiff": capture.get("own_model_tiff") or run.get("model_tiff"),
+        "achieved_fpp_ft": geometry.get("achieved_fpp_ft"),
+    }
 
 
 def _locate(recorded, probe_dir: Path, variant) -> Path | None:
@@ -1153,6 +1882,270 @@ def _table(headers, rows):
     return lines
 
 
+def _render_crop_context(combined):
+    """The view-level facts round 2 (revised) turns on: where the crop is, how
+    far each pass moves it, what the white suppression costs, which fiducials
+    were chosen. Printed once per view, before any capture's numbers."""
+    lines = []
+    relationships = combined.get("crop_relationships")
+    if not relationships:
+        return lines
+    lines.append("")
+    lines.append("**The crop.** Authored crop active: {0}; UV {1}.".format(
+        _fmt(relationships.get("authored_crop_active")),
+        relationships.get("authored_crop_uv")))
+
+    def _sides(delta):
+        if not delta:
+            return "--"
+        return " / ".join("{0} {1}".format(side, _fmt(delta[side], "{0:+.2f}"))
+                          for side in ("left", "right", "top", "bottom"))
+
+    lines.append("- V0 widens it to frame B by (ft): {0}".format(
+        _sides(relationships.get("v0_widens_crop_by_ft"))))
+    lines.append("- the MODEL pass sets it to crop A, which differs from the "
+                 "authored crop by (ft): {0}{1}".format(
+                     _sides(relationships.get("model_pass_crop_a_minus_authored_ft")),
+                     " -- and on this crop-INACTIVE view the model pass ACTIVATES "
+                     "a crop" if relationships.get("model_pass_activates_a_crop")
+                     else ""))
+    shape = _gs_value((combined.get("authored_crop") or {}).get("shape"))
+    if shape:
+        lines.append("- crop shape: {0} loop(s), {1} edge(s), rectangle: {2}, "
+                     "oblique edges: {3}".format(
+                         shape.get("loop_count"), shape.get("edge_count"),
+                         _fmt(shape.get("is_rectangle")),
+                         shape.get("oblique_edge_count")))
+    else:
+        reason = ((combined.get("authored_crop") or {}).get("shape") or {}).get(
+            "reason")
+        lines.append("- crop shape: UNAVAILABLE ({0}); F1 assumes a rectangle "
+                     "from view.CropBox and says so".format(reason))
+    cost = combined.get("suppression_cost") or {}
+    if cost.get("suppression_ms") is not None:
+        lines.append("- **white-suppression cost**: {0} ms for {1} element "
+                     "override(s), against {2} ms for the whole model pass "
+                     "(ratio {3}; a LOWER bound on suppression-vs-paint, since "
+                     "production does not time its paint alone)".format(
+                         _fmt(cost.get("suppression_ms"), "{0:.0f}"),
+                         cost.get("element_override_count"),
+                         _fmt(cost.get("model_pass_total_ms"), "{0:.0f}"),
+                         _fmt(cost.get("ratio_to_model_pass_total"), "{0:.2f}")))
+    choice = combined.get("fiducial_choice") or {}
+    if choice.get("state") == "value":
+        lines.append("- F2 fiducials: {0}; separated {1} ft on u and {2} ft on v "
+                     "({3} of {4} candidates kept, reference {5})".format(
+                         ", ".join("{0} ({1})".format(c.get("id"), c.get("category"))
+                                   for c in choice.get("pair") or []),
+                         _fmt(choice.get("separation_u_ft"), "{0:.1f}"),
+                         _fmt(choice.get("separation_v_ft"), "{0:.1f}"),
+                         choice.get("kept_count"), choice.get("candidate_count"),
+                         choice.get("reference_source")))
+    elif choice:
+        lines.append("- F2 fiducials: none chosen -- {0}".format(choice.get("reason")))
+    return lines
+
+
+def _render_mapping_row(name, record):
+    if not record or record.get("status") != "value":
+        return [name, "--", "--", "--", "--",
+                (record or {}).get("reason") or (record or {}).get("status") or "--"]
+    residual = record.get("residual_max_px") or {}
+    if isinstance(residual, dict):
+        residual_text = "{0} / {1}".format(_fmt(residual.get("u"), "{0:.2f}"),
+                                           _fmt(residual.get("v"), "{0:.2f}"))
+    else:
+        residual_text = _fmt(residual, "{0:.2f}")
+    return [name, _fmt(record.get("px_per_ft_u"), "{0:.4f}"),
+            _fmt(record.get("px_per_ft_v"), "{0:.4f}"),
+            _fmt(record.get("isotropy_u_over_v"), "{0:.5f}"),
+            residual_text, ""]
+
+
+def _render_f1_f2(analyses):
+    lines = []
+    # ---- (7) F1 ------------------------------------------------------
+    lines.append("### 7. F1 -- the crop boundary, recovered from the pixels")
+    lines.append("")
+    lines.append("Q1: does the exported image contain the crop boundary, and does "
+                 "its recovered position match `view.CropBox`? A boundary is a "
+                 "band of rows (or columns) each holding a straight run of "
+                 "non-white, non-palette, non-fiducial pixels of >= {0:.0%} of "
+                 "the image, closing into one rectangle (or matching the crop "
+                 "shape's levels). `NOT FOUND` on a V8 row is the answer that "
+                 "ImageExportOptions does not draw it.".format(
+                     BOUNDARY_MIN_RUN_FRACTION))
+    lines.append("")
+    rows = []
+    for item in analyses:
+        boundary = item["analysis"]["measurements"].get("crop_boundary") or {}
+        rects = boundary.get("boundary_px_rect") or []
+        rows.append([
+            item["variant"], _fmt(boundary.get("probe_turned_it_on")),
+            (boundary.get("status") or "--").upper(),
+            "{0} / {1}".format(boundary.get("row_band_count", "--"),
+                               boundary.get("col_band_count", "--")),
+            _fmt(boundary.get("px_per_ft_u"), "{0:.4f}"),
+            _fmt(boundary.get("px_per_ft_v"), "{0:.4f}"),
+            _fmt(boundary.get("lattice_px_per_ft"), "{0:.4f}"),
+            _fmt(boundary.get("isotropy_u_over_v"), "{0:.5f}"),
+            "; ".join(str(r) for r in rects) or "--",
+            boundary.get("reason") or ""])
+    lines.extend(_table(["variant", "probe turned it on", "boundary",
+                         "row/col bands", "px/ft u", "px/ft v", "lattice px/ft",
+                         "u/v isotropy", "boundary px rects (subtract these)", ""],
+                        rows))
+    lines.append("")
+    lines.append("`isotropy` of 1 means the boundary's pixel rectangle has the "
+                 "crop's own aspect -- the recovered position is the crop's "
+                 "shape at one uniform scale. `lattice px/ft` is the model "
+                 "capture's (1 / achieved fpp): an untouched capture that "
+                 "rendered exactly the authored crop at the requested count would "
+                 "match it.")
+    lines.append("")
+    for item in analyses:
+        model_boundary = item["analysis"]["measurements"].get("model_crop_boundary")
+        if not model_boundary:
+            continue
+        agreement = model_boundary.get("vs_lattice") or {}
+        lines.append("- `{0}` MODEL capture (boundary drawn at crop A {1}): "
+                     "{2}{3}".format(
+                         item["variant"], model_boundary.get("drawn_at_uv"),
+                         (model_boundary.get("status") or "--").upper(),
+                         "; against the model lattice: px/ft u {0}, v {1}, worst "
+                         "corner {2} px".format(
+                             _fmt(agreement.get("px_per_ft_u_delta"), "{0:+.4f}"),
+                             _fmt(agreement.get("px_per_ft_v_delta"), "{0:+.4f}"),
+                             _fmt(agreement.get("worst_corner_px"), "{0:.2f}"))
+                         if agreement.get("status") == "value"
+                         else " -- {0}".format(model_boundary.get("reason")
+                                               or agreement.get("reason"))))
+    lines.append("")
+
+    # ---- (8) F2 ------------------------------------------------------
+    lines.append("### 8. F2 -- the fiducial pair")
+    lines.append("")
+    rows = []
+    for item in analyses:
+        f2 = item["analysis"]["measurements"].get("fiducials") or {}
+        if f2.get("status") == "not_applicable":
+            continue
+        for fiducial in f2.get("fiducials") or []:
+            rows.append([item["variant"], fiducial.get("id"),
+                         str(fiducial.get("rgb")), _fmt(fiducial.get("found")),
+                         fiducial.get("pixel_count", "--"),
+                         str(fiducial.get("pixel_bbox", "--")),
+                         _fmt(fiducial.get("touches_border")),
+                         str(fiducial.get("rect_uv"))])
+    lines.extend(_table(["variant", "element", "colour", "found", "pixels",
+                         "ink px bbox", "clipped", "recorded rect_uv"],
+                        rows or [["--"] * 8]))
+    lines.append("")
+    rows = []
+    for item in analyses:
+        f2 = item["analysis"]["measurements"].get("fiducials") or {}
+        if f2.get("status") == "not_applicable":
+            continue
+        rows.append(_render_mapping_row(
+            "`{0}` F2 (recorded bbox)".format(item["variant"]), f2))
+        rows.append(_render_mapping_row(
+            "`{0}` F2 (model-anchored)".format(item["variant"]),
+            f2.get("model_anchored")))
+    lines.extend(_table(["fit", "px/ft u", "px/ft v", "u/v isotropy",
+                         "residual max px u / v", ""], rows or [["--"] * 6]))
+    lines.append("")
+    lines.append("F2 fits each fiducial's INK EDGES against its recorded extent: "
+                 "four points per axis for the pair, so it has a residual. The "
+                 "recorded extent is a projected 3-D bbox, which can be looser "
+                 "than the element; the model-anchored row replaces it with the "
+                 "element's drawn extent in the model capture, at the cost of "
+                 "assuming the model capture registers.")
+    lines.append("")
+
+    # ---- (9) F1 vs F2 ------------------------------------------------
+    lines.append("### 9. F1 vs F2 vs the bbox fit")
+    lines.append("")
+    lines.append("Q2: with the crop untouched, is the rendered rectangle stable, "
+                 "and do F1 and F2 agree? The disagreement is the number. "
+                 "Corners are the authored crop's, pushed through both maps.")
+    lines.append("")
+    rows = []
+    for item in analyses:
+        agreement = item["analysis"]["measurements"].get("mapping_agreement") or {}
+        for key in ("F1_vs_F2", "F1_vs_bbox_fit", "F2_vs_bbox_fit"):
+            entry = agreement.get(key) or {}
+            if entry.get("status") != "value":
+                rows.append([item["variant"], key, "--", "--", "--",
+                             entry.get("reason") or "--"])
+                continue
+            rows.append([item["variant"], key,
+                         _fmt(entry.get("px_per_ft_u_delta"), "{0:+.4f}"),
+                         _fmt(entry.get("px_per_ft_v_delta"), "{0:+.4f}"),
+                         _fmt(entry.get("worst_corner_px"), "{0:.2f}"), ""])
+    lines.extend(_table(["variant", "pair", "px/ft u delta", "px/ft v delta",
+                         "worst corner px", ""], rows))
+    lines.append("")
+
+    # ---- (10) datums -------------------------------------------------
+    lines.append("### 10. Datum extents: ink vs the recorded (authored-crop) bbox")
+    lines.append("")
+    lines.append("Q3: do datum extents in the capture match the drawing? Positive "
+                 "means the ink reaches FURTHER than the bbox recorded before the "
+                 "capture touched the view. Under V0 the crop was widened to B, "
+                 "which lengthens datums; under V7/V8 it was not.")
+    lines.append("")
+    rows = []
+    for item in analyses:
+        datums = item["analysis"]["measurements"].get("datum_extents") or {}
+        if datums.get("status") != "value":
+            rows.append([item["variant"], "--", "--", "--", "--", "--", "--",
+                         datums.get("reason") or "--"])
+            continue
+        for datum in datums.get("datums") or []:
+            if datum.get("status") != "value":
+                rows.append([item["variant"], datum.get("element_id"),
+                             datum.get("category"), "--", "--", "--", "--",
+                             datum.get("reason")])
+                continue
+            rows.append([
+                item["variant"], datum.get("element_id"), datum.get("category"),
+                datums.get("mapping_used"),
+                _fmt(datum.get("length_delta_ft"), "{0:+.2f}"),
+                _fmt(datum.get("length_delta_paper_in"), "{0:+.3f}"),
+                " / ".join(_fmt(datum.get(side + "_ft"), "{0:+.2f}")
+                           for side in ("left", "right", "top", "bottom")),
+                "CLIPPED at image edge" if datum.get("touches_border") else ""])
+    lines.extend(_table(["variant", "datum", "category", "map", "length delta ft",
+                         "paper in", "per side ft l/r/t/b", ""],
+                        rows or [["--"] * 8]))
+    lines.append("")
+    lines.append("Premise: `get_BoundingBox(view)` of a datum is its drawn extent in "
+                 "the view (UNCONFIRMED).")
+    lines.append("")
+
+    # ---- (11) residue ------------------------------------------------
+    lines.append("### 11. Model-ink residue")
+    lines.append("")
+    lines.append("Q4: does membership suppression with subcategories leave any "
+                 "model ink? Off-palette pixels outside the fiducials and outside "
+                 "any recovered boundary band. Counted, not attributed: an "
+                 "annotation the pass could not paint lands here too.")
+    lines.append("")
+    rows = []
+    for item in analyses:
+        residue = item["analysis"]["measurements"].get("model_ink_residue") or {}
+        rows.append([item["variant"], _fmt(residue.get("suppression_mode")),
+                     residue.get("offpalette_pixels", "--"),
+                     residue.get("fiducial_pixels", "--"),
+                     residue.get("boundary_rects_excluded", "--"),
+                     residue.get("offpalette_outside_boundary", "--")])
+    lines.extend(_table(["variant", "suppression", "off-palette", "fiducial px",
+                         "boundary bands excluded", "off-palette outside boundary"],
+                        rows))
+    lines.append("")
+    return lines
+
+
 def render_run(run, analyses, overlay_results):
     """One view's section of the report. Numbers only."""
     combined = run["combined"]
@@ -1180,10 +2173,21 @@ def render_run(run, analyses, overlay_results):
             verdict.get("status"),
             verdict.get("reason")
             or "the control held and the post-variant hash matches"))
+    lines.extend(_render_crop_context(combined))
     for missing in run.get("missing", []):
         lines.append("")
         lines.append("- `{0}`: NO CAPTURE ANALYSED. {1}".format(
             missing.get("variant"), missing.get("reason")))
+    if not analyses:
+        # NOTHING TO TABULATE IS NOT AN EMPTY TABLE. A heading over zero rows
+        # reads as "measured, nothing found"; it is "not measured", and the
+        # lines above say why for each variant.
+        lines.append("")
+        lines.append("**No capture of this view could be analysed**, so none of "
+                     "the per-capture measurements (sections 0-11) is reported. "
+                     "Each needs an annotation sidecar AND its TIFF.")
+        lines.append("")
+        return lines
     # A FAILED BBOX COLLECTION, stated where a reader cannot miss it. Sections 2,
     # 2b, 3 and 4 all say "unavailable" with the same reason below, but a line
     # here means it is not something you have to notice four tables in.
@@ -1304,20 +2308,27 @@ def render_run(run, analyses, overlay_results):
             rows.append([item["variant"], "NOT FITTED", "--", "--", "--", "--",
                          "--", fit.get("reason") or "--"])
             continue
+        top_left = fit.get("frame_top_left_predicted_px") or (None, None)
         rows.append([
             item["variant"],
             "{0} pairs".format(fit["sample_count"]),
             _fmt(fit.get("px_per_ft_u")),
             _fmt(fit.get("px_per_ft_v")),
             _fmt(fit.get("frame_px_per_ft")),
-            "({0}, {1})".format(_fmt(fit["frame_top_left_predicted_px"][0], "{0:.1f}"),
-                                _fmt(fit["frame_top_left_predicted_px"][1], "{0:.1f}")),
+            "({0}, {1})".format(_fmt(top_left[0], "{0:.1f}"),
+                                _fmt(top_left[1], "{0:.1f}")),
             "{0} / {1}".format(_fmt(fit.get("residual_median_px"), "{0:.2f}"),
                                _fmt(fit.get("residual_max_px"), "{0:.2f}")),
             fit.get("v_axis_sign", "--")])
     lines.extend(_table(["variant", "samples", "px/ft u", "px/ft v",
                          "frame px/ft", "offset at (u0,v1) px",
                          "residual med/max px", "v axis"], rows))
+    lines.append("")
+    for item in analyses:
+        fit = item["analysis"]["measurements"]["registration"]
+        if fit.get("frame_source"):
+            lines.append("- `{0}` frame: {1}".format(item["variant"],
+                                                    fit["frame_source"]))
     lines.append("")
     lines.append("#### 2b. Fitted per-side margin (how much bigger the render is "
                  "than the frame)")
@@ -1327,6 +2338,10 @@ def render_run(run, analyses, overlay_results):
         fit = item["analysis"]["measurements"]["registration"]
         if fit.get("status") != "value":
             rows.append([item["variant"], "--", "--", "--", "--", "NOT FITTED"])
+            continue
+        if fit.get("margin_ft") is None:
+            rows.append([item["variant"], "--", "--", "--", "--",
+                         fit.get("frame_reason") or "no reference rectangle"])
             continue
         ft = fit["margin_ft"]
         inches = fit["margin_paper_in"]
@@ -1555,6 +2570,8 @@ def render_run(run, analyses, overlay_results):
                  "its own repeatability control.")
     lines.append("")
 
+    lines.extend(_render_f1_f2(analyses))
+
     # ---- overlay ----------------------------------------------------
     lines.append("### Overlays")
     lines.append("")
@@ -1670,7 +2687,39 @@ def _recorded_model_sha(run, variant):
     return None
 
 
-def build_report(targets, overlay_enabled=True):
+def _json_record(run, capture, analysis):
+    """The machine-readable half: where the boundary and fiducials WERE, so a
+    consumer can subtract them without re-deriving anything."""
+    inputs = (run.get("combined") or {}).get("inputs") or {}
+    measurements = analysis["measurements"]
+    boundary = measurements.get("crop_boundary") or {}
+    model_boundary = measurements.get("model_crop_boundary") or {}
+    return {
+        "view_id": inputs.get("view_id"), "view_name": inputs.get("view_name"),
+        "variant": capture["variant"],
+        "annotation_tiff": str(capture["tiff"]),
+        "crop_boundary": {
+            "status": boundary.get("status"), "reason": boundary.get("reason"),
+            "boundary_px_rects": boundary.get("boundary_px_rect"),
+            "mapping": boundary.get("mapping"),
+            "must_be_subtracted": boundary.get("status") == "value",
+        },
+        "model_crop_boundary": ({
+            "status": model_boundary.get("status"),
+            "boundary_px_rects": model_boundary.get("boundary_px_rect"),
+            "model_tiff": str(capture.get("own_model_tiff")),
+        } if model_boundary else None),
+        "fiducials": {
+            "status": (measurements.get("fiducials") or {}).get("status"),
+            "per_fiducial": (measurements.get("fiducials") or {}).get("fiducials"),
+            "mapping": (measurements.get("fiducials") or {}).get("mapping"),
+        },
+        "mapping_agreement": measurements.get("mapping_agreement"),
+    }
+
+
+def build_report(targets, overlay_enabled=True, json_records=None):
+    json_records = json_records if json_records is not None else []
     lines = ["# Annotation-pass variant report", "",
              "Values only. No pass/fail, no score, no recommendation -- the "
              "probe brief puts the judgement with Greg, and a tool that rated "
@@ -1696,10 +2745,16 @@ def build_report(targets, overlay_enabled=True):
                     capture["sidecar"], capture["tiff"],
                     model_tiff_sha=(_recorded_model_sha(run, capture["variant"])
                                     or model_sha),
-                    v0_model_tiff_sha=v0_sha)
+                    v0_model_tiff_sha=v0_sha,
+                    context=capture_context(run, capture))
+                if capture.get("own_model_sidecar") and capture.get("own_model_tiff"):
+                    analysis["measurements"]["model_crop_boundary"] = (
+                        analyze_model_boundary(capture["own_model_sidecar"],
+                                               capture["own_model_tiff"]))
                 analyses.append({"variant": capture["variant"],
                                  "analysis": analysis,
                                  "variant_report": capture.get("variant_report")})
+                json_records.append(_json_record(run, capture, analysis))
                 overlay = maybe_run_overlay(analysis, capture["sidecar"],
                                             overlay_enabled)
                 overlay["variant"] = capture["variant"]
@@ -1723,9 +2778,19 @@ def main(argv=None):
                         help="write the report here instead of stdout")
     parser.add_argument("--no-overlay", dest="overlay", action="store_false",
                         help="do not invoke tools/capture_overlay.py")
+    parser.add_argument("--json-out", default=None,
+                        help="also write the recovered crop boundary and "
+                             "fiducial positions, per capture, as JSON")
     parser.set_defaults(overlay=True)
     args = parser.parse_args(argv)
-    report = build_report(args.targets, overlay_enabled=args.overlay)
+    json_records = []
+    report = build_report(args.targets, overlay_enabled=args.overlay,
+                          json_records=json_records)
+    if args.json_out:
+        Path(args.json_out).write_text(
+            json.dumps({"captures": json_records}, indent=2, sort_keys=True,
+                       default=str), encoding="utf-8")
+        print("wrote {0}".format(args.json_out))
     if args.out:
         Path(args.out).write_text(report, encoding="utf-8")
         print("wrote {0}".format(args.out))
