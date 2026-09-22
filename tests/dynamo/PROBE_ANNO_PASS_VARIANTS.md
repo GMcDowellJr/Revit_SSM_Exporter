@@ -1,8 +1,14 @@
-# Stage A annotation-pass variant probe
+# Stage A annotation-pass variant probe — round 2
 
-`probe_stage_a_anno_pass_variants.py` runs four candidate fixes for the Stage A
+`probe_stage_a_anno_pass_variants.py` runs the candidate fixes for the Stage A
 annotation pass beside the current pass, on one view at a time, and writes what
 each produced.
+
+**Round 2.** Round 1's measured output is in
+`tools/notes/ROUND1_ANNO_PASS_VARIANTS_FINDINGS.md`, with the JSONs it quotes in
+`tools/notes/data/round1_anno_pass_variants/`. F2 is answered, the annotation
+crop offsets are falsified, and the suppression mechanism changed: it now runs off
+membership rather than category. Read that report before this document.
 
 **It is a PROBE.** It changes no production default and it concludes nothing
 about which fix is right. Greg's read of the output is the gate; the probe
@@ -12,140 +18,138 @@ silently failed to restore the document is not evidence, it is damage.
 
 ---
 
-## What each variant changes
+## What each variant changes — ROUND 2
 
-| variant | white filter | SmoothEdges off | expanded frame B′ | annotation crop offsets zeroed | production suppression mode |
-|---|---|---|---|---|---|
-| `v0_control` | no | no | no | no | `hide_categories` (shipped) |
-| `v0_offsets0` | no | no | no | **yes** | `hide_categories` |
-| `v1_white_filter` | **yes** | no | no | no | `external` |
-| `v2_white_filter_smooth_edges_off` | **yes** | **yes** | no | no | `external` |
-| `v3_white_filter_smooth_edges_off_expanded_frame` | **yes** | **yes** | **yes** | no | `external` |
+| variant | white membership suppression | SmoothEdges off | expanded frame B′ | production suppression mode |
+|---|---|---|---|---|
+| `v0_control` | — | — | — | `hide_categories` (shipped) |
+| `v4_white_membership` | **yes** | — | — | `external` |
+| `v5_white_membership_smooth_edges_off` | **yes** | **yes** | — | `external` |
+| `v6_white_membership_expanded_frame` | **yes** | **yes** | **yes** | `external` |
 
-That table is `variant_plan()`, not a second copy of it: the probe's records,
-the production switches it sets and this document all read the same three
-membership sets, and `tests/test_probe_stage_a_anno_pass_variants.py` asserts
-the table above against them variant by variant.
+That table is `variant_plan()`, and `tests/test_probe_stage_a_anno_pass_variants.py`
+asserts it row by row.
 
-### V0 — the control
+### Retired after round 1 — named, not deleted
 
-The current annotation pass, unchanged. Everything else is read against this.
+`RETIRED_VARIANTS` carries the reasons in code, and the registry **refuses** a
+campaign that still asks for one rather than running nothing.
 
-### V0-offsets0 — Greg's competing hypothesis for F1
-
-Reads the view's four annotation crop offsets, sets them to 0, runs V0, restores
-them and reads them back. On the 20260922T085737 views those offsets were 1″ per
-side, and the hypothesis is that they widen what `ExportImage` fits **even
-though the annotation crop is inactive**.
-
-`AnnotationCropActive` is recorded beside the offsets, because that is the whole
-point of the hypothesis.
-
-**If the offsets cannot be READ on a view, this variant is skipped for that
-view** with the reason, and the sidecar records `unavailable`. It never records
-0: a 0 that was never read is indistinguishable from a view whose offsets really
-are 0, and that difference is this variant's entire content.
-
-### V1 — model suppression by a white filter (F2)
-
-Hiding model categories takes dependent annotations with it — tags, and most
-dimensions. Greg confirmed by hand that a view filter setting model lines and
-fills to white leaves a clean annotation-only view.
-
-The probe creates **one rule-less `ParameterFilterElement`** over all filterable
-MODEL categories, overrides its projection and cut lines to white and all four
-surface/cut patterns to white solid fill, applies it to the view, and deletes it
-on restore. It does **not** hide model categories — production's
-`color_id_buffer_anno_model_suppression = "external"` switch is what makes that
-so, and the same switch stops production disabling the filter (the shipped pass
-disables every enabled+visible filter, which would undo exactly this).
-
-Recorded per run: the filter element id, the category count, every MODEL category
-Revit **rejected as non-filterable** (the white override cannot reach those, so
-anything they draw stays visible), every link instance **not set to "By Host
-View"** (the filter does not reach those either), and the count of elements
-carrying **authored per-element overrides**, which outrank a filter in Revit's
-graphics precedence.
-
-> **Known consequence, named rather than discovered.** "All filterable MODEL
-> categories" includes **Detail Items** and the shared model/detail **Lines**
-> category. Those carry a Model label but are annotation content, and
-> production's `_model_category_hidden_state` deliberately excludes them — so
-> V1–V3 white them out and **real annotation ink is lost**. The probe follows
-> the brief literally and lists the affected categories in the sidecar under
-> `view_only_model_categories_included`. Setting
-> `white_filter_include_view_only_model_categories = false` runs it the other
-> way in one re-run, and both lists appear either way.
-
-### V2 — V1 plus SmoothEdges off (F3)
-
-The annotation pass has never set `SmoothEdges`, and ~0.2% of pixels in the run
-were palette-to-white blends. V2 captures, clears and restores it the way the
-model pass does — three-valued read, `applied_smooth_edges` in the sidecar.
-
-`applied_smooth_edges` is **four-valued** and the four are different facts:
-
-| value | meaning |
+| retired | why |
 |---|---|
-| `"not_attempted"` | the pass was not asked to touch AA — the shipped state |
-| `"read_failed"` | asked, but the pre-state could not be read |
-| `"unchanged (failed)"` | read, but the write raised |
-| `false` | AA is **confirmed off** for this export |
+| `v0_offsets0` | **FALSIFIED.** Byte-identical to `v0_control` on **both** round-1 views (elevation `e9ab768b`, plan `b047a741`). The annotation crop offsets changed nothing. |
+| `v1_white_filter` | **SUPERSEDED** by `v4`. |
+| `v2_white_filter_smooth_edges_off` | **SUPERSEDED** by `v5`. |
+| `v3_white_filter_smooth_edges_off_expanded_frame` | **SUPERSEDED** by `v6`. |
 
-The write lands **after** the `DisplayStyle` change, deliberately. Whether
-setting `DisplayStyle` replaces the `ViewDisplayModel` — and with it a
-`SmoothEdges` written beforehand — is UNCONFIRMED on this Revit host. Ordering
-the write after it makes the question moot rather than leaving a variant that may
-have measured nothing, and that ordering is the whole reason the switch lives in
-production instead of in the probe. `tests/test_stage_a_annotation_pass_probe_
-switches.py` asserts the ordering against a fake view that models the worst case,
-and relocating the block above the `DisplayStyle` write turns exactly that test
-red.
+The v1–v3 family suppressed by **category** — one rule-less
+`ParameterFilterElement` over every filterable MODEL category. That cannot
+separate a drafting line from a model line, because both live in `OST_Lines`. The
+setting that used to ask whether to include Detail Items and Lines
+(`white_filter_include_view_only_model_categories`) is **gone with them**: its
+premise was that a category-level mechanism has to choose, and it does not any
+more.
 
-### V3 — V2 plus an expanded annotation frame B′ (F1)
+The annotation crop offsets are still **read** and still a restore obligation.
+Only the writer is gone.
 
-B is too small because `is_extent_driver_annotation` admits only text,
-dimensions and a fixed tag list. It excludes grids, levels, viewers, ceiling
-tags, multi-category tags, detail items and revision clouds — and the RCP and
-section views got **no expansion at all** (B == A).
+### V4 — membership, not category, decides what is suppressed
 
-    B′ = B  ∪  get_BoundingBox(view) of every annotation-pass member
-            ∪  get_BoundingBox(view) of every rendered viewer element
-            +  0.5″ paper margin on all four sides
+"Annotation" is content visible only in the view it is placed in. A drafting line
+and a detail item are annotation even though their categories carry a Model
+label; a model line in the *same* `OST_Lines` category is not. So suppression
+runs off the **same split the painting uses** — `split_stage_a_pass_membership`,
+`OwnerViewId` plus datum categories:
 
-Viewers are included **for extent only**: the annotation pass does not paint
-them and V3 does not make them painted.
+- every element in the **MODEL** set gets an element-level **white override**;
+- every element in the **ANNOTATION** set is left alone for the pass to paint;
+- **nothing is hidden**, in either set.
 
-**`revit/annotation.py` is not modified and not called differently.**
-`compute_annotation_extents` (:123) and `is_extent_driver_annotation` (:47) are
-the retained arbiter; B′ comes from this module's own pure `expanded_frame_uv()`.
-A probe that edited the arbiter it measures against would have nothing left to
-compare to.
+**Revit's precedence is what makes the shared-category case work**, and the design
+depends on it: `Element > Filter > Category`. A white *category* override on
+`OST_Lines` suppresses model lines while the annotation pass's own per-element
+palette paint still wins for the drafting lines in that same category. The
+separation is done by precedence, not by picking categories apart.
 
-The margin is applied **once, after the union**, on all four sides. Applying it
-per driver would scale it by however many drivers happened to be on an extreme,
-which is not a margin; there is a test for that specifically.
+The split is resolved **once** in `_run_native` and shared by all four variants —
+a per-variant split would let two variants suppress different sets and then be
+read against each other as if they had not.
 
-B′ is sized through production's `frame_export_geometry` with the same dpi, the
-same fit direction and the same per-axis ceiling — so "the existing pixel cap on
-B applies unchanged" holds by **calling the thing that applies it**, not by
-re-deriving it.
+#### Four mechanisms, because element overrides do not reach everything
 
-Recorded: B, B′, the per-side delta in feet **and paper inches**, which element
-set each side, how many driver elements contributed, and **every driver that
-contributed no rectangle with its reason**. An unmeasurable driver is the single
-most likely way B′ comes back too small while looking computed, so none is
-dropped silently.
+| # | mechanism | reaches |
+|---|---|---|
+| 1 | element-level white override | every MODEL-membership element, **including DWG `ImportInstance`s** (element-overridable, confirmed 2026-09-21) |
+| 2 | per-category `ParameterFilterElement` + `SetFilterOverrides`, **white** | LINKED RVT content, where a per-element override is impossible (ledger M1) |
+| 3 | category **and SUBcategory** white overrides | the subcategory linework an element override does not govern |
+| 4 | — | whatever none of the above reached: a **NAMED LIST**, never an absence |
 
-> **V3 and the model lattice.** V3 renders B′; the model pass was sized from B.
-> Production's `annotation_lattice_mismatch` fault compares
-> `geom["model_accepted_px"]` against `geom["requested_px"]` — under V3 those
-> describe **different frames**, so the probe passes `model_accepted_px = None`
-> and production skips that check. The question is **not answered** for V3, and
-> "not answered" is not "passed". The real relationship between the two lattices
-> — both frames' pixel sizes, both achieved fpp, both achieved dpi, and whether
-> the fpp is shared — is recorded in full under `frame_prime.record.
-> lattice_relationship`.
+Mechanism 2 **calls production's own `_apply_link_category_filters`** with white
+instead of a palette colour. It is not a second link mechanism, and it keeps
+production's restore rule: a filter this run *created* may be deleted, a filter it
+*reused* is shared with other views or templates and is only removed from this
+view.
+
+Mechanism 3 is a **complement to mechanism 1, not a fallback for it**. Greg
+observed roof fascia surviving a white filter and going white only when the
+**subcategory** was overridden alongside the parent, so `cat.SubCategories` is
+walked and each one overridden. A category whose `SubCategories` cannot be read is
+itself an `unreached` entry — an unwalked subcategory is the roof-fascia case
+arriving silently.
+
+> **Mechanism 3 writes only where the current override is BLANK.** Overwriting an
+> authored category override would destroy graphics this probe cannot put back:
+> reapplying a captured `OverrideGraphicSettings` across a transaction boundary is
+> the pattern this module's history warns about, and it is how the curtain-panel
+> bug happened. Writing only over blank means the explicit restore is a blank
+> write, which **is** the original state and is verifiable. An authored or
+> unreadable override is left alone and named in `unreached`.
+
+#### What is recorded, per view
+
+Element override count and every failure by id; DWG `ImportInstance` ids; the link
+filter's categories, created and reused filter ids and failed categories; category
+and subcategory overrides applied, skipped-as-authored, refused and failed; and
+`unreached` with a reason per entry plus `unreached_count`.
+
+`unreached` is the honest answer to "is the annotation TIFF annotation on white".
+An empty list is a claim; a populated one is a bound on it.
+
+#### UNCONFIRMED, and recorded rather than assumed
+
+Whether **subcategory** overrides reach **linked** content. Mechanism 2 works at
+category level through a filter; whether a linked element's subcategory linework
+follows that filter override is not established.
+
+Round 1's two views have **no linked RVT instances at all**
+(`link_visibility.instance_count == 0` on both), so mechanism 2 is **built but
+unexercised** on the re-run set — a clean round-2 run on these two views is *not*
+evidence that the link path works. Its first real exercise is `Plan_RVTLink`
+19293485.
+
+### V5 — V4 plus SmoothEdges off
+
+Kept, not settled. Round 1: its predecessors V1 and V2 were byte-identical on the plan
+(`13fc4e90`) and different on the elevation (`b1b2d3c4` vs `43f8f6c6`). Since the
+elevation's annotation set is a **single** element with no category and no
+resolvable bbox, the elevation difference is in *model-suppression residue* rather
+than in annotation edges — a reason to keep the variant, and a hint about what it
+is measuring.
+
+### V6 — V5 plus the expanded frame B′
+
+B′ unchanged from round 1. What changed is the reading of it — see
+`tools/notes/ROUND1_ANNO_PASS_VARIANTS_FINDINGS.md`. On the derived axis the
+export tracks **content**, not the crop: with B it *grew* past the crop by +442 px
+(35%) on the elevation and +124 px (5.8%) on the plan, and with B′ it *shrank* by
+only −12 px (0.6%) and −87 px (3.5%). So B′ is close to right, and its residual is
+overshoot — a margin of background rather than lost content.
+
+**`u` matched to the pixel in all ten round-1 captures**, because `u` is the
+requested axis and `PixelSize` pins it. Every disagreement is on `v`. That is also
+why `dim_check` reported `pass` on all ten: it compares the requested axis, which
+cannot vary. F4 is not a check that missed a case — it is a check aimed at the
+axis that cannot move.
 
 ---
 
@@ -160,8 +164,15 @@ reach a production run. A probe assigns the attribute on its own cfg object.
 
 | attribute | default | probe value |
 |---|---|---|
-| `color_id_buffer_anno_model_suppression` | `"hide_categories"` | `"external"` for V1–V3 |
-| `color_id_buffer_anno_smooth_edges_off` | `False` | `True` for V2–V3 |
+| `color_id_buffer_anno_model_suppression` | `"hide_categories"` | `"external"` for V4–V6 |
+| `color_id_buffer_anno_smooth_edges_off` | `False` | `True` for V5–V6 |
+
+`"external"` covers membership-based suppression **unchanged**, and a second mode
+name was deliberately not added: that mode's contract is "the CALLER has already
+suppressed model content by some other means; do not hide, do not disable
+filters", and nothing in it is specific to how the caller did it. Two names for
+one behaviour is the "computed in two places" shape. An unknown mode still
+raises.
 
 An **unknown** suppression mode raises `ValueError` rather than defaulting. The
 mode decides whether "the annotation TIFF is annotation on white" was arranged
@@ -224,9 +235,40 @@ is `unverified`, which is **not** `restored` — the same rule production's
 override read-back follows, and the rule that stops a probe certifying a view it
 never managed to inspect.
 
-Under V1–V3 model category visibility is **never written, in either direction**,
+Under V4–V6 model category visibility is **never written, in either direction**,
 which is what makes `model_category_visibility: restored` a real statement
 rather than a no-op write's echo.
+
+### R5: a category Revit REFUSES to override is not a capture fault
+
+Round 1's plan run returned `success=false` /
+`annotation_view_state_not_restored` on **every** variant, with "2 restore step(s)
+raised", while all eight read-back obligations said `restored` and
+`document_safe` was `true`. Five good captures read as failures. The raiser,
+verbatim:
+
+```
+ArgumentException: Category cannot be overridden.
+Parameter name: categoryId
+   at Autodesk.Revit.DB.View.SetCategoryOverrides(ElementId categoryId, ...)
+```
+
+Two fixes in production, and the sidecar says which one carries the weight:
+
+1. **Ordering.** `category_halftone_state` was recorded *before*
+   `SetCategoryOverrides`, so a category Revit refuses up front was entered anyway
+   and the restore loop tried to undo a change that never happened. The state is
+   now written only after the write succeeds.
+2. **Restore-side classification, which is the half that actually fixes R5.** The
+   plan sidecar holds **eleven** categories in `category_halftone_state` — eleven
+   suppress writes *succeeded* — with two failures at restore. The offenders
+   accepted the override going in and refused it coming out, so fix 1 does not
+   touch that case. A refusal is now classified and kept out of
+   `restore_failures`; a restore that genuinely **failed** still fails the capture.
+
+`category_halftone_outcomes` records, per category, `applied` / `not_overridable`
+/ `failed` going in and `restored` / `not_overridable` / `failed` coming out. Not
+failing is not the same as not happening, and halftone changes exported colour.
 
 ### A capture PRODUCTION declared invalid
 
@@ -266,10 +308,10 @@ raising:
 * `applied_smooth_edges` comes back `"read_failed"` or `"unchanged (failed)"`
   when the `ViewDisplayModel` read or write fails. Production correctly does
   not raise — an unconfirmed AA state costs decode confidence, not the export —
-  so V2/V3 can return a real TIFF that measured **V1's** behaviour.
-* `model_suppression_mode` is what production says it did. A V1–V3 capture that
+  so V5/V6 can return a real TIFF that measured **V4's** behaviour.
+* `model_suppression_mode` is what production says it did. A V4–V6 capture that
   came back `"hide_categories"` hid model categories and disabled the probe's
-  own filter: it measured **V0's** suppression.
+  own suppression: it measured **V0's** suppression.
 
 Either way the capture is not evidence about its candidate, so the variant
 concludes **`DID_NOT_MEASURE`** rather than `RAN`, the run concludes the same,
@@ -314,7 +356,7 @@ and composed into no decision at all.)
 
 Runs **once per view**, shipped behaviour, neither switch set. Its
 `frame_export_geometry` result is caught through `geometry_out` and handed to
-every variant — production's own wiring, so V0–V2 register against the model
+every variant — production's own wiring, so V0/V4/V5 register against the model
 capture exactly as a production run would.
 
 Its TIFF is re-hashed after every variant. **That detects a variant CLOBBERING
@@ -358,11 +400,10 @@ exports.
 
 ```json
 "settings": {
-  "selection": "v0_control,v1_white_filter",
+  "selection": "v0_control,v4_white_membership",
   "export_dpi": 150,
   "expanded_frame_margin_in": 0.5,
-  "authored_override_scan_max": 5000,
-  "white_filter_include_view_only_model_categories": true,
+  "authored_override_scan_max": 8000,
   "model_reexport_check": true
 }
 ```
@@ -374,18 +415,25 @@ different values is **refused**, not silently resolved one way.
 
 ## Running it — the 20260922T085737 view set
 
-Run the **elevations first**, as the brief asks.
+**Round 2 runs TWO views and stops.** `Elevation_CropActive` 19293413 then
+`Plan_CropActive` 19290402 — the two with a round-1 baseline — then send both
+combined JSONs before going further.
 
-| order | view | id |
+| order | view | id | why this one |
+|---|---|---|---|
+| 1 | `Elevation_CropActive` | 19293413 | round-1 baseline; 6535 model members against **1** annotation member, so it is the model-suppression reach test |
+| 2 | `Plan_CropActive` | 19290402 | round-1 baseline; 283 annotation members across 11 categories, and the only view known to trigger R5 |
+
+The remaining six wait on Greg reading those two:
+
+| view | id | note |
 |---|---|---|
-| 1 | `Elevation_CropActive` | 19293413 |
-| 2 | `Plan_CropActive` | 19290402 |
-| 3 | `Plan_CropInActive` | 19291097 |
-| 4 | `Plan_DWG` | 19294180 |
-| 5 | `Plan_RVTLink` | 19293485 |
-| 6 | `RCP_CropActive` | 19293283 |
-| 7 | `Section_CropActive` | 19293421 |
-| 8 | `ModelCallout_CropActive` | 19293458 |
+| `Plan_CropInActive` | 19291097 | |
+| `Plan_DWG` | 19294180 | first exercise of mechanism 1 on a DWG `ImportInstance` |
+| `Plan_RVTLink` | 19293485 | **first exercise of mechanism 2**; neither round-2 view has a linked RVT |
+| `RCP_CropActive` | 19293283 | got no B expansion at all in the 20260922 run (B == A) |
+| `Section_CropActive` | 19293421 | as above |
+| `ModelCallout_CropActive` | 19293458 | |
 
 1. Open the FVOT BLDG 1 test model (a **copy**, as always).
 2. Restart Revit, or reset the Dynamo CPython3 engine, so the edited probe is
@@ -408,24 +456,25 @@ Run the **elevations first**, as the brief asks.
     model/color_id_buffer/<view>_<id>.json
     v0_control/color_id_buffer/<view>_<id>_anno.tiff
     v0_control/color_id_buffer/<view>_<id>_anno.json
-    v0_offsets0/color_id_buffer/...
-    v1_white_filter/color_id_buffer/...
-    v2_white_filter_smooth_edges_off/color_id_buffer/...
-    v3_white_filter_smooth_edges_off_expanded_frame/color_id_buffer/...
+    v4_white_membership/color_id_buffer/...
+    v5_white_membership_smooth_edges_off/color_id_buffer/...
+    v6_white_membership_expanded_frame/color_id_buffer/...
 ```
 
 Each variant gets its own output directory because production's TIFF and sidecar
 names are fixed per view — five variants sharing one directory would overwrite
 one file five times.
 
-For the full 8-view set:
+For the round-2 two-view set, at four variants:
 
 | artifact | count |
 |---|---|
-| annotation captures (8 views × 5 variants × 2 files) | **80** |
-| model pairs (8 views × TIFF + sidecar) | **16** |
-| combined probe reports (1 per view) | **8** |
-| **total** | **104** |
+| annotation captures (2 views × 4 variants × 2 files) | **16** |
+| model pairs (2 views × TIFF + sidecar) | **4** |
+| combined probe reports (1 per view) | **2** |
+| **total** | **22** |
+
+For all eight views later, at four variants: 64 + 16 + 8 = **88**.
 
 Fewer means a variant was skipped or a view stopped early, and the combined
 report says which and why in `skip_reason` / `stopped_early`. The two repeat
@@ -539,9 +588,12 @@ absent property is `unavailable` **with a reason**, never a 0 and never a
 
 | claim | what depends on it |
 |---|---|
-| `ViewCropRegionShapeManager.Left/Right/Top/BottomAnnotationCropOffset` exist and are readable and writable, via `View.GetCropRegionShapeManager()` | **all** of V0-offsets0 |
-| `ParameterFilterUtilities.GetAllFilterableCategories()` exists | **all** of V1–V3 |
-| a rule-less `ParameterFilterElement` matches every element of its categories, so white line and pattern overrides suppress all model content the filter reaches | V1–V3's central claim |
+| `ViewCropRegionShapeManager.Left/Right/Top/BottomAnnotationCropOffset` exist and are READABLE, via `View.GetCropRegionShapeManager()` | the offsets record and its restore obligation only; nothing writes them as of round 2 |
+| a white **element** override suppresses a model element's own graphics | **all** of V4–V6, mechanism 1 |
+| `cat.SubCategories` is walked and each subcategory takes a white override | mechanism 3 — and Greg's roof-fascia observation is the evidence FOR it, not a confirmation of the API |
+| whether **subcategory** overrides reach **LINKED** content | recorded, not assumed; neither round-2 view has a linked RVT so this is unexercised |
+| `View.IsCategoryOverridable` exists | only an optimisation — absent, the refusal is classified from the exception instead |
+| production's `_apply_link_category_filters` applies a white filter override that suppresses LINKED content | mechanism 2 |
 | `View.GetLinkOverrides(ElementId).LinkVisibilityType` exists | the "not By Host View" record only; its absence degrades the record, not the variant |
 | setting `View.DisplayStyle` does not replace the `ViewDisplayModel` and discard a `SmoothEdges` written before it | **mitigated** by writing SmoothEdges after DisplayStyle; recorded because the ordering *is* the mitigation |
 | `ExportImage` fits the crop box unioned with the extents of annotations drawn beyond it | F1's primary hypothesis — which this probe **measures** rather than assumes |
@@ -556,6 +608,21 @@ same defect as an incomplete pattern" lesson, applied to a category list.
 
 ---
 
+## Cost and reach, measured from round 1
+
+**Element-override cost: ≈1× the model pass's own paint, not a multiple.** The
+model membership set is **4783** elements on the plan and **6535** on the
+elevation; the model pass already writes one per-element override per model
+element. No stop-and-raise on cost.
+
+**Nothing in either view outranks a white override.**
+`authored_model_overrides` came back **0** on both. The elevation's scan was
+capped at 5000 of 6437, so that answer is a prefix — the default cap is raised to
+8000 for round 2 so it is complete.
+
+**Neither round-2 view has a linked RVT.** Mechanism 2 is built and unexercised
+there; `Plan_RVTLink` 19293485 is its first real test.
+
 ## Evidence to send back
 
 * every `*.anno_pass_variants.json`;
@@ -563,8 +630,11 @@ same defect as an incomplete pattern" lesson, applied to a category list.
 * the model pair per view;
 * `OUT` copied as text, per view;
 * the analyzer's report;
-* notes on whether V1's image really is annotation-on-white in Revit, and
-  whether V3's frame holds the grids, levels and viewer marks B was missing.
+* notes on whether V4's image really is annotation-on-white in Revit — and in
+  particular whether the roof fascia is white now that subcategories are walked;
+* whether V6's frame holds the grids and viewer marks B was missing;
+* anything in `unreached` that turns out to be visible in the image, which is the
+  list's whole purpose.
 
 ---
 

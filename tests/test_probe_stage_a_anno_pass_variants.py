@@ -38,42 +38,44 @@ def test_an_unknown_variant_raises():
     assert "v9_wishful" in str(excinfo.value)
 
 
-def test_the_plan_matches_the_probe_brief_variant_by_variant():
-    """The table from the brief, spelled out. A membership set edited in one
-    direction only -- V2 gaining the expanded frame, say -- makes two variants
-    the same capture and silently drops a candidate."""
+def test_the_plan_matches_the_round_2_brief_variant_by_variant():
+    """The round-2 table, spelled out. A membership set edited in one direction
+    only -- V5 gaining the expanded frame, say -- makes two variants the same
+    capture and silently drops a candidate."""
     expected = {
-        probe.V0: dict(white_filter=False, smooth_edges_off=False,
-                       expanded_frame=False, zero_annotation_crop_offsets=False,
+        probe.V0: dict(white_membership=False, smooth_edges_off=False,
+                       expanded_frame=False,
                        model_suppression="hide_categories"),
-        probe.V0_OFFSETS0: dict(white_filter=False, smooth_edges_off=False,
-                                expanded_frame=False,
-                                zero_annotation_crop_offsets=True,
-                                model_suppression="hide_categories"),
-        probe.V1: dict(white_filter=True, smooth_edges_off=False,
-                       expanded_frame=False, zero_annotation_crop_offsets=False,
-                       model_suppression="external"),
-        probe.V2: dict(white_filter=True, smooth_edges_off=True,
-                       expanded_frame=False, zero_annotation_crop_offsets=False,
-                       model_suppression="external"),
-        probe.V3: dict(white_filter=True, smooth_edges_off=True,
-                       expanded_frame=True, zero_annotation_crop_offsets=False,
-                       model_suppression="external"),
+        probe.V4: dict(white_membership=True, smooth_edges_off=False,
+                       expanded_frame=False, model_suppression="external"),
+        probe.V5: dict(white_membership=True, smooth_edges_off=True,
+                       expanded_frame=False, model_suppression="external"),
+        probe.V6: dict(white_membership=True, smooth_edges_off=True,
+                       expanded_frame=True, model_suppression="external"),
     }
     assert set(expected) == set(probe.SUPPORTED_VARIANTS)
     for name, fields in expected.items():
         plan = probe.variant_plan(name)
         for key, value in fields.items():
             assert plan[key] == value, (name, key, plan[key], value)
+    # The retired variants are NAMED with a reason, not merely absent -- a reader
+    # comparing a round-1 report against a round-2 one needs to know they were
+    # dropped on evidence.
+    assert set(probe.RETIRED_VARIANTS) == {
+        "v0_offsets0", "v1_white_filter", "v2_white_filter_smooth_edges_off",
+        "v3_white_filter_smooth_edges_off_expanded_frame"}
+    assert "falsified" in probe.RETIRED_VARIANTS["v0_offsets0"]
+    for name in probe.RETIRED_VARIANTS:
+        assert name not in probe.SUPPORTED_VARIANTS, name
 
 
-def test_any_variant_applying_the_white_filter_also_asks_for_external_suppression():
-    """A variant that applied the filter while production still hid model
-    categories would measure the two suppressions stacked, and V1 would be
+def test_any_variant_suppressing_by_membership_also_asks_for_external_suppression():
+    """A variant that applied membership suppression while production still hid
+    model categories would measure the two stacked, and V4 would be
     indistinguishable from V0 in the one respect it is testing."""
     for name in probe.SUPPORTED_VARIANTS:
         plan = probe.variant_plan(name)
-        if plan["white_filter"]:
+        if plan["white_membership"]:
             assert plan["model_suppression"] == "external", name
         else:
             assert plan["model_suppression"] == "hide_categories", name
@@ -82,11 +84,11 @@ def test_any_variant_applying_the_white_filter_also_asks_for_external_suppressio
 def test_select_variants_defaults_to_all_and_rejects_a_typo():
     assert probe.select_variants("all") == list(probe.SUPPORTED_VARIANTS)
     assert probe.select_variants(None) == list(probe.SUPPORTED_VARIANTS)
-    assert probe.select_variants("v0_control, v2_white_filter_smooth_edges_off") == [
-        probe.V0, probe.V2]
+    assert probe.select_variants(
+        "v0_control, v5_white_membership_smooth_edges_off") == [probe.V0, probe.V5]
     with pytest.raises(ValueError):
         probe.select_variants("v0_control,v9_wishful")
-    assert probe.select_variants([probe.V2, probe.V0]) == [probe.V2, probe.V0]
+    assert probe.select_variants([probe.V5, probe.V0]) == [probe.V5, probe.V0]
 
 
 # ======================================================================
@@ -369,20 +371,20 @@ def test_the_probe_filter_is_checked_by_id_not_by_the_filter_map_diff():
     """
     before = _snapshot(filters={})
     after = _snapshot(filters={"5551": {"enabled": True, "visible": True}})
-    verdict = probe.restore_readback_verdict(before, after, expect_filter_absent=5551)
-    assert verdict["probe_filter_deleted"]["status"] == "not_restored"
-    assert "5551" in verdict["probe_filter_deleted"]["reason"]
+    verdict = probe.restore_readback_verdict(before, after, expect_filters_absent=[5551])
+    assert verdict["probe_filter_deleted[5551]"]["status"] == "not_restored"
+    assert "5551" in verdict["probe_filter_deleted[5551]"]["reason"]
 
     # OFF THE VIEW IS NOT ENOUGH: the element must also be gone from the
     # project. Not knowing is "unverified", never "restored".
     unknown = probe.restore_readback_verdict(
-        _snapshot(filters={}), _snapshot(filters={}), expect_filter_absent=5551)
-    assert unknown["probe_filter_deleted"]["status"] == "unverified"
+        _snapshot(filters={}), _snapshot(filters={}), expect_filters_absent=[5551])
+    assert unknown["probe_filter_deleted[5551]"]["status"] == "unverified"
 
     clean = probe.restore_readback_verdict(
-        _snapshot(filters={}), _snapshot(filters={}), expect_filter_absent=5551,
-        filter_element_still_in_project=False)
-    assert clean["probe_filter_deleted"]["status"] == "restored"
+        _snapshot(filters={}), _snapshot(filters={}), expect_filters_absent=[5551],
+        filter_elements_still_in_project={5551: False})
+    assert clean["probe_filter_deleted[5551]"]["status"] == "restored"
     assert clean["overall"] == "restored"
 
 
@@ -390,15 +392,15 @@ def test_the_probe_filter_check_is_unverified_when_the_filters_cannot_be_read():
     after = _snapshot()
     after["view_filters"] = {"state": "unavailable", "reason": "GetFilters raised"}
     verdict = probe.restore_readback_verdict(_snapshot(), after,
-                                             expect_filter_absent=5551)
-    assert verdict["probe_filter_deleted"]["status"] == "unverified"
+                                             expect_filters_absent=[5551])
+    assert verdict["probe_filter_deleted[5551]"]["status"] == "unverified"
 
 
 def test_no_probe_filter_id_means_no_probe_filter_obligation():
     """V0 and V0-offsets0 create no filter, so asserting one was deleted would
     be asserting something the variant never did."""
     verdict = probe.restore_readback_verdict(_snapshot(), _snapshot())
-    assert "probe_filter_deleted" not in verdict
+    assert not any(k.startswith("probe_filter_deleted") for k in verdict)
 
 
 # ======================================================================
@@ -464,10 +466,9 @@ def test_the_registry_exposes_the_probe():
 
 def test_validation_accepts_the_probes_real_settings():
     _adapter().validate_settings(
-        {"selection": "{0},{1}".format(probe.V0, probe.V3),
+        {"selection": "{0},{1}".format(probe.V0, probe.V6),
          "export_dpi": 150, "expanded_frame_margin_in": 0.5,
          "authored_override_scan_max": 5000,
-         "white_filter_include_view_only_model_categories": False,
          "model_reexport_check": True},
         "C:/out")
 
@@ -482,19 +483,19 @@ def test_validation_rejects_a_misspelled_variant():
     """The point of validating in the dry run: a campaign typo must be caught
     before the model is open, not after five exports."""
     with pytest.raises(ValueError) as excinfo:
-        _adapter().validate_settings({"selection": "v2_smooth_edges"}, "C:/out")
-    assert "v2_smooth_edges" in str(excinfo.value)
+        _adapter().validate_settings({"selection": "v2_white_filter"}, "C:/out")
+    assert "v2_white_filter" in str(excinfo.value)
 
 
 def test_validation_maps_a_campaign_job_variant_onto_selection():
-    resolved = _adapter().validate_settings({}, "C:/out", variant=probe.V1)
-    assert resolved["selection"] == probe.V1
+    resolved = _adapter().validate_settings({}, "C:/out", variant=probe.V4)
+    assert resolved["selection"] == probe.V4
 
 
 def test_validation_refuses_a_conflicting_variant_and_selection():
     with pytest.raises(ValueError) as excinfo:
-        _adapter().validate_settings({"selection": probe.V1}, "C:/out",
-                                     variant=probe.V2)
+        _adapter().validate_settings({"selection": probe.V4}, "C:/out",
+                                     variant=probe.V5)
     assert "conflicting" in str(excinfo.value)
 
 
@@ -507,7 +508,6 @@ def test_validation_refuses_a_conflicting_variant_and_selection():
     {"authored_override_scan_max": True},
     {"authored_override_scan_max": 1.5},
     {"model_reexport_check": "yes"},
-    {"white_filter_include_view_only_model_categories": 1},
 ])
 def test_validation_rejects_a_malformed_value(settings):
     with pytest.raises(ValueError):
@@ -595,7 +595,7 @@ def test_missing_override_setters_checks_every_name_in_the_set():
 # ======================================================================
 
 def test_a_variant_that_got_what_it_asked_for_is_measured():
-    plan = probe.variant_plan(probe.V2)
+    plan = probe.variant_plan(probe.V5)
     check = probe.variant_measurement_check(
         plan, {"applied_smooth_edges": False, "model_suppression_mode": "external"})
     assert check["measured"] is True
@@ -608,14 +608,14 @@ def test_a_variant_that_got_what_it_asked_for_is_measured():
 
 @pytest.mark.parametrize("applied", ["read_failed", "unchanged (failed)",
                                      "not_attempted", None, True])
-def test_v2_did_not_measure_when_smooth_edges_was_not_confirmed_off(applied):
+def test_v5_did_not_measure_when_smooth_edges_was_not_confirmed_off(applied):
     """Production does NOT raise when the ViewDisplayModel read or write fails.
 
     That is correct -- an unconfirmed AA state costs decode confidence, not the
-    export -- but it means V2/V3 can return a real TIFF that measured the same
+    export -- but it means V5/V6 can return a real TIFF that measured the same
     behaviour as V1. Anything but a confirmed ``False`` is not AA off.
     """
-    plan = probe.variant_plan(probe.V2)
+    plan = probe.variant_plan(probe.V5)
     check = probe.variant_measurement_check(
         plan, {"applied_smooth_edges": applied,
                "model_suppression_mode": "external"})
@@ -625,14 +625,14 @@ def test_v2_did_not_measure_when_smooth_edges_was_not_confirmed_off(applied):
     assert "F3" in check["unmet"][0]["why_it_matters"]
 
 
-def test_a_white_filter_variant_did_not_measure_when_production_hid_categories():
+def test_a_membership_variant_did_not_measure_when_production_hid_categories():
     """The same defect one switch over, which the review did not name.
 
-    A V1-V3 capture reporting ``hide_categories`` hid model categories and
+    A V4-V6 capture reporting ``hide_categories`` hid model categories and
     disabled the probe's own white filter: it measured V0's suppression under
     V1's name. Fixing only the SmoothEdges half would have left this one.
     """
-    plan = probe.variant_plan(probe.V1)
+    plan = probe.variant_plan(probe.V4)
     check = probe.variant_measurement_check(
         plan, {"model_suppression_mode": "hide_categories"})
     assert check["measured"] is False
@@ -646,7 +646,7 @@ def test_the_control_variants_are_measured_by_their_own_standard():
     Without this the fix would mark every control DID_NOT_MEASURE and the
     baseline every other variant is read against would vanish.
     """
-    for name in (probe.V0, probe.V0_OFFSETS0):
+    for name in (probe.V0,):
         check = probe.variant_measurement_check(
             probe.variant_plan(name),
             {"model_suppression_mode": "hide_categories",
@@ -655,7 +655,7 @@ def test_the_control_variants_are_measured_by_their_own_standard():
 
 
 def test_both_switches_are_checked_independently():
-    plan = probe.variant_plan(probe.V3)
+    plan = probe.variant_plan(probe.V6)
     check = probe.variant_measurement_check(
         plan, {"applied_smooth_edges": "read_failed",
                "model_suppression_mode": "hide_categories"})
@@ -666,9 +666,9 @@ def test_both_switches_are_checked_independently():
 def test_missing_metadata_is_not_measured_rather_than_assumed_fine():
     """An annotation pass that raised leaves no metadata at all. That is not
     evidence that the mutation applied."""
-    check = probe.variant_measurement_check(probe.variant_plan(probe.V2), {})
+    check = probe.variant_measurement_check(probe.variant_plan(probe.V5), {})
     assert check["measured"] is False
-    check_none = probe.variant_measurement_check(probe.variant_plan(probe.V2), None)
+    check_none = probe.variant_measurement_check(probe.variant_plan(probe.V5), None)
     assert check_none["measured"] is False
 
 
@@ -941,18 +941,18 @@ def test_a_filter_removed_from_the_view_but_alive_in_the_project_is_not_restored
     directions: an identity claimed in prose and never asserted.
     """
     verdict = probe.restore_readback_verdict(
-        _snapshot(filters={}), _snapshot(filters={}), expect_filter_absent=5551,
-        filter_element_still_in_project=True)
-    assert verdict["probe_filter_deleted"]["status"] == "not_restored"
-    assert "project" in verdict["probe_filter_deleted"]["reason"]
+        _snapshot(filters={}), _snapshot(filters={}), expect_filters_absent=[5551],
+        filter_elements_still_in_project={5551: True})
+    assert verdict["probe_filter_deleted[5551]"]["status"] == "not_restored"
+    assert "project" in verdict["probe_filter_deleted[5551]"]["reason"]
     assert verdict["overall"] == "not_restored"
 
 
 def test_an_undeterminable_filter_element_is_unverified_not_restored():
     verdict = probe.restore_readback_verdict(
-        _snapshot(filters={}), _snapshot(filters={}), expect_filter_absent=5551,
-        filter_element_still_in_project=None)
-    assert verdict["probe_filter_deleted"]["status"] == "unverified"
+        _snapshot(filters={}), _snapshot(filters={}), expect_filters_absent=[5551],
+        filter_elements_still_in_project={5551: None})
+    assert verdict["probe_filter_deleted[5551]"]["status"] == "unverified"
     assert verdict["overall"] == "unverified"
 
 
@@ -962,8 +962,8 @@ def test_the_view_membership_check_still_outranks_the_element_check():
     verdict = probe.restore_readback_verdict(
         _snapshot(filters={}),
         _snapshot(filters={"5551": {"enabled": True, "visible": True}}),
-        expect_filter_absent=5551, filter_element_still_in_project=True)
-    assert "still on the view" in verdict["probe_filter_deleted"]["reason"]
+        expect_filters_absent=[5551], filter_elements_still_in_project={5551: True})
+    assert "still on the view" in verdict["probe_filter_deleted[5551]"]["reason"]
 
 
 def test_a_failed_explicit_restore_step_is_not_restored():
@@ -998,7 +998,7 @@ def test_run_variant_feeds_both_new_restore_inputs():
     import inspect
 
     source = inspect.getsource(probe._run_variant)
-    assert "filter_element_still_in_project=" in source
+    assert "filter_elements_still_in_project=" in source
     assert "explicit_step_errors=restore_errors" in source
     assert "filter_element_exists(" in source
 
@@ -1058,3 +1058,479 @@ def test_a_successful_model_pass_does_not_trip_the_gate():
     source = inspect.getsource(probe._run_native)
     assert 'if model_out.get("success"):' not in source, (
         "the gate must fire on FAILURE, not on success")
+
+
+# ======================================================================
+# ROUND 2: membership-based white suppression
+# ======================================================================
+
+class _FakeCatId(object):
+    def __init__(self, value):
+        self.IntegerValue = int(value)
+        self.Value = int(value)
+
+
+class _FakeColor(object):
+    def __init__(self, valid=True):
+        self.IsValid = valid
+
+
+class _FakeCatOGS(object):
+    """A category OverrideGraphicSettings whose blankness is controllable."""
+
+    def __init__(self, blank=True, halftone=False, unreadable=False):
+        self._unreadable = unreadable
+        self.Halftone = halftone
+        value = None if blank else _FakeColor()
+        self.ProjectionLineColor = value
+        self.CutLineColor = None
+        self.SurfaceForegroundPatternColor = None
+        self.CutForegroundPatternColor = None
+
+    def __getattribute__(self, name):
+        if name != "_unreadable" and object.__getattribute__(self, "_unreadable") \
+                and name == "ProjectionLineColor":
+            raise RuntimeError("override unreadable")
+        return object.__getattribute__(self, name)
+
+
+class _CatView(object):
+    """The minimum view surface ``_category_override_is_blank`` reads."""
+
+    def __init__(self, overrides=None, raises=False, returns_none=False):
+        self._overrides = overrides or {}
+        self._raises = raises
+        self._returns_none = returns_none
+
+    def GetCategoryOverrides(self, cat_id):
+        if self._raises:
+            raise RuntimeError("GetCategoryOverrides exploded")
+        if self._returns_none:
+            return None
+        return self._overrides.get(int(cat_id.IntegerValue), _FakeCatOGS())
+
+
+def test_a_blank_category_override_reads_blank():
+    state, blank, reason = probe._category_override_is_blank(
+        _CatView(), _FakeCatId(-2000051))
+    assert (state, blank, reason) == ("value", True, None)
+
+
+def test_an_authored_category_override_reads_not_blank_and_names_the_residue():
+    """The check that decides whether mechanism 3 may write.
+
+    Writing over an authored category override would destroy graphics this probe
+    cannot put back -- reapplying a captured OverrideGraphicSettings across a
+    transaction boundary is the pattern that caused the curtain-panel bug.
+    """
+    view = _CatView({-2000051: _FakeCatOGS(blank=False)})
+    state, blank, reason = probe._category_override_is_blank(
+        view, _FakeCatId(-2000051))
+    assert state == "value"
+    assert blank is False
+    assert "projection_line_color" in reason
+
+
+def test_halftone_alone_makes_a_category_override_not_blank():
+    view = _CatView({-2000051: _FakeCatOGS(blank=True, halftone=True)})
+    _state, blank, reason = probe._category_override_is_blank(
+        view, _FakeCatId(-2000051))
+    assert blank is False
+    assert "halftone" in reason
+
+
+@pytest.mark.parametrize("view", [
+    _CatView(raises=True),
+    _CatView(returns_none=True),
+    _CatView({-2000051: _FakeCatOGS(unreadable=True)}),
+])
+def test_an_unreadable_category_override_is_unavailable_not_blank(view):
+    """"Could not read it" is not "it is blank".
+
+    Treating it as blank would let mechanism 3 overwrite an override it never
+    managed to inspect -- the exact destruction the blank-only rule prevents.
+    """
+    state, blank, reason = probe._category_override_is_blank(
+        view, _FakeCatId(-2000051))
+    assert state == "unavailable"
+    assert blank is None
+    assert reason
+
+
+# ---------------------------------------------------------------- subcategories
+
+class _FakeCategory(object):
+    def __init__(self, cat_id, name, subs=None, subs_raise=False, subs_none=False):
+        self.Id = _FakeCatId(cat_id)
+        self.Name = name
+        self._subs = subs or []
+        self._subs_raise = subs_raise
+        self._subs_none = subs_none
+
+    @property
+    def SubCategories(self):
+        if self._subs_raise:
+            raise RuntimeError("SubCategories exploded")
+        return None if self._subs_none else self._subs
+
+
+def test_subcategories_are_walked_not_just_the_parent():
+    """Greg observed roof fascia surviving a white filter and going white only
+    when the SUBCATEGORY was overridden alongside the parent. So the walk has to
+    reach them."""
+    fascia = _FakeCategory(-2000039, "Fascia")
+    roof = _FakeCategory(-2000035, "Roofs", subs=[fascia])
+    subs, error = probe._subcategories_of(roof)
+    assert error is None
+    assert [s.Name for s in subs] == ["Fascia"]
+
+
+def test_an_unreadable_subcategory_list_yields_a_REASON_not_an_empty_list():
+    """An unwalked subcategory is the roof-fascia case arriving silently. A bare
+    empty list would be indistinguishable from a category that genuinely has
+    none."""
+    subs, error = probe._subcategories_of(
+        _FakeCategory(-2000035, "Roofs", subs_raise=True))
+    assert subs == []
+    assert "exploded" in error
+
+    subs, error = probe._subcategories_of(
+        _FakeCategory(-2000035, "Roofs", subs_none=True))
+    assert subs == []
+    assert error == "SubCategories is None"
+
+
+def test_a_category_with_no_subcategories_reports_no_error():
+    """THE CONTROL: an empty list with error None is a real answer, so the
+    reason channel cannot be satisfied by always reporting one."""
+    subs, error = probe._subcategories_of(_FakeCategory(-2000051, "Lines"))
+    assert subs == []
+    assert error is None
+
+
+# ------------------------------------------------------- wiring of the mechanism
+
+def test_run_variant_suppresses_by_membership_and_reverses_it():
+    """Pin the WIRING, which every round of review on this probe has had to.
+
+    A correct suppression function the call site does not invoke is suppression
+    nothing performs.
+    """
+    import inspect
+
+    source = inspect.getsource(probe._run_variant)
+    assert "apply_membership_white_suppression(" in source
+    assert "reverse_membership_white_suppression(" in source
+    assert 'model_context["model_members"]' in source
+    assert 'link_categories=model_context.get("link_categories")' in source
+    # The element overrides are reversed with a FRESH blank per element, never a
+    # captured object reapplied across the boundary.
+    assert "OverrideGraphicSettings())" in source
+    # And the retired category-filter entry point is gone from the call site.
+    assert "create_white_model_filter" not in source
+
+
+def test_run_native_resolves_the_membership_split_once_and_shares_it():
+    """Four variants must suppress the SAME set, or they are not comparable.
+
+    A per-variant split would let two variants suppress different sets and then
+    be read against each other as if they had not.
+    """
+    import inspect
+
+    source = inspect.getsource(probe._run_native)
+    assert "split_stage_a_pass_membership(" in source
+    assert source.count("split_stage_a_pass_membership(") == 1, (
+        "the split must be resolved once, not per variant")
+    gate = source.index("split_stage_a_pass_membership(")
+    loop = source.index("for variant in selected:")
+    assert gate < loop
+    assert '"model_members": model_members' in source
+
+
+def test_run_native_discovers_link_categories_through_production():
+    """The link route reuses production's linked-doc category policy rather than
+    forming a second opinion about which categories a link contributes."""
+    import inspect
+
+    source = inspect.getsource(probe._run_native)
+    assert "_model_categories_in_linked_doc" in source
+    assert "_resolve_colorable_category_predicate" in source
+    # A view with no links must SAY the mechanism is unexercised rather than
+    # letting a clean run read as evidence that the link path works.
+    assert "UNEXERCISED" in source
+
+
+def test_the_suppression_reuses_productions_link_filter_mechanism():
+    """Not a second link mechanism -- production's own, called with white."""
+    import inspect
+
+    source = inspect.getsource(probe.apply_membership_white_suppression)
+    assert "_apply_link_category_filters" in source
+    assert "(cat, WHITE) for cat in link_categories" in source
+    # Element overrides come first; the category/subcategory pass is a
+    # COMPLEMENT, and Revit's Element > Category precedence is what lets the
+    # annotation paint still win in a shared category.
+    assert source.index("SetElementOverrides") < source.index("SetCategoryOverrides")
+
+
+def test_unreached_is_a_named_list_on_every_branch():
+    """"Unreached" must never be an absence. Every branch that fails to suppress
+    something appends a record with a reason, and the count is published."""
+    import inspect
+
+    source = inspect.getsource(probe.apply_membership_white_suppression)
+    # One append per failure route: element id unreadable, element override
+    # raised, link category failed, link mechanism raised, category unreadable,
+    # authored category, refused category, category raised, subcategories
+    # unreadable, element category unreadable.
+    assert source.count('record["unreached"].append(') >= 9
+    assert 'record["unreached_count"] = len(record["unreached"])' in source
+
+
+def test_mechanism_3_only_writes_over_a_blank_override():
+    """The rule that makes the explicit restore correct AND non-destructive."""
+    import inspect
+
+    source = inspect.getsource(probe.apply_membership_white_suppression)
+    assert "_category_override_is_blank(" in source
+    assert 'record["category_overrides"]["skipped_authored"]' in source
+
+
+def test_reverse_restores_created_filters_but_only_removes_reused_ones():
+    """Production's rule, kept rather than re-decided: a REUSED filter definition
+    is shared with other views or templates, so deleting it would corrupt them."""
+    import inspect
+
+    source = inspect.getsource(probe.reverse_membership_white_suppression)
+    created = source.index("created_filter_ids")
+    reused = source.index("reused_filter_ids")
+    assert "delete_filter(" in source[created:reused]
+    assert "RemoveFilter(" in source[reused:]
+    assert "delete_filter(" not in source[reused:]
+
+
+# ======================================================================
+# The suppression, driven BEHAVIOURALLY rather than by reading its source
+# ======================================================================
+#
+# The source-inspection tests above bind PRESENCE, not logic: four mutations of
+# the real loops (stop walking subcategories, overwrite authored overrides, treat
+# an unreadable override as blank, neuter the call site) all left them green,
+# because `if False:` and `None and f(...)` keep the strings they assert on. That
+# is the weak-test class this probe's review rounds kept finding, one layer out.
+#
+# These drive the actual function against the shared fake Revit DB and assert on
+# the record it produces.
+
+
+from tests.stage_a_capture_fakes import (            # noqa: E402
+    FakeCategory, FakeDoc, FakeElement, FakeElementId, FakeViewPlan,
+    install_fake_revit_db,
+)
+
+
+def _sub(cat_id, name):
+    """A subcategory: the same shape the walk reads off ``cat.SubCategories``.
+
+    ``SubCategories`` is set to ``[]`` rather than left absent because a real
+    Revit ``Category`` ALWAYS exposes it, possibly empty. The shared fake does
+    not, and the clean-suppression control below caught that as a spurious
+    "unreached" -- a fixture artifact, not a behaviour. Leaving it absent would
+    have made every fixture look like the unreadable-subcategories case.
+    """
+    cat = FakeCategory(name, cat_id, cat_type="Model")
+    cat.SubCategories = []
+    return cat
+
+
+_LINES = _sub(-2000051, "Lines")
+
+
+class _SuppressionView(FakeViewPlan):
+    """Records every override write, and can make a category authored/unreadable."""
+
+    def __init__(self, view_id, authored=(), unreadable=(), refuse=(),
+                 subcategories=None):
+        FakeViewPlan.__init__(self, view_id)
+        self.element_override_writes = []
+        self.category_override_writes = []
+        self._authored = set(int(v) for v in authored)
+        self._unreadable = set(int(v) for v in unreadable)
+        self._refuse = set(int(v) for v in refuse)
+        self._subcategories = subcategories or {}
+
+    def SetElementOverrides(self, eid, ogs):
+        self.element_override_writes.append(int(eid.IntegerValue))
+        FakeViewPlan.SetElementOverrides(self, eid, ogs)
+
+    def GetCategoryOverrides(self, cat_id):
+        value = int(cat_id.IntegerValue)
+        if value in self._unreadable:
+            raise RuntimeError("GetCategoryOverrides refused")
+        ogs = FakeViewPlan.GetCategoryOverrides(self, cat_id)
+        if value in self._authored:
+            ogs.ProjectionLineColor = _FakeColor()
+        return ogs
+
+    def SetCategoryOverrides(self, cat_id, ogs):
+        value = int(cat_id.IntegerValue)
+        if value in self._refuse:
+            raise Exception("Category cannot be overridden")
+        self.category_override_writes.append(value)
+        FakeViewPlan.SetCategoryOverrides(self, cat_id, ogs)
+
+
+def _suppress(view=None, elements=None, link_categories=None):
+    """Run the real suppression against the fake DB."""
+    roof_with_fascia = FakeCategory("Roofs", -2000035, cat_type="Model")
+    roof_with_fascia.SubCategories = [_sub(-2000039, "Fascia"),
+                                      _sub(-2000040, "Soffit")]
+    elements = elements if elements is not None else [
+        FakeElement(9001, roof_with_fascia),
+        FakeElement(9002, roof_with_fascia),
+        FakeElement(9003, _LINES),
+    ]
+    view = view if view is not None else _SuppressionView(4242)
+    doc = FakeDoc(elements=elements, link_instances=[],
+                  categories=[roof_with_fascia, _LINES])
+    with install_fake_revit_db():
+        record = probe.apply_membership_white_suppression(
+            doc, view, 4242, elements, link_categories=link_categories)
+    return record, view, doc
+
+
+def test_every_model_member_gets_an_element_override():
+    record, view, _doc = _suppress()
+    assert record["element_overrides"]["attempted"] == 3
+    assert record["element_overrides"]["applied"] == 3
+    assert record["element_overrides"]["failed"] == []
+    assert sorted(view.element_override_writes) == [9001, 9002, 9003]
+    assert record["element_override_count"] == 3
+
+
+def test_the_parent_AND_every_subcategory_is_overridden():
+    """Greg's roof-fascia observation, asserted behaviourally.
+
+    Mutating the walk to ``[(cat, False)]`` -- parent only -- left the
+    source-inspection tests green. This one goes red.
+    """
+    record, view, _doc = _suppress()
+    parents = {e["category_id"] for e in
+               record["category_overrides"]["parents_applied"]}
+    subs = {e["category_id"] for e in
+            record["category_overrides"]["subcategories_applied"]}
+    assert parents == {-2000035, -2000051}
+    assert subs == {-2000039, -2000040}, "Fascia and Soffit must both be reached"
+    assert set(view.category_override_writes) == parents | subs
+    assert record["category_override_count"] == 4
+
+
+def test_an_authored_category_override_is_left_alone_and_named_unreached():
+    """Mutating the blank check to ``if False:`` overwrote authored graphics and
+    kept every source-inspection test green."""
+    view = _SuppressionView(4242, authored=[-2000039])
+    record, view, _doc = _suppress(view=view)
+    assert -2000039 not in view.category_override_writes, (
+        "an AUTHORED override must never be overwritten")
+    skipped = {e["category_id"] for e in
+               record["category_overrides"]["skipped_authored"]}
+    assert skipped == {-2000039}
+    unreached = {u["id"]: u["reason"] for u in record["unreached"]}
+    assert -2000039 in unreached
+    assert "AUTHORED" in unreached[-2000039]
+
+
+def test_an_unreadable_category_override_is_left_alone_and_named_unreached():
+    """"Could not read it" must not be treated as blank -- that would overwrite an
+    override the probe never inspected."""
+    view = _SuppressionView(4242, unreadable=[-2000040])
+    record, view, _doc = _suppress(view=view)
+    assert -2000040 not in view.category_override_writes
+    failed = {e["category_id"] for e in record["category_overrides"]["failed"]}
+    assert -2000040 in failed
+    unreached = {u["id"]: u["reason"] for u in record["unreached"]}
+    assert "unreadable" in unreached[-2000040]
+
+
+def test_a_refused_category_is_recorded_as_refused_and_unreached():
+    view = _SuppressionView(4242, refuse=[-2000051])
+    record, view, _doc = _suppress(view=view)
+    refused = {e["category_id"] for e in record["category_overrides"]["refused"]}
+    assert refused == {-2000051}
+    unreached = {u["id"]: u["reason"] for u in record["unreached"]}
+    assert "refuses" in unreached[-2000051]
+    # Its ELEMENT override still landed -- the mechanisms are independent.
+    assert 9003 in view.element_override_writes
+
+
+def test_a_clean_suppression_reaches_everything_and_unreached_is_empty():
+    """THE CONTROL. Without it every assertion above would also pass against a
+    function that recorded everything as unreached and suppressed nothing."""
+    record, _view, _doc = _suppress()
+    assert record["unreached"] == []
+    assert record["unreached_count"] == 0
+    assert record["element_overrides"]["applied"] == 3
+    assert record["category_override_count"] == 4
+
+
+def test_an_element_whose_override_raises_is_named_unreached():
+    class _FailingView(_SuppressionView):
+        def SetElementOverrides(self, eid, ogs):
+            if int(eid.IntegerValue) == 9002:
+                raise Exception("InvalidOperationException: element is pinned")
+            _SuppressionView.SetElementOverrides(self, eid, ogs)
+
+    record, view, _doc = _suppress(view=_FailingView(4242))
+    assert record["element_overrides"]["applied"] == 2
+    assert [f["id"] for f in record["element_overrides"]["failed"]] == [9002]
+    unreached = {u["id"]: u["reason"] for u in record["unreached"]}
+    assert "SetElementOverrides raised" in unreached[9002]
+
+
+def test_a_category_whose_subcategories_cannot_be_read_is_named_unreached():
+    """An unwalked subcategory is the roof-fascia case arriving silently."""
+
+    class _Broken(object):
+        Id = FakeElementId(-2000035)
+        Name = "Roofs"
+
+        @property
+        def SubCategories(self):
+            raise RuntimeError("SubCategories exploded")
+
+    record, _view, _doc = _suppress(
+        elements=[FakeElement(9001, _Broken())])
+    unreached = [u for u in record["unreached"]
+                 if u["kind"] == "subcategories_of"]
+    assert unreached, record["unreached"]
+    assert "SubCategories" in unreached[0]["reason"]
+
+
+def test_the_retired_white_filter_setting_is_REFUSED_not_ignored():
+    """A campaign JSON still carrying it must fail the dry run.
+
+    The setting configured the category-based white filter, which round 2
+    retires: suppression runs off the membership split, so "should Detail Items
+    and Lines be included" has no premise. Silently ignoring it would let a
+    campaign think it had asked for something.
+    """
+    with pytest.raises(ValueError) as excinfo:
+        _adapter().validate_settings(
+            {"white_filter_include_view_only_model_categories": True}, "C:/out")
+    assert "white_filter_include_view_only_model_categories" in str(excinfo.value)
+
+
+def test_the_round_2_variants_validate_through_the_registry():
+    for name in probe.SUPPORTED_VARIANTS:
+        resolved = _adapter().validate_settings({"selection": name}, "C:/out")
+        assert resolved["selection"] == name
+
+
+def test_a_retired_variant_name_is_refused_by_the_registry():
+    """v1/v2/v3 and v0_offsets0 are not runnable any more, and asking for one
+    must say so rather than running nothing."""
+    for name in probe.RETIRED_VARIANTS:
+        with pytest.raises(ValueError) as excinfo:
+            _adapter().validate_settings({"selection": name}, "C:/out")
+        assert name in str(excinfo.value)

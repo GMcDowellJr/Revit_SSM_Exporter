@@ -422,10 +422,14 @@ _WHITE_BLEND_RUNTIME_SETTINGS = frozenset((
 # excluding raw_view/output_dir which the adapter injects.
 _ANNO_PASS_VARIANTS_RUNTIME_SETTINGS = frozenset((
     "selection", "export_dpi", "expanded_frame_margin_in",
-    "authored_override_scan_max",
-    "white_filter_include_view_only_model_categories",
-    "model_reexport_check", "repo_root",
+    "authored_override_scan_max", "model_reexport_check", "repo_root",
 ))
+# GONE in round 2, not merely unused. The category-based white filter it
+# configured is retired: suppression runs off the membership split now, so
+# "should Detail Items and Lines be included" -- a question only a
+# category-level mechanism has to ask -- has no premise left. Kept in the
+# rejection path by NOT being in the set above, so a campaign still carrying it
+# is refused with the name rather than silently ignored.
 
 
 def _anomaly_probe_adapter(module_name, allowed, probe_id):
@@ -547,8 +551,7 @@ def _anno_pass_variants_adapter(module_name):
                 raise ValueError(
                     "stage_a_anno_pass_variants.authored_override_scan_max must be "
                     "a non-negative integer")
-        for key in ("white_filter_include_view_only_model_categories",
-                    "model_reexport_check"):
+        for key in ("model_reexport_check",):
             if key in arguments and not isinstance(arguments[key], bool):
                 raise ValueError(
                     "stage_a_anno_pass_variants.{0} must be a boolean".format(key))

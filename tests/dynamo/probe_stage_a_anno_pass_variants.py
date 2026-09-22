@@ -126,20 +126,47 @@ PROBE_NAME = "stage_a_anno_pass_variants"
 PROBE_VERSION = "2026-09-22.1"
 
 V0 = "v0_control"
-V0_OFFSETS0 = "v0_offsets0"
-V1 = "v1_white_filter"
-V2 = "v2_white_filter_smooth_edges_off"
-V3 = "v3_white_filter_smooth_edges_off_expanded_frame"
+V4 = "v4_white_membership"
+V5 = "v5_white_membership_smooth_edges_off"
+V6 = "v6_white_membership_expanded_frame"
 
-SUPPORTED_VARIANTS = (V0, V0_OFFSETS0, V1, V2, V3)
+SUPPORTED_VARIANTS = (V0, V4, V5, V6)
 
-# WHAT EACH VARIANT CHANGES, as three membership sets rather than an if/elif
-# chain per property. A new variant is a row here, and a variant missing from
-# every set is visibly a control rather than silently a no-op.
-WHITE_FILTER_VARIANTS = frozenset((V1, V2, V3))
-SMOOTH_EDGES_OFF_VARIANTS = frozenset((V2, V3))
-EXPANDED_FRAME_VARIANTS = frozenset((V3,))
-ZERO_ANNOTATION_CROP_OFFSET_VARIANTS = frozenset((V0_OFFSETS0,))
+# WHAT EACH VARIANT CHANGES, as membership sets rather than an if/elif chain per
+# property. A new variant is a row here, and a variant missing from every set is
+# visibly a control rather than silently a no-op.
+WHITE_MEMBERSHIP_VARIANTS = frozenset((V4, V5, V6))
+SMOOTH_EDGES_OFF_VARIANTS = frozenset((V5, V6))
+EXPANDED_FRAME_VARIANTS = frozenset((V6,))
+
+# ROUND-1 VARIANTS THAT ARE GONE, and why. Named rather than deleted silently,
+# because a reader comparing a round-1 combined report against a round-2 one
+# needs to know these were retired on evidence and not lost.
+#
+#   v0_offsets0    FALSIFIED. Byte-identical to v0_control on BOTH round-1 views
+#                  (elevation e9ab768b, plan b047a741). The annotation crop
+#                  offsets changed nothing, so the variant has nothing left to
+#                  measure.
+#   v1_white_filter
+#   v2_white_filter_smooth_edges_off
+#   v3_white_filter_smooth_edges_off_expanded_frame
+#                  SUPERSEDED. These suppressed by CATEGORY -- one rule-less
+#                  ParameterFilterElement over every filterable MODEL category.
+#                  That cannot separate a drafting line from a model line: both
+#                  live in OST_Lines. The candidate is now membership-based
+#                  suppression (v4-v6), which can, so the category-filter
+#                  variants are not a candidate any more.
+RETIRED_VARIANTS = {
+    "v0_offsets0": "falsified in round 1: byte-identical to v0_control on both views",
+    "v1_white_filter": "superseded by v4_white_membership (category-based "
+                       "suppression cannot separate drafting lines from model "
+                       "lines; both are OST_Lines)",
+    "v2_white_filter_smooth_edges_off": "superseded by v5_white_membership_"
+                                        "smooth_edges_off",
+    "v3_white_filter_smooth_edges_off_expanded_frame": "superseded by "
+                                                       "v6_white_membership_"
+                                                       "expanded_frame",
+}
 
 DEFAULT_EXPORT_DPI = 150.0
 # B' adds this much PAPER margin on every side, per the probe brief.
@@ -147,12 +174,16 @@ DEFAULT_EXPANDED_FRAME_MARGIN_IN = 0.5
 # Reading GetElementOverrides for every model element in a large view is
 # thousands of API calls, so the scan is bounded and says so. A capped scan is
 # recorded as capped with both counts -- never as a total.
-DEFAULT_AUTHORED_OVERRIDE_SCAN_MAX = 5000
+# Raised from 5000 after round 1: the elevation has 6437 candidates and the scan
+# was CAPPED, so "0 authored overrides" was a prefix rather than an answer. 8000
+# clears both round-1 views outright.
+DEFAULT_AUTHORED_OVERRIDE_SCAN_MAX = 8000
 
 # UNCONFIRMED. ViewCropRegionShapeManager's four annotation-crop offset
 # properties, believed to exist on Revit 2025 under these names. Resolved by
-# reflection; an absent name makes the whole V0-offsets0 variant "unavailable"
-# for that view rather than recording a 0 that was never read.
+# reflection; an absent name makes the offsets record "unavailable" rather than
+# recording a 0 that was never read. READ-ONLY as of round 2 -- see
+# annotation_crop_offsets().
 ANNOTATION_CROP_OFFSET_PROPERTIES = (
     "LeftAnnotationCropOffset",
     "RightAnnotationCropOffset",
@@ -202,17 +233,23 @@ def variant_plan(variant):
             variant, list(SUPPORTED_VARIANTS)))
     return {
         "variant": variant,
-        "white_filter": variant in WHITE_FILTER_VARIANTS,
+        "white_membership": variant in WHITE_MEMBERSHIP_VARIANTS,
         "smooth_edges_off": variant in SMOOTH_EDGES_OFF_VARIANTS,
         "expanded_frame": variant in EXPANDED_FRAME_VARIANTS,
-        "zero_annotation_crop_offsets": (
-            variant in ZERO_ANNOTATION_CROP_OFFSET_VARIANTS),
         # Which production suppression mode this variant asks for. A variant
-        # that applies the white filter must ALSO tell the annotation pass not
-        # to hide model categories and not to disable the filter, or it would
+        # that suppresses by membership must ALSO tell the annotation pass not
+        # to hide model categories and not to disable filters, or it would
         # measure the two suppressions on top of each other.
+        #
+        # "external" covers membership-based suppression unchanged, and a second
+        # mode name was deliberately NOT added: that mode's contract is "the
+        # CALLER has already suppressed model content by some other means; do
+        # not hide, do not disable filters", and nothing in it is specific to
+        # how the caller did it. Two names for one behaviour is the "computed in
+        # two places" shape, and the unknown-mode refusal still guards typos.
         "model_suppression": (
-            "external" if variant in WHITE_FILTER_VARIANTS else "hide_categories"),
+            "external" if variant in WHITE_MEMBERSHIP_VARIANTS
+            else "hide_categories"),
     }
 
 
@@ -657,9 +694,14 @@ def annotation_crop_offsets(view):
     has observed those names on a Revit host.
 
     A missing manager or a missing property makes the WHOLE record
-    unavailable with the reason. It never reports 0: a 0 that was never read
-    is indistinguishable from a view whose offsets really are 0, and
-    V0-offsets0's entire content is the difference between those two.
+    unavailable with the reason. It never reports 0: a 0 that was never read is
+    indistinguishable from a view whose offsets really are 0.
+
+    READ-ONLY as of round 2. The v0_offsets0 variant that used to WRITE these was
+    falsified -- it produced byte-identical TIFFs to v0_control on both round-1
+    views -- so nothing sets them any more. They are still snapshotted, because
+    "the capture did not change them" is a restore obligation and because the
+    offsets remain a recorded property of the view a reader may want.
     """
     try:
         manager = view.GetCropRegionShapeManager()
@@ -692,17 +734,6 @@ def annotation_crop_offsets(view):
     return _value(values)
 
 
-def set_annotation_crop_offsets(view, values):
-    """Write the four offsets. Must be called inside an open Transaction.
-
-    Raises on the first failure rather than partially applying: three of four
-    offsets zeroed is a state nothing asked for and nothing would recognise.
-    """
-    manager = view.GetCropRegionShapeManager()
-    for name in ANNOTATION_CROP_OFFSET_PROPERTIES:
-        setattr(manager, name, float(values[name]))
-
-
 def annotation_crop_active(view):
     """``View.AnnotationCropActive``, three-valued.
 
@@ -722,96 +753,6 @@ def annotation_crop_active(view):
 # ======================================================================
 # THE WHITE MODEL FILTER (V1/V2/V3)
 # ======================================================================
-
-def white_filter_categories(doc, include_view_only_model=True):
-    """The MODEL categories a ``ParameterFilterElement`` can be built over.
-
-    Returns a record, not a bare list, because four different populations
-    matter to reading V1 and three of them are easy to lose:
-
-        filterable_model_ids      what the filter is actually built over
-        rejected_non_filterable   MODEL categories Revit will not filter, so
-                                  the white override CANNOT reach them --
-                                  anything they draw stays visible in the
-                                  annotation capture, which is the first
-                                  thing to check if V1's image is not clean
-        view_only_model_ids       categories carrying a Model label that are
-                                  ANNOTATION content in every sense that
-                                  matters here -- Detail Items and the shared
-                                  model/detail Lines category. Production's
-                                  ``_model_category_hidden_state`` deliberately
-                                  EXCLUDES these. This function includes them
-                                  by default because the probe brief says
-                                  "all filterable MODEL categories", and
-                                  whiting them out therefore ERASES real
-                                  annotation ink. Named and counted so that
-                                  reads as a known consequence rather than a
-                                  surprise; ``include_view_only_model=False``
-                                  runs it the other way in one re-run.
-        unreadable                categories whose id or type would not read
-
-    UNCONFIRMED: ``ParameterFilterUtilities.GetAllFilterableCategories()``.
-    An absent surface is an explicit refusal (the caller stops before V1-V3),
-    never an empty category list that would build a filter over nothing and
-    render a capture that looks like V0.
-    """
-    from Autodesk.Revit.DB import BuiltInCategory, CategoryType
-    try:
-        from Autodesk.Revit.DB import ParameterFilterUtilities
-        filterable = set()
-        for eid in ParameterFilterUtilities.GetAllFilterableCategories():
-            value = _element_id_int(eid)
-            if value is not None:
-                filterable.add(value)
-    except Exception as ex:
-        return {"state": "unavailable",
-                "reason": "ParameterFilterUtilities.GetAllFilterableCategories() "
-                          "raised {0}: {1} (UNCONFIRMED API); V1-V3 cannot build "
-                          "the white filter".format(type(ex).__name__, ex)}
-
-    view_only_ids = set()
-    for bic_name in ("OST_DetailComponents", "OST_Lines"):
-        bic = getattr(BuiltInCategory, bic_name, None)
-        if bic is not None:
-            view_only_ids.add(int(bic))
-
-    record = {
-        "state": "value",
-        "filterable_model_ids": [],
-        "filterable_model_names": {},
-        "rejected_non_filterable": [],
-        "view_only_model_ids": [],
-        "unreadable": [],
-        "include_view_only_model": bool(include_view_only_model),
-    }
-    for cat in doc.Settings.Categories:
-        try:
-            cat_id = _element_id_int(cat.Id)
-            is_model = cat.CategoryType == CategoryType.Model
-            name = str(getattr(cat, "Name", "") or "")
-        except Exception as ex:
-            record["unreadable"].append(
-                {"error": "{0}: {1}".format(type(ex).__name__, ex)})
-            continue
-        if cat_id is None:
-            record["unreadable"].append({"error": "category id would not read as int",
-                                         "name": name})
-            continue
-        if not is_model:
-            continue
-        if cat_id not in filterable:
-            record["rejected_non_filterable"].append({"id": cat_id, "name": name})
-            continue
-        if cat_id in view_only_ids:
-            record["view_only_model_ids"].append({"id": cat_id, "name": name})
-            if not include_view_only_model:
-                continue
-        record["filterable_model_ids"].append(cat_id)
-        record["filterable_model_names"][str(cat_id)] = name
-    record["filterable_model_ids"].sort()
-    record["category_count"] = len(record["filterable_model_ids"])
-    return record
-
 
 # Every ``OverrideGraphicSettings`` member the white override needs, as a flat
 # list so a MISSING one is nameable rather than an AttributeError thrown from
@@ -848,7 +789,7 @@ def white_override_capability_record(
     """PURE. The capability record, from an OGS-like object and a pattern id.
 
     ``state`` is "value" only when every setter resolves AND a solid pattern id
-    was supplied. Anything else LISTS what is missing, because "V1-V3 were
+    was supplied. Anything else LISTS what is missing, because "V4-V6 were
     skipped" is not actionable and "SetCutBackgroundPatternId is absent on this
     host" is.
     """
@@ -879,19 +820,12 @@ def white_override_capability(doc):
 
     Opens no transaction and touches no view -- an ``OverrideGraphicSettings``
     is a plain API object -- so this runs before the first variant and decides
-    whether V1-V3 run at all.
+    whether V4-V6 run at all.
 
-    This exists because of what the alternative looks like. A missing pattern
-    setter leaves that pattern UNCHANGED rather than raising at the point of
-    use, so a filter built without it renders model fills in their authored
-    colour while the sidecar says a white filter was applied: a variant that
-    measured nothing and reported success, which is the single worst outcome a
-    probe can produce. Likewise a project with no solid drafting pattern.
-
-    Returns a record. ``state`` is "value" only when every setter in
-    WHITE_OVERRIDE_SETTERS resolves AND a solid pattern was found. Otherwise it
-    LISTS what is missing and V1-V3 are skipped with that list, which is the
-    probe brief's "stop before V2/V3" rather than a best effort.
+    A missing pattern setter leaves that pattern UNCHANGED rather than raising
+    at the point of use, so suppression built without it would render model
+    fills in their authored colour while the record said white was applied: a
+    variant that measured nothing and reported success.
     """
     from Autodesk.Revit.DB import OverrideGraphicSettings
     from vop_interwoven.color_id_buffer import _get_solid_pattern_id
@@ -916,6 +850,9 @@ def white_override_capability(doc):
         solid_pattern_error=solid_error)
 
 
+WHITE = (255, 255, 255)
+
+
 def _white_override_settings(doc):
     """A white ``OverrideGraphicSettings``: lines, and all four patterns.
 
@@ -924,9 +861,6 @@ def _white_override_settings(doc):
     override is the failure mode the preflight exists to prevent.
     """
     from Autodesk.Revit.DB import Color, OverrideGraphicSettings
-    # Production's lookup, CALLED. A second copy here would be a second answer
-    # to "which pattern is the solid one", and this module's whole reason for
-    # existing is that the annotation capture and its evidence agree.
     from vop_interwoven.color_id_buffer import _get_solid_pattern_id
     capability = white_override_capability(doc)
     if capability.get("state") != "value":
@@ -934,7 +868,7 @@ def _white_override_settings(doc):
             "the white override cannot be built on this host: {0}".format(
                 capability.get("reason")))
     solid_id = _get_solid_pattern_id(doc)
-    white = Color(255, 255, 255)
+    white = Color(WHITE[0], WHITE[1], WHITE[2])
     ogs = OverrideGraphicSettings()
     ogs.SetProjectionLineColor(white)
     ogs.SetCutLineColor(white)
@@ -955,38 +889,390 @@ def _white_override_settings(doc):
     return ogs
 
 
-def create_white_model_filter(doc, view, category_ids, name):
-    """Create a RULE-LESS white filter and apply it to ``view``.
+# ======================================================================
+# MEMBERSHIP-BASED WHITE SUPPRESSION (V4-V6)
+# ======================================================================
+#
+# MEMBERSHIP, NOT CATEGORY, DECIDES WHAT IS SUPPRESSED.
+#
+# "Annotation" is content visible only in the view it is placed in. A drafting
+# line and a detail item are annotation even though their categories carry a
+# Model label; a model line in the SAME OST_Lines category is not. No
+# category-level mechanism can separate them -- which is why round 1's
+# category-filter variants are retired -- so the suppression runs off the same
+# split the painting already uses: split_stage_a_pass_membership, OwnerViewId
+# plus datum categories.
+#
+#   every element in the MODEL set     -> element-level WHITE override
+#   every element in the ANNOTATION set -> left alone for the pass to paint
+#   nothing is hidden, in either set
+#
+# REVIT'S PRECEDENCE IS WHAT MAKES THE SHARED-CATEGORY CASE WORK, and it is
+# worth stating because the design depends on it: Element > Filter > Category.
+# So a white CATEGORY override on OST_Lines suppresses model lines while the
+# annotation pass's own per-element palette paint still wins for the drafting
+# lines in that same category. The separation is done by precedence, not by
+# picking categories apart.
+#
+# FOUR MECHANISMS, because element overrides do not reach everything:
+#
+#   1. element override      every MODEL-membership element, including DWG
+#                            ImportInstances (element-overridable, confirmed
+#                            2026-09-21).
+#   2. link category filter  LINKED RVT content, where a per-element override is
+#                            impossible (ledger M1). Reuses PRODUCTION's
+#                            _apply_link_category_filters with WHITE instead of
+#                            a palette colour -- not a second link mechanism.
+#   3. category + SUBcategory
+#                            an element override does not govern the element's
+#                            SUBCATEGORY linework. Greg observed roof fascia
+#                            surviving a white filter and going white only when
+#                            the subcategory was overridden alongside the
+#                            parent, so cat.SubCategories is walked and each is
+#                            overridden. Applied only where the current override
+#                            is BLANK (see below).
+#   4. nothing               whatever none of the above reached is a NAMED LIST,
+#                            never an absence.
 
-    Must be called inside an open Transaction. Returns
-    ``(filter_element_id_int, applied_override)``.
 
-    Rule-less on purpose: a ``ParameterFilterElement`` with no rules matches
-    EVERY element of its categories, which is exactly "all model content" and
-    needs no parameter that every category happens to share.
+def _category_override_is_blank(view, cat_id):
+    """``(state, blank, reason)`` for one category's override, read back.
+
+    Mirrors production's ``_override_is_cleared`` for categories, checking
+    exactly the members the white override sets.
+
+    WHY IT MATTERS: mechanism 3 applies a category override ONLY where the
+    current one is blank. Overwriting an authored category override would
+    destroy graphics this probe cannot put back -- restoring a captured
+    ``OverrideGraphicSettings`` across a transaction boundary is the pattern
+    this module's history warns against, and it is how the curtain-panel bug
+    happened. Writing only over blank means the explicit restore is a blank
+    write, which IS the original state and is verifiable.
     """
-    from Autodesk.Revit.DB import ElementId, ParameterFilterElement
-    from System.Collections.Generic import List as NetList
+    try:
+        ogs = view.GetCategoryOverrides(cat_id)
+    except Exception as ex:
+        return ("unavailable", None,
+                "GetCategoryOverrides raised {0}: {1}".format(
+                    type(ex).__name__, ex))
+    if ogs is None:
+        return ("unavailable", None, "GetCategoryOverrides returned None")
+    residue = []
+    unreadable = []
+    for name, reader in (
+            ("projection_line_color", lambda o: getattr(o, "ProjectionLineColor", None)),
+            ("cut_line_color", lambda o: getattr(o, "CutLineColor", None)),
+            ("surface_foreground_pattern_color",
+             lambda o: getattr(o, "SurfaceForegroundPatternColor", None)),
+            ("cut_foreground_pattern_color",
+             lambda o: getattr(o, "CutForegroundPatternColor", None))):
+        try:
+            value = reader(ogs)
+            if value is not None and bool(getattr(value, "IsValid", False)):
+                residue.append(name)
+        except Exception as ex:
+            unreadable.append("{0} ({1}: {2})".format(name, type(ex).__name__, ex))
+    try:
+        if bool(getattr(ogs, "Halftone", False)):
+            residue.append("halftone")
+    except Exception as ex:
+        unreadable.append("halftone ({0}: {1})".format(type(ex).__name__, ex))
+    if unreadable:
+        return ("unavailable", None, "; ".join(unreadable))
+    return ("value", not residue, None if not residue else ", ".join(residue))
 
-    ids = NetList[ElementId]()
-    for value in category_ids:
-        ids.Add(ElementId(int(value)))
-    filter_element = ParameterFilterElement.Create(doc, str(name), ids)
-    view.AddFilter(filter_element.Id)
+
+def _subcategories_of(cat):
+    """``(subcategories, error)``. A category whose SubCategories cannot be read
+    yields an empty list AND a reason, never a silent zero -- an unwalked
+    subcategory is exactly the roof-fascia case."""
+    try:
+        subs = cat.SubCategories
+    except Exception as ex:
+        return ([], "{0}: {1}".format(type(ex).__name__, ex))
+    if subs is None:
+        return ([], "SubCategories is None")
+    try:
+        return (list(subs), None)
+    except Exception as ex:
+        return ([], "SubCategories not iterable: {0}: {1}".format(
+            type(ex).__name__, ex))
+
+
+def apply_membership_white_suppression(doc, view, view_id, model_elements,
+                                       link_categories=None, diag=None,
+                                       subcategories=True):
+    """Suppress the MODEL membership set to white. Four mechanisms, one record.
+
+    Must be called inside an open Transaction. Returns the record described at
+    the top of this section: what each mechanism reached, and a NAMED list of
+    what nothing reached.
+
+    ``model_elements`` is the model half of split_stage_a_pass_membership -- the
+    same split the painting uses, which is the whole point.
+
+    ``link_categories`` is ``[(category, ...), ...]`` for linked RVT content, or
+    None to skip mechanism 2.
+    """
+    from Autodesk.Revit.DB import ElementId
+
     ogs = _white_override_settings(doc)
-    view.SetFilterOverrides(filter_element.Id, ogs)
-    view.SetFilterVisibility(filter_element.Id, True)
-    view.SetIsFilterEnabled(filter_element.Id, True)
-    return (_element_id_int(filter_element.Id), True)
+    record = {
+        "mechanisms": ["element_override", "link_category_filter",
+                       "category_and_subcategory_override"],
+        "element_overrides": {"applied": 0, "attempted": 0, "failed": []},
+        "dwg_import_instance_ids": [],
+        "link_category_filters": {
+            "state": "not_attempted", "categories": [], "created_filter_ids": [],
+            "reused_filter_ids": [], "failed_categories": []},
+        "category_overrides": {
+            "parents_applied": [], "subcategories_applied": [],
+            "skipped_authored": [], "refused": [], "failed": [],
+            "subcategory_read_errors": []},
+        # NEVER AN ABSENCE. Every element, category and link category no
+        # mechanism reached, with the reason. This list is the honest answer to
+        # "is the annotation TIFF annotation on white"; an empty one is a claim
+        # and a populated one is a bound on it.
+        "unreached": [],
+    }
+
+    # ---- 1: element-level white override on every MODEL member -------
+    dwg_ids = set()
+    for elem in model_elements or []:
+        elem_id = _element_id_int(getattr(elem, "Id", None))
+        if elem_id is None:
+            record["unreached"].append({
+                "kind": "element", "id": None,
+                "reason": "element id would not read as an int, so no override "
+                          "could be applied"})
+            continue
+        record["element_overrides"]["attempted"] += 1
+        try:
+            view.SetElementOverrides(ElementId(int(elem_id)), ogs)
+            record["element_overrides"]["applied"] += 1
+        except Exception as ex:
+            failure = {"id": elem_id,
+                       "error": "{0}: {1}".format(type(ex).__name__, ex)}
+            record["element_overrides"]["failed"].append(failure)
+            record["unreached"].append({
+                "kind": "element", "id": elem_id,
+                "reason": "SetElementOverrides raised: {0}".format(failure["error"])})
+        # DWG ImportInstances are ordinary host elements and take the same
+        # element override; recorded separately because the brief asks which
+        # mechanism reached what, and "it was just an element" is the answer.
+        try:
+            if type(elem).__name__ == "ImportInstance" or (
+                    getattr(elem, "Category", None) is not None
+                    and "import" in str(getattr(elem.Category, "Name", "")).lower()):
+                dwg_ids.add(elem_id)
+        except Exception:
+            # Classification only; a miss costs a record line, not the override
+            # that already happened above. Recorded so it is not silent.
+            record["category_overrides"]["subcategory_read_errors"].append(
+                {"kind": "dwg_classification", "id": elem_id})
+    record["dwg_import_instance_ids"] = sorted(dwg_ids)
+
+    # ---- 2: linked RVT content, via PRODUCTION's own link mechanism ---
+    if link_categories:
+        from vop_interwoven.color_id_buffer import (
+            _apply_link_category_filters, _get_solid_pattern_id,
+        )
+        try:
+            colour_map, created, reused, failed = _apply_link_category_filters(
+                doc, view, view_id,
+                [(cat, WHITE) for cat in link_categories],
+                _get_solid_pattern_id(doc), diag=diag)
+            record["link_category_filters"] = {
+                "state": "value",
+                "categories": sorted(colour_map.keys()),
+                "created_filter_ids": [int(v) for v in created],
+                "reused_filter_ids": [int(v) for v in reused],
+                "failed_categories": [str(getattr(c, "Name", c)) for c in failed],
+                "note": "production's _apply_link_category_filters, called with "
+                        "white instead of a palette colour -- not a second link "
+                        "mechanism",
+            }
+            for cat in failed:
+                record["unreached"].append({
+                    "kind": "link_category",
+                    "id": str(getattr(cat, "Name", cat)),
+                    "reason": "the per-category white filter could not be created "
+                              "or applied; this category's LINKED elements render "
+                              "in their native colour"})
+        except Exception as ex:
+            record["link_category_filters"] = {
+                "state": "unavailable",
+                "reason": "{0}: {1}".format(type(ex).__name__, ex)}
+            record["unreached"].append({
+                "kind": "link_mechanism", "id": None,
+                "reason": "the link category filter mechanism raised, so NO linked "
+                          "content was suppressed: {0}: {1}".format(
+                              type(ex).__name__, ex)})
+
+    # ---- 3: category and SUBcategory white overrides ------------------
+    #
+    # An element override does not govern the element's subcategory linework, so
+    # this is a COMPLEMENT to mechanism 1 rather than a fallback for it. Revit's
+    # Element > Category precedence means the annotation pass's own paint still
+    # wins for annotation members in a shared category.
+    if subcategories:
+        model_cat_ids = {}
+        for elem in model_elements or []:
+            try:
+                cat = elem.Category
+                if cat is None:
+                    continue
+                cat_id_int = _element_id_int(cat.Id)
+                if cat_id_int is not None:
+                    model_cat_ids[cat_id_int] = cat
+            except Exception as ex:
+                # RECORDED, because the comment that used to sit here said
+                # "nothing is silently dropped" and this branch dropped it. An
+                # element whose Category will not read contributes no category to
+                # mechanism 3, so its SUBCATEGORY linework goes unsuppressed --
+                # which is the roof-fascia case, arriving by a different route.
+                # The element override above may well have succeeded; that does
+                # not cover its subcategories.
+                record["unreached"].append({
+                    "kind": "category_of_element",
+                    "id": _element_id_int(getattr(elem, "Id", None)),
+                    "reason": "the element's Category could not be read ({0}: {1}), "
+                              "so no category or subcategory override was applied "
+                              "for it".format(type(ex).__name__, ex)})
+        for cat_id_int, cat in sorted(model_cat_ids.items()):
+            subs, sub_error = _subcategories_of(cat)
+            if sub_error is not None:
+                record["category_overrides"]["subcategory_read_errors"].append(
+                    {"category_id": cat_id_int,
+                     "name": str(getattr(cat, "Name", "")), "reason": sub_error})
+                record["unreached"].append({
+                    "kind": "subcategories_of", "id": cat_id_int,
+                    "reason": "SubCategories could not be read ({0}); any "
+                              "subcategory linework in this category is "
+                              "unsuppressed".format(sub_error)})
+            for target, is_sub in ([(cat, False)] + [(sub, True) for sub in subs]):
+                target_id_int = _element_id_int(getattr(target, "Id", None))
+                if target_id_int is None:
+                    continue
+                target_id = ElementId(int(target_id_int))
+                name = str(getattr(target, "Name", ""))
+                state, blank, reason = _category_override_is_blank(view, target_id)
+                if state != "value":
+                    record["category_overrides"]["failed"].append(
+                        {"category_id": target_id_int, "name": name,
+                         "is_subcategory": is_sub,
+                         "error": "override unreadable: {0}".format(reason)})
+                    record["unreached"].append({
+                        "kind": "subcategory" if is_sub else "category",
+                        "id": target_id_int,
+                        "reason": "current override unreadable, so it was not "
+                                  "overwritten: {0}".format(reason)})
+                    continue
+                if not blank:
+                    # AUTHORED. Left alone -- overwriting it would destroy
+                    # graphics this probe cannot put back.
+                    record["category_overrides"]["skipped_authored"].append(
+                        {"category_id": target_id_int, "name": name,
+                         "is_subcategory": is_sub, "residue": reason})
+                    record["unreached"].append({
+                        "kind": "subcategory" if is_sub else "category",
+                        "id": target_id_int,
+                        "reason": "carries an AUTHORED override ({0}); not "
+                                  "overwritten, so whatever it draws is "
+                                  "unsuppressed".format(reason)})
+                    continue
+                try:
+                    view.SetCategoryOverrides(target_id, ogs)
+                    bucket = ("subcategories_applied" if is_sub
+                              else "parents_applied")
+                    record["category_overrides"][bucket].append(
+                        {"category_id": target_id_int, "name": name})
+                except Exception as ex:
+                    from vop_interwoven.color_id_buffer import (
+                        _category_override_refused,
+                    )
+                    if _category_override_refused(ex):
+                        record["category_overrides"]["refused"].append(
+                            {"category_id": target_id_int, "name": name,
+                             "is_subcategory": is_sub})
+                        record["unreached"].append({
+                            "kind": "subcategory" if is_sub else "category",
+                            "id": target_id_int,
+                            "reason": "Revit refuses category overrides on it, so "
+                                      "whatever it draws is unsuppressed"})
+                    else:
+                        record["category_overrides"]["failed"].append(
+                            {"category_id": target_id_int, "name": name,
+                             "is_subcategory": is_sub,
+                             "error": "{0}: {1}".format(type(ex).__name__, ex)})
+                        record["unreached"].append({
+                            "kind": "subcategory" if is_sub else "category",
+                            "id": target_id_int,
+                            "reason": "SetCategoryOverrides raised {0}: {1}".format(
+                                type(ex).__name__, ex)})
+
+    record["unreached_count"] = len(record["unreached"])
+    record["element_override_count"] = record["element_overrides"]["applied"]
+    record["category_override_count"] = (
+        len(record["category_overrides"]["parents_applied"])
+        + len(record["category_overrides"]["subcategories_applied"]))
+    return record
+
+
+def reverse_membership_white_suppression(doc, view, record):
+    """Undo what apply_membership_white_suppression applied.
+
+    Must be called inside an open Transaction. Returns a list of errors, empty
+    when every step succeeded.
+
+    A BLANK write is the correct restore for everything this applied, and that
+    is a property of mechanism 3's design rather than a convenience: it wrote
+    only over categories whose override was already blank, so blank IS the
+    original state. A captured OverrideGraphicSettings is never reapplied across
+    the transaction boundary -- the pattern this module's history warns about.
+    """
+    from Autodesk.Revit.DB import ElementId, OverrideGraphicSettings
+
+    errors = []
+    for entry in (record.get("category_overrides", {}).get("parents_applied", [])
+                  + record.get("category_overrides", {}).get(
+                      "subcategories_applied", [])):
+        try:
+            view.SetCategoryOverrides(
+                ElementId(int(entry["category_id"])), OverrideGraphicSettings())
+        except Exception as ex:
+            from vop_interwoven.color_id_buffer import _category_override_refused
+            if not _category_override_refused(ex):
+                errors.append({"step": "restore_category_override",
+                               "category_id": entry["category_id"],
+                               "error": "{0}: {1}".format(type(ex).__name__, ex)})
+    filters = record.get("link_category_filters") or {}
+    for filter_id in filters.get("created_filter_ids", []):
+        try:
+            delete_filter(doc, view, filter_id)
+        except Exception as ex:
+            errors.append({"step": "delete_link_filter", "filter_id": filter_id,
+                           "error": "{0}: {1}".format(type(ex).__name__, ex)})
+    # A REUSED filter definition is shared with other views or templates, so it
+    # is only removed from THIS view and never deleted -- production's own rule
+    # in _apply_link_category_filters, kept rather than re-decided.
+    for filter_id in filters.get("reused_filter_ids", []):
+        try:
+            view.RemoveFilter(ElementId(int(filter_id)))
+        except Exception as ex:
+            errors.append({"step": "remove_reused_link_filter",
+                           "filter_id": filter_id,
+                           "error": "{0}: {1}".format(type(ex).__name__, ex)})
+    return errors
 
 
 def delete_filter(doc, view, filter_id_int):
     """Remove the filter from the view and delete the element.
 
-    Must be called inside an open Transaction. Both halves are attempted and
-    the second runs even if the first raised: a filter element left in the
-    project is project-wide contamination, which is worse than a stale
-    view-filter association.
+    Must be called inside an open Transaction. Both halves are attempted and the
+    second runs even if the first raised: a filter element left in the project is
+    project-wide contamination, which is worse than a stale view-filter
+    association.
     """
     from Autodesk.Revit.DB import ElementId
     eid = ElementId(int(filter_id_int))
@@ -1009,10 +1295,6 @@ def filter_element_exists(doc, filter_id_int):
     ``None`` when there was no filter to check or the question could not be
     answered -- which ``restore_readback_verdict`` treats as ``unverified``, not
     as deleted. "Could not tell" is not "it is gone".
-
-    Asked of the document rather than inferred from the view's filter list,
-    because ``RemoveFilter`` succeeding and ``doc.Delete`` failing leaves the id
-    absent from the view and the element alive in the project.
     """
     if filter_id_int is None:
         return None
@@ -1328,8 +1610,8 @@ def snapshot_view(doc, view):
     }
 
 
-def restore_readback_verdict(before, after, expect_filter_absent=None,
-                             filter_element_still_in_project=None,
+def restore_readback_verdict(before, after, expect_filters_absent=None,
+                             filter_elements_still_in_project=None,
                              explicit_step_errors=None):
     """Which restore obligations this pair of snapshots satisfies.
 
@@ -1382,7 +1664,7 @@ def restore_readback_verdict(before, after, expect_filter_absent=None,
                                    else {"status": "not_restored",
                                          "differences": differences})
 
-    if expect_filter_absent is not None:
+    for filter_id in (expect_filters_absent or []):
         # The probe's OWN filter, checked by id rather than by the diff above.
         # A filter that was deleted from the project but left associated with
         # the view, or vice versa, can produce an identical filter MAP while
@@ -1395,30 +1677,32 @@ def restore_readback_verdict(before, after, expect_filter_absent=None,
         # precisely the case the comment above promised to catch and did not --
         # an identity claimed in prose and never asserted. So the caller also
         # resolves whether the ELEMENT still exists, and both must be clear.
+        key = "probe_filter_deleted[{0}]".format(filter_id)
+        still_in_project = (filter_elements_still_in_project or {}).get(filter_id)
         if a_filters.get("state") != "value":
-            verdict["probe_filter_deleted"] = {
+            verdict[key] = {
                 "status": "unverified",
                 "reason": a_filters.get("reason") or "view filters unreadable"}
-        elif str(int(expect_filter_absent)) in (a_filters.get("value") or {}):
-            verdict["probe_filter_deleted"] = {
+        elif str(int(filter_id)) in (a_filters.get("value") or {}):
+            verdict[key] = {
                 "status": "not_restored",
                 "reason": "the probe's white filter {0} is still on the view".format(
-                    expect_filter_absent)}
-        elif filter_element_still_in_project is True:
-            verdict["probe_filter_deleted"] = {
+                    filter_id)}
+        elif still_in_project is True:
+            verdict[key] = {
                 "status": "not_restored",
                 "reason": "the probe's white filter {0} was removed from the view "
                           "but the ParameterFilterElement still exists in the "
                           "project; this capture left project-wide "
-                          "contamination".format(expect_filter_absent)}
-        elif filter_element_still_in_project is None:
-            verdict["probe_filter_deleted"] = {
+                          "contamination".format(filter_id)}
+        elif still_in_project is None:
+            verdict[key] = {
                 "status": "unverified",
                 "reason": "the filter is off the view, but whether the "
                           "ParameterFilterElement itself was deleted could not be "
                           "determined"}
         else:
-            verdict["probe_filter_deleted"] = {"status": "restored"}
+            verdict[key] = {"status": "restored"}
 
     # A RESTORE STEP THAT RAISED IS NOT A RESTORE THAT SUCCEEDED, and this was
     # recorded and then not consulted: a failed doc.Delete landed in
@@ -1527,9 +1811,10 @@ def _run_variant(doc, view, variant, model_context, settings):
 
     group = None
     started = False
-    filter_id = None
-    offsets_before = None
-    offsets_zeroed = False
+    # The link mechanism may create SEVERAL filters (one per linked category), so
+    # the single-filter id round 1 tracked is gone. The created ids live on the
+    # suppression record and the read-back checks every one of them.
+    created_filter_ids = []
     snapshot_before = None
 
     try:
@@ -1538,43 +1823,24 @@ def _run_variant(doc, view, variant, model_context, settings):
         report["snapshot_before"] = snapshot_before
 
         # ---- variants that cannot run on this view ---------------------
-        if plan["zero_annotation_crop_offsets"]:
-            offsets_before = snapshot_before.get("annotation_crop_offsets") or {}
-            if offsets_before.get("state") != "value":
-                report["skipped"] = True
-                report["skip_reason"] = (
-                    "the annotation crop offsets could not be READ on this view, so "
-                    "zeroing them would be writing over a state this run never "
-                    "observed: {0}".format(offsets_before.get("reason")))
-                report["conclusion"] = "UNAVAILABLE"
-                return report
-
-        if plan["white_filter"]:
+        if plan["white_membership"]:
             capability = model_context["white_override_capability"]
             if capability.get("state") != "value":
                 report["skipped"] = True
                 report["skip_reason"] = (
                     "the white override cannot be built on this Revit host, so "
-                    "this variant would apply a filter that changes nothing and "
+                    "this variant would apply overrides that change nothing and "
                     "render an image indistinguishable from V0's: {0}".format(
                         capability.get("reason")))
                 report["white_override_capability"] = capability
                 report["conclusion"] = "UNAVAILABLE"
                 return report
-            categories = model_context["white_filter_categories"]
-            if categories.get("state") != "value":
+            if not model_context.get("model_members"):
                 report["skipped"] = True
                 report["skip_reason"] = (
-                    "the filterable MODEL category set is unavailable, so no white "
-                    "filter can be built: {0}".format(categories.get("reason")))
-                report["conclusion"] = "UNAVAILABLE"
-                return report
-            if not categories.get("filterable_model_ids"):
-                report["skipped"] = True
-                report["skip_reason"] = (
-                    "no filterable MODEL category resolved; a filter over an empty "
-                    "category set would render exactly like V0 while the sidecar "
-                    "said a white filter was applied")
+                    "the MODEL membership set is empty, so there is nothing to "
+                    "suppress and this variant would render exactly like V0 while "
+                    "the record said white suppression was applied")
                 report["conclusion"] = "UNAVAILABLE"
                 return report
 
@@ -1608,39 +1874,25 @@ def _run_variant(doc, view, variant, model_context, settings):
         pre_tx = Transaction(doc, "VOP Stage A anno variant pre-state: " + variant)
         pre_tx.Start()
         try:
-            if plan["zero_annotation_crop_offsets"]:
-                zeroed = dict((name, 0.0) for name in ANNOTATION_CROP_OFFSET_PROPERTIES)
-                set_annotation_crop_offsets(view, zeroed)
-                offsets_zeroed = True
-                report["pre_state"]["annotation_crop_offsets_before"] = (
-                    offsets_before.get("value"))
-                report["pre_state"]["annotation_crop_offsets_requested"] = zeroed
-            if plan["white_filter"]:
-                categories = model_context["white_filter_categories"]
-                filter_id, applied = create_white_model_filter(
-                    doc, view, categories["filterable_model_ids"],
-                    "VOP PROBE white model suppression {0} {1}".format(
-                        variant, int(time.time())))
-                report["pre_state"]["white_filter"] = {
-                    "filter_element_id": filter_id,
-                    "overrides_applied": bool(applied),
-                    "category_count": categories["category_count"],
-                    "rejected_non_filterable": categories["rejected_non_filterable"],
-                    "view_only_model_categories_included": (
-                        categories["view_only_model_ids"]
-                        if categories["include_view_only_model"] else []),
-                    "view_only_model_categories_excluded": (
-                        [] if categories["include_view_only_model"]
-                        else categories["view_only_model_ids"]),
-                    "note": "Detail Items and the shared model/detail Lines category "
-                            "carry a Model label but are ANNOTATION content. When "
-                            "included, this filter whites them out and REAL "
-                            "ANNOTATION INK IS LOST. Production's model-category "
-                            "hiding deliberately excludes them. Listed either way "
-                            "so the choice is visible in the record.",
-                    "link_visibility": model_context["link_visibility"],
-                    "authored_model_overrides": model_context["authored_model_overrides"],
+            if plan["white_membership"]:
+                suppression = apply_membership_white_suppression(
+                    doc, view, _element_id_int(view.Id),
+                    model_context["model_members"],
+                    link_categories=model_context.get("link_categories"),
+                    diag=model_context["diag"])
+                report["pre_state"]["white_membership_suppression"] = suppression
+                report["pre_state"]["membership"] = {
+                    "model_count": len(model_context["model_members"]),
+                    "annotation_count": len(model_context["annotation_members"]),
+                    "unresolved_count": model_context["unresolved_count"],
+                    "rule": "OwnerViewId+datum_category "
+                            "(split_stage_a_pass_membership -- the SAME split the "
+                            "painting uses)",
                 }
+                report["pre_state"]["link_visibility"] = model_context[
+                    "link_visibility"]
+                report["pre_state"]["authored_model_overrides"] = model_context[
+                    "authored_model_overrides"]
             commit = pre_tx.Commit()
             report["transaction_group"]["pre_state_commit_status"] = str(commit)
             if commit != TransactionStatus.Committed:
@@ -1700,20 +1952,26 @@ def _run_variant(doc, view, variant, model_context, settings):
         restore_errors = []
         restore_tx = Transaction(doc, "VOP Stage A anno variant restore: " + variant)
         restore_tx.Start()
-        if filter_id is not None:
-            try:
-                delete_filter(doc, view, filter_id)
-            except Exception as ex:
-                restore_errors.append({"step": "delete_white_filter",
-                                       "error": "{0}: {1}".format(
-                                           type(ex).__name__, ex)})
-        if offsets_zeroed and offsets_before.get("state") == "value":
-            try:
-                set_annotation_crop_offsets(view, offsets_before["value"])
-            except Exception as ex:
-                restore_errors.append({"step": "restore_annotation_crop_offsets",
-                                       "error": "{0}: {1}".format(
-                                           type(ex).__name__, ex)})
+        suppression = report.get("pre_state", {}).get(
+            "white_membership_suppression")
+        if suppression is not None:
+            # Element overrides are reversed with a BLANK, exactly as production
+            # does for its own paint, and the pass's own read-back covers them.
+            from Autodesk.Revit.DB import ElementId, OverrideGraphicSettings
+            for elem in model_context["model_members"]:
+                elem_id = _element_id_int(getattr(elem, "Id", None))
+                if elem_id is None:
+                    continue
+                try:
+                    view.SetElementOverrides(ElementId(int(elem_id)),
+                                             OverrideGraphicSettings())
+                except Exception as ex:
+                    restore_errors.append({
+                        "step": "restore_model_element_override",
+                        "element_id": elem_id,
+                        "error": "{0}: {1}".format(type(ex).__name__, ex)})
+            restore_errors.extend(
+                reverse_membership_white_suppression(doc, view, suppression))
         try:
             commit = restore_tx.Commit()
             report["transaction_group"]["restore_commit_status"] = str(commit)
@@ -1735,12 +1993,16 @@ def _run_variant(doc, view, variant, model_context, settings):
         # ---- 6: THE MEASUREMENT --------------------------------------
         snapshot_after_restore = snapshot_view(doc, view)
         report["snapshot_after_explicit_restore"] = snapshot_after_restore
-        element_still_there = filter_element_exists(doc, filter_id)
-        report["restore"]["probe_filter_element_still_in_project"] = (
-            element_still_there)
+        created_filter_ids = list(
+            ((report.get("pre_state", {}).get("white_membership_suppression") or {})
+             .get("link_category_filters") or {}).get("created_filter_ids") or [])
+        still_there = dict(
+            (fid, filter_element_exists(doc, fid)) for fid in created_filter_ids)
+        report["restore"]["probe_filter_elements_still_in_project"] = still_there
         report["restore"]["after_explicit_restore"] = restore_readback_verdict(
-            snapshot_before, snapshot_after_restore, expect_filter_absent=filter_id,
-            filter_element_still_in_project=element_still_there,
+            snapshot_before, snapshot_after_restore,
+            expect_filters_absent=created_filter_ids,
+            filter_elements_still_in_project=still_there,
             explicit_step_errors=restore_errors)
 
     except Exception as ex:
@@ -1769,9 +2031,10 @@ def _run_variant(doc, view, variant, model_context, settings):
                 # the net report the failure it just undid.
                 report["restore"]["after_rollback"] = restore_readback_verdict(
                     snapshot_before, snapshot_after_rollback,
-                    expect_filter_absent=filter_id,
-                    filter_element_still_in_project=filter_element_exists(
-                        doc, filter_id))
+                    expect_filters_absent=created_filter_ids,
+                    filter_elements_still_in_project=dict(
+                        (fid, filter_element_exists(doc, fid))
+                        for fid in created_filter_ids))
             except Exception as ex:
                 report["exceptions"].append(_exception_record("post_rollback_snapshot", ex))
 
@@ -2070,7 +2333,6 @@ def _write_combined(report, probe_dir, base):
 def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT_DPI,
                 expanded_frame_margin_in=DEFAULT_EXPANDED_FRAME_MARGIN_IN,
                 authored_override_scan_max=DEFAULT_AUTHORED_OVERRIDE_SCAN_MAX,
-                white_filter_include_view_only_model_categories=True,
                 model_reexport_check=True):
     out_dir = os.path.abspath(str(output_dir or os.getcwd()))
     _ensure_repo_import_path(out_dir)
@@ -2109,8 +2371,6 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
             "selection": list(selected), "export_dpi": float(export_dpi),
             "expanded_frame_margin_in": float(expanded_frame_margin_in),
             "authored_override_scan_max": int(authored_override_scan_max),
-            "white_filter_include_view_only_model_categories": bool(
-                white_filter_include_view_only_model_categories),
             "model_reexport_check": bool(model_reexport_check),
         },
         "model_pass": {},
@@ -2254,11 +2514,99 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
                     type(ex).__name__, ex))
 
     white_capability = white_override_capability(doc)
-    white_categories = white_filter_categories(
-        doc, include_view_only_model=bool(
-            white_filter_include_view_only_model_categories))
+
+    # ---- THE MEMBERSHIP SPLIT, resolved ONCE ---------------------------
+    #
+    # The same call the annotation pass makes, on the same view, so the set this
+    # suppresses and the set that gets painted cannot come apart. Resolved here
+    # rather than per variant because four variants sharing one split is the
+    # point: a per-variant split would let two variants suppress different sets
+    # and be compared as if they had not.
+    from vop_interwoven.revit.annotation import split_stage_a_pass_membership
+    from Autodesk.Revit.DB import FilteredElementCollector as _FEC
+    membership_error = None
+    model_members, annotation_members, unresolved = [], [], []
+    try:
+        view_elements = list(
+            _FEC(doc, view.Id).WhereElementIsNotElementType())
+        model_members, annotation_members, unresolved, membership_basis = (
+            split_stage_a_pass_membership(
+                view_elements, capture_view_id_int=view_id, diag=diag))
+    except Exception as ex:
+        membership_error = "{0}: {1}".format(type(ex).__name__, ex)
+        membership_basis = {}
+    report["membership"] = {
+        "rule": "OwnerViewId+datum_category (split_stage_a_pass_membership)",
+        "model_count": len(model_members),
+        "annotation_count": len(annotation_members),
+        "unresolved_count": len(unresolved),
+        "basis_counts": dict(
+            (k, v) for k, v in (membership_basis or {}).items()
+            if not isinstance(v, (list, dict))),
+        "datum_category_counts": (membership_basis or {}).get(
+            "datum_category_counts"),
+        "error": membership_error,
+    }
+
+    # ---- LINKED RVT categories, for mechanism 2 ------------------------
+    #
+    # Per-element override is impossible for linked content (ledger M1), so this
+    # is the one set that needs the category-filter route. Discovered through
+    # production's own linked-doc category policy rather than a second opinion
+    # about which categories a link contributes.
+    link_categories = []
+    link_report = {"state": "not_attempted", "instances": 0}
+    try:
+        from Autodesk.Revit.DB import RevitLinkInstance
+        from vop_interwoven.color_id_buffer import (
+            _model_categories_in_linked_doc, _resolve_colorable_category_predicate,
+        )
+        instances = list(_FEC(doc, view.Id).OfClass(RevitLinkInstance))
+        is_colorable, colorable_error = _resolve_colorable_category_predicate(doc)
+        seen = {}
+        uncolorable_names = []
+        for instance in instances:
+            linked_doc = None
+            try:
+                linked_doc = instance.GetLinkDocument()
+            except Exception as ex:
+                link_report.setdefault("instance_errors", []).append(
+                    "{0}: {1}".format(type(ex).__name__, ex))
+            if linked_doc is None:
+                continue
+            colorable, uncolorable = _model_categories_in_linked_doc(
+                linked_doc, is_colorable)
+            for cat in colorable:
+                cid = _element_id_int(getattr(cat, "Id", None))
+                if cid is not None and cid not in seen:
+                    seen[cid] = cat
+            uncolorable_names.extend(
+                str(getattr(cat, "Name", cat)) for cat in uncolorable)
+        link_categories = [seen[k] for k in sorted(seen)]
+        link_report = {
+            "state": "value",
+            "instances": len(instances),
+            "colorable_category_count": len(link_categories),
+            "colorable_category_names": [str(getattr(c, "Name", c))
+                                         for c in link_categories],
+            # REPORTING ONLY, and an accepted gap: nothing capture-side
+            # suppresses a category Stage A cannot colour. Named so a
+            # non-white pixel in a linked area has somewhere to point.
+            "uncolorable_category_names": sorted(set(uncolorable_names)),
+            "colorable_predicate_error": colorable_error,
+        }
+        if not instances:
+            link_report["note"] = (
+                "this view has NO linked RVT instances, so mechanism 2 is built "
+                "but UNEXERCISED here. A clean run on this view is not evidence "
+                "that the link path works.")
+    except Exception as ex:
+        link_report = {"state": "unavailable",
+                       "reason": "{0}: {1}".format(type(ex).__name__, ex)}
+    report["link_categories"] = link_report
+
     model_element_ids = []
-    for elem in elements or []:
+    for elem in model_members or elements or []:
         value = _element_id_int(getattr(elem, "Id", None))
         if value is not None:
             model_element_ids.append(value)
@@ -2269,8 +2617,8 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
         authored = _unavailable("{0}: {1}".format(type(ex).__name__, ex))
 
     frame_prime = {"state": "unavailable",
-                   "reason": "V3 was not requested for this run"}
-    if V3 in selected:
+                   "reason": "V6 was not requested for this run"}
+    if V6 in selected:
         if view_basis is None:
             frame_prime = {"state": "unavailable",
                            "reason": "no view basis, so no driver bbox can be "
@@ -2290,8 +2638,11 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
     model_context = {
         "diag": diag, "raster": raster, "geom": geom,
         "model_tiff_path": model_tiff_path, "model_tiff_sha256": model_tiff_sha,
-        "white_filter_categories": white_categories,
         "white_override_capability": white_capability,
+        "model_members": model_members,
+        "annotation_members": annotation_members,
+        "unresolved_count": len(unresolved),
+        "link_categories": link_categories,
         "link_visibility": link_visibility_report(doc, view),
         "authored_model_overrides": authored,
         "frame_prime": frame_prime,
@@ -2308,7 +2659,6 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
         model_repeat_control = _model_repeat_export(
             doc, view, elements, raster, export_dpi, probe_dir, diag, "control")
     report["model_repeat_control"] = model_repeat_control
-    report["white_filter_categories"] = white_categories
     report["white_override_capability"] = white_capability
     report["link_visibility"] = model_context["link_visibility"]
     report["authored_model_overrides"] = authored
@@ -2487,7 +2837,6 @@ def model_reexport_verdict(original_sha, control, after_variants):
 def run_probe(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT_DPI,
               expanded_frame_margin_in=DEFAULT_EXPANDED_FRAME_MARGIN_IN,
               authored_override_scan_max=DEFAULT_AUTHORED_OVERRIDE_SCAN_MAX,
-              white_filter_include_view_only_model_categories=True,
               model_reexport_check=True, repo_root=None):
     if repo_root:
         root = os.path.abspath(os.path.expanduser(str(repo_root)))
@@ -2498,7 +2847,7 @@ def run_probe(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT_D
     native = _run_native(
         raw_view, output_dir, selection, export_dpi, expanded_frame_margin_in,
         authored_override_scan_max,
-        white_filter_include_view_only_model_categories, model_reexport_check)
+        model_reexport_check)
     variants = native.get("variants", [])
     executed = [entry for entry in variants if not entry.get("skipped")]
     rollback_ok = bool(executed) and all(
@@ -2520,8 +2869,6 @@ def run_probe(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT_D
          "export_dpi": export_dpi,
          "expanded_frame_margin_in": expanded_frame_margin_in,
          "authored_override_scan_max": authored_override_scan_max,
-         "white_filter_include_view_only_model_categories": (
-             white_filter_include_view_only_model_categories),
          "model_reexport_check": model_reexport_check},
         _probe_contract().view_identity(raw_view), native, artifacts,
         "succeeded" if rollback_ok else ("not_started" if not executed else "failed"),
