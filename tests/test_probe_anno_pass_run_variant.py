@@ -30,10 +30,13 @@ from tests.dynamo import probe_stage_a_anno_pass_variants as probe
 from tests.stage_a_capture_fakes import (
     FakeDiag, FakeElement, FakeViewPlan, install_fake_revit_db,
 )
+from tests.stage_a_capture_fakes import FakeCategory
 from tests.test_stage_a_annotation_pass_probe_switches import (
     ANNO_CAT, MODEL_CAT, OTHER_MODEL_CAT, VIEW_ID, _BBox, _SizedDoc, _elements,
     _model_pass_elements, _raster,
 )
+
+VIEWERS_CAT = FakeCategory("Views", -2000279, cat_type="Annotation")
 
 _STATUS = types.SimpleNamespace(Started="Started", Committed="Committed",
                                 RolledBack="RolledBack")
@@ -128,6 +131,9 @@ def _run(tmp_path, monkeypatch, variant):
     # is white" has something to be true of.
     elements.append(FakeElement(1003, MODEL_CAT))
     view = _ProbeView(VIEW_ID)
+    # The view's own crop-region element: OST_Viewers, named like the view, and
+    # a MODEL member by membership (no owner view).
+    elements.append(FakeElement(1004, VIEWERS_CAT, name=view.Name))
     doc = _SizedDoc(elements=elements, link_instances=[],
                     categories=[MODEL_CAT, OTHER_MODEL_CAT, ANNO_CAT])
     doc.IsModifiable = False
@@ -177,6 +183,8 @@ def _run(tmp_path, monkeypatch, variant):
             "authored_crop": probe.crop_region_record(view, raster.view_basis),
             "fiducial_choice": probe.choose_fiducial_pair(
                 candidates, (20.0, 15.0, 80.0, 60.0), 0.05),
+            "crop_region_elements": probe.crop_region_elements(
+                doc, view, model_members),
         }
         del _LOG[:]
         doc.on_export_image = _at_export
@@ -270,3 +278,23 @@ def test_every_model_override_is_blank_after_the_variant(tmp_path, monkeypatch):
     report, view, exports, doc = _run(tmp_path, monkeypatch, probe.V8)
     for eid in (1001, 1002, 1003):
         assert _colour_of(view.element_overrides[eid]) is None, eid
+
+
+def test_v8_leaves_the_crop_region_element_untouched_and_v7_whitens_it(
+        tmp_path, monkeypatch):
+    """Round 2 found the boundary in V0 and in neither V7 nor V8 -- the shape
+    of membership suppression whitening F1's own ruler. V8 now leaves the
+    view's crop-region element alone, in BOTH directions (no white override,
+    no blank restore write); V7 is the control that still whitens it.
+    Mutation: drop exclude_ids at the call site, or the restore-loop skip."""
+    report, view, exports, doc = _run(tmp_path / "v8", monkeypatch, probe.V8)
+    assert [e for e in _LOG if e[0] == "override" and e[1] == 1004] == []
+    assert exports[-1]["overrides"].get(1004) is None
+    suppression = report["pre_state"]["white_membership_suppression"]
+    assert suppression["excluded_element_ids"] == [1004]
+    assert report["conclusion"] == "RAN", report["exceptions"]
+
+    report7, view7, exports7, _doc = _run(tmp_path / "v7", monkeypatch, probe.V7)
+    assert exports7[-1]["overrides"].get(1004) == (255, 255, 255)
+    assert report7["pre_state"]["white_membership_suppression"][
+        "excluded_element_ids"] == []

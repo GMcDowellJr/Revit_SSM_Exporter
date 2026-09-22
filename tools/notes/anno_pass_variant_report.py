@@ -713,59 +713,96 @@ BOUNDARY_SPAN_TOLERANCE_FRACTION = 0.02
 BOUNDARY_SPAN_TOLERANCE_MIN_PX = 3.0
 
 
-def _row_longest_run(mask_row: np.ndarray) -> tuple[int, int, int]:
-    """(length, first, last) of the longest True run in a 1-D mask."""
+# A drawn edge is crossed by annotation (a grid, a dimension, a tag leader)
+# painted in a palette colour, which breaks its run into pieces. Gaps up to
+# this many pixels -- or this fraction of the axis, whichever is larger -- are
+# bridged. Round 2's plan capture is why: its crop's right edge was cut into
+# pieces too short to qualify, and a rectangle was closed on an interior line.
+BOUNDARY_GAP_MIN_PX = 8
+BOUNDARY_GAP_FRACTION = 0.01
+
+
+def boundary_gap_px(extent):
+    return max(BOUNDARY_GAP_MIN_PX, int(BOUNDARY_GAP_FRACTION * extent))
+
+
+def _row_longest_run(mask_row: np.ndarray, gap: int = 0) -> tuple[int, int, int]:
+    """(length, first, last) of the longest True run in a 1-D mask, where
+    False gaps of up to ``gap`` pixels do not break a run. ``length`` is the
+    span, gaps included."""
     if not mask_row.any():
         return (0, -1, -1)
     padded = np.concatenate(([0], mask_row.astype(np.int8), [0]))
     delta = np.diff(padded)
     starts = np.flatnonzero(delta == 1)
-    ends = np.flatnonzero(delta == -1)
-    lengths = ends - starts
-    index = int(np.argmax(lengths))
-    return (int(lengths[index]), int(starts[index]), int(ends[index]) - 1)
+    ends = np.flatnonzero(delta == -1)          # exclusive
+    best = (0, -1, -1)
+    run_start, run_end = int(starts[0]), int(ends[0])
+    for start, end in zip(starts[1:].tolist(), ends[1:].tolist()):
+        if start - run_end <= gap:
+            run_end = end
+            continue
+        if run_end - run_start > best[0]:
+            best = (run_end - run_start, run_start, run_end - 1)
+        run_start, run_end = start, end
+    if run_end - run_start > best[0]:
+        best = (run_end - run_start, run_start, run_end - 1)
+    return best
 
 
-def scan_axis_lines(path, excluded_rgbs):
+def scan_axis_lines(path, excluded_rgbs, boundary_rgbs=()):
     """One chunked pass: the longest candidate run in every row and column.
 
-    ``excluded_rgbs`` are the colours that are NOT boundary candidates (the
-    palette, the fiducials); white is always excluded. Returns per-row and
-    per-column ``(length, first, last)`` plus the image size.
+    A candidate is a GREY pixel (all channels within GREY_TOLERANCE) that is
+    not white and not in ``excluded_rgbs`` (the palette, the fiducials) -- or
+    any pixel in ``boundary_rgbs``, the colours a capture is KNOWN to have
+    painted its crop-region element in. Grey only, because the anti-aliased
+    fringe of a painted grid line is a palette-to-white blend: coloured, off
+    the palette, straight and long, and without this it would read as an edge.
+    Runs bridge gaps of ``boundary_gap_px`` along their own axis.
     """
-    keys_sorted = np.array(sorted({_pack(rgb) for rgb in excluded_rgbs}
-                                  | {_pack(WHITE)}), dtype=np.int64)
+    excluded = {_pack(rgb) for rgb in excluded_rgbs} | {_pack(WHITE)}
+    forced = {_pack(rgb) for rgb in boundary_rgbs or ()}
+    excluded -= forced
+    keys_sorted = np.array(sorted(excluded), dtype=np.int64)
+    forced_sorted = np.array(sorted(forced), dtype=np.int64)
     rows = []
     with Image.open(path) as handle:
         image = handle.convert("RGB")
         width, height = image.size
-        col_cur = np.zeros(width, dtype=np.int64)
-        col_cur_start = np.zeros(width, dtype=np.int64)
+        row_gap = boundary_gap_px(width)
+        col_gap = boundary_gap_px(height)
+        col_start = np.zeros(width, dtype=np.int64)
+        col_last = np.full(width, -(10 ** 9), dtype=np.int64)
         col_best = np.zeros(width, dtype=np.int64)
         col_best_start = np.full(width, -1, dtype=np.int64)
         col_best_end = np.full(width, -1, dtype=np.int64)
         for top in range(0, height, CHUNK_ROWS):
             bottom = min(height, top + CHUNK_ROWS)
-            block = np.asarray(image.crop((0, top, width, bottom)), dtype=np.uint8)
-            keys = ((block[:, :, 0].astype(np.int64) << 16)
-                    | (block[:, :, 1].astype(np.int64) << 8)
-                    | block[:, :, 2].astype(np.int64))
+            block = np.asarray(image.crop((0, top, width, bottom)), dtype=np.int64)
+            keys = (block[:, :, 0] << 16) | (block[:, :, 1] << 8) | block[:, :, 2]
             idx = np.clip(np.searchsorted(keys_sorted, keys), 0, len(keys_sorted) - 1)
-            candidate = keys_sorted[idx] != keys
+            not_excluded = keys_sorted[idx] != keys
+            grey = (block.max(axis=2) - block.min(axis=2)) <= GREY_TOLERANCE
+            candidate = not_excluded & grey
+            if len(forced_sorted):
+                candidate |= np.isin(keys, forced_sorted)
             for offset in range(candidate.shape[0]):
                 row = candidate[offset]
-                rows.append(_row_longest_run(row))
+                rows.append(_row_longest_run(row, row_gap))
                 y = top + offset
-                started = row & (col_cur == 0)
-                col_cur_start[started] = y
-                col_cur = np.where(row, col_cur + 1, 0)
-                better = col_cur > col_best
-                col_best[better] = col_cur[better]
-                col_best_start[better] = col_cur_start[better]
+                restart = row & ((y - col_last - 1) > col_gap)
+                col_start[restart] = y
+                col_last[row] = y
+                length = col_last - col_start + 1
+                better = row & (length > col_best)
+                col_best[better] = length[better]
+                col_best_start[better] = col_start[better]
                 col_best_end[better] = y
     cols = [(int(col_best[x]), int(col_best_start[x]), int(col_best_end[x]))
             for x in range(width)]
-    return {"image_w": width, "image_h": height, "rows": rows, "cols": cols}
+    return {"image_w": width, "image_h": height, "rows": rows, "cols": cols,
+            "gap_px": {"row": row_gap, "col": col_gap}}
 
 
 def group_bands(runs, min_run):
@@ -807,8 +844,16 @@ def mark_border_clipped(bands, extent):
     return bands
 
 
-def _covers(band, lo, hi, tolerance):
-    return band["span"][0] <= lo + tolerance and band["span"][1] + 1 >= hi - tolerance
+def _spans(band, lo, hi, tolerance):
+    """The band runs from ``lo`` to ``hi`` and STOPS there, within tolerance.
+
+    Both ends, not just coverage. A crop edge ends at its corners; a band that
+    merely covers the gap between two perpendicular lines and runs on past one
+    of them is closing a rectangle on the wrong line -- which is exactly what
+    round 2's plan capture did, at u/v isotropy 0.49.
+    """
+    return (abs(band["span"][0] - lo) <= tolerance
+            and abs(band["span"][1] + 1 - hi) <= tolerance)
 
 
 def pick_rectangle(row_bands, col_bands, image_w, image_h):
@@ -834,10 +879,10 @@ def pick_rectangle(row_bands, col_bands, image_w, image_h):
                 for right in cols:
                     if right["centre"] <= left["centre"]:
                         continue
-                    if not (_covers(top, left["centre"], right["centre"], tol_x)
-                            and _covers(bottom, left["centre"], right["centre"], tol_x)
-                            and _covers(left, top["centre"], bottom["centre"], tol_y)
-                            and _covers(right, top["centre"], bottom["centre"], tol_y)):
+                    if not (_spans(top, left["centre"], right["centre"], tol_x)
+                            and _spans(bottom, left["centre"], right["centre"], tol_x)
+                            and _spans(left, top["centre"], bottom["centre"], tol_y)
+                            and _spans(right, top["centre"], bottom["centre"], tol_y)):
                         continue
                     area = ((right["centre"] - left["centre"])
                             * (bottom["centre"] - top["centre"]))
@@ -1535,7 +1580,10 @@ def analyze_capture(sidecar_path, tiff_path, model_tiff_sha=None,
     measurements["offpalette"] = off
 
     # ---- (7) F1: the crop boundary ------------------------------------
-    line_scan = scan_axis_lines(tiff_path, palette + fiducial_rgbs)
+    crop_ids = set(int(v) for v in context.get("crop_element_ids") or [])
+    crop_rgbs = [rgb for eid, rgb in record["color_map"].items() if eid in crop_ids]
+    line_scan = scan_axis_lines(tiff_path, palette + fiducial_rgbs,
+                                boundary_rgbs=crop_rgbs)
     boundary = recover_crop_boundary(
         line_scan, context.get("authored_shape"), context.get("authored_crop_uv"))
     boundary["probe_turned_it_on"] = bool(record.get("probe_crop_boundary"))
@@ -1650,8 +1698,20 @@ def _model_anchored_fiducials(fiducials, blobs, image_w, image_h, context):
         return {"status": "unavailable",
                 "reason": "the model sidecar records no usable bounds_xy"}
     anchored = []
+    ink_ratio = []
     for fiducial in fiducials:
         blob = model_scan["blobs"].get(_pack(wanted[int(fiducial["id"])]))
+        anno_blob = blobs.get(_pack(tuple(int(c) for c in fiducial.get("rgb") or ())))
+        # THE PREMISE, measured: the same element must draw the same shape in
+        # both captures. Round 2's plan wall drew 463 px in the annotation
+        # capture (cut region lost to the white category override) and far more
+        # in the model one, and the anchored fit came back at u/v 0.63 with a
+        # zero residual -- two points per edge, nothing to disagree with.
+        ink_ratio.append({
+            "id": fiducial.get("id"),
+            "annotation_px": anno_blob["pixel_count"] if anno_blob else None,
+            "model_px": blob["pixel_count"] if blob else None,
+        })
         entry = dict(fiducial)
         entry["rect_uv"] = (list(pixel_rect_to_uv(blob["pixel_bbox"], lattice))
                             if blob is not None and not blob["touches_border"]
@@ -1659,11 +1719,12 @@ def _model_anchored_fiducials(fiducials, blobs, image_w, image_h, context):
         anchored.append(entry)
     out = fiducial_fit(anchored, blobs, image_w, image_h)
     out["model_drawn_uv"] = [a["rect_uv"] for a in anchored]
+    out["ink_pixels_annotation_vs_model"] = ink_ratio
     out["premise"] = "the model capture registers on its recorded bounds_xy"
     return out
 
 
-def analyze_model_boundary(model_sidecar, model_tiff):
+def analyze_model_boundary(model_sidecar, model_tiff, crop_element_ids=()):
     """F1 in the MODEL half of V8: is the boundary there too, and where?
 
     The model pass sets the crop to its snapped crop A for its own export, so
@@ -1684,9 +1745,16 @@ def analyze_model_boundary(model_sidecar, model_tiff):
     palette = sorted(set(tuple(int(c) for c in rgb)
                          for rgb in (model.get("color_assignment_map") or {}).values()))
     bounds = model.get("bounds_xy")
-    line_scan = scan_axis_lines(model_tiff, palette)
+    # The model pass paints every model member it collects -- the crop-region
+    # element included, if it is one -- so the boundary can be a PALETTE colour
+    # here. Round 2's elevation model capture found no closing rectangle.
+    colour_map = model.get("color_assignment_map") or {}
+    crop_rgbs = [tuple(int(c) for c in colour_map[str(eid)])
+                 for eid in crop_element_ids or () if str(eid) in colour_map]
+    line_scan = scan_axis_lines(model_tiff, palette, boundary_rgbs=crop_rgbs)
     out = recover_crop_boundary(line_scan, None, bounds)
     out["drawn_at_uv"] = bounds
+    out["crop_element_colours"] = [list(rgb) for rgb in crop_rgbs]
     out["probe_crop_boundary"] = model.get("probe_crop_boundary")
     lattice = model_lattice_mapping(bounds, line_scan["image_w"], line_scan["image_h"])
     out["lattice_mapping"] = lattice
@@ -1869,6 +1937,8 @@ def capture_context(run, capture):
         "model_sidecar": capture.get("own_model_sidecar") or run.get("model_sidecar"),
         "model_tiff": capture.get("own_model_tiff") or run.get("model_tiff"),
         "achieved_fpp_ft": geometry.get("achieved_fpp_ft"),
+        "crop_element_ids": (combined.get("crop_region_elements") or {}).get(
+            "crop_element_ids") or [],
     }
 
 
@@ -2078,6 +2148,21 @@ def _render_f1_f2(analyses):
             f2.get("model_anchored")))
     lines.extend(_table(["fit", "px/ft u", "px/ft v", "u/v isotropy",
                          "residual max px u / v", ""], rows or [["--"] * 6]))
+    lines.append("")
+    for item in analyses:
+        anchored = ((item["analysis"]["measurements"].get("fiducials") or {})
+                    .get("model_anchored") or {})
+        for entry in anchored.get("ink_pixels_annotation_vs_model") or []:
+            lines.append("- `{0}` fiducial {1}: {2} px in the annotation capture, {3} "
+                         "px in the model capture{4}".format(
+                             item["variant"], entry.get("id"),
+                             entry.get("annotation_px"), entry.get("model_px"),
+                             " -- the element did NOT draw the same shape in both, "
+                             "so the model-anchored row does not hold"
+                             if (entry.get("annotation_px") and entry.get("model_px")
+                                 and abs(entry["annotation_px"] - entry["model_px"])
+                                 > 0.5 * max(entry["annotation_px"], entry["model_px"]))
+                             else ""))
     lines.append("")
     lines.append("F2 fits each fiducial's INK EDGES against its recorded extent: "
                  "four points per axis for the pair, so it has a residual. The "
@@ -2774,8 +2859,9 @@ def build_report(targets, overlay_enabled=True, json_records=None):
                     context=capture_context(run, capture))
                 if capture.get("own_model_sidecar") and capture.get("own_model_tiff"):
                     analysis["measurements"]["model_crop_boundary"] = (
-                        analyze_model_boundary(capture["own_model_sidecar"],
-                                               capture["own_model_tiff"]))
+                        analyze_model_boundary(
+                            capture["own_model_sidecar"], capture["own_model_tiff"],
+                            capture_context(run, capture).get("crop_element_ids")))
                 analyses.append({"variant": capture["variant"],
                                  "analysis": analysis,
                                  "variant_report": capture.get("variant_report")})

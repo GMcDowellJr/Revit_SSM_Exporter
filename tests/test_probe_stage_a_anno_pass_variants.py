@@ -482,6 +482,14 @@ def test_paint_fiducials_paints_the_reserved_colours_and_records_failures():
     assert record["failed"][0]["id"] == 9
     assert "refused" in record["failed"][0]["error"]
     assert 5 in view.element_overrides
+    # CUT graphics too, in the reserved colour. Round 2 painted projection only,
+    # so a wall cut in plan kept the white CATEGORY cut override and showed a
+    # sliver; mutation: go back to _build_flat_color_ogs.
+    painted = view.element_overrides[5]
+    assert (painted.CutLineColor.r, painted.CutLineColor.g, painted.CutLineColor.b) == \
+        probe.FIDUCIAL_COLOURS[0]
+    assert (painted.CutForegroundPatternColor.r, painted.CutForegroundPatternColor.g,
+            painted.CutForegroundPatternColor.b) == probe.FIDUCIAL_COLOURS[0]
 
 # ======================================================================
 # _diff  --  the snapshot comparator
@@ -1665,7 +1673,7 @@ class _SuppressionView(FakeViewPlan):
         FakeViewPlan.SetCategoryOverrides(self, cat_id, ogs)
 
 
-def _suppress(view=None, elements=None, link_categories=None):
+def _suppress(view=None, elements=None, link_categories=None, exclude_ids=None):
     """Run the real suppression against the fake DB."""
     roof_with_fascia = FakeCategory("Roofs", -2000035, cat_type="Model")
     roof_with_fascia.SubCategories = [_sub(-2000039, "Fascia"),
@@ -1680,7 +1688,8 @@ def _suppress(view=None, elements=None, link_categories=None):
                   categories=[roof_with_fascia, _LINES])
     with install_fake_revit_db():
         record = probe.apply_membership_white_suppression(
-            doc, view, 4242, elements, link_categories=link_categories)
+            doc, view, 4242, elements, link_categories=link_categories,
+            exclude_ids=exclude_ids)
     return record, view, doc
 
 
@@ -1818,3 +1827,53 @@ def test_a_retired_variant_name_is_refused_by_the_registry():
         with pytest.raises(ValueError) as excinfo:
             _adapter().validate_settings({"selection": name}, "C:/out")
         assert name in str(excinfo.value)
+
+
+# ======================================================================
+# F1's ruler: the view's own crop-region element
+# ======================================================================
+
+def _viewer(elem_id, name, owner=None):
+    from tests.stage_a_capture_fakes import FakeCategory, FakeElement
+    return FakeElement(elem_id, FakeCategory("Views", -2000279, cat_type="Annotation"),
+                       name=name, owner_view_id=owner)
+
+
+def test_the_crop_region_element_is_the_viewer_named_like_the_view():
+    from tests.stage_a_capture_fakes import (
+        FakeCategory, FakeDoc, FakeElement, FakeViewPlan, install_fake_revit_db,
+    )
+    view = FakeViewPlan(view_id=77, name="Plan A")
+    members = [_viewer(1, "Plan A"), _viewer(2, "Section 3"),
+               FakeElement(3, FakeCategory("Walls", 10))]
+    with install_fake_revit_db():
+        record = probe.crop_region_elements(FakeDoc(elements=members), view, members)
+    assert record["crop_element_ids"] == [1]
+    assert record["viewers_in_model_set_count"] == 2
+
+
+def test_no_matching_viewer_is_an_empty_finding_not_an_error():
+    from tests.stage_a_capture_fakes import FakeDoc, FakeViewPlan, install_fake_revit_db
+    view = FakeViewPlan(view_id=77, name="Plan A")
+    with install_fake_revit_db():
+        record = probe.crop_region_elements(FakeDoc(elements=[]), view, [])
+    assert record["state"] == "value"
+    assert record["crop_element_ids"] == []
+
+
+def test_an_excluded_element_gets_no_override_and_lends_no_category():
+    """Excluded means untouched: no element override, and its category is not
+    overridden on its account -- a category override is exactly how its
+    linework would still go white."""
+    viewer = _viewer(8001, "Plan A")
+    record, view, _doc = _suppress(
+        elements=[viewer, FakeElement(9003, _LINES)],
+        view=_SuppressionView(4242))
+    assert 8001 in view.element_override_writes
+    record_x, view_x, _doc = _suppress(
+        elements=[_viewer(8001, "Plan A"), FakeElement(9003, _LINES)],
+        view=_SuppressionView(4242), exclude_ids=[8001])
+    assert 8001 not in view_x.element_override_writes
+    assert -2000279 not in view_x.category_override_writes
+    assert record_x["excluded_element_ids"] == [8001]
+    assert all(entry.get("id") != 8001 for entry in record_x["unreached"])

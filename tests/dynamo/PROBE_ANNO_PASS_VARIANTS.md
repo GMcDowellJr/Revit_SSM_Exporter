@@ -17,6 +17,16 @@ Round 1's measured output is in
 
 ---
 
+## Round 2 measured — read first
+
+`tools/notes/ROUND2_ANNO_PASS_VARIANTS_FINDINGS.md`. Two of that run's figures
+are invalid (the plan V0 F1 rectangle and the plan V8 model-anchored F2), and
+the missing V7/V8 crop boundary points at the white suppression, not at
+ImageExportOptions. Probe `2026-09-22.3` leaves the crop-region element
+unsuppressed in V8 and paints fiducials with cut graphics; re-run with it.
+
+---
+
 ## The decision this round is built on
 
 **THE CAPTURE DOES NOT MODIFY THE CROP.** Not the model crop region, not the

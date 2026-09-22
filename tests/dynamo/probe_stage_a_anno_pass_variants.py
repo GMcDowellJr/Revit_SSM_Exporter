@@ -106,7 +106,7 @@ def _probe_contract():
 
 
 PROBE_NAME = "stage_a_anno_pass_variants"
-PROBE_VERSION = "2026-09-22.2"
+PROBE_VERSION = "2026-09-22.3"
 
 V0 = "v0_control"
 V7 = "v7_no_crop"
@@ -1082,8 +1082,14 @@ def white_override_capability(doc):
 WHITE = (255, 255, 255)
 
 
-def _white_override_settings(doc):
-    """A white ``OverrideGraphicSettings``: lines, and all four patterns.
+def _white_override_settings(doc, colour=WHITE):
+    """A solid ``OverrideGraphicSettings`` in ``colour`` (white by default):
+    projection AND cut lines, and all four patterns.
+
+    Also what paints the F2 fiducials. Round 2 painted them with production's
+    ``_build_flat_color_ogs``, which sets no CUT graphics -- so a cut element
+    (a wall in plan) kept the WHITE category cut override from mechanism 3 and
+    showed only its projection sliver: 463 px of a 10.6 x 1 ft wall.
 
     Assumes ``white_override_capability(doc)`` already said "value"; it raises
     rather than degrading if that is not so, because a partially-applied white
@@ -1097,7 +1103,7 @@ def _white_override_settings(doc):
             "the white override cannot be built on this host: {0}".format(
                 capability.get("reason")))
     solid_id = _get_solid_pattern_id(doc)
-    white = Color(WHITE[0], WHITE[1], WHITE[2])
+    white = Color(int(colour[0]), int(colour[1]), int(colour[2]))
     ogs = OverrideGraphicSettings()
     ogs.SetProjectionLineColor(white)
     ogs.SetCutLineColor(white)
@@ -1230,7 +1236,7 @@ def _subcategories_of(cat):
 
 def apply_membership_white_suppression(doc, view, view_id, model_elements,
                                        link_categories=None, diag=None,
-                                       subcategories=True):
+                                       subcategories=True, exclude_ids=None):
     """Suppress the MODEL membership set to white. Four mechanisms, one record.
 
     Must be called inside an open Transaction. Returns the record described at
@@ -1242,11 +1248,22 @@ def apply_membership_white_suppression(doc, view, view_id, model_elements,
 
     ``link_categories`` is ``[(category, ...), ...]`` for linked RVT content, or
     None to skip mechanism 2.
+
+    ``exclude_ids`` are model members deliberately left UNTOUCHED -- by
+    mechanism 1 and as a source of categories for mechanism 3 -- and named in
+    ``excluded_element_ids``. V8 uses it for the view's own crop-region element:
+    round 2 found the boundary in V0 and in neither V7 nor V8, which is what
+    whitening that element would do (see crop_region_elements).
     """
     from Autodesk.Revit.DB import ElementId
 
     ogs = _white_override_settings(doc)
+    excluded = set(int(v) for v in (exclude_ids or ()))
+    model_elements = [
+        elem for elem in (model_elements or [])
+        if _element_id_int(getattr(elem, "Id", None)) not in excluded]
     record = {
+        "excluded_element_ids": sorted(excluded),
         "mechanisms": ["element_override", "link_category_filter",
                        "category_and_subcategory_override"],
         "element_overrides": {"applied": 0, "attempted": 0, "failed": []},
@@ -1258,6 +1275,8 @@ def apply_membership_white_suppression(doc, view, view_id, model_elements,
             "parents_applied": [], "subcategories_applied": [],
             "skipped_authored": [], "refused": [], "failed": [],
             "subcategory_read_errors": []},
+        # Deliberately excluded ids are NOT unreached: they were chosen, and
+        # excluded_element_ids above names them.
         # NEVER AN ABSENCE. Every element, category and link category no
         # mechanism reached, with the reason. This list is the honest answer to
         # "is the annotation TIFF annotation on white"; an empty one is a claim
@@ -1726,6 +1745,54 @@ def crop_region_record(view, view_basis, diag=None):
     return record
 
 
+def crop_region_elements(doc, view, model_members):
+    """The view's own crop-region element(s) among the MODEL members.
+
+    UNCONFIRMED API, recorded as such: the crop region is drawn by an element
+    of category ``OST_Viewers`` that carries the view's own name (the Building
+    Coder's documented lookup). Round 2 is the evidence for why this matters:
+    the boundary drew in V0 -- whose sidecar says the probe never turned it on,
+    so the views already show their crop -- and in NEITHER V7 NOR V8, including
+    V8 with CropBoxVisible explicitly on. Membership suppression whitens every
+    model member; if this element is one, it whitens F1's own ruler.
+
+    Returns a record: every OST_Viewers model member with its name and owner
+    view, and ``crop_element_ids`` -- the ones named like this view. An empty
+    list is a finding (the lookup did not hold on this host), not a clean one.
+    """
+    try:
+        from Autodesk.Revit.DB import BuiltInCategory
+        viewers_id = int(getattr(BuiltInCategory, "OST_Viewers"))
+    except Exception as ex:
+        return {"state": "unavailable",
+                "reason": "OST_Viewers did not resolve: {0}: {1}".format(
+                    type(ex).__name__, ex),
+                "crop_element_ids": []}
+    view_name = str(getattr(view, "Name", "") or "")
+    viewers = []
+    for elem in model_members or []:
+        try:
+            cat = elem.Category
+            if cat is None or _element_id_int(cat.Id) != viewers_id:
+                continue
+            viewers.append({
+                "id": _element_id_int(elem.Id),
+                "name": str(getattr(elem, "Name", "") or ""),
+                "owner_view_id": _element_id_int(getattr(elem, "OwnerViewId", None)),
+            })
+        except Exception as ex:
+            viewers.append({"id": _element_id_int(getattr(elem, "Id", None)),
+                            "error": "{0}: {1}".format(type(ex).__name__, ex)})
+    crop_ids = [v["id"] for v in viewers
+                if v.get("name") == view_name and v.get("id") is not None]
+    return {"state": "value", "view_name": view_name,
+            "viewers_in_model_set": viewers,
+            "viewers_in_model_set_count": len(viewers),
+            "crop_element_ids": crop_ids,
+            "lookup": "model members of OST_Viewers named like the view "
+                      "(UNCONFIRMED API)"}
+
+
 def collect_fiducial_candidates(view, view_basis, model_members, scan_max,
                                 diag=None, view_id=None):
     """Model members with a UV rectangle, bounded, for choose_fiducial_pair.
@@ -1781,24 +1848,23 @@ def paint_fiducials(doc, view, pair):
     white ones. Restore is the white suppression's own blank write over every
     model member, which covers both.
 
-    Uses production's ``_build_flat_color_ogs`` -- the same flat solid paint
-    the passes use -- so a fiducial renders exactly like an ID-buffer element.
+    The SAME override the white suppression uses, in the reserved colour:
+    projection and cut lines and all four patterns. Anything less leaves the
+    white CATEGORY cut override (mechanism 3) winning on a cut element, which is
+    what round 2 measured on the plan (see _white_override_settings).
     """
-    from Autodesk.Revit.DB import Color, ElementId
-    from vop_interwoven.color_id_buffer import (
-        _build_flat_color_ogs, _get_solid_pattern_id,
-    )
-    solid = _get_solid_pattern_id(doc)
-    record = {"painted": [], "failed": [], "painted_count": 0}
+    from Autodesk.Revit.DB import ElementId
+    record = {"painted": [], "failed": [], "painted_count": 0,
+              "override": "_white_override_settings(colour): projection + cut "
+                          "lines, surface + cut patterns"}
     for candidate, rgb in zip(pair or [], FIDUCIAL_COLOURS):
         entry = {"id": int(candidate["id"]), "rgb": list(rgb),
                  "rect_uv": [float(v) for v in candidate["rect"]],
                  "category": candidate.get("category"),
                  "bbox_source": candidate.get("bbox_source")}
         try:
-            view.SetElementOverrides(
-                ElementId(int(candidate["id"])),
-                _build_flat_color_ogs(solid, Color(rgb[0], rgb[1], rgb[2])))
+            view.SetElementOverrides(ElementId(int(candidate["id"])),
+                                     _white_override_settings(doc, colour=rgb))
             record["painted"].append(entry)
         except Exception as ex:
             entry["error"] = "{0}: {1}".format(type(ex).__name__, ex)
@@ -2381,11 +2447,17 @@ def _run_variant(doc, view, variant, model_context, settings):
         try:
             if plan["white_membership"]:
                 t_suppress = time.time()
+                # F1's ruler is left alone: the crop-region element is NOT
+                # whitened when this variant turns the boundary on.
+                exclude_ids = (
+                    (model_context.get("crop_region_elements") or {}).get(
+                        "crop_element_ids") or []
+                    if plan["crop_box_visible"] else [])
                 suppression = apply_membership_white_suppression(
                     doc, view, _element_id_int(view.Id),
                     model_context["model_members"],
                     link_categories=model_context.get("link_categories"),
-                    diag=model_context["diag"])
+                    diag=model_context["diag"], exclude_ids=exclude_ids)
                 suppression["elapsed_ms"] = round(
                     (time.time() - t_suppress) * 1000.0, 3)
                 report["pre_state"]["white_membership_suppression"] = suppression
@@ -2502,9 +2574,12 @@ def _run_variant(doc, view, variant, model_context, settings):
             # does for its own paint. The fiducials are model members, so this
             # one loop reverses them too.
             from Autodesk.Revit.DB import ElementId, OverrideGraphicSettings
+            untouched = set((suppression or {}).get("excluded_element_ids") or [])
             for elem in model_context["model_members"]:
                 elem_id = _element_id_int(getattr(elem, "Id", None))
-                if elem_id is None:
+                if elem_id is None or elem_id in untouched:
+                    # Never written, so never written back: a blank write
+                    # would destroy an authored override this run left alone.
                     continue
                 try:
                     view.SetElementOverrides(ElementId(int(elem_id)),
@@ -3093,6 +3168,11 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
         "model_pass_activates_a_crop": (authored_active is False),
     }
 
+    # ---- F1's ruler: the view's own crop-region element ------------------
+    crop_elements = crop_region_elements(doc, view, model_members)
+    report["crop_region_elements"] = crop_elements
+    crop_element_ids = set(crop_elements.get("crop_element_ids") or [])
+
     # ---- F2: the fiducial pair, chosen once --------------------------------
     fiducial_choice = {"state": "unavailable",
                        "reason": "{0} was not requested for this run".format(V8)}
@@ -3109,8 +3189,10 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
                             else [float(v) for v in geom["crop_snapped_uv"]])
             try:
                 candidates, candidate_record = collect_fiducial_candidates(
-                    view, view_basis, model_members, FIDUCIAL_CANDIDATE_SCAN_MAX,
-                    diag=diag, view_id=view_id)
+                    view, view_basis,
+                    [m for m in model_members
+                     if _element_id_int(getattr(m, "Id", None)) not in crop_element_ids],
+                    FIDUCIAL_CANDIDATE_SCAN_MAX, diag=diag, view_id=view_id)
                 fiducial_choice = choose_fiducial_pair(
                     candidates, reference_uv, float(geom["achieved_fpp_ft"]))
                 fiducial_choice["candidate_collection"] = candidate_record
@@ -3137,6 +3219,7 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
         "model_pass_ms": model_pass_ms,
         "authored_crop": authored_crop,
         "fiducial_choice": fiducial_choice,
+        "crop_region_elements": crop_elements,
     }
     settings = {"probe_dir": probe_dir, "export_dpi": float(export_dpi)}
 

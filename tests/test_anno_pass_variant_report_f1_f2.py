@@ -465,3 +465,111 @@ def test_a_boundary_on_the_image_edge_is_flagged_half_clipped(tmp_path):
     inside = report.recover_crop_boundary(
         report.scan_axis_lines(_crop_image(tmp_path), []), _RECT_SHAPE, CROP_UV)
     assert inside["border_clipped_band_count"] == 0
+
+
+def _plan_like_image(tmp_path):
+    """The round-2 Plan_CropActive failure, in miniature.
+
+    The crop's right edge is crossed every 20 px by painted annotation (a
+    palette colour), which cuts it into runs too short to qualify; an interior
+    black line runs PAST the top and bottom edges. Without gap bridging and
+    span-end checks the detector closed the rectangle on the interior line
+    (round 2: u/v isotropy 0.49, datum extents off by ~300 ft).
+    """
+    img = _canvas()
+    _outline(img, _x(CROP_UV[0]), _y(CROP_UV[3]), _x(CROP_UV[2]), _y(CROP_UV[1]))
+    x_right = int(_x(CROP_UV[2]))
+    for y in range(int(_y(CROP_UV[3])) + 5, int(_y(CROP_UV[1])) - 5, 20):
+        img[y:y + 3, x_right - 4:x_right + 4] = GRID
+    img[10:350, 250] = BLACK
+    return _save(img, tmp_path / "plan_like.tiff")
+
+
+def test_a_crossed_edge_is_bridged_and_an_overshooting_line_is_refused(tmp_path):
+    path = _plan_like_image(tmp_path)
+    boundary = report.recover_crop_boundary(
+        report.scan_axis_lines(path, [GRID]), _RECT_SHAPE, CROP_UV)
+    assert boundary["status"] == "value", boundary
+    assert boundary["bands"]["right"]["centre"] == pytest.approx(_x(CROP_UV[2]), abs=0.6)
+    assert boundary["isotropy_u_over_v"] == pytest.approx(1.0, rel=1e-3)
+    assert boundary["px_per_ft_u"] == pytest.approx(A_U, rel=1e-3)
+
+
+def test_without_bridging_the_crossed_edge_would_not_qualify(tmp_path):
+    """The control for the test above: the crossings really do break the edge
+    into pieces shorter than the qualifying run, so the bridging is what
+    rescues it rather than the fixture being easy."""
+    path = _plan_like_image(tmp_path)
+    img = np.asarray(Image.open(path).convert("RGB"))
+    column = np.all(img[:, int(_x(CROP_UV[2]))] == 0, axis=-1)
+    assert report._row_longest_run(column, 0)[0] < report.BOUNDARY_MIN_RUN_FRACTION * H
+    assert report._row_longest_run(column, 8)[0] >= report.BOUNDARY_MIN_RUN_FRACTION * H
+
+
+def test_a_blend_fringe_is_not_a_boundary_candidate(tmp_path):
+    """A painted grid's anti-aliased fringe is off-palette, straight and long,
+    but coloured. Only grey (or a known crop-element colour) is a candidate."""
+    img = _canvas()
+    img[100, 20:460] = (253, 128, 128)      # GRID blended toward white
+    img[20:340, 100] = (253, 128, 128)
+    path = _save(img, tmp_path / "fringe.tiff")
+    scan = report.scan_axis_lines(path, [GRID])
+    assert max(r[0] for r in scan["rows"]) == 0
+
+
+def test_a_crop_element_painted_in_a_palette_colour_is_still_found(tmp_path):
+    """The model pass paints every model member, the crop-region element
+    included, so its boundary can be a PALETTE colour -- recoverable only when
+    the caller names that colour."""
+    img = _canvas()
+    _outline(img, _x(CROP_UV[0]), _y(CROP_UV[3]), _x(CROP_UV[2]), _y(CROP_UV[1]),
+             colour=GRID)
+    path = _save(img, tmp_path / "painted.tiff")
+    hidden = report.recover_crop_boundary(
+        report.scan_axis_lines(path, [GRID]), _RECT_SHAPE, CROP_UV)
+    assert hidden["status"] == "not_found"
+    found = report.recover_crop_boundary(
+        report.scan_axis_lines(path, [GRID], boundary_rgbs=[GRID]), _RECT_SHAPE, CROP_UV)
+    assert found["status"] == "value"
+
+
+def test_a_rectangle_is_never_closed_on_a_line_that_runs_past_the_corners(tmp_path):
+    """The true right edge is GONE; an interior line runs past top and bottom.
+    Coverage alone accepts it and reports a rectangle at the wrong scale (the
+    round-2 plan's 0.49 isotropy). Requiring both span ends at the corners
+    refuses, which is the honest answer."""
+    img = _canvas()
+    x0, x1 = int(_x(CROP_UV[0])), int(_x(CROP_UV[2]))
+    y0, y1 = int(_y(CROP_UV[3])), int(_y(CROP_UV[1]))
+    img[y0 - 1:y0 + 1, x0:x1] = BLACK
+    img[y1 - 1:y1 + 1, x0:x1] = BLACK
+    img[y0:y1, x0 - 1:x0 + 1] = BLACK
+    img[10:350, 250] = BLACK
+    path = _save(img, tmp_path / "no_right_edge.tiff")
+    boundary = report.recover_crop_boundary(
+        report.scan_axis_lines(path, []), _RECT_SHAPE, CROP_UV)
+    assert boundary["status"] == "not_found", boundary.get("bands")
+
+
+def test_a_crossed_HORIZONTAL_edge_is_bridged_too(tmp_path):
+    """Rows and columns are scanned by different code; each needs its own
+    known-positive."""
+    img = _canvas()
+    _outline(img, _x(CROP_UV[0]), _y(CROP_UV[3]), _x(CROP_UV[2]), _y(CROP_UV[1]))
+    y_bottom = int(_y(CROP_UV[1]))
+    for x in range(int(_x(CROP_UV[0])) + 5, int(_x(CROP_UV[2])) - 5, 20):
+        img[y_bottom - 4:y_bottom + 4, x:x + 3] = GRID
+    path = _save(img, tmp_path / "crossed_bottom.tiff")
+    boundary = report.recover_crop_boundary(
+        report.scan_axis_lines(path, [GRID]), _RECT_SHAPE, CROP_UV)
+    assert boundary["status"] == "value", boundary
+    assert boundary["bands"]["bottom"]["centre"] == pytest.approx(y_bottom, abs=0.6)
+
+
+def test_the_capture_context_carries_the_crop_element_ids(tmp_path):
+    """Wiring, not arithmetic: the ids the probe found must reach the scan, or
+    a palette-painted boundary stays invisible (round 2's elevation model
+    capture)."""
+    run = {"combined": {"crop_region_elements": {"crop_element_ids": [42]}}}
+    assert report.capture_context(run, {})["crop_element_ids"] == [42]
+    assert report.capture_context({"combined": {}}, {})["crop_element_ids"] == []
