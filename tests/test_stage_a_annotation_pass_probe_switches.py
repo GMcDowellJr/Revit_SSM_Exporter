@@ -408,3 +408,78 @@ def test_the_two_switches_are_independent(tmp_path):
     assert only_aa["metadata"]["applied_smooth_edges"] is False
     assert at_export_b["smooth_edges"] is False
     assert [call for call in view_b.set_category_hidden_calls if call[1] is True]
+
+
+# ======================================================================
+# the PERSISTED sidecar carries capture_faults (PR #215 review, round 2)
+# ======================================================================
+
+def test_the_persisted_sidecar_carries_capture_faults_and_failure_reason(tmp_path):
+    """THE PRODUCER/CONSUMER CONTRACT, driven through real production.
+
+    ``state_out`` used to be serialised ~100 lines BEFORE ``capture_faults`` was
+    computed, so the persisted sidecar never carried them: a capture with faults
+    was indistinguishable, in the file, from one with none. Only the returned
+    in-memory metadata was right.
+
+    This drives the REAL ``export_annotation_color_id_buffer_view``, forces a
+    fault, and then READS THE FILE BACK. A test that injected
+    ``capture_faults`` into a synthetic sidecar -- which is what the analyzer's
+    own tests do -- cannot bind this: it asserts on a fixture the producer never
+    wrote.
+    """
+    import json
+
+    elements = _elements()
+    view = FakeViewPlan(view_id=VIEW_ID)
+    doc = _SizedDoc(elements=elements, link_instances=[],
+                    categories=[MODEL_CAT, OTHER_MODEL_CAT, ANNO_CAT])
+    cfg = Config()
+    cfg.include_linked_rvt = False
+    cfg.debug_dump_path = str(tmp_path)
+    diag = FakeDiag()
+    geom = {}
+    with install_fake_revit_db():
+        color_id_buffer.export_color_id_buffer_view(
+            doc, view, elements=_model_pass_elements(elements), cfg=cfg,
+            diag=diag, raster=_raster(), elem_cache=None, geometry_out=geom)
+        # FORCE A FAULT that is neither switch-related nor a restore failure:
+        # a lattice mismatch, by telling the annotation pass the model export
+        # came back at a width the lattice does not require. This is exactly the
+        # class variant_measurement_check cannot see, because it happens after
+        # any switch was applied.
+        geom["model_accepted_px"] = int(geom["requested_px"]) + 7
+        anno = color_id_buffer.export_annotation_color_id_buffer_view(
+            doc, view, cfg, geom, diag=diag, raster=_raster(), elements=elements)
+
+    assert anno["success"] is False
+    assert anno["failure_reason"] == "annotation_lattice_mismatch"
+    faults_in_memory = anno["metadata"]["capture_faults"]
+    assert faults_in_memory, "the in-memory metadata must carry the fault"
+
+    # AND THE FILE SAYS THE SAME THING. This is the assertion that was false.
+    with open(anno["sidecar_path"], encoding="utf-8") as handle:
+        persisted = json.load(handle)
+    assert persisted["capture_faults"] == faults_in_memory
+    assert persisted["failure_reason"] == "annotation_lattice_mismatch"
+
+
+def test_a_clean_capture_persists_an_empty_fault_list_not_a_missing_key(tmp_path):
+    """THE CONTROL. An absent key and an empty list are different facts.
+
+    Without this, the assertion above would also pass against a producer that
+    wrote ``capture_faults`` only when non-empty -- and a consumer could not then
+    tell a clean capture from one written by an older build that never wrote the
+    key at all.
+    """
+    import json
+
+    anno, doc, view, diag, at_export = _run(tmp_path)
+    assert anno["success"] is True
+    assert anno["failure_reason"] is None
+    with open(anno["sidecar_path"], encoding="utf-8") as handle:
+        persisted = json.load(handle)
+    assert "capture_faults" in persisted
+    assert persisted["capture_faults"] == []
+    assert "failure_reason" in persisted
+    assert persisted["failure_reason"] is None

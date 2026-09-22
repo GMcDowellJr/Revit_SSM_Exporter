@@ -904,3 +904,177 @@ def test_an_l_shaped_ink_makes_the_two_anchors_disagree(tmp_path):
     # delta is therefore materially nonzero -- the cross-check fires.
     assert max(abs(v) for v in agreement["margin_ft_delta"].values()) > 0.1, (
         agreement)
+
+
+# ======================================================================
+# FINDING C (PR #215 round 2, P2): a degenerate fit is unavailable, not a crash
+# ======================================================================
+
+def test_a_zero_slope_axis_is_reported_unavailable_not_raised():
+    """``fit_axis`` returns 0.0 -- validly -- when distinct recorded UV positions
+    all render at the same pixel. Every inversion then divides by it, and one
+    such capture used to abort the WHOLE multi-view report with a
+    ZeroDivisionError before any other view was written."""
+    samples = [
+        {"u": 0.0, "v": 0.0, "x": 5.0, "y": 5.0, "category": "Text Notes"},
+        {"u": 10.0, "v": 10.0, "x": 5.0, "y": 5.0, "category": "Grids"},
+    ]
+    fit = report.fit_registration(samples, (0.0, 0.0, 80.0, 54.0), 100, 100, 96.0)
+    assert fit["status"] == "unavailable"
+    assert "degenerate mapping" in fit["reason"]
+    assert fit["degenerate_mapping"]["a_u"] == 0.0
+
+
+def test_a_zero_slope_on_only_one_axis_is_still_unavailable():
+    """u fits, v collapses. Reporting the u half would hand back margins whose v
+    components came from a division that could not be performed."""
+    samples = [
+        {"u": 0.0, "v": 0.0, "x": 0.0, "y": 7.0, "category": "a"},
+        {"u": 10.0, "v": 10.0, "x": 50.0, "y": 7.0, "category": "b"},
+    ]
+    fit = report.fit_registration(samples, (0.0, 0.0, 80.0, 54.0), 100, 100, 96.0)
+    assert fit["status"] == "unavailable"
+
+
+def test_one_degenerate_capture_does_not_abort_the_whole_report(tmp_path):
+    """The consequence, end to end: a collapsed capture must be REPORTED and the
+    other views still written. This is what the crash cost."""
+    fpp = 0.5333333333333333
+    frame_uv = (0.0, 0.0, 40.0, 30.0)
+    frame_px = (int(round(40.0 / fpp)), int(round(30.0 / fpp)))
+    probe_dir = tmp_path / "anno_pass_variants_probe"
+    variant_dir = probe_dir / "v0_control" / "color_id_buffer"
+    variant_dir.mkdir(parents=True)
+    # Two elements at DIFFERENT recorded UVs whose ink is painted at the same
+    # place -- a collapsed render.
+    elements = [(501, (10, 120, 200), (5.0, 5.0, 9.0, 9.0), "Text Notes"),
+                (502, (200, 60, 10), (25.0, 20.0, 29.0, 24.0), "Grids")]
+    sidecar_path, tiff_path = _build_capture(
+        variant_dir, "Plan_19290402", frame_uv, frame_px, fpp,
+        (frame_uv[0], frame_uv[3]), elements)
+    # Repaint both colours into one identical 4x4 block.
+    with Image.open(tiff_path) as handle:
+        array = np.asarray(handle.convert("RGB"), dtype=np.uint8).copy()
+    array[:] = 255
+    array[10:14, 10:14] = (10, 120, 200)
+    array[10:14, 20:24] = (200, 60, 10)
+    # Same y for both, same x-spread ratio -> v axis has no spread at all.
+    Image.fromarray(array, mode="RGB").save(tiff_path)
+    combined = {
+        "probe": {"name": "stage_a_anno_pass_variants", "version": "test"},
+        "inputs": {"view_name": "Plan", "view_id": 19290402,
+                   "view_type": "FloorPlan", "view_scale": 96.0},
+        "model_pass": {"success": True, "failure_reason": None, "tiff_path": None,
+                       "geometry": {"achieved_export_dpi": 150.0,
+                                    "frame_px": list(frame_px)}},
+        "variants": [{"variant": "v0_control", "skipped": False,
+                      "annotation_pass": {"sidecar_path": str(sidecar_path),
+                                          "tiff_path": str(tiff_path)}}],
+    }
+    (probe_dir / "Plan_19290402.anno_pass_variants.json").write_text(
+        json.dumps(combined), encoding="utf-8")
+
+    # The whole report is produced, and the degenerate fit is stated.
+    text = report.build_report([probe_dir], overlay_enabled=False)
+    assert "### 1. Image size" in text
+    assert "NOT FITTED" in text
+
+
+# ======================================================================
+# FINDING B (PR #215 round 2, P1): faults read from the combined record
+# ======================================================================
+
+def test_capture_faults_prefer_the_combined_record_over_the_sidecar():
+    """Production wrote the sidecar BEFORE computing its faults until `dcb4e65`,
+    so a sidecar can carry none however faulted the capture was. The combined
+    record holds the later in-memory metadata and is preferred."""
+    item = {
+        "analysis": {"sidecar": {"capture_faults": [], "capture_faults_raw": []}},
+        "variant_report": {"annotation_pass": {
+            "capture_faults": [{"fault": "annotation_frame_not_applied"}]}},
+    }
+    faults, source = report._capture_faults_for(item)
+    assert source == "combined_record"
+    assert faults[0]["fault"] == "annotation_frame_not_applied"
+
+
+def test_capture_faults_fall_back_to_the_sidecar_when_the_record_lacks_them():
+    item = {
+        "analysis": {"sidecar": {"capture_faults": [{"fault": "export_dim_mismatch"}],
+                                 "capture_faults_raw": [
+                                     {"fault": "export_dim_mismatch"}]}},
+        "variant_report": {"annotation_pass": {}},
+    }
+    faults, source = report._capture_faults_for(item)
+    assert source == "sidecar"
+    assert faults[0]["fault"] == "export_dim_mismatch"
+
+
+def test_absent_everywhere_is_UNKNOWN_not_none():
+    """An absent key and an empty list are different facts, and collapsing them
+    is the same silence this finding is about."""
+    item = {"analysis": {"sidecar": {"capture_faults": [],
+                                     "capture_faults_raw": None}},
+            "variant_report": {}}
+    faults, source = report._capture_faults_for(item)
+    assert source == "unavailable"
+    assert faults == []
+
+
+def test_an_empty_list_in_the_record_is_none_not_unknown():
+    """THE CONTROL for the distinction above: a genuinely clean capture must
+    read as "none", not "UNKNOWN"."""
+    item = {"analysis": {"sidecar": {"capture_faults": [],
+                                     "capture_faults_raw": []}},
+            "variant_report": {"annotation_pass": {"capture_faults": []}}}
+    faults, source = report._capture_faults_for(item)
+    assert source == "combined_record"
+    assert faults == []
+
+
+def test_section_0_prints_the_fault_and_says_where_it_came_from(tmp_path):
+    """End to end: a capture whose SIDECAR carries no faults but whose combined
+    record does must still show the fault in section 0. That is exactly the case
+    production's ordering bug produced, and the case the old code printed as
+    `none`."""
+    fpp = 0.5333333333333333
+    frame_uv = (0.0, 0.0, 40.0, 30.0)
+    frame_px = (int(round(40.0 / fpp)), int(round(30.0 / fpp)))
+    probe_dir = tmp_path / "anno_pass_variants_probe"
+    variant_dir = probe_dir / "v0_control" / "color_id_buffer"
+    variant_dir.mkdir(parents=True)
+    sidecar_path, tiff_path = _build_capture(
+        variant_dir, "Plan_19290402", frame_uv, frame_px, fpp,
+        (frame_uv[0], frame_uv[3]),
+        [(601, (10, 120, 200), (5.0, 5.0, 9.0, 9.0), "Text Notes"),
+         (602, (200, 60, 10), (25.0, 20.0, 29.0, 24.0), "Grids")])
+    # The sidecar as an OLD production build wrote it: no capture_faults key.
+    sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    sidecar.pop("capture_faults", None)
+    sidecar_path.write_text(json.dumps(sidecar), encoding="utf-8")
+    combined = {
+        "probe": {"name": "stage_a_anno_pass_variants", "version": "test"},
+        "inputs": {"view_name": "Plan", "view_id": 19290402,
+                   "view_type": "FloorPlan", "view_scale": 96.0},
+        "model_pass": {"success": True, "failure_reason": None, "tiff_path": None,
+                       "geometry": {"achieved_export_dpi": 150.0,
+                                    "frame_px": list(frame_px)}},
+        "variants": [{"variant": "v0_control", "skipped": False,
+                      "conclusion": "CAPTURE_FAILED",
+                      "annotation_pass": {
+                          "sidecar_path": str(sidecar_path),
+                          "tiff_path": str(tiff_path),
+                          "success": False,
+                          "failure_reason": "annotation_frame_not_applied",
+                          "capture_faults": [
+                              {"fault": "annotation_frame_not_applied",
+                               "detail": "frame B could not be applied"}]}}],
+    }
+    (probe_dir / "Plan_19290402.anno_pass_variants.json").write_text(
+        json.dumps(combined), encoding="utf-8")
+
+    text = report.build_report([probe_dir], overlay_enabled=False)
+    section = text[text.index("### 0."):text.index("### 1.")]
+    assert "annotation_frame_not_applied" in section
+    assert "combined_record" in section
+    assert "CAPTURE_FAILED" in section

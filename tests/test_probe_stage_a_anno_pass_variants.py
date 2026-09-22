@@ -764,8 +764,8 @@ _NOT_MEASURED = {"measured": False, "unmet": [{"requested": "SmoothEdges off"}]}
 
 @pytest.mark.parametrize("document_safe,exceptions,tiff,measurement,expected", [
     (True, [], "a.tiff", _MEASURED, "RAN"),
-    # THE CASE THE REVIEW FOUND: a real TIFF, a safe document, and production
-    # declined the mutation. Previously "RAN".
+    # THE CASE THE FIRST REVIEW ROUND FOUND: a real TIFF, a safe document, and
+    # production declined the mutation. Previously "RAN".
     (True, [], "a.tiff", _NOT_MEASURED, "DID_NOT_MEASURE"),
     (True, [], None, _MEASURED, "INCONCLUSIVE"),
     (True, [{"stage": "annotation_pass"}], "a.tiff", _MEASURED, "ERRORED"),
@@ -789,8 +789,12 @@ def test_variant_conclusion_at_the_call_site(document_safe, exceptions, tiff,
     reproduced in the fix for a review finding about exactly this shape of
     silence.
     """
+    # capture_success=True/no faults, so these cases isolate the OTHER gates.
+    # Production's own verdict has its own parametrization below; leaving it
+    # unset here would default to None, which now -- correctly -- disqualifies.
     assert probe.variant_conclusion(
-        document_safe, exceptions, tiff, measurement) == expected
+        document_safe, exceptions, tiff, measurement,
+        capture_success=True, capture_faults=[]) == expected
 
 
 def test_run_variant_uses_variant_conclusion_rather_than_its_own_chain():
@@ -809,3 +813,106 @@ def test_run_variant_uses_variant_conclusion_rather_than_its_own_chain():
         "_run_variant must compute the measurement it passes")
     # And the inline chain it replaced is gone, so there is one decision.
     assert 'report["conclusion"] = "RAN"' not in source
+
+
+# ======================================================================
+# FINDING A (PR #215 round 2, P1): production's own verdict on the capture
+# ======================================================================
+
+@pytest.mark.parametrize("failure_reason", [
+    "annotation_frame_not_applied",
+    "annotation_lattice_mismatch",
+    "export_dim_mismatch",
+    "annotation_overrides_unverified",
+    "annotation_collection_failed",
+])
+def test_a_capture_production_declared_invalid_is_not_RAN(failure_reason):
+    """These faults arise AFTER the requested switch was applied.
+
+    ``variant_measurement_check`` inspects the two switches and nothing else, so
+    it cannot see them -- which is why discarding production's own ``success``
+    let a capture it called invalid come back ``RAN``.
+    """
+    assert probe.variant_conclusion(
+        True, [], "a.tiff", _MEASURED,
+        capture_success=False,
+        capture_faults=[{"fault": failure_reason, "detail": "..."}],
+    ) == "CAPTURE_FAILED"
+
+
+def test_faults_present_with_success_true_is_still_a_failed_capture():
+    """Belt and braces: the fault list alone is disqualifying.
+
+    ``success`` is derived from the fault list in production, so the two cannot
+    normally disagree -- and a check that trusted only the boolean would go
+    silent the day they did.
+    """
+    assert probe.variant_conclusion(
+        True, [], "a.tiff", _MEASURED, capture_success=True,
+        capture_faults=[{"fault": "export_dim_mismatch"}]) == "CAPTURE_FAILED"
+
+
+def test_an_unreadable_capture_success_is_not_treated_as_a_pass():
+    """``None`` means the annotation pass returned nothing to read it from.
+
+    That is not the same as True, and a capture whose validity is unknown is not
+    a capture that passed.
+    """
+    assert probe.variant_conclusion(
+        True, [], "a.tiff", _MEASURED, capture_success=None,
+        capture_faults=None) == "CAPTURE_FAILED"
+
+
+def test_a_clean_capture_still_reaches_RAN():
+    """THE CONTROL. Without it every assertion above would also pass against a
+    gate that returned CAPTURE_FAILED unconditionally, and nothing would ever
+    be reported as a usable capture again."""
+    assert probe.variant_conclusion(
+        True, [], "a.tiff", _MEASURED, capture_success=True,
+        capture_faults=[]) == "RAN"
+
+
+def test_the_ordering_puts_productions_verdict_before_the_switch_check():
+    """A capture that is BOTH invalid and did not measure reports the more
+    fundamental fact. Both are recorded on the variant either way, so neither is
+    hidden by whichever wins."""
+    assert probe.variant_conclusion(
+        True, [], "a.tiff", _NOT_MEASURED, capture_success=False,
+        capture_faults=[{"fault": "annotation_frame_not_applied"}]
+    ) == "CAPTURE_FAILED"
+    # And document safety still outranks both.
+    assert probe.variant_conclusion(
+        False, [], "a.tiff", _NOT_MEASURED, capture_success=False,
+        capture_faults=[{"fault": "annotation_frame_not_applied"}]) == "FAIL"
+
+
+def test_run_variant_passes_productions_verdict_to_the_gate():
+    """Pin the WIRING, not just the gate. The previous round's lesson: a correct
+    decision function that the call site does not feed is a decision nothing
+    makes."""
+    import inspect
+
+    source = inspect.getsource(probe._run_variant)
+    assert "capture_success=" in source
+    assert "capture_faults=" in source
+
+
+def test_finalize_surfaces_failed_captures_and_the_run_conclusion_follows():
+    report = {
+        "variants": [
+            {"variant": "v0", "skipped": False, "document_safe": True,
+             "conclusion": "RAN", "measurement": {"measured": True, "unmet": []}},
+            {"variant": "v1", "skipped": False, "document_safe": True,
+             "conclusion": "CAPTURE_FAILED",
+             "measurement": {"measured": True, "unmet": []},
+             "annotation_pass": {"failure_reason": "annotation_frame_not_applied",
+                                 "capture_faults": [{"fault": "annotation_frame_not_applied"}]}},
+        ],
+        "conclusion": "INCONCLUSIVE",
+    }
+    probe.finalize_native_report(report, {})
+    assert report["conclusion"] == "CAPTURE_FAILED"
+    assert [entry["variant"] for entry in report["variants_with_failed_captures"]] == [
+        "v1"]
+    assert report["variants_with_failed_captures"][0]["failure_reason"] == (
+        "annotation_frame_not_applied")

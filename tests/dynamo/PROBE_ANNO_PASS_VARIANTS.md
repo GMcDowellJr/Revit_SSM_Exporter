@@ -216,6 +216,35 @@ Under V1–V3 model category visibility is **never written, in either direction*
 which is what makes `model_category_visibility: restored` a real statement
 rather than a no-op write's echo.
 
+### A capture PRODUCTION declared invalid
+
+Separate from, and checked before, the measurement question below. Production
+sets `success = False` with `capture_faults` such as
+`annotation_frame_not_applied`, `annotation_lattice_mismatch`,
+`export_dim_mismatch` or `annotation_overrides_unverified` — and **those arise
+after** any switch was applied, so `variant_measurement_check` cannot see them:
+it inspects the two switches and nothing else.
+
+Such a variant concludes **`CAPTURE_FAILED`**, the run and the envelope follow,
+and `variants_with_failed_captures` names each one with its `failure_reason`.
+Production's verdict is checked *before* the switch check because it is the more
+fundamental fact; both are recorded on the variant either way, so neither is
+hidden by whichever wins. A `capture_success` of `None` — the annotation pass
+returned nothing to read it from — is **not** treated as a pass.
+
+(Review finding on PR #215, round 2, P1. The probe was discarding production's
+own `success` and `failure_reason`, so a capture production called invalid came
+back `RAN`.)
+
+> **The persisted annotation sidecar now carries `capture_faults`.** Production
+> serialised `state_out` about a hundred lines *before* it computed them, so the
+> file never had them — only the returned in-memory metadata did, and any
+> consumer reading the file saw a faulted capture as a clean one. Fixed at
+> `dcb4e65`+, with `failure_reason` persisted beside the list it is derived
+> from. The analyzer still prefers the probe's combined record and **says which
+> source it used**, because a sidecar written by an earlier build has no such
+> key — and an absent key is reported as `UNKNOWN`, not `none`.
+
 ### A variant that did not MEASURE its candidate
 
 A TIFF existing proves an export happened. It does not prove the export
@@ -401,16 +430,21 @@ score, no tolerance, no pass/fail, no "this variant looks better".
 
 0. **What the capture reports it actually did** — `model_suppression_mode`,
    `applied_smooth_edges`, the display style, the probe's conclusion, whether
-   the variant measured its candidate, and any capture faults. This section
-   exists because those fields were being *read and never rendered*, which made
-   a variant that measured nothing look exactly like one that did.
+   the variant measured its candidate, production's own `success`, any capture
+   faults, and **which source those faults were read from**. This section exists
+   because those fields were being *read and never rendered*, which made a
+   variant that measured nothing look exactly like one that did.
 1. **Image size vs `frame_px`, on both axes.** `dim_check` inspects the
    requested axis only (F4), so a nonzero `dh` beside `dim_check=pass` is F4
    exactly.
 2. **Registration fit, measured from the pixels.** Exact-palette-colour
    centroids matched against the sidecar's `bbox_uv` centres, a linear map
    fitted to the pairs, both axes **independently** (F1 saw u and v off by
-   different amounts). Reports px/ft on u and v against the frame's own, the
+   different amounts). A fit whose slope comes back **zero or non-finite** on
+   either axis — every sample rendering at the same pixel, i.e. a collapsed
+   capture — is reported `unavailable` with that reason rather than inverted;
+   one such capture used to abort the whole multi-view report with a
+   `ZeroDivisionError` before any other view was written (PR #215 round 2, P2). Reports px/ft on u and v against the frame's own, the
    offset at (u0, v1), the per-side margin in feet **and** paper inches, and the
    residual median and max. A colour whose mask touches an image edge is
    **excluded and counted**: a clipped element's centroid is not its centre.

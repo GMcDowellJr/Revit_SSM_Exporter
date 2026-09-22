@@ -307,6 +307,22 @@ def fit_registration(samples, frame_uv, image_w, image_h, view_scale,
 
     a_u, b_u = fit_u
     a_v, b_v = fit_v
+    # A ZERO OR NON-FINITE SLOPE IS AN UNAVAILABLE FIT, NOT AN EXCEPTION.
+    # fit_axis returns None only when the SAMPLE x values have no spread; when
+    # distinct recorded UV positions all render at the SAME pixel it validly
+    # returns a slope of 0.0, and every inversion below then divides by it. A
+    # collapsed or malformed capture is exactly an input this diagnostic exists
+    # to report -- and one of them used to abort the whole multi-view report
+    # with a ZeroDivisionError before any of the other views were written.
+    if not all(math.isfinite(value) for value in (a_u, b_u, a_v, b_v)) or (
+            a_u == 0.0 or a_v == 0.0):
+        out["status"] = "unavailable"
+        out["reason"] = (
+            "the fit produced a degenerate mapping (px/ft u={0!r}, v={1!r}): every "
+            "sample renders at the same pixel on at least one axis, so there is no "
+            "invertible mapping and no margin to report".format(a_u, a_v))
+        out["degenerate_mapping"] = {"a_u": a_u, "b_u": b_u, "a_v": a_v, "b_v": b_v}
+        return out
     out["status"] = "value"
     # px/ft. a_v is NEGATIVE on an intact capture (v grows up, y grows down),
     # so its magnitude is the scale and its SIGN is reported separately -- a
@@ -679,7 +695,12 @@ def read_annotation_sidecar(path):
         "model_suppression_mode": sidecar.get("model_suppression_mode"),
         "applied_smooth_edges": sidecar.get("applied_smooth_edges"),
         "applied_display_style": sidecar.get("applied_display_style"),
+        # Two keys on purpose. "capture_faults" keeps the convenient
+        # already-defaulted list; "capture_faults_raw" preserves ABSENT as None,
+        # which is a different fact from an empty list and is what lets
+        # _capture_faults_for report "UNKNOWN" instead of "none".
         "capture_faults": sidecar.get("capture_faults") or [],
+        "capture_faults_raw": sidecar.get("capture_faults"),
         "tiff_path": sidecar.get("tiff_path"),
         "paint_failed_element_ids": set(
             int(v) for v in (sidecar.get("paint_failed_element_ids") or [])),
@@ -1156,7 +1177,7 @@ def render_run(run, analyses, overlay_results):
         sidecar = item["analysis"]["sidecar"]
         variant_report = item.get("variant_report") or {}
         measurement = variant_report.get("measurement") or {}
-        faults = sidecar.get("capture_faults") or []
+        faults, faults_source = _capture_faults_for(item)
         rows.append([
             item["variant"],
             _fmt(sidecar.get("model_suppression_mode")),
@@ -1165,11 +1186,25 @@ def render_run(run, analyses, overlay_results):
             _fmt(variant_report.get("conclusion")),
             ("yes" if measurement.get("measured") is True
              else ("NO" if measurement.get("measured") is False else "--")),
-            (", ".join(str(f.get("fault")) for f in faults) or "none"),
+            _fmt((variant_report.get("annotation_pass") or {}).get("success")),
+            (", ".join(str(f.get("fault")) for f in faults)
+             if faults else ("none" if faults_source != "unavailable"
+                             else "UNKNOWN (not recorded)")),
+            faults_source,
         ])
     lines.extend(_table(["variant", "suppression mode", "applied_smooth_edges",
                          "display style", "probe conclusion",
-                         "measured its candidate", "capture faults"], rows))
+                         "measured its candidate", "production success",
+                         "capture faults", "faults read from"], rows))
+    lines.append("")
+    lines.append("`capture faults` come from the probe's combined record "
+                 "(`annotation_pass.capture_faults`) in preference to the "
+                 "annotation sidecar, and the last column says which was used. "
+                 "The sidecar is the fallback because production wrote it before "
+                 "computing its own faults until `dcb4e65`, so an older capture's "
+                 "file carries none however faulted it was. `UNKNOWN (not "
+                 "recorded)` means neither source had the field -- which is not "
+                 "the same fact as `none`.")
     lines.append("")
     lines.append("`applied_smooth_edges` is four-valued: `not_attempted` (the pass "
                  "was not asked), `read_failed`, `unchanged (failed)`, or `False` "
@@ -1506,6 +1541,34 @@ def render_run(run, analyses, overlay_results):
                 entry["variant"], context, entry["reason"]))
     lines.append("")
     return lines
+
+
+def _capture_faults_for(item):
+    """One capture's faults, and WHICH SOURCE they came from.
+
+    The probe's combined record is preferred over the annotation sidecar, and
+    the reason is a producer bug this review round found: production serialised
+    ``state_out`` about a hundred lines BEFORE it computed
+    ``capture_faults``, so the persisted sidecar never carried them. Section 0
+    therefore printed `none` for precisely the failed captures it exists to
+    expose. Production is fixed as of `dcb4e65`, but a sidecar written by an
+    earlier build still has no such key, and this tool reads files from runs it
+    did not produce.
+
+    Returns ``(faults, source)`` where source is "combined_record", "sidecar" or
+    "unavailable". "unavailable" is NOT an empty fault list: neither source had
+    the field, and reporting that as "none" is the same silence being fixed.
+    """
+    variant_report = item.get("variant_report") or {}
+    annotation_pass = variant_report.get("annotation_pass") or {}
+    if "capture_faults" in annotation_pass:
+        faults = annotation_pass.get("capture_faults")
+        if faults is not None:
+            return (list(faults), "combined_record")
+    sidecar_raw = item["analysis"]["sidecar"].get("capture_faults_raw")
+    if sidecar_raw is not None:
+        return (list(sidecar_raw), "sidecar")
+    return ([], "unavailable")
 
 
 def maybe_run_overlay(analysis, sidecar_path, enabled):

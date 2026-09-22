@@ -215,13 +215,13 @@ measuring.
 
 | | before (`a3cd0b2`) | after |
 |---|---|---|
-| suite | 1442 passed, 2 xfailed | **1577 passed, 2 xfailed** |
+| suite | 1442 passed, 2 xfailed | **1598 passed, 2 xfailed** |
 | `count_discarded_handlers vop_interwoven tools` | 179 | **179** |
 | `check_stage_a_no_geometry vop_interwoven` | PROVEN | **PROVEN** |
 | `check_no_bare_except --paths vop_interwoven tools` | OK | **OK** |
 | flake8 on new files (`--max-line-length=120`) | — | clean; no new findings in the two pre-existing files |
 
-The 135 new tests are 11 production-switch tests, 32 analyzer tests and 92 probe
+The 156 new tests are 13 production-switch tests, 40 analyzer tests and 103 probe
 helper/adapter tests.
 
 **The switch tests were falsified by mutating production, not by reading it.**
@@ -343,6 +343,45 @@ the genuinely-oversized F1 render, where both come back positive.
 
 Checks after the round: **1577 passed, 2 xfailed**; handler count **179**;
 geometry-free **PROVEN**; lint clean. Each fix was falsified by mutating it back.
+
+---
+
+## Review round 2 — three more Codex findings, all confirmed and fixed
+
+**P1 — a capture production declared INVALID came back `RAN`.** Confirmed: the
+probe recorded production's `success` and `failure_reason` but
+`variant_conclusion` never saw them, so `annotation_frame_not_applied`, a
+lattice or dimension mismatch, or an unverified restore all concluded `RAN`.
+Correctly noted as distinct from round 1: these faults arise *after* the switch
+was applied, so `variant_measurement_check` cannot see them. Production's verdict
+is now checked first, such a variant concludes `CAPTURE_FAILED`, and a
+`capture_success` of `None` is not treated as a pass. A second test pins the
+*wiring*, which is the lesson round 1 taught.
+
+**P1 — the analyzer's section 0 printed `none` for exactly the failed captures
+it exists to expose.** Root cause was a **production** defect, not an analyzer
+one: `export_annotation_color_id_buffer_view` serialised `state_out` about a
+hundred lines before it computed `capture_faults`, so the persisted sidecar never
+carried them — the same serialize-before-finalize shape as round 1's P2, one file
+over, and affecting every Stage A annotation sidecar rather than just this
+probe's. Fixed on both sides: production writes the sidecar *after* the faults
+are assigned (with `failure_reason` persisted beside them), and the analyzer
+prefers the probe's combined record while **saying which source it used**,
+because a sidecar from an earlier build has no such key. An absent key reads
+`UNKNOWN`, not `none`. The new test drives the **real** production function,
+forces a lattice mismatch and reads the file back — the review was right that
+injecting faults into a synthetic sidecar binds nothing.
+
+**P2 — a zero fitted slope raised `ZeroDivisionError`.** Confirmed reachable:
+`fit_axis` returns `None` only when the *sample* values have no spread, and
+validly returns `0.0` when distinct recorded UVs all render at the same pixel.
+Every inversion then divided by it, and one collapsed capture aborted the whole
+multi-view report before any other view was written. Now reported `unavailable`
+with the degenerate mapping recorded, with a test that the rest of the report is
+still produced.
+
+Checks after the round: **1598 passed, 2 xfailed**; handler count **179**;
+geometry-free **PROVEN**; lint clean. All five mutations turn tests red.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 

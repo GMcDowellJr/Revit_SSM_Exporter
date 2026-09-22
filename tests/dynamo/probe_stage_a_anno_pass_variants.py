@@ -274,7 +274,8 @@ def variant_measurement_check(plan, annotation_metadata):
     return {"measured": not unmet, "unmet": unmet, "checked": checked}
 
 
-def variant_conclusion(document_safe, exceptions, tiff_path, measurement):
+def variant_conclusion(document_safe, exceptions, tiff_path, measurement,
+                       capture_success=None, capture_faults=None):
     """One variant's conclusion. PURE, and extracted because of a mutation.
 
     This lived inline in ``_run_variant`` as an if/elif chain over fields that
@@ -290,10 +291,23 @@ def variant_conclusion(document_safe, exceptions, tiff_path, measurement):
       FAIL             the document is not as the variant found it. Stops the run.
       ERRORED          something raised; the document is safe.
       INCONCLUSIVE     no TIFF was produced.
+      CAPTURE_FAILED   PRODUCTION declared the capture invalid -- success=False
+                       with faults such as annotation_frame_not_applied, a
+                       lattice or dimension mismatch, or an unverified restore.
+                       These arise AFTER any switch was applied, so
+                       variant_measurement_check cannot see them: it inspects
+                       the two switches and nothing else. Discarding
+                       production's own verdict here is how a capture it called
+                       invalid came back RAN.
       DID_NOT_MEASURE  a real TIFF and a safe document, but production did not
                        apply what this variant asked for -- so it is not
                        evidence about its candidate.
       RAN              a capture that measured what it is named after.
+
+    ``capture_success`` is production's ``success`` flag. ``None`` means the
+    annotation pass returned nothing to read it from, which is not the same as
+    True and is not treated as it: a capture whose validity is unknown is not a
+    capture that passed.
     """
     if not document_safe:
         return "FAIL"
@@ -301,6 +315,11 @@ def variant_conclusion(document_safe, exceptions, tiff_path, measurement):
         return "ERRORED"
     if not tiff_path:
         return "INCONCLUSIVE"
+    # PRODUCTION'S OWN VERDICT, before this module's. It knows things this
+    # module cannot: whether frame B was actually applied as the crop, whether
+    # the export landed on the shared lattice, whether its own restore verified.
+    if capture_success is not True or capture_faults:
+        return "CAPTURE_FAILED"
     if not (measurement or {}).get("measured"):
         return "DID_NOT_MEASURE"
     return "RAN"
@@ -1746,7 +1765,9 @@ def _run_variant(doc, view, variant, model_context, settings):
 
             report["conclusion"] = variant_conclusion(
                 report["document_safe"], report["exceptions"],
-                report["annotation_pass"].get("tiff_path"), measurement)
+                report["annotation_pass"].get("tiff_path"), measurement,
+                capture_success=report["annotation_pass"].get("success"),
+                capture_faults=report["annotation_pass"].get("capture_faults"))
     return report
 
 
@@ -1927,10 +1948,17 @@ def finalize_native_report(report, paths):
         report["conclusion"] = "FAIL"
     elif any(entry.get("conclusion") == "ERRORED" for entry in ran):
         report["conclusion"] = "ERRORED"
+    elif any(entry.get("conclusion") == "CAPTURE_FAILED" for entry in ran):
+        report["conclusion"] = "CAPTURE_FAILED"
     elif any(entry.get("conclusion") == "DID_NOT_MEASURE" for entry in ran):
         report["conclusion"] = "DID_NOT_MEASURE"
     else:
         report["conclusion"] = "RAN"
+    report["variants_with_failed_captures"] = [
+        {"variant": entry.get("variant"),
+         "failure_reason": (entry.get("annotation_pass") or {}).get("failure_reason"),
+         "capture_faults": (entry.get("annotation_pass") or {}).get("capture_faults")}
+        for entry in ran if entry.get("conclusion") == "CAPTURE_FAILED"]
     report["variants_that_did_not_measure"] = [
         {"variant": entry.get("variant"),
          "unmet": (entry.get("measurement") or {}).get("unmet")}
@@ -2399,7 +2427,8 @@ def run_probe(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT_D
         execution_status=("inconclusive" if not executed else
                           ("failed" if errors or not rollback_ok or not restored
                            else ("inconclusive" if any(
-                               entry.get("conclusion") == "DID_NOT_MEASURE"
+                               entry.get("conclusion")
+                               in ("DID_NOT_MEASURE", "CAPTURE_FAILED")
                                for entry in executed) else "completed"))),
         errors=errors,
         warnings=[
@@ -2407,7 +2436,13 @@ def run_probe(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT_D
                 entry.get("variant"),
                 (entry.get("measurement") or {}).get("unmet"))
             for entry in executed
-            if entry.get("conclusion") == "DID_NOT_MEASURE"])
+            if entry.get("conclusion") == "DID_NOT_MEASURE"
+        ] + [
+            "variant {0} produced a capture PRODUCTION declared invalid: {1}".format(
+                entry.get("variant"),
+                (entry.get("annotation_pass") or {}).get("failure_reason"))
+            for entry in executed
+            if entry.get("conclusion") == "CAPTURE_FAILED"])
 
 
 def dynamo_main(inputs):
