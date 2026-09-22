@@ -5633,12 +5633,12 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         ],
     }
 
-    # NOTE: state_out is NOT serialised here. It used to be, ~100 lines above
-    # the capture_faults computation below -- so the PERSISTED sidecar never
-    # carried capture_faults at all, and every consumer reading the file (rather
-    # than the returned in-memory metadata) saw a capture with faults as a
-    # capture with none. The write now happens after the faults are assigned;
-    # see the comment at the write itself. (PR #215 review, round 2, P1.)
+    # NOTE: state_out is deliberately NOT serialised here. It used to be --
+    # ~100 lines above the capture_faults computation below -- so the PERSISTED
+    # sidecar never carried capture_faults or failure_reason at all, and every
+    # consumer reading the FILE (rather than the returned in-memory metadata)
+    # saw a capture with faults as a capture with none. The write now happens
+    # after the faults are assigned; see the comment at the write itself.
     #
     # ------------------------------------------------------------------
     # Did this capture deliver what it claims? (PR #211 review, round 2)

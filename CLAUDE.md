@@ -319,8 +319,15 @@ Check the strategy tracker output for extraction method usage and failures.
 ## Recurring Defect Classes
 
 Six real defects shipped across PRs #200–#202 and were found by review, not by
-any check in this repo. They fall into three classes that keep recurring. Read
+any check in this repo. They fell into three classes; a fourth was added from
+PR #216, which is the same shape reaching production rather than tooling. Read
 this before writing a fix, not after.
+
+Numbered classes are the ones with a stated rule and a mutation record. The two
+unnumbered shapes below — "the citation that rots" and "the edge that was never
+walked" — are recorded the same way and are not lesser. They simply arrived after
+the numbering, and renumbering prose that other documents cite is itself a way of
+rotting a citation.
 
 ### 1. A quantity computed in two places, never composed
 
@@ -374,6 +381,58 @@ node id — both invisible to the 959 tests it governed.
 asserting on its exit code: `tests/test_harness_contract.py`. Any such file
 needs a **control** asserting the unmutated copy is green, or every scenario
 would also pass against a harness broken outright.
+
+### 4. A record serialised before it is finished
+
+`export_annotation_color_id_buffer_view` wrote its sidecar 101 lines **before** it
+computed `capture_faults`, so the persisted file never carried them. Every
+consumer that read the FILE rather than the returned value saw a faulted capture
+as a clean one — `annotation_lattice_mismatch`, `export_dim_mismatch`,
+`annotation_overrides_unverified` and the rest, all persisting as "no faults", on
+every Stage A annotation run.
+
+It is a **class**, not an incident. The same shape shipped in the Stage A
+annotation-pass variant probe (PR #215, not yet on `main` — so this is named
+rather than cited by path): its combined JSON was written before `conclusion` and
+`paths` were set, so the durable file permanently said `INCONCLUSIVE` while only
+the in-memory object returned to Dynamo was right. Two representations of one run,
+disagreeing, with the *durable* one wrong — which is the worst direction for it to
+fail in, because the file is what gets read later.
+
+**Rule.** A function that both builds a record and persists it has one ordering
+obligation, and it is not checkable by reading the function top to bottom — the
+write and the last assignment are a hundred lines apart. So:
+
+- assert the FILE, not the return value. A test on the return value cannot see
+  this defect at all, and neither can one that injects the field into a synthetic
+  fixture: that asserts on something the producer never wrote;
+- pair the assertion with a **control** on a clean record, because "the key is
+  present and empty" and "the key is absent" are different facts to a consumer,
+  and only the control distinguishes a correct producer from one that writes the
+  field only when non-empty;
+- prefer a **refusal** where the write site is reusable:
+  `finalize_native_report()` stamps `report_finalized` and `_write_combined`
+  raises without it, so a future caller that writes early fails loudly rather
+  than silently shipping a half-record.
+
+A useful mechanical check, since the two ends are too far apart to eyeball: walk
+every `json.dump(state_out …)` and report any `state_out[...] =` assignment that
+follows it in the same function. That is what confirmed the model pass's own dump
+was already final rather than assuming it, and what confirmed that reverting the
+annotation fix on the probe branch stranded `capture_faults` **and nothing else**.
+
+Proven at `de79593` by mutation, and the three mutations discriminate rather than
+all firing together: reverting production turns all three tests red; dropping the
+persisted `failure_reason` turns the two fault tests red and correctly leaves the
+record-equality test green (both sides change together); writing `capture_faults`
+only when non-empty turns **only the control** red.
+
+One thing that surfaced while asserting it, worth knowing before comparing a
+record to its file: this record has **integer dict keys** (category ids), and json
+turns every key into a string. `metadata[-2000460]` works where
+`persisted[-2000460]` raises `KeyError` on the same fact, so a bare `==` fails for
+a reason unrelated to the ordering. Compare through a json round trip and say so,
+rather than letting the round trip quietly absorb the difference.
 
 ### The discipline that actually caught things
 
@@ -556,7 +615,7 @@ being syntactically indistinguishable from the .NET generics this repo really
 uses (`SCG.List[ElementId]()`, `NetList[EId]()`), so refusing it would refuse
 the real tree. A test pins that boundary so it stays known rather than silent.
 
-### A fourth recurring shape: the citation that rots
+### Another recurring shape: the citation that rots
 
 `tests/test_invariants_resolution_cap.py` cited its three claims as `:91`,
 `:112` and `:68`. `:91` was **wrong the day it was written** (the cap claim sat
