@@ -2147,7 +2147,10 @@ def _own_model_pass(doc, view, model_context, variant_dir, export_dpi):
     record = {"output_directory": os.path.join(variant_dir, "model"),
               "crop_box_visible_before": crop_box_visible_record(view)}
     try:
-        _force_close_dynamo_transaction()
+        # NO _force_close_dynamo_transaction() here, unlike the other model
+        # exports: this runs INSIDE the variant's TransactionGroup, and Dynamo's
+        # transaction was already closed before that group started. Forcing a
+        # close with the group open is an interaction nothing has observed.
         cfg = _model_config(record["output_directory"], export_dpi)
         own_geom = {}
         t0 = time.time()
