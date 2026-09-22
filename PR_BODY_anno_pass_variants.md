@@ -215,13 +215,13 @@ measuring.
 
 | | before (`a3cd0b2`) | after |
 |---|---|---|
-| suite | 1442 passed, 2 xfailed | **1598 passed, 2 xfailed** |
+| suite | 1442 passed, 2 xfailed | **1610 passed, 2 xfailed** |
 | `count_discarded_handlers vop_interwoven tools` | 179 | **179** |
 | `check_stage_a_no_geometry vop_interwoven` | PROVEN | **PROVEN** |
 | `check_no_bare_except --paths vop_interwoven tools` | OK | **OK** |
 | flake8 on new files (`--max-line-length=120`) | — | clean; no new findings in the two pre-existing files |
 
-The 156 new tests are 13 production-switch tests, 40 analyzer tests and 103 probe
+The 168 new tests are 13 production-switch tests, 43 analyzer tests and 112 probe
 helper/adapter tests.
 
 **The switch tests were falsified by mutating production, not by reading it.**
@@ -382,6 +382,38 @@ still produced.
 
 Checks after the round: **1598 passed, 2 xfailed**; handler count **179**;
 geometry-free **PROVEN**; lint clean. All five mutations turn tests red.
+
+---
+
+## Review round 3 — three more findings, all confirmed and fixed
+
+**P1 — a failed annotation bbox collection read as "no annotations".** The reader
+deliberately empties `bbox_entries` and keeps production's reason, and nothing
+consumed that: the fit said "0 matched", the excursion came back `status: value`
+over zero rectangles, and coverage printed an empty table. All four bbox-derived
+measurements are now gated on the collection status with the same reason, and a
+line near the top of the view's section states it. The review was also right that
+the previous test asserted only the reader's intermediate field; the new one
+drives `build_report` and asserts on the text a reader consumes.
+
+**P2 — `probe_filter_deleted` checked only half of what its comment promised.**
+`RemoveFilter` succeeding while `doc.Delete` fails leaves the id off the view and
+a project-wide `ParameterFilterElement` alive; view membership alone declared
+that restored. The verdict now also requires `doc.GetElement` to confirm the
+element is gone, with "could not determine" as `unverified`. And
+`explicit_step_errors` — recorded and consulted by nothing — is now its own
+obligation, because a clean rollback could otherwise let the variant conclude
+`RAN` and falsely validate an explicit restore the rollback had rescued.
+
+**P1 — a model capture production rejected still ran all five variants.**
+`export_color_id_buffer_view` can return a TIFF and usable geometry with
+`success=False`. The probe now refuses before any variant, naming the
+`failure_reason` and still writing the report — five captures against a rejected
+foundation cost a Revit session and prove nothing, and which model faults are
+tolerable is Greg's call.
+
+Checks: **1610 passed, 2 xfailed**; handler count **179**; geometry-free
+**PROVEN**; lint clean. All four mutations turn tests red.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 

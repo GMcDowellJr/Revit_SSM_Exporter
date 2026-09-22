@@ -310,7 +310,8 @@ def test_an_identical_pair_of_snapshots_is_restored():
     assert verdict["overall"] == "restored"
     for name in ("crop_box", "smooth_edges", "annotation_crop_offsets",
                  "model_category_visibility", "view_filters",
-                 "view_template_id", "display_style"):
+                 "view_template_id", "display_style",
+                 "explicit_restore_steps"):
         assert verdict[name]["status"] == "restored", name
 
 
@@ -372,9 +373,15 @@ def test_the_probe_filter_is_checked_by_id_not_by_the_filter_map_diff():
     assert verdict["probe_filter_deleted"]["status"] == "not_restored"
     assert "5551" in verdict["probe_filter_deleted"]["reason"]
 
-    clean = probe.restore_readback_verdict(_snapshot(filters={}),
-                                           _snapshot(filters={}),
-                                           expect_filter_absent=5551)
+    # OFF THE VIEW IS NOT ENOUGH: the element must also be gone from the
+    # project. Not knowing is "unverified", never "restored".
+    unknown = probe.restore_readback_verdict(
+        _snapshot(filters={}), _snapshot(filters={}), expect_filter_absent=5551)
+    assert unknown["probe_filter_deleted"]["status"] == "unverified"
+
+    clean = probe.restore_readback_verdict(
+        _snapshot(filters={}), _snapshot(filters={}), expect_filter_absent=5551,
+        filter_element_still_in_project=False)
     assert clean["probe_filter_deleted"]["status"] == "restored"
     assert clean["overall"] == "restored"
 
@@ -916,3 +923,138 @@ def test_finalize_surfaces_failed_captures_and_the_run_conclusion_follows():
         "v1"]
     assert report["variants_with_failed_captures"][0]["failure_reason"] == (
         "annotation_frame_not_applied")
+
+
+# ======================================================================
+# FINDING E (PR #215 round 3, P2): the filter ELEMENT, and failed restore steps
+# ======================================================================
+
+def test_a_filter_removed_from_the_view_but_alive_in_the_project_is_not_restored():
+    """THE CASE THE DOCSTRING PROMISED AND THE CODE DID NOT CHECK.
+
+    ``RemoveFilter`` succeeding and ``doc.Delete`` failing leaves the id absent
+    from the view -- so the membership test passed -- while a project-wide
+    ``ParameterFilterElement`` the probe created survives. The old comment said
+    the id was asked for directly "because a filter deleted from the project but
+    left associated with the view, or vice versa, can produce an identical filter
+    MAP while the element survives". It only ever checked one of those two
+    directions: an identity claimed in prose and never asserted.
+    """
+    verdict = probe.restore_readback_verdict(
+        _snapshot(filters={}), _snapshot(filters={}), expect_filter_absent=5551,
+        filter_element_still_in_project=True)
+    assert verdict["probe_filter_deleted"]["status"] == "not_restored"
+    assert "project" in verdict["probe_filter_deleted"]["reason"]
+    assert verdict["overall"] == "not_restored"
+
+
+def test_an_undeterminable_filter_element_is_unverified_not_restored():
+    verdict = probe.restore_readback_verdict(
+        _snapshot(filters={}), _snapshot(filters={}), expect_filter_absent=5551,
+        filter_element_still_in_project=None)
+    assert verdict["probe_filter_deleted"]["status"] == "unverified"
+    assert verdict["overall"] == "unverified"
+
+
+def test_the_view_membership_check_still_outranks_the_element_check():
+    """A filter still ON the view reports that, not the element question -- the
+    more specific and more actionable fact."""
+    verdict = probe.restore_readback_verdict(
+        _snapshot(filters={}),
+        _snapshot(filters={"5551": {"enabled": True, "visible": True}}),
+        expect_filter_absent=5551, filter_element_still_in_project=True)
+    assert "still on the view" in verdict["probe_filter_deleted"]["reason"]
+
+
+def test_a_failed_explicit_restore_step_is_not_restored():
+    """A recorded error that nothing consulted is not a check.
+
+    ``explicit_step_errors`` held the failed ``doc.Delete`` and ``document_safe``
+    read only the read-back verdicts, so a clean TransactionGroup rollback could
+    let the variant conclude ``RAN`` -- falsely validating an explicit restore
+    the rollback had actually rescued.
+    """
+    verdict = probe.restore_readback_verdict(
+        _snapshot(), _snapshot(),
+        explicit_step_errors=[{"step": "delete_white_filter",
+                               "error": "InvalidOperationException: in use"}])
+    assert verdict["explicit_restore_steps"]["status"] == "not_restored"
+    assert verdict["explicit_restore_steps"]["errors"][0]["step"] == (
+        "delete_white_filter")
+    assert verdict["overall"] == "not_restored"
+
+
+def test_no_explicit_step_errors_is_restored_not_unverified():
+    """THE CONTROL: an empty error list is a pass, so the check cannot be
+    satisfied by simply always failing."""
+    verdict = probe.restore_readback_verdict(_snapshot(), _snapshot(),
+                                             explicit_step_errors=[])
+    assert verdict["explicit_restore_steps"]["status"] == "restored"
+    assert verdict["overall"] == "restored"
+
+
+def test_run_variant_feeds_both_new_restore_inputs():
+    """Pin the wiring, as every round of this review has had to."""
+    import inspect
+
+    source = inspect.getsource(probe._run_variant)
+    assert "filter_element_still_in_project=" in source
+    assert "explicit_step_errors=restore_errors" in source
+    assert "filter_element_exists(" in source
+
+
+# ======================================================================
+# FINDING F (PR #215 round 3, P1): the model pass's own verdict gates the run
+# ======================================================================
+
+def test_run_native_refuses_when_the_model_pass_rejects_its_own_capture():
+    """A model capture production declared invalid stops the run.
+
+    ``export_color_id_buffer_view`` can return a TIFF *and* usable geometry with
+    ``success=False`` -- an ``export_dim_mismatch`` surviving the halving backoff
+    is the reachable case. The status was recorded and composed into no decision,
+    so all five variants ran against a rejected foundation and the run could
+    still conclude ``RAN``/``completed``.
+
+    Checked by reading the source for the gate, because ``_run_native`` needs a
+    Revit document; the behaviour it guards is asserted through
+    ``finalize_native_report`` below.
+    """
+    import inspect
+
+    source = inspect.getsource(probe._run_native)
+    assert 'if not model_out.get("success"):' in source, (
+        "_run_native must gate on the model pass's own success flag")
+    # And it must refuse BEFORE the variants loop, not merely record it.
+    gate = source.index('if not model_out.get("success"):')
+    loop = source.index("for variant in selected:")
+    assert gate < loop, "the gate must come before any variant runs"
+    # The refusal names the fault rather than reporting a bare failure.
+    assert "REJECTED ITS OWN CAPTURE" in source
+    assert "failure_reason" in source[gate:loop]
+
+
+def test_the_model_gate_finalizes_and_writes_before_returning():
+    """A refused run still leaves the combined report on disk.
+
+    The whole point of round 1's P2 fix: the one run most worth reading must not
+    return with nothing written.
+    """
+    import inspect
+
+    source = inspect.getsource(probe._run_native)
+    gate = source.index('if not model_out.get("success"):')
+    loop = source.index("for variant in selected:")
+    block = source[gate:loop]
+    assert "finalize_native_report(" in block
+    assert "_write_combined(" in block
+
+
+def test_a_successful_model_pass_does_not_trip_the_gate():
+    """THE CONTROL, as source inspection: the gate is on the falsy branch only,
+    so a successful model pass falls through to the variants."""
+    import inspect
+
+    source = inspect.getsource(probe._run_native)
+    assert 'if model_out.get("success"):' not in source, (
+        "the gate must fire on FAILURE, not on success")

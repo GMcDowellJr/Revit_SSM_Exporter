@@ -198,14 +198,26 @@ failure at step 5 still leaves the document as found, and so the two can be told
 apart: an explicit restore that failed while the rollback saved it is a probe
 defect worth fixing, not a clean run.
 
-### The seven obligations, named individually
+### The eight obligations, named individually
 
 `crop_box` (corners **and** `CropBoxActive`), `smooth_edges`,
 `annotation_crop_offsets`, `model_category_visibility` (**every** MODEL
 category, not a sample), `view_filters`, `view_template_id`, `display_style` —
-plus `probe_filter_deleted`, checked **by id** rather than inferred from the
-filter-map diff, because a filter deleted from the project but left associated
-with the view (or the reverse) can leave an identical map.
+plus `probe_filter_deleted` and `explicit_restore_steps`.
+
+`probe_filter_deleted` asks **two** questions: the id is gone from the view
+**and** `doc.GetElement` confirms the `ParameterFilterElement` itself is gone
+from the project. `RemoveFilter` succeeding while `doc.Delete` fails leaves the
+id off the view and the element alive project-wide, and checking only view
+membership declared that restored — the case this document and the code's own
+comment promised to catch and did not. Not being able to determine it is
+`unverified`, never `restored`.
+
+`explicit_restore_steps` fails when any explicit restore step raised. Those
+errors were recorded in `explicit_step_errors` and consulted by nothing, so a
+clean `TransactionGroup` rollback could let the variant conclude `RAN` — falsely
+validating an explicit restore the rollback had actually rescued. (Both: review
+finding on PR #215, round 3, P2.)
 
 Each is three-valued. A property that could not be **read** in either snapshot
 is `unverified`, which is **not** `restored` — the same rule production's
@@ -282,6 +294,21 @@ raised **with the view verifiably restored** is a failed variant and a safe
 document: the run continues, because the other four candidates are still worth
 measuring and stopping would throw away the whole view's evidence over one of
 them.
+
+### The model pass's own verdict gates the run
+
+`export_color_id_buffer_view` can return a TIFF **and** usable geometry with
+`success = False` — an `export_dim_mismatch` that survived the halving backoff is
+the reachable case. Every annotation variant registers against that capture, so
+the probe **refuses and runs no variant** when the model pass rejects its own
+capture, naming the `failure_reason`. The model TIFF and sidecar are still on
+disk as the evidence, and the combined report is written.
+
+Refusing rather than running-and-flagging, for the same reason the
+missing-geometry branch refuses: which model faults are tolerable is Greg's call,
+and five captures against a rejected foundation cost a Revit session and prove
+nothing. (Review finding on PR #215, round 3, P1: the status was recorded here
+and composed into no decision at all.)
 
 ### The model pass
 
@@ -434,6 +461,14 @@ score, no tolerance, no pass/fail, no "this variant looks better".
    faults, and **which source those faults were read from**. This section exists
    because those fields were being *read and never rendered*, which made a
    variant that measured nothing look exactly like one that did.
+   **A failed annotation bbox collection withholds 2, 2b, 2c, 3 and 4**, with
+   production's reason, and says so in a line near the top of the view's
+   section. Production writes an empty map plus a status block when its
+   collection raises; reading that map as "this view has no annotations" made a
+   failed collection indistinguishable from a clean capture — the fit said "0
+   matched", the excursion came back `value` over zero rectangles, and coverage
+   printed an empty table (review finding on PR #215, round 3, P1).
+
 1. **Image size vs `frame_px`, on both axes.** `dim_check` inspects the
    requested axis only (F4), so a nonzero `dh` beside `dim_check=pass` is F4
    exactly.

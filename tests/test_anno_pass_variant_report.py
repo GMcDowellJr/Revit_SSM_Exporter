@@ -1078,3 +1078,105 @@ def test_section_0_prints_the_fault_and_says_where_it_came_from(tmp_path):
     assert "annotation_frame_not_applied" in section
     assert "combined_record" in section
     assert "CAPTURE_FAILED" in section
+
+
+# ======================================================================
+# FINDING D (PR #215 round 3, P1): a failed bbox collection is not "no bboxes"
+# ======================================================================
+
+def _failed_collection_capture(tmp_path, name="v0_control"):
+    """A capture whose sidecar reports the bbox collection as unavailable.
+
+    This is what production writes when ``_collect_annotation_bbox_data``
+    raises: an EMPTY MAP plus a status block saying so.
+    """
+    fpp = 0.5333333333333333
+    frame_uv = (0.0, 0.0, 40.0, 30.0)
+    frame_px = (int(round(40.0 / fpp)), int(round(30.0 / fpp)))
+    probe_dir = tmp_path / "anno_pass_variants_probe"
+    variant_dir = probe_dir / name / "color_id_buffer"
+    variant_dir.mkdir(parents=True)
+    sidecar_path, tiff_path = _build_capture(
+        variant_dir, "Plan_19290402", frame_uv, frame_px, fpp,
+        (frame_uv[0], frame_uv[3]),
+        [(701, (10, 120, 200), (5.0, 5.0, 9.0, 9.0), "Text Notes"),
+         (702, (200, 60, 10), (25.0, 20.0, 29.0, 24.0), "Grids")])
+    sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    sidecar["annotation_bbox_status"] = {
+        "status": "unavailable",
+        "reason": "RuntimeError: the bbox collection blew up"}
+    sidecar["annotation_bbox_map"] = {}
+    sidecar_path.write_text(json.dumps(sidecar), encoding="utf-8")
+    combined = {
+        "probe": {"name": "stage_a_anno_pass_variants", "version": "test"},
+        "inputs": {"view_name": "Plan", "view_id": 19290402,
+                   "view_type": "FloorPlan", "view_scale": 96.0},
+        "model_pass": {"success": True, "failure_reason": None, "tiff_path": None,
+                       "geometry": {"achieved_export_dpi": 150.0,
+                                    "frame_px": list(frame_px)}},
+        "variants": [{"variant": name, "skipped": False,
+                      "annotation_pass": {"sidecar_path": str(sidecar_path),
+                                          "tiff_path": str(tiff_path)}}],
+    }
+    (probe_dir / "Plan_19290402.anno_pass_variants.json").write_text(
+        json.dumps(combined), encoding="utf-8")
+    return (probe_dir, sidecar_path, tiff_path)
+
+
+def test_every_bbox_derived_measurement_is_withheld_when_the_collection_failed(tmp_path):
+    """Four measurements, one reason, none of them reported as a value.
+
+    Before this, the fit said "0 matched sample(s)", the excursion came back
+    ``status: value`` over ZERO rectangles, and coverage printed an empty table
+    -- all indistinguishable from a clean capture that simply has no usable
+    bboxes. That is the same silence this whole file exists to prevent.
+    """
+    _probe_dir, sidecar_path, tiff_path = _failed_collection_capture(tmp_path)
+    measurements = report.analyze_capture(sidecar_path, tiff_path)["measurements"]
+
+    assert measurements["bbox_collection"]["status"] == "unavailable"
+    assert "blew up" in measurements["bbox_collection"]["reason"]
+    for key in ("registration", "registration_ink_bbox_anchor", "bbox_excursion",
+                "coverage"):
+        assert measurements[key]["status"] == "unavailable", key
+        assert "blew up" in measurements[key]["reason"], key
+    # Explicitly NOT a value-valued excursion over zero rectangles.
+    assert "rect_count" not in measurements["bbox_excursion"]
+    assert measurements["coverage"]["by_category"] == {}
+    assert measurements["coverage"]["ink_source"] is None
+    # Measurements that do NOT depend on the bbox map still work -- the gate is
+    # scoped, not a blanket refusal of the whole capture.
+    assert measurements["size"]["image_w"] > 0
+    assert measurements["offpalette"]["total_pixels"] > 0
+
+
+def test_the_rendered_report_states_the_collection_failure(tmp_path):
+    """THE PART THE PREVIOUS TEST DID NOT BIND.
+
+    The review was right: asserting on ``read_annotation_sidecar``'s
+    intermediate field says nothing about the report a reader consumes. This
+    drives ``build_report`` and asserts the failure appears in the text.
+    """
+    probe_dir, _sidecar, _tiff = _failed_collection_capture(tmp_path)
+    text = report.build_report([probe_dir], overlay_enabled=False)
+    assert "ANNOTATION BBOX COLLECTION FAILED" in text
+    assert "blew up" in text
+    # And the withheld measurements are visibly withheld rather than empty.
+    assert "NOT FITTED" in text
+
+
+def test_a_clean_collection_is_not_reported_as_failed(tmp_path):
+    """THE CONTROL. Without it the gate could fire unconditionally and every
+    capture would read as a failed collection."""
+    fpp = 0.5333333333333333
+    frame_uv = (0.0, 0.0, 80.0, 54.0)
+    frame_px = (int(round(80.0 / fpp)), int(round(54.0 / fpp)))
+    sidecar_path, tiff_path = _build_capture(
+        tmp_path, "clean", frame_uv, frame_px, fpp, (frame_uv[0], frame_uv[3]),
+        _registering_elements(fpp))
+    measurements = report.analyze_capture(sidecar_path, tiff_path)["measurements"]
+    assert measurements["bbox_collection"]["status"] == "value"
+    assert measurements["bbox_collection"]["entry_count"] == 4
+    assert measurements["registration"]["status"] == "value"
+    assert measurements["bbox_excursion"]["status"] == "value"
+    assert measurements["coverage"]["by_category"]

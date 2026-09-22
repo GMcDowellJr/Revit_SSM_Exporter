@@ -789,6 +789,26 @@ def analyze_capture(sidecar_path, tiff_path, model_tiff_sha=None,
     scan = scan_image(tiff_path, palette)
     image_w, image_h = scan["image_w"], scan["image_h"]
 
+    # A FAILED BBOX COLLECTION IS NOT A VIEW WITH NO ANNOTATIONS, and every
+    # measurement below is built on that map. read_annotation_sidecar
+    # deliberately empties bbox_entries when production reported the collection
+    # unavailable and keeps the reason -- but nothing consumed that, so the
+    # report said "0 matched", emitted a value-valued excursion over zero
+    # rectangles and printed empty coverage: indistinguishable from a clean
+    # capture that simply has no usable bboxes. Gated here, once, so all four
+    # bbox-derived measurements carry the same reason rather than each
+    # independently reading an empty dict as a fact. (PR #215 review, round 3.)
+    bbox_unavailable = None
+    if not record["bbox_status_ok"]:
+        bbox_unavailable = {
+            "status": "unavailable",
+            "reason": "production reported the annotation bbox collection as "
+                      "{0}. Every measurement below depends on that map, so none "
+                      "is reported -- an empty map here is a FAILED collection, "
+                      "not a view without annotations.".format(
+                          record["bbox_status_reason"]),
+        }
+
     # ---- (1) image size vs frame_px, BOTH axes ------------------------
     frame_px = record.get("frame_px")
     size = {"image_w": image_w, "image_h": image_h,
@@ -859,7 +879,10 @@ def analyze_capture(sidecar_path, tiff_path, model_tiff_sha=None,
         })
         sample_diagnostics["matched"] += 1
 
-    if frame_rect is None:
+    if bbox_unavailable is not None:
+        fit = dict(bbox_unavailable, sample_count=0)
+        alt_fit = dict(bbox_unavailable)
+    elif frame_rect is None:
         fit = {"status": "unavailable", "reason": frame_reason,
                "sample_count": len(samples)}
         alt_fit = {"status": "unavailable", "reason": frame_reason}
@@ -880,7 +903,9 @@ def analyze_capture(sidecar_path, tiff_path, model_tiff_sha=None,
     measurements["anchor_agreement"] = _anchor_agreement(fit, alt_fit)
 
     # ---- (3) bbox excursion past the rendered frame, per side ---------
-    if frame_rect is None:
+    if bbox_unavailable is not None:
+        measurements["bbox_excursion"] = dict(bbox_unavailable)
+    elif frame_rect is None:
         measurements["bbox_excursion"] = {
             "status": "unavailable", "reason": frame_reason}
     else:
@@ -910,8 +935,18 @@ def analyze_capture(sidecar_path, tiff_path, model_tiff_sha=None,
         measurements["bbox_excursion"] = excursion
 
     # ---- (4) coverage per category -----------------------------------
-    measurements["coverage"] = _coverage_by_category(
-        record, scan, measurements["registration"], tiff_path, image_w, image_h)
+    if bbox_unavailable is not None:
+        measurements["coverage"] = dict(
+            bbox_unavailable, ink_source=None,
+            ink_unavailable_reason=bbox_unavailable["reason"],
+            ink_threshold=INK_FRACTION_THRESHOLD, by_category={})
+    else:
+        measurements["coverage"] = _coverage_by_category(
+            record, scan, measurements["registration"], tiff_path,
+            image_w, image_h)
+    measurements["bbox_collection"] = (
+        dict(bbox_unavailable) if bbox_unavailable is not None
+        else {"status": "value", "entry_count": len(record["bbox_entries"])})
 
     # ---- (5) off-palette split ---------------------------------------
     off = classify_offpalette_tally(
@@ -1149,6 +1184,17 @@ def render_run(run, analyses, overlay_results):
         lines.append("")
         lines.append("- `{0}`: NO CAPTURE ANALYSED. {1}".format(
             missing.get("variant"), missing.get("reason")))
+    # A FAILED BBOX COLLECTION, stated where a reader cannot miss it. Sections 2,
+    # 2b, 3 and 4 all say "unavailable" with the same reason below, but a line
+    # here means it is not something you have to notice four tables in.
+    for item in analyses:
+        collection = item["analysis"]["measurements"].get("bbox_collection") or {}
+        if collection.get("status") != "value":
+            lines.append("")
+            lines.append("- `{0}`: **ANNOTATION BBOX COLLECTION FAILED.** {1} "
+                         "Measurements 2, 2b, 2c, 3 and 4 are all withheld for "
+                         "this variant.".format(
+                             item["variant"], collection.get("reason")))
     for item in analyses:
         sidecar = item["analysis"]["sidecar"]
         for label, records in (

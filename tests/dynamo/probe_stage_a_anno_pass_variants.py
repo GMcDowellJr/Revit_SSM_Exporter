@@ -1003,6 +1003,28 @@ def delete_filter(doc, view, filter_id_int):
         raise RuntimeError("; ".join(errors))
 
 
+def filter_element_exists(doc, filter_id_int):
+    """Does the ParameterFilterElement still exist in the PROJECT?
+
+    ``None`` when there was no filter to check or the question could not be
+    answered -- which ``restore_readback_verdict`` treats as ``unverified``, not
+    as deleted. "Could not tell" is not "it is gone".
+
+    Asked of the document rather than inferred from the view's filter list,
+    because ``RemoveFilter`` succeeding and ``doc.Delete`` failing leaves the id
+    absent from the view and the element alive in the project.
+    """
+    if filter_id_int is None:
+        return None
+    try:
+        from Autodesk.Revit.DB import ElementId
+        return doc.GetElement(ElementId(int(filter_id_int))) is not None
+    except Exception as ex:
+        print("[probe:{0}] could not determine whether filter {1} still exists: "
+              "{2}: {3}".format(PROBE_NAME, filter_id_int, type(ex).__name__, ex))
+        return None
+
+
 def link_visibility_report(doc, view):
     """Link instances whose graphics are NOT "By Host View".
 
@@ -1306,7 +1328,9 @@ def snapshot_view(doc, view):
     }
 
 
-def restore_readback_verdict(before, after, expect_filter_absent=None):
+def restore_readback_verdict(before, after, expect_filter_absent=None,
+                             filter_element_still_in_project=None,
+                             explicit_step_errors=None):
     """Which restore obligations this pair of snapshots satisfies.
 
     The five obligations are named INDIVIDUALLY rather than rolled into one
@@ -1363,17 +1387,54 @@ def restore_readback_verdict(before, after, expect_filter_absent=None):
         # A filter that was deleted from the project but left associated with
         # the view, or vice versa, can produce an identical filter MAP while
         # the element survives -- so the id is asked for directly.
+        #
+        # TWO QUESTIONS, and the first version of this asked only one. The view
+        # membership test alone declares "restored" when RemoveFilter succeeded
+        # and doc.Delete FAILED: the id is gone from the view and a project-wide
+        # ParameterFilterElement the probe created is still there. That is
+        # precisely the case the comment above promised to catch and did not --
+        # an identity claimed in prose and never asserted. So the caller also
+        # resolves whether the ELEMENT still exists, and both must be clear.
         if a_filters.get("state") != "value":
             verdict["probe_filter_deleted"] = {
                 "status": "unverified",
                 "reason": a_filters.get("reason") or "view filters unreadable"}
+        elif str(int(expect_filter_absent)) in (a_filters.get("value") or {}):
+            verdict["probe_filter_deleted"] = {
+                "status": "not_restored",
+                "reason": "the probe's white filter {0} is still on the view".format(
+                    expect_filter_absent)}
+        elif filter_element_still_in_project is True:
+            verdict["probe_filter_deleted"] = {
+                "status": "not_restored",
+                "reason": "the probe's white filter {0} was removed from the view "
+                          "but the ParameterFilterElement still exists in the "
+                          "project; this capture left project-wide "
+                          "contamination".format(expect_filter_absent)}
+        elif filter_element_still_in_project is None:
+            verdict["probe_filter_deleted"] = {
+                "status": "unverified",
+                "reason": "the filter is off the view, but whether the "
+                          "ParameterFilterElement itself was deleted could not be "
+                          "determined"}
         else:
-            still_there = str(int(expect_filter_absent)) in (a_filters.get("value") or {})
-            verdict["probe_filter_deleted"] = (
-                {"status": "not_restored",
-                 "reason": "the probe's white filter {0} is still on the view".format(
-                     expect_filter_absent)}
-                if still_there else {"status": "restored"})
+            verdict["probe_filter_deleted"] = {"status": "restored"}
+
+    # A RESTORE STEP THAT RAISED IS NOT A RESTORE THAT SUCCEEDED, and this was
+    # recorded and then not consulted: a failed doc.Delete landed in
+    # explicit_step_errors while document_safe read only the read-back verdicts,
+    # so a clean TransactionGroup rollback could still let the variant conclude
+    # RAN -- falsely validating the explicit restore the rollback had actually
+    # rescued.
+    if explicit_step_errors:
+        verdict["explicit_restore_steps"] = {
+            "status": "not_restored",
+            "reason": "{0} explicit restore step(s) raised".format(
+                len(explicit_step_errors)),
+            "errors": list(explicit_step_errors),
+        }
+    else:
+        verdict["explicit_restore_steps"] = {"status": "restored"}
 
     statuses = [entry["status"] for entry in verdict.values()]
     verdict["overall"] = ("restored" if all(s == "restored" for s in statuses)
@@ -1674,8 +1735,13 @@ def _run_variant(doc, view, variant, model_context, settings):
         # ---- 6: THE MEASUREMENT --------------------------------------
         snapshot_after_restore = snapshot_view(doc, view)
         report["snapshot_after_explicit_restore"] = snapshot_after_restore
+        element_still_there = filter_element_exists(doc, filter_id)
+        report["restore"]["probe_filter_element_still_in_project"] = (
+            element_still_there)
         report["restore"]["after_explicit_restore"] = restore_readback_verdict(
-            snapshot_before, snapshot_after_restore, expect_filter_absent=filter_id)
+            snapshot_before, snapshot_after_restore, expect_filter_absent=filter_id,
+            filter_element_still_in_project=element_still_there,
+            explicit_step_errors=restore_errors)
 
     except Exception as ex:
         report["exceptions"].append(_exception_record("variant", ex))
@@ -1697,9 +1763,15 @@ def _run_variant(doc, view, variant, model_context, settings):
             try:
                 snapshot_after_rollback = snapshot_view(doc, view)
                 report["snapshot_after_rollback"] = snapshot_after_rollback
+                # No explicit_step_errors here: the rollback is the safety net,
+                # and whether it rescued a failed explicit step is exactly the
+                # distinction between the two verdicts. Passing them would make
+                # the net report the failure it just undid.
                 report["restore"]["after_rollback"] = restore_readback_verdict(
                     snapshot_before, snapshot_after_rollback,
-                    expect_filter_absent=filter_id)
+                    expect_filter_absent=filter_id,
+                    filter_element_still_in_project=filter_element_exists(
+                        doc, filter_id))
             except Exception as ex:
                 report["exceptions"].append(_exception_record("post_rollback_snapshot", ex))
 
@@ -2096,6 +2168,42 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
                             "annotation pass REFUSES to run without it and this "
                             "probe does not substitute one")
         finalize_native_report(report, {})
+        report["conclusion"] = "FAIL"
+        report["paths"]["combined_json"] = _write_combined(report, probe_dir, base)
+        _write_combined(report, probe_dir, base)
+        return report
+
+    # THE MODEL PASS'S OWN VERDICT, and it gates the run. It can return a TIFF
+    # and usable geometry with success=False -- an export_dim_mismatch that
+    # survived the halving backoff is the reachable case -- and the status was
+    # being recorded here and composed into no decision at all. Every variant
+    # registers against this capture, so an invalid one makes all five
+    # annotation captures evidence about a foundation production has already
+    # rejected, and the run could still conclude RAN/completed.
+    #
+    # REFUSING rather than running and flagging, for the same reason the missing
+    # -geometry branch above refuses: which model faults are tolerable is Greg's
+    # call, not this module's, and five captures against a rejected foundation
+    # cost a Revit session to produce and prove nothing. The fault is named so
+    # the decision can be made. (PR #215 review, round 3.)
+    if not model_out.get("success"):
+        report["model_pass"] = {
+            "success": False,
+            "failure_reason": model_out.get("failure_reason"),
+            "tiff_path": model_out.get("tiff_path"),
+            "sidecar_path": model_out.get("sidecar_path"),
+            "output_directory": model_dir,
+        }
+        report["reason"] = (
+            "the model pass REJECTED ITS OWN CAPTURE ({0}); every annotation "
+            "variant registers against it, so no variant was run. The model TIFF "
+            "and sidecar are on disk as the evidence. Re-run once the model "
+            "capture is sound, or say which model faults this probe should "
+            "tolerate.".format(model_out.get("failure_reason")))
+        finalize_native_report(report, {
+            "model_tiff": model_out.get("tiff_path"),
+            "model_sidecar": model_out.get("sidecar_path"),
+        })
         report["conclusion"] = "FAIL"
         report["paths"]["combined_json"] = _write_combined(report, probe_dir, base)
         _write_combined(report, probe_dir, base)
