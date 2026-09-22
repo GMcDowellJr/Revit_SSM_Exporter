@@ -216,6 +216,32 @@ Under V1–V3 model category visibility is **never written, in either direction*
 which is what makes `model_category_visibility: restored` a real statement
 rather than a no-op write's echo.
 
+### A variant that did not MEASURE its candidate
+
+A TIFF existing proves an export happened. It does not prove the export
+measured the variant, and **both** production switches can decline without
+raising:
+
+* `applied_smooth_edges` comes back `"read_failed"` or `"unchanged (failed)"`
+  when the `ViewDisplayModel` read or write fails. Production correctly does
+  not raise — an unconfirmed AA state costs decode confidence, not the export —
+  so V2/V3 can return a real TIFF that measured **V1's** behaviour.
+* `model_suppression_mode` is what production says it did. A V1–V3 capture that
+  came back `"hide_categories"` hid model categories and disabled the probe's
+  own filter: it measured **V0's** suppression.
+
+Either way the capture is not evidence about its candidate, so the variant
+concludes **`DID_NOT_MEASURE`** rather than `RAN`, the run concludes the same,
+the envelope's `execution_status` is `inconclusive`, and the analyzer's
+**section 0** prints it as the first thing in the report. The document is still
+safe in that case, so it does **not** stop the run.
+
+(Found by review on PR #215, as a P1. Before it, the probe declared `RAN` on
+TIFF existence alone; the fields were recorded in the sidecar, absent from the
+conclusion and never rendered — three places to look and no place that said so.
+`variant_conclusion()` is extracted precisely so the *call site* is bound by a
+test and not only the checker it calls.)
+
 ### Two different questions, and only one of them stops the run
 
 `document_safe` is "is the view as this variant found it". It is the **only**
@@ -353,6 +379,13 @@ deleted.
 **If the restore read-back fails on the first view, stop the run**, send the
 combined JSON, and do not open the next view.
 
+The combined JSON is **finalized before it is written**: its `conclusion` and
+`paths` are set first, and `_write_combined` **refuses** a report without the
+`report_finalized` stamp. (Review finding on PR #215, P2: it used to be
+serialised first, so the persisted file — the one the analyzer and you actually
+read — permanently said `INCONCLUSIVE` and carried no paths, while only the
+in-memory object returned to Dynamo was right.)
+
 ---
 
 ## Reading the output
@@ -366,6 +399,11 @@ Leaf module: standard library + numpy + PIL, plus `tools/clamp_pad_geometry.py`.
 It emits the brief's six measurements as tables and **nothing evaluative** — no
 score, no tolerance, no pass/fail, no "this variant looks better".
 
+0. **What the capture reports it actually did** — `model_suppression_mode`,
+   `applied_smooth_edges`, the display style, the probe's conclusion, whether
+   the variant measured its candidate, and any capture faults. This section
+   exists because those fields were being *read and never rendered*, which made
+   a variant that measured nothing look exactly like one that did.
 1. **Image size vs `frame_px`, on both axes.** `dim_check` inspects the
    requested axis only (F4), so a nonzero `dh` beside `dim_check=pass` is F4
    exactly.
@@ -376,6 +414,22 @@ score, no tolerance, no pass/fail, no "this variant looks better".
    offset at (u0, v1), the per-side margin in feet **and** paper inches, and the
    residual median and max. A colour whose mask touches an image edge is
    **excluded and counted**: a clipped element's centroid is not its centre.
+
+   **2c states the fit's own premise and bounds it.** The fit assumes an
+   element's ink is centred in its recorded bbox, and for real text, a tag with
+   a leader or a dimension it need not be. A displacement that is the *same* for
+   every element is absorbed into the fitted intercept — so it leaves the
+   residuals clean while shifting every margin in 2b by exactly that amount.
+   Such a uniform displacement is **not recoverable** from a capture (nothing
+   distinguishes it from the whole render sitting that far over), so the report
+   does not pretend to measure it. What it measures is whether one is
+   **possible, and by how much**: the ink's span as a fraction of its recorded
+   bbox, its solidity, and the resulting bound in pixels — plus a **second fit**
+   anchored on the ink's own bbox centre, whose deltas are ~0 exactly when the
+   premise holds. Ink that reaches both edges of its box cannot be off-centre in
+   it. (Review finding on PR #215, P1. The first attempt at this measured the
+   displacement *through the fit that absorbs it* and returned ~0 by
+   construction; its own test caught that.)
 3. **How far the recorded bboxes reach past the rendered frame, per side** —
    printed beside 2b. Where they agree, the render is behaving as if fitted to
    the crop unioned with the annotations drawn beyond it.

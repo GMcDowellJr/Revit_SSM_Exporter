@@ -147,8 +147,114 @@ def rect_from_corners(corners: Any) -> tuple[float, float, float, float] | None:
     return (min(us), min(vs), max(us), max(vs))
 
 
-def fit_registration(samples, frame_uv, image_w, image_h, view_scale):
+def ink_vs_bbox_geometry(samples, mapping):
+    """Does an element's INK fill its recorded bbox? Per category.
+
+    THIS MEASURES THE FIT'S PREMISE, and the first version of this function
+    measured the wrong thing -- caught by its own test, which is the only reason
+    this comment is accurate. That version reported the per-sample residual of
+    the fit, and a displacement that is the SAME for every element is ABSORBED
+    INTO THE FITTED INTERCEPT, so it came back ~0 by construction. Measuring the
+    premise through the fit that hides it is circular.
+
+    WHAT IS ACTUALLY RECOVERABLE, and what is not:
+
+      * NOT recoverable: a uniform displacement between every element's ink and
+        its bbox centre. Nothing in the capture distinguishes "the ink sits 3 px
+        left of every box" from "the whole render sits 3 px left". That is
+        exactly why it is dangerous, and this function does not pretend to
+        measure it.
+      * Recoverable, and diagnostic of whether such a displacement is POSSIBLE:
+        how much of its recorded bbox an element's ink actually occupies. Ink
+        that fills its box cannot be off-centre in it. Ink occupying a third of
+        it can be, by up to a third of the box.
+
+    So what is reported is the fill: the ink's own pixel bbox against the
+    recorded bbox mapped through the fitted SCALE (which a uniform translation
+    does not corrupt), plus the fraction of that ink bbox the ink covers. A
+    category whose ink fills its boxes puts a bound on the offset; one whose ink
+    occupies a fraction says the margins in 2b rest on a premise this capture
+    cannot confirm.
+
+    Returns ``{}`` when there is nothing to measure through -- never zeros,
+    which would read as "the ink fills its box".
+    """
+    if not mapping or not samples:
+        return {}
+    scale_u = abs(mapping.get("a_u") or 0.0)
+    scale_v = abs(mapping.get("a_v") or 0.0)
+    if scale_u <= 0.0 or scale_v <= 0.0:
+        return {}
+    per_category = {}
+    for sample in samples:
+        recorded_u_px = float(sample.get("bbox_u_ft") or 0.0) * scale_u
+        recorded_v_px = float(sample.get("bbox_v_ft") or 0.0) * scale_v
+        ink_u_px = float(sample.get("ink_w_px") or 0.0)
+        ink_v_px = float(sample.get("ink_h_px") or 0.0)
+        if recorded_u_px <= 0.0 or recorded_v_px <= 0.0:
+            continue
+        bucket = per_category.setdefault(
+            sample.get("category") or "<no category>",
+            {"span_u": [], "span_v": [], "solidity": [], "slack_u_px": [],
+             "slack_v_px": []})
+        bucket["span_u"].append(ink_u_px / recorded_u_px)
+        bucket["span_v"].append(ink_v_px / recorded_v_px)
+        # How far the ink COULD be off-centre inside its recorded box, in px.
+        # This is the bound the margins in 2b are uncertain by.
+        bucket["slack_u_px"].append(max(0.0, (recorded_u_px - ink_u_px) / 2.0))
+        bucket["slack_v_px"].append(max(0.0, (recorded_v_px - ink_v_px) / 2.0))
+        area = ink_u_px * ink_v_px
+        if area > 0.0:
+            bucket["solidity"].append(float(sample.get("ink_pixels") or 0) / area)
+
+    def _stats(values):
+        if not values:
+            return None
+        ordered = sorted(values)
+        mid = len(ordered) // 2
+        median = (ordered[mid] if len(ordered) % 2
+                  else (ordered[mid - 1] + ordered[mid]) / 2.0)
+        return {"median": median, "min": ordered[0], "max": ordered[-1],
+                "count": len(ordered)}
+
+    out = {}
+    for name, bucket in per_category.items():
+        out[name] = {
+            # ink bbox extent / recorded bbox extent. 1.0 = the ink spans its
+            # whole box, so it cannot be off-centre in it.
+            "span_fraction_u": _stats(bucket["span_u"]),
+            "span_fraction_v": _stats(bucket["span_v"]),
+            # ink pixels / ink bbox area. <1 means the ink is not a solid
+            # rectangle (a glyph run, an L, a leader), so its CENTROID can sit
+            # away from its own bbox centre too.
+            "solidity": _stats(bucket["solidity"]),
+            # The bound, in pixels, on how wrong a margin could be because of
+            # this. The number to read 2b against.
+            "possible_offset_u_px": _stats(bucket["slack_u_px"]),
+            "possible_offset_v_px": _stats(bucket["slack_v_px"]),
+        }
+    return out
+
+
+def fit_registration(samples, frame_uv, image_w, image_h, view_scale,
+                     anchor="ink_centroid"):
     """Fit UV -> pixel from matched (bbox centre, colour centroid) pairs.
+
+    ``anchor`` selects which pixel feature stands for an element's position:
+
+        "ink_centroid"  the centroid of its exact-colour pixels. The probe
+                        brief's method, and the one precedented at a 0.44 px
+                        median on the run's plan view.
+        "ink_bbox"      the centre of the bounding box of those same pixels.
+
+    BOTH ARE REPORTED, and the reason is finding 3 on PR #215: neither anchor
+    is guaranteed to coincide with the centre of ``get_BoundingBox(view)`` for
+    real text, tags or dimensions. The two agree exactly when the ink fills its
+    box and diverge when it does not -- so running both and printing them side
+    by side turns an unasserted premise into a visible measurement. Where they
+    agree the anchor choice does not matter; where they disagree, the margins
+    below rest on a premise this capture does not satisfy, and the reader can
+    see it without opening a sidecar.
 
     ``samples`` is ``[{"u": float, "v": float, "x": float, "y": float}, ...]``.
     The two axes are fitted INDEPENDENTLY, on purpose: if the rendered region
@@ -173,10 +279,18 @@ def fit_registration(samples, frame_uv, image_w, image_h, view_scale):
             "{0} matched sample(s); a linear fit needs at least 2".format(n))
         return out
 
+    key_x = "x" if anchor == "ink_centroid" else "bbox_x"
+    key_y = "y" if anchor == "ink_centroid" else "bbox_y"
+    if any(s.get(key_x) is None or s.get(key_y) is None for s in samples):
+        out["status"] = "unavailable"
+        out["reason"] = ("anchor {0!r} needs {1}/{2} on every sample and at least "
+                         "one is missing".format(anchor, key_x, key_y))
+        return out
+    out["anchor"] = anchor
     us = [float(s["u"]) for s in samples]
     vs = [float(s["v"]) for s in samples]
-    xs = [float(s["x"]) for s in samples]
-    ys = [float(s["y"]) for s in samples]
+    xs = [float(s[key_x]) for s in samples]
+    ys = [float(s[key_y]) for s in samples]
 
     fit_u = fit_axis(us, xs)
     fit_v = fit_axis(vs, ys)
@@ -254,6 +368,10 @@ def fit_registration(samples, frame_uv, image_w, image_h, view_scale):
     out["margin_paper_in"] = dict(
         (side, value * 12.0 / scale) for side, value in margins_ft.items())
     out["mapping"] = {"a_u": a_u, "b_u": b_u, "a_v": a_v, "b_v": b_v}
+    # The premise, measured -- and measured OUTSIDE the fit, because the fit
+    # absorbs exactly the displacement in question. See ink_vs_bbox_geometry.
+    out["ink_vs_bbox_by_category"] = ink_vs_bbox_geometry(samples, out["mapping"])
+    out["feet_per_pixel_fitted"] = (1.0 / a_u) if a_u else None
     return out
 
 
@@ -698,19 +816,47 @@ def analyze_capture(sidecar_path, tiff_path, model_tiff_sha=None,
             sample_diagnostics["border_clipped"] += 1
             continue
         u, v = rect_center(rect)
-        samples.append({"element_id": element_id, "u": u, "v": v,
-                        "x": blob["centroid_px"][0], "y": blob["centroid_px"][1]})
+        pixel_bbox = blob["pixel_bbox"]
+        samples.append({
+            "element_id": element_id, "u": u, "v": v,
+            "category": entry.get("category"),
+            # The brief's anchor.
+            "x": blob["centroid_px"][0], "y": blob["centroid_px"][1],
+            # The second anchor: the centre of the ink's own bounding box.
+            # Equal to the centroid when the ink fills its box; different when
+            # it does not, which is finding 3's whole point.
+            "bbox_x": (pixel_bbox[0] + pixel_bbox[2]) / 2.0,
+            "bbox_y": (pixel_bbox[1] + pixel_bbox[3]) / 2.0,
+            # Raw ink geometry, for the premise measurement. Deliberately NOT
+            # derived through the fit: the fit absorbs the very displacement
+            # being looked for.
+            "ink_w_px": pixel_bbox[2] - pixel_bbox[0] + 1.0,
+            "ink_h_px": pixel_bbox[3] - pixel_bbox[1] + 1.0,
+            "ink_pixels": blob["pixel_count"],
+            "bbox_u_ft": rect[2] - rect[0],
+            "bbox_v_ft": rect[3] - rect[1],
+        })
         sample_diagnostics["matched"] += 1
 
     if frame_rect is None:
         fit = {"status": "unavailable", "reason": frame_reason,
                "sample_count": len(samples)}
+        alt_fit = {"status": "unavailable", "reason": frame_reason}
     else:
         fit = fit_registration(samples, frame_rect, image_w, image_h,
-                               record.get("view_scale") or 1.0)
+                               record.get("view_scale") or 1.0,
+                               anchor="ink_centroid")
+        # THE SECOND ANCHOR. Not a fallback -- a cross-check on the premise
+        # that an element's ink is centred in its recorded bbox. See
+        # fit_registration's docstring and ink_offset_distribution.
+        alt_fit = fit_registration(samples, frame_rect, image_w, image_h,
+                                   record.get("view_scale") or 1.0,
+                                   anchor="ink_bbox")
     fit["sample_diagnostics"] = sample_diagnostics
     fit["frame_uv"] = list(frame_rect) if frame_rect else None
     measurements["registration"] = fit
+    measurements["registration_ink_bbox_anchor"] = alt_fit
+    measurements["anchor_agreement"] = _anchor_agreement(fit, alt_fit)
 
     # ---- (3) bbox excursion past the rendered frame, per side ---------
     if frame_rect is None:
@@ -766,6 +912,29 @@ def analyze_capture(sidecar_path, tiff_path, model_tiff_sha=None,
                        else model_tiff_sha == v0_model_tiff_sha),
     }
     return result
+
+
+def _anchor_agreement(primary, secondary):
+    """How far the two anchors' answers differ. Deltas only, no verdict.
+
+    Reported rather than thresholded on purpose: what counts as "close enough"
+    for a margin figure is Greg's call, and a tool that picked a number would
+    be making it. Where these are ~0 the premise holds on this capture and the
+    anchor choice is immaterial; where they are not, the margins rest on
+    something this capture does not satisfy.
+    """
+    if primary.get("status") != "value" or secondary.get("status") != "value":
+        return {"status": "unavailable",
+                "reason": "one of the two anchors did not fit ({0} / {1})".format(
+                    primary.get("status"), secondary.get("status"))}
+    out = {"status": "value",
+           "px_per_ft_u_delta": primary["px_per_ft_u"] - secondary["px_per_ft_u"],
+           "px_per_ft_v_delta": primary["px_per_ft_v"] - secondary["px_per_ft_v"],
+           "margin_ft_delta": {}}
+    for side in ("left", "right", "top", "bottom"):
+        out["margin_ft_delta"][side] = (
+            primary["margin_ft"][side] - secondary["margin_ft"][side])
+    return out
 
 
 def _coverage_by_category(record, scan, fit, tiff_path, image_w, image_h):
@@ -973,6 +1142,55 @@ def render_run(run, analyses, overlay_results):
                                  records[:5]))
     lines.append("")
 
+    # ---- (0) what production says it DID ----------------------------
+    #
+    # This section exists because these fields were being READ and never
+    # RENDERED, which made a variant that measured nothing look exactly like
+    # one that did. `applied_smooth_edges` is the whole content of V2, and
+    # `model_suppression_mode` is the whole content of V1: a capture that came
+    # back "read_failed" or "hide_categories" measured the variant BELOW it.
+    lines.append("### 0. What the capture reports it actually did")
+    lines.append("")
+    rows = []
+    for item in analyses:
+        sidecar = item["analysis"]["sidecar"]
+        variant_report = item.get("variant_report") or {}
+        measurement = variant_report.get("measurement") or {}
+        faults = sidecar.get("capture_faults") or []
+        rows.append([
+            item["variant"],
+            _fmt(sidecar.get("model_suppression_mode")),
+            _fmt(sidecar.get("applied_smooth_edges")),
+            _fmt(sidecar.get("applied_display_style")),
+            _fmt(variant_report.get("conclusion")),
+            ("yes" if measurement.get("measured") is True
+             else ("NO" if measurement.get("measured") is False else "--")),
+            (", ".join(str(f.get("fault")) for f in faults) or "none"),
+        ])
+    lines.extend(_table(["variant", "suppression mode", "applied_smooth_edges",
+                         "display style", "probe conclusion",
+                         "measured its candidate", "capture faults"], rows))
+    lines.append("")
+    lines.append("`applied_smooth_edges` is four-valued: `not_attempted` (the pass "
+                 "was not asked), `read_failed`, `unchanged (failed)`, or `False` "
+                 "(**confirmed off**). A V2/V3 row that is anything but `False` did "
+                 "NOT have anti-aliasing disabled and therefore measures the same "
+                 "behaviour as the variant above it -- the probe reports that as "
+                 "`DID_NOT_MEASURE` rather than `RAN`.")
+    lines.append("")
+    for item in analyses:
+        unmet = ((item.get("variant_report") or {}).get("measurement")
+                 or {}).get("unmet") or []
+        for entry in unmet:
+            lines.append("- `{0}` DID NOT MEASURE: requested {1}, production "
+                         "reported `{2}`. {3}".format(
+                             item["variant"], entry.get("requested"),
+                             entry.get("production_reported"),
+                             entry.get("why_it_matters")))
+    if any(((item.get("variant_report") or {}).get("measurement") or {}).get("unmet")
+           for item in analyses):
+        lines.append("")
+
     # ---- (1) size ---------------------------------------------------
     lines.append("### 1. Image size vs `frame_px`, both axes")
     lines.append("")
@@ -1038,6 +1256,96 @@ def render_run(run, analyses, overlay_results):
                     + [""])
     lines.extend(_table(["variant", "left", "right", "top", "bottom", ""], rows))
     lines.append("")
+    lines.append("#### 2c. The fit's own premise: does the ink sit where the bbox "
+                 "says?")
+    lines.append("")
+    lines.append("The fit matches an element's exact-colour centroid against the "
+                 "centre of its recorded `bbox_uv`. **Those coincide only when the "
+                 "ink fills the box**, which real text, a tag with a leader or a "
+                 "dimension need not do. A displacement that is the SAME for every "
+                 "element is absorbed into the fitted intercept, so it leaves the "
+                 "residuals in 2 clean while shifting every margin in 2b by exactly "
+                 "that amount; one that varies with size or position corrupts the "
+                 "scale instead and does inflate the residuals. Both are surfaced "
+                 "here. No tolerance is applied -- what is close enough for a margin "
+                 "figure is your call.")
+    lines.append("")
+    rows = []
+    for item in analyses:
+        agreement = item["analysis"]["measurements"].get("anchor_agreement") or {}
+        alt = item["analysis"]["measurements"].get(
+            "registration_ink_bbox_anchor") or {}
+        if agreement.get("status") != "value":
+            rows.append([item["variant"], "--", "--", "--", "--", "--",
+                         agreement.get("reason") or "--"])
+            continue
+        deltas = agreement["margin_ft_delta"]
+        rows.append([item["variant"],
+                     _fmt(alt.get("px_per_ft_u")), _fmt(alt.get("px_per_ft_v")),
+                     _fmt(agreement["px_per_ft_u_delta"], "{0:.4f}"),
+                     _fmt(agreement["px_per_ft_v_delta"], "{0:.4f}"),
+                     " / ".join(_fmt(deltas[side], "{0:.3f}")
+                                for side in ("left", "right", "top", "bottom")),
+                     ""])
+    lines.extend(_table(["variant", "ink-bbox px/ft u", "ink-bbox px/ft v",
+                         "px/ft u delta", "px/ft v delta",
+                         "margin delta ft (l/r/t/b)", ""], rows))
+    lines.append("")
+    lines.append("The second anchor is the centre of the ink's own bounding box "
+                 "rather than its centroid. The two are identical when the ink "
+                 "fills its bbox and diverge when it does not, so a row of ~0 "
+                 "deltas says the anchor choice does not matter on this capture "
+                 "and the margins above do not rest on the premise.")
+    lines.append("")
+    lines.append("A UNIFORM displacement -- every element's ink sitting the same "
+                 "distance off its box centre -- is NOT recoverable from a capture: "
+                 "nothing distinguishes it from the whole render sitting that far "
+                 "over, which is why it is the dangerous case. What IS recoverable "
+                 "is whether such a displacement is POSSIBLE, and by how much: ink "
+                 "that spans its whole box cannot be off-centre in it. The table "
+                 "below bounds it.")
+    lines.append("")
+    for item in analyses:
+        premise = (item["analysis"]["measurements"]["registration"]
+                   .get("ink_vs_bbox_by_category") or {})
+        if not premise:
+            continue
+        lines.append("##### `{0}` does the ink fill its recorded bbox?".format(
+            item["variant"]))
+        lines.append("")
+        rows = []
+        for name in sorted(premise):
+            entry = premise[name]
+
+            def _cell(stats, spec="{0:.3f}"):
+                if not stats:
+                    return "--"
+                return "{0} ({1} .. {2})".format(
+                    _fmt(stats["median"], spec), _fmt(stats["min"], spec),
+                    _fmt(stats["max"], spec))
+
+            rows.append([
+                name,
+                (entry["span_fraction_u"] or {}).get("count", "--"),
+                _cell(entry["span_fraction_u"]),
+                _cell(entry["span_fraction_v"]),
+                _cell(entry["solidity"]),
+                _cell(entry["possible_offset_u_px"], "{0:.1f}"),
+                _cell(entry["possible_offset_v_px"], "{0:.1f}"),
+            ])
+        lines.extend(_table(
+            ["category", "n", "ink span / bbox u", "ink span / bbox v",
+             "solidity", "possible offset u px", "possible offset v px"], rows))
+        lines.append("")
+        lines.append("`ink span / bbox` of 1.0 means the ink reaches both edges of "
+                     "its recorded box, so it cannot be off-centre in it and the "
+                     "margins above are bounded. `solidity` is ink pixels over ink "
+                     "bbox area: below 1 the ink is not a solid rectangle -- a glyph "
+                     "run, an L, a leader -- so its centroid can also sit away from "
+                     "its own bbox centre. `possible offset` is how far, in pixels, "
+                     "a margin in 2b could be wrong because of this.")
+        lines.append("")
+
     for item in analyses:
         fit = item["analysis"]["measurements"]["registration"]
         diagnostics = fit.get("sample_diagnostics") or {}
@@ -1281,7 +1589,8 @@ def build_report(targets, overlay_enabled=True):
                                     or model_sha),
                     v0_model_tiff_sha=v0_sha)
                 analyses.append({"variant": capture["variant"],
-                                 "analysis": analysis})
+                                 "analysis": analysis,
+                                 "variant_report": capture.get("variant_report")})
                 overlay = maybe_run_overlay(analysis, capture["sidecar"],
                                             overlay_enabled)
                 overlay["variant"] = capture["variant"]

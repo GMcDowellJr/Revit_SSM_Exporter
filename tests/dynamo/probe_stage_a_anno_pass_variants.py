@@ -216,6 +216,96 @@ def variant_plan(variant):
     }
 
 
+def variant_measurement_check(plan, annotation_metadata):
+    """Did production actually apply what this variant ASKED FOR?
+
+    PURE, and the answer this probe was missing. A TIFF existing proves an
+    export happened; it does not prove the export measured the variant. Both
+    switches can decline:
+
+      * ``applied_smooth_edges`` comes back ``"read_failed"`` or
+        ``"unchanged (failed)"`` when the ViewDisplayModel read or write fails.
+        Production does not raise -- correctly, an unconfirmed AA state costs
+        decode confidence, not the export -- so V2/V3 would return a TIFF that
+        measured V1's behaviour under V2/V3's name.
+      * ``model_suppression_mode`` is what production says it did. A V1-V3
+        capture that came back ``"hide_categories"`` hid model categories and
+        disabled the probe's own filter: it measured V0's suppression.
+
+    Either way the variant is not evidence about its candidate, and the failure
+    was previously invisible -- recorded in the sidecar, absent from the
+    conclusion, and never rendered by the analyzer. Three places to look and no
+    place that said so.
+
+    Returns ``{"measured": bool, "unmet": [...], "checked": [...]}``. ``unmet``
+    names each requested mutation production did not confirm, with what it
+    reported instead, so "V2 did not measure AA" is readable without opening
+    the sidecar.
+    """
+    metadata = annotation_metadata or {}
+    unmet = []
+    checked = []
+    if plan.get("smooth_edges_off"):
+        checked.append("applied_smooth_edges is False")
+        applied = metadata.get("applied_smooth_edges")
+        if applied is not False:
+            unmet.append({
+                "requested": "SmoothEdges off",
+                "production_reported": applied,
+                "why_it_matters": "anti-aliasing was NOT confirmed off, so this "
+                                  "capture measures the same behaviour as the "
+                                  "variant without it and cannot speak to F3",
+            })
+    expected_mode = plan.get("model_suppression")
+    if expected_mode is not None:
+        checked.append("model_suppression_mode == {0!r}".format(expected_mode))
+        reported = metadata.get("model_suppression_mode")
+        if reported != expected_mode:
+            unmet.append({
+                "requested": "model suppression mode {0!r}".format(expected_mode),
+                "production_reported": reported,
+                "why_it_matters": (
+                    "the annotation pass hid model categories and disabled the "
+                    "probe's white filter, so this capture measures V0's "
+                    "suppression rather than the variant's"
+                    if expected_mode == "external" else
+                    "the annotation pass did not apply its own suppression"),
+            })
+    return {"measured": not unmet, "unmet": unmet, "checked": checked}
+
+
+def variant_conclusion(document_safe, exceptions, tiff_path, measurement):
+    """One variant's conclusion. PURE, and extracted because of a mutation.
+
+    This lived inline in ``_run_variant`` as an if/elif chain over fields that
+    are all plain values by the time it runs. Mutating the measurement branch
+    there to ``elif False:`` left the whole suite green -- because the tests
+    bound ``variant_measurement_check`` and nothing bound the CALL SITE that
+    consumes it. That is the "extracting the formula does not bind the
+    arguments production passes" corollary in CLAUDE.md, and the answer is the
+    same one it gives: make the call site exercisable and exercise it.
+
+    The order is causal, most disqualifying first:
+
+      FAIL             the document is not as the variant found it. Stops the run.
+      ERRORED          something raised; the document is safe.
+      INCONCLUSIVE     no TIFF was produced.
+      DID_NOT_MEASURE  a real TIFF and a safe document, but production did not
+                       apply what this variant asked for -- so it is not
+                       evidence about its candidate.
+      RAN              a capture that measured what it is named after.
+    """
+    if not document_safe:
+        return "FAIL"
+    if exceptions:
+        return "ERRORED"
+    if not tiff_path:
+        return "INCONCLUSIVE"
+    if not (measurement or {}).get("measured"):
+        return "DID_NOT_MEASURE"
+    return "RAN"
+
+
 def paper_margin_ft(paper_in, view_scale):
     """Printed inches -> model feet at this view's scale."""
     scale = float(view_scale)
@@ -1646,14 +1736,17 @@ def _run_variant(doc, view, variant, model_context, settings):
                 "after_rollback": rolled_back,
             }
 
-            if not report["document_safe"]:
-                report["conclusion"] = "FAIL"
-            elif report["exceptions"]:
-                report["conclusion"] = "ERRORED"
-            elif report["annotation_pass"].get("tiff_path"):
-                report["conclusion"] = "RAN"
-            else:
-                report["conclusion"] = "INCONCLUSIVE"
+            # DID IT MEASURE WHAT IT CLAIMS? A TIFF existing proves an export
+            # happened, not that the variant's mutation was applied -- and
+            # both switches can decline without raising. See
+            # variant_measurement_check.
+            measurement = variant_measurement_check(
+                plan, (report["annotation_pass"] or {}))
+            report["measurement"] = measurement
+
+            report["conclusion"] = variant_conclusion(
+                report["document_safe"], report["exceptions"],
+                report["annotation_pass"].get("tiff_path"), measurement)
     return report
 
 
@@ -1807,6 +1900,45 @@ def _build_frame_prime(doc, view, geom, view_basis, margin_in, diag, view_id,
     return {"state": "value", "geom": prime_geom, "record": record}
 
 
+def finalize_native_report(report, paths):
+    """Set the run's conclusion and artifact paths. PURE, and required.
+
+    This exists as its own function because the order mattered and got it
+    wrong: the combined JSON was serialised BEFORE these two fields were
+    written, so the persisted file -- the one the analyzer and Greg actually
+    read -- permanently said ``INCONCLUSIVE`` and carried no ``paths``, while
+    only the in-memory object returned to Dynamo was correct. Two
+    representations of one run, disagreeing, with the durable one wrong.
+
+    So the fields are computed here, ``report_finalized`` is stamped, and
+    ``_write_combined`` REFUSES a report without that stamp. A future call site
+    that writes before finalising fails loudly instead of quietly persisting an
+    unfinished report.
+
+    A variant that did not MEASURE its own candidate does not make the run
+    fail: the document is safe and the TIFF is real. It is surfaced as its own
+    conclusion so it cannot be read as a clean run.
+    """
+    report["paths"] = dict(paths or {})
+    ran = [entry for entry in report.get("variants", []) if not entry.get("skipped")]
+    if not ran:
+        report["conclusion"] = "INCONCLUSIVE"
+    elif not all(entry.get("document_safe") for entry in ran):
+        report["conclusion"] = "FAIL"
+    elif any(entry.get("conclusion") == "ERRORED" for entry in ran):
+        report["conclusion"] = "ERRORED"
+    elif any(entry.get("conclusion") == "DID_NOT_MEASURE" for entry in ran):
+        report["conclusion"] = "DID_NOT_MEASURE"
+    else:
+        report["conclusion"] = "RAN"
+    report["variants_that_did_not_measure"] = [
+        {"variant": entry.get("variant"),
+         "unmet": (entry.get("measurement") or {}).get("unmet")}
+        for entry in ran if entry.get("conclusion") == "DID_NOT_MEASURE"]
+    report["report_finalized"] = True
+    return report
+
+
 def _write_combined(report, probe_dir, base):
     """Write the combined report, and record where -- on EVERY exit path.
 
@@ -1814,7 +1946,16 @@ def _write_combined(report, probe_dir, base):
     most worth reading left nothing on disk: whatever Dynamo's OUT pane happened
     to show, and only until the session closed. A report is cheap and the
     failure is the evidence.
+
+    REFUSES an unfinalised report rather than persisting one. See
+    finalize_native_report for what that prevented.
     """
+    if not report.get("report_finalized"):
+        raise RuntimeError(
+            "refusing to write the combined report before finalize_native_report() "
+            "has set its conclusion and paths: the persisted file is what the "
+            "analyzer and the reader consume, and an unfinalised one reports the "
+            "wrong conclusion permanently")
     json_path = os.path.join(probe_dir, base + ".anno_pass_variants.json")
     try:
         with open(json_path, "w") as handle:
@@ -1908,11 +2049,13 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
     except Exception as ex:
         report["model_pass"] = {"success": False,
                                 "error": _exception_record("model_pass", ex)}
-        report["conclusion"] = "FAIL"
         report["reason"] = ("the model pass failed, so there is no frame geometry "
                             "and no annotation variant can register against "
                             "anything")
-        report["paths"] = {"combined_json": _write_combined(report, probe_dir, base)}
+        finalize_native_report(report, {})
+        report["conclusion"] = "FAIL"
+        report["paths"]["combined_json"] = _write_combined(report, probe_dir, base)
+        _write_combined(report, probe_dir, base)
         return report
 
     if not geom:
@@ -1921,11 +2064,13 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
             "failure_reason": model_out.get("failure_reason"),
             "geometry": None,
         }
-        report["conclusion"] = "FAIL"
         report["reason"] = ("the model pass resolved no frame geometry; the "
                             "annotation pass REFUSES to run without it and this "
                             "probe does not substitute one")
-        report["paths"] = {"combined_json": _write_combined(report, probe_dir, base)}
+        finalize_native_report(report, {})
+        report["conclusion"] = "FAIL"
+        report["paths"]["combined_json"] = _write_combined(report, probe_dir, base)
+        _write_combined(report, probe_dir, base)
         return report
 
     model_tiff_path = model_out.get("tiff_path")
@@ -2082,9 +2227,9 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
                                   "no TIFF, so no post-variant re-export was taken"},
         }
 
-    json_path = _write_combined(report, probe_dir, base)
-    report["paths"] = {
-        "combined_json": json_path,
+    # FINALIZE, THEN WRITE. The persisted file is what the analyzer and Greg
+    # read; writing first left it saying INCONCLUSIVE with no paths forever.
+    finalize_native_report(report, {
         "model_tiff": model_tiff_path,
         "model_sidecar": model_out.get("sidecar_path"),
         "annotation_tiffs": [entry.get("annotation_pass", {}).get("tiff_path")
@@ -2093,17 +2238,14 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
         "annotation_sidecars": [entry.get("annotation_pass", {}).get("sidecar_path")
                                 for entry in report["variants"]
                                 if entry.get("annotation_pass", {}).get("sidecar_path")],
-    }
-
-    ran = [entry for entry in report["variants"] if not entry.get("skipped")]
-    if not ran:
-        report["conclusion"] = "INCONCLUSIVE"
-    elif not all(entry.get("document_safe") for entry in ran):
-        report["conclusion"] = "FAIL"
-    elif any(entry.get("conclusion") == "ERRORED" for entry in ran):
-        report["conclusion"] = "ERRORED"
-    else:
-        report["conclusion"] = "RAN"
+    })
+    # combined_json is the one path that cannot be known before the write, so
+    # it is added after and the file is rewritten once with it present -- rather
+    # than persisting a report whose own location is missing from it.
+    json_path = _write_combined(report, probe_dir, base)
+    report["paths"]["combined_json"] = json_path
+    if json_path is not None:
+        _write_combined(report, probe_dir, base)
     return report
 
 
@@ -2249,10 +2391,23 @@ def run_probe(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT_D
         "succeeded" if rollback_ok else ("not_started" if not executed else "failed"),
         "restored" if restored else ("not_checked" if not executed else "not_restored"),
         started_at,
+        # A variant that did not MEASURE its candidate makes the run
+        # INCONCLUSIVE, not completed: the captures exist and the document is
+        # safe, but at least one of them is not evidence about the thing it is
+        # named after. "completed" here would be the same silence the
+        # per-variant conclusion just stopped telling.
         execution_status=("inconclusive" if not executed else
                           ("failed" if errors or not rollback_ok or not restored
-                           else "completed")),
-        errors=errors)
+                           else ("inconclusive" if any(
+                               entry.get("conclusion") == "DID_NOT_MEASURE"
+                               for entry in executed) else "completed"))),
+        errors=errors,
+        warnings=[
+            "variant {0} did not measure its candidate: {1}".format(
+                entry.get("variant"),
+                (entry.get("measurement") or {}).get("unmet"))
+            for entry in executed
+            if entry.get("conclusion") == "DID_NOT_MEASURE"])
 
 
 def dynamo_main(inputs):

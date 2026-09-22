@@ -215,13 +215,13 @@ measuring.
 
 | | before (`a3cd0b2`) | after |
 |---|---|---|
-| suite | 1442 passed, 2 xfailed | **1542 passed, 2 xfailed** |
+| suite | 1442 passed, 2 xfailed | **1577 passed, 2 xfailed** |
 | `count_discarded_handlers vop_interwoven tools` | 179 | **179** |
 | `check_stage_a_no_geometry vop_interwoven` | PROVEN | **PROVEN** |
 | `check_no_bare_except --paths vop_interwoven tools` | OK | **OK** |
 | flake8 on new files (`--max-line-length=120`) | — | clean; no new findings in the two pre-existing files |
 
-The 100 new tests are 11 production-switch tests, 27 analyzer tests and 62 probe
+The 135 new tests are 11 production-switch tests, 32 analyzer tests and 92 probe
 helper/adapter tests.
 
 **The switch tests were falsified by mutating production, not by reading it.**
@@ -274,6 +274,75 @@ variant that measured nothing and reported success. The preflight opens no
 transaction, names every missing setter, and skips V1–V3 with that list. Each
 entry of `WHITE_OVERRIDE_SETTERS` is falsified individually, because a stub that
 exposes everything cannot tell whether the set has the right names in it.
+
+---
+
+## Review round 1 — three Codex findings, all confirmed and fixed
+
+None were marked optional, so each was verified against the code rather than
+argued with. All three were real.
+
+**P1 — a variant could report `RAN` without having measured its candidate.**
+A TIFF existing proves an export happened, not that the variant's mutation was
+applied, and **both** switches can decline without raising:
+`applied_smooth_edges` comes back `"read_failed"` / `"unchanged (failed)"` when
+the `ViewDisplayModel` read or write fails, and `model_suppression_mode` comes
+back `"hide_categories"` if production suppressed after all. Either way V2/V3
+would have been analysed under a name claiming AA was off while measuring V1's
+behaviour — and the analyzer was **reading `applied_smooth_edges` and never
+rendering it**, so the failure was invisible in three places at once.
+
+Fixed at the root rather than at the instance: `variant_measurement_check()`
+verifies **every** mutation the variant's plan requested (the review named only
+the SmoothEdges half; the suppression-mode half is the same defect one switch
+over), a variant that did not get it concludes `DID_NOT_MEASURE`, the run and
+the envelope's `execution_status` follow, and the analyzer gained **section 0**
+which prints it first.
+
+A first pass at this left the gate inline in `_run_variant`. Mutating its
+measurement branch to `elif False:` **left the whole suite green** — the tests
+bound the checker and nothing bound the call site, which is CLAUDE.md's own
+"exercise the call site" corollary. `variant_conclusion()` is now extracted and
+bound, and that mutation turns three tests red.
+
+**P2 — the persisted combined JSON was serialised before it was finalized.**
+Confirmed exactly as reported: `_write_combined` ran before `paths` and
+`conclusion` were set, so the file the analyzer and Greg read permanently said
+`INCONCLUSIVE` with no paths, while only the in-memory object returned to Dynamo
+was correct. Two representations of one run, disagreeing, with the durable one
+wrong.
+
+Fixed with a **refusal**, not just a reorder: `finalize_native_report()` stamps
+`report_finalized` and `_write_combined` raises without it, so a future call site
+that writes early fails loudly. The test **reloads the file from disk** rather
+than inspecting the return value — a test on the return value could not have
+seen this.
+
+**P1 — the registration fit rested on an unasserted premise.** Correct, and the
+fixtures were the problem: every one drew solid rectangles exactly filling each
+bbox, which makes ink centroid == bbox centre *by construction*. For real text, a
+tag with a leader or a dimension it need not hold.
+
+The method itself is kept — the brief specifies it and it is precedented at a
+0.44 px median on the run's plan — but its premise is now measured rather than
+assumed. A uniform displacement is **not recoverable** from a capture (nothing
+distinguishes it from the whole render sitting that far over), so the report does
+not pretend to measure it; it measures whether one is **possible and by how
+much** (ink span as a fraction of its recorded bbox, solidity, and the resulting
+bound in pixels), plus a **second fit** anchored on the ink's own bbox centre
+whose deltas are ~0 exactly when the premise holds. New fixtures draw ink that
+does *not* fill its box, and an L-shaped one where the two anchors genuinely
+diverge.
+
+My first attempt at this measured the displacement **through the fit that
+absorbs it** and returned ~0 on the very fixture built to expose it. Its own test
+caught that, and the replacement measures outside the fit. The offset-ink test
+now pins the *signature* — left and right margins moving in opposite directions
+and summing to ~0 — which is what keeps a uniform ink offset distinguishable from
+the genuinely-oversized F1 render, where both come back positive.
+
+Checks after the round: **1577 passed, 2 xfailed**; handler count **179**;
+geometry-free **PROVEN**; lint clean. Each fix was falsified by mutating it back.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 

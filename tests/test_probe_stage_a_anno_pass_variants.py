@@ -581,3 +581,231 @@ def test_missing_override_setters_checks_every_name_in_the_set():
         assert probe.missing_override_setters(_FullOGS(omit=(name,))) == [name], name
     # And the set is not empty, or the loop above would assert nothing.
     assert len(probe.WHITE_OVERRIDE_SETTERS) >= 16
+
+
+# ======================================================================
+# FINDING 1 (PR #215, P1): did the variant MEASURE its candidate?
+# ======================================================================
+
+def test_a_variant_that_got_what_it_asked_for_is_measured():
+    plan = probe.variant_plan(probe.V2)
+    check = probe.variant_measurement_check(
+        plan, {"applied_smooth_edges": False, "model_suppression_mode": "external"})
+    assert check["measured"] is True
+    assert check["unmet"] == []
+    # And it says WHAT it checked, so a mutation that stops checking something
+    # is visible in the record rather than only in a boolean.
+    assert any("applied_smooth_edges" in item for item in check["checked"])
+    assert any("model_suppression_mode" in item for item in check["checked"])
+
+
+@pytest.mark.parametrize("applied", ["read_failed", "unchanged (failed)",
+                                     "not_attempted", None, True])
+def test_v2_did_not_measure_when_smooth_edges_was_not_confirmed_off(applied):
+    """Production does NOT raise when the ViewDisplayModel read or write fails.
+
+    That is correct -- an unconfirmed AA state costs decode confidence, not the
+    export -- but it means V2/V3 can return a real TIFF that measured the same
+    behaviour as V1. Anything but a confirmed ``False`` is not AA off.
+    """
+    plan = probe.variant_plan(probe.V2)
+    check = probe.variant_measurement_check(
+        plan, {"applied_smooth_edges": applied,
+               "model_suppression_mode": "external"})
+    assert check["measured"] is False
+    assert len(check["unmet"]) == 1
+    assert check["unmet"][0]["production_reported"] == applied
+    assert "F3" in check["unmet"][0]["why_it_matters"]
+
+
+def test_a_white_filter_variant_did_not_measure_when_production_hid_categories():
+    """The same defect one switch over, which the review did not name.
+
+    A V1-V3 capture reporting ``hide_categories`` hid model categories and
+    disabled the probe's own white filter: it measured V0's suppression under
+    V1's name. Fixing only the SmoothEdges half would have left this one.
+    """
+    plan = probe.variant_plan(probe.V1)
+    check = probe.variant_measurement_check(
+        plan, {"model_suppression_mode": "hide_categories"})
+    assert check["measured"] is False
+    assert check["unmet"][0]["production_reported"] == "hide_categories"
+    assert "V0's suppression" in check["unmet"][0]["why_it_matters"]
+
+
+def test_the_control_variants_are_measured_by_their_own_standard():
+    """V0 asks for no mutation, so it must not be judged against one.
+
+    Without this the fix would mark every control DID_NOT_MEASURE and the
+    baseline every other variant is read against would vanish.
+    """
+    for name in (probe.V0, probe.V0_OFFSETS0):
+        check = probe.variant_measurement_check(
+            probe.variant_plan(name),
+            {"model_suppression_mode": "hide_categories",
+             "applied_smooth_edges": "not_attempted"})
+        assert check["measured"] is True, name
+
+
+def test_both_switches_are_checked_independently():
+    plan = probe.variant_plan(probe.V3)
+    check = probe.variant_measurement_check(
+        plan, {"applied_smooth_edges": "read_failed",
+               "model_suppression_mode": "hide_categories"})
+    assert check["measured"] is False
+    assert len(check["unmet"]) == 2
+
+
+def test_missing_metadata_is_not_measured_rather_than_assumed_fine():
+    """An annotation pass that raised leaves no metadata at all. That is not
+    evidence that the mutation applied."""
+    check = probe.variant_measurement_check(probe.variant_plan(probe.V2), {})
+    assert check["measured"] is False
+    check_none = probe.variant_measurement_check(probe.variant_plan(probe.V2), None)
+    assert check_none["measured"] is False
+
+
+# ======================================================================
+# FINDING 2 (PR #215, P2): finalize, THEN write
+# ======================================================================
+
+def _native_report(variant_conclusions):
+    return {
+        "variants": [
+            {"variant": "v{0}".format(index), "skipped": False,
+             "document_safe": conclusion != "FAIL",
+             "conclusion": conclusion,
+             "measurement": {"measured": conclusion != "DID_NOT_MEASURE",
+                             "unmet": ([{"requested": "SmoothEdges off"}]
+                                       if conclusion == "DID_NOT_MEASURE" else [])}}
+            for index, conclusion in enumerate(variant_conclusions)],
+        "conclusion": "INCONCLUSIVE",
+    }
+
+
+@pytest.mark.parametrize("conclusions,expected", [
+    ([], "INCONCLUSIVE"),
+    (["RAN", "RAN"], "RAN"),
+    (["RAN", "FAIL"], "FAIL"),
+    (["RAN", "ERRORED"], "ERRORED"),
+    (["RAN", "DID_NOT_MEASURE"], "DID_NOT_MEASURE"),
+    # A document-safety failure outranks a measurement one.
+    (["DID_NOT_MEASURE", "FAIL"], "FAIL"),
+])
+def test_finalize_sets_the_run_conclusion(conclusions, expected):
+    report = _native_report(conclusions)
+    probe.finalize_native_report(report, {"model_tiff": "m.tiff"})
+    assert report["conclusion"] == expected
+    assert report["paths"] == {"model_tiff": "m.tiff"}
+    assert report["report_finalized"] is True
+
+
+def test_finalize_lists_the_variants_that_did_not_measure():
+    report = _native_report(["RAN", "DID_NOT_MEASURE"])
+    probe.finalize_native_report(report, {})
+    assert [entry["variant"] for entry in report["variants_that_did_not_measure"]] == [
+        "v1"]
+    assert report["variants_that_did_not_measure"][0]["unmet"]
+
+
+def test_the_persisted_json_carries_the_finalized_conclusion_and_paths(tmp_path):
+    """READ THE FILE BACK, not the returned object.
+
+    The returned in-memory envelope was always correct; the PERSISTED file --
+    the one the analyzer and Greg consume -- was serialised before the
+    conclusion and paths were set, so it permanently said INCONCLUSIVE with no
+    paths. A test that inspected the return value could not see that, which is
+    why this one reloads from disk.
+    """
+    import json
+
+    report = _native_report(["RAN", "RAN"])
+    probe.finalize_native_report(report, {"model_tiff": "m.tiff"})
+    path = probe._write_combined(report, str(tmp_path), "View_1")
+    assert path is not None
+
+    with open(path, encoding="utf-8") as handle:
+        persisted = json.load(handle)
+    assert persisted["conclusion"] == "RAN"
+    assert persisted["conclusion"] != "INCONCLUSIVE"
+    assert persisted["paths"]["model_tiff"] == "m.tiff"
+    assert persisted["report_finalized"] is True
+
+
+def test_writing_an_unfinalized_report_is_REFUSED(tmp_path):
+    """The refusal is what keeps the order from silently regressing.
+
+    A future call site that serialises before finalising fails loudly here
+    rather than persisting an unfinished report -- the ordering was wrong once
+    and nothing about the call sequence made that visible.
+    """
+    report = _native_report(["RAN"])
+    with pytest.raises(RuntimeError) as excinfo:
+        probe._write_combined(report, str(tmp_path), "View_1")
+    assert "finalize_native_report" in str(excinfo.value)
+    assert not list(tmp_path.iterdir()), "nothing may be written on refusal"
+
+
+def test_a_write_failure_is_recorded_and_returns_none(tmp_path):
+    report = _native_report(["RAN"])
+    probe.finalize_native_report(report, {})
+    missing = tmp_path / "does" / "not" / "exist"
+    assert probe._write_combined(report, str(missing), "View_1") is None
+    assert "combined_json_write_error" in report
+
+
+# ======================================================================
+# the CALL SITE that consumes variant_measurement_check
+# ======================================================================
+
+_MEASURED = {"measured": True, "unmet": []}
+_NOT_MEASURED = {"measured": False, "unmet": [{"requested": "SmoothEdges off"}]}
+
+
+@pytest.mark.parametrize("document_safe,exceptions,tiff,measurement,expected", [
+    (True, [], "a.tiff", _MEASURED, "RAN"),
+    # THE CASE THE REVIEW FOUND: a real TIFF, a safe document, and production
+    # declined the mutation. Previously "RAN".
+    (True, [], "a.tiff", _NOT_MEASURED, "DID_NOT_MEASURE"),
+    (True, [], None, _MEASURED, "INCONCLUSIVE"),
+    (True, [{"stage": "annotation_pass"}], "a.tiff", _MEASURED, "ERRORED"),
+    (False, [], "a.tiff", _MEASURED, "FAIL"),
+    # Document safety outranks everything, including a missing measurement.
+    (False, [], "a.tiff", _NOT_MEASURED, "FAIL"),
+    # An exception outranks a missing measurement.
+    (True, [{"stage": "x"}], "a.tiff", _NOT_MEASURED, "ERRORED"),
+    # A missing measurement record is not "fine".
+    (True, [], "a.tiff", {}, "DID_NOT_MEASURE"),
+    (True, [], "a.tiff", None, "DID_NOT_MEASURE"),
+])
+def test_variant_conclusion_at_the_call_site(document_safe, exceptions, tiff,
+                                             measurement, expected):
+    """Bind the DECISION, not just the checker it calls.
+
+    The first version of this fix left the gate inline in ``_run_variant``.
+    Mutating its measurement branch to ``elif False:`` kept the whole suite
+    green, because every test bound ``variant_measurement_check`` and nothing
+    bound the site that consumes it -- CLAUDE.md's "exercise the call site",
+    reproduced in the fix for a review finding about exactly this shape of
+    silence.
+    """
+    assert probe.variant_conclusion(
+        document_safe, exceptions, tiff, measurement) == expected
+
+
+def test_run_variant_uses_variant_conclusion_rather_than_its_own_chain():
+    """Pin that the extraction is actually WIRED.
+
+    ``variant_conclusion`` could be correct, tested and never called. Reading
+    the source for the call is crude, and it is the only check available
+    without a Revit host -- so it is done explicitly rather than assumed.
+    """
+    import inspect
+
+    source = inspect.getsource(probe._run_variant)
+    assert "variant_conclusion(" in source, (
+        "_run_variant must delegate to variant_conclusion")
+    assert "variant_measurement_check(" in source, (
+        "_run_variant must compute the measurement it passes")
+    # And the inline chain it replaced is gone, so there is one decision.
+    assert 'report["conclusion"] = "RAN"' not in source

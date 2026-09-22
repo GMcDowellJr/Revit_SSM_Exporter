@@ -166,7 +166,8 @@ def _palette(n):
 
 def _build_capture(tmp_path, name, frame_uv, frame_px, draw_fpp, draw_origin_uv,
                    elements, view_scale=96.0, extra_pixels=None,
-                   rendered_uv=None):
+                   rendered_uv=None, ink_fraction_of_bbox=None,
+                   ink_align="center"):
     """Write a synthetic annotation TIFF + sidecar, and return their paths.
 
     ``frame_uv``/``frame_px`` are what the SIDECAR claims. ``draw_fpp`` and
@@ -176,6 +177,12 @@ def _build_capture(tmp_path, name, frame_uv, frame_px, draw_fpp, draw_origin_uv,
 
     ``elements`` is ``[(element_id, rgb, (u0, v0, u1, v1), category), ...]`` in
     absolute view UV -- the same coordinates the sidecar's ``bbox_uv`` records.
+
+    ``ink_fraction_of_bbox`` draws the ink as that fraction of each bbox instead
+    of filling it, and ``ink_align`` ("center" or "left") decides where inside
+    the box it sits. THIS IS THE CASE EVERY ORIGINAL FIXTURE EXCLUDED: they all
+    filled the bbox exactly, which makes the ink centroid equal the bbox centre
+    by construction and hides the fit's central premise. Finding 3 on PR #215.
     """
     width, height = frame_px
     array = np.full((height, width, 3), 255, dtype=np.uint8)
@@ -192,6 +199,17 @@ def _build_capture(tmp_path, name, frame_uv, frame_px, draw_fpp, draw_origin_uv,
         x1, y0 = to_px(u1, v1)
         ix0, ix1 = int(round(min(x0, x1))), int(round(max(x0, x1)))
         iy0, iy1 = int(round(min(y0, y1))), int(round(max(y0, y1)))
+        if ink_fraction_of_bbox is not None:
+            # Shrink the painted region inside the bbox. "left" puts it against
+            # the box's left edge, so the ink centroid sits left of the box
+            # centre exactly the way a left-aligned glyph run does.
+            span_x = ix1 - ix0
+            keep = max(1, int(round(span_x * float(ink_fraction_of_bbox))))
+            if ink_align == "left":
+                ix1 = ix0 + keep
+            else:
+                pad = (span_x - keep) // 2
+                ix0, ix1 = ix0 + pad, ix0 + pad + keep
         ix0c, ix1c = max(0, ix0), min(width, ix1)
         iy0c, iy1c = max(0, iy0), min(height, iy1)
         if ix1c > ix0c and iy1c > iy0c:
@@ -688,3 +706,201 @@ def test_the_overlay_section_echoes_the_fit_so_the_size_gate_is_not_read_as_a_ve
     # the frame's 18.7 without scrolling back to section 2.
     assert "fitted 17." in overlay_section
     assert "18.7" in overlay_section
+
+
+# ======================================================================
+# FINDING 3 (PR #215, P1): the fit's premise, now measured
+# ======================================================================
+
+# The premise fixtures render at 10 px/ft with 4 ft elements -- 40 px a side.
+# The other fixtures in this file run at 1.875 px/ft with 6 px elements, where a
+# single pixel of rounding is 17% of an element and swamps a span ratio. That is
+# fine for a scale fit over well-separated centroids and useless for measuring
+# how much of its box an element's ink fills, so these get their own geometry
+# rather than asserting loose bounds on a fixture too coarse to answer.
+_PREMISE_FPP = 0.1
+_PREMISE_FRAME_UV = (0.0, 0.0, 80.0, 54.0)
+
+
+def _premise_elements():
+    size = 4.0
+    palette = _palette(4)
+    return [
+        (101, palette[0], (10.0, 10.0, 10.0 + size, 10.0 + size), "Text Notes"),
+        (102, palette[1], (60.0, 18.0, 60.0 + size, 18.0 + size), "Dimensions"),
+        (103, palette[2], (25.0, 40.0, 25.0 + size, 40.0 + size), "Grids"),
+        (104, palette[3], (70.0, 46.0, 70.0 + size, 46.0 + size), "Door Tags"),
+    ]
+
+
+def _premise_capture(tmp_path, name, fraction=None, align="left"):
+    """A capture at premise-measuring resolution.
+
+    ``fraction=None`` fills each bbox (the control); a fraction draws the ink as
+    that much of the box, left-aligned -- the shape a left-aligned glyph run
+    takes inside its text bbox. EVERY ORIGINAL FIXTURE FILLED THE BOX, which
+    makes the ink centroid equal the bbox centre by construction and is why none
+    of them could detect that the fit rests on that coincidence. Finding 3 on
+    PR #215.
+    """
+    frame_px = (int(round(_PREMISE_FRAME_UV[2] / _PREMISE_FPP)),
+                int(round(_PREMISE_FRAME_UV[3] / _PREMISE_FPP)))
+    return _build_capture(
+        tmp_path, name, _PREMISE_FRAME_UV, frame_px, _PREMISE_FPP,
+        (_PREMISE_FRAME_UV[0], _PREMISE_FRAME_UV[3]), _premise_elements(),
+        ink_fraction_of_bbox=fraction, ink_align=align)
+
+
+def test_offset_ink_shifts_the_fitted_margins_while_residuals_stay_clean(tmp_path):
+    """The exact failure mode finding 3 names, reproduced.
+
+    A displacement that is the SAME for every element is absorbed into the
+    fitted intercept: the residuals stay small, so measurement 2 looks healthy,
+    while every margin in 2b is shifted by that displacement. This asserts both
+    halves — clean residuals AND shifted margins — so the report cannot be read
+    as "the fit was fine" on such a capture.
+    """
+    sidecar_path, tiff_path = _premise_capture(tmp_path, "left_ink", fraction=0.3)
+    analysis = report.analyze_capture(sidecar_path, tiff_path)
+    fit = analysis["measurements"]["registration"]
+    assert fit["status"] == "value", fit
+
+    # The scale is still recovered: a uniform translation does not affect it.
+    assert fit["px_per_ft_u"] == pytest.approx(1.0 / _PREMISE_FPP, rel=0.02)
+    # And the residuals are SMALL -- which is precisely why residuals alone are
+    # not enough to catch this.
+    assert fit["residual_median_px"] < 2.0
+    # But the margins have moved, and THE SIGNATURE IS THE FINDING.
+    #
+    # 30% of a 4 ft box, left-aligned, puts every ink centroid 1.4 ft left of
+    # its box centre. The fit absorbs that into the origin, so the image looks
+    # SHIFTED: the left margin goes negative by 1.4 and the right margin
+    # positive by the same 1.4. A translation, summing to zero.
+    #
+    # That is distinguishable from the F1 case, where the render really is
+    # bigger than the frame and BOTH margins come back positive -- as
+    # test_the_non_b_extent_capture_recovers_the_scale_it_was_drawn_at asserts.
+    # Pinning the sign pattern rather than one number is what keeps those two
+    # readings apart, which is the whole reason this offset matters.
+    margins = fit["margin_ft"]
+    assert margins["left"] == pytest.approx(-1.4, abs=0.4), margins
+    assert margins["right"] == pytest.approx(1.4, abs=0.4), margins
+    assert margins["left"] + margins["right"] == pytest.approx(0.0, abs=0.2), margins
+    # v is untouched: the fixture only narrows the ink horizontally.
+    assert abs(margins["top"]) < 0.3 and abs(margins["bottom"]) < 0.3, margins
+
+
+def test_the_premise_measurement_bounds_the_possible_offset(tmp_path):
+    """The premise is a measurement now, and it is measured OUTSIDE the fit.
+
+    The first version of this measured the fit's per-sample residual, and a
+    uniform displacement is absorbed into the fitted intercept -- so it came
+    back ~0 on this very fixture. This asserts what is actually recoverable:
+    ink occupying 30% of its box spans ~0.3 of it, and the possible offset is
+    therefore a real, nonzero bound on the margins in 2b.
+    """
+    sidecar_path, tiff_path = _premise_capture(tmp_path, "offsets", fraction=0.3)
+    fit = report.analyze_capture(
+        sidecar_path, tiff_path)["measurements"]["registration"]
+    premise = fit["ink_vs_bbox_by_category"]
+    assert premise, "the premise must be reported, not left implicit"
+    assert set(premise) == {"Text Notes", "Dimensions", "Grids", "Door Tags"}
+    for name, entry in premise.items():
+        # The fixture paints 30% of each box's width, full height.
+        assert entry["span_fraction_u"]["median"] == pytest.approx(0.3, abs=0.06), (
+            name, entry)
+        assert entry["span_fraction_v"]["median"] == pytest.approx(1.0, abs=0.06), (
+            name, entry)
+        # A real, nonzero bound on u -- 40 px box, 12 px of ink, so up to 14 px
+        # of slack -- and essentially none on v.
+        assert entry["possible_offset_u_px"]["median"] > 10.0, (name, entry)
+        assert entry["possible_offset_v_px"]["median"] < 1.5, (name, entry)
+        # Solid rectangles, so solidity is ~1 even though the span is not.
+        assert entry["solidity"]["median"] == pytest.approx(1.0, abs=0.1), (
+            name, entry)
+
+
+def test_a_capture_whose_ink_fills_its_bbox_bounds_the_offset_at_zero(tmp_path):
+    """THE CONTROL. Without it the assertions above would also pass against a
+    function that reported a constant, and "the premise holds on this capture"
+    would never be a readable outcome.
+
+    Ink that reaches both edges of its box cannot be off-centre in it, so the
+    possible offset is ~0 and the margins in 2b are bounded.
+    """
+    sidecar_path, tiff_path = _premise_capture(tmp_path, "filled")
+    fit = report.analyze_capture(
+        sidecar_path, tiff_path)["measurements"]["registration"]
+    for name, entry in fit["ink_vs_bbox_by_category"].items():
+        assert entry["span_fraction_u"]["median"] == pytest.approx(1.0, abs=0.06), (
+            name, entry)
+        assert entry["span_fraction_v"]["median"] == pytest.approx(1.0, abs=0.06), (
+            name, entry)
+        assert entry["possible_offset_u_px"]["median"] < 1.5, (name, entry)
+        assert entry["possible_offset_v_px"]["median"] < 1.5, (name, entry)
+
+
+def test_the_two_anchors_diverge_on_offset_ink_and_agree_when_it_fills(tmp_path):
+    """The cross-check that makes the premise visible without a threshold.
+
+    Centre-aligned but SHRUNKEN ink keeps centroid == ink-bbox centre, so that
+    would not discriminate. Left-aligned ink moves the centroid and the ink-bbox
+    centre together, so for the divergence to be real the fixture needs ink
+    whose centroid is NOT its bbox centre — an L shape. Simpler and sufficient
+    here: assert agreement on the filled fixture (the premise holds) and that
+    both anchors are reported either way, so a reader always has both numbers.
+    """
+    fpp = 0.5333333333333333
+    frame_uv = (0.0, 0.0, 80.0, 54.0)
+    frame_px = (int(round(80.0 / fpp)), int(round(54.0 / fpp)))
+    sidecar_path, tiff_path = _build_capture(
+        tmp_path, "filled2", frame_uv, frame_px, fpp, (frame_uv[0], frame_uv[3]),
+        _registering_elements(fpp))
+    measurements = report.analyze_capture(sidecar_path, tiff_path)["measurements"]
+    primary = measurements["registration"]
+    secondary = measurements["registration_ink_bbox_anchor"]
+    agreement = measurements["anchor_agreement"]
+    assert primary["anchor"] == "ink_centroid"
+    assert secondary["anchor"] == "ink_bbox"
+    assert agreement["status"] == "value"
+    # Solid rectangles: centroid and ink-bbox centre coincide, so every delta
+    # is ~0 and the anchor choice provably does not matter on this capture.
+    assert abs(agreement["px_per_ft_u_delta"]) < 0.01
+    assert abs(agreement["px_per_ft_v_delta"]) < 0.01
+    for side, delta in agreement["margin_ft_delta"].items():
+        assert abs(delta) < 0.05, (side, delta)
+
+
+def test_an_l_shaped_ink_makes_the_two_anchors_disagree(tmp_path):
+    """THE DISCRIMINATING CASE for the cross-check itself.
+
+    An L: the centroid is pulled toward the heavy arm while the ink's bounding
+    box still spans the whole glyph. That is the one shape where centroid and
+    ink-bbox centre genuinely differ, so it is what proves the cross-check can
+    detect a divergence rather than always printing zeros.
+    """
+    fpp = 0.5333333333333333
+    frame_uv = (0.0, 0.0, 80.0, 54.0)
+    frame_px = (int(round(80.0 / fpp)), int(round(54.0 / fpp)))
+    elements = _registering_elements(fpp)
+    sidecar_path, tiff_path = _build_capture(
+        tmp_path, "lshape", frame_uv, frame_px, fpp, (frame_uv[0], frame_uv[3]),
+        elements)
+    # Carve each filled square into an L by whitening its top-right quadrant.
+    with Image.open(tiff_path) as handle:
+        array = np.asarray(handle.convert("RGB"), dtype=np.uint8).copy()
+    for _eid, rgb, _rect, _cat in elements:
+        mask = np.all(array == np.array(rgb, dtype=np.uint8), axis=-1)
+        ys, xs = np.nonzero(mask)
+        mid_x = (xs.min() + xs.max()) // 2
+        mid_y = (ys.min() + ys.max()) // 2
+        array[ys.min():mid_y, mid_x:xs.max() + 1] = 255
+    Image.fromarray(array, mode="RGB").save(tiff_path)
+
+    measurements = report.analyze_capture(sidecar_path, tiff_path)["measurements"]
+    agreement = measurements["anchor_agreement"]
+    assert agreement["status"] == "value"
+    # The centroid moved down-left; the ink bbox did not. At least one margin
+    # delta is therefore materially nonzero -- the cross-check fires.
+    assert max(abs(v) for v in agreement["margin_ft_delta"].values()) > 0.1, (
+        agreement)
