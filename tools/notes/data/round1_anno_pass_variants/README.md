@@ -24,3 +24,19 @@ the content, not the filename. Worth knowing before comparing them to a later ru
 
 No V0 sidecar was supplied, which is why the report confirms F2's recovered state
 (135/135 dimensions and so on) rather than the 2/135 → 135/135 delta.
+
+## Why these are minified
+
+They are stored as single-line JSON. Pretty-printed they were 21,226 lines of the
+PR's 31,467 — two thirds of the diff, for machine output nobody reads by hand.
+Nothing imports them; they are cited evidence, read by
+`tools/notes/anno_pass_variant_report.py` (`json.load`) and quoted by
+`ROUND1_ANNO_PASS_VARIANTS_FINDINGS.md`. Minifying was verified by round-trip:
+the parsed object is equal before and after, so every figure the report cites is
+still checkable against the file it came from.
+
+To read one:
+
+```bash
+python -m json.tool tools/notes/data/round1_anno_pass_variants/<file>.json | less
+```
