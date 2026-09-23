@@ -17,6 +17,36 @@ variant set below is round 2's; round 1's is retired by name, with reasons.
 
 ---
 
+## Round 4 — the production candidate (`Config.color_id_buffer_registered_capture`, default OFF)
+
+Round 3 measured the category/subcategory white layer as **inert** (V7 and V10
+TIFFs byte-identical on all three views) at 23–86 s per view, and the
+registration marks as registering both passes (model marks within 0.51–1.13 px
+of the recorded lattice). So:
+
+* **`vop_interwoven/stage_a_registered_capture.py`** — `export_registered_stage_a_view`
+  runs both passes inside one `TransactionGroup`: marks → model pass (OST_Lines
+  visible) → white element overrides + white link filters → annotation pass
+  (external suppression, crop untouched) → **rollback** → read-back (view
+  properties, marks gone, element overrides as before) → the record into both
+  sidecars under `registration_marks`, **after** the read-back so the file
+  carries the restore verdict. Faults are diag-errored and set
+  `registration_success` false; nothing is silent.
+* **`vop_interwoven/stage_a_registration.py`** — the marks, the flat-colour
+  override, the white preflight, link-category discovery and the element/link
+  white suppression, promoted from the probe (which now calls them).
+* **`pipeline.py`** — with the flag on, the registered capture replaces both
+  pass calls. `check_stage_a_no_geometry.py` gains it as a root (PROVEN, 233
+  reachable functions; falsified by injecting `get_Geometry` into the mark code).
+* **Twelve marks**, three levels per axis (`2026-09-23.2`): round 3's two levels
+  gave every fit a 0.00 residual by construction.
+
+Not in this: fitting the marks and resampling the annotation capture onto the
+model lattice — the sidecars carry what that needs; the fit is the analyzer's
+`registration_mark_fit` today.
+
+---
+
 ## Round 3 — registration marks, element-only white, restore by rollback
 
 From round 2's `.4` run: the crop boundary Revit draws is not a ruler (V8 still

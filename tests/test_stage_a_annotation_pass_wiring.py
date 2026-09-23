@@ -44,7 +44,7 @@ GEOM = {
 }
 
 
-def _run_one_view(monkeypatch, tmp_path, annotation_pass):
+def _run_one_view(monkeypatch, tmp_path, annotation_pass, registered=False):
     """Drive one Stage A view through the real per-view loop.
 
     Returns (model_calls, anno_calls, results).
@@ -78,8 +78,21 @@ def _run_one_view(monkeypatch, tmp_path, annotation_pass):
             "stage": "color_id_buffer_stage_a_annotation",
         }
 
+    registered_calls = []
+
+    def _registered(doc_, view_, elements_, cfg_, **kwargs):
+        registered_calls.append(kwargs)
+        return {"view_id": VIEW_ID, "view_name": "L1 Plan", "success": True,
+                "stage": "color_id_buffer_stage_a",
+                "annotation_pass": {"stage": "color_id_buffer_stage_a_annotation",
+                                    "success": True},
+                "registration_success": True}
+
     # raising=True (the default): a rename in production errors here rather
     # than silently testing nothing.
+    monkeypatch.setattr(
+        "vop_interwoven.stage_a_registered_capture.export_registered_stage_a_view",
+        _registered)
     monkeypatch.setattr(
         "vop_interwoven.color_id_buffer.export_color_id_buffer_view", _model)
     monkeypatch.setattr(
@@ -98,6 +111,7 @@ def _run_one_view(monkeypatch, tmp_path, annotation_pass):
     cfg = Config(
         enable_color_id_buffer_stage_a=True,
         color_id_buffer_annotation_pass=annotation_pass,
+        color_id_buffer_registered_capture=registered,
         view_cache_enabled=False,
         perf_collect_timings=False,
     )
@@ -105,6 +119,9 @@ def _run_one_view(monkeypatch, tmp_path, annotation_pass):
     with _fake_revit_db():
         results = pipeline.process_document_views(doc, [VIEW_ID], cfg)
 
+    if registered:
+        return model_calls, anno_calls, results, registered_calls
+    assert registered_calls == [], "the registered capture ran with its flag off"
     return model_calls, anno_calls, results
 
 
@@ -253,3 +270,31 @@ def test_the_flag_defaults_off_and_survives_a_dict_round_trip():
     assert cfg.to_dict()["color_id_buffer_annotation_pass"] is False
     on = Config(color_id_buffer_annotation_pass=True)
     assert Config.from_dict(on.to_dict()).color_id_buffer_annotation_pass is True
+
+
+# ---- Config.color_id_buffer_registered_capture --------------------------
+
+@pytest.mark.parametrize("annotation_pass", [False, True])
+def test_the_registered_flag_runs_the_registered_capture_INSTEAD(
+        monkeypatch, tmp_path, annotation_pass):
+    """With the flag on, the pipeline calls export_registered_stage_a_view
+    once and NEITHER pass separately -- the registered capture runs both
+    itself, inside its own rolled-back TransactionGroup. A second annotation
+    call on top would export over a view the capture had already restored.
+    Mutation: drop the ``and not registered`` guard, or the branch."""
+    model_calls, anno_calls, results, registered_calls = _run_one_view(
+        monkeypatch, tmp_path, annotation_pass=annotation_pass, registered=True)
+    assert len(registered_calls) == 1
+    assert model_calls == [] and anno_calls == []
+    assert len(results) == 1
+    assert results[0]["annotation_pass"]["stage"] == (
+        "color_id_buffer_stage_a_annotation")
+    assert results[0]["registration_success"] is True
+
+
+def test_the_registered_flag_defaults_off():
+    assert Config().color_id_buffer_registered_capture is False
+    assert Config().to_dict()["color_id_buffer_registered_capture"] is False
+    assert Config.from_dict({}).color_id_buffer_registered_capture is False
+    assert Config.from_dict({"color_id_buffer_registered_capture": True}
+                            ).color_id_buffer_registered_capture is True

@@ -270,18 +270,21 @@ def flat_colour_override(doc, colour=WHITE):
     ogs = OverrideGraphicSettings()
     ogs.SetProjectionLineColor(white)
     ogs.SetCutLineColor(white)
-    for setter_id, setter_color, setter_visible in (
-            ("SetSurfaceForegroundPatternId", "SetSurfaceForegroundPatternColor",
-             "SetSurfaceForegroundPatternVisible"),
-            ("SetSurfaceBackgroundPatternId", "SetSurfaceBackgroundPatternColor",
-             "SetSurfaceBackgroundPatternVisible"),
-            ("SetCutForegroundPatternId", "SetCutForegroundPatternColor",
-             "SetCutForegroundPatternVisible"),
-            ("SetCutBackgroundPatternId", "SetCutBackgroundPatternColor",
-             "SetCutBackgroundPatternVisible")):
-        getattr(ogs, setter_id)(solid_id)
-        getattr(ogs, setter_color)(white)
-        getattr(ogs, setter_visible)(True)
+    # Written out, not looped through getattr: a computed callee is one
+    # tools/check_stage_a_no_geometry.py cannot resolve, and it REFUSES rather
+    # than certify a path it cannot walk.
+    ogs.SetSurfaceForegroundPatternId(solid_id)
+    ogs.SetSurfaceForegroundPatternColor(white)
+    ogs.SetSurfaceForegroundPatternVisible(True)
+    ogs.SetSurfaceBackgroundPatternId(solid_id)
+    ogs.SetSurfaceBackgroundPatternColor(white)
+    ogs.SetSurfaceBackgroundPatternVisible(True)
+    ogs.SetCutForegroundPatternId(solid_id)
+    ogs.SetCutForegroundPatternColor(white)
+    ogs.SetCutForegroundPatternVisible(True)
+    ogs.SetCutBackgroundPatternId(solid_id)
+    ogs.SetCutBackgroundPatternColor(white)
+    ogs.SetCutBackgroundPatternVisible(True)
     ogs.SetSurfaceTransparency(0)
     ogs.SetHalftone(False)
     return ogs
