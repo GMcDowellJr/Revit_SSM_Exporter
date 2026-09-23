@@ -877,3 +877,70 @@ def test_a_capture_without_marks_reports_f3_not_applicable(tmp_path):
                                json_records=records)
     assert "### 12." not in text
     assert records[0]["registration_marks"] == {"status": "not_applicable"}
+
+
+# ======================================================================
+# A crop-INACTIVE view with the crop untouched: frameless fits, no margins
+# (Plan_CropInActive 19291097, probe_0923_1239 -- the analyzer crashed here)
+# ======================================================================
+
+def test_anchor_agreement_of_frameless_fits_reports_scale_and_names_no_margins():
+    samples = [{"u": u, "v": v, "x": A_U * u + B_U, "y": A_V * v + B_V,
+                "bbox_x": A_U * u + B_U, "bbox_y": A_V * v + B_V}
+               for u, v in ((3, 4), (20, 9), (11, 22))]
+    fit = report.fit_registration(samples, None, W, H, 96.0)
+    agreement = report._anchor_agreement(fit, fit)
+    assert agreement["status"] == "value"
+    assert agreement["px_per_ft_u_delta"] == pytest.approx(0.0)
+    assert agreement["margin_ft_delta"] is None
+    assert "frameless" in agreement["margin_reason"]
+
+
+def test_a_framed_fit_still_gets_its_margin_deltas():
+    """The CONTROL: the None branch must not swallow the framed case."""
+    samples = [{"u": u, "v": v, "x": A_U * u + B_U, "y": A_V * v + B_V,
+                "bbox_x": A_U * u + B_U, "bbox_y": A_V * v + B_V}
+               for u, v in ((3, 4), (20, 9), (11, 22))]
+    fit = report.fit_registration(samples, (0.0, 0.0, 37.5, 27.5), W, H, 96.0)
+    agreement = report._anchor_agreement(fit, fit)
+    assert set(agreement["margin_ft_delta"]) == {"left", "right", "top", "bottom"}
+
+
+def test_end_to_end_a_crop_inactive_untouched_capture_reports_instead_of_crashing(
+        tmp_path):
+    root = tmp_path / "anno_pass_variants_probe"
+    root.mkdir()
+    img = _canvas()
+    colours, bboxes = {}, {}
+    for i, (u0, v0) in enumerate(((3.0, 4.0), (20.0, 9.0), (11.0, 20.0))):
+        eid = 50 + i
+        colours[eid] = (40 * (i + 1), 8, 16)
+        u1, v1 = u0 + 2.0, v0 + 2.0
+        img[int(_y(v1)):int(_y(v0)), int(_x(u0)):int(_x(u1))] = colours[eid]
+        bboxes[str(eid)] = {"bbox_uv": {"state": "value",
+                                        "value": [[u0, v0], [u1, v0], [u1, v1],
+                                                  [u0, v1]]},
+                            "category": "Text Notes",
+                            "membership_basis": "owner_view"}
+    side, tiff = _write_capture(root, "v7_no_crop", img, colours, bboxes,
+                                "untouched", None)
+    combined = {
+        "probe": {"name": "stage_a_anno_pass_variants", "version": "2026-09-23.2"},
+        "inputs": {"view_id": 1, "view_name": "V", "view_scale": 96.0},
+        "model_pass": {"success": True, "geometry": {"achieved_fpp_ft": 1.0 / 12.0}},
+        "authored_crop": {"crop_box_active": {"state": "value", "value": False},
+                          "crop_box_uv": {"state": "value", "value": list(CROP_UV)}},
+        "variants": [{"variant": "v7_no_crop", "skipped": False, "conclusion": "RAN",
+                      "measurement": {"measured": True, "unmet": []},
+                      "annotation_pass": {"sidecar_path": side, "tiff_path": tiff,
+                                          "success": True, "capture_faults": []}}],
+    }
+    (root / "V_1.anno_pass_variants.json").write_text(json.dumps(combined))
+    [run] = report.discover_runs(root)
+    [capture] = run["captures"]
+    analysis = report.analyze_capture(capture["sidecar"], capture["tiff"],
+                                      context=report.capture_context(run, capture))
+    assert analysis["measurements"]["registration"]["status"] == "value"
+    assert analysis["measurements"]["anchor_agreement"]["margin_ft_delta"] is None
+    text = report.build_report([str(root)], overlay_enabled=False)
+    assert "frameless" in text

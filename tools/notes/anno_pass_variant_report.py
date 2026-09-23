@@ -2068,6 +2068,15 @@ def _anchor_agreement(primary, secondary):
            "px_per_ft_u_delta": primary["px_per_ft_u"] - secondary["px_per_ft_u"],
            "px_per_ft_v_delta": primary["px_per_ft_v"] - secondary["px_per_ft_v"],
            "margin_ft_delta": {}}
+    # A FRAMELESS fit (crop untouched on a crop-INACTIVE view) measures the
+    # scale and withholds margins -- there is no rectangle to have a margin
+    # from. The scale deltas still stand; the margin deltas are named absent,
+    # never computed from a None (Plan_CropInActive, probe_0923_1239).
+    if primary.get("margin_ft") is None or secondary.get("margin_ft") is None:
+        out["margin_ft_delta"] = None
+        out["margin_reason"] = ("no margins: at least one fit is frameless "
+                                "(no rendered rectangle to measure them from)")
+        return out
     for side in ("left", "right", "top", "bottom"):
         out["margin_ft_delta"][side] = (
             primary["margin_ft"][side] - secondary["margin_ft"][side])
@@ -2923,14 +2932,15 @@ def render_run(run, analyses, overlay_results):
             rows.append([item["variant"], "--", "--", "--", "--", "--",
                          agreement.get("reason") or "--"])
             continue
-        deltas = agreement["margin_ft_delta"]
+        deltas = agreement.get("margin_ft_delta")
         rows.append([item["variant"],
                      _fmt(alt.get("px_per_ft_u")), _fmt(alt.get("px_per_ft_v")),
                      _fmt(agreement["px_per_ft_u_delta"], "{0:.4f}"),
                      _fmt(agreement["px_per_ft_v_delta"], "{0:.4f}"),
-                     " / ".join(_fmt(deltas[side], "{0:.3f}")
-                                for side in ("left", "right", "top", "bottom")),
-                     ""])
+                     (" / ".join(_fmt(deltas[side], "{0:.3f}")
+                                 for side in ("left", "right", "top", "bottom"))
+                      if deltas else "--"),
+                     agreement.get("margin_reason") or ""])
     lines.extend(_table(["variant", "ink-bbox px/ft u", "ink-bbox px/ft v",
                          "px/ft u delta", "px/ft v delta",
                          "margin delta ft (l/r/t/b)", ""], rows))
