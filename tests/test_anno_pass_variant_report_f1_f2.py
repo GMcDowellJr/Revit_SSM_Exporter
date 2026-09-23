@@ -974,3 +974,20 @@ def test_a_complete_capture_diagnoses_nothing(tmp_path):
     anno, model, sidecar, colours = _mark_images(tmp_path, marks)
     f3 = report.registration_mark_fit(anno, marks, colour_by_id=colours)
     assert f3["missing_diagnosis"] == []
+
+
+def test_crop_left_alone_follows_what_the_capture_DID_not_the_mode_name():
+    """"authored_else_crop_a" resolves per view: left alone where the view's
+    crop was active, crop A written where it was not. Mutation: key off
+    crop_mode alone."""
+    assert report.crop_left_alone({"crop_mode": "untouched"}) is True
+    assert report.crop_left_alone({"crop_mode": "authored_else_crop_a",
+                                   "crop_applied": "none"}) is True
+    assert report.crop_left_alone({"crop_mode": "authored_else_crop_a",
+                                   "crop_applied": "crop_a"}) is False
+    assert report.crop_left_alone({"crop_mode": "frame_b"}) is False
+    # A crop-A capture is measured against the rectangle it rendered.
+    rect, reason = report.frame_rect_for(
+        {"crop_mode": "authored_else_crop_a", "crop_applied": "crop_a",
+         "rendered_uv": [1.0, 2.0, 9.0, 8.0]}, authored_crop_uv=[0, 0, 5, 5])
+    assert rect == (1.0, 2.0, 9.0, 8.0) and reason is None

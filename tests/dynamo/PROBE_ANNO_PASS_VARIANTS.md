@@ -17,6 +17,19 @@ Round 1's measured output is in
 
 ---
 
+## Crop-inactive views (probe `2026-09-23.3`)
+
+V7–V10 now ask production for crop mode **`authored_else_crop_a`**, not
+`untouched`. On a view whose crop is **active** it is exactly `untouched`: no
+CropBox or CropBoxActive write, in either direction. On a crop-**inactive**
+view it applies **crop A**, the model pass's own snapped crop, which that pass
+already activates there, and restores it. Left untouched, `Plan_CropInActive`
+exported its whole extent (2942 × 6986 px at 2.9 px/ft against the lattice's
+18.75) and production refused it (`annotation_lattice_mismatch`).
+`registration.crop_applied` in the sidecar says which it resolved to (`none` /
+`crop_a`), and the analyzer measures a crop-A capture against the rectangle
+it rendered. The registered production capture uses the same mode.
+
 ## Round 3 — what changed, and how to run it (probe `2026-09-23.1`)
 
 Round 2's `.4` run (`tools/notes/ROUND2_ANNO_PASS_VARIANTS_FINDINGS.md`, last
@@ -110,7 +123,7 @@ is deleted, not left unused.
 `selection` default is all five. Per view: 5 annotation pairs (10) + the shared
 model pair (2) + V8's and V9's own model pairs (4) + 1 combined report = **17**;
 three views **51**. The Dynamo runner's version check must read
-**`2026-09-23.2`** (or later).
+**`2026-09-23.3`** (or later).
 
 ---
 

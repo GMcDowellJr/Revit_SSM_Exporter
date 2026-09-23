@@ -4392,6 +4392,10 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
 
 ANNOTATION_PASS_SCHEMA = "vop.stage_a.annotation_pass.v1"
 
+# The annotation pass's crop modes (probe-only switch
+# color_id_buffer_anno_crop_mode; see export_annotation_color_id_buffer_view).
+ANNO_CROP_MODES = ("frame_b", "untouched", "authored_else_crop_a")
+
 
 def _model_category_hidden_state(doc, view, diag=None, view_id=None):
     """Categories to hide for the ANNOTATION pass: the model ones.
@@ -4718,6 +4722,14 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     #           annotation visible that extent is the union including datum
     #           heads past the crop (handoff 2026-09-22: 21.4% scale mismatch
     #           on one section). So the scale is an output here, not a claim.
+    #       "authored_else_crop_a" -- "untouched" on a view whose own crop is
+    #           ACTIVE; on a crop-INACTIVE view, crop A (the model pass's
+    #           snapped crop, which that pass itself activates there) is
+    #           written as the crop and restored, exactly as "frame_b" writes
+    #           B. An untouched crop-inactive view exports its whole extent
+    #           (round 3b: 2.9 px/ft against 18.75, refused as
+    #           annotation_lattice_mismatch). registration.crop_applied says
+    #           which it resolved to.
     #
     # An unknown suppression or crop mode is raised, not defaulted: the mode decides
     # whether this capture's central claim -- "the annotation TIFF is
@@ -4734,11 +4746,31 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     anno_smooth_edges_off = bool(
         getattr(cfg, "color_id_buffer_anno_smooth_edges_off", False))
     anno_crop_mode = str(getattr(cfg, "color_id_buffer_anno_crop_mode", "frame_b"))
-    if anno_crop_mode not in ("frame_b", "untouched"):
+    if anno_crop_mode not in ANNO_CROP_MODES:
         raise ValueError(
-            "color_id_buffer_anno_crop_mode must be 'frame_b' or 'untouched', "
-            "got {0!r}".format(anno_crop_mode))
-    write_crop_here = (anno_crop_mode == "frame_b")
+            "color_id_buffer_anno_crop_mode must be one of {0}, got {1!r}".format(
+                ", ".join(repr(m) for m in ANNO_CROP_MODES), anno_crop_mode))
+    # "authored_else_crop_a" RESOLVES to one of the other two behaviours, per
+    # view, from whether the view's own crop is active. A crop-INACTIVE view
+    # left untouched exports its whole extent: Plan_CropInActive came out at
+    # 2942 x 6986 px, 2.9 px/ft against the lattice's 18.75, i.e. ~1015 x 2410
+    # ft, and production refused it (annotation_lattice_mismatch). So such a
+    # view gets crop A -- the rectangle the MODEL pass already activates on it
+    # -- and a view with an active crop keeps it untouched.
+    crop_applied = {"frame_b": "frame_b", "untouched": "none"}.get(anno_crop_mode)
+    authored_crop_active = None
+    if anno_crop_mode == "authored_else_crop_a":
+        try:
+            authored_crop_active = bool(view.CropBoxActive)
+        except Exception as ex:
+            # UNREADABLE is not "inactive": guessing either way would decide
+            # whether this capture writes the crop. Refused, loudly.
+            raise RuntimeError(
+                "crop_mode 'authored_else_crop_a' cannot read view.CropBoxActive "
+                "({0}: {1}), so it cannot decide whether to apply crop A".format(
+                    type(ex).__name__, ex))
+        crop_applied = "none" if authored_crop_active else "crop_a"
+    write_crop_here = crop_applied in ("frame_b", "crop_a")
 
     # THE FRAME, not the crop. This is the one line that makes this pass a
     # different capture from the model one: it renders B whole, at the same
@@ -4746,7 +4778,12 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     frame_uv = tuple(float(v) for v in geom["frame_snapped_uv"])
     frame_px = tuple(int(v) for v in geom["frame_px"])
     requested_axis = "height" if vertical else "width"
-    if write_crop_here:
+    # The rectangle this pass hands Revit when it writes the crop: B for
+    # "frame_b", the model pass's snapped crop A for "crop_a".
+    crop_to_write_uv = (frame_uv if crop_applied == "frame_b" else
+                        tuple(float(v) for v in geom["crop_snapped_uv"])
+                        if crop_applied == "crop_a" else None)
+    if crop_applied == "frame_b":
         pixel_size = frame_px[1] if vertical else frame_px[0]
         requested_px_source = "frame_px"
     else:
@@ -5088,11 +5125,12 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
                     basis = _make_view_basis(view, diag=diag)
                 from .revit.view_basis import crop_box_from_uv_bounds as _crop_box_from_uv_bounds
                 new_crop_box = _crop_box_from_uv_bounds(
-                    view, basis, frame_uv[0], frame_uv[1], frame_uv[2], frame_uv[3])
+                    view, basis, crop_to_write_uv[0], crop_to_write_uv[1],
+                    crop_to_write_uv[2], crop_to_write_uv[3])
                 if new_crop_box is not None:
                     view.CropBox = new_crop_box
                     view.CropBoxActive = True
-                    crop_bounds_xy = tuple(float(v) for v in frame_uv)
+                    crop_bounds_xy = tuple(float(v) for v in crop_to_write_uv)
                 elif diag is not None:
                     diag.warn(
                         phase="color_id_buffer",
@@ -5560,14 +5598,20 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
             # different fact from a frame_b crop that failed to apply, which
             # rendered_uv_reason is what says.
             "crop_mode": anno_crop_mode,
+            # What the mode RESOLVED to on this view: "frame_b", "crop_a" or
+            # "none" (crop left as found). authored_else_crop_a resolves per
+            # view, so the mode alone does not say what this capture did.
+            "crop_applied": crop_applied,
+            "authored_crop_active": authored_crop_active,
             "rendered_uv_reason": (
                 None if crop_bounds_xy is not None else (
-                    "crop_mode 'untouched': the view's authored crop was left as "
-                    "found and no rectangle was handed to Revit, so the rendered "
-                    "rectangle is Revit's choice and must be MEASURED (fiducials), "
-                    "not read from this record"
+                    "the view's authored crop was left as found and no rectangle "
+                    "was handed to Revit, so the rendered rectangle is Revit's "
+                    "choice and must be MEASURED (registration marks), not read "
+                    "from this record"
                     if not write_crop_here else
-                    "frame B could not be applied as the view crop")),
+                    "{0} could not be applied as the view crop".format(
+                        "frame B" if crop_applied == "frame_b" else "crop A"))),
             # Which recorded count the requested axis was set from: "frame_px"
             # (B's, frame_b mode) or "model_crop_px" (the model pass's own
             # crop count, untouched mode).
@@ -5707,9 +5751,10 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         # the sidecar's registration block describes a rectangle that was
         # never rendered.
         _fault("annotation_frame_not_applied",
-               "frame B could not be applied as the view crop; the export is "
+               "{0} could not be applied as the view crop; the export is "
                "FitToPage's automatic extent and does not register against the "
-               "model capture")
+               "model capture".format(
+                   "frame B" if crop_applied == "frame_b" else "crop A"))
 
     # THE SHARED LATTICE IS THE WHOLE PROMISE OF THIS PASS, so a size Revit
     # accepted that is not the size the lattice requires invalidates it --

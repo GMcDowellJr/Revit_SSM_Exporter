@@ -1603,6 +1603,10 @@ def read_annotation_sidecar(path):
         # Round 2 (revised). "frame_b" or "untouched"; None on a sidecar written
         # before the switch existed, which behaved as "frame_b".
         "crop_mode": registration.get("crop_mode"),
+        # What the mode RESOLVED to ("frame_b" / "crop_a" / "none"). Written
+        # from 2026-09-23 on; older sidecars leave it None and crop_mode alone
+        # decides (crop_left_alone below).
+        "crop_applied": registration.get("crop_applied"),
         "rendered_uv_reason": registration.get("rendered_uv_reason"),
         "probe_crop_boundary": sidecar.get("probe_crop_boundary"),
         "probe_fiducials": sidecar.get("probe_fiducials"),
@@ -1650,6 +1654,19 @@ def read_annotation_sidecar(path):
     return record
 
 
+def crop_left_alone(record) -> bool:
+    """Did this capture leave the view's crop as found? PURE.
+
+    "untouched" always does. "authored_else_crop_a" does only where the view's
+    own crop was active (crop_applied "none"); on a crop-inactive view it
+    writes crop A and records it as rendered_uv, like frame_b writes B.
+    """
+    mode = record.get("crop_mode")
+    if mode == "untouched":
+        return True
+    return mode == "authored_else_crop_a" and record.get("crop_applied") == "none"
+
+
 def frame_rect_for(record, authored_crop_uv=None) -> tuple[Any, str | None]:
     """The rectangle this annotation capture RENDERED, or why there is none.
 
@@ -1660,7 +1677,7 @@ def frame_rect_for(record, authored_crop_uv=None) -> tuple[Any, str | None]:
     describing a rectangle that was not rendered.
     """
     rendered = record.get("rendered_uv")
-    if (not rendered) and record.get("crop_mode") == "untouched":
+    if (not rendered) and crop_left_alone(record):
         # ROUND 2 (REVISED). Nothing was handed to Revit, so the reference is
         # the AUTHORED crop the capture left alone -- the rectangle the
         # probe's combined report read from view.CropBox. The margins against
@@ -1809,7 +1826,7 @@ def analyze_capture(sidecar_path, tiff_path, model_tiff_sha=None,
     if bbox_unavailable is not None:
         fit = dict(bbox_unavailable, sample_count=0)
         alt_fit = dict(bbox_unavailable)
-    elif frame_rect is None and record.get("crop_mode") != "untouched":
+    elif frame_rect is None and not crop_left_alone(record):
         fit = {"status": "unavailable", "reason": frame_reason,
                "sample_count": len(samples)}
         alt_fit = {"status": "unavailable", "reason": frame_reason}
@@ -1827,7 +1844,7 @@ def analyze_capture(sidecar_path, tiff_path, model_tiff_sha=None,
     fit["frame_uv"] = list(frame_rect) if frame_rect else None
     fit["frame_source"] = (
         "registration.rendered_uv" if record.get("rendered_uv")
-        else ("the AUTHORED crop (crop_mode untouched)" if frame_rect else None))
+        else ("the AUTHORED crop (crop left as found)" if frame_rect else None))
     if frame_rect is None and frame_reason:
         fit["frame_reason"] = frame_reason
     measurements["registration"] = fit

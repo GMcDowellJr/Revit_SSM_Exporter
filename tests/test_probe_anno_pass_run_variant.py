@@ -341,7 +341,7 @@ def test_v8_concludes_RAN_and_measured_every_request(tmp_path, monkeypatch):
     report, view, exports, doc = _run(tmp_path, monkeypatch, probe.V8)
     assert report["measurement"]["measured"] is True, report["measurement"]
     assert report["conclusion"] == "RAN", (report["conclusion"], report["exceptions"])
-    assert report["annotation_pass"]["crop_mode"] == "untouched"
+    assert report["annotation_pass"]["crop_mode"] == "authored_else_crop_a"
     assert report["document_safe"] is True
 
 

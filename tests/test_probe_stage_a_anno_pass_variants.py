@@ -50,12 +50,12 @@ def test_the_plan_matches_the_round_2_revised_brief_variant_by_variant():
                        registration_marks=False, category_layer=True,
                        model_suppression="hide_categories"),
         probe.V7: dict(white_membership=True, smooth_edges_off=False,
-                       crop_mode="untouched", crop_box_visible=False,
+                       crop_mode="authored_else_crop_a", crop_box_visible=False,
                        fiducials=False, own_model_pass=False,
                        registration_marks=False, category_layer=True,
                        model_suppression="external"),
         probe.V8: dict(white_membership=True, smooth_edges_off=True,
-                       crop_mode="untouched", crop_box_visible=True,
+                       crop_mode="authored_else_crop_a", crop_box_visible=True,
                        fiducials=True, own_model_pass=True,
                        registration_marks=False, category_layer=True,
                        model_suppression="external"),
@@ -63,12 +63,12 @@ def test_the_plan_matches_the_round_2_revised_brief_variant_by_variant():
         # differs from its base in exactly one field, which is what makes the
         # pair a measurement of that field.
         probe.V9: dict(white_membership=True, smooth_edges_off=True,
-                       crop_mode="untouched", crop_box_visible=True,
+                       crop_mode="authored_else_crop_a", crop_box_visible=True,
                        fiducials=True, own_model_pass=True,
                        registration_marks=True, category_layer=True,
                        model_suppression="external"),
         probe.V10: dict(white_membership=True, smooth_edges_off=False,
-                        crop_mode="untouched", crop_box_visible=False,
+                        crop_mode="authored_else_crop_a", crop_box_visible=False,
                         fiducials=False, own_model_pass=False,
                         registration_marks=False, category_layer=False,
                         model_suppression="external"),
@@ -876,7 +876,7 @@ def test_missing_override_setters_checks_every_name_in_the_set():
 
 _V8_GOOD_METADATA = {"applied_smooth_edges": False,
                      "model_suppression_mode": "external",
-                     "crop_mode": "untouched"}
+                     "crop_mode": "authored_else_crop_a"}
 _V8_GOOD_STATE = {"crop_box_visible": {"during_capture": True},
                   "fiducials": {"painted_count": 2}}
 
@@ -912,7 +912,7 @@ def test_a_membership_variant_did_not_measure_when_production_hid_categories():
     measured V0's suppression under V7's name."""
     check = probe.variant_measurement_check(
         probe.variant_plan(probe.V7),
-        {"model_suppression_mode": "hide_categories", "crop_mode": "untouched"})
+        {"model_suppression_mode": "hide_categories", "crop_mode": "authored_else_crop_a"})
     assert check["measured"] is False
     assert check["unmet"][0]["production_reported"] == "hide_categories"
     assert "V0's suppression" in check["unmet"][0]["why_it_matters"]
@@ -928,7 +928,7 @@ def test_an_untouched_variant_did_not_measure_when_production_wrote_the_crop(rep
         {"model_suppression_mode": "external", "crop_mode": reported})
     assert check["measured"] is False
     assert check["unmet"][0]["production_reported"] == reported
-    assert "wrote the crop" in check["unmet"][0]["why_it_matters"]
+    assert "candidate crop mode" in check["unmet"][0]["why_it_matters"]
 
 
 @pytest.mark.parametrize("state", [
@@ -965,7 +965,7 @@ def test_the_control_variant_is_measured_by_its_own_standard():
                "applied_smooth_edges": "not_attempted", "crop_mode": "frame_b"})
     assert check["measured"] is True, check
     check_moved = probe.variant_measurement_check(
-        plan, {"model_suppression_mode": "hide_categories", "crop_mode": "untouched"})
+        plan, {"model_suppression_mode": "hide_categories", "crop_mode": "authored_else_crop_a"})
     assert check_moved["measured"] is False
 
 
@@ -2075,7 +2075,7 @@ def _v9_state(created=8, hidden=False, lines_visible=True):
 
 def _v9_metadata():
     return {"applied_smooth_edges": False, "model_suppression_mode": "external",
-            "crop_mode": "untouched"}
+            "crop_mode": "authored_else_crop_a"}
 
 
 def test_v9_measured_only_when_every_mark_drew_in_both_passes():

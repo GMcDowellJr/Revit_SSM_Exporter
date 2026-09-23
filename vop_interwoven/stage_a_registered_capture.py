@@ -4,9 +4,12 @@ Behind ``Config.color_id_buffer_registered_capture`` (default OFF). What it
 changes against the shipped two-pass capture, and the measurement behind each
 (tools/notes/ROUND2_ and ROUND3_ANNO_PASS_VARIANTS_FINDINGS.md):
 
-  * THE CROP IS NOT WRITTEN by the annotation pass (crop_mode "untouched").
-    Widening it to frame B lengthened datums and pulled in content from
-    beyond the authored crop (round 1).
+  * THE AUTHORED CROP IS NOT WRITTEN by the annotation pass (crop_mode
+    "authored_else_crop_a"). Widening it to frame B lengthened datums and
+    pulled in content from beyond the authored crop (round 1). A crop-INACTIVE
+    view gets crop A instead -- the rectangle the model pass itself activates
+    there -- because left untouched it exports its whole extent (round 3b:
+    2942 x 6986 px at 2.9 px/ft, refused as annotation_lattice_mismatch).
   * MODEL CONTENT IS SUPPRESSED BY MEMBERSHIP, not by hiding categories: a
     white element override on every model member and a white view filter per
     linked RVT category. Hiding a category also hides its dependent annotation
@@ -28,7 +31,7 @@ changes against the shipped two-pass capture, and the measurement behind each
 
 Sequence: snapshot -> group -> marks -> MODEL pass (OST_Lines left visible, so
 the marks draw) -> white membership suppression -> ANNOTATION pass (external
-suppression, crop untouched) -> rollback -> read-back -> the registration record
+suppression, authored crop kept or crop A applied) -> rollback -> read-back -> the registration record
 into BOTH sidecars, under ``registration_marks`` (the annotation sidecar's own
 ``registration`` block is production's and is never overwritten). The record is
 written LAST, after the read-back, so the
@@ -166,7 +169,7 @@ def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=N
                           "view-owned, so the annotation pass painted them"),
         "must_be_subtracted": True,
         "is_documentation_content": False,
-        "annotation_crop_mode": "untouched",
+        "annotation_crop_mode": "authored_else_crop_a",
         "model_suppression": record.get("suppression_summary"),
         "restore": record.get("restore"),
         "faults": list(record.get("faults") or []),
@@ -312,7 +315,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         # ---- 4: ANNOTATION pass, external suppression, crop untouched -----
         anno_cfg = copy.copy(cfg)
         anno_cfg.color_id_buffer_anno_model_suppression = "external"
-        anno_cfg.color_id_buffer_anno_crop_mode = "untouched"
+        anno_cfg.color_id_buffer_anno_crop_mode = "authored_else_crop_a"
         _t = time.time()
         try:
             anno_out = export_annotation_color_id_buffer_view(

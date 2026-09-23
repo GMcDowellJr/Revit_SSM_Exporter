@@ -29,8 +29,11 @@ V0  v0_control -- the current annotation pass, unchanged. Still sets the crop
     to B: it is the control for exactly the behaviour being removed.
 V7  v7_no_crop -- membership white suppression (the model membership set
     goes white per element; nothing hidden), and production's
-    color_id_buffer_anno_crop_mode = "untouched": no CropBox write, no
-    CropBoxActive write, in either direction.
+    color_id_buffer_anno_crop_mode = "authored_else_crop_a": on a view whose
+    crop is ACTIVE, no CropBox write and no CropBoxActive write, in either
+    direction; on a crop-INACTIVE view, crop A (the model pass's own) is
+    applied and restored -- round 3b showed the untouched alternative exports
+    the whole view at 2.9 px/ft.
 V8  v8_no_crop_fiducials -- V7 plus
       F1  CropBoxVisible on for BOTH passes, so the crop boundary draws at
           the crop's own UV bounds (read from view.CropBox, never changed).
@@ -55,7 +58,7 @@ defaulting to the shipped behaviour and each absent from ``Config``:
 
     color_id_buffer_anno_model_suppression = "external"   (V7, V8)
     color_id_buffer_anno_smooth_edges_off = True           (V8)
-    color_id_buffer_anno_crop_mode = "untouched"           (V7, V8)
+    color_id_buffer_anno_crop_mode = "authored_else_crop_a" (V7-V10)
 
 CropBoxVisible (F1) and the fiducial paint (F2) are NOT production switches:
 a caller can set both from outside the pass's transaction, so this module
@@ -106,7 +109,7 @@ def _probe_contract():
 
 
 PROBE_NAME = "stage_a_anno_pass_variants"
-PROBE_VERSION = "2026-09-23.2"
+PROBE_VERSION = "2026-09-23.3"
 
 V0 = "v0_control"
 V7 = "v7_no_crop"
@@ -124,6 +127,8 @@ SUPPORTED_VARIANTS = (V0, V7, V8, V9, V10)
 # visibly a control rather than silently a no-op.
 WHITE_MEMBERSHIP_VARIANTS = frozenset((V7, V8, V9, V10))
 UNTOUCHED_CROP_VARIANTS = frozenset((V7, V8, V9, V10))
+# What those variants ask production for (see variant_plan).
+CANDIDATE_CROP_MODE = "authored_else_crop_a"
 SMOOTH_EDGES_OFF_VARIANTS = frozenset((V8, V9))
 CROP_BOX_VISIBLE_VARIANTS = frozenset((V8, V9))
 FIDUCIAL_VARIANTS = frozenset((V8, V9))
@@ -227,9 +232,11 @@ def variant_plan(variant):
         "white_membership": variant in WHITE_MEMBERSHIP_VARIANTS,
         "smooth_edges_off": variant in SMOOTH_EDGES_OFF_VARIANTS,
         # Production's color_id_buffer_anno_crop_mode. "frame_b" is the shipped
-        # crop-to-B behaviour; "untouched" writes neither CropBox nor
-        # CropBoxActive.
-        "crop_mode": ("untouched" if variant in UNTOUCHED_CROP_VARIANTS
+        # crop-to-B behaviour. The candidates use "authored_else_crop_a": the
+        # view's crop left as found where it is ACTIVE (no CropBox or
+        # CropBoxActive write), crop A applied where it is not (round 3b: an
+        # untouched crop-inactive plan exported its whole extent at 2.9 px/ft).
+        "crop_mode": (CANDIDATE_CROP_MODE if variant in UNTOUCHED_CROP_VARIANTS
                       else "frame_b"),
         # F1. Set by THIS module, from outside the pass, and restored by it.
         "crop_box_visible": variant in CROP_BOX_VISIBLE_VARIANTS,
@@ -323,9 +330,10 @@ def variant_measurement_check(plan, annotation_metadata, probe_state=None):
                 "requested": "crop mode {0!r}".format(expected_crop),
                 "production_reported": reported_crop,
                 "why_it_matters": (
-                    "the annotation pass wrote the crop, which is exactly what "
-                    "this variant exists not to do"
-                    if expected_crop == "untouched" else
+                    "the annotation pass did not run the candidate crop mode, "
+                    "so it may have written a crop this variant exists not to "
+                    "write"
+                    if expected_crop != "frame_b" else
                     "the annotation pass did not apply frame B, so this is not "
                     "the shipped control"),
             })

@@ -818,9 +818,12 @@ class _CropRecordingView(FakeViewPlan):
         object.__setattr__(self, name, value)
 
 
-def _run_crop_mode(tmp_path, crop_mode=None, suppression="external"):
+def _run_crop_mode(tmp_path, crop_mode=None, suppression="external",
+                   authored_crop_active=None):
     elements = _elements()
     view = _CropRecordingView(view_id=VIEW_ID)
+    if authored_crop_active is not None:
+        view.CropBoxActive = bool(authored_crop_active)
     doc = _SizedDoc(elements=elements, link_instances=[],
                     categories=[MODEL_CAT, OTHER_MODEL_CAT, ANNO_CAT])
     cfg = Config()
@@ -843,6 +846,7 @@ def _run_crop_mode(tmp_path, crop_mode=None, suppression="external"):
 
         def _observe(opts):
             at_export["crop_box"] = view.CropBox
+            at_export["crop_box_active"] = view.CropBoxActive
             at_export["pixel_size"] = int(opts.PixelSize)
 
         doc.on_export_image = _observe
@@ -884,7 +888,8 @@ def test_untouched_crop_mode_records_the_rendered_rectangle_as_unknown(tmp_path)
         tmp_path, crop_mode="untouched")
     registration = anno["metadata"]["registration"]
     assert registration["rendered_uv"] is None
-    assert "untouched" in registration["rendered_uv_reason"]
+    assert registration["crop_applied"] == "none"
+    assert "left as found" in registration["rendered_uv_reason"]
     assert "MEASURED" in registration["rendered_uv_reason"]
 
 
@@ -972,3 +977,72 @@ def test_model_lines_visible_leaves_lines_visible_and_nothing_else(tmp_path):
 def test_model_lines_visible_is_not_a_config_field():
     assert not hasattr(Config(), "color_id_buffer_model_lines_visible")
     assert "color_id_buffer_model_lines_visible" not in Config().to_dict()
+
+
+
+# ---- crop_mode "authored_else_crop_a" ------------------------------------
+
+def test_authored_else_crop_a_leaves_an_ACTIVE_authored_crop_untouched(tmp_path):
+    anno, view, geom, at_export, authored = _run_crop_mode(
+        tmp_path, crop_mode="authored_else_crop_a", authored_crop_active=True)
+    registration = anno["metadata"]["registration"]
+    assert view.crop_writes == []
+    assert registration["crop_applied"] == "none"
+    assert registration["authored_crop_active"] is True
+    assert registration["rendered_uv"] is None
+    assert at_export["pixel_size"] == int(geom["crop_px"][0])
+
+
+def test_authored_else_crop_a_applies_crop_A_on_a_crop_INACTIVE_view(tmp_path):
+    """Round 3b: an untouched crop-inactive view exported its whole extent at
+    2.9 px/ft. Crop A -- the model pass's own snapped crop -- is written for
+    the export and put back. Mutation: resolve to "none" regardless, or write
+    frame B instead of A."""
+    anno, view, geom, at_export, authored = _run_crop_mode(
+        tmp_path, crop_mode="authored_else_crop_a", authored_crop_active=False)
+    registration = anno["metadata"]["registration"]
+    assert registration["crop_applied"] == "crop_a"
+    assert registration["authored_crop_active"] is False
+    crop_a = [float(v) for v in geom["crop_snapped_uv"]]
+    assert registration["rendered_uv"] == crop_a
+    # B and A differ in this fixture, so "wrote the crop" and "wrote A" are
+    # different claims and this pins the second.
+    assert crop_a != [float(v) for v in geom["frame_snapped_uv"]]
+    box = at_export["crop_box"]
+    assert (box.Min.X, box.Min.Y, box.Max.X, box.Max.Y) == pytest.approx(
+        (crop_a[0], crop_a[1], crop_a[2], crop_a[3]))
+    assert at_export["crop_box_active"] is True
+    assert at_export["pixel_size"] == int(geom["crop_px"][0])
+    # ...and put back.
+    assert view.CropBoxActive is False
+    assert view.CropBox is authored
+    assert anno["success"] is True, anno["metadata"]["capture_faults"]
+
+
+def test_authored_else_crop_a_refuses_an_unreadable_crop_state(tmp_path):
+    """Unreadable is not inactive: guessing would decide whether the capture
+    writes the crop."""
+    class _Unreadable(_CropRecordingView):
+        @property
+        def CropBoxActive(self):
+            raise RuntimeError("no crop state")
+
+        @CropBoxActive.setter
+        def CropBoxActive(self, value):
+            pass
+    elements = _elements()
+    view = _Unreadable(view_id=VIEW_ID)
+    cfg = Config()
+    cfg.include_linked_rvt = False
+    cfg.debug_dump_path = str(tmp_path)
+    cfg.color_id_buffer_anno_model_suppression = "external"
+    cfg.color_id_buffer_anno_crop_mode = "authored_else_crop_a"
+    geom = {"frame_snapped_uv": (0, 0, 1, 1), "frame_px": (10, 10),
+            "crop_snapped_uv": (0, 0, 1, 1), "crop_px": (10, 10)}
+    with install_fake_revit_db():
+        with pytest.raises(RuntimeError) as excinfo:
+            color_id_buffer.export_annotation_color_id_buffer_view(
+                _SizedDoc(elements=elements, link_instances=[], categories=[]),
+                view, cfg, geom, diag=FakeDiag(), raster=_raster(),
+                elements=elements)
+    assert "CropBoxActive" in str(excinfo.value)

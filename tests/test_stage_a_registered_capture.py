@@ -32,13 +32,14 @@ WHITE = (255, 255, 255)
 
 
 def _run(tmp_path, rollback_restores=("view", "doc"), break_model_pass=False,
-         monkeypatch=None, leave_view_changed=False):
+         monkeypatch=None, leave_view_changed=False, crop_active=True):
     del world._LOG[:]
     elements = _elements()
     elements[0].bbox = _BBox((25, 18, 0), (26, 19, 0))
     elements.append(FakeElement(1003, MODEL_CAT))
     view = world._ProbeView(VIEW_ID)
     view.Scale = 96
+    object.__setattr__(view, "CropBoxActive", bool(crop_active))
     doc = _SizedDoc(elements=elements, link_instances=[],
                     categories=[MODEL_CAT, OTHER_MODEL_CAT, ANNO_CAT,
                                 world.LINES_CAT])
@@ -54,6 +55,9 @@ def _run(tmp_path, rollback_restores=("view", "doc"), break_model_pass=False,
             "lines_hidden": view.category_hidden.get(
                 world.LINES_CAT.Id.IntegerValue, False),
             "marks_in_doc": sorted(i for i in doc._by_id if i > world.MARK_ID_BASE),
+            "crop_box_active": view.CropBoxActive,
+            "crop_box": (view.CropBox.Min.X, view.CropBox.Min.Y,
+                         view.CropBox.Max.X, view.CropBox.Max.Y),
         })
 
     doc.on_export_image = _at_export
@@ -130,7 +134,8 @@ def test_both_passes_run_registered_and_the_view_comes_back(tmp_path):
 
 
 def test_the_annotation_pass_never_writes_the_crop(tmp_path):
-    """Mutation: drop crop_mode "untouched" from the annotation cfg."""
+    """The fixture's crop is ACTIVE, so "authored_else_crop_a" leaves it alone.
+    Mutation: set crop_mode "frame_b" in the annotation cfg."""
     _run(tmp_path)
     assert world._anno_crop_writes() == []
 
@@ -146,7 +151,7 @@ def test_the_FILES_carry_the_registration_record_with_its_restore_verdict(tmp_pa
         assert record["pass"] == pass_name
         assert record["faults"] == []
         assert record["restore"]["rolled_back"] is True
-        assert record["annotation_crop_mode"] == "untouched"
+        assert record["annotation_crop_mode"] == "authored_else_crop_a"
         assert len(record["marks"]) == 12
     assert {tuple(m["rgb"]) for m in model["marks"]} == {registration.MARK_COLOUR}
     colours = _sidecar(out["annotation_sidecar_path"])["color_assignment_map"]
@@ -217,3 +222,19 @@ def test_the_same_leak_is_undone_by_a_real_rollback(tmp_path, monkeypatch):
     out, view, doc, exports, diag = _run(tmp_path, monkeypatch=monkeypatch,
                                          leave_view_changed=True)
     assert out["registration"]["faults"] == []
+
+
+def test_a_crop_INACTIVE_view_is_captured_with_crop_A_and_put_back(tmp_path):
+    """Round 3b: an untouched crop-inactive plan exported its whole extent at
+    2.9 px/ft. The registered capture now applies crop A for the annotation
+    export -- the same rectangle the model export rendered -- and the view
+    comes back crop-inactive. Mutation: pass "untouched" instead."""
+    out, view, doc, exports, diag = _run(tmp_path, crop_active=False)
+    model_export, anno_export = exports
+    assert anno_export["crop_box_active"] is True
+    assert anno_export["crop_box"] == model_export["crop_box"]
+    registration_block = out["annotation_pass"]["metadata"]["registration"]
+    assert registration_block["crop_applied"] == "crop_a"
+    assert view.CropBoxActive is False
+    assert out["registration"]["faults"] == []
+    assert out["registration"]["mark_reference_source"] == "model_crop_a"
