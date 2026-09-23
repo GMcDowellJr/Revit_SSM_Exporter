@@ -436,6 +436,60 @@ def get_or_create_neutral_phase_filter(doc):
     return pf, True
 
 
+# UNCONFIRMED (no Revit run in this session): the markers Revit uses when it
+# REFUSES a category override rather than failing at it. Observed on the
+# 2026-09-22 and round-1 probe runs as the message "Category cannot be
+# overridden"; the exception type is not relied on because it varies by host.
+# A marker miss degrades to "failed", which is the safe direction -- a genuine
+# failure reported as a refusal would hide a real defect, where a refusal
+# reported as a failure only costs a false alarm.
+_CATEGORY_NOT_OVERRIDABLE_MARKERS = (
+    "cannot be overridden",
+    "not overridable",
+    "cannot be overriden",   # Revit has shipped this spelling
+)
+
+
+def _category_override_refused(ex):
+    """True when Revit REFUSED the category override rather than failed at it.
+
+    A category Revit will not let a view override is a property of the
+    category, not a fault in the capture: there is nothing to suppress and
+    nothing to restore. Reporting it as a restore failure is what made five
+    good round-1 captures read as
+    ``annotation_view_state_not_restored``.
+    """
+    text = "{0} {1}".format(type(ex).__name__, ex).lower()
+    return any(marker in text for marker in _CATEGORY_NOT_OVERRIDABLE_MARKERS)
+
+
+def _category_is_overridable(view, cat_id, diag=None, view_id=None):
+    """Three-valued: True / False / None when the host cannot answer.
+
+    Asks ``View.IsCategoryOverridable`` when the host exposes it (UNCONFIRMED
+    on Revit 2025, hence the reflection) so a refusal can be anticipated rather
+    than only classified after it raises. ``None`` means the question could not
+    be asked, and the caller falls back to attempting the write and classifying
+    the exception -- never to assuming it is fine.
+    """
+    probe = getattr(view, "IsCategoryOverridable", None)
+    if probe is None:
+        return None
+    try:
+        return bool(probe(cat_id))
+    except Exception as ex:
+        if diag is not None:
+            diag.warn(
+                phase="color_id_buffer",
+                callsite="category_overridable_probe",
+                message="View.IsCategoryOverridable raised ({0}: {1}); falling back to "
+                        "attempting the override and classifying the "
+                        "result".format(type(ex).__name__, ex),
+                view_id=view_id,
+            )
+        return None
+
+
 def _get_solid_pattern_id(doc):
     from Autodesk.Revit.DB import FilteredElementCollector, FillPatternElement, FillPatternTarget
     for fp in FilteredElementCollector(doc).OfClass(FillPatternElement):
@@ -2442,6 +2496,16 @@ def _export_tiff(doc, view, output_path, pixel_size, diag=None, view_id=None,
             # over it; this run simply does not know, and says so.
             dim_check = "read_failed"
         else:
+            # TODO (F4, run 20260922T085737): this check looks at the
+            # REQUESTED axis and the per-axis ceiling only. It never compares
+            # the DERIVED axis against what the lattice predicts for it, so it
+            # passed annotation images whose derived axis was up to 440 px away
+            # from the predicted figure. The fix is deliberately NOT made here:
+            # it lands after Greg reads
+            # tests/dynamo/PROBE_ANNO_PASS_VARIANTS.md's output, because what
+            # the derived axis SHOULD be compared against -- geom's
+            # predicted_derived_px, or the frame's other axis -- is one of the
+            # things that probe measures.
             on_axis = actual_w if requested_axis == "width" else actual_h
             axis_ok = abs(int(on_axis) - int(actual_pixel_size)) <= 1
             cap_ok = max(int(actual_w), int(actual_h)) <= int(max_axis_px)
@@ -2988,6 +3052,30 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     created_link_category_filter_ids = []
     reused_link_category_filter_ids = []
     category_hidden_state = _hidden_category_state(doc, view)
+    # PROBE-ONLY SWITCH, read by getattr and absent from Config, like the
+    # annotation pass's three (see export_annotation_color_id_buffer_view):
+    #
+    #   color_id_buffer_model_lines_visible
+    #       False (default) -- OST_Lines is hidden with the other view-only
+    #           categories, as shipped.
+    #       True            -- OST_Lines is left VISIBLE in this capture. The
+    #           annotation-pass variant probe draws registration marks as
+    #           detail lines at known view UV and paints them a reserved
+    #           colour, so the SAME marks register BOTH passes. Hiding the
+    #           category happens inside this function's suppress transaction,
+    #           where a caller cannot undo it. Every other detail and model
+    #           line then draws in its native colour, unpainted -- the
+    #           known OST_Lines gap the annotation pass already carries, and
+    #           decoded the same way (exact palette match). Recorded in
+    #           model_lines_visible so a capture says which it was.
+    model_lines_visible = bool(getattr(cfg, "color_id_buffer_model_lines_visible", False))
+    if model_lines_visible:
+        from Autodesk.Revit.DB import BuiltInCategory
+        lines_bic = getattr(BuiltInCategory, "OST_Lines", None)
+        if lines_bic is None:
+            raise RuntimeError("color_id_buffer_model_lines_visible is set but "
+                               "BuiltInCategory.OST_Lines did not resolve")
+        category_hidden_state.pop(int(lines_bic), None)
     solid_pattern_id = _get_solid_pattern_id(doc)
     if solid_pattern_id is None:
         raise RuntimeError("No solid drafting fill pattern found in project")
@@ -4201,6 +4289,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             cat.Name for cat in failed_link_categories
         ),
         "categories_hidden": category_hidden_state,
+        "model_lines_visible": model_lines_visible,
         "filter_state": filter_state,
         "phase_filter_state": phase_filter_state,
         # ADDITIVE, new top-level key: the graphics state that governed this
@@ -4302,6 +4391,10 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
 # CLAUDE.md records as the way this exact class of defect survived a fix.
 
 ANNOTATION_PASS_SCHEMA = "vop.stage_a.annotation_pass.v1"
+
+# The annotation pass's crop modes (probe-only switch
+# color_id_buffer_anno_crop_mode; see export_annotation_color_id_buffer_view).
+ANNO_CROP_MODES = ("frame_b", "untouched", "authored_else_crop_a")
 
 
 def _model_category_hidden_state(doc, view, diag=None, view_id=None):
@@ -4578,13 +4671,131 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     ).strip().lower()
     vertical = (fit_direction == "vertical")
 
+    # ---- two PROBE-ONLY opt-in switches -------------------------------
+    #
+    # Read with getattr and defaulted to today's behaviour, and DELIBERATELY
+    # absent from Config: they are not production settings, they have no
+    # to_dict()/from_dict() representation, and a capture that does not set
+    # them behaves exactly as it did before this block existed. A probe sets
+    # the attribute on its own cfg object. Both exist because the behaviour
+    # they change happens INSIDE this function's suppress transaction, where
+    # a caller has no window to do it itself:
+    #
+    #   color_id_buffer_anno_model_suppression
+    #       "hide_categories" (default) -- hide every model category and
+    #           disable the view's filters, as shipped.
+    #       "external"                  -- the CALLER has already suppressed
+    #           model content by some other means (tests/dynamo's
+    #           probe_stage_a_anno_pass_variants.py applies a white-override
+    #           view filter). This pass then touches neither model category
+    #           visibility nor filter enablement in EITHER direction: it does
+    #           not hide, and so has nothing to restore. It still RECORDS the
+    #           model category state it read, so the sidecar says what was
+    #           visible rather than going silent.
+    #
+    #   color_id_buffer_anno_smooth_edges_off
+    #       False (default) -- this pass does not touch SmoothEdges, as
+    #           shipped. applied_smooth_edges reads "not_attempted", which is
+    #           not the same fact as the model pass's "read_failed".
+    #       True            -- capture/clear/restore SmoothEdges the way
+    #           export_color_id_buffer_view does, INSIDE the suppress
+    #           transaction and after the DisplayStyle change, which is the
+    #           only ordering a caller cannot arrange from outside.
+    #
+    #   color_id_buffer_anno_crop_mode
+    #       "frame_b" (default) -- set view.CropBox to frame B and
+    #           CropBoxActive True for the export, then restore both, as
+    #           shipped.
+    #       "untouched"         -- write NEITHER CropBox NOR CropBoxActive,
+    #           in either direction. Round 1 measured why this exists: datum
+    #           extents clip to the crop, so widening it to B LENGTHENS level
+    #           and grid lines, walks their heads outward and pulls in content
+    #           from beyond the authored crop. A capture that moves the crop
+    #           is not a capture of the drawing. Under this mode B is not an
+    #           instruction to Revit, so the rendered rectangle is Revit's
+    #           choice and is NOT recorded as known: registration.rendered_uv
+    #           is None with the reason, and it has to be MEASURED (the probe
+    #           does that with fiducials). The requested pixel count is the
+    #           model pass's own crop_px on the requested axis. That lands on
+    #           the model lattice ONLY when the export's extent is the crop:
+    #           FitToPage fits each pass's OWN extent to PixelSize, and with
+    #           annotation visible that extent is the union including datum
+    #           heads past the crop (handoff 2026-09-22: 21.4% scale mismatch
+    #           on one section). So the scale is an output here, not a claim.
+    #       "authored_else_crop_a" -- "untouched" on a view whose own crop is
+    #           ACTIVE; on a crop-INACTIVE view, crop A (the model pass's
+    #           snapped crop, which that pass itself activates there) is
+    #           written as the crop and restored, exactly as "frame_b" writes
+    #           B. An untouched crop-inactive view exports its whole extent
+    #           (round 3b: 2.9 px/ft against 18.75, refused as
+    #           annotation_lattice_mismatch). registration.crop_applied says
+    #           which it resolved to.
+    #
+    # An unknown suppression or crop mode is raised, not defaulted: the mode decides
+    # whether this capture's central claim -- "the annotation TIFF is
+    # annotation on white" -- was arranged by this function or by its caller,
+    # and a typo silently falling back to "hide_categories" would make a
+    # variant that measured nothing indistinguishable from one that did.
+    anno_model_suppression = str(getattr(
+        cfg, "color_id_buffer_anno_model_suppression", "hide_categories"))
+    if anno_model_suppression not in ("hide_categories", "external"):
+        raise ValueError(
+            "color_id_buffer_anno_model_suppression must be 'hide_categories' or "
+            "'external', got {0!r}".format(anno_model_suppression))
+    suppress_model_categories_here = (anno_model_suppression == "hide_categories")
+    anno_smooth_edges_off = bool(
+        getattr(cfg, "color_id_buffer_anno_smooth_edges_off", False))
+    anno_crop_mode = str(getattr(cfg, "color_id_buffer_anno_crop_mode", "frame_b"))
+    if anno_crop_mode not in ANNO_CROP_MODES:
+        raise ValueError(
+            "color_id_buffer_anno_crop_mode must be one of {0}, got {1!r}".format(
+                ", ".join(repr(m) for m in ANNO_CROP_MODES), anno_crop_mode))
+    # "authored_else_crop_a" RESOLVES to one of the other two behaviours, per
+    # view, from whether the view's own crop is active. A crop-INACTIVE view
+    # left untouched exports its whole extent: Plan_CropInActive came out at
+    # 2942 x 6986 px, 2.9 px/ft against the lattice's 18.75, i.e. ~1015 x 2410
+    # ft, and production refused it (annotation_lattice_mismatch). So such a
+    # view gets crop A -- the rectangle the MODEL pass already activates on it
+    # -- and a view with an active crop keeps it untouched.
+    crop_applied = {"frame_b": "frame_b", "untouched": "none"}.get(anno_crop_mode)
+    authored_crop_active = None
+    if anno_crop_mode == "authored_else_crop_a":
+        try:
+            authored_crop_active = bool(view.CropBoxActive)
+        except Exception as ex:
+            # UNREADABLE is not "inactive": guessing either way would decide
+            # whether this capture writes the crop. Refused, loudly.
+            raise RuntimeError(
+                "crop_mode 'authored_else_crop_a' cannot read view.CropBoxActive "
+                "({0}: {1}), so it cannot decide whether to apply crop A".format(
+                    type(ex).__name__, ex))
+        crop_applied = "none" if authored_crop_active else "crop_a"
+    write_crop_here = crop_applied in ("frame_b", "crop_a")
+
     # THE FRAME, not the crop. This is the one line that makes this pass a
     # different capture from the model one: it renders B whole, at the same
     # feet-per-pixel the model pass rendered A at.
     frame_uv = tuple(float(v) for v in geom["frame_snapped_uv"])
     frame_px = tuple(int(v) for v in geom["frame_px"])
-    pixel_size = frame_px[1] if vertical else frame_px[0]
     requested_axis = "height" if vertical else "width"
+    # The rectangle this pass hands Revit when it writes the crop: B for
+    # "frame_b", the model pass's snapped crop A for "crop_a".
+    crop_to_write_uv = (frame_uv if crop_applied == "frame_b" else
+                        tuple(float(v) for v in geom["crop_snapped_uv"])
+                        if crop_applied == "crop_a" else None)
+    if crop_applied == "frame_b":
+        pixel_size = frame_px[1] if vertical else frame_px[0]
+        requested_px_source = "frame_px"
+    else:
+        # The crop is the view's own, so B's pixel count would describe a
+        # rectangle this capture never asks for. The model pass's crop_px is
+        # the count it rendered the (snapped) authored crop at. Whether this
+        # capture lands on that lattice depends on its extent, which FitToPage
+        # takes from the drawn content, not the crop -- see the switch
+        # comment above. It is measured (F1/F2), never assumed.
+        crop_px = tuple(int(v) for v in geom["crop_px"])
+        pixel_size = crop_px[1] if vertical else crop_px[0]
+        requested_px_source = "model_crop_px"
 
     # ---- collection and membership ------------------------------------
     membership_error = None
@@ -4777,7 +4988,13 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     # an annotation category's visibility in either direction.
     model_category_hidden_state = _model_category_hidden_state(
         doc, view, diag=diag, view_id=view_id)
+    # Only categories whose halftone write SUCCEEDED, so restore touches exactly
+    # what this pass changed.
     category_halftone_state = {}
+    # Every category considered, three-valued: "applied" / "not_overridable" /
+    # "failed". A category absent from category_halftone_state is not the same
+    # fact as one that was never looked at, and this is what says which.
+    category_halftone_outcomes = {}
 
     orig_crop_box = None
     orig_crop_box_active = None
@@ -4795,6 +5012,72 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
 
     orig_display_style = getattr(view, "DisplayStyle", None)
 
+    # SmoothEdges, captured the way export_color_id_buffer_view captures it
+    # and for the same reason: the plain bool only, never the live
+    # ViewDisplayModel held across a transaction boundary. Three-valued by
+    # construction -- a missing attribute is an UNKNOWN AA state, not an off
+    # one, so it is recorded as a read error rather than coerced to False.
+    # Captured only when the caller asked for the change; otherwise the
+    # sidecar says "not_attempted", which is a different fact from the model
+    # pass's "read_failed".
+    def _dispose_view_display_model(dm, callsite):
+        """Dispose a ViewDisplayModel, RECORDING a failure rather than
+        discarding it (Refactor Rule #1). The model pass spells this as a bare
+        ``except Exception: pass`` in three places; copying that idiom into
+        this pass would have added three more discarded handlers to the
+        repository's ground-truth population. A leaked ViewDisplayModel is not
+        a capture failure, so nothing here raises -- but a host on which
+        Dispose raises every time is a fact worth having once."""
+        try:
+            dm.Dispose()
+        except Exception as ex:
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite=callsite,
+                    message="could not dispose the ViewDisplayModel ({0}: {1}); the "
+                            "capture is unaffected".format(type(ex).__name__, ex),
+                    view_id=view_id,
+                )
+
+    orig_smooth_edges = None
+    smooth_edges_read_error = None
+    _MISSING_SMOOTH_EDGES = object()
+    if anno_smooth_edges_off:
+        try:
+            _dm = view.GetViewDisplayModel()
+            try:
+                _raw_smooth_edges = getattr(
+                    _dm, "SmoothEdges", _MISSING_SMOOTH_EDGES)
+                if _raw_smooth_edges is _MISSING_SMOOTH_EDGES:
+                    smooth_edges_read_error = "AttributeError"
+                    if diag is not None:
+                        diag.warn(
+                            phase="color_id_buffer",
+                            callsite="annotation_smooth_edges_capture",
+                            message="ViewDisplayModel has no SmoothEdges attribute on "
+                                    "this Revit host; anti-aliasing cannot be confirmed "
+                                    "off for the annotation pass and decoded edges may "
+                                    "be blended",
+                            view_id=view_id,
+                        )
+                else:
+                    orig_smooth_edges = bool(_raw_smooth_edges)
+            finally:
+                _dispose_view_display_model(
+                    _dm, "annotation_smooth_edges_capture_dispose")
+        except Exception as ex:
+            smooth_edges_read_error = type(ex).__name__
+            if diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="annotation_smooth_edges_capture",
+                    message="could not read the view's SmoothEdges state ({0}: {1}); the "
+                            "annotation capture proceeds but anti-aliasing cannot be "
+                            "confirmed off".format(type(ex).__name__, ex),
+                    view_id=view_id,
+                )
+
     state_out = None
     painted_ids = []
     authored_overrides = {
@@ -4803,53 +5086,69 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     }
     crop_bounds_xy = None
     applied_display_style = "unchanged"
+    # "not_attempted" is this pass's shipped state: it has never touched
+    # SmoothEdges. It is NOT "read_failed" and NOT False, and a reader that
+    # cannot tell those apart cannot tell an AA-off capture from one that
+    # never asked.
+    applied_smooth_edges = "not_attempted"
 
     suppress_tx = Transaction(doc, "VOP Stage A ANNO SUPPRESS color ID buffer")
     suppress_tx.Start()
     try:
-        for fid_int, fstate in filter_state.items():
-            if fstate["was_enabled"] and fstate["was_visible"]:
-                view.SetIsFilterEnabled(ElementId(int(fid_int)), False)
+        # Both loops are the "hide_categories" mode's work. Under "external"
+        # the caller's own suppression is what makes this capture annotation-
+        # on-white, and disabling its filter would undo exactly that -- so
+        # neither filter enablement nor model category visibility is written
+        # in either direction, and the restore block below has correspondingly
+        # nothing to put back.
+        if suppress_model_categories_here:
+            for fid_int, fstate in filter_state.items():
+                if fstate["was_enabled"] and fstate["was_visible"]:
+                    view.SetIsFilterEnabled(ElementId(int(fid_int)), False)
 
-        for cat_id_int in model_category_hidden_state:
-            view.SetCategoryHidden(ElementId(int(cat_id_int)), True)
+            for cat_id_int in model_category_hidden_state:
+                view.SetCategoryHidden(ElementId(int(cat_id_int)), True)
 
-        # THE CROP IS B. The model pass cropped to A; this one restores the
-        # full frame, so every annotation the frame was expanded to hold is
-        # inside the rendered rectangle by construction.
-        try:
-            # The SAME basis the bbox records were projected through,
-            # resolved once above. Rebuilding it here would let the record
-            # and the frame it is meant to register against disagree.
-            basis = annotation_view_basis
-            if basis is None:
-                from .revit.view_basis import make_view_basis as _make_view_basis
-                basis = _make_view_basis(view, diag=diag)
-            from .revit.view_basis import crop_box_from_uv_bounds as _crop_box_from_uv_bounds
-            new_crop_box = _crop_box_from_uv_bounds(
-                view, basis, frame_uv[0], frame_uv[1], frame_uv[2], frame_uv[3])
-            if new_crop_box is not None:
-                view.CropBox = new_crop_box
-                view.CropBoxActive = True
-                crop_bounds_xy = tuple(float(v) for v in frame_uv)
-            elif diag is not None:
-                diag.warn(
-                    phase="color_id_buffer",
-                    callsite="annotation_crop_box_set",
-                    message="View has no CropBox; the annotation export falls back to "
-                            "FitToPage's auto-computed extent, which is NOT frame B and "
-                            "will not register against the model capture",
-                    view_id=view_id,
-                )
-        except Exception as ex:
-            crop_bounds_xy = None
-            if diag is not None:
-                diag.warn(
-                    phase="color_id_buffer",
-                    callsite="annotation_crop_box_set",
-                    message=str(ex),
-                    view_id=view_id,
-                )
+        # THE CROP IS B -- under "frame_b" only. The model pass cropped to A;
+        # this one restores the full frame, so every annotation the frame was
+        # expanded to hold is inside the rendered rectangle by construction.
+        # Under "untouched" this block does not run at all: no CropBox write,
+        # no CropBoxActive write, and so nothing for the restore to put back.
+        if write_crop_here:
+            try:
+                # The SAME basis the bbox records were projected through,
+                # resolved once above. Rebuilding it here would let the record
+                # and the frame it is meant to register against disagree.
+                basis = annotation_view_basis
+                if basis is None:
+                    from .revit.view_basis import make_view_basis as _make_view_basis
+                    basis = _make_view_basis(view, diag=diag)
+                from .revit.view_basis import crop_box_from_uv_bounds as _crop_box_from_uv_bounds
+                new_crop_box = _crop_box_from_uv_bounds(
+                    view, basis, crop_to_write_uv[0], crop_to_write_uv[1],
+                    crop_to_write_uv[2], crop_to_write_uv[3])
+                if new_crop_box is not None:
+                    view.CropBox = new_crop_box
+                    view.CropBoxActive = True
+                    crop_bounds_xy = tuple(float(v) for v in crop_to_write_uv)
+                elif diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite="annotation_crop_box_set",
+                        message="View has no CropBox; the annotation export falls back to "
+                                "FitToPage's auto-computed extent, which is NOT frame B and "
+                                "will not register against the model capture",
+                        view_id=view_id,
+                    )
+            except Exception as ex:
+                crop_bounds_xy = None
+                if diag is not None:
+                    diag.warn(
+                        phase="color_id_buffer",
+                        callsite="annotation_crop_box_set",
+                        message=str(ex),
+                        view_id=view_id,
+                    )
 
         if orig_display_style is not None:
             try:
@@ -4871,6 +5170,35 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
                         view_id=view_id,
                     )
 
+        # AFTER the DisplayStyle change, deliberately and not incidentally.
+        # Whether setting DisplayStyle replaces the view's ViewDisplayModel
+        # -- and with it any SmoothEdges a caller had set beforehand -- is
+        # UNCONFIRMED on this Revit host. Ordering the write after it makes
+        # the question moot rather than leaving a variant that may have
+        # measured nothing, and this ordering is the whole reason the switch
+        # lives in production at all instead of in the probe.
+        if anno_smooth_edges_off:
+            applied_smooth_edges = "read_failed"
+            if orig_smooth_edges is not None:
+                try:
+                    dm = view.GetViewDisplayModel()
+                    try:
+                        dm.SmoothEdges = False
+                        view.SetViewDisplayModel(dm)
+                        applied_smooth_edges = False
+                    finally:
+                        _dispose_view_display_model(
+                            dm, "annotation_smooth_edges_dispose")
+                except Exception as ex:
+                    applied_smooth_edges = "unchanged (failed)"
+                    if diag is not None:
+                        diag.warn(
+                            phase="color_id_buffer",
+                            callsite="annotation_smooth_edges",
+                            message=str(ex),
+                            view_id=view_id,
+                        )
+
         categories_touched = set()
         for eid in resolved_ids:
             elem = doc.GetElement(eid)
@@ -4878,19 +5206,51 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
             if cat is not None:
                 categories_touched.add(cat.Id.IntegerValue)
 
+        # THE STATE IS RECORDED ONLY AFTER THE WRITE SUCCEEDS, and that ordering
+        # is the whole fix. It used to be recorded before SetCategoryOverrides,
+        # so a category Revit REFUSES to override was entered into
+        # category_halftone_state anyway -- and the restore loop then dutifully
+        # tried to put back a halftone this pass had never changed, raised the
+        # same refusal, and landed in restore_failures. Every plan variant of
+        # round 1 came back success=false /
+        # annotation_view_state_not_restored with "2 restore step(s) raised"
+        # while all eight read-back obligations said restored, because the two
+        # raisers were restores of writes that never happened.
+        #
+        # A category this pass did not change needs no restore. Nothing is
+        # recorded for it, so the restore loop never sees it.
         for cat_id_int in categories_touched:
+            cat_id = ElementId(int(cat_id_int))
+            overridable = _category_is_overridable(
+                view, cat_id, diag=diag, view_id=view_id)
+            if overridable is False:
+                category_halftone_outcomes[cat_id_int] = {
+                    "outcome": "not_overridable",
+                    "detected": "View.IsCategoryOverridable",
+                }
+                continue
             try:
-                cat_id = ElementId(int(cat_id_int))
                 cat_ogs = view.GetCategoryOverrides(cat_id)
-                category_halftone_state[cat_id_int] = cat_ogs.Halftone
+                was_halftone = cat_ogs.Halftone
                 cat_ogs.SetHalftone(False)
                 view.SetCategoryOverrides(cat_id, cat_ogs)
+                category_halftone_state[cat_id_int] = was_halftone
+                category_halftone_outcomes[cat_id_int] = {"outcome": "applied"}
             except Exception as ex:
+                refused = _category_override_refused(ex)
+                category_halftone_outcomes[cat_id_int] = {
+                    "outcome": "not_overridable" if refused else "failed",
+                    "detected": "exception classification",
+                    "error": "{0}: {1}".format(type(ex).__name__, ex),
+                }
                 if diag is not None:
                     diag.warn(
                         phase="color_id_buffer",
                         callsite="annotation_category_halftone",
-                        message=str(ex),
+                        message="{0}{1}".format(
+                            "Revit refuses category overrides on this category, so "
+                            "its halftone was neither changed nor recorded for "
+                            "restore: " if refused else "", ex),
                         view_id=view_id,
                     )
 
@@ -5067,24 +5427,82 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
                 view.DisplayStyle = orig_display_style
             _restore_step("annotation_restore_display_style", _restore_display_style)
 
-        if orig_crop_box is not None:
+        # Only a crop this pass WROTE is written back. Under "untouched" the
+        # crop was never touched, and a restore write here would be this pass
+        # writing CropBox in a mode whose whole contract is that it does not.
+        if write_crop_here and orig_crop_box is not None:
             def _restore_crop_box():
                 view.CropBox = orig_crop_box
                 view.CropBoxActive = orig_crop_box_active
             _restore_step("annotation_restore_crop_box", _restore_crop_box)
 
+        # Only the categories whose suppress-side write SUCCEEDED are in this
+        # map, so anything raising here is a category that accepted the override
+        # on the way in and refuses it on the way out. That is still not a
+        # capture fault when Revit REFUSED it -- there is nothing this pass can
+        # do and nothing it left changed -- so it is recorded three-valued and
+        # kept out of restore_failures. A restore that genuinely FAILED still
+        # fails the capture.
         for cat_id_int, was_halftone in category_halftone_state.items():
-            def _restore_halftone(cat_id_int=cat_id_int, was_halftone=was_halftone):
+            try:
                 cat_id = ElementId(int(cat_id_int))
                 cat_ogs = view.GetCategoryOverrides(cat_id)
                 cat_ogs.SetHalftone(was_halftone)
                 view.SetCategoryOverrides(cat_id, cat_ogs)
-            _restore_step("annotation_restore_category_halftone", _restore_halftone)
+                category_halftone_outcomes.setdefault(cat_id_int, {})[
+                    "restore"] = "restored"
+            except Exception as ex:
+                refused = _category_override_refused(ex)
+                category_halftone_outcomes.setdefault(cat_id_int, {})[
+                    "restore"] = "not_overridable" if refused else "failed"
+                category_halftone_outcomes[cat_id_int]["restore_error"] = (
+                    "{0}: {1}".format(type(ex).__name__, ex))
+                if refused:
+                    if diag is not None:
+                        diag.warn(
+                            phase="color_id_buffer",
+                            callsite="annotation_restore_category_halftone",
+                            message="Revit refused the category override while "
+                                    "restoring halftone; the category is not "
+                                    "overridable and nothing was left changed, so "
+                                    "this is NOT a capture fault: {0}".format(ex),
+                            view_id=view_id,
+                        )
+                else:
+                    restore_failures.append({
+                        "callsite": "annotation_restore_category_halftone",
+                        "error": "{0}: {1}".format(type(ex).__name__, ex),
+                    })
+                    if diag is not None:
+                        diag.error(
+                            phase="color_id_buffer",
+                            callsite="annotation_restore_category_halftone",
+                            message=str(ex),
+                            view_id=view_id,
+                            exc=ex,
+                        )
 
-        for cat_id_int, hstate in model_category_hidden_state.items():
-            def _restore_cat_hidden(cat_id_int=cat_id_int, hstate=hstate):
-                view.SetCategoryHidden(ElementId(int(cat_id_int)), bool(hstate["was_hidden"]))
-            _restore_step("annotation_restore_category_hidden", _restore_cat_hidden)
+        if orig_smooth_edges is not None and applied_smooth_edges is False:
+            def _restore_smooth_edges():
+                dm = view.GetViewDisplayModel()
+                try:
+                    dm.SmoothEdges = orig_smooth_edges
+                    view.SetViewDisplayModel(dm)
+                finally:
+                    _dispose_view_display_model(
+                        dm, "annotation_restore_smooth_edges_dispose")
+            _restore_step("annotation_restore_smooth_edges", _restore_smooth_edges)
+
+        # Only what this pass actually hid. Under "external" the loop above
+        # never ran, so writing visibility back here would be this pass
+        # touching model category visibility in a mode whose contract is that
+        # it does not -- a no-op on an intact view and a silent overwrite on
+        # one the caller had changed.
+        if suppress_model_categories_here:
+            for cat_id_int, hstate in model_category_hidden_state.items():
+                def _restore_cat_hidden(cat_id_int=cat_id_int, hstate=hstate):
+                    view.SetCategoryHidden(ElementId(int(cat_id_int)), bool(hstate["was_hidden"]))
+                _restore_step("annotation_restore_category_hidden", _restore_cat_hidden)
 
         # Every PAINTED id, reset to a freshly-constructed blank -- never a
         # captured object reapplied across the transaction boundary (see the
@@ -5095,10 +5513,11 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
                                          OverrideGraphicSettings())
             _restore_step("annotation_restore_element_overrides", _restore_element_override)
 
-        for fid_int, fstate in filter_state.items():
-            def _restore_filter(fid_int=fid_int, fstate=fstate):
-                view.SetIsFilterEnabled(ElementId(int(fid_int)), fstate["was_enabled"])
-            _restore_step("annotation_restore_filter_enabled", _restore_filter)
+        if suppress_model_categories_here:
+            for fid_int, fstate in filter_state.items():
+                def _restore_filter(fid_int=fid_int, fstate=fstate):
+                    view.SetIsFilterEnabled(ElementId(int(fid_int)), fstate["was_enabled"])
+                _restore_step("annotation_restore_filter_enabled", _restore_filter)
 
         if view_template_detached and orig_view_template_id is not None:
             def _restore_view_template():
@@ -5174,6 +5593,29 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
             # the crop could not be applied, which is the only thing that
             # distinguishes "B was rendered" from "FitToPage chose something".
             "rendered_uv": (list(crop_bounds_xy) if crop_bounds_xy is not None else None),
+            # "frame_b" or "untouched". Under "untouched" rendered_uv is None
+            # BY CONSTRUCTION -- nothing was handed to Revit -- and that is a
+            # different fact from a frame_b crop that failed to apply, which
+            # rendered_uv_reason is what says.
+            "crop_mode": anno_crop_mode,
+            # What the mode RESOLVED to on this view: "frame_b", "crop_a" or
+            # "none" (crop left as found). authored_else_crop_a resolves per
+            # view, so the mode alone does not say what this capture did.
+            "crop_applied": crop_applied,
+            "authored_crop_active": authored_crop_active,
+            "rendered_uv_reason": (
+                None if crop_bounds_xy is not None else (
+                    "the view's authored crop was left as found and no rectangle "
+                    "was handed to Revit, so the rendered rectangle is Revit's "
+                    "choice and must be MEASURED (registration marks), not read "
+                    "from this record"
+                    if not write_crop_here else
+                    "{0} could not be applied as the view crop".format(
+                        "frame B" if crop_applied == "frame_b" else "crop A"))),
+            # Which recorded count the requested axis was set from: "frame_px"
+            # (B's, frame_b mode) or "model_crop_px" (the model pass's own
+            # crop count, untouched mode).
+            "requested_px_source": requested_px_source,
         },
         "membership": membership,
         "color_assignment_map": {
@@ -5194,10 +5636,33 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         "palette_step": step,
         "paint_failures": paint_failures,
         "paint_failed_element_ids": paint_failed_element_ids,
+        # The model category state this pass READ. Under the "external"
+        # suppression mode nothing in it was written, which
+        # model_suppression_mode below is what says -- the map alone cannot
+        # tell "hidden by this capture" from "read and left alone".
         "categories_hidden": model_category_hidden_state,
         "category_halftone_state": category_halftone_state,
+        # Per category: "applied" / "not_overridable" / "failed" on the way in,
+        # and "restored" / "not_overridable" / "failed" on the way out. A
+        # category Revit refuses to override is NOT a capture fault -- there is
+        # nothing to suppress and nothing left changed -- and this is where that
+        # reads as a fact rather than as a missing key.
+        "category_halftone_outcomes": category_halftone_outcomes,
         "filter_state": filter_state,
+        # Which side arranged model suppression for this capture. "external"
+        # means this pass hid nothing and disabled no filter, so
+        # "the annotation TIFF is annotation on white" is the CALLER's claim
+        # here and has to be read against whatever the caller applied.
+        "model_suppression_mode": anno_model_suppression,
         "applied_display_style": applied_display_style,
+        # Four-valued, and the four are different facts:
+        #   "not_attempted"       this pass was not asked to touch AA (shipped)
+        #   "read_failed"         asked, but the pre-state could not be read
+        #   "unchanged (failed)"  read, but the write raised
+        #   False                 AA is confirmed off for this export
+        "applied_smooth_edges": applied_smooth_edges,
+        # The exception TYPE when the SmoothEdges read raised, None otherwise.
+        "smooth_edges_read_error": smooth_edges_read_error,
         # Read back, not assumed. See _verify_annotation_overrides_restored.
         "override_restore_check": override_restore_check,
         # Authored per-element overrides this capture destroyed. See the
@@ -5274,7 +5739,11 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         # annotations. It is not the same fact.
         _fault("annotation_collection_failed", membership_error)
 
-    if crop_bounds_xy is None:
+    if write_crop_here and crop_bounds_xy is None:
+        # Under "untouched" there is no frame to have failed to apply: the
+        # capture never claims to render B, and registration.rendered_uv_reason
+        # says so. Only a frame_b capture that DID claim it can break it.
+        #
         # The capture fell back to FitToPage's automatic extent. The
         # diagnostic above already says that extent is not frame B and will
         # not register -- so returning it as a successful annotation buffer
@@ -5282,9 +5751,10 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         # the sidecar's registration block describes a rectangle that was
         # never rendered.
         _fault("annotation_frame_not_applied",
-               "frame B could not be applied as the view crop; the export is "
+               "{0} could not be applied as the view crop; the export is "
                "FitToPage's automatic extent and does not register against the "
-               "model capture")
+               "model capture".format(
+                   "frame B" if crop_applied == "frame_b" else "crop A"))
 
     # THE SHARED LATTICE IS THE WHOLE PROMISE OF THIS PASS, so a size Revit
     # accepted that is not the size the lattice requires invalidates it --

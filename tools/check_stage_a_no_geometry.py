@@ -111,6 +111,11 @@ DEFAULT_ROOTS = (
     # reporting a new defect -- but had the annotation pass been touching
     # geometry, nothing here would have said so.
     "export_annotation_color_id_buffer_view",
+    # The REGISTERED capture (stage_a_registered_capture.py) is a third entry
+    # point pipeline.py takes when Config.color_id_buffer_registered_capture
+    # is on. It reaches both passes above, and code only IT reaches: the
+    # registration marks, the white membership suppression, the read-back.
+    "export_registered_stage_a_view",
 )
 
 

@@ -586,6 +586,9 @@ def test_sidecar_top_level_keys_are_additive_only(tmp_path):
         # requested-vs-achieved dpi/px/fpp triple and decision A's
         # whole-pixel registration offset.
         "export_frame",
+        # Round 3 of the annotation-pass variant probe: whether this capture
+        # left OST_Lines visible (probe-only switch; False in production).
+        "model_lines_visible",
     }
 
 
