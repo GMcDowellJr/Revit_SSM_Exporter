@@ -80,10 +80,10 @@
 - `_export_tiff` (function, L2422)
 - `compute_model_crop` (function, L2593)
 - `export_color_id_buffer_view` (function, L2673)
-- `_model_category_hidden_state` (function, L4371)
-- `_override_is_cleared` (function, L4450)
-- `_verify_annotation_overrides_restored` (function, L4518)
-- `export_annotation_color_id_buffer_view` (function, L4572)
+- `_model_category_hidden_state` (function, L4396)
+- `_override_is_cleared` (function, L4475)
+- `_verify_annotation_overrides_restored` (function, L4543)
+- `export_annotation_color_id_buffer_view` (function, L4597)
 
 ### `config.py`
 
@@ -95,17 +95,17 @@
 **Definitions**
 - `Config` (class, L14)
 - `Config.__init__` (method, L60)
-- `Config.compute_adaptive_tile_size` (method, L421)
-- `Config.max_grid_cells_width` (method, L471)
-- `Config.max_grid_cells_height` (method, L480)
-- `Config.bounds_buffer_ft` (method, L489)
-- `Config.silhouette_tiny_thresh_ft` (method, L498)
-- `Config.silhouette_large_thresh_ft` (method, L507)
-- `Config.coarse_tess_max_verts` (method, L516)
-- `Config.get_silhouette_strategies` (method, L524)
-- `Config.__repr__` (method, L558)
-- `Config.to_dict` (method, L578)
-- `Config.from_dict` (method, L655)
+- `Config.compute_adaptive_tile_size` (method, L432)
+- `Config.max_grid_cells_width` (method, L482)
+- `Config.max_grid_cells_height` (method, L491)
+- `Config.bounds_buffer_ft` (method, L500)
+- `Config.silhouette_tiny_thresh_ft` (method, L509)
+- `Config.silhouette_large_thresh_ft` (method, L518)
+- `Config.coarse_tess_max_verts` (method, L527)
+- `Config.get_silhouette_strategies` (method, L535)
+- `Config.__repr__` (method, L569)
+- `Config.to_dict` (method, L589)
+- `Config.from_dict` (method, L667)
 
 ### `core/areal_extraction.py`
 
@@ -628,27 +628,27 @@
 - `_extract_view_identity_for_csv` (function, L410)
 - `_compute_manifest_metrics_payload` (function, L524)
 - `process_document_views` (function, L567)
-- `init_view_raster` (function, L1788)
-- `_extract_view_summary` (function, L1956)
-- `rasterize_areal_loops` (function, L1994)
-- `_make_areal_geom_cache_key` (function, L2150)
-- `_reconstruct_areal_low_conf_loops` (function, L2164)
-- `_quantize_view_dir` (function, L2260)
-- `_make_areal_high_conf_cache_key` (function, L2282)
-- `_reconstruct_areal_high_conf_loops` (function, L2305)
-- `render_model_front_to_back` (function, L2348)
-- `_is_supported_2d_view` (function, L3925)
-- `_intersects_crop_volume` (function, L3978)
-- `_should_skip_outside_view_volume` (function, L4004)
-- `_tiles_fully_covered_and_nearer` (function, L4043)
-- `_bin_elements_to_tiles` (function, L4081)
-- `_tile_has_depth_conflict` (function, L4113)
-- `_get_ambiguous_tiles` (function, L4147)
-- `_render_proxy_element` (function, L4177)
-- `_stamp_proxy_edges` (function, L4202)
-- `_mark_rect_center_cell` (function, L4219)
-- `_mark_thin_band_along_long_axis` (function, L4227)
-- `export_view_raster` (function, L4245)
+- `init_view_raster` (function, L1806)
+- `_extract_view_summary` (function, L1974)
+- `rasterize_areal_loops` (function, L2012)
+- `_make_areal_geom_cache_key` (function, L2168)
+- `_reconstruct_areal_low_conf_loops` (function, L2182)
+- `_quantize_view_dir` (function, L2278)
+- `_make_areal_high_conf_cache_key` (function, L2300)
+- `_reconstruct_areal_high_conf_loops` (function, L2323)
+- `render_model_front_to_back` (function, L2366)
+- `_is_supported_2d_view` (function, L3943)
+- `_intersects_crop_volume` (function, L3996)
+- `_should_skip_outside_view_volume` (function, L4022)
+- `_tiles_fully_covered_and_nearer` (function, L4061)
+- `_bin_elements_to_tiles` (function, L4099)
+- `_tile_has_depth_conflict` (function, L4131)
+- `_get_ambiguous_tiles` (function, L4165)
+- `_render_proxy_element` (function, L4195)
+- `_stamp_proxy_edges` (function, L4220)
+- `_mark_rect_center_cell` (function, L4237)
+- `_mark_thin_band_along_long_axis` (function, L4245)
+- `export_view_raster` (function, L4263)
 
 ### `png_export.py`
 
@@ -847,6 +847,47 @@
 - `RootStyleCache._empty_cache` (method, L289)
 - `compute_config_hash` (function, L300)
 - `extract_metrics_from_view_result` (function, L324)
+
+### `stage_a_registered_capture.py`
+
+**Imports**
+- `.revit.safe_api:element_id_value`
+- `copy`
+- `time`
+
+**Definitions**
+- `_read` (function, L51)
+- `_xyz` (function, L60)
+- `view_state` (function, L65)
+- `view_state_verdict` (function, L79)
+- `_non_blank_override_ids` (function, L97)
+- `mark_reference_rectangle` (function, L111)
+- `nominal_fpp_ft` (function, L142)
+- `_registration_payload` (function, L149)
+- `export_registered_stage_a_view` (function, L176)
+
+### `stage_a_registration.py`
+
+**Imports**
+- `.revit.safe_api:element_id_value`
+- `json`
+- `time`
+
+**Definitions**
+- `_value` (function, L30)
+- `_unavailable` (function, L34)
+- `_xyz_tuple` (function, L38)
+- `registration_mark_segments` (function, L77)
+- `missing_override_setters` (function, L165)
+- `white_override_capability_record` (function, L177)
+- `white_override_capability` (function, L208)
+- `flat_colour_override` (function, L246)
+- `white_membership_suppression` (function, L296)
+- `_lines_category_hidden` (function, L425)
+- `create_registration_marks` (function, L438)
+- `marks_still_in_project` (function, L532)
+- `annotate_sidecar` (function, L546)
+- `discover_link_categories` (function, L569)
 
 ### `streaming.py`
 
