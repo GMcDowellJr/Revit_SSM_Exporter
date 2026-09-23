@@ -28,6 +28,7 @@ import vop_interwoven.color_id_buffer as color_id_buffer
 from vop_interwoven.revit.annotation import split_stage_a_pass_membership
 
 from tests.dynamo import probe_stage_a_anno_pass_variants as probe
+import vop_interwoven.stage_a_registration as registration  # noqa: E402
 from tests.stage_a_capture_fakes import (
     FakeBoundingBoxXYZ, FakeCollector, FakeDiag, FakeElement, FakeViewPlan,
     FakeXYZ, install_fake_revit_db,
@@ -434,7 +435,7 @@ def test_v9_draws_twelve_marks_BEFORE_its_model_capture_and_both_captures_see_th
     model_export, anno_export = exports
     assert model_export["marks_in_doc"] == sorted(ids)
     assert model_export["lines_hidden"] is False
-    assert all(model_export["overrides"][i] == probe.MARK_COLOUR for i in ids)
+    assert all(model_export["overrides"][i] == registration.MARK_COLOUR for i in ids)
     assert report["own_model_pass"]["model_lines_visible"] is True
     # The annotation pass collected them as ITS members and painted them its
     # own palette colours, which its sidecar names.
@@ -472,7 +473,7 @@ def test_v9_writes_the_marks_into_both_sidecars(tmp_path, monkeypatch):
     assert all(m["rgb"] for m in anno["probe_registration_marks"]["marks"])
     assert model["probe_registration_marks"]["pass"] == "model"
     assert {tuple(m["rgb"]) for m in model["probe_registration_marks"]["marks"]} == {
-        probe.MARK_COLOUR}
+        registration.MARK_COLOUR}
     assert len(model["probe_registration_marks"]["marks"]) == 12
 
 

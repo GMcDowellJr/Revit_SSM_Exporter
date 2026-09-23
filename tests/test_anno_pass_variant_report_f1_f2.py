@@ -633,8 +633,9 @@ def test_the_capture_context_carries_the_crop_element_ids(tmp_path):
 # breaks the other turns these red (CLAUDE.md, defect class 1).
 
 from tests.dynamo import probe_stage_a_anno_pass_variants as probe  # noqa: E402
+import vop_interwoven.stage_a_registration as registration  # noqa: E402
 
-MARK = probe.MARK_COLOUR
+MARK = registration.MARK_COLOUR
 # The model capture's lattice: a DIFFERENT scale and origin from the
 # annotation drawing, so "the two maps agree" cannot pass by accident.
 M_U, M_V = 18.0, -18.0

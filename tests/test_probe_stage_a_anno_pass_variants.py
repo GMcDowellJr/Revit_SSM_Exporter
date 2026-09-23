@@ -20,6 +20,7 @@ silently lets a run continue over a document it has changed.
 import pytest
 
 from tests.dynamo import probe_stage_a_anno_pass_variants as probe
+import vop_interwoven.stage_a_registration as registration  # noqa: E402
 
 
 # ======================================================================
@@ -809,7 +810,7 @@ class _FullOGS(object):
         self._omit = set(omit)
 
     def __getattr__(self, name):
-        if name in self._omit or name not in probe.WHITE_OVERRIDE_SETTERS:
+        if name in self._omit or name not in registration.WHITE_OVERRIDE_SETTERS:
             raise AttributeError(name)
         return lambda *args: None
 
@@ -863,10 +864,10 @@ def test_missing_override_setters_checks_every_name_in_the_set():
     GetInstanceGeometry token, one layer up.
     """
     assert probe.missing_override_setters(_FullOGS()) == []
-    for name in probe.WHITE_OVERRIDE_SETTERS:
+    for name in registration.WHITE_OVERRIDE_SETTERS:
         assert probe.missing_override_setters(_FullOGS(omit=(name,))) == [name], name
     # And the set is not empty, or the loop above would assert nothing.
-    assert len(probe.WHITE_OVERRIDE_SETTERS) >= 16
+    assert len(registration.WHITE_OVERRIDE_SETTERS) >= 16
 
 
 # ======================================================================
@@ -1568,7 +1569,10 @@ def test_run_native_discovers_link_categories_through_production():
     import inspect
 
     assert "discover_link_categories(" in inspect.getsource(probe._run_native)
-    source = inspect.getsource(probe.discover_link_categories)
+    # The probe's name delegates to production's, which is where the policy is.
+    assert "_reg().discover_link_categories(" in inspect.getsource(
+        probe.discover_link_categories)
+    source = inspect.getsource(registration.discover_link_categories)
     assert "_model_categories_in_linked_doc" in source
     assert "_resolve_colorable_category_predicate" in source
     # A view with no links must SAY the mechanism is unexercised rather than
@@ -1580,13 +1584,16 @@ def test_the_suppression_reuses_productions_link_filter_mechanism():
     """Not a second link mechanism -- production's own, called with white."""
     import inspect
 
-    source = inspect.getsource(probe.apply_membership_white_suppression)
+    probe_source = inspect.getsource(probe.apply_membership_white_suppression)
+    source = inspect.getsource(registration.white_membership_suppression)
     assert "_apply_link_category_filters" in source
     assert "(cat, WHITE) for cat in link_categories" in source
-    # Element overrides come first; the category/subcategory pass is a
-    # COMPLEMENT, and Revit's Element > Category precedence is what lets the
-    # annotation paint still win in a shared category.
-    assert source.index("SetElementOverrides") < source.index("SetCategoryOverrides")
+    # Mechanisms 1 and 2 are PRODUCTION's, called first; the category and
+    # subcategory pass is a probe-only COMPLEMENT after them, and Revit's
+    # Element > Category precedence lets the annotation paint still win.
+    assert "_reg().white_membership_suppression(" in probe_source
+    assert (probe_source.index("_reg().white_membership_suppression(")
+            < probe_source.index("SetCategoryOverrides"))
 
 
 def test_unreached_is_a_named_list_on_every_branch():
@@ -1594,13 +1601,17 @@ def test_unreached_is_a_named_list_on_every_branch():
     something appends a record with a reason, and the count is published."""
     import inspect
 
-    source = inspect.getsource(probe.apply_membership_white_suppression)
-    # One append per failure route: element id unreadable, element override
-    # raised, link category failed, link mechanism raised, category unreadable,
-    # authored category, refused category, category raised, subcategories
-    # unreadable, element category unreadable.
-    assert source.count('record["unreached"].append(') >= 9
-    assert 'record["unreached_count"] = len(record["unreached"])' in source
+    probe_source = inspect.getsource(probe.apply_membership_white_suppression)
+    production = inspect.getsource(registration.white_membership_suppression)
+    # One append per failure route. Production (mechanisms 1-2): element id
+    # unreadable, element override raised, link category failed, link
+    # mechanism raised. Probe (mechanism 3): category unreadable, authored
+    # category, refused category, category raised, subcategories unreadable,
+    # element category unreadable -- and it carries production's list over.
+    assert production.count('record["unreached"].append(') >= 4
+    assert probe_source.count('record["unreached"].append(') >= 5
+    assert '"unreached": list(base["unreached"])' in probe_source
+    assert 'record["unreached_count"] = len(record["unreached"])' in probe_source
 
 
 def test_mechanism_3_only_writes_over_a_blank_override():
@@ -1958,9 +1969,9 @@ def test_the_crop_lookup_also_searches_OST_Views_and_says_which_matched():
 
 def test_the_mark_colour_is_off_every_palette_lattice_and_distinct():
     for step in range(2, 9):
-        assert probe.colour_on_lattice(probe.MARK_COLOUR, step) is False, step
-    assert probe.MARK_COLOUR not in probe.FIDUCIAL_COLOURS
-    assert len(set(probe.MARK_COLOUR)) == 3  # not grey: a grey is a boundary candidate
+        assert probe.colour_on_lattice(registration.MARK_COLOUR, step) is False, step
+    assert registration.MARK_COLOUR not in probe.FIDUCIAL_COLOURS
+    assert len(set(registration.MARK_COLOUR)) == 3  # not grey: a grey is a boundary candidate
 
 
 def _layout(uv=(0.0, 0.0, 100.0, 50.0), fpp=0.1, **kw):
@@ -1973,7 +1984,7 @@ def test_marks_are_twelve_ticks_two_per_corner_and_one_per_edge_middle():
     segments = layout["segments"]
     assert len(segments) == 12
     assert len(set(s["key"] for s in segments)) == 12
-    for corner, _su, _sv in probe.MARK_CORNERS:
+    for corner, _su, _sv in registration.MARK_CORNERS:
         mine = [s for s in segments if s["corner"] == corner]
         assert sorted(s["orientation"] for s in mine) == ["horizontal", "vertical"]
     by_key = dict((s["key"], s) for s in segments)
@@ -1989,13 +2000,13 @@ def test_marks_sit_inside_the_reference_by_the_inset_and_never_touch():
     one connected component the model-capture analysis cannot split."""
     fpp = 0.1
     layout = _layout(fpp=fpp)
-    inset = probe.MARK_INSET_PX * fpp
-    gap = probe.MARK_GAP_PX * fpp
+    inset = registration.MARK_INSET_PX * fpp
+    gap = registration.MARK_GAP_PX * fpp
     for seg in layout["segments"]:
         for u, v in (seg["uv0"], seg["uv1"]):
             assert inset - 1e-9 <= u <= 100.0 - inset + 1e-9
             assert inset - 1e-9 <= v <= 50.0 - inset + 1e-9
-    for corner, _su, _sv in probe.MARK_CORNERS:
+    for corner, _su, _sv in registration.MARK_CORNERS:
         h, v = sorted((s for s in layout["segments"] if s["corner"] == corner),
                       key=lambda s: s["orientation"])
         # The horizontal tick stops short of the vertical one's u by the gap,
@@ -2029,7 +2040,7 @@ def test_every_corner_tick_stays_in_the_outer_third_and_mid_ticks_do_not():
             us = [seg["uv0"][0], seg["uv1"][0]]
             vs = [seg["uv0"][1], seg["uv1"][1]]
             third_u, third_v = (u1 - u0) / 3.0, (v1 - v0) / 3.0
-            if seg["corner"] in dict((c[0], 1) for c in probe.MARK_CORNERS):
+            if seg["corner"] in dict((c[0], 1) for c in registration.MARK_CORNERS):
                 assert (max(us) <= u0 + third_u or min(us) >= u1 - third_u), seg
                 assert (max(vs) <= v0 + third_v or min(vs) >= v1 - third_v), seg
             elif seg["orientation"] == "horizontal":
@@ -2041,9 +2052,9 @@ def test_every_corner_tick_stays_in_the_outer_third_and_mid_ticks_do_not():
 
 def test_the_arm_shrinks_for_a_small_crop_and_a_tiny_one_is_refused():
     full = _layout(uv=(0.0, 0.0, 100.0, 100.0), fpp=0.1)
-    assert full["arm_px"] == probe.MARK_ARM_PX
+    assert full["arm_px"] == registration.MARK_ARM_PX
     small = _layout(uv=(0.0, 0.0, 20.0, 20.0), fpp=0.1)   # 200 px square
-    assert probe.MARK_MIN_ARM_PX <= small["arm_px"] < probe.MARK_ARM_PX
+    assert registration.MARK_MIN_ARM_PX <= small["arm_px"] < registration.MARK_ARM_PX
     tiny = _layout(uv=(0.0, 0.0, 10.0, 10.0), fpp=0.1)    # 100 px square
     assert tiny["state"] == "unavailable" and "too small" in tiny["reason"]
 
