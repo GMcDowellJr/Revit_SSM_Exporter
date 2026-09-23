@@ -223,6 +223,50 @@ def test_a_clipped_fiducial_is_excluded_and_f2_is_unavailable(tmp_path):
     assert "1 usable" in f2["reason"]
 
 
+MODEL_A = (10, 20, 30)
+MODEL_B = (40, 50, 60)
+
+
+def _model_anchored(tmp_path, model_draws_second):
+    """Drive _model_anchored_fiducials: the model capture is the same drawing
+    in the model pass's own colours, on a lattice whose bounds_xy is exact."""
+    anno = _fiducial_image(tmp_path)
+    scan = report.scan_image(anno, [], [FID_A, FID_B])
+    model = _canvas()
+    model[int(_y(8)):int(_y(6)), int(_x(5)):int(_x(7))] = MODEL_A
+    if model_draws_second:
+        model[int(_y(21)):int(_y(19)), int(_x(26)):int(_x(29))] = MODEL_B
+    model_tiff = _save(model, tmp_path / "model.tiff")
+    sidecar = tmp_path / "model.json"
+    sidecar.write_text(json.dumps({
+        "color_assignment_map": {"1": list(MODEL_A), "2": list(MODEL_B)},
+        "bounds_xy": [(0 - B_U) / A_U, (H - B_V) / A_V,
+                      (W - B_U) / A_U, (0 - B_V) / A_V],
+    }), encoding="utf-8")
+    return report._model_anchored_fiducials(
+        _FIDUCIALS, scan["blobs"], scan["image_w"], scan["image_h"],
+        {"model_sidecar": str(sidecar), "model_tiff": str(model_tiff)})
+
+
+def test_model_anchored_f2_recovers_the_mapping_when_both_draw(tmp_path):
+    """Control: the refusal below must not be what every case returns."""
+    f2 = _model_anchored(tmp_path, model_draws_second=True)
+    assert f2["status"] == "value", f2
+    assert f2["px_per_ft_u"] == pytest.approx(A_U, rel=1e-6)
+    assert f2["px_per_ft_v"] == pytest.approx(abs(A_V), rel=1e-6)
+
+
+def test_a_fiducial_the_model_capture_did_not_draw_makes_f2_unavailable(tmp_path):
+    """Round 2 plan, probe .4: the wall had a model colour but drew nothing in
+    the model capture, so it had no UV extent -- and the fit ran on the other
+    fiducial alone, two points per axis, zero residual, reported as a value
+    (11.72 / 18.74 px/ft). One fiducial is not F2."""
+    f2 = _model_anchored(tmp_path, model_draws_second=False)
+    assert f2["status"] == "unavailable", f2
+    assert "1 usable" in f2["reason"]
+    assert f2["ink_pixels_annotation_vs_model"][1]["model_px"] is None
+
+
 def test_fiducial_pixels_are_neither_palette_nor_offpalette(tmp_path):
     """They are there on purpose; in the off-palette tally they would read as
     model ink the suppression missed."""

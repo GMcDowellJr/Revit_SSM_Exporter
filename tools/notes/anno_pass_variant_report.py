@@ -1056,13 +1056,18 @@ def fiducial_fit(fiducials, blobs, image_w, image_h):
         xs += [x0, x1 + 1.0]
         vs += [v1, v0]
         ys += [y0, y1 + 1.0]
+    # A fiducial with no rect_uv contributed nothing to the fit, so it is not
+    # usable. Counting it let the plan's model-anchored F2 (whose wall never
+    # drew in the model capture) fit ONE fiducial -- two points per axis, zero
+    # residual -- and report that as a value.
     out = {"fiducials": per,
            "usable_count": sum(1 for e in per if e["found"]
+                               and e["rect_uv"] is not None
                                and not e.get("touches_border"))}
     if out["usable_count"] < 2:
         out["status"] = "unavailable"
         out["reason"] = ("{0} usable fiducial(s) of {1}; F2 needs both, unclipped, "
-                         "in their reserved colours".format(
+                         "in their reserved colours, each with a UV extent".format(
                              out["usable_count"], len(per)))
         return out
     u_fit = _axis_fit_record(us, xs)
@@ -2176,7 +2181,10 @@ def _render_f1_f2(analyses):
                          "px in the model capture{4}".format(
                              item["variant"], entry.get("id"),
                              entry.get("annotation_px"), entry.get("model_px"),
-                             " -- the element did NOT draw the same shape in both, "
+                             " -- the element drew NOTHING in the model capture in its "
+                             "model colour, so it has no model-drawn extent"
+                             if entry.get("model_px") is None
+                             else " -- the element did NOT draw the same shape in both, "
                              "so the model-anchored row does not hold"
                              if (entry.get("annotation_px") and entry.get("model_px")
                                  and abs(entry["annotation_px"] - entry["model_px"])

@@ -169,3 +169,95 @@ Probe (`2026-09-22.3`, then `.4` for the per-mechanism timing and the link fix):
 * the view's crop-region element (OST_Viewers, named like the view) is looked
   up and recorded; **V8 leaves it untouched** by the white suppression and the
   restore; V7 still whitens it, as the control.
+
+---
+
+# Run `probe_0923_0827` (probe `2026-09-22.4`)
+
+Source: `data/round2_anno_pass_variants/anno_variants_probe_0923_0827.{md,json}`
+plus the two combined JSONs (read, not committed). Same two views. All variants
+`RAN`, model re-export **unchanged** on both.
+
+## One number in that report is WRONG — the plan's model-anchored F2 again
+
+`11.7179 / 18.7371 px/ft, residual 0.00 / 0.00`. The wall fiducial (12261162)
+has a model colour but drew **no pixels** in the model capture ("None px"), so
+it had no model-drawn extent. The fit then ran on the other fiducial alone:
+two points per axis, which any line fits exactly. The analyzer counted a
+fiducial with no UV extent as usable; it no longer does, and reports F2
+unavailable. Test: `test_a_fiducial_the_model_capture_did_not_draw_makes_f2_unavailable`
+(red with the fix reverted; its control stays green).
+
+## Q1 — the crop-element hypothesis is REFUTED on the elevation
+
+| | elevation | plan |
+|---|---|---|
+| crop element found | **19293412** (OST_Viewers, named like the view, = view id − 1) | **none** (5 viewers in the model set, none named like the plan; id − 1 absent) |
+| V8 excluded it from suppression and restore | yes (`excluded_element_ids` [19293412], 6535 overrides) | nothing to exclude |
+| V8 boundary | **not found** (0 / 0 bands) | not found |
+| V8 black `[0,0,0]` px | 358 — identical to V7 | — |
+
+With its crop-region element left untouched, the elevation's V8 still draws no
+boundary, and its black population is identical to V7's, which whitened that
+element. So whitening that element did not remove the boundary. What remains
+different between V0 (boundary drawn) and V7/V8 (absent) is **two** things at
+once: V0 writes the crop (`frame_b`) and V0 hides categories instead of the
+membership white. This run cannot separate them. A variant that crosses them
+(untouched crop + `hide_categories`, or `frame_b` + membership white) can.
+
+`Views` (−2000278) is still refused a category override and is not written.
+`Viewers` (−2000279) does not appear in the category walk at all, so no
+category override was written on it either.
+
+## Q1 — V0 changed between runs, and it is the pixels, not only the analyzer
+
+| elevation V0 | `.2` (probe_1355) | `.4` (this run) |
+|---|---|---|
+| boundary | found, 17.64 px/ft | not found: **0 row** bands, 3 column bands |
+| black px | 22 570 | 10 518 |
+
+The black count halved, and no row carries a long run. That fits the vertical
+edges drawing and the horizontal ones being absent (off the image or not
+drawn), not a detector failing on a line that is present. It is a
+reading of counts: the V0 TIFFs from both runs are needed to confirm it. Plan V0: 1 row and 2
+column bands, and no rectangle closes.
+
+## F2 — the plan wall is not a usable fiducial
+
+Painting the cut graphics changed nothing: the same 463 px, the same bbox
+`[1186, 415, 1340, 417]` (a 155 × 3 px line for a 10.6 × 1 ft wall), and no ink
+at all in the model capture. It is not being cut-overridden. It draws as one
+line, or not at all. Fiducial choice should require the element to have drawn a
+filled area in the model capture, rather than trusting its bbox.
+
+## The suppression cost is the CATEGORY writes
+
+| | elevation | plan |
+|---|---|---|
+| suppression total | 21 471 ms | 26 594 ms |
+| `category_override_writes` | **21 290 ms / 391 calls ≈ 54 ms each** | **26 462 ms / 393 ≈ 67 ms each** |
+| `element_overrides` | 92 ms / 6 536 calls | 65 ms / 4 784 |
+| everything else | < 50 ms | < 25 ms |
+| restore: category/link reverse (V7, V8) | 33 177, 34 910 ms | 48 996, 50 820 ms |
+| pre-state commit / restore commit | 1.6–2.2 s / 1.8 s | 3.4–3.7 s / 3.3 s |
+| ratio vs the whole model pass | 0.83 | 1.12 |
+
+Element overrides are ~0.01 ms each. The ~390 category/subcategory writes are
+**over 99 %** of the suppression, and reversing them costs 1.5–2× as much again.
+Two things follow as questions, not conclusions:
+
+* whether the category layer buys anything the element layer does not — a
+  variant with element overrides only, compared on residue (section 11), measures
+  it;
+* whether production needs the reverse at all: the capture already runs inside
+  a TransactionGroup, and rolling it back undoes the writes without 390 more
+  API calls. The probe reverses explicitly because its read-back obligations
+  require it.
+
+## Other
+
+* Link discovery now reports `value` on both views (neither has a link; the
+  field named `colorable_predicate_error` carries the predicate's source string,
+  `live_filterable_lookup` — a misleading name, not an error).
+* Plan datums: V0 through the bbox fit +0.55 / +1.70 ft; V7 −0.90 / −4.41 ft;
+  V8 through F2 (recorded bbox) +0.39 / −0.80 ft — unchanged from `.2`.
