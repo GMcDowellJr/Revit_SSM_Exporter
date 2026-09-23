@@ -261,3 +261,14 @@ Two things follow as questions, not conclusions:
   `live_filterable_lookup` — a misleading name, not an error).
 * Plan datums: V0 through the bbox fit +0.55 / +1.70 ft; V7 −0.90 / −4.41 ft;
   V8 through F2 (recorded bbox) +0.39 / −0.80 ft — unchanged from `.2`.
+
+## What changed as a result (round 3, probe `2026-09-23.1`)
+
+* **V9** draws its own ruler: eight detail-line ticks at known UV inside the
+  crop, in both passes (the model pass leaves `OST_Lines` visible for it through
+  a probe-only switch). Analyzer section 12.
+* **V10** drops the category layer, to put a number on what it buys.
+* **The restore is the group rollback**, read back afterwards; the 33–51 s
+  explicit reverse is gone.
+* Next run adds **`Plan_RVTLink` 19293485**, the first with a link, so the link
+  filters are timed and V10 is measured where the category layer might matter.

@@ -106,22 +106,33 @@ def _probe_contract():
 
 
 PROBE_NAME = "stage_a_anno_pass_variants"
-PROBE_VERSION = "2026-09-22.4"
+PROBE_VERSION = "2026-09-23.1"
 
 V0 = "v0_control"
 V7 = "v7_no_crop"
 V8 = "v8_no_crop_fiducials"
+# Round 3. V9 is V8 plus registration marks drawn by the probe in BOTH passes;
+# V10 is V7 without the category/subcategory white layer (element overrides
+# and link filters only), so its residue and cost say what that layer buys.
+V9 = "v9_registration_marks"
+V10 = "v10_element_only_white"
 
-SUPPORTED_VARIANTS = (V0, V7, V8)
+SUPPORTED_VARIANTS = (V0, V7, V8, V9, V10)
 
 # WHAT EACH VARIANT CHANGES, as membership sets rather than an if/elif chain per
 # property. A new variant is a row here, and a variant missing from every set is
 # visibly a control rather than silently a no-op.
-WHITE_MEMBERSHIP_VARIANTS = frozenset((V7, V8))
-UNTOUCHED_CROP_VARIANTS = frozenset((V7, V8))
-SMOOTH_EDGES_OFF_VARIANTS = frozenset((V8,))
-CROP_BOX_VISIBLE_VARIANTS = frozenset((V8,))
-FIDUCIAL_VARIANTS = frozenset((V8,))
+WHITE_MEMBERSHIP_VARIANTS = frozenset((V7, V8, V9, V10))
+UNTOUCHED_CROP_VARIANTS = frozenset((V7, V8, V9, V10))
+SMOOTH_EDGES_OFF_VARIANTS = frozenset((V8, V9))
+CROP_BOX_VISIBLE_VARIANTS = frozenset((V8, V9))
+FIDUCIAL_VARIANTS = frozenset((V8, V9))
+REGISTRATION_MARK_VARIANTS = frozenset((V9,))
+# Mechanism 3 (category and subcategory white overrides) is OFF here. Round 2
+# `.4` measured it at over 99 % of the suppression's cost (~390 writes at
+# 54-67 ms each, against ~0.01 ms per element override), with nothing yet
+# showing what it catches that the element overrides miss.
+NO_CATEGORY_LAYER_VARIANTS = frozenset((V10,))
 
 # VARIANTS THAT ARE GONE, and why. Named rather than deleted silently, because
 # a reader comparing an earlier combined report against this one needs to know
@@ -165,6 +176,27 @@ FIDUCIAL_CANDIDATE_SCAN_MAX = 8000
 # only at step 1 (a view of millions of annotations). colour_on_lattice() says
 # which, per capture, and the probe records it rather than assuming it.
 FIDUCIAL_COLOURS = ((251, 11, 139), (11, 139, 251))
+
+# REGISTRATION MARKS (V9). Detail lines the probe draws at KNOWN view UV, just
+# inside the crop, and removes by rolling the variant's TransactionGroup back.
+# Round 2 showed the crop boundary as Revit draws it is not a ruler: the
+# elevation's horizontal edges fall on the image border and are clipped. Marks
+# drawn INSIDE the crop cannot be clipped that way, and being drawn by the
+# probe their UV is known exactly rather than inferred from a bbox.
+#
+# Eight ticks, two per corner, one horizontal and one vertical, NOT touching:
+# each is its own connected component, so the model capture (where all eight
+# share MARK_COLOUR) can be split into ticks without knowing the mapping. The
+# horizontal ticks give v (their centre row), the vertical ones u (their centre
+# column): four points per axis at two levels, so each axis fit has a residual.
+# Sizes are in MODEL-LATTICE pixels, converted to feet through achieved_fpp_ft.
+MARK_COLOUR = (139, 251, 11)
+MARK_INSET_PX = 24.0
+MARK_GAP_PX = 8.0
+MARK_ARM_PX = 96.0
+MARK_MIN_ARM_PX = 32.0
+MARK_CORNERS = (("left_bottom", 1.0, 1.0), ("right_bottom", -1.0, 1.0),
+                ("left_top", 1.0, -1.0), ("right_top", -1.0, -1.0))
 
 # UNCONFIRMED. ViewCropRegionShapeManager's four annotation-crop offset
 # properties, believed to exist on Revit 2025 under these names. Resolved by
@@ -211,10 +243,18 @@ def variant_plan(variant):
         "crop_box_visible": variant in CROP_BOX_VISIBLE_VARIANTS,
         # F2. Painted by THIS module, from outside the pass.
         "fiducials": variant in FIDUCIAL_VARIANTS,
+        # F3 (round 3). Detail lines drawn by THIS module at known UV, in BOTH
+        # passes; the model pass is told to leave OST_Lines visible for them.
+        "registration_marks": variant in REGISTRATION_MARK_VARIANTS,
+        # Mechanism 3 of the white suppression. Off only where the variant
+        # exists to measure its absence.
+        "category_layer": variant not in NO_CATEGORY_LAYER_VARIANTS,
         # F1 needs the boundary in BOTH passes, and the shared model pass is the
         # shipped one with the boundary hidden -- so a CropBoxVisible variant
-        # takes its own model capture into its own directory.
-        "own_model_pass": variant in CROP_BOX_VISIBLE_VARIANTS,
+        # takes its own model capture into its own directory. So does a marks
+        # variant: the shared model pass hides OST_Lines.
+        "own_model_pass": (variant in CROP_BOX_VISIBLE_VARIANTS
+                           or variant in REGISTRATION_MARK_VARIANTS),
         # Which production suppression mode this variant asks for. A variant
         # that suppresses by membership must ALSO tell the annotation pass not
         # to hide model categories and not to disable filters, or it would
@@ -318,6 +358,36 @@ def variant_measurement_check(plan, annotation_metadata, probe_state=None):
                 "why_it_matters": "without both fiducials F2 has no pair to fit, "
                                   "and on a crop-less view nothing else registers "
                                   "the capture",
+            })
+    if plan.get("registration_marks"):
+        checked.append("every registration mark created, OST_Lines visible in the "
+                       "view, and the own model pass left OST_Lines visible")
+        marks = state.get("registration_marks") or {}
+        expected = marks.get("expected_count")
+        if not expected or marks.get("created_count") != expected:
+            unmet.append({
+                "requested": "{0} registration marks drawn".format(expected),
+                "production_reported": marks.get("created_count"),
+                "why_it_matters": "a missing tick leaves an axis with fewer points "
+                                  "than the fit's residual needs: {0}".format(
+                                      marks.get("reason")),
+            })
+        if marks.get("lines_category_hidden_in_view") is not False:
+            unmet.append({
+                "requested": "OST_Lines visible in the view",
+                "production_reported": marks.get("lines_category_hidden_in_view"),
+                "why_it_matters": "the marks are detail lines; a view that hides "
+                                  "Lines (or whose state could not be read) may "
+                                  "draw none of them",
+            })
+        if state.get("own_model_lines_visible") is not True:
+            unmet.append({
+                "requested": "own model pass with OST_Lines visible",
+                "production_reported": state.get("own_model_lines_visible"),
+                "why_it_matters": "the model pass hides OST_Lines by default, so "
+                                  "the marks would be in the annotation capture "
+                                  "only and could not register the two passes "
+                                  "against each other",
             })
     return {"measured": not unmet, "unmet": unmet, "checked": checked}
 
@@ -602,6 +672,61 @@ def choose_fiducial_pair(candidates, reference_uv, fpp_ft,
 
 
 # ---- F1: the crop region's own shape --------------------------------------
+
+def registration_mark_segments(reference_uv, fpp_ft, inset_px=MARK_INSET_PX,
+                               gap_px=MARK_GAP_PX, arm_px=MARK_ARM_PX,
+                               min_arm_px=MARK_MIN_ARM_PX):
+    """The eight registration ticks for a reference rectangle, in view UV. PURE.
+
+    Two ticks per corner, set in ``inset_px`` from both crop edges, each
+    starting ``gap_px`` from the corner point so the pair never touches: a
+    horizontal tick (constant v, the ruler for v) and a vertical one (constant
+    u, the ruler for u). The arm shrinks to fit a small crop, never below
+    ``min_arm_px``; a crop too small for that is REFUSED rather than drawn with
+    overlapping ticks the analyzer could not separate.
+
+    Returns ``{"state": "value", "segments": [...], ...}`` or
+    ``{"state": "unavailable", "reason": ...}``.
+    """
+    if not reference_uv or len(reference_uv) != 4 or not fpp_ft or fpp_ft <= 0:
+        return _unavailable("no reference rectangle or lattice to place the marks "
+                            "on (reference={0!r}, fpp_ft={1!r})".format(
+                                reference_uv, fpp_ft))
+    u0, v0, u1, v1 = (float(v) for v in reference_uv)
+    if u1 <= u0 or v1 <= v0:
+        return _unavailable("the reference rectangle is empty: {0!r}".format(
+            reference_uv))
+    fpp = float(fpp_ft)
+    extent_px = min((u1 - u0) / fpp, (v1 - v0) / fpp)
+    # Both corners on an edge need inset + gap + arm, with a clear gap between
+    # the two arms meeting in the middle.
+    room = extent_px / 2.0 - inset_px - gap_px - gap_px
+    arm = min(float(arm_px), room)
+    if arm < float(min_arm_px):
+        return _unavailable(
+            "the reference rectangle is {0:.0f} px on its short side, too small for "
+            "{1:.0f} px ticks inset {2:.0f} px".format(extent_px, min_arm_px,
+                                                         inset_px))
+    inset, gap, arm_ft = inset_px * fpp, gap_px * fpp, arm * fpp
+    segments = []
+    for corner, su, sv in MARK_CORNERS:
+        cu = (u0 + inset) if su > 0 else (u1 - inset)
+        cv = (v0 + inset) if sv > 0 else (v1 - inset)
+        h_span = sorted((cu + su * gap, cu + su * (gap + arm_ft)))
+        v_span = sorted((cv + sv * gap, cv + sv * (gap + arm_ft)))
+        segments.append({"key": corner + "_h", "corner": corner,
+                         "orientation": "horizontal", "level_uv": cv,
+                         "span_uv": h_span,
+                         "uv0": [h_span[0], cv], "uv1": [h_span[1], cv]})
+        segments.append({"key": corner + "_v", "corner": corner,
+                         "orientation": "vertical", "level_uv": cu,
+                         "span_uv": v_span,
+                         "uv0": [cu, v_span[0]], "uv1": [cu, v_span[1]]})
+    return {"state": "value", "segments": segments,
+            "reference_uv": [u0, v0, u1, v1], "fpp_ft": fpp,
+            "inset_px": float(inset_px), "gap_px": float(gap_px),
+            "arm_px": arm, "colour": list(MARK_COLOUR)}
+
 
 def crop_loop_record(loops_uv, tolerance=1.0e-6):
     """PURE. The crop region's curve loops, described without assuming four
@@ -1277,8 +1402,12 @@ def apply_membership_white_suppression(doc, view, view_id, model_elements,
         if _element_id_int(getattr(elem, "Id", None)) not in excluded]
     record = {
         "excluded_element_ids": sorted(excluded),
-        "mechanisms": ["element_override", "link_category_filter",
-                       "category_and_subcategory_override"],
+        "mechanisms": (["element_override", "link_category_filter"]
+                       + (["category_and_subcategory_override"] if subcategories
+                          else [])),
+        # False under V10: mechanism 3 was not RUN, which is not the same fact
+        # as "ran and reached nothing". category_overrides stays empty.
+        "category_layer": bool(subcategories),
         "element_overrides": {"applied": 0, "attempted": 0, "failed": []},
         "dwg_import_instance_ids": [],
         "link_category_filters": {
@@ -1499,76 +1628,6 @@ def apply_membership_white_suppression(doc, view, view_id, model_elements,
     return record
 
 
-def reverse_membership_white_suppression(doc, view, record):
-    """Undo what apply_membership_white_suppression applied.
-
-    Must be called inside an open Transaction. Returns a list of errors, empty
-    when every step succeeded.
-
-    A BLANK write is the correct restore for everything this applied, and that
-    is a property of mechanism 3's design rather than a convenience: it wrote
-    only over categories whose override was already blank, so blank IS the
-    original state. A captured OverrideGraphicSettings is never reapplied across
-    the transaction boundary -- the pattern this module's history warns about.
-    """
-    from Autodesk.Revit.DB import ElementId, OverrideGraphicSettings
-
-    errors = []
-    for entry in (record.get("category_overrides", {}).get("parents_applied", [])
-                  + record.get("category_overrides", {}).get(
-                      "subcategories_applied", [])):
-        try:
-            view.SetCategoryOverrides(
-                ElementId(int(entry["category_id"])), OverrideGraphicSettings())
-        except Exception as ex:
-            from vop_interwoven.color_id_buffer import _category_override_refused
-            if not _category_override_refused(ex):
-                errors.append({"step": "restore_category_override",
-                               "category_id": entry["category_id"],
-                               "error": "{0}: {1}".format(type(ex).__name__, ex)})
-    filters = record.get("link_category_filters") or {}
-    for filter_id in filters.get("created_filter_ids", []):
-        try:
-            delete_filter(doc, view, filter_id)
-        except Exception as ex:
-            errors.append({"step": "delete_link_filter", "filter_id": filter_id,
-                           "error": "{0}: {1}".format(type(ex).__name__, ex)})
-    # A REUSED filter definition is shared with other views or templates, so it
-    # is only removed from THIS view and never deleted -- production's own rule
-    # in _apply_link_category_filters, kept rather than re-decided.
-    for filter_id in filters.get("reused_filter_ids", []):
-        try:
-            view.RemoveFilter(ElementId(int(filter_id)))
-        except Exception as ex:
-            errors.append({"step": "remove_reused_link_filter",
-                           "filter_id": filter_id,
-                           "error": "{0}: {1}".format(type(ex).__name__, ex)})
-    return errors
-
-
-def delete_filter(doc, view, filter_id_int):
-    """Remove the filter from the view and delete the element.
-
-    Must be called inside an open Transaction. Both halves are attempted and the
-    second runs even if the first raised: a filter element left in the project is
-    project-wide contamination, which is worse than a stale view-filter
-    association.
-    """
-    from Autodesk.Revit.DB import ElementId
-    eid = ElementId(int(filter_id_int))
-    errors = []
-    try:
-        view.RemoveFilter(eid)
-    except Exception as ex:
-        errors.append("RemoveFilter: {0}: {1}".format(type(ex).__name__, ex))
-    try:
-        doc.Delete(eid)
-    except Exception as ex:
-        errors.append("Delete: {0}: {1}".format(type(ex).__name__, ex))
-    if errors:
-        raise RuntimeError("; ".join(errors))
-
-
 def filter_element_exists(doc, filter_id_int):
     """Does the ParameterFilterElement still exist in the PROJECT?
 
@@ -1662,6 +1721,50 @@ def authored_override_scan(view, element_ids, scan_max):
             if len(out["authored_element_ids"]) < 200:
                 out["authored_element_ids"].append(int(eid))
     return out
+
+
+def element_override_readback(view, model_context, report):
+    """After the rollback: do the model members' element overrides read as
+    they did before the variant? The obligation the explicit blank-write loop
+    used to discharge, now judged on what the ROLLBACK left.
+
+    The same bounded scan as the pre-variant one (``authored_override_scan``
+    over the same ids, same cap), compared field for field: a white override
+    the rollback left behind reads as an extra AUTHORED override. Three-valued,
+    plus ``not_applicable`` for a variant that wrote no element override.
+    """
+    pre = report.get("pre_state") or {}
+    wrote = (pre.get("white_membership_suppression") is not None
+             or bool((pre.get("fiducials") or {}).get("painted")))
+    if not wrote:
+        return {"status": "not_applicable",
+                "reason": "this variant wrote no element override"}
+    before = model_context.get("authored_model_overrides") or {}
+    if before.get("state") != "value":
+        return {"status": "unverified",
+                "reason": "no pre-variant override scan to compare against: "
+                          "{0}".format(before.get("reason"))}
+    ids = []
+    for elem in model_context.get("model_members") or []:
+        value = _element_id_int(getattr(elem, "Id", None))
+        if value is not None:
+            ids.append(value)
+    t0 = time.time()
+    after = authored_override_scan(
+        view, ids, before.get("scan_max", DEFAULT_AUTHORED_OVERRIDE_SCAN_MAX))
+    keys = ("scanned_count", "authored_count", "unreadable_count",
+            "authored_element_ids")
+    differences = dict((k, {"before": before.get(k), "after": after.get(k)})
+                       for k in keys if before.get(k) != after.get(k))
+    if differences:
+        status = "not_restored"
+    elif after.get("unreadable_count"):
+        status = "unverified"
+    else:
+        status = "restored"
+    return {"status": status, "differences": differences,
+            "after": dict((k, after.get(k)) for k in keys + ("capped",)),
+            "elapsed_ms": round((time.time() - t0) * 1000.0, 3)}
 
 
 # ======================================================================
@@ -1914,6 +2017,127 @@ def paint_fiducials(doc, view, pair):
             record["failed"].append(entry)
     record["painted_count"] = len(record["painted"])
     return record
+
+
+def _lines_category_hidden(view):
+    """Whether the view hides OST_Lines, three-valued. The marks are detail
+    lines: a view that hides Lines draws none of them, in either pass."""
+    try:
+        from Autodesk.Revit.DB import BuiltInCategory, ElementId
+        bic = getattr(BuiltInCategory, "OST_Lines", None)
+        if bic is None:
+            return None, "BuiltInCategory.OST_Lines did not resolve"
+        return bool(view.GetCategoryHidden(ElementId(int(bic)))), None
+    except Exception as ex:
+        return None, "{0}: {1}".format(type(ex).__name__, ex)
+
+
+def create_registration_marks(doc, view, view_basis, layout):
+    """Draw the V9 ticks as DETAIL LINES and paint them MARK_COLOUR.
+
+    Inside an open Transaction, inside the variant's TransactionGroup: the
+    marks are removed by the group's rollback, never by a delete this module
+    has to get right. BEFORE the own model pass, so both captures carry them.
+
+    UV -> world goes through the view's own Origin/RightDirection/UpDirection,
+    offset by the Origin's UV under ``view_basis`` -- so a mark lands on the
+    view plane (NewDetailCurve requires that) whatever depth the basis origin
+    sits at (a plan's basis origin is its CUT plane). Each curve's endpoints
+    are READ BACK and projected through ``view_basis``, and the record carries
+    the largest deviation: the recorded UV is the element's, not the request.
+
+    In the annotation pass production paints the marks with its OWN palette
+    (they are view-owned, so annotation members by OwnerViewId), and its
+    sidecar's color_assignment_map names each one's colour. MARK_COLOUR is
+    what the MODEL pass draws them in.
+    """
+    from Autodesk.Revit.DB import ElementId, Line, XYZ
+    record = {"state": "value", "expected_count": 0, "created_count": 0,
+              "created": [], "failed": [], "colour": list(MARK_COLOUR),
+              "lines_category_hidden_in_view": None}
+    if (layout or {}).get("state") != "value":
+        record["state"] = "unavailable"
+        record["reason"] = (layout or {}).get("reason")
+        return record
+    hidden, hidden_error = _lines_category_hidden(view)
+    record["lines_category_hidden_in_view"] = hidden
+    if hidden_error:
+        record["lines_category_hidden_error"] = hidden_error
+    segments = layout["segments"]
+    record["expected_count"] = len(segments)
+    record["layout"] = dict((k, v) for k, v in layout.items() if k != "segments")
+    try:
+        origin = view.Origin
+        right = view.RightDirection
+        up = view.UpDirection
+        o_u, o_v = view_basis.transform_to_view_uv(
+            (float(origin.X), float(origin.Y), float(origin.Z)))
+    except Exception as ex:
+        record["state"] = "unavailable"
+        record["reason"] = "the view's origin/directions could not be read: " \
+                           "{0}: {1}".format(type(ex).__name__, ex)
+        return record
+
+    def _world(u, v):
+        du, dv = float(u) - o_u, float(v) - o_v
+        return XYZ(float(origin.X) + du * float(right.X) + dv * float(up.X),
+                   float(origin.Y) + du * float(right.Y) + dv * float(up.Y),
+                   float(origin.Z) + du * float(right.Z) + dv * float(up.Z))
+
+    paint = _white_override_settings(doc, colour=MARK_COLOUR)
+    for segment in segments:
+        entry = dict(segment)
+        try:
+            curve = doc.Create.NewDetailCurve(
+                view, Line.CreateBound(_world(*segment["uv0"]),
+                                       _world(*segment["uv1"])))
+            entry["id"] = _element_id_int(curve.Id)
+        except Exception as ex:
+            entry["error"] = "NewDetailCurve raised {0}: {1}".format(
+                type(ex).__name__, ex)
+            record["failed"].append(entry)
+            continue
+        try:
+            geometry_curve = curve.GeometryCurve
+            ends = [tuple(view_basis.transform_to_view_uv(
+                        _xyz_tuple(geometry_curve.GetEndPoint(i)))) for i in (0, 1)]
+            entry["readback_uv"] = [list(e) for e in ends]
+            wanted = (segment["uv0"], segment["uv1"])
+            entry["readback_max_deviation_ft"] = max(
+                max(abs(a - b) for a, b in zip(end, want))
+                for end, want in zip(sorted(ends), sorted(tuple(w) for w in wanted)))
+        except Exception as ex:
+            entry["readback_error"] = "{0}: {1}".format(type(ex).__name__, ex)
+        try:
+            view.SetElementOverrides(ElementId(int(entry["id"])), paint)
+            entry["painted"] = True
+        except Exception as ex:
+            entry["painted"] = False
+            entry["paint_error"] = "{0}: {1}".format(type(ex).__name__, ex)
+        record["created"].append(entry)
+    record["created_count"] = len(record["created"])
+    deviations = [e["readback_max_deviation_ft"] for e in record["created"]
+                  if e.get("readback_max_deviation_ft") is not None]
+    record["readback_max_deviation_ft"] = max(deviations) if deviations else None
+    if record["created_count"] != record["expected_count"]:
+        record["reason"] = "{0} of {1} ticks could not be created".format(
+            record["expected_count"] - record["created_count"],
+            record["expected_count"])
+    return record
+
+
+def marks_still_in_project(doc, mark_ids):
+    """``{id: bool}`` for each mark after the rollback, or ``None`` for a
+    lookup that raised. A mark still present means the rollback did not remove
+    what this module drew -- a document change, and document_safe says so."""
+    from Autodesk.Revit.DB import ElementId
+    out = {}
+    for mark_id in mark_ids or []:
+        try:
+            out[int(mark_id)] = doc.GetElement(ElementId(int(mark_id))) is not None
+        except Exception:
+            out[int(mark_id)] = None
+    return out
 
 
 def annotate_sidecar(path, key, payload):
@@ -2237,7 +2461,8 @@ _SHARED_GEOMETRY_KEYS = ("frame_snapped_uv", "frame_px", "crop_snapped_uv",
                          "crop_px", "crop_offset_px", "achieved_fpp_ft")
 
 
-def _own_model_pass(doc, view, model_context, variant_dir, export_dpi):
+def _own_model_pass(doc, view, model_context, variant_dir, export_dpi,
+                    lines_visible=False):
     """A CropBoxVisible variant's own MODEL capture, into ``<variant>/model``.
 
     F1 needs the boundary in BOTH passes. The shared model pass is the shipped
@@ -2261,6 +2486,11 @@ def _own_model_pass(doc, view, model_context, variant_dir, export_dpi):
         # transaction was already closed before that group started. Forcing a
         # close with the group open is an interaction nothing has observed.
         cfg = _model_config(record["output_directory"], export_dpi)
+        if lines_visible:
+            # V9's registration marks are detail lines; the shipped model pass
+            # hides OST_Lines. Probe-only production switch, read by getattr.
+            cfg.color_id_buffer_model_lines_visible = True
+        record["lines_visible_requested"] = bool(lines_visible)
         own_geom = {}
         t0 = time.time()
         out = export_color_id_buffer_view(
@@ -2271,6 +2501,9 @@ def _own_model_pass(doc, view, model_context, variant_dir, export_dpi):
         record["failure_reason"] = out.get("failure_reason")
         record["tiff_path"] = out.get("tiff_path")
         record["sidecar_path"] = out.get("sidecar_path")
+        # What production SAYS it did with OST_Lines, not what was asked.
+        record["model_lines_visible"] = (out.get("metadata") or {}).get(
+            "model_lines_visible")
         record["tiff_sha256"] = (_sha256(out["tiff_path"]) if out.get("tiff_path")
                                  else _unavailable("no TIFF path"))
         shared = model_context["geom"]
@@ -2350,6 +2583,44 @@ def _annotate_variant_sidecars(plan, anno_out, metadata, model_context, report,
         if anno_out.get("sidecar_path"):
             results["annotation:probe_fiducials"] = annotate_sidecar(
                 anno_out["sidecar_path"], "probe_fiducials", payload)
+    if plan.get("registration_marks"):
+        marks = probe_state.get("registration_marks") or {}
+        colour_map = metadata.get("color_assignment_map") or {}
+        base = {
+            "present": bool(marks.get("created")),
+            "must_be_subtracted": True,
+            "is_documentation_content": False,
+            "layout": marks.get("layout"),
+            "set_by": PROBE_NAME,
+            "note": "detail lines drawn by the probe at KNOWN view UV inside the "
+                    "crop and removed by rolling back its TransactionGroup. "
+                    "level_uv is the constant coordinate (v for a horizontal "
+                    "tick, u for a vertical one); readback_uv is the created "
+                    "curve's own endpoints.",
+        }
+        if anno_out.get("sidecar_path"):
+            payload = dict(base)
+            payload["pass"] = "annotation"
+            payload["marks"] = [
+                dict(m, rgb=colour_map.get(str(m.get("id"))))
+                for m in marks.get("created", [])]
+            payload["colour_source"] = ("this capture's color_assignment_map: the "
+                                        "marks are view-owned, so production "
+                                        "painted them as annotation members")
+            results["annotation:probe_registration_marks"] = annotate_sidecar(
+                anno_out["sidecar_path"], "probe_registration_marks", payload)
+        own = report.get("own_model_pass") or {}
+        if own.get("sidecar_path"):
+            payload = dict(base)
+            payload["pass"] = "model"
+            payload["marks"] = [dict(m, rgb=list(MARK_COLOUR))
+                                for m in marks.get("created", [])]
+            payload["colour_source"] = ("MARK_COLOUR, one reserved colour for all "
+                                        "eight; each tick is its own connected "
+                                        "component")
+            payload["model_lines_visible"] = own.get("model_lines_visible")
+            results["model:probe_registration_marks"] = annotate_sidecar(
+                own["sidecar_path"], "probe_registration_marks", payload)
     return results
 
 
@@ -2361,25 +2632,29 @@ def _run_variant(doc, view, variant, model_context, settings):
 
       1   snapshot BEFORE
       2   TransactionGroup.Start
-      3a  (V8) a committed child Transaction turns CropBoxVisible ON
-      3b  (V8) this variant's OWN model capture, boundary visible, into
+      3a  (V8, V9) a committed child Transaction turns CropBoxVisible ON
+      3a' (V9) a committed child Transaction draws the registration marks
+      3b  (V8, V9) this variant's OWN model capture, boundary visible (and for
+          V9 with OST_Lines visible, so the marks draw), into
           ``<variant>/model``. BEFORE the white suppression, deliberately: the
           model pass paints every model element and restores each to a blank
           override, which would wipe white overrides applied before it.
       3c  a committed child Transaction applies the white membership
-          suppression, then (V8) paints the F2 fiducial pair over it
+          suppression (V10: without its category layer), then (V8, V9)
+          paints the F2 fiducial pair over it
       4   production's export_annotation_color_id_buffer_view runs, with no
           child transaction open
-      5   a committed child Transaction reverses 3c and 3a
-      6   snapshot, and read-back verdict -- THE REAL MEASUREMENT, taken
-          before the rollback so it is a verdict on the explicit restore
-      7   TransactionGroup.RollBack in ``finally``
-      8   snapshot again, and a second read-back verdict -- the safety net
+      5   TransactionGroup.RollBack in ``finally`` -- THE RESTORE
+      6   snapshot, the read-back verdict, the marks' absence and the model
+          members' element overrides -- all read AFTER the rollback
 
-    Step 6 is the one the restore contract is judged on. Step 8 exists so
-    that a failure at step 5 still leaves the document as found, and so the
-    two can be told apart: an explicit restore that failed while the rollback
-    saved it is a probe defect worth fixing, not a clean run.
+    ROUND 3: THE ROLLBACK IS THE RESTORE. Until `.4` a committed child
+    transaction reversed 3c and 3a explicitly before the rollback, and round 2
+    measured that reverse at 33-51 s per variant -- longer than the writes it
+    undid. It existed only so a read-back could be taken before the rollback.
+    What production would adopt is the rollback itself, so that is what is now
+    measured, and read back: every obligation below is judged on the view as
+    the rollback left it.
 
     NOTHING HERE WRITES THE CROP. CropBoxVisible is a display property of the
     crop region, not its extent; the extent is read (crop_region_record) and
@@ -2409,7 +2684,6 @@ def _run_variant(doc, view, variant, model_context, settings):
     # every one of them.
     created_filter_ids = []
     snapshot_before = None
-    crop_box_visible_changed = False
     crop_box_visible_before = None
 
     try:
@@ -2467,7 +2741,6 @@ def _run_variant(doc, view, variant, model_context, settings):
                 if commit != TransactionStatus.Committed:
                     raise RuntimeError(
                         "CropBoxVisible Transaction.Commit returned {0}".format(commit))
-                crop_box_visible_changed = True
             except Exception as ex:
                 visible_record["error"] = "{0}: {1}".format(type(ex).__name__, ex)
                 try:
@@ -2479,10 +2752,46 @@ def _run_variant(doc, view, variant, model_context, settings):
             report["pre_state"]["crop_box_visible"] = visible_record
             probe_state["crop_box_visible"] = visible_record
 
-        # ---- 3b: this variant's OWN model capture (V8) ------------------
+        # ---- 3a': registration marks (V9) ---------------------------------
+        if plan["registration_marks"]:
+            authored = model_context.get("authored_crop") or {}
+            active = (authored.get("crop_box_active") or {})
+            crop_uv = (authored.get("crop_box_uv") or {})
+            if active.get("value") is True and crop_uv.get("state") == "value":
+                reference, reference_source = crop_uv["value"], "authored_crop"
+            else:
+                reference = geom.get("crop_snapped_uv")
+                reference_source = "model_pass_crop_a (no active authored crop)"
+            layout = registration_mark_segments(
+                reference, geom.get("achieved_fpp_ft"))
+            marks_tx = Transaction(doc, "VOP Stage A anno variant marks: " + variant)
+            marks_tx.Start()
+            try:
+                marks = create_registration_marks(
+                    doc, view, model_context["raster"].view_basis, layout)
+                marks["reference_source"] = reference_source
+                commit = marks_tx.Commit()
+                marks["commit_status"] = str(commit)
+                if commit != TransactionStatus.Committed:
+                    raise RuntimeError(
+                        "marks Transaction.Commit returned {0}".format(commit))
+            except Exception:
+                try:
+                    marks_tx.RollBack()
+                except Exception as ex:
+                    report["exceptions"].append(
+                        _exception_record("marks_rollback", ex))
+                raise
+            report["pre_state"]["registration_marks"] = marks
+            probe_state["registration_marks"] = marks
+
+        # ---- 3b: this variant's OWN model capture (V8, V9) ---------------
         if plan["own_model_pass"]:
             report["own_model_pass"] = _own_model_pass(
-                doc, view, model_context, variant_dir, settings["export_dpi"])
+                doc, view, model_context, variant_dir, settings["export_dpi"],
+                lines_visible=plan["registration_marks"])
+            probe_state["own_model_lines_visible"] = report["own_model_pass"].get(
+                "model_lines_visible")
 
         # ---- 3c: white suppression, then the fiducials -------------------
         pre_tx = Transaction(doc, "VOP Stage A anno variant pre-state: " + variant)
@@ -2500,7 +2809,8 @@ def _run_variant(doc, view, variant, model_context, settings):
                     doc, view, _element_id_int(view.Id),
                     model_context["model_members"],
                     link_categories=model_context.get("link_categories"),
-                    diag=model_context["diag"], exclude_ids=exclude_ids)
+                    diag=model_context["diag"], exclude_ids=exclude_ids,
+                    subcategories=plan["category_layer"])
                 suppression["elapsed_ms"] = round(
                     (time.time() - t_suppress) * 1000.0, 3)
                 report["pre_state"]["white_membership_suppression"] = suppression
@@ -2613,103 +2923,28 @@ def _run_variant(doc, view, variant, model_context, settings):
             report["annotation_pass"]["tiff_sha256"] = _sha256(anno_out["tiff_path"])
 
         # ---- F1/F2 facts into the sidecars a consumer reads --------------
-        if anno_out is not None and (plan["crop_box_visible"] or plan["fiducials"]):
+        if anno_out is not None and (plan["crop_box_visible"] or plan["fiducials"]
+                                     or plan["registration_marks"]):
             report["sidecar_annotations"] = _annotate_variant_sidecars(
                 plan, anno_out, metadata, model_context, report, probe_state)
 
-        # ---- 5: reverse 3c and 3a, explicitly --------------------------
-        restore_errors = []
-        _t_restore_tx = time.time()
-        restore_tx = Transaction(doc, "VOP Stage A anno variant restore: " + variant)
-        restore_tx.Start()
-        suppression = report.get("pre_state", {}).get(
-            "white_membership_suppression")
-        if suppression is not None or plan["fiducials"]:
-            # Element overrides are reversed with a BLANK, exactly as production
-            # does for its own paint. The fiducials are model members, so this
-            # one loop reverses them too.
-            from Autodesk.Revit.DB import ElementId, OverrideGraphicSettings
-            untouched = set((suppression or {}).get("excluded_element_ids") or [])
-            _t_restore = time.time()
-            for elem in model_context["model_members"]:
-                elem_id = _element_id_int(getattr(elem, "Id", None))
-                if elem_id is None or elem_id in untouched:
-                    # Never written, so never written back: a blank write
-                    # would destroy an authored override this run left alone.
-                    continue
-                try:
-                    view.SetElementOverrides(ElementId(int(elem_id)),
-                                             OverrideGraphicSettings())
-                except Exception as ex:
-                    restore_errors.append({
-                        "step": "restore_model_element_override",
-                        "element_id": elem_id,
-                        "error": "{0}: {1}".format(type(ex).__name__, ex)})
-            report["restore"]["element_blank_writes_ms"] = round(
-                (time.time() - _t_restore) * 1000.0, 3)
-        if suppression is not None:
-            _t_restore = time.time()
-            restore_errors.extend(
-                reverse_membership_white_suppression(doc, view, suppression))
-            report["restore"]["reverse_category_and_link_ms"] = round(
-                (time.time() - _t_restore) * 1000.0, 3)
-        if crop_box_visible_changed:
-            try:
-                if (crop_box_visible_before or {}).get("state") != "value":
-                    raise RuntimeError(
-                        "CropBoxVisible's pre-variant value was never read, so "
-                        "there is no value to put back: {0}".format(
-                            (crop_box_visible_before or {}).get("reason")))
-                view.CropBoxVisible = bool(crop_box_visible_before["value"])
-            except Exception as ex:
-                restore_errors.append({
-                    "step": "restore_crop_box_visible",
-                    "error": "{0}: {1}".format(type(ex).__name__, ex)})
-        try:
-            _t = time.time()
-            commit = restore_tx.Commit()
-            report["restore"]["commit_ms"] = round((time.time() - _t) * 1000.0, 3)
-            report["transaction_group"]["restore_commit_status"] = str(commit)
-            if commit != TransactionStatus.Committed:
-                restore_errors.append({
-                    "step": "restore_commit",
-                    "error": "Transaction.Commit returned {0}".format(commit)})
-        except Exception as ex:
-            try:
-                restore_tx.RollBack()
-            except Exception as inner:
-                restore_errors.append({"step": "restore_rollback",
-                                       "error": "{0}: {1}".format(
-                                           type(inner).__name__, inner)})
-            restore_errors.append({"step": "restore_commit",
-                                   "error": "{0}: {1}".format(type(ex).__name__, ex)})
-        report["restore"]["transaction_ms"] = round(
-            (time.time() - _t_restore_tx) * 1000.0, 3)
-        report["restore"]["explicit_step_errors"] = restore_errors
-
-        # ---- 6: THE MEASUREMENT --------------------------------------
-        snapshot_after_restore = snapshot_view(doc, view)
-        report["snapshot_after_explicit_restore"] = snapshot_after_restore
-        created_filter_ids = list(
-            ((report.get("pre_state", {}).get("white_membership_suppression") or {})
-             .get("link_category_filters") or {}).get("created_filter_ids") or [])
-        still_there = dict(
-            (fid, filter_element_exists(doc, fid)) for fid in created_filter_ids)
-        report["restore"]["probe_filter_elements_still_in_project"] = still_there
-        report["restore"]["after_explicit_restore"] = restore_readback_verdict(
-            snapshot_before, snapshot_after_restore,
-            expect_filters_absent=created_filter_ids,
-            filter_elements_still_in_project=still_there,
-            explicit_step_errors=restore_errors)
+        # ---- 5: NO explicit restore -- the rollback in ``finally`` is it ----
+        report["restore"]["mode"] = "transaction_group_rollback"
 
     except Exception as ex:
         report["exceptions"].append(_exception_record("variant", ex))
     finally:
-        # ---- 7: the safety net ---------------------------------------
+        # ---- 5: THE RESTORE --------------------------------------------
+        created_filter_ids = list(
+            ((report.get("pre_state", {}).get("white_membership_suppression") or {})
+             .get("link_category_filters") or {}).get("created_filter_ids") or [])
         if started and group is not None:
             report["transaction_group"]["rollback_attempted"] = True
             try:
+                _t_rollback = time.time()
                 status = group.RollBack()
+                report["restore"]["rollback_ms"] = round(
+                    (time.time() - _t_rollback) * 1000.0, 3)
                 report["transaction_group"]["rollback_status"] = str(status)
                 report["transaction_group"]["rollback_succeeded"] = (
                     status == TransactionStatus.RolledBack)
@@ -2717,15 +2952,11 @@ def _run_variant(doc, view, variant, model_context, settings):
                 report["exceptions"].append(_exception_record("group_rollback", ex))
                 report["transaction_group"]["rollback_succeeded"] = False
 
-        # ---- 8: read-back after the rollback -------------------------
+        # ---- 6: read-back after the rollback -- THE MEASUREMENT -------
         if snapshot_before is not None and not report.get("skipped"):
             try:
                 snapshot_after_rollback = snapshot_view(doc, view)
                 report["snapshot_after_rollback"] = snapshot_after_rollback
-                # No explicit_step_errors here: the rollback is the safety net,
-                # and whether it rescued a failed explicit step is exactly the
-                # distinction between the two verdicts. Passing them would make
-                # the net report the failure it just undid.
                 report["restore"]["after_rollback"] = restore_readback_verdict(
                     snapshot_before, snapshot_after_rollback,
                     expect_filters_absent=created_filter_ids,
@@ -2734,6 +2965,16 @@ def _run_variant(doc, view, variant, model_context, settings):
                         for fid in created_filter_ids))
             except Exception as ex:
                 report["exceptions"].append(_exception_record("post_rollback_snapshot", ex))
+            try:
+                mark_ids = [m.get("id") for m in (
+                    (report.get("pre_state", {}).get("registration_marks") or {})
+                    .get("created") or []) if m.get("id") is not None]
+                report["restore"]["probe_marks_still_in_project"] = (
+                    marks_still_in_project(doc, mark_ids))
+                report["restore"]["element_overrides_after_rollback"] = (
+                    element_override_readback(view, model_context, report))
+            except Exception as ex:
+                report["exceptions"].append(_exception_record("post_rollback_readback", ex))
 
             # The model TIFF, re-hashed. This detects a variant CLOBBERING the
             # model artifact -- a path collision, a stray write. It does NOT
@@ -2759,10 +3000,13 @@ def _run_variant(doc, view, variant, model_context, settings):
         # view came back; what the image shows is the analyzer's to report and
         # Greg's to judge.
         if not report.get("skipped"):
-            explicit = (report["restore"].get("after_explicit_restore") or {}).get(
-                "overall")
             rolled_back = (report["restore"].get("after_rollback") or {}).get("overall")
             rollback_ok = report["transaction_group"].get("rollback_succeeded")
+            marks_left = [mid for mid, present in (
+                report["restore"].get("probe_marks_still_in_project") or {}).items()
+                if present is not False]
+            overrides = (report["restore"].get("element_overrides_after_rollback")
+                         or {}).get("status")
 
             # TWO SEPARATE QUESTIONS, and conflating them was a defect in the
             # first draft of this function.
@@ -2779,12 +3023,14 @@ def _run_variant(doc, view, variant, model_context, settings):
             # would throw away the whole view's evidence over one of them.
             report["document_safe"] = bool(
                 rollback_ok
-                and explicit not in ("not_restored", "unverified", None)
-                and rolled_back not in ("not_restored", "unverified", None))
+                and rolled_back not in ("not_restored", "unverified", None)
+                and not marks_left
+                and overrides in ("restored", "not_applicable"))
             report["document_safe_detail"] = {
                 "rollback_succeeded": rollback_ok,
-                "after_explicit_restore": explicit,
                 "after_rollback": rolled_back,
+                "probe_marks_still_in_project": marks_left,
+                "element_overrides_after_rollback": overrides,
             }
 
             # DID IT MEASURE WHAT IT CLAIMS? A TIFF existing proves an export

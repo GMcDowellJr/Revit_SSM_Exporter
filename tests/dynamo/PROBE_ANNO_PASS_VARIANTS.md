@@ -1,4 +1,4 @@
-# Stage A annotation-pass variant probe — round 2 (revised)
+# Stage A annotation-pass variant probe — round 3 (on round 2 revised)
 
 `probe_stage_a_anno_pass_variants.py` runs the candidate fixes for the Stage A
 annotation pass beside the current pass, on one view at a time, and writes what
@@ -14,6 +14,100 @@ is not evidence, it is damage.
 Round 1's measured output is in
 `tools/notes/ROUND1_ANNO_PASS_VARIANTS_FINDINGS.md`, with the JSONs it quotes in
 `tools/notes/data/round1_anno_pass_variants/`. Read that first.
+
+---
+
+## Round 3 — what changed, and how to run it (probe `2026-09-23.1`)
+
+Round 2's `.4` run (`tools/notes/ROUND2_ANNO_PASS_VARIANTS_FINDINGS.md`, last
+section) settled three things this round is built on:
+
+* **The crop boundary Revit draws is not a ruler.** Leaving the crop-region
+  element unsuppressed did not bring it back in V8, and V0's elevation lost its
+  horizontal edges between runs (they sit on the image border and are clipped).
+* **The suppression's cost is its category layer**: ~390 category/subcategory
+  override writes at 54–67 ms each, >99 % of it; element overrides are
+  ~0.01 ms each.
+* **The explicit reverse cost more than the writes** (33–51 s per variant),
+  and existed only to take a read-back before the rollback.
+
+So, three changes:
+
+| change | what | why |
+|---|---|---|
+| **V9 `v9_registration_marks`** | V8 **plus** eight detail-line ticks the probe draws at KNOWN view UV, inset inside the crop, in BOTH passes | a ruler the probe draws cannot be clipped on the border or misplaced by a bbox; the model capture's recorded lattice checks the method against a known answer |
+| **V10 `v10_element_only_white`** | V7 **without** the category/subcategory white layer — element overrides and link filters only | V7 vs V10 residue says what the layer buys; V10's cost says what dropping it saves |
+| **Restore = the group rollback** | no explicit reverse; every obligation is read back AFTER the rollback | measures what production would adopt, and removes 33–51 s per variant |
+
+### V9 — registration marks (F3)
+
+Two ticks per corner, one horizontal and one vertical, **not touching**, set in
+`MARK_INSET_PX` = 24 lattice px from both crop edges, `MARK_GAP_PX` = 8 px from
+the corner point, `MARK_ARM_PX` = 96 px long (shrinking to fit a small crop, never
+below 32 px — a crop too small is refused, not drawn with overlapping ticks).
+Horizontal ticks' centre rows give **v**, vertical ticks' centre columns give
+**u**: four points per axis at two levels, so each fit has a residual. The
+reference rectangle is the authored crop when active, else the model pass's
+crop A. Layout: `registration_mark_segments()` (pure); drawing:
+`create_registration_marks()`.
+
+* **Drawn as detail lines** (`doc.Create.NewDetailCurve`) in a committed child
+  transaction inside the variant's group, **before** V9's own model capture, and
+  removed by the group's rollback. Each curve's endpoints are READ BACK and
+  projected into UV; `readback_max_deviation_ft` is recorded.
+* **Model pass.** The shipped model pass hides `OST_Lines`. V9's own model
+  capture sets the probe-only production switch
+  `color_id_buffer_model_lines_visible` (getattr, not a Config field) so the
+  marks draw — in `MARK_COLOUR` (139, 251, 11), off every palette lattice. Other
+  detail/model lines then draw unpainted in that capture only; the decode is
+  exact-match, as for the annotation pass's own `OST_Lines` gap.
+* **Annotation pass.** The marks are view-owned, so production collects them
+  as **annotation members** and paints each its own palette colour; the
+  sidecar's `color_assignment_map` names it. Nothing in production was changed
+  for this. They therefore also appear in that capture's bbox map (category
+  Lines) — they are real drawn lines, so the bbox fit is helped, not hurt.
+* **Both sidecars** get `probe_registration_marks` (`must_be_subtracted`: true).
+* **Measured** only if all eight were created, the view does not hide Lines, and
+  the own model pass reports `model_lines_visible` true.
+
+The analyzer's **section 12** fits both captures, checks the model fit against
+the model capture's recorded lattice, and composes the **annotation → model
+pixel transform** (`x' = sx·x + ox`, `y' = sy·y + oy`) — via the model marks and
+via the model lattice — which `--json-out` carries under `registration_marks`,
+with each capture's mark pixel rects to subtract. The datum extents (section 10)
+now prefer F3 over F1, F2 and the bbox fit.
+
+### V10 — element-only white
+
+`apply_membership_white_suppression(..., subcategories=False)`: mechanism 3 is
+not RUN (`category_layer: false`, not "ran and reached nothing"). Mechanism 2,
+the link category filters, is unchanged — linked content needs it, and most
+models have links. Compare V7 and V10 in section 11 (the `category layer`
+column) and the per-variant cost lines above section 0.
+
+### Restore = the group rollback
+
+Step 5 of `_run_variant` is now `TransactionGroup.RollBack`. After it: the
+snapshot read-back (every obligation below), **`probe_marks_still_in_project`**
+(each mark id looked up; any still present is unsafe), and
+**`element_overrides_after_rollback`** — the pre-variant authored-override scan
+re-run over the same model members and compared field for field (a white
+override the rollback left reads as an extra authored one). `document_safe`
+needs all three. `rollback_ms` is timed. `reverse_membership_white_suppression`
+is deleted, not left unused.
+
+### Round 3 run
+
+| order | view | id | then |
+|---|---|---|---|
+| 1 | `Elevation_CropActive` | 19293413 | a read-back failure stops the run |
+| 2 | `Plan_CropActive` | 19290402 | |
+| 3 | `Plan_RVTLink` | 19293485 | first run of mechanism 2 (link filters): V7 vs V10 with links present |
+
+`selection` default is all five. Per view: 5 annotation pairs (10) + the shared
+model pair (2) + V8's and V9's own model pairs (4) + 1 combined report = **17**;
+three views **51**. The Dynamo runner's version check must read
+**`2026-09-23.1`**.
 
 ---
 
@@ -73,6 +167,8 @@ Consequences:
 | `v0_control` | — | **written to B** (shipped) | — | — | — | — | `hide_categories` |
 | `v7_no_crop` | **yes** | **untouched** | — | — | — | — | `external` |
 | `v8_no_crop_fiducials` | **yes** | **untouched** | **on** | **yes** | **yes** | **yes** | `external` |
+| `v9_registration_marks` | **yes** | **untouched** | **on** | **yes** | **yes** | **yes**, OST_Lines visible | `external` — plus the eight registration marks |
+| `v10_element_only_white` | **yes, without the category layer** | **untouched** | — | — | — | — | `external` |
 
 That table is `variant_plan()`, asserted row by row in
 `tests/test_probe_stage_a_anno_pass_variants.py`. `v0_control` still moves the
@@ -240,16 +336,18 @@ Per variant, in order:
 1. snapshot **before** — read by one function, so every reading is the same
    reading;
 2. `TransactionGroup.Start`;
-3. a. (V8) a committed child `Transaction` turns `CropBoxVisible` on;
-   b. (V8) V8's own model capture, boundary visible;
-   c. a committed child `Transaction` applies the white membership suppression,
-      then (V8) paints the fiducials;
+3. a. (V8, V9) a committed child `Transaction` turns `CropBoxVisible` on;
+   a′. (V9) a committed child `Transaction` draws the registration marks;
+   b. (V8, V9) the variant's own model capture, boundary visible (V9: Lines
+      visible too);
+   c. a committed child `Transaction` applies the white membership suppression
+      (V10: without the category layer), then (V8, V9) paints the fiducials;
 4. production's annotation pass runs, with **no child transaction open**;
-5. a committed child `Transaction` reverses 3c and 3a;
-6. snapshot, and the read-back verdict — **the real measurement**, taken before
-   the rollback so it judges the explicit restore;
-7. `TransactionGroup.RollBack` in `finally`;
-8. snapshot again, and a second verdict — the safety net.
+5. **`TransactionGroup.RollBack` in `finally` — the restore** (round 3; until
+   `.4` a child transaction reversed 3c and 3a explicitly first);
+6. snapshot and the read-back verdict, the marks' absence and the model
+   members' element overrides — **the measurement**, all taken after the
+   rollback.
 
 **Nothing here writes the crop.** The crop's extent is read (`crop_region_record`)
 and read back (the `crop_box` and `crop_region_shape` obligations), never set.
@@ -261,7 +359,10 @@ and read back (the `crop_box` and `crop_region_shape` obligations), never set.
 read-back, not a claim), `smooth_edges`, `annotation_crop_offsets`,
 `model_category_visibility` (every MODEL category), `view_filters`,
 `view_template_id`, `display_style` — plus `probe_filter_deleted[...]` (both
-off the view **and** gone from the project) and `explicit_restore_steps`.
+off the view **and** gone from the project) — plus, since round 3,
+`probe_marks_still_in_project` and `element_overrides_after_rollback`, both
+read after the rollback. (`explicit_restore_steps` is still a field of the
+verdict but nothing feeds it now: there is no explicit restore.)
 
 Each is three-valued; a property that could not be **read** is `unverified`,
 which is not `restored`.
@@ -333,7 +434,7 @@ Via the campaign/batch pipeline (`stage_a_anno_pass_variants` in
 
 ```json
 "settings": {
-  "selection": "v0_control,v7_no_crop,v8_no_crop_fiducials",
+  "selection": "v0_control,v7_no_crop,v8_no_crop_fiducials,v9_registration_marks,v10_element_only_white",
   "export_dpi": 150,
   "authored_override_scan_max": 8000,
   "model_reexport_check": true
@@ -342,7 +443,7 @@ Via the campaign/batch pipeline (`stage_a_anno_pass_variants` in
 
 ---
 
-## Running it — round 2 (revised)
+## Running it — round 2 (revised; round 3's run order is at the top)
 
 **Re-run order, and where to stop:**
 

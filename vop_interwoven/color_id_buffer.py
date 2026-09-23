@@ -3052,6 +3052,30 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     created_link_category_filter_ids = []
     reused_link_category_filter_ids = []
     category_hidden_state = _hidden_category_state(doc, view)
+    # PROBE-ONLY SWITCH, read by getattr and absent from Config, like the
+    # annotation pass's three (see export_annotation_color_id_buffer_view):
+    #
+    #   color_id_buffer_model_lines_visible
+    #       False (default) -- OST_Lines is hidden with the other view-only
+    #           categories, as shipped.
+    #       True            -- OST_Lines is left VISIBLE in this capture. The
+    #           annotation-pass variant probe draws registration marks as
+    #           detail lines at known view UV and paints them a reserved
+    #           colour, so the SAME marks register BOTH passes. Hiding the
+    #           category happens inside this function's suppress transaction,
+    #           where a caller cannot undo it. Every other detail and model
+    #           line then draws in its native colour, unpainted -- the
+    #           known OST_Lines gap the annotation pass already carries, and
+    #           decoded the same way (exact palette match). Recorded in
+    #           model_lines_visible so a capture says which it was.
+    model_lines_visible = bool(getattr(cfg, "color_id_buffer_model_lines_visible", False))
+    if model_lines_visible:
+        from Autodesk.Revit.DB import BuiltInCategory
+        lines_bic = getattr(BuiltInCategory, "OST_Lines", None)
+        if lines_bic is None:
+            raise RuntimeError("color_id_buffer_model_lines_visible is set but "
+                               "BuiltInCategory.OST_Lines did not resolve")
+        category_hidden_state.pop(int(lines_bic), None)
     solid_pattern_id = _get_solid_pattern_id(doc)
     if solid_pattern_id is None:
         raise RuntimeError("No solid drafting fill pattern found in project")
@@ -4265,6 +4289,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             cat.Name for cat in failed_link_categories
         ),
         "categories_hidden": category_hidden_state,
+        "model_lines_visible": model_lines_visible,
         "filter_state": filter_state,
         "phase_filter_state": phase_filter_state,
         # ADDITIVE, new top-level key: the graphics state that governed this

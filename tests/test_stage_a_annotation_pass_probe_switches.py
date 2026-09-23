@@ -922,3 +922,53 @@ def test_crop_mode_is_not_a_config_field():
     to_dict() representation, no way to reach a production run."""
     assert not hasattr(Config(), "color_id_buffer_anno_crop_mode")
     assert "color_id_buffer_anno_crop_mode" not in Config().to_dict()
+
+
+# ---- color_id_buffer_model_lines_visible (MODEL pass, probe-only) ----------
+
+LINES_CAT = FakeCategory("Lines", -2000051, cat_type="Model")
+
+
+def _run_model_lines(tmp_path, lines_visible=None):
+    elements = _elements()
+    view = FakeViewPlan(view_id=VIEW_ID)
+    doc = _SizedDoc(elements=elements, link_instances=[],
+                    categories=[MODEL_CAT, OTHER_MODEL_CAT, ANNO_CAT, LINES_CAT])
+    cfg = Config()
+    cfg.include_linked_rvt = False
+    cfg.debug_dump_path = str(tmp_path)
+    if lines_visible is not None:
+        cfg.color_id_buffer_model_lines_visible = lines_visible
+    at_export = {}
+    doc.on_export_image = lambda opts: at_export.update(
+        lines_hidden=view.category_hidden.get(LINES_CAT.Id.IntegerValue, False),
+        anno_hidden=view.category_hidden.get(ANNO_CAT.Id.IntegerValue, False))
+    with install_fake_revit_db():
+        out = color_id_buffer.export_color_id_buffer_view(
+            doc, view, elements=_model_pass_elements(elements), cfg=cfg,
+            diag=FakeDiag(), raster=_raster(), elem_cache=None, geometry_out={})
+    return out, view, at_export
+
+
+def test_control_by_default_the_model_pass_hides_lines(tmp_path):
+    """The CONTROL: without it the test below would also pass against a model
+    pass that never hid OST_Lines at all."""
+    out, view, at_export = _run_model_lines(tmp_path)
+    assert at_export == {"lines_hidden": True, "anno_hidden": True}
+    assert out["metadata"]["model_lines_visible"] is False
+
+
+def test_model_lines_visible_leaves_lines_visible_and_nothing_else(tmp_path):
+    """The probe's registration marks are detail lines; the model pass must
+    draw them. Mutation: ignore the switch, or pop the wrong category."""
+    out, view, at_export = _run_model_lines(tmp_path, lines_visible=True)
+    assert at_export == {"lines_hidden": False, "anno_hidden": True}
+    assert (LINES_CAT.Id.IntegerValue, True) not in view.set_category_hidden_calls
+    assert out["metadata"]["model_lines_visible"] is True
+    assert str(LINES_CAT.Id.IntegerValue) not in {
+        str(k) for k in out["metadata"]["categories_hidden"]}
+
+
+def test_model_lines_visible_is_not_a_config_field():
+    assert not hasattr(Config(), "color_id_buffer_model_lines_visible")
+    assert "color_id_buffer_model_lines_visible" not in Config().to_dict()

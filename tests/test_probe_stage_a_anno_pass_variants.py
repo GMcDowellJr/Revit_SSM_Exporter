@@ -34,8 +34,8 @@ def test_every_supported_variant_has_a_plan():
 
 def test_an_unknown_variant_raises():
     with pytest.raises(ValueError) as excinfo:
-        probe.variant_plan("v9_wishful")
-    assert "v9_wishful" in str(excinfo.value)
+        probe.variant_plan("v99_wishful")
+    assert "v99_wishful" in str(excinfo.value)
 
 
 def test_the_plan_matches_the_round_2_revised_brief_variant_by_variant():
@@ -46,19 +46,42 @@ def test_the_plan_matches_the_round_2_revised_brief_variant_by_variant():
         probe.V0: dict(white_membership=False, smooth_edges_off=False,
                        crop_mode="frame_b", crop_box_visible=False,
                        fiducials=False, own_model_pass=False,
+                       registration_marks=False, category_layer=True,
                        model_suppression="hide_categories"),
         probe.V7: dict(white_membership=True, smooth_edges_off=False,
                        crop_mode="untouched", crop_box_visible=False,
                        fiducials=False, own_model_pass=False,
+                       registration_marks=False, category_layer=True,
                        model_suppression="external"),
         probe.V8: dict(white_membership=True, smooth_edges_off=True,
                        crop_mode="untouched", crop_box_visible=True,
                        fiducials=True, own_model_pass=True,
+                       registration_marks=False, category_layer=True,
                        model_suppression="external"),
+        # Round 3: V8 plus the marks, and V7 minus the category layer. Each
+        # differs from its base in exactly one field, which is what makes the
+        # pair a measurement of that field.
+        probe.V9: dict(white_membership=True, smooth_edges_off=True,
+                       crop_mode="untouched", crop_box_visible=True,
+                       fiducials=True, own_model_pass=True,
+                       registration_marks=True, category_layer=True,
+                       model_suppression="external"),
+        probe.V10: dict(white_membership=True, smooth_edges_off=False,
+                        crop_mode="untouched", crop_box_visible=False,
+                        fiducials=False, own_model_pass=False,
+                        registration_marks=False, category_layer=False,
+                        model_suppression="external"),
     }
     assert set(expected) == set(probe.SUPPORTED_VARIANTS)
     assert probe.SUPPORTED_VARIANTS == ("v0_control", "v7_no_crop",
-                                        "v8_no_crop_fiducials")
+                                        "v8_no_crop_fiducials",
+                                        "v9_registration_marks",
+                                        "v10_element_only_white")
+    for base, variant, field in ((probe.V8, probe.V9, "registration_marks"),
+                                 (probe.V7, probe.V10, "category_layer")):
+        a, b = probe.variant_plan(base), probe.variant_plan(variant)
+        assert [k for k in a if k != "variant" and a[k] != b[k]] == [field], (
+            base, variant)
     for name, fields in expected.items():
         plan = probe.variant_plan(name)
         for key, value in fields.items():
@@ -1291,7 +1314,6 @@ def test_run_variant_feeds_both_new_restore_inputs():
 
     source = inspect.getsource(probe._run_variant)
     assert "filter_elements_still_in_project=" in source
-    assert "explicit_step_errors=restore_errors" in source
     assert "filter_element_exists(" in source
 
 
@@ -1502,7 +1524,7 @@ def test_a_category_with_no_subcategories_reports_no_error():
 
 # ------------------------------------------------------- wiring of the mechanism
 
-def test_run_variant_suppresses_by_membership_and_reverses_it():
+def test_run_variant_suppresses_by_membership():
     """Pin the WIRING, which every round of review on this probe has had to.
 
     A correct suppression function the call site does not invoke is suppression
@@ -1512,12 +1534,12 @@ def test_run_variant_suppresses_by_membership_and_reverses_it():
 
     source = inspect.getsource(probe._run_variant)
     assert "apply_membership_white_suppression(" in source
-    assert "reverse_membership_white_suppression(" in source
     assert 'model_context["model_members"]' in source
     assert 'link_categories=model_context.get("link_categories")' in source
-    # The element overrides are reversed with a FRESH blank per element, never a
-    # captured object reapplied across the boundary.
-    assert "OverrideGraphicSettings())" in source
+    # Round 3: the group's rollback is the restore. No explicit reverse is
+    # left to drift from what was applied -- driven, not grepped, in
+    # tests/test_probe_anno_pass_run_variant.py.
+    assert not hasattr(probe, "reverse_membership_white_suppression")
     # And the retired category-filter entry point is gone from the call site.
     assert "create_white_model_filter" not in source
 
@@ -1588,19 +1610,6 @@ def test_mechanism_3_only_writes_over_a_blank_override():
     source = inspect.getsource(probe.apply_membership_white_suppression)
     assert "_category_override_is_blank(" in source
     assert 'record["category_overrides"]["skipped_authored"]' in source
-
-
-def test_reverse_restores_created_filters_but_only_removes_reused_ones():
-    """Production's rule, kept rather than re-decided: a REUSED filter definition
-    is shared with other views or templates, so deleting it would corrupt them."""
-    import inspect
-
-    source = inspect.getsource(probe.reverse_membership_white_suppression)
-    created = source.index("created_filter_ids")
-    reused = source.index("reused_filter_ids")
-    assert "delete_filter(" in source[created:reused]
-    assert "RemoveFilter(" in source[reused:]
-    assert "delete_filter(" not in source[reused:]
 
 
 # ======================================================================
@@ -1941,3 +1950,96 @@ def test_the_crop_lookup_also_searches_OST_Views_and_says_which_matched():
                                             [views_member])
     assert record["crop_element_ids"] == [9]
     assert record["viewers_in_model_set"][0]["category"] == "OST_Views"
+
+
+# ======================================================================
+# ROUND 3: registration marks (V9), pure
+# ======================================================================
+
+def test_the_mark_colour_is_off_every_palette_lattice_and_distinct():
+    for step in range(2, 9):
+        assert probe.colour_on_lattice(probe.MARK_COLOUR, step) is False, step
+    assert probe.MARK_COLOUR not in probe.FIDUCIAL_COLOURS
+    assert len(set(probe.MARK_COLOUR)) == 3  # not grey: a grey is a boundary candidate
+
+
+def _layout(uv=(0.0, 0.0, 100.0, 50.0), fpp=0.1, **kw):
+    return probe.registration_mark_segments(uv, fpp, **kw)
+
+
+def test_marks_are_eight_ticks_two_per_corner_one_of_each_orientation():
+    layout = _layout()
+    assert layout["state"] == "value"
+    segments = layout["segments"]
+    assert len(segments) == 8
+    for corner, _su, _sv in probe.MARK_CORNERS:
+        mine = [s for s in segments if s["corner"] == corner]
+        assert sorted(s["orientation"] for s in mine) == ["horizontal", "vertical"]
+
+
+def test_marks_sit_inside_the_reference_by_the_inset_and_never_touch():
+    """A tick on the crop edge is clipped on the image border -- what removed the
+    elevation's horizontal crop edges in round 2 -- and two touching ticks are
+    one connected component the model-capture analysis cannot split."""
+    fpp = 0.1
+    layout = _layout(fpp=fpp)
+    inset = probe.MARK_INSET_PX * fpp
+    gap = probe.MARK_GAP_PX * fpp
+    for seg in layout["segments"]:
+        for u, v in (seg["uv0"], seg["uv1"]):
+            assert inset - 1e-9 <= u <= 100.0 - inset + 1e-9
+            assert inset - 1e-9 <= v <= 50.0 - inset + 1e-9
+    for corner, _su, _sv in probe.MARK_CORNERS:
+        h, v = sorted((s for s in layout["segments"] if s["corner"] == corner),
+                      key=lambda s: s["orientation"])
+        # The horizontal tick stops short of the vertical one's u by the gap,
+        # and the vertical tick stops short of the horizontal one's v.
+        assert min(abs(x - v["level_uv"]) for x in h["span_uv"]) == pytest.approx(gap)
+        assert min(abs(y - h["level_uv"]) for y in v["span_uv"]) == pytest.approx(gap)
+
+
+def test_each_axis_gets_four_ticks_at_two_levels_so_the_fit_has_a_residual():
+    layout = _layout()
+    for orientation in ("horizontal", "vertical"):
+        levels = [s["level_uv"] for s in layout["segments"]
+                  if s["orientation"] == orientation]
+        assert len(levels) == 4 and len(set(round(x, 9) for x in levels)) == 2
+
+
+def test_the_arm_shrinks_for_a_small_crop_and_a_tiny_one_is_refused():
+    full = _layout(uv=(0.0, 0.0, 100.0, 100.0), fpp=0.1)
+    assert full["arm_px"] == probe.MARK_ARM_PX
+    small = _layout(uv=(0.0, 0.0, 20.0, 20.0), fpp=0.1)   # 200 px square
+    assert probe.MARK_MIN_ARM_PX <= small["arm_px"] < probe.MARK_ARM_PX
+    tiny = _layout(uv=(0.0, 0.0, 10.0, 10.0), fpp=0.1)    # 100 px square
+    assert tiny["state"] == "unavailable" and "too small" in tiny["reason"]
+
+
+def test_marks_without_a_reference_or_lattice_are_unavailable_not_guessed():
+    assert _layout(uv=None)["state"] == "unavailable"
+    assert _layout(fpp=None)["state"] == "unavailable"
+    assert _layout(uv=(5.0, 5.0, 5.0, 9.0))["state"] == "unavailable"
+
+
+def _v9_state(created=8, hidden=False, lines_visible=True):
+    return {"registration_marks": {"expected_count": 8, "created_count": created,
+                                   "lines_category_hidden_in_view": hidden},
+            "own_model_lines_visible": lines_visible,
+            "crop_box_visible": {"during_capture": True},
+            "fiducials": {"painted_count": 2}}
+
+
+def _v9_metadata():
+    return {"applied_smooth_edges": False, "model_suppression_mode": "external",
+            "crop_mode": "untouched"}
+
+
+def test_v9_measured_only_when_every_mark_drew_in_both_passes():
+    plan = probe.variant_plan(probe.V9)
+    assert probe.variant_measurement_check(
+        plan, _v9_metadata(), _v9_state())["measured"] is True
+    for state in (_v9_state(created=7), _v9_state(hidden=True),
+                  _v9_state(hidden=None), _v9_state(lines_visible=False),
+                  _v9_state(lines_visible=None)):
+        check = probe.variant_measurement_check(plan, _v9_metadata(), state)
+        assert check["measured"] is False, state

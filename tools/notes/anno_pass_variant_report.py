@@ -1087,6 +1087,244 @@ def fiducial_fit(fiducials, blobs, image_w, image_h):
     return out
 
 
+# ======================================================================
+# REGISTRATION MARKS (V9) -- detail lines the probe drew at KNOWN view UV
+# ======================================================================
+#
+# Eight ticks, two per corner, just inside the crop. A horizontal tick's
+# centre ROW is its v; a vertical tick's centre COLUMN is its u. Four points per
+# axis at two levels, so each fit has a residual. In the annotation capture
+# production painted every tick its own palette colour (the sidecar's colour
+# map names it); in the model capture all eight share one reserved colour and
+# are told apart as connected components.
+
+def _load_rgb(path):
+    with Image.open(path) as image:
+        return np.asarray(image.convert("RGB"))
+
+
+def _components(ys, xs):
+    """8-connected components of a small pixel set, as index lists. Pure numpy
+    and python: scipy is not a dependency of this tool."""
+    index = {(int(y), int(x)): i for i, (y, x) in enumerate(zip(ys, xs))}
+    parent = list(range(len(index)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for (y, x), i in index.items():
+        for dy, dx in ((0, 1), (1, -1), (1, 0), (1, 1)):
+            j = index.get((y + dy, x + dx))
+            if j is not None:
+                ri, rj = find(i), find(j)
+                if ri != rj:
+                    parent[ri] = rj
+    groups = {}
+    for i in range(len(parent)):
+        groups.setdefault(find(i), []).append(i)
+    return list(groups.values())
+
+
+def _tick_measure(ys, xs, orientation):
+    """A tick's centre line and extent, in continuous pixel coordinates (pixel
+    i spans [i, i+1], as every other fit here)."""
+    ys = np.asarray(ys, dtype=float)
+    xs = np.asarray(xs, dtype=float)
+    out = {"pixel_count": int(len(xs)),
+           "pixel_bbox": [int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())]}
+    if orientation == "horizontal":
+        out["centre_px"] = float(ys.mean()) + 0.5
+        out["end_px"] = [float(xs.min()), float(xs.max()) + 1.0]
+    else:
+        out["centre_px"] = float(xs.mean()) + 0.5
+        out["end_px"] = [float(ys.min()), float(ys.max()) + 1.0]
+    return out
+
+
+def locate_mark_pixels(pixels, marks, colour_by_id=None, shared_colour=None):
+    """``{mark key: (ys, xs)}`` for each tick found, plus the reasons for the
+    ones that were not.
+
+    ``colour_by_id``: the annotation capture, one palette colour per tick.
+    ``shared_colour``: the model capture, one reserved colour for all eight;
+    components are assigned to ticks by the image quadrant of their centroid
+    (the corner) and their bbox aspect (the orientation) -- which needs no
+    mapping, only that each tick sits in its own corner of the image. Several
+    components landing on one tick (a tick crossed by other ink) are merged
+    and counted; a component that fits no tick is counted too.
+    """
+    found, missing = {}, []
+    if shared_colour is None:
+        for mark in marks:
+            rgb = (colour_by_id or {}).get(int(mark["id"])) if mark.get(
+                "id") is not None else None
+            if rgb is None:
+                missing.append({"key": mark["key"], "reason": "no colour in the "
+                                "capture's colour map for id {0}".format(mark.get("id"))})
+                continue
+            mask = np.all(pixels == np.asarray(rgb, dtype=pixels.dtype), axis=2)
+            ys, xs = np.nonzero(mask)
+            if len(xs) == 0:
+                missing.append({"key": mark["key"], "reason": "its colour {0} drew "
+                                "no pixels".format(list(rgb))})
+                continue
+            found[mark["key"]] = (ys, xs)
+        return found, missing, {}
+    mask = np.all(pixels == np.asarray(shared_colour, dtype=pixels.dtype), axis=2)
+    ys, xs = np.nonzero(mask)
+    height, width = pixels.shape[0], pixels.shape[1]
+    by_slot = {}
+    stats = {"components": 0, "merged_into_one_tick": 0}
+    for component in _components(ys, xs):
+        stats["components"] += 1
+        cy, cx = ys[component], xs[component]
+        corner = "{0}_{1}".format("left" if cx.mean() < width / 2.0 else "right",
+                                  "top" if cy.mean() < height / 2.0 else "bottom")
+        orientation = ("horizontal" if (cx.max() - cx.min()) >= (cy.max() - cy.min())
+                       else "vertical")
+        slot = "{0}_{1}".format(corner, orientation[0])
+        if slot in by_slot:
+            stats["merged_into_one_tick"] += 1
+            by_slot[slot] = (np.concatenate([by_slot[slot][0], cy]),
+                             np.concatenate([by_slot[slot][1], cx]))
+        else:
+            by_slot[slot] = (cy, cx)
+    keys = set(m["key"] for m in marks)
+    stats["unassigned_components"] = sorted(k for k in by_slot if k not in keys)
+    for mark in marks:
+        if mark["key"] in by_slot:
+            found[mark["key"]] = by_slot[mark["key"]]
+        else:
+            missing.append({"key": mark["key"], "reason": "no component of the "
+                            "shared colour in that corner and orientation"})
+    return found, missing, stats
+
+
+def registration_mark_fit(tiff_path, marks, colour_by_id=None, shared_colour=None):
+    """F3: UV -> pixel from the ticks' CENTRE LINES, per axis, with residuals.
+
+    Also an ENDPOINT fit (tick ends against their UV span), reported beside it
+    and never in its place: an end is where line caps and anti-aliasing live.
+    """
+    marks = [m for m in marks or [] if m.get("key")]
+    if not marks:
+        return {"status": "not_applicable", "reason": "no registration marks"}
+    try:
+        pixels = _load_rgb(tiff_path)
+    except (OSError, ValueError) as ex:
+        return {"status": "unavailable",
+                "reason": "could not read {0}: {1}: {2}".format(
+                    tiff_path, type(ex).__name__, ex)}
+    found, missing, stats = locate_mark_pixels(pixels, marks, colour_by_id,
+                                               shared_colour)
+    ticks = []
+    centre = {"horizontal": ([], []), "vertical": ([], [])}
+    ends = {"horizontal": ([], []), "vertical": ([], [])}
+    mark_pixel_rects = []
+    for mark in marks:
+        if mark["key"] not in found:
+            continue
+        ys, xs = found[mark["key"]]
+        measured = _tick_measure(ys, xs, mark["orientation"])
+        tick = dict(key=mark["key"], id=mark.get("id"),
+                    orientation=mark["orientation"], level_uv=mark["level_uv"],
+                    span_uv=mark["span_uv"], **measured)
+        ticks.append(tick)
+        mark_pixel_rects.append(measured["pixel_bbox"])
+        centre[mark["orientation"]][0].append(float(mark["level_uv"]))
+        centre[mark["orientation"]][1].append(measured["centre_px"])
+        lo, hi = (float(v) for v in mark["span_uv"])
+        if mark["orientation"] == "horizontal":   # ends are u
+            ends["horizontal"][0].extend([lo, hi])
+            ends["horizontal"][1].extend(measured["end_px"])
+        else:                                       # ends are v; +v is -y
+            ends["vertical"][0].extend([hi, lo])
+            ends["vertical"][1].extend(measured["end_px"])
+    out = {"ticks": ticks, "missing": missing, "found_count": len(ticks),
+           "expected_count": len(marks), "components": stats,
+           "mark_pixel_rects": mark_pixel_rects,
+           "mark_pixels": int(sum(t["pixel_count"] for t in ticks)),
+           "image_w": int(pixels.shape[1]), "image_h": int(pixels.shape[0])}
+    # u from the VERTICAL ticks' columns, v from the HORIZONTAL ticks' rows.
+    u_fit = _axis_fit_record(*centre["vertical"])
+    v_fit = _axis_fit_record(*centre["horizontal"])
+    if (u_fit is None or v_fit is None or u_fit["a"] == 0.0 or v_fit["a"] == 0.0
+            or len(set(round(v, 9) for v in centre["vertical"][0])) < 2
+            or len(set(round(v, 9) for v in centre["horizontal"][0])) < 2):
+        out["status"] = "unavailable"
+        out["reason"] = ("{0} of {1} ticks found; each axis needs ticks at both of "
+                         "its levels".format(len(ticks), len(marks)))
+        return out
+    out["status"] = "value"
+    out["mapping"] = {"a_u": u_fit["a"], "b_u": u_fit["b"],
+                      "a_v": v_fit["a"], "b_v": v_fit["b"]}
+    out["px_per_ft_u"] = u_fit["a"]
+    out["px_per_ft_v"] = abs(v_fit["a"])
+    out["isotropy_u_over_v"] = u_fit["a"] / abs(v_fit["a"])
+    out["residual_max_px"] = {"u": u_fit["residual_max_px"],
+                              "v": v_fit["residual_max_px"]}
+    out["points"] = {"u": u_fit["points"], "v": v_fit["points"]}
+    end_u = _axis_fit_record(*ends["horizontal"])
+    end_v = _axis_fit_record(*ends["vertical"])
+    out["endpoint_fit"] = {
+        "px_per_ft_u": end_u["a"] if end_u else None,
+        "px_per_ft_v": abs(end_v["a"]) if end_v else None,
+        "residual_max_px": {"u": end_u["residual_max_px"] if end_u else None,
+                            "v": end_v["residual_max_px"] if end_v else None},
+    }
+    return out
+
+
+def _model_registration_marks(marks, context, probe_uv):
+    """The same ticks in the MODEL capture, and the check only the model
+    capture can give: its lattice is KNOWN (bounds_xy at its pixel count), so
+    the marks' fit there is compared against an answer, not another fit."""
+    model_sidecar = context.get("model_sidecar")
+    model_tiff = context.get("model_tiff")
+    if not model_sidecar or not model_tiff:
+        return {"status": "unavailable", "reason": "no model capture located"}
+    try:
+        with open(model_sidecar, encoding="utf-8") as handle:
+            model = json.load(handle)
+    except (OSError, ValueError) as ex:
+        return {"status": "unavailable",
+                "reason": "model sidecar unreadable: {0}: {1}".format(
+                    type(ex).__name__, ex)}
+    colour = context.get("registration_mark_colour")
+    if not colour:
+        return {"status": "unavailable",
+                "reason": "the combined report records no mark colour"}
+    fit = registration_mark_fit(model_tiff, marks,
+                                shared_colour=tuple(int(c) for c in colour))
+    fit["model_lines_visible"] = model.get("model_lines_visible")
+    lattice = (model_lattice_mapping(model.get("bounds_xy"), fit.get("image_w"),
+                                     fit.get("image_h"))
+               if fit.get("image_w") else None)
+    fit["lattice_mapping"] = lattice
+    fit["vs_lattice"] = mapping_agreement(
+        fit.get("mapping") if fit.get("status") == "value" else None,
+        lattice, probe_uv)
+    return fit
+
+
+def compose_pixel_transform(from_mapping, to_mapping):
+    """Pixel in one capture -> pixel in the other, through view UV. PURE.
+
+    ``x_to = sx * x_from + ox`` (and y likewise): what post-processing applies
+    to put the annotation capture onto the model lattice. Both maps must be
+    ``position = a * uv + b``.
+    """
+    if not from_mapping or not to_mapping:
+        return None
+    sx = to_mapping["a_u"] / from_mapping["a_u"]
+    sy = to_mapping["a_v"] / from_mapping["a_v"]
+    return {"scale_x": sx, "offset_x": to_mapping["b_u"] - sx * from_mapping["b_u"],
+            "scale_y": sy, "offset_y": to_mapping["b_v"] - sy * from_mapping["b_v"]}
+
+
 def mapping_agreement(first, second, probe_uv):
     """How far two UV->pixel mappings disagree. Deltas only, no verdict.
 
@@ -1608,23 +1846,55 @@ def analyze_capture(sidecar_path, tiff_path, model_tiff_sha=None,
         f2["lattice_px_per_ft"] = 1.0 / float(context["achieved_fpp_ft"])
     measurements["fiducials"] = f2
 
-    # ---- (9) F1 vs F2 vs the bbox fit -----------------------------------
+    probe_rect = context.get("authored_crop_uv") or (
+        list(frame_rect) if frame_rect else None)
+
+    # ---- (12) F3: the registration marks, in BOTH captures ---------------
+    marks = context.get("registration_marks") or []
+    if marks:
+        f3 = registration_mark_fit(tiff_path, marks,
+                                   colour_by_id=record["color_map"])
+        f3["model"] = _model_registration_marks(marks, context, probe_rect)
+        model_marks = f3["model"]
+        anno_map = f3.get("mapping") if f3.get("status") == "value" else None
+        f3["annotation_to_model_px"] = {
+            # Through the marks as found in the model capture: both ends
+            # measured, nothing assumed about either lattice.
+            "via_model_marks": compose_pixel_transform(
+                anno_map, model_marks.get("mapping")
+                if model_marks.get("status") == "value" else None),
+            # Through the model capture's RECORDED lattice: what production's
+            # decode assumes about the model image.
+            "via_model_lattice": compose_pixel_transform(
+                anno_map, model_marks.get("lattice_mapping")),
+        }
+    else:
+        f3 = {"status": "not_applicable",
+              "reason": "this capture has no registration marks (only V9 draws them)"}
+    if context.get("achieved_fpp_ft"):
+        f3["lattice_px_per_ft"] = 1.0 / float(context["achieved_fpp_ft"])
+    measurements["registration_marks"] = f3
+
+    # ---- (9) F1 vs F2 vs F3 vs the bbox fit -----------------------------
     maps = {
         "F1": boundary.get("mapping") if boundary.get("status") == "value" else None,
         "F2": f2.get("mapping") if f2.get("status") == "value" else None,
+        "F3": f3.get("mapping") if f3.get("status") == "value" else None,
         "bbox_fit": fit.get("mapping") if fit.get("status") == "value" else None,
     }
-    probe_rect = context.get("authored_crop_uv") or (
-        list(frame_rect) if frame_rect else None)
     measurements["mapping_agreement"] = {
         "probe_uv": probe_rect,
         "F1_vs_F2": mapping_agreement(maps["F1"], maps["F2"], probe_rect),
         "F1_vs_bbox_fit": mapping_agreement(maps["F1"], maps["bbox_fit"], probe_rect),
         "F2_vs_bbox_fit": mapping_agreement(maps["F2"], maps["bbox_fit"], probe_rect),
+        "F3_vs_F2": mapping_agreement(maps["F3"], maps["F2"], probe_rect),
+        "F3_vs_bbox_fit": mapping_agreement(maps["F3"], maps["bbox_fit"], probe_rect),
     }
 
     # ---- (10) datum extents, through the best available map -------------
-    chosen = next(((name, maps[name]) for name in ("F1", "F2", "bbox_fit")
+    # The marks first: their UV is what the probe DREW, not a bbox or a
+    # boundary Revit may clip.
+    chosen = next(((name, maps[name]) for name in ("F3", "F1", "F2", "bbox_fit")
                    if maps[name]), (None, None))
     if bbox_unavailable is not None:
         datums = dict(bbox_unavailable, datums=[])
@@ -1646,6 +1916,7 @@ def analyze_capture(sidecar_path, tiff_path, model_tiff_sha=None,
         "boundary_rects_excluded": len(excluded),
         "offpalette_outside_boundary": residue_pixels,
         "suppression_mode": record.get("model_suppression_mode"),
+        "category_layer": context.get("category_layer"),
         "note": "off-palette pixels that are neither the fiducials nor inside a "
                 "recovered crop-boundary band. Under membership suppression "
                 "every model member is white, so these are candidate model ink "
@@ -1939,6 +2210,12 @@ def capture_context(run, capture):
         "authored_shape": _gs_value(authored.get("shape")),
         "fiducials": ((variant_report.get("pre_state") or {}).get("fiducials")
                       or {}).get("painted") or [],
+        "registration_marks": ((variant_report.get("pre_state") or {}).get(
+            "registration_marks") or {}).get("created") or [],
+        "registration_mark_colour": ((variant_report.get("pre_state") or {}).get(
+            "registration_marks") or {}).get("colour"),
+        "category_layer": ((variant_report.get("pre_state") or {}).get(
+            "white_membership_suppression") or {}).get("category_layer"),
         "model_sidecar": capture.get("own_model_sidecar") or run.get("model_sidecar"),
         "model_tiff": capture.get("own_model_tiff") or run.get("model_tiff"),
         "achieved_fpp_ft": geometry.get("achieved_fpp_ft"),
@@ -2042,6 +2319,30 @@ def _render_crop_context(combined):
     for entry in combined.get("variants") or []:
         commit_ms = (entry.get("transaction_group") or {}).get("pre_state_commit_ms")
         restore = entry.get("restore") or {}
+        own_cost = (entry.get("pre_state") or {}).get("suppression_cost") or {}
+        if own_cost.get("suppression_ms") is not None:
+            layer = ((entry.get("pre_state") or {}).get(
+                "white_membership_suppression") or {}).get("category_layer")
+            lines.append("  - `{0}` suppression{1}: {2} ms ({3})".format(
+                entry.get("variant"),
+                "" if layer is not False else " WITHOUT the category layer",
+                _fmt(own_cost.get("suppression_ms"), "{0:.0f}"),
+                ", ".join("{0} {1}".format(k.replace("_ms", ""),
+                                           _fmt(v, "{0:.0f}"))
+                          for k, v in sorted(
+                              (own_cost.get("by_mechanism_ms") or {}).items(),
+                              key=lambda kv: -kv[1]) if v)))
+        if restore.get("mode") == "transaction_group_rollback":
+            lines.append("  - `{0}`: pre-state commit {1} ms; restore = group "
+                         "rollback, {2} ms; post-rollback element-override "
+                         "read-back {3} ms ({4})".format(
+                             entry.get("variant"), _fmt(commit_ms, "{0:.0f}"),
+                             _fmt(restore.get("rollback_ms"), "{0:.0f}"),
+                             _fmt((restore.get("element_overrides_after_rollback")
+                                   or {}).get("elapsed_ms"), "{0:.0f}"),
+                             (restore.get("element_overrides_after_rollback")
+                              or {}).get("status", "--")))
+            continue
         if commit_ms is None and not restore.get("element_blank_writes_ms"):
             continue
         lines.append("  - `{0}`: pre-state commit {1} ms; restore blank writes {2} "
@@ -2200,7 +2501,7 @@ def _render_f1_f2(analyses):
     lines.append("")
 
     # ---- (9) F1 vs F2 ------------------------------------------------
-    lines.append("### 9. F1 vs F2 vs the bbox fit")
+    lines.append("### 9. F1 vs F2 vs F3 vs the bbox fit")
     lines.append("")
     lines.append("Q2: with the crop untouched, is the rendered rectangle stable, "
                  "and do F1 and F2 agree? The disagreement is the number. "
@@ -2209,8 +2510,15 @@ def _render_f1_f2(analyses):
     rows = []
     for item in analyses:
         agreement = item["analysis"]["measurements"].get("mapping_agreement") or {}
-        for key in ("F1_vs_F2", "F1_vs_bbox_fit", "F2_vs_bbox_fit"):
-            entry = agreement.get(key) or {}
+        for key in ("F1_vs_F2", "F1_vs_bbox_fit", "F2_vs_bbox_fit",
+                    "F3_vs_F2", "F3_vs_bbox_fit"):
+            entry = agreement.get(key)
+            if entry is None:
+                continue
+            if (key.startswith("F3") and entry.get("status") != "value"
+                    and (item["analysis"]["measurements"].get(
+                        "registration_marks") or {}).get("status") == "not_applicable"):
+                continue
             if entry.get("status") != "value":
                 rows.append([item["variant"], key, "--", "--", "--",
                              entry.get("reason") or "--"])
@@ -2272,13 +2580,100 @@ def _render_f1_f2(analyses):
     for item in analyses:
         residue = item["analysis"]["measurements"].get("model_ink_residue") or {}
         rows.append([item["variant"], _fmt(residue.get("suppression_mode")),
+                     _fmt(residue.get("category_layer")),
                      residue.get("offpalette_pixels", "--"),
                      residue.get("fiducial_pixels", "--"),
                      residue.get("boundary_rects_excluded", "--"),
                      residue.get("offpalette_outside_boundary", "--")])
-    lines.extend(_table(["variant", "suppression", "off-palette", "fiducial px",
-                         "boundary bands excluded", "off-palette outside boundary"],
-                        rows))
+    lines.extend(_table(["variant", "suppression", "category layer", "off-palette",
+                         "fiducial px", "boundary bands excluded",
+                         "off-palette outside boundary"], rows))
+    lines.append("")
+    lines.append("`category layer` is mechanism 3 (category and subcategory white "
+                 "overrides). V10 runs without it: the V7 vs V10 difference in this "
+                 "table is what that layer removes, and the cost section above is "
+                 "what it costs.")
+    lines.append("")
+    lines.extend(_render_registration_marks(analyses))
+    return lines
+
+
+def _render_registration_marks(analyses):
+    """Section 12: F3, the probe's own ticks, in both captures."""
+    items = [item for item in analyses
+             if (item["analysis"]["measurements"].get("registration_marks") or {})
+             .get("status") != "not_applicable"]
+    if not items:
+        return []
+    lines = ["### 12. F3 -- registration marks, in BOTH captures", "",
+             "Eight detail-line ticks the probe drew at KNOWN view UV, inset "
+             "inside the crop, then removed by rolling back. Horizontal ticks' "
+             "centre rows give v, vertical ticks' centre columns give u: four "
+             "points per axis at two levels. The model row is checked against the "
+             "model capture's RECORDED lattice -- the one place this method meets "
+             "a known answer. The endpoint fit uses tick ends (caps, "
+             "anti-aliasing) and is shown beside the centre-line fit, never in "
+             "its place.", ""]
+    rows = []
+    for item in items:
+        f3 = item["analysis"]["measurements"]["registration_marks"]
+        for label, record in (("annotation", f3), ("model", f3.get("model") or {})):
+            residual = record.get("residual_max_px") or {}
+            ends = record.get("endpoint_fit") or {}
+            vs = record.get("vs_lattice") or {}
+            rows.append([
+                item["variant"], label,
+                "{0}/{1}".format(record.get("found_count", "--"),
+                                 record.get("expected_count", "--")),
+                _fmt(record.get("px_per_ft_u"), "{0:.4f}"),
+                _fmt(record.get("px_per_ft_v"), "{0:.4f}"),
+                _fmt(record.get("isotropy_u_over_v"), "{0:.5f}"),
+                "{0} / {1}".format(_fmt(residual.get("u"), "{0:.2f}"),
+                                   _fmt(residual.get("v"), "{0:.2f}")),
+                "{0} / {1}".format(_fmt(ends.get("px_per_ft_u"), "{0:.4f}"),
+                                   _fmt(ends.get("px_per_ft_v"), "{0:.4f}")),
+                (_fmt(vs.get("worst_corner_px"), "{0:.2f}")
+                 if vs.get("status") == "value" else "--"),
+                record.get("reason") or ""])
+    lines.extend(_table(["variant", "capture", "ticks", "px/ft u", "px/ft v",
+                         "u/v isotropy", "residual max px u / v",
+                         "endpoint fit px/ft u / v", "vs model lattice worst px",
+                         ""], rows))
+    lines.append("")
+    for item in items:
+        f3 = item["analysis"]["measurements"]["registration_marks"]
+        lattice = f3.get("lattice_px_per_ft")
+        if lattice:
+            lines.append("- `{0}` model lattice: {1} px/ft".format(
+                item["variant"], _fmt(lattice, "{0:.4f}")))
+        for name, transform in sorted((f3.get("annotation_to_model_px") or {}).items()):
+            if not transform:
+                lines.append("- `{0}` annotation -> model pixels {1}: unavailable".format(
+                    item["variant"], name))
+                continue
+            lines.append("- `{0}` annotation -> model pixels {1}: x' = {2} x {3:+.2f}, "
+                         "y' = {4} y {5:+.2f}".format(
+                             item["variant"], name,
+                             _fmt(transform["scale_x"], "{0:.6f}"),
+                             transform["offset_x"],
+                             _fmt(transform["scale_y"], "{0:.6f}"),
+                             transform["offset_y"]))
+        for label, record in (("annotation", f3), ("model", f3.get("model") or {})):
+            for miss in record.get("missing") or []:
+                lines.append("- `{0}` {1}: tick {2} not found -- {3}".format(
+                    item["variant"], label, miss.get("key"), miss.get("reason")))
+            stats = record.get("components") or {}
+            if stats.get("merged_into_one_tick") or stats.get("unassigned_components"):
+                lines.append("- `{0}` {1}: {2} component(s), {3} merged into a tick "
+                             "already found, unassigned: {4}".format(
+                                 item["variant"], label, stats.get("components"),
+                                 stats.get("merged_into_one_tick"),
+                                 stats.get("unassigned_components")))
+            if record.get("mark_pixels"):
+                lines.append("- `{0}` {1}: {2} mark pixels in {3} rect(s) to subtract "
+                             "in post".format(item["variant"], label,
+                                              record["mark_pixels"],
+                                              len(record.get("mark_pixel_rects") or [])))
     lines.append("")
     return lines
 
@@ -2851,7 +3246,29 @@ def _json_record(run, capture, analysis):
             "per_fiducial": (measurements.get("fiducials") or {}).get("fiducials"),
             "mapping": (measurements.get("fiducials") or {}).get("mapping"),
         },
+        "registration_marks": _marks_json(measurements.get("registration_marks")),
         "mapping_agreement": measurements.get("mapping_agreement"),
+    }
+
+
+def _marks_json(f3):
+    """F3 for a consumer: both mappings, the composed annotation -> model pixel
+    transform, and the mark pixels to subtract from each capture."""
+    f3 = f3 or {}
+    if f3.get("status") == "not_applicable":
+        return {"status": "not_applicable"}
+    model = f3.get("model") or {}
+    return {
+        "status": f3.get("status"), "reason": f3.get("reason"),
+        "mapping": f3.get("mapping"),
+        "mark_pixel_rects": f3.get("mark_pixel_rects"),
+        "model": {"status": model.get("status"), "reason": model.get("reason"),
+                  "mapping": model.get("mapping"),
+                  "lattice_mapping": model.get("lattice_mapping"),
+                  "vs_lattice": model.get("vs_lattice"),
+                  "mark_pixel_rects": model.get("mark_pixel_rects")},
+        "annotation_to_model_px": f3.get("annotation_to_model_px"),
+        "must_be_subtracted": True,
     }
 
 

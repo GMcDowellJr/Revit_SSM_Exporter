@@ -17,6 +17,35 @@ variant set below is round 2's; round 1's is retired by name, with reasons.
 
 ---
 
+## Round 3 — registration marks, element-only white, restore by rollback
+
+From round 2's `.4` run: the crop boundary Revit draws is not a ruler (V8 still
+had none with the crop element left alone; V0's elevation lost its horizontal
+edges to the image border), the suppression's cost is its ~390 category writes
+(>99 %), and the explicit reverse cost 33–51 s per variant.
+
+* **`v9_registration_marks`** — V8 plus eight detail-line ticks drawn by the
+  probe at known view UV, inset inside the crop, in BOTH passes; removed by the
+  group rollback. The analyzer fits both captures (section 12), checks the model
+  fit against the model capture's recorded lattice, and emits the annotation →
+  model pixel transform and the mark pixels to subtract.
+* **`v10_element_only_white`** — V7 without the category/subcategory layer
+  (element overrides and link filters only), to measure what that layer buys
+  and costs.
+* **Restore = `TransactionGroup.RollBack`**, read back afterwards: the snapshot
+  obligations, the marks' absence, and the model members' element overrides
+  against the pre-variant scan. The explicit reverse is deleted.
+* **Production (PATCH-only):** probe-only switch
+  `color_id_buffer_model_lines_visible` in the model pass (getattr, not a Config
+  field, default off), recorded as `model_lines_visible` in the sidecar.
+* **Analyzer fix:** F2 no longer fits a fiducial with no UV extent (the plan's
+  "model-anchored" 11.72/18.74 px/ft was one fiducial, two points per axis).
+
+Run order: Elevation 19293413, Plan_CropActive 19290402, Plan_RVTLink 19293485.
+Probe version `2026-09-23.1`.
+
+---
+
 ## Round 2 (revised) — THE CAPTURE DOES NOT MODIFY THE CROP
 
 This supersedes the round-2 variant set further down, which is kept for the

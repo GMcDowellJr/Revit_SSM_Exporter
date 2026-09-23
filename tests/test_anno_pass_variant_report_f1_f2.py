@@ -622,3 +622,241 @@ def test_the_capture_context_carries_the_crop_element_ids(tmp_path):
     run = {"combined": {"crop_region_elements": {"crop_element_ids": [42]}}}
     assert report.capture_context(run, {})["crop_element_ids"] == [42]
     assert report.capture_context({"combined": {}}, {})["crop_element_ids"] == []
+
+
+# ======================================================================
+# F3 (round 3) -- registration marks, in BOTH captures
+# ======================================================================
+#
+# The layout is the PROBE's own registration_mark_segments, not a copy: the
+# analyzer measures what the probe would draw, so a change to either side that
+# breaks the other turns these red (CLAUDE.md, defect class 1).
+
+from tests.dynamo import probe_stage_a_anno_pass_variants as probe  # noqa: E402
+
+MARK = probe.MARK_COLOUR
+# The model capture's lattice: a DIFFERENT scale and origin from the
+# annotation drawing, so "the two maps agree" cannot pass by accident.
+M_U, M_V = 18.0, -18.0
+MW, MH = 700, 520
+MODEL_BOUNDS = (-1.0, -2.0, -1.0 + MW / M_U, -2.0 + MH / abs(M_V))
+
+
+def _mark_layout():
+    layout = probe.registration_mark_segments(CROP_UV, 1.0 / A_U)
+    assert layout["state"] == "value", layout
+    return [dict(seg, id=9000 + i) for i, seg in enumerate(layout["segments"])]
+
+
+def _draw_tick(img, seg, colour, to_x, to_y, thickness=2):
+    if seg["orientation"] == "horizontal":
+        yc = to_y(seg["level_uv"])
+        xs = sorted(to_x(u) for u in seg["span_uv"])
+        img[int(round(yc - thickness / 2.0)):int(round(yc + thickness / 2.0)),
+            int(round(xs[0])):int(round(xs[1]))] = colour
+    else:
+        xc = to_x(seg["level_uv"])
+        ys = sorted(to_y(v) for v in seg["span_uv"])
+        img[int(round(ys[0])):int(round(ys[1])),
+            int(round(xc - thickness / 2.0)):int(round(xc + thickness / 2.0))] = colour
+
+
+def _anno_colours(marks):
+    return {m["id"]: (200, 8 * (i + 1), 16) for i, m in enumerate(marks)}
+
+
+def _mark_images(tmp_path, marks, drop=(), cross=False):
+    colours = _anno_colours(marks)
+    anno = _canvas()
+    for m in marks:
+        if m["key"] not in drop:
+            _draw_tick(anno, m, colours[m["id"]], _x, _y)
+    model = np.full((MH, MW, 3), 255, dtype=np.uint8)
+    mx = lambda u: M_U * (u - MODEL_BOUNDS[0])            # noqa: E731
+    my = lambda v: M_V * (v - MODEL_BOUNDS[3])            # noqa: E731
+    for m in marks:
+        if m["key"] not in drop:
+            _draw_tick(model, m, MARK, mx, my)
+    if cross:
+        # Other ink crossing every horizontal tick: each splits in two.
+        for m in marks:
+            if m["orientation"] == "horizontal":
+                x_mid = int(round(mx(sum(m["span_uv"]) / 2.0)))
+                model[:, x_mid:x_mid + 3] = (0, 0, 0)
+    anno_path = _save(anno, tmp_path / "anno.tiff")
+    model_path = _save(model, tmp_path / "model.tiff")
+    sidecar = tmp_path / "model.json"
+    sidecar.write_text(json.dumps({"bounds_xy": list(MODEL_BOUNDS),
+                                   "model_lines_visible": True}))
+    return anno_path, model_path, str(sidecar), colours
+
+
+def _context(model_path, sidecar):
+    return {"model_tiff": model_path, "model_sidecar": sidecar,
+            "registration_mark_colour": list(MARK)}
+
+
+def test_f3_recovers_the_annotation_mapping_from_the_tick_centre_lines(tmp_path):
+    marks = _mark_layout()
+    anno, model, sidecar, colours = _mark_images(tmp_path, marks)
+    f3 = report.registration_mark_fit(anno, marks, colour_by_id=colours)
+    assert f3["status"] == "value", f3
+    assert f3["found_count"] == 8
+    assert f3["points"] == {"u": 4, "v": 4}
+    assert f3["px_per_ft_u"] == pytest.approx(A_U, abs=1e-6)
+    assert f3["px_per_ft_v"] == pytest.approx(abs(A_V), abs=1e-6)
+    assert f3["mapping"]["b_u"] == pytest.approx(B_U, abs=0.05)
+    assert f3["mapping"]["b_v"] == pytest.approx(B_V, abs=0.05)
+
+
+def test_f3_in_the_model_capture_meets_the_recorded_lattice(tmp_path):
+    """The one place the method meets a KNOWN answer: the model lattice."""
+    marks = _mark_layout()
+    anno, model, sidecar, colours = _mark_images(tmp_path, marks)
+    fit = report._model_registration_marks(marks, _context(model, sidecar),
+                                           list(CROP_UV))
+    assert fit["status"] == "value", fit
+    assert fit["found_count"] == 8
+    assert fit["px_per_ft_u"] == pytest.approx(M_U, abs=0.01)
+    assert fit["vs_lattice"]["status"] == "value"
+    assert fit["vs_lattice"]["worst_corner_px"] < 0.6
+
+
+def test_f3_composes_annotation_pixels_onto_the_model_lattice(tmp_path):
+    marks = _mark_layout()
+    anno, model, sidecar, colours = _mark_images(tmp_path, marks)
+    anno_fit = report.registration_mark_fit(anno, marks, colour_by_id=colours)
+    model_fit = report._model_registration_marks(marks, _context(model, sidecar),
+                                                 list(CROP_UV))
+    transform = report.compose_pixel_transform(anno_fit["mapping"],
+                                               model_fit["mapping"])
+    assert transform["scale_x"] == pytest.approx(M_U / A_U, rel=1e-4)
+    # A point of known UV lands where the model lattice puts it.
+    u, v = 10.0, 12.0
+    x_model = transform["scale_x"] * _x(u) + transform["offset_x"]
+    y_model = transform["scale_y"] * _y(v) + transform["offset_y"]
+    assert x_model == pytest.approx(M_U * (u - MODEL_BOUNDS[0]), abs=0.6)
+    assert y_model == pytest.approx(M_V * (v - MODEL_BOUNDS[3]), abs=0.6)
+
+
+def test_f3_crossed_ticks_are_merged_not_miscounted(tmp_path):
+    marks = _mark_layout()
+    anno, model, sidecar, colours = _mark_images(tmp_path, marks, cross=True)
+    fit = report._model_registration_marks(marks, _context(model, sidecar),
+                                           list(CROP_UV))
+    assert fit["status"] == "value", fit
+    assert fit["components"]["components"] == 12
+    assert fit["components"]["merged_into_one_tick"] == 4
+    assert fit["vs_lattice"]["worst_corner_px"] < 0.6
+    # MERGED, not dropped: each crossed tick still spans its full length.
+    # Keeping only the first half would leave the centre right and the tick
+    # short, which only the extent shows.
+    clean_dir = tmp_path / "clean"
+    clean_dir.mkdir()
+    _a, clean_model, clean_side, _c = _mark_images(clean_dir, marks)
+    clean = report._model_registration_marks(marks, _context(clean_model, clean_side),
+                                             list(CROP_UV))
+    spans = dict((t["key"], t["end_px"]) for t in clean["ticks"])
+    for tick in fit["ticks"]:
+        if tick["orientation"] == "horizontal":
+            assert tick["end_px"] == spans[tick["key"]], tick["key"]
+
+
+def test_f3_without_ticks_at_both_levels_of_an_axis_is_unavailable(tmp_path):
+    """Both LEFT vertical ticks missing: u has one level left, which fixes no
+    scale. Refused, not fitted through one level."""
+    marks = _mark_layout()
+    anno, model, sidecar, colours = _mark_images(
+        tmp_path, marks, drop=("left_bottom_v", "left_top_v"))
+    f3 = report.registration_mark_fit(anno, marks, colour_by_id=colours)
+    assert f3["status"] == "unavailable"
+    assert {m["key"] for m in f3["missing"]} == {"left_bottom_v", "left_top_v"}
+
+
+def test_one_missing_tick_still_fits_and_names_the_gap(tmp_path):
+    """The CONTROL for the refusal above: one tick short is three points on an
+    axis, still two levels."""
+    marks = _mark_layout()
+    anno, model, sidecar, colours = _mark_images(tmp_path, marks,
+                                                 drop=("left_top_v",))
+    f3 = report.registration_mark_fit(anno, marks, colour_by_id=colours)
+    assert f3["status"] == "value"
+    assert f3["points"]["u"] == 3
+    assert [m["key"] for m in f3["missing"]] == ["left_top_v"]
+
+
+def test_end_to_end_v9_reports_section_12_and_the_json_carries_the_transform(
+        tmp_path):
+    marks = _mark_layout()
+    root = tmp_path / "anno_pass_variants_probe"
+    root.mkdir()
+    anno_img_dir = tmp_path / "src"
+    anno_img_dir.mkdir()
+    anno, model, model_sidecar, colours = _mark_images(anno_img_dir, marks)
+    anno_pixels = np.array(Image.open(anno).convert("RGB"))
+    # The crop boundary too, so F1 is ALSO available and the datum map is a
+    # choice between rulers rather than the only one present.
+    _outline(anno_pixels, _x(CROP_UV[0]), _y(CROP_UV[3]), _x(CROP_UV[2]),
+             _y(CROP_UV[1]))
+    side, tiff = _write_capture(root, "v9_registration_marks", anno_pixels,
+                                colours, {}, "untouched", None)
+    own_dir = root / "v9_registration_marks" / "model" / "color_id_buffer"
+    own_dir.mkdir(parents=True)
+    own_tiff = own_dir / "V_1.tiff"
+    own_tiff.write_bytes(open(model, "rb").read())
+    own_side = own_dir / "V_1.json"
+    own_side.write_text(open(model_sidecar).read())
+    combined = {
+        "probe": {"name": "stage_a_anno_pass_variants", "version": "2026-09-23.1"},
+        "inputs": {"view_id": 1, "view_name": "V", "view_scale": 96.0},
+        "model_pass": {"success": True, "geometry": {"achieved_fpp_ft": 1.0 / 12.0}},
+        "authored_crop": {"crop_box_active": {"state": "value", "value": True},
+                          "crop_box_uv": {"state": "value", "value": list(CROP_UV)}},
+        "crop_relationships": {"authored_crop_active": True,
+                               "authored_crop_uv": list(CROP_UV)},
+        "variants": [{
+            "variant": "v9_registration_marks", "skipped": False, "conclusion": "RAN",
+            "measurement": {"measured": True, "unmet": []},
+            "annotation_pass": {"sidecar_path": side, "tiff_path": tiff,
+                                "success": True, "capture_faults": []},
+            "own_model_pass": {"sidecar_path": str(own_side),
+                               "tiff_path": str(own_tiff)},
+            "pre_state": {"registration_marks": {
+                "created": marks, "colour": list(MARK)}},
+            "restore": {"mode": "transaction_group_rollback", "rollback_ms": 12.0,
+                        "element_overrides_after_rollback": {
+                            "status": "restored", "elapsed_ms": 3.0}},
+            "transaction_group": {"pre_state_commit_ms": 5.0},
+        }],
+    }
+    (root / "V_1.anno_pass_variants.json").write_text(json.dumps(combined))
+    records = []
+    text = report.build_report([str(root)], overlay_enabled=False,
+                               json_records=records)
+    assert "### 12. F3 -- registration marks" in text
+    assert "restore = group rollback, 12 ms" in text
+    [record] = records
+    marks_json = record["registration_marks"]
+    assert marks_json["status"] == "value"
+    assert marks_json["model"]["vs_lattice"]["worst_corner_px"] < 0.6
+    assert marks_json["annotation_to_model_px"]["via_model_marks"][
+        "scale_x"] == pytest.approx(M_U / A_U, rel=1e-4)
+    assert len(marks_json["mark_pixel_rects"]) == 8
+    assert "F3_vs_bbox_fit" in record["mapping_agreement"]
+    # The marks, now the best ruler present, are the map the datums use.
+    [run] = report.discover_runs(root)
+    [capture] = run["captures"]
+    analysis = report.analyze_capture(capture["sidecar"], capture["tiff"],
+                                      context=report.capture_context(run, capture))
+    assert analysis["measurements"]["crop_boundary"]["status"] == "value"
+    assert analysis["measurements"]["datum_extents"]["mapping_used"] == "F3"
+
+
+def test_a_capture_without_marks_reports_f3_not_applicable(tmp_path):
+    """The CONTROL for the end-to-end test: no marks, no section 12."""
+    root = _probe_dir(tmp_path)
+    records = []
+    text = report.build_report([str(root)], overlay_enabled=False,
+                               json_records=records)
+    assert "### 12." not in text
+    assert records[0]["registration_marks"] == {"status": "not_applicable"}
