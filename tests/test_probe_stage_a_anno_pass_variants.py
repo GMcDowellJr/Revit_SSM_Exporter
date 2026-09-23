@@ -1967,14 +1967,20 @@ def _layout(uv=(0.0, 0.0, 100.0, 50.0), fpp=0.1, **kw):
     return probe.registration_mark_segments(uv, fpp, **kw)
 
 
-def test_marks_are_eight_ticks_two_per_corner_one_of_each_orientation():
+def test_marks_are_twelve_ticks_two_per_corner_and_one_per_edge_middle():
     layout = _layout()
     assert layout["state"] == "value"
     segments = layout["segments"]
-    assert len(segments) == 8
+    assert len(segments) == 12
+    assert len(set(s["key"] for s in segments)) == 12
     for corner, _su, _sv in probe.MARK_CORNERS:
         mine = [s for s in segments if s["corner"] == corner]
         assert sorted(s["orientation"] for s in mine) == ["horizontal", "vertical"]
+    by_key = dict((s["key"], s) for s in segments)
+    # The mid ticks sit ON the centre lines: v for the horizontal ones, u for
+    # the vertical ones.
+    assert by_key["left_mid_h"]["level_uv"] == by_key["right_mid_h"]["level_uv"] == 25.0
+    assert by_key["mid_bottom_v"]["level_uv"] == by_key["mid_top_v"]["level_uv"] == 50.0
 
 
 def test_marks_sit_inside_the_reference_by_the_inset_and_never_touch():
@@ -1998,12 +2004,39 @@ def test_marks_sit_inside_the_reference_by_the_inset_and_never_touch():
         assert min(abs(y - h["level_uv"]) for y in v["span_uv"]) == pytest.approx(gap)
 
 
-def test_each_axis_gets_four_ticks_at_two_levels_so_the_fit_has_a_residual():
+def test_each_axis_gets_six_ticks_at_THREE_levels_so_the_residual_means_something():
+    """Round 3 had two levels per axis: both ticks at a level land on one pixel
+    row, so four points were two and every residual was 0.00 by construction."""
     layout = _layout()
     for orientation in ("horizontal", "vertical"):
         levels = [s["level_uv"] for s in layout["segments"]
                   if s["orientation"] == orientation]
-        assert len(levels) == 4 and len(set(round(x, 9) for x in levels)) == 2
+        assert len(levels) == 6 and len(set(round(x, 9) for x in levels)) == 3
+
+
+def test_every_corner_tick_stays_in_the_outer_third_and_mid_ticks_do_not():
+    """The analyzer splits the MODEL capture's one-colour ticks by image thirds.
+    That is only sound if the layout keeps the promise; assert it here, where
+    the layout lives, over several crop shapes."""
+    for uv, fpp in (((0.0, 0.0, 100.0, 50.0), 0.1), ((0.0, 0.0, 20.0, 60.0), 0.05),
+                    ((-5.0, 3.0, 40.0, 13.0), 0.02),
+                    # 600 x 300 px: here the THIRD bound, not the 96 px cap,
+                    # sets the arm -- the case that discriminates.
+                    ((0.0, 0.0, 30.0, 15.0), 0.05)):
+        layout = _layout(uv=uv, fpp=fpp)
+        u0, v0, u1, v1 = uv
+        for seg in layout["segments"]:
+            us = [seg["uv0"][0], seg["uv1"][0]]
+            vs = [seg["uv0"][1], seg["uv1"][1]]
+            third_u, third_v = (u1 - u0) / 3.0, (v1 - v0) / 3.0
+            if seg["corner"] in dict((c[0], 1) for c in probe.MARK_CORNERS):
+                assert (max(us) <= u0 + third_u or min(us) >= u1 - third_u), seg
+                assert (max(vs) <= v0 + third_v or min(vs) >= v1 - third_v), seg
+            elif seg["orientation"] == "horizontal":
+                assert max(us) <= u0 + (u1 - u0) / 2.0 or min(us) >= u0 + (u1 - u0) / 2.0
+                assert v0 + third_v < vs[0] < v1 - third_v, seg
+            else:
+                assert u0 + third_u < us[0] < u1 - third_u, seg
 
 
 def test_the_arm_shrinks_for_a_small_crop_and_a_tiny_one_is_refused():

@@ -106,7 +106,7 @@ def _probe_contract():
 
 
 PROBE_NAME = "stage_a_anno_pass_variants"
-PROBE_VERSION = "2026-09-23.1"
+PROBE_VERSION = "2026-09-23.2"
 
 V0 = "v0_control"
 V7 = "v7_no_crop"
@@ -184,12 +184,20 @@ FIDUCIAL_COLOURS = ((251, 11, 139), (11, 139, 251))
 # drawn INSIDE the crop cannot be clipped that way, and being drawn by the
 # probe their UV is known exactly rather than inferred from a bbox.
 #
-# Eight ticks, two per corner, one horizontal and one vertical, NOT touching:
-# each is its own connected component, so the model capture (where all eight
-# share MARK_COLOUR) can be split into ticks without knowing the mapping. The
-# horizontal ticks give v (their centre row), the vertical ones u (their centre
-# column): four points per axis at two levels, so each axis fit has a residual.
-# Sizes are in MODEL-LATTICE pixels, converted to feet through achieved_fpp_ft.
+# Twelve ticks, NOT touching: two per corner (one horizontal, one vertical) and
+# one at the middle of each edge. Each is its own connected component, so the
+# model capture (where all twelve share MARK_COLOUR) can be split into ticks
+# without knowing the mapping. Horizontal ticks give v (their centre row),
+# vertical ones u (their centre column): SIX points per axis at THREE levels.
+#
+# Why three levels. Round 3 had two per axis, and both ticks at one level sat
+# on the same pixel row -- four points collapsed to two, every fit came back
+# with residual 0.00, and the residual said nothing about the scale. A third
+# level is the smallest change that gives the fit something to disagree with.
+#
+# Every tick is kept inside the outer THIRD of its axis (corner ticks) or on the
+# centre line (mid ticks), so the analyzer can assign model-capture components
+# by image thirds. Sizes are in MODEL-LATTICE pixels, via achieved_fpp_ft.
 MARK_COLOUR = (139, 251, 11)
 MARK_INSET_PX = 24.0
 MARK_GAP_PX = 8.0
@@ -197,6 +205,11 @@ MARK_ARM_PX = 96.0
 MARK_MIN_ARM_PX = 32.0
 MARK_CORNERS = (("left_bottom", 1.0, 1.0), ("right_bottom", -1.0, 1.0),
                 ("left_top", 1.0, -1.0), ("right_top", -1.0, -1.0))
+# Mid-edge ticks: (name, orientation, which edge the tick starts from, sign).
+MARK_MIDS = (("left_mid", "horizontal", "u0", 1.0),
+             ("right_mid", "horizontal", "u1", -1.0),
+             ("mid_bottom", "vertical", "v0", 1.0),
+             ("mid_top", "vertical", "v1", -1.0))
 
 # UNCONFIRMED. ViewCropRegionShapeManager's four annotation-crop offset
 # properties, believed to exist on Revit 2025 under these names. Resolved by
@@ -676,14 +689,17 @@ def choose_fiducial_pair(candidates, reference_uv, fpp_ft,
 def registration_mark_segments(reference_uv, fpp_ft, inset_px=MARK_INSET_PX,
                                gap_px=MARK_GAP_PX, arm_px=MARK_ARM_PX,
                                min_arm_px=MARK_MIN_ARM_PX):
-    """The eight registration ticks for a reference rectangle, in view UV. PURE.
+    """The twelve registration ticks for a reference rectangle, in view UV. PURE.
 
     Two ticks per corner, set in ``inset_px`` from both crop edges, each
     starting ``gap_px`` from the corner point so the pair never touches: a
     horizontal tick (constant v, the ruler for v) and a vertical one (constant
-    u, the ruler for u). The arm shrinks to fit a small crop, never below
+    u, the ruler for u). Plus one tick at the middle of each edge -- horizontal
+    on the left and right edges at the centre v, vertical on the bottom and top
+    edges at the centre u -- the third level per axis. The arm shrinks so every
+    corner tick stays inside the outer third of each axis, never below
     ``min_arm_px``; a crop too small for that is REFUSED rather than drawn with
-    overlapping ticks the analyzer could not separate.
+    ticks the analyzer could not separate.
 
     Returns ``{"state": "value", "segments": [...], ...}`` or
     ``{"state": "unavailable", "reason": ...}``.
@@ -698,9 +714,10 @@ def registration_mark_segments(reference_uv, fpp_ft, inset_px=MARK_INSET_PX,
             reference_uv))
     fpp = float(fpp_ft)
     extent_px = min((u1 - u0) / fpp, (v1 - v0) / fpp)
-    # Both corners on an edge need inset + gap + arm, with a clear gap between
-    # the two arms meeting in the middle.
-    room = extent_px / 2.0 - inset_px - gap_px - gap_px
+    # A corner tick must end inside the outer third of its axis: the model
+    # capture's ticks are told apart by image thirds (top/mid/bottom rows for
+    # horizontal ticks, left/mid/right columns for vertical ones).
+    room = extent_px / 3.0 - inset_px - gap_px
     arm = min(float(arm_px), room)
     if arm < float(min_arm_px):
         return _unavailable(
@@ -722,6 +739,21 @@ def registration_mark_segments(reference_uv, fpp_ft, inset_px=MARK_INSET_PX,
                          "orientation": "vertical", "level_uv": cu,
                          "span_uv": v_span,
                          "uv0": [cu, v_span[0]], "uv1": [cu, v_span[1]]})
+    edges = {"u0": u0 + inset, "u1": u1 - inset, "v0": v0 + inset, "v1": v1 - inset}
+    mid_u, mid_v = (u0 + u1) / 2.0, (v0 + v1) / 2.0
+    for name, orientation, edge, sign in MARK_MIDS:
+        start = edges[edge]
+        span = sorted((start + sign * gap, start + sign * (gap + arm_ft)))
+        if orientation == "horizontal":
+            segments.append({"key": name + "_h", "corner": name,
+                             "orientation": "horizontal", "level_uv": mid_v,
+                             "span_uv": span,
+                             "uv0": [span[0], mid_v], "uv1": [span[1], mid_v]})
+        else:
+            segments.append({"key": name + "_v", "corner": name,
+                             "orientation": "vertical", "level_uv": mid_u,
+                             "span_uv": span,
+                             "uv0": [mid_u, span[0]], "uv1": [mid_u, span[1]]})
     return {"state": "value", "segments": segments,
             "reference_uv": [u0, v0, u1, v1], "fpp_ft": fpp,
             "inset_px": float(inset_px), "gap_px": float(gap_px),

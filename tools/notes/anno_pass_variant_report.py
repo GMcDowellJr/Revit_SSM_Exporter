@@ -1091,12 +1091,13 @@ def fiducial_fit(fiducials, blobs, image_w, image_h):
 # REGISTRATION MARKS (V9) -- detail lines the probe drew at KNOWN view UV
 # ======================================================================
 #
-# Eight ticks, two per corner, just inside the crop. A horizontal tick's
-# centre ROW is its v; a vertical tick's centre COLUMN is its u. Four points per
-# axis at two levels, so each fit has a residual. In the annotation capture
-# production painted every tick its own palette colour (the sidecar's colour
-# map names it); in the model capture all eight share one reserved colour and
-# are told apart as connected components.
+# Twelve ticks just inside the crop: two per corner and one mid-edge per side.
+# A horizontal tick's centre ROW is its v; a vertical tick's centre COLUMN is
+# its u. Six points per axis at THREE levels, so each fit has a residual that
+# measures something (round 3's two levels gave 0.00 by construction). In the
+# annotation capture production painted every tick its own palette colour (the
+# sidecar's colour map names it); in the model capture all twelve share one
+# reserved colour and are told apart as connected components.
 
 def _load_rgb(path):
     with Image.open(path) as image:
@@ -1149,10 +1150,12 @@ def locate_mark_pixels(pixels, marks, colour_by_id=None, shared_colour=None):
     ones that were not.
 
     ``colour_by_id``: the annotation capture, one palette colour per tick.
-    ``shared_colour``: the model capture, one reserved colour for all eight;
-    components are assigned to ticks by the image quadrant of their centroid
-    (the corner) and their bbox aspect (the orientation) -- which needs no
-    mapping, only that each tick sits in its own corner of the image. Several
+    ``shared_colour``: the model capture, one reserved colour for all twelve;
+    components are assigned to ticks by their bbox aspect (the orientation)
+    and where their centroid falls: a horizontal tick by image HALF across and
+    THIRD down (left/right x top/mid/bottom), a vertical one by THIRD across and
+    HALF down. That needs no mapping, only the layout's promise that corner
+    ticks stay in the outer thirds and mid ticks on the centre line. Several
     components landing on one tick (a tick crossed by other ink) are merged
     and counted; a component that fits no tick is counted too.
     """
@@ -1181,10 +1184,20 @@ def locate_mark_pixels(pixels, marks, colour_by_id=None, shared_colour=None):
     for component in _components(ys, xs):
         stats["components"] += 1
         cy, cx = ys[component], xs[component]
-        corner = "{0}_{1}".format("left" if cx.mean() < width / 2.0 else "right",
-                                  "top" if cy.mean() < height / 2.0 else "bottom")
         orientation = ("horizontal" if (cx.max() - cx.min()) >= (cy.max() - cy.min())
                        else "vertical")
+        x, y = cx.mean(), cy.mean()
+
+        def _third(value, extent, names):
+            return names[0 if value < extent / 3.0 else
+                         (1 if value < 2.0 * extent / 3.0 else 2)]
+
+        if orientation == "horizontal":
+            corner = "{0}_{1}".format("left" if x < width / 2.0 else "right",
+                                      _third(y, height, ("top", "mid", "bottom")))
+        else:
+            corner = "{0}_{1}".format(_third(x, width, ("left", "mid", "right")),
+                                      "top" if y < height / 2.0 else "bottom")
         slot = "{0}_{1}".format(corner, orientation[0])
         if slot in by_slot:
             stats["merged_into_one_tick"] += 1
@@ -2606,10 +2619,13 @@ def _render_registration_marks(analyses):
     if not items:
         return []
     lines = ["### 12. F3 -- registration marks, in BOTH captures", "",
-             "Eight detail-line ticks the probe drew at KNOWN view UV, inset "
-             "inside the crop, then removed by rolling back. Horizontal ticks' "
-             "centre rows give v, vertical ticks' centre columns give u: four "
-             "points per axis at two levels. The model row is checked against the "
+             "Detail-line ticks the probe drew at KNOWN view UV, inset inside "
+             "the crop, then removed by rolling back. Horizontal ticks' centre "
+             "rows give v, vertical ticks' centre columns give u. Twelve ticks "
+             "give six points per axis at three levels, so the residual measures "
+             "disagreement between levels (a round-3 capture had eight ticks at "
+             "two levels, whose residual is 0 by construction). The model row "
+             "is checked against the "
              "model capture's RECORDED lattice -- the one place this method meets "
              "a known answer. The endpoint fit uses tick ends (caps, "
              "anti-aliasing) and is shown beside the centre-line fit, never in "

@@ -417,19 +417,19 @@ def test_a_rollback_that_undoes_nothing_is_not_safe(tmp_path, monkeypatch):
     assert report["document_safe"] is False
     assert detail["after_rollback"] == "not_restored"
     assert detail["element_overrides_after_rollback"] == "not_restored"
-    assert len(detail["probe_marks_still_in_project"]) == 8
+    assert len(detail["probe_marks_still_in_project"]) == 12
     assert report["conclusion"] == "FAIL"
 
 
 # ---- round 3: V9's registration marks, in BOTH captures -------------------
 
-def test_v9_draws_eight_marks_BEFORE_its_model_capture_and_both_captures_see_them(
+def test_v9_draws_twelve_marks_BEFORE_its_model_capture_and_both_captures_see_them(
         tmp_path, monkeypatch):
     """Mutation: create the marks after _own_model_pass, or drop the
     lines-visible request -- the model capture then has no marks."""
     report, view, exports, doc = _run(tmp_path, monkeypatch, probe.V9)
     marks = report["pre_state"]["registration_marks"]
-    assert marks["created_count"] == 8 == marks["expected_count"], marks
+    assert marks["created_count"] == 12 == marks["expected_count"], marks
     ids = [m["id"] for m in marks["created"]]
     model_export, anno_export = exports
     assert model_export["marks_in_doc"] == sorted(ids)
@@ -473,7 +473,7 @@ def test_v9_writes_the_marks_into_both_sidecars(tmp_path, monkeypatch):
     assert model["probe_registration_marks"]["pass"] == "model"
     assert {tuple(m["rgb"]) for m in model["probe_registration_marks"]["marks"]} == {
         probe.MARK_COLOUR}
-    assert len(model["probe_registration_marks"]["marks"]) == 8
+    assert len(model["probe_registration_marks"]["marks"]) == 12
 
 
 def test_v8_draws_no_marks_and_keeps_lines_hidden_in_its_model_capture(
@@ -523,5 +523,5 @@ def test_marks_the_rollback_left_behind_are_not_safe_on_their_own(
     detail = report["document_safe_detail"]
     assert detail["after_rollback"] == "restored"
     assert detail["element_overrides_after_rollback"] == "restored"
-    assert len(detail["probe_marks_still_in_project"]) == 8
+    assert len(detail["probe_marks_still_in_project"]) == 12
     assert report["document_safe"] is False

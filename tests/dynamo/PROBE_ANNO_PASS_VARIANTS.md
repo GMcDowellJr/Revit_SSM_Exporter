@@ -41,12 +41,15 @@ So, three changes:
 
 ### V9 — registration marks (F3)
 
-Two ticks per corner, one horizontal and one vertical, **not touching**, set in
-`MARK_INSET_PX` = 24 lattice px from both crop edges, `MARK_GAP_PX` = 8 px from
-the corner point, `MARK_ARM_PX` = 96 px long (shrinking to fit a small crop, never
-below 32 px — a crop too small is refused, not drawn with overlapping ticks).
-Horizontal ticks' centre rows give **v**, vertical ticks' centre columns give
-**u**: four points per axis at two levels, so each fit has a residual. The
+Twelve ticks, **not touching**: two per corner (one horizontal, one vertical)
+set in `MARK_INSET_PX` = 24 lattice px from both crop edges and `MARK_GAP_PX` = 8
+px from the corner point, plus one at the middle of each edge (`2026-09-23.2`).
+`MARK_ARM_PX` = 96 px long, shrinking so every corner tick stays in the outer
+third of its axis, never below 32 px — a crop too small is refused. Horizontal
+ticks' centre rows give **v**, vertical ticks' centre columns give **u**: six
+points per axis at **three** levels. Round 3 (`.1`) had two levels, and both
+ticks at a level sat on one pixel row, so every residual read 0.00 by
+construction; the third level is what makes the residual a measurement. The
 reference rectangle is the authored crop when active, else the model pass's
 crop A. Layout: `registration_mark_segments()` (pure); drawing:
 `create_registration_marks()`.
@@ -107,7 +110,7 @@ is deleted, not left unused.
 `selection` default is all five. Per view: 5 annotation pairs (10) + the shared
 model pair (2) + V8's and V9's own model pairs (4) + 1 combined report = **17**;
 three views **51**. The Dynamo runner's version check must read
-**`2026-09-23.1`**.
+**`2026-09-23.2`** (or later).
 
 ---
 

@@ -701,8 +701,8 @@ def test_f3_recovers_the_annotation_mapping_from_the_tick_centre_lines(tmp_path)
     anno, model, sidecar, colours = _mark_images(tmp_path, marks)
     f3 = report.registration_mark_fit(anno, marks, colour_by_id=colours)
     assert f3["status"] == "value", f3
-    assert f3["found_count"] == 8
-    assert f3["points"] == {"u": 4, "v": 4}
+    assert f3["found_count"] == 12
+    assert f3["points"] == {"u": 6, "v": 6}
     assert f3["px_per_ft_u"] == pytest.approx(A_U, abs=1e-6)
     assert f3["px_per_ft_v"] == pytest.approx(abs(A_V), abs=1e-6)
     assert f3["mapping"]["b_u"] == pytest.approx(B_U, abs=0.05)
@@ -716,7 +716,7 @@ def test_f3_in_the_model_capture_meets_the_recorded_lattice(tmp_path):
     fit = report._model_registration_marks(marks, _context(model, sidecar),
                                            list(CROP_UV))
     assert fit["status"] == "value", fit
-    assert fit["found_count"] == 8
+    assert fit["found_count"] == 12
     assert fit["px_per_ft_u"] == pytest.approx(M_U, abs=0.01)
     assert fit["vs_lattice"]["status"] == "value"
     assert fit["vs_lattice"]["worst_corner_px"] < 0.6
@@ -745,8 +745,10 @@ def test_f3_crossed_ticks_are_merged_not_miscounted(tmp_path):
     fit = report._model_registration_marks(marks, _context(model, sidecar),
                                            list(CROP_UV))
     assert fit["status"] == "value", fit
-    assert fit["components"]["components"] == 12
-    assert fit["components"]["merged_into_one_tick"] == 4
+    # Six horizontal ticks, each split in two by the crossing line.
+    assert fit["components"]["components"] == 18
+    assert fit["components"]["merged_into_one_tick"] == 6
+    assert fit["components"]["unassigned_components"] == []
     assert fit["vs_lattice"]["worst_corner_px"] < 0.6
     # MERGED, not dropped: each crossed tick still spans its full length.
     # Keeping only the first half would leave the centre right and the tick
@@ -762,15 +764,29 @@ def test_f3_crossed_ticks_are_merged_not_miscounted(tmp_path):
             assert tick["end_px"] == spans[tick["key"]], tick["key"]
 
 
-def test_f3_without_ticks_at_both_levels_of_an_axis_is_unavailable(tmp_path):
-    """Both LEFT vertical ticks missing: u has one level left, which fixes no
+def test_f3_with_one_level_left_on_an_axis_is_unavailable(tmp_path):
+    """Left AND mid vertical ticks missing: u has one level left, which fixes no
     scale. Refused, not fitted through one level."""
     marks = _mark_layout()
-    anno, model, sidecar, colours = _mark_images(
-        tmp_path, marks, drop=("left_bottom_v", "left_top_v"))
+    gone = ("left_bottom_v", "left_top_v", "mid_bottom_v", "mid_top_v")
+    anno, model, sidecar, colours = _mark_images(tmp_path, marks, drop=gone)
     f3 = report.registration_mark_fit(anno, marks, colour_by_id=colours)
     assert f3["status"] == "unavailable"
-    assert {m["key"] for m in f3["missing"]} == {"left_bottom_v", "left_top_v"}
+    assert {m["key"] for m in f3["missing"]} == set(gone)
+
+
+def test_a_misplaced_mid_tick_shows_up_as_a_residual(tmp_path):
+    """THE POINT OF THE THIRD LEVEL: a level that disagrees with the other two
+    now moves the residual. Round 3's two-level fit would read 0.00 here."""
+    marks = _mark_layout()
+    shifted = [dict(m, level_uv=m["level_uv"] + 0.5)
+               if m["key"] in ("mid_bottom_v", "mid_top_v") else m for m in marks]
+    anno, model, sidecar, colours = _mark_images(tmp_path, shifted)
+    # Measured against where the ticks were SUPPOSED to be.
+    f3 = report.registration_mark_fit(anno, marks, colour_by_id=colours)
+    assert f3["status"] == "value"
+    assert f3["residual_max_px"]["u"] > 2.0
+    assert f3["residual_max_px"]["v"] < 0.5
 
 
 def test_one_missing_tick_still_fits_and_names_the_gap(tmp_path):
@@ -781,7 +797,7 @@ def test_one_missing_tick_still_fits_and_names_the_gap(tmp_path):
                                                  drop=("left_top_v",))
     f3 = report.registration_mark_fit(anno, marks, colour_by_id=colours)
     assert f3["status"] == "value"
-    assert f3["points"]["u"] == 3
+    assert f3["points"]["u"] == 5
     assert [m["key"] for m in f3["missing"]] == ["left_top_v"]
 
 
@@ -841,7 +857,7 @@ def test_end_to_end_v9_reports_section_12_and_the_json_carries_the_transform(
     assert marks_json["model"]["vs_lattice"]["worst_corner_px"] < 0.6
     assert marks_json["annotation_to_model_px"]["via_model_marks"][
         "scale_x"] == pytest.approx(M_U / A_U, rel=1e-4)
-    assert len(marks_json["mark_pixel_rects"]) == 8
+    assert len(marks_json["mark_pixel_rects"]) == 12
     assert "F3_vs_bbox_fit" in record["mapping_agreement"]
     # The marks, now the best ruler present, are the map the datums use.
     [run] = report.discover_runs(root)
