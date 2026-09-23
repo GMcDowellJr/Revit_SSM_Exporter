@@ -944,3 +944,33 @@ def test_end_to_end_a_crop_inactive_untouched_capture_reports_instead_of_crashin
     assert analysis["measurements"]["anchor_agreement"]["margin_ft_delta"] is None
     text = report.build_report([str(root)], overlay_enabled=False)
     assert "frameless" in text
+
+
+def test_a_missing_tick_is_diagnosed_by_what_drew_where_it_should_be(tmp_path):
+    """Round 3b's elevation lost two ticks per capture and "not found" could
+    not say why. The fitted map places the missing tick; the colours there are
+    counted and named by element. Here an element's ink overdraws the tick."""
+    marks = _mark_layout()
+    anno, model, sidecar, colours = _mark_images(tmp_path, marks)
+    img = np.array(Image.open(anno).convert("RGB"))
+    victim = [m for m in marks if m["key"] == "left_mid_h"][0]
+    over = (90, 90, 200)
+    _draw_tick(img, victim, over, _x, _y, thickness=4)
+    path = _save(img, tmp_path / "overdrawn.tiff")
+    identify = dict(colours)
+    identify[777] = over
+    f3 = report.registration_mark_fit(path, marks, colour_by_id=colours,
+                                      identify_by_id=identify)
+    assert f3["status"] == "value"
+    [diag] = f3["missing_diagnosis"]
+    assert diag["key"] == "left_mid_h"
+    assert diag["colours"][0]["rgb"] == list(over)
+    assert diag["colours"][0]["element_id"] == 777
+
+
+def test_a_complete_capture_diagnoses_nothing(tmp_path):
+    """The CONTROL."""
+    marks = _mark_layout()
+    anno, model, sidecar, colours = _mark_images(tmp_path, marks)
+    f3 = report.registration_mark_fit(anno, marks, colour_by_id=colours)
+    assert f3["missing_diagnosis"] == []

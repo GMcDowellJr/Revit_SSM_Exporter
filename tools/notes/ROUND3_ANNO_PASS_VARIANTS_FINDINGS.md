@@ -109,3 +109,63 @@ the model re-export was unchanged on every view.
 * Plan residue (V7–V10): 34 470 off-palette px, overwhelmingly palette-to-white
   blends; SmoothEdges off (V8, V9) changes none of it.
 * Elevation residue (V7–V10): 1 340 grey px.
+
+---
+
+# Run `probe_0923_1239` (probe `2026-09-23.2`, twelve marks)
+
+Source: `data/round3_anno_pass_variants/anno_variants_probe_0923_1239.{md,json}`
+plus the two combined JSONs. Views: `__Elevation_CropActive` 19293413 again,
+and `__Plan_CropInActive` 19291097 for the first time. Every variant
+`document_safe`; model re-export unchanged on both.
+
+## 1. A crop-INACTIVE view breaks "crop untouched": the annotation export is the whole view
+
+| Plan_CropInActive | image | px/ft (F3) | vs model lattice 18.751 |
+|---|---|---|---|
+| V0 (crop written to frame B) | 5885 × 2963 | 18.74 / 18.62 (bbox fit) | ≈ 1 |
+| V7–V10 (crop untouched) | **2942 × 6986** | **2.8976 / 2.8983** | **6.47× coarser** |
+
+With no crop, FitToPage fits everything the view shows: ≈ 1015 × 2410 ft.
+The width request (5885 px, the model crop) was halved to 2942 because the
+height would have passed the axis cap. Production raised
+`annotation_lattice_mismatch` on V7–V10, and the probe concludes
+`CAPTURE_FAILED`: production refused its own capture, correctly.
+
+The registration marks still registered it: 12/12 in both captures. The
+annotation fit's residual is 0.00 / 0.33 px, which is 0.11 ft at that scale.
+The model fit is 0.33 px from the recorded lattice. The annotation → model
+transform is x' = 6.471175 x − 10242.85, y' = 6.469799 y − 7755.02. So
+registration is not the problem on this view. **Resolution** is: 1/8" text at
+1:96 is ≈ 3 px tall at 2.9 px/ft.
+
+**A decision, not a finding:** a crop-inactive view needs a crop for the
+annotation pass. Either the model pass's crop A (which that pass already
+activates on this view) or frame B (V0). Both move datum clipping to that
+rectangle.
+
+## 2. The mid-edge ticks drew on the plan and only partly on the elevation
+
+| view | annotation ticks | model ticks | residual max u / v (annotation, model) |
+|---|---|---|---|
+| Plan_CropInActive | **12/12** | **12/12** | 0.00 / 0.33 px, 0.33 / 0.67 px |
+| Elevation | 10/12 (no `left_mid_h`, `right_mid_h`) | 10/12 (no `mid_bottom_v`, `mid_top_v`) | 0.00 / 0.00, 0.00 / 0.00 |
+
+On the elevation each capture lost a DIFFERENT pair: the annotation capture
+lost the mid-height horizontal ticks, the model capture the mid-width
+vertical ones. All four were created (`readback_max_deviation_ft` 0) and
+coloured, and the elevation has no levels or grids to overdraw them. With one
+pair gone, each axis is back to two levels and the residual to 0 by
+construction. Not explained yet. The analyzer now reports what drew where a
+missing tick should be (`missing_diagnosis`); re-running it over this run
+answers the question without re-running Revit.
+
+Elevation F3 is unchanged from round 3 to four decimals (17.6346 / 17.6205;
+model within 0.51 px of the lattice).
+
+## 3. The category layer: five views now
+
+V7 and V10 annotation TIFFs are byte-identical on both views again
+(elevation `4cf7a33e…`, plan `b77665da…`). V10's suppression took 95 ms
+against V7's 26.8 s on the crop-inactive plan. Five views in total, zero
+differences.

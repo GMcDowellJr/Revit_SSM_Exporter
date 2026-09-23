@@ -1216,7 +1216,8 @@ def locate_mark_pixels(pixels, marks, colour_by_id=None, shared_colour=None):
     return found, missing, stats
 
 
-def registration_mark_fit(tiff_path, marks, colour_by_id=None, shared_colour=None):
+def registration_mark_fit(tiff_path, marks, colour_by_id=None, shared_colour=None,
+                          identify_by_id=None):
     """F3: UV -> pixel from the ticks' CENTRE LINES, per axis, with residuals.
 
     Also an ENDPOINT fit (tick ends against their UV span), reported beside it
@@ -1288,6 +1289,54 @@ def registration_mark_fit(tiff_path, marks, colour_by_id=None, shared_colour=Non
         "residual_max_px": {"u": end_u["residual_max_px"] if end_u else None,
                             "v": end_v["residual_max_px"] if end_v else None},
     }
+    # WHAT DREW WHERE A MISSING TICK SHOULD BE. Round 3b's elevation lost the
+    # two mid-height horizontal ticks from the annotation capture and the two
+    # mid-width vertical ones from the model capture, with every other tick
+    # present -- and "not found" alone cannot say whether the tick was
+    # overdrawn, drawn in another colour, or never drawn. The fitted map puts
+    # each missing tick at a pixel rectangle; its colours are counted there.
+    out["missing_diagnosis"] = [
+        _diagnose_missing_tick(pixels, mark, out["mapping"],
+                               identify_by_id or colour_by_id)
+        for mark in marks
+        if mark["key"] in set(m["key"] for m in missing)]
+    return out
+
+
+MISSING_TICK_PAD_PX = 3
+
+
+def _diagnose_missing_tick(pixels, mark, mapping, colour_by_id=None):
+    """The colours inside the rectangle where ``mark`` should have drawn."""
+    lo, hi = (float(v) for v in mark["span_uv"])
+    level = float(mark["level_uv"])
+    if mark["orientation"] == "horizontal":
+        xs = sorted((mapping["a_u"] * lo + mapping["b_u"],
+                     mapping["a_u"] * hi + mapping["b_u"]))
+        y = mapping["a_v"] * level + mapping["b_v"]
+        x0, x1, y0, y1 = xs[0], xs[1], y, y
+    else:
+        ys = sorted((mapping["a_v"] * lo + mapping["b_v"],
+                     mapping["a_v"] * hi + mapping["b_v"]))
+        x = mapping["a_u"] * level + mapping["b_u"]
+        x0, x1, y0, y1 = x, x, ys[0], ys[1]
+    pad = MISSING_TICK_PAD_PX
+    height, width = pixels.shape[0], pixels.shape[1]
+    c0, c1 = max(0, int(x0) - pad), min(width, int(x1) + pad + 1)
+    r0, r1 = max(0, int(y0) - pad), min(height, int(y1) + pad + 1)
+    out = {"key": mark["key"], "id": mark.get("id"),
+           "expected_px_rect": [c0, r0, c1 - 1, r1 - 1]}
+    if c1 <= c0 or r1 <= r0:
+        out["reason"] = "the expected rectangle falls outside the image"
+        return out
+    window = pixels[r0:r1, c0:c1].reshape(-1, 3)
+    counts = Counter(tuple(int(c) for c in rgb) for rgb in window)
+    by_colour = dict((tuple(v), k) for k, v in (colour_by_id or {}).items())
+    out["window_px"] = int(window.shape[0])
+    out["white_px"] = int(counts.pop(WHITE, 0))
+    out["colours"] = [{"rgb": list(rgb), "px": n,
+                       "element_id": by_colour.get(rgb)}
+                      for rgb, n in counts.most_common(5)]
     return out
 
 
@@ -1310,8 +1359,16 @@ def _model_registration_marks(marks, context, probe_uv):
     if not colour:
         return {"status": "unavailable",
                 "reason": "the combined report records no mark colour"}
+    model_colours, unreadable_keys = {}, []
+    for key, rgb in (model.get("color_assignment_map") or {}).items():
+        try:
+            model_colours[int(key)] = tuple(int(c) for c in rgb)
+        except (TypeError, ValueError):
+            unreadable_keys.append(str(key))
     fit = registration_mark_fit(model_tiff, marks,
-                                shared_colour=tuple(int(c) for c in colour))
+                                shared_colour=tuple(int(c) for c in colour),
+                                identify_by_id=model_colours)
+    fit["model_colour_map_unreadable_keys"] = unreadable_keys
     fit["model_lines_visible"] = model.get("model_lines_visible")
     lattice = (model_lattice_mapping(model.get("bounds_xy"), fit.get("image_w"),
                                      fit.get("image_h"))
@@ -2687,6 +2744,17 @@ def _render_registration_marks(analyses):
             for miss in record.get("missing") or []:
                 lines.append("- `{0}` {1}: tick {2} not found -- {3}".format(
                     item["variant"], label, miss.get("key"), miss.get("reason")))
+            for diag in record.get("missing_diagnosis") or []:
+                lines.append(
+                    "  - where {0} should be (px {1}): {2} of {3} px white; "
+                    "other colours: {4}".format(
+                        diag["key"], diag.get("expected_px_rect"),
+                        diag.get("white_px", "--"), diag.get("window_px", "--"),
+                        ", ".join("{0} x{1}{2}".format(
+                            c["rgb"], c["px"],
+                            " (element {0})".format(c["element_id"])
+                            if c.get("element_id") is not None else "")
+                            for c in diag.get("colours") or []) or "none"))
             stats = record.get("components") or {}
             if stats.get("merged_into_one_tick") or stats.get("unassigned_components"):
                 lines.append("- `{0}` {1}: {2} component(s), {3} merged into a tick "
