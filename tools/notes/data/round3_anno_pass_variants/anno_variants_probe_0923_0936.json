@@ -1,0 +1,2020 @@
+{
+  "captures": [
+    {
+      "annotation_tiff": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_0923_0936\\anno_pass_variants_probe\\v0_control\\color_id_buffer\\__Elevation_CropActive_19293413_anno.tiff",
+      "crop_boundary": {
+        "boundary_px_rects": null,
+        "mapping": null,
+        "must_be_subtracted": false,
+        "reason": "0 row band(s) and 3 column band(s) long enough to be a crop edge, but no four of them close into one rectangle",
+        "status": "not_found"
+      },
+      "fiducials": {
+        "mapping": null,
+        "per_fiducial": null,
+        "status": "not_applicable"
+      },
+      "mapping_agreement": {
+        "F1_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F1_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F2_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F3_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F3_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "probe_uv": [
+          -104.01772534812247,
+          -4.810097715203943,
+          171.41561007680002,
+          62.7311886414472
+        ]
+      },
+      "model_crop_boundary": null,
+      "registration_marks": {
+        "status": "not_applicable"
+      },
+      "variant": "v0_control",
+      "view_id": 19293413,
+      "view_name": "__Elevation_CropActive"
+    },
+    {
+      "annotation_tiff": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_0923_0936\\anno_pass_variants_probe\\v7_no_crop\\color_id_buffer\\__Elevation_CropActive_19293413_anno.tiff",
+      "crop_boundary": {
+        "boundary_px_rects": null,
+        "mapping": null,
+        "must_be_subtracted": false,
+        "reason": "no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture",
+        "status": "not_found"
+      },
+      "fiducials": {
+        "mapping": null,
+        "per_fiducial": null,
+        "status": "not_applicable"
+      },
+      "mapping_agreement": {
+        "F1_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F1_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F2_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F3_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F3_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "probe_uv": [
+          -104.01772534812247,
+          -4.810097715203943,
+          171.41561007680002,
+          62.7311886414472
+        ]
+      },
+      "model_crop_boundary": null,
+      "registration_marks": {
+        "status": "not_applicable"
+      },
+      "variant": "v7_no_crop",
+      "view_id": 19293413,
+      "view_name": "__Elevation_CropActive"
+    },
+    {
+      "annotation_tiff": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_0923_0936\\anno_pass_variants_probe\\v8_no_crop_fiducials\\color_id_buffer\\__Elevation_CropActive_19293413_anno.tiff",
+      "crop_boundary": {
+        "boundary_px_rects": null,
+        "mapping": null,
+        "must_be_subtracted": false,
+        "reason": "no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture",
+        "status": "not_found"
+      },
+      "fiducials": {
+        "mapping": {
+          "a_u": 17.631198700285395,
+          "a_v": -17.279657304525657,
+          "b_u": 1977.412165583557,
+          "b_v": 1366.6031894104713
+        },
+        "per_fiducial": [
+          {
+            "found": true,
+            "id": 8852504,
+            "pixel_bbox": [
+              1246.0,
+              341.0,
+              1429.0,
+              342.0
+            ],
+            "pixel_count": 368,
+            "rect_uv": [
+              -41.51502225001987,
+              57.58333333333331,
+              -31.015022250016784,
+              60.916666666666664
+            ],
+            "rgb": [
+              251,
+              11,
+              139
+            ],
+            "touches_border": false
+          },
+          {
+            "found": true,
+            "id": 14208030,
+            "pixel_bbox": [
+              4452.0,
+              1376.0,
+              4459.0,
+              1395.0
+            ],
+            "pixel_count": 153,
+            "rect_uv": [
+              140.37039441664712,
+              -1.737695094585085,
+              140.7870610833138,
+              -0.4166666666666676
+            ],
+            "rgb": [
+              11,
+              139,
+              251
+            ],
+            "touches_border": false
+          }
+        ],
+        "status": "value"
+      },
+      "mapping_agreement": {
+        "F1_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F1_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F2_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F3_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F3_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "probe_uv": [
+          -104.01772534812247,
+          -4.810097715203943,
+          171.41561007680002,
+          62.7311886414472
+        ]
+      },
+      "model_crop_boundary": {
+        "boundary_px_rects": null,
+        "model_tiff": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_0923_0936\\anno_pass_variants_probe\\v8_no_crop_fiducials\\model\\color_id_buffer\\__Elevation_CropActive_19293413.tiff",
+        "status": "not_found"
+      },
+      "registration_marks": {
+        "status": "not_applicable"
+      },
+      "variant": "v8_no_crop_fiducials",
+      "view_id": 19293413,
+      "view_name": "__Elevation_CropActive"
+    },
+    {
+      "annotation_tiff": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_0923_0936\\anno_pass_variants_probe\\v9_registration_marks\\color_id_buffer\\__Elevation_CropActive_19293413_anno.tiff",
+      "crop_boundary": {
+        "boundary_px_rects": null,
+        "mapping": null,
+        "must_be_subtracted": false,
+        "reason": "no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture",
+        "status": "not_found"
+      },
+      "fiducials": {
+        "mapping": {
+          "a_u": 17.631198700285395,
+          "a_v": -17.279657304525657,
+          "b_u": 1977.412165583557,
+          "b_v": 1366.6031894104713
+        },
+        "per_fiducial": [
+          {
+            "found": true,
+            "id": 8852504,
+            "pixel_bbox": [
+              1246.0,
+              341.0,
+              1429.0,
+              342.0
+            ],
+            "pixel_count": 368,
+            "rect_uv": [
+              -41.51502225001987,
+              57.58333333333331,
+              -31.015022250016784,
+              60.916666666666664
+            ],
+            "rgb": [
+              251,
+              11,
+              139
+            ],
+            "touches_border": false
+          },
+          {
+            "found": true,
+            "id": 14208030,
+            "pixel_bbox": [
+              4452.0,
+              1376.0,
+              4459.0,
+              1395.0
+            ],
+            "pixel_count": 153,
+            "rect_uv": [
+              140.37039441664712,
+              -1.737695094585085,
+              140.7870610833138,
+              -0.4166666666666676
+            ],
+            "rgb": [
+              11,
+              139,
+              251
+            ],
+            "touches_border": false
+          }
+        ],
+        "status": "value"
+      },
+      "mapping_agreement": {
+        "F1_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F1_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F2_vs_bbox_fit": {
+          "corners": [
+            {
+              "dx_px": 1.1158550705204107,
+              "dy_px": 24.259578226344047,
+              "uv": [
+                -104.01772534812247,
+                62.7311886414472
+              ]
+            },
+            {
+              "dx_px": 0.013973726838230505,
+              "dy_px": 24.259578226344047,
+              "uv": [
+                171.41561007680002,
+                62.7311886414472
+              ]
+            },
+            {
+              "dx_px": 1.1158550705204107,
+              "dy_px": 0.7151986848441538,
+              "uv": [
+                -104.01772534812247,
+                -4.810097715203943
+              ]
+            },
+            {
+              "dx_px": 0.013973726838230505,
+              "dy_px": 0.7151986848441538,
+              "uv": [
+                171.41561007680002,
+                -4.810097715203943
+              ]
+            }
+          ],
+          "px_per_ft_u_delta": -0.004000537342299992,
+          "px_per_ft_v_delta": -0.34859240638642675,
+          "status": "value",
+          "worst_corner_px": 24.259578226344047
+        },
+        "F3_vs_F2": {
+          "corners": [
+            {
+              "dx_px": -0.5288674674161484,
+              "dy_px": -23.68563563818202,
+              "uv": [
+                -104.01772534812247,
+                62.7311886414472
+              ]
+            },
+            {
+              "dx_px": 0.399038670057962,
+              "dy_px": -23.68563563818202,
+              "uv": [
+                171.41561007680002,
+                62.7311886414472
+              ]
+            },
+            {
+              "dx_px": -0.5288674674161484,
+              "dy_px": -0.664141273006635,
+              "uv": [
+                -104.01772534812247,
+                -4.810097715203943
+              ]
+            },
+            {
+              "dx_px": 0.399038670057962,
+              "dy_px": -0.664141273006635,
+              "uv": [
+                171.41561007680002,
+                -4.810097715203943
+              ]
+            }
+          ],
+          "px_per_ft_u_delta": 0.0033688955479611593,
+          "px_per_ft_v_delta": 0.34085069454571126,
+          "status": "value",
+          "worst_corner_px": 23.68563563818202
+        },
+        "F3_vs_bbox_fit": {
+          "corners": [
+            {
+              "dx_px": 0.5869876031042622,
+              "dy_px": 0.5739425881620264,
+              "uv": [
+                -104.01772534812247,
+                62.7311886414472
+              ]
+            },
+            {
+              "dx_px": 0.4130123968961925,
+              "dy_px": 0.5739425881620264,
+              "uv": [
+                171.41561007680002,
+                62.7311886414472
+              ]
+            },
+            {
+              "dx_px": 0.5869876031042622,
+              "dy_px": 0.051057411837518885,
+              "uv": [
+                -104.01772534812247,
+                -4.810097715203943
+              ]
+            },
+            {
+              "dx_px": 0.4130123968961925,
+              "dy_px": 0.051057411837518885,
+              "uv": [
+                171.41561007680002,
+                -4.810097715203943
+              ]
+            }
+          ],
+          "px_per_ft_u_delta": -0.000631641794338833,
+          "px_per_ft_v_delta": -0.007741711840715482,
+          "status": "value",
+          "worst_corner_px": 0.5869876031042622
+        },
+        "probe_uv": [
+          -104.01772534812247,
+          -4.810097715203943,
+          171.41561007680002,
+          62.7311886414472
+        ]
+      },
+      "model_crop_boundary": {
+        "boundary_px_rects": null,
+        "model_tiff": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_0923_0936\\anno_pass_variants_probe\\v9_registration_marks\\model\\color_id_buffer\\__Elevation_CropActive_19293413.tiff",
+        "status": "not_found"
+      },
+      "registration_marks": {
+        "annotation_to_model_px": {
+          "via_model_lattice": {
+            "offset_x": -151.95552784704887,
+            "offset_y": -274.82982825608406,
+            "scale_x": 1.063175394846218,
+            "scale_y": 1.064023714164798
+          },
+          "via_model_marks": {
+            "offset_x": -152.45552784704887,
+            "offset_y": -274.94716157205244,
+            "scale_x": 1.0631753948462177,
+            "scale_y": 1.063755458515284
+          }
+        },
+        "mapping": {
+          "a_u": 17.634567595833357,
+          "a_v": -17.620507999071368,
+          "b_u": 1977.2337229679754,
+          "b_v": 1364.2995229904045
+        },
+        "mark_pixel_rects": [
+          [
+            173,
+            1426,
+            262,
+            1426
+          ],
+          [
+            165,
+            1330,
+            165,
+            1419
+          ],
+          [
+            4880,
+            1426,
+            4969,
+            1426
+          ],
+          [
+            4977,
+            1329,
+            4977,
+            1419
+          ],
+          [
+            173,
+            281,
+            262,
+            281
+          ],
+          [
+            165,
+            289,
+            165,
+            378
+          ],
+          [
+            4880,
+            281,
+            4969,
+            281
+          ],
+          [
+            4977,
+            289,
+            4977,
+            378
+          ]
+        ],
+        "model": {
+          "lattice_mapping": {
+            "a_u": 18.74863836664245,
+            "a_v": -18.74863836664245,
+            "b_u": 1950.1907162726857,
+            "b_v": 1176.8172174294282
+          },
+          "mapping": {
+            "a_u": 18.748638366642446,
+            "a_v": -18.74391156582439,
+            "b_u": 1949.6907162726852,
+            "b_v": 1176.3339030587886
+          },
+          "mark_pixel_rects": [
+            [
+              32,
+              1242,
+              127,
+              1242
+            ],
+            [
+              23,
+              1139,
+              23,
+              1234
+            ],
+            [
+              5036,
+              1242,
+              5131,
+              1242
+            ],
+            [
+              5139,
+              1139,
+              5139,
+              1234
+            ],
+            [
+              32,
+              24,
+              127,
+              24
+            ],
+            [
+              23,
+              33,
+              23,
+              128
+            ],
+            [
+              5036,
+              24,
+              5131,
+              24
+            ],
+            [
+              5139,
+              33,
+              5139,
+              128
+            ]
+          ],
+          "reason": null,
+          "status": "value",
+          "vs_lattice": {
+            "corners": [
+              {
+                "dx_px": -0.5000000000002274,
+                "dy_px": -0.18679653685148878,
+                "uv": [
+                  -104.01772534812247,
+                  62.7311886414472
+                ]
+              },
+              {
+                "dx_px": -0.5,
+                "dy_px": -0.18679653685148878,
+                "uv": [
+                  171.41561007680002,
+                  62.7311886414472
+                ]
+              },
+              {
+                "dx_px": -0.5000000000002274,
+                "dy_px": -0.5060507444547966,
+                "uv": [
+                  -104.01772534812247,
+                  -4.810097715203943
+                ]
+              },
+              {
+                "dx_px": -0.5,
+                "dy_px": -0.5060507444547966,
+                "uv": [
+                  171.41561007680002,
+                  -4.810097715203943
+                ]
+              }
+            ],
+            "px_per_ft_u_delta": -3.552713678800501e-15,
+            "px_per_ft_v_delta": -0.004726800818058763,
+            "status": "value",
+            "worst_corner_px": 0.5060507444547966
+          }
+        },
+        "must_be_subtracted": true,
+        "reason": null,
+        "status": "value"
+      },
+      "variant": "v9_registration_marks",
+      "view_id": 19293413,
+      "view_name": "__Elevation_CropActive"
+    },
+    {
+      "annotation_tiff": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_0923_0936\\anno_pass_variants_probe\\v10_element_only_white\\color_id_buffer\\__Elevation_CropActive_19293413_anno.tiff",
+      "crop_boundary": {
+        "boundary_px_rects": null,
+        "mapping": null,
+        "must_be_subtracted": false,
+        "reason": "no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture",
+        "status": "not_found"
+      },
+      "fiducials": {
+        "mapping": null,
+        "per_fiducial": null,
+        "status": "not_applicable"
+      },
+      "mapping_agreement": {
+        "F1_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F1_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F2_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F3_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F3_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "probe_uv": [
+          -104.01772534812247,
+          -4.810097715203943,
+          171.41561007680002,
+          62.7311886414472
+        ]
+      },
+      "model_crop_boundary": null,
+      "registration_marks": {
+        "status": "not_applicable"
+      },
+      "variant": "v10_element_only_white",
+      "view_id": 19293413,
+      "view_name": "__Elevation_CropActive"
+    },
+    {
+      "annotation_tiff": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_0923_0936\\anno_pass_variants_probe\\v0_control\\color_id_buffer\\__Plan_CropActive_19290402_anno.tiff",
+      "crop_boundary": {
+        "boundary_px_rects": null,
+        "mapping": null,
+        "must_be_subtracted": false,
+        "reason": "1 row band(s) and 2 column band(s) long enough to be a crop edge, but no four of them close into one rectangle",
+        "status": "not_found"
+      },
+      "fiducials": {
+        "mapping": null,
+        "per_fiducial": null,
+        "status": "not_applicable"
+      },
+      "mapping_agreement": {
+        "F1_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F1_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F2_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F3_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F3_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "probe_uv": [
+          -91.46926561670251,
+          2250.749394451395,
+          165.49485231475583,
+          2337.3310543423245
+        ]
+      },
+      "model_crop_boundary": null,
+      "registration_marks": {
+        "status": "not_applicable"
+      },
+      "variant": "v0_control",
+      "view_id": 19290402,
+      "view_name": "__Plan_CropActive"
+    },
+    {
+      "annotation_tiff": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_0923_0936\\anno_pass_variants_probe\\v7_no_crop\\color_id_buffer\\__Plan_CropActive_19290402_anno.tiff",
+      "crop_boundary": {
+        "boundary_px_rects": null,
+        "mapping": null,
+        "must_be_subtracted": false,
+        "reason": "no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture",
+        "status": "not_found"
+      },
+      "fiducials": {
+        "mapping": null,
+        "per_fiducial": null,
+        "status": "not_applicable"
+      },
+      "mapping_agreement": {
+        "F1_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F1_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F2_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F3_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F3_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "probe_uv": [
+          -91.46926561670251,
+          2250.749394451395,
+          165.49485231475583,
+          2337.3310543423245
+        ]
+      },
+      "model_crop_boundary": null,
+      "registration_marks": {
+        "status": "not_applicable"
+      },
+      "variant": "v7_no_crop",
+      "view_id": 19290402,
+      "view_name": "__Plan_CropActive"
+    },
+    {
+      "annotation_tiff": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_0923_0936\\anno_pass_variants_probe\\v8_no_crop_fiducials\\color_id_buffer\\__Plan_CropActive_19290402_anno.tiff",
+      "crop_boundary": {
+        "boundary_px_rects": null,
+        "mapping": null,
+        "must_be_subtracted": false,
+        "reason": "no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture",
+        "status": "not_found"
+      },
+      "fiducials": {
+        "mapping": {
+          "a_u": 16.264539830011778,
+          "a_v": -16.384435449239195,
+          "b_u": 1784.8027605308207,
+          "b_v": 38647.98767299085
+        },
+        "per_fiducial": [
+          {
+            "found": true,
+            "id": 12261162,
+            "pixel_bbox": [
+              1186.0,
+              415.0,
+              1340.0,
+              417.0
+            ],
+            "pixel_count": 463,
+            "rect_uv": [
+              -37.3402448956206,
+              2332.8998997006133,
+              -26.729670423215794,
+              2333.8998997006133
+            ],
+            "rgb": [
+              251,
+              11,
+              139
+            ],
+            "touches_border": false
+          },
+          {
+            "found": true,
+            "id": 5850099,
+            "pixel_bbox": [
+              4129.0,
+              1732.0,
+              4133.0,
+              1738.0
+            ],
+            "pixel_count": 17,
+            "rect_uv": [
+              143.95663010436672,
+              2252.592608033942,
+              144.5763807605349,
+              2253.21235869011
+            ],
+            "rgb": [
+              11,
+              139,
+              251
+            ],
+            "touches_border": false
+          }
+        ],
+        "status": "value"
+      },
+      "mapping_agreement": {
+        "F1_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F1_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F2_vs_bbox_fit": {
+          "corners": [
+            {
+              "dx_px": 6.306692844528243,
+              "dy_px": 22.686363242944935,
+              "uv": [
+                -91.46926561670251,
+                2337.3310543423245
+              ]
+            },
+            {
+              "dx_px": -12.334393673994782,
+              "dy_px": 22.686363242944935,
+              "uv": [
+                165.49485231475583,
+                2337.3310543423245
+              ]
+            },
+            {
+              "dx_px": 6.306692844528243,
+              "dy_px": -19.465092604812526,
+              "uv": [
+                -91.46926561670251,
+                2250.749394451395
+              ]
+            },
+            {
+              "dx_px": -12.334393673994782,
+              "dy_px": -19.465092604812526,
+              "uv": [
+                165.49485231475583,
+                2250.749394451395
+              ]
+            }
+          ],
+          "px_per_ft_u_delta": -0.07254353903020316,
+          "px_per_ft_v_delta": -0.48684046830311445,
+          "status": "value",
+          "worst_corner_px": 22.686363242944935
+        },
+        "F3_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F3_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "probe_uv": [
+          -91.46926561670251,
+          2250.749394451395,
+          165.49485231475583,
+          2337.3310543423245
+        ]
+      },
+      "model_crop_boundary": {
+        "boundary_px_rects": null,
+        "model_tiff": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_0923_0936\\anno_pass_variants_probe\\v8_no_crop_fiducials\\model\\color_id_buffer\\__Plan_CropActive_19290402.tiff",
+        "status": "not_found"
+      },
+      "registration_marks": {
+        "status": "not_applicable"
+      },
+      "variant": "v8_no_crop_fiducials",
+      "view_id": 19290402,
+      "view_name": "__Plan_CropActive"
+    },
+    {
+      "annotation_tiff": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_0923_0936\\anno_pass_variants_probe\\v9_registration_marks\\color_id_buffer\\__Plan_CropActive_19290402_anno.tiff",
+      "crop_boundary": {
+        "boundary_px_rects": null,
+        "mapping": null,
+        "must_be_subtracted": false,
+        "reason": "no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture",
+        "status": "not_found"
+      },
+      "fiducials": {
+        "mapping": {
+          "a_u": 16.264539830011778,
+          "a_v": -16.384435449239195,
+          "b_u": 1784.8027605308207,
+          "b_v": 38647.98767299085
+        },
+        "per_fiducial": [
+          {
+            "found": true,
+            "id": 12261162,
+            "pixel_bbox": [
+              1186.0,
+              415.0,
+              1340.0,
+              417.0
+            ],
+            "pixel_count": 463,
+            "rect_uv": [
+              -37.3402448956206,
+              2332.8998997006133,
+              -26.729670423215794,
+              2333.8998997006133
+            ],
+            "rgb": [
+              251,
+              11,
+              139
+            ],
+            "touches_border": false
+          },
+          {
+            "found": true,
+            "id": 5850099,
+            "pixel_bbox": [
+              4129.0,
+              1732.0,
+              4133.0,
+              1738.0
+            ],
+            "pixel_count": 17,
+            "rect_uv": [
+              143.95663010436672,
+              2252.592608033942,
+              144.5763807605349,
+              2253.21235869011
+            ],
+            "rgb": [
+              11,
+              139,
+              251
+            ],
+            "touches_border": false
+          }
+        ],
+        "status": "value"
+      },
+      "mapping_agreement": {
+        "F1_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F1_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F2_vs_bbox_fit": {
+          "corners": [
+            {
+              "dx_px": 5.782719582090067,
+              "dy_px": 20.934059536833956,
+              "uv": [
+                -91.46926561670251,
+                2337.3310543423245
+              ]
+            },
+            {
+              "dx_px": -11.763713531247959,
+              "dy_px": 20.934059536833956,
+              "uv": [
+                165.49485231475583,
+                2337.3310543423245
+              ]
+            },
+            {
+              "dx_px": 5.782719582090067,
+              "dy_px": -17.906131456431467,
+              "uv": [
+                -91.46926561670251,
+                2250.749394451395
+              ]
+            },
+            {
+              "dx_px": -11.763713531247959,
+              "dy_px": -17.906131456431467,
+              "uv": [
+                165.49485231475583,
+                2250.749394451395
+              ]
+            }
+          ],
+          "px_per_ft_u_delta": -0.06828359248981997,
+          "px_per_ft_v_delta": -0.4485960542012286,
+          "status": "value",
+          "worst_corner_px": 20.934059536833956
+        },
+        "F3_vs_F2": {
+          "corners": [
+            {
+              "dx_px": -0.43867143036754896,
+              "dy_px": 5.5202288472646615,
+              "uv": [
+                -91.46926561670251,
+                2337.3310543423245
+              ]
+            },
+            {
+              "dx_px": 3.841047078248266,
+              "dy_px": 5.5202288472646615,
+              "uv": [
+                165.49485231475583,
+                2337.3310543423245
+              ]
+            },
+            {
+              "dx_px": -0.43867143036754896,
+              "dy_px": -3.3876256518778973,
+              "uv": [
+                -91.46926561670251,
+                2250.749394451395
+              ]
+            },
+            {
+              "dx_px": 3.841047078248266,
+              "dy_px": -3.3876256518778973,
+              "uv": [
+                165.49485231475583,
+                2250.749394451395
+              ]
+            }
+          ],
+          "px_per_ft_u_delta": 0.016654926544092064,
+          "px_per_ft_v_delta": -0.10288384988643173,
+          "status": "value",
+          "worst_corner_px": 5.5202288472646615
+        },
+        "F3_vs_bbox_fit": {
+          "corners": [
+            {
+              "dx_px": 5.344048151722518,
+              "dy_px": 26.454288384098618,
+              "uv": [
+                -91.46926561670251,
+                2337.3310543423245
+              ]
+            },
+            {
+              "dx_px": -7.922666452999692,
+              "dy_px": 26.454288384098618,
+              "uv": [
+                165.49485231475583,
+                2337.3310543423245
+              ]
+            },
+            {
+              "dx_px": 5.344048151722518,
+              "dy_px": -21.293757108309364,
+              "uv": [
+                -91.46926561670251,
+                2250.749394451395
+              ]
+            },
+            {
+              "dx_px": -7.922666452999692,
+              "dy_px": -21.293757108309364,
+              "uv": [
+                165.49485231475583,
+                2250.749394451395
+              ]
+            }
+          ],
+          "px_per_ft_u_delta": -0.0516286659457279,
+          "px_per_ft_v_delta": -0.5514799040876603,
+          "status": "value",
+          "worst_corner_px": 26.454288384098618
+        },
+        "probe_uv": [
+          -91.46926561670251,
+          2250.749394451395,
+          165.49485231475583,
+          2337.3310543423245
+        ]
+      },
+      "model_crop_boundary": {
+        "boundary_px_rects": null,
+        "model_tiff": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_0923_0936\\anno_pass_variants_probe\\v9_registration_marks\\model\\color_id_buffer\\__Plan_CropActive_19290402.tiff",
+        "status": "not_found"
+      },
+      "registration_marks": {
+        "annotation_to_model_px": {
+          "via_model_lattice": {
+            "offset_x": -340.8629105064331,
+            "offset_y": -411.09692459315556,
+            "scale_x": 1.1515527510434345,
+            "scale_y": 1.1508184437943234
+          },
+          "via_model_marks": {
+            "offset_x": -339.98527281506495,
+            "offset_y": -412.54970760233846,
+            "scale_x": 1.1511347175277642,
+            "scale_y": 1.152046783625731
+          }
+        },
+        "mapping": {
+          "a_u": 16.28119475655587,
+          "a_v": -16.281551599352763,
+          "b_u": 1785.8875030003412,
+          "b_v": 38413.03428450826
+        },
+        "mark_pixel_rects": [
+          [
+            324,
+            1746,
+            407,
+            1746
+          ],
+          [
+            317,
+            1657,
+            317,
+            1739
+          ],
+          [
+            4372,
+            1746,
+            4451,
+            1746
+          ],
+          [
+            4459,
+            1657,
+            4459,
+            1739
+          ],
+          [
+            324,
+            378,
+            407,
+            378
+          ],
+          [
+            317,
+            386,
+            317,
+            468
+          ],
+          [
+            4369,
+            378,
+            4451,
+            378
+          ],
+          [
+            4459,
+            386,
+            4459,
+            469
+          ]
+        ],
+        "model": {
+          "lattice_mapping": {
+            "a_u": 18.748654612185852,
+            "a_v": -18.737109874124123,
+            "b_u": 1715.6807566276996,
+            "b_v": 43795.331412122636
+          },
+          "mapping": {
+            "a_u": 18.741848527102455,
+            "a_v": -18.75710915247073,
+            "b_u": 1715.8118334875971,
+            "b_v": 43841.062889170345
+          },
+          "mark_pixel_rects": [
+            [
+              33,
+              1599,
+              128,
+              1599
+            ],
+            [
+              25,
+              1495,
+              25,
+              1590
+            ],
+            [
+              4690,
+              1599,
+              4785,
+              1599
+            ],
+            [
+              4793,
+              1495,
+              4793,
+              1590
+            ],
+            [
+              33,
+              23,
+              128,
+              23
+            ],
+            [
+              25,
+              32,
+              25,
+              127
+            ],
+            [
+              4690,
+              23,
+              4785,
+              23
+            ],
+            [
+              4793,
+              32,
+              4793,
+              127
+            ]
+          ],
+          "reason": null,
+          "status": "value",
+          "vs_lattice": {
+            "corners": [
+              {
+                "dx_px": 0.7536244642008114,
+                "dy_px": -1.0134572962488164,
+                "uv": [
+                  -91.46926561670251,
+                  2337.3310543423245
+                ]
+              },
+              {
+                "dx_px": -0.995295185820396,
+                "dy_px": -1.0134572962488164,
+                "uv": [
+                  165.49485231475583,
+                  2337.3310543423245
+                ]
+              },
+              {
+                "dx_px": 0.7536244642008114,
+                "dy_px": 0.718113419621659,
+                "uv": [
+                  -91.46926561670251,
+                  2250.749394451395
+                ]
+              },
+              {
+                "dx_px": -0.995295185820396,
+                "dy_px": 0.718113419621659,
+                "uv": [
+                  165.49485231475583,
+                  2250.749394451395
+                ]
+              }
+            ],
+            "px_per_ft_u_delta": -0.006806085083397306,
+            "px_per_ft_v_delta": 0.01999927834660653,
+            "status": "value",
+            "worst_corner_px": 1.0134572962488164
+          }
+        },
+        "must_be_subtracted": true,
+        "reason": null,
+        "status": "value"
+      },
+      "variant": "v9_registration_marks",
+      "view_id": 19290402,
+      "view_name": "__Plan_CropActive"
+    },
+    {
+      "annotation_tiff": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_0923_0936\\anno_pass_variants_probe\\v10_element_only_white\\color_id_buffer\\__Plan_CropActive_19290402_anno.tiff",
+      "crop_boundary": {
+        "boundary_px_rects": null,
+        "mapping": null,
+        "must_be_subtracted": false,
+        "reason": "no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture",
+        "status": "not_found"
+      },
+      "fiducials": {
+        "mapping": null,
+        "per_fiducial": null,
+        "status": "not_applicable"
+      },
+      "mapping_agreement": {
+        "F1_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F1_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F2_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F3_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F3_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "probe_uv": [
+          -91.46926561670251,
+          2250.749394451395,
+          165.49485231475583,
+          2337.3310543423245
+        ]
+      },
+      "model_crop_boundary": null,
+      "registration_marks": {
+        "status": "not_applicable"
+      },
+      "variant": "v10_element_only_white",
+      "view_id": 19290402,
+      "view_name": "__Plan_CropActive"
+    },
+    {
+      "annotation_tiff": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_0923_0936\\anno_pass_variants_probe\\v0_control\\color_id_buffer\\__Plan_RVTLink_19293485_anno.tiff",
+      "crop_boundary": {
+        "boundary_px_rects": null,
+        "mapping": null,
+        "must_be_subtracted": false,
+        "reason": "no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture",
+        "status": "not_found"
+      },
+      "fiducials": {
+        "mapping": null,
+        "per_fiducial": null,
+        "status": "not_applicable"
+      },
+      "mapping_agreement": {
+        "F1_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F1_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F2_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F3_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F3_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "probe_uv": [
+          -91.46926561670251,
+          2250.749394451395,
+          165.49485231475583,
+          2337.3310543423245
+        ]
+      },
+      "model_crop_boundary": null,
+      "registration_marks": {
+        "status": "not_applicable"
+      },
+      "variant": "v0_control",
+      "view_id": 19293485,
+      "view_name": "__Plan_RVTLink"
+    },
+    {
+      "annotation_tiff": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_0923_0936\\anno_pass_variants_probe\\v7_no_crop\\color_id_buffer\\__Plan_RVTLink_19293485_anno.tiff",
+      "crop_boundary": {
+        "boundary_px_rects": null,
+        "mapping": null,
+        "must_be_subtracted": false,
+        "reason": "no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture",
+        "status": "not_found"
+      },
+      "fiducials": {
+        "mapping": null,
+        "per_fiducial": null,
+        "status": "not_applicable"
+      },
+      "mapping_agreement": {
+        "F1_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F1_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F2_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F3_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F3_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "probe_uv": [
+          -91.46926561670251,
+          2250.749394451395,
+          165.49485231475583,
+          2337.3310543423245
+        ]
+      },
+      "model_crop_boundary": null,
+      "registration_marks": {
+        "status": "not_applicable"
+      },
+      "variant": "v7_no_crop",
+      "view_id": 19293485,
+      "view_name": "__Plan_RVTLink"
+    },
+    {
+      "annotation_tiff": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_0923_0936\\anno_pass_variants_probe\\v8_no_crop_fiducials\\color_id_buffer\\__Plan_RVTLink_19293485_anno.tiff",
+      "crop_boundary": {
+        "boundary_px_rects": null,
+        "mapping": null,
+        "must_be_subtracted": false,
+        "reason": "no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture",
+        "status": "not_found"
+      },
+      "fiducials": {
+        "mapping": {
+          "a_u": 18.734027484567495,
+          "a_v": -18.85645479568211,
+          "b_u": 1710.9755496922285,
+          "b_v": 44067.2017827749
+        },
+        "per_fiducial": [
+          {
+            "found": true,
+            "id": 12261162,
+            "pixel_bbox": [
+              1038.0,
+              65.0,
+              1181.0,
+              69.0
+            ],
+            "pixel_count": 133,
+            "rect_uv": [
+              -37.3402448956206,
+              2332.8998997006133,
+              -26.729670423215794,
+              2333.8998997006133
+            ],
+            "rgb": [
+              251,
+              11,
+              139
+            ],
+            "touches_border": false
+          },
+          {
+            "found": true,
+            "id": 5850099,
+            "pixel_bbox": [
+              4413.0,
+              1582.0,
+              4415.0,
+              1588.0
+            ],
+            "pixel_count": 16,
+            "rect_uv": [
+              143.95663010436672,
+              2252.592608033942,
+              144.5763807605349,
+              2253.21235869011
+            ],
+            "rgb": [
+              11,
+              139,
+              251
+            ],
+            "touches_border": false
+          }
+        ],
+        "status": "value"
+      },
+      "mapping_agreement": {
+        "F1_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F1_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F2_vs_bbox_fit": {
+          "corners": [
+            {
+              "dx_px": 52.05092956229396,
+              "dy_px": 105.45180130049994,
+              "uv": [
+                -91.46926561670251,
+                2337.3310543423245
+              ]
+            },
+            {
+              "dx_px": -275.56553111908033,
+              "dy_px": 105.45180130049994,
+              "uv": [
+                165.49485231475583,
+                2337.3310543423245
+              ]
+            },
+            {
+              "dx_px": 52.05092956229396,
+              "dy_px": -119.88797836120648,
+              "uv": [
+                -91.46926561670251,
+                2250.749394451395
+              ]
+            },
+            {
+              "dx_px": -275.56553111908033,
+              "dy_px": -119.88797836120648,
+              "uv": [
+                165.49485231475583,
+                2250.749394451395
+              ]
+            }
+          ],
+          "px_per_ft_u_delta": -1.2749502277542142,
+          "px_per_ft_v_delta": -2.6026271608280034,
+          "status": "value",
+          "worst_corner_px": 275.56553111908033
+        },
+        "F3_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F3_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "probe_uv": [
+          -91.46926561670251,
+          2250.749394451395,
+          165.49485231475583,
+          2337.3310543423245
+        ]
+      },
+      "model_crop_boundary": {
+        "boundary_px_rects": null,
+        "model_tiff": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_0923_0936\\anno_pass_variants_probe\\v8_no_crop_fiducials\\model\\color_id_buffer\\__Plan_RVTLink_19293485.tiff",
+        "status": "not_found"
+      },
+      "registration_marks": {
+        "status": "not_applicable"
+      },
+      "variant": "v8_no_crop_fiducials",
+      "view_id": 19293485,
+      "view_name": "__Plan_RVTLink"
+    },
+    {
+      "annotation_tiff": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_0923_0936\\anno_pass_variants_probe\\v9_registration_marks\\color_id_buffer\\__Plan_RVTLink_19293485_anno.tiff",
+      "crop_boundary": {
+        "boundary_px_rects": null,
+        "mapping": null,
+        "must_be_subtracted": false,
+        "reason": "no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture",
+        "status": "not_found"
+      },
+      "fiducials": {
+        "mapping": {
+          "a_u": 18.734027484567495,
+          "a_v": -18.85645479568211,
+          "b_u": 1710.9755496922285,
+          "b_v": 44067.2017827749
+        },
+        "per_fiducial": [
+          {
+            "found": true,
+            "id": 12261162,
+            "pixel_bbox": [
+              1038.0,
+              65.0,
+              1181.0,
+              69.0
+            ],
+            "pixel_count": 133,
+            "rect_uv": [
+              -37.3402448956206,
+              2332.8998997006133,
+              -26.729670423215794,
+              2333.8998997006133
+            ],
+            "rgb": [
+              251,
+              11,
+              139
+            ],
+            "touches_border": false
+          },
+          {
+            "found": true,
+            "id": 5850099,
+            "pixel_bbox": [
+              4413.0,
+              1582.0,
+              4415.0,
+              1588.0
+            ],
+            "pixel_count": 16,
+            "rect_uv": [
+              143.95663010436672,
+              2252.592608033942,
+              144.5763807605349,
+              2253.21235869011
+            ],
+            "rgb": [
+              11,
+              139,
+              251
+            ],
+            "touches_border": false
+          }
+        ],
+        "status": "value"
+      },
+      "mapping_agreement": {
+        "F1_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F1_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F2_vs_bbox_fit": {
+          "corners": [
+            {
+              "dx_px": -2.861065809444881,
+              "dy_px": -5.744288716574374,
+              "uv": [
+                -91.46926561670251,
+                2337.3310543423245
+              ]
+            },
+            {
+              "dx_px": -5.373635698900216,
+              "dy_px": -5.744288716574374,
+              "uv": [
+                165.49485231475583,
+                2337.3310543423245
+              ]
+            },
+            {
+              "dx_px": -2.861065809444881,
+              "dy_px": 3.34319240541663,
+              "uv": [
+                -91.46926561670251,
+                2250.749394451395
+              ]
+            },
+            {
+              "dx_px": -5.373635698900216,
+              "dy_px": 3.34319240541663,
+              "uv": [
+                165.49485231475583,
+                2250.749394451395
+              ]
+            }
+          ],
+          "px_per_ft_u_delta": -0.009777901715153803,
+          "px_per_ft_v_delta": 0.10495849968037163,
+          "status": "value",
+          "worst_corner_px": 5.744288716574374
+        },
+        "F3_vs_F2": {
+          "corners": [
+            {
+              "dx_px": 3.11721781082133,
+              "dy_px": 6.066142271141871,
+              "uv": [
+                -91.46926561670251,
+                2337.3310543423245
+              ]
+            },
+            {
+              "dx_px": 6.134307042157161,
+              "dy_px": 6.066142271141871,
+              "uv": [
+                165.49485231475583,
+                2337.3310543423245
+              ]
+            },
+            {
+              "dx_px": 3.11721781082133,
+              "dy_px": -2.5381261892835028,
+              "uv": [
+                -91.46926561670251,
+                2250.749394451395
+              ]
+            },
+            {
+              "dx_px": 6.134307042157161,
+              "dy_px": -2.5381261892835028,
+              "uv": [
+                165.49485231475583,
+                2250.749394451395
+              ]
+            }
+          ],
+          "px_per_ft_u_delta": 0.011741286120500405,
+          "px_per_ft_v_delta": -0.09937749485587943,
+          "status": "value",
+          "worst_corner_px": 6.134307042157161
+        },
+        "F3_vs_bbox_fit": {
+          "corners": [
+            {
+              "dx_px": 0.25615200137644933,
+              "dy_px": 0.32185355456749676,
+              "uv": [
+                -91.46926561670251,
+                2337.3310543423245
+              ]
+            },
+            {
+              "dx_px": 0.760671343256945,
+              "dy_px": 0.32185355456749676,
+              "uv": [
+                165.49485231475583,
+                2337.3310543423245
+              ]
+            },
+            {
+              "dx_px": 0.25615200137644933,
+              "dy_px": 0.8050662161331275,
+              "uv": [
+                -91.46926561670251,
+                2250.749394451395
+              ]
+            },
+            {
+              "dx_px": 0.760671343256945,
+              "dy_px": 0.8050662161331275,
+              "uv": [
+                165.49485231475583,
+                2250.749394451395
+              ]
+            }
+          ],
+          "px_per_ft_u_delta": 0.001963384405346602,
+          "px_per_ft_v_delta": 0.005581004824492197,
+          "status": "value",
+          "worst_corner_px": 0.8050662161331275
+        },
+        "probe_uv": [
+          -91.46926561670251,
+          2250.749394451395,
+          165.49485231475583,
+          2337.3310543423245
+        ]
+      },
+      "model_crop_boundary": {
+        "boundary_px_rects": null,
+        "model_tiff": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_0923_0936\\anno_pass_variants_probe\\v9_registration_marks\\model\\color_id_buffer\\__Plan_RVTLink_19293485.tiff",
+        "status": "not_found"
+      },
+      "registration_marks": {
+        "annotation_to_model_px": {
+          "via_model_lattice": {
+            "offset_x": -0.5051373453547967,
+            "offset_y": 1.1284406851482345,
+            "scale_x": 1.000209687565527,
+            "scale_y": 0.9989911457580312
+          },
+          "via_model_marks": {
+            "offset_x": 0.0,
+            "offset_y": 0.0,
+            "scale_x": 1.0,
+            "scale_y": 1.0
+          }
+        },
+        "mapping": {
+          "a_u": 18.745768770687995,
+          "a_v": -18.757077300826232,
+          "b_u": 1715.1667343218876,
+          "b_v": 43840.98982021665
+        },
+        "mark_pixel_rects": [
+          [
+            33,
+            1599,
+            128,
+            1599
+          ],
+          [
+            24,
+            1495,
+            24,
+            1590
+          ],
+          [
+            4689,
+            1599,
+            4784,
+            1599
+          ],
+          [
+            4793,
+            1495,
+            4793,
+            1590
+          ],
+          [
+            33,
+            23,
+            128,
+            23
+          ],
+          [
+            24,
+            32,
+            24,
+            127
+          ],
+          [
+            4689,
+            23,
+            4784,
+            23
+          ],
+          [
+            4793,
+            32,
+            4793,
+            127
+          ]
+        ],
+        "model": {
+          "lattice_mapping": {
+            "a_u": 18.749699525305456,
+            "a_v": -18.738154143824357,
+            "b_u": 1715.0212461135259,
+            "b_v": 43797.889092349564
+          },
+          "mapping": {
+            "a_u": 18.745768770687995,
+            "a_v": -18.757077300826232,
+            "b_u": 1715.1667343218876,
+            "b_v": 43840.98982021665
+          },
+          "mark_pixel_rects": [
+            [
+              33,
+              1599,
+              128,
+              1599
+            ],
+            [
+              24,
+              1495,
+              24,
+              1590
+            ],
+            [
+              4689,
+              1599,
+              4784,
+              1599
+            ],
+            [
+              4793,
+              1495,
+              4793,
+              1590
+            ],
+            [
+              33,
+              23,
+              128,
+              23
+            ],
+            [
+              24,
+              32,
+              24,
+              127
+            ],
+            [
+              4689,
+              23,
+              4784,
+              23
+            ],
+            [
+              4793,
+              32,
+              4793,
+              127
+            ]
+          ],
+          "reason": null,
+          "status": "value",
+          "vs_lattice": {
+            "corners": [
+              {
+                "dx_px": 0.5050314465404426,
+                "dy_px": -1.1289546395928483,
+                "uv": [
+                  -91.46926561670251,
+                  2337.3310543423245
+                ]
+              },
+              {
+                "dx_px": -0.50503144654067,
+                "dy_px": -1.1289546395928483,
+                "uv": [
+                  165.49485231475583,
+                  2337.3310543423245
+                ]
+              },
+              {
+                "dx_px": 0.5050314465404426,
+                "dy_px": 0.5094437040024786,
+                "uv": [
+                  -91.46926561670251,
+                  2250.749394451395
+                ]
+              },
+              {
+                "dx_px": -0.50503144654067,
+                "dy_px": 0.5094437040024786,
+                "uv": [
+                  165.49485231475583,
+                  2250.749394451395
+                ]
+              }
+            ],
+            "px_per_ft_u_delta": -0.003930754617460508,
+            "px_per_ft_v_delta": 0.018923157001875524,
+            "status": "value",
+            "worst_corner_px": 1.1289546395928483
+          }
+        },
+        "must_be_subtracted": true,
+        "reason": null,
+        "status": "value"
+      },
+      "variant": "v9_registration_marks",
+      "view_id": 19293485,
+      "view_name": "__Plan_RVTLink"
+    },
+    {
+      "annotation_tiff": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_0923_0936\\anno_pass_variants_probe\\v10_element_only_white\\color_id_buffer\\__Plan_RVTLink_19293485_anno.tiff",
+      "crop_boundary": {
+        "boundary_px_rects": null,
+        "mapping": null,
+        "must_be_subtracted": false,
+        "reason": "no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture",
+        "status": "not_found"
+      },
+      "fiducials": {
+        "mapping": null,
+        "per_fiducial": null,
+        "status": "not_applicable"
+      },
+      "mapping_agreement": {
+        "F1_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F1_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F2_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F3_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F3_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "probe_uv": [
+          -91.46926561670251,
+          2250.749394451395,
+          165.49485231475583,
+          2337.3310543423245
+        ]
+      },
+      "model_crop_boundary": null,
+      "registration_marks": {
+        "status": "not_applicable"
+      },
+      "variant": "v10_element_only_white",
+      "view_id": 19293485,
+      "view_name": "__Plan_RVTLink"
+    }
+  ]
+}
