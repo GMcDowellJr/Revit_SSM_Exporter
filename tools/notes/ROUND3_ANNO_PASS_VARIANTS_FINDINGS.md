@@ -169,3 +169,23 @@ V7 and V10 annotation TIFFs are byte-identical on both views again
 (elevation `4cf7a33e…`, plan `b77665da…`). V10's suppression took 95 ms
 against V7's 26.8 s on the crop-inactive plan. Five views in total, zero
 differences.
+
+### The missing elevation ticks: NOT drawn, not overdrawn (analyzer re-run)
+
+`missing_diagnosis` over the same captures
+(`anno_variants_probe_0923_1239_rerun.{md,json}`), each tick's expected
+rectangle placed through that capture's fitted map:
+
+| capture | tick | expected px | what is there |
+|---|---|---|---|
+| annotation | `left_mid_h` | [170, 850, 266, 856] | 679 of 679 px **white** |
+| annotation | `right_mid_h` | [4876, 850, 4972, 856] | 679 of 679 px **white** |
+| model | `mid_top_v` | [2578, 29, 2584, 131] | 721 of 721 px **white** |
+| model | `mid_bottom_v` | [2578, 1135, 2584, 1237] | 42 px white; model elements 5686560 (238 px), 12008414 (154), 18861828 (133), 14208019 (126), 14203081 (28) |
+
+Three of the four drew nothing at all. The fourth sits where model elements
+drew, with no mark pixel among them. None was overdrawn by annotation, and
+each tick appears in the OTHER capture, so none is missing from the document.
+Each capture drops a different pair of the same four detail lines, all
+created, all read back at their requested UV. Why is not established; it
+needs a Revit run, not the analyzer.
