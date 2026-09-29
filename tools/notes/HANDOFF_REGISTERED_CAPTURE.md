@@ -64,21 +64,27 @@ Findings: `tools/notes/ROUND2_ANNO_PASS_VARIANTS_FINDINGS.md`,
   resolution: Plan_CropInActive's crop A grew to ≈ 1033 × 2411 ft (4.15 px/ft)
   when the document gained property lines ~1,850 ft away. This is a model-pass
   property; Greg's call was to leave crop A as is.
-- **Nothing applies the registration yet.** No resampling of the annotation
-  capture onto the model lattice and no removal of mark pixels; the fit lives
-  only in the analyzer (`tools/notes/anno_pass_variant_report.py`,
-  `registration_mark_fit`).
+- **The registration is applied offline, not in the pipeline.** Step 3 below
+  landed as `tools/registration_marks.py` (the fit, lifted out of the
+  analyzer, which now imports it), `tools/register_stage_a_annotation.py`
+  (resample onto the model lattice, marks removed) and the decoder's mark
+  exclusion. Nothing in `vop_interwoven` calls them. Step 2's run
+  (`pipeline_0928_0953`, all nine views) found three defects in them, since
+  fixed; all nine now register at <= 0.39 px residual. See
+  `RUN_pipeline_0928_0953_REGISTRATION.md`.
 
 ## 4. The order from here
 
 1. **Review and merge PR #217.** Production defaults are unchanged.
-2. **Greg: run the pipeline with the flag on** over all eight test views
+2. **Greg: run the pipeline with the flag on** *(Done: `pipeline_0928_0953`,
+   `RUN_pipeline_0928_0953_REGISTRATION.md`.)* over all eight test views
    (Elevation 19293413, Plan_CropActive 19290402, Plan_CropInActive 19291097,
    Plan_RVTLink 19293485, Plan_DWG 19294180, RCP 19293283, Section 19293421,
    ModelCallout 19293458). This is the first real test of the entry point and
    needs no code. Check each view's result for `registration_success`, the
    `registration.faults` list, and both sidecars' `registration_marks` block.
-3. **Transform and mark removal — its own PR.** Fit the marks from
+3. **Transform and mark removal — its own PR.** *(Done offline: see
+   `tools/register_stage_a_annotation.py`. Run it over step 2's output.)* Fit the marks from
    `registration_marks` in both sidecars (lift `registration_mark_fit` /
    `compose_pixel_transform` out of the analyzer into a tool the decoder uses,
    don't copy them), resample the annotation capture onto the model lattice,

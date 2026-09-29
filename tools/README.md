@@ -136,6 +136,36 @@ python tools/capture_overlay.py sidecar.json --labels id --only host --only dwg
 
 ---
 
+### `register_stage_a_annotation.py` - Registered capture onto the model lattice
+
+For captures made with `Config.color_id_buffer_registered_capture` on. Fits
+the registration ticks recorded under `registration_marks` in BOTH sidecars
+(`registration_marks.py`, the one fit, shared with the decoder and the probe
+analyzer), composes annotation pixel -> model pixel, removes the ticks from the
+annotation capture and resamples it onto the model image's pixel grid,
+nearest neighbour (colour IDs are never blended).
+
+It **refuses**, and writes the reason instead of a TIFF, when a sidecar has no
+usable `registration_marks`, when the two sidecars' marks are not the same
+ticks, when either capture has ticks at fewer than two levels on an axis, or
+when the transform would mirror an axis. It never falls back to the model's
+recorded lattice. Losses (ink off the model image, uncovered model pixels,
+colours that did not survive the resample) are counted in the record.
+
+**Usage:**
+```bash
+python tools/register_stage_a_annotation.py path/to/View_123_anno.json
+python tools/register_stage_a_annotation.py path/to/color_id_buffer/
+```
+
+**Output:** `<anno-stem>.registered.tiff` and `<anno-stem>.registered.json`
+beside the annotation sidecar; the JSON is written last and names the TIFF's
+hash. Exit 0 all registered, 1 any refused, 2 an input unreadable.
+`decode_stage_a_color_id.py` removes the marks from its own decode of either
+capture (`registration_marks` in its output).
+
+---
+
 ### `compare_golden.py` - Golden Baseline Comparison
 
 Compares current exporter outputs against golden baseline to detect regressions.

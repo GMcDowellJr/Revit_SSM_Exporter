@@ -863,15 +863,15 @@
 - `time`
 
 **Definitions**
-- `_read` (function, L54)
-- `_xyz` (function, L63)
-- `view_state` (function, L68)
-- `view_state_verdict` (function, L82)
-- `_non_blank_override_ids` (function, L100)
-- `mark_reference_rectangle` (function, L114)
-- `nominal_fpp_ft` (function, L145)
-- `_registration_payload` (function, L152)
-- `export_registered_stage_a_view` (function, L179)
+- `_read` (function, L56)
+- `_xyz` (function, L65)
+- `view_state` (function, L70)
+- `view_state_verdict` (function, L84)
+- `_non_blank_override_ids` (function, L102)
+- `mark_reference_rectangle` (function, L116)
+- `nominal_fpp_ft` (function, L147)
+- `_registration_payload` (function, L154)
+- `export_registered_stage_a_view` (function, L181)
 
 ### `stage_a_registration.py`
 

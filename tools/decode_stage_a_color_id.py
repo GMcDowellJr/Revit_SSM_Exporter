@@ -59,8 +59,14 @@ For input sidecar ``<name>.json``, this tool writes a sibling
       "off_palette_foreground_pixel_count": <int>,
       "background_pixel_count": <int>,
       "distinct_ids_decoded": <int>,
-      "element_count_in_palette": <int>,
+      "element_count_in_palette": <int>,   # registration-mark ids excluded
       "element_count_with_geometry": <int>,
+      "registration_marks": {"status": "absent"}
+                          | {"status": "refused", "reason": <str>}
+                          | {"status": "subtracted", "pass": "model"|"annotation",
+                             "mark_pixels_subtracted": <int>,
+                             "excluded_element_ids": [<int>, ...],
+                             "fit_status": "value"|"unavailable", ...},
       "elements": {
         "<elem_id>": {
           "loops": [
@@ -199,7 +205,11 @@ from vop_interwoven.resolution_contract import DEFAULT_COLOR_ID_EXPORT_DPI
 # taking on this module's vop_interwoven dependency.
 from tools.clamp_pad_geometry import clamp_pad_geometry as _shared_clamp_pad_geometry
 
-TOOL_VERSION = "1.0.0"
+# The ONE registration-mark implementation, shared with
+# tools/register_stage_a_annotation.py and the probe analyzer.
+from tools import registration_marks as _registration_marks
+
+TOOL_VERSION = "1.1.0"
 SCHEMA_VERSION = "1.0"
 BACKGROUND_ELEMENT_ID = 0
 STRATEGY_NAME = "color_id_boundary"
@@ -681,8 +691,16 @@ def build_decoded_document(
     t0 = time.time()
     rgb = _load_rgb_array(tiff_path)
     h, w = rgb.shape[:2]
-    color_assignment_map = sidecar.get("color_assignment_map") or {}
+    color_assignment_map, marks_block, mark_mask = _registration_mark_exclusion(
+        rgb, sidecar)
     id_array, stats = decode_ids(rgb, color_assignment_map)
+    if mark_mask is not None:
+        # The ticks are neither element content nor contamination. With their
+        # ids out of the decode map they decode as background in both passes;
+        # moving them out of the off-palette count is the subtraction.
+        subtracted = int(np.count_nonzero(mark_mask & (id_array == BACKGROUND_ELEMENT_ID)))
+        stats["off_palette_foreground_pixel_count"] -= subtracted
+        marks_block["mark_pixels_subtracted"] = subtracted
 
     feet_per_pixel = None
     feet_per_pixel_unreliable_reason = None
@@ -999,12 +1017,60 @@ def build_decoded_document(
         "background_pixel_count": stats["background_pixel_count"],
         "distinct_ids_decoded": stats["distinct_ids_decoded"],
         "element_count_in_palette": len(color_assignment_map),
+        "registration_marks": marks_block,
         "element_count_with_geometry": len(elements),
         "elements": elements,
         "generated_at_unix": time.time(),
         "decode_ms": round((time.time() - t0) * 1000.0, 3),
     }
     return doc
+
+
+def _registration_mark_exclusion(rgb, sidecar):
+    """``(decode colour map, registration_marks block, mark mask or None)``.
+
+    A registered capture (``Config.color_id_buffer_registered_capture``) drew
+    twelve ticks into this image and recorded them under
+    ``registration_marks``. In the ANNOTATION pass they are view-owned detail
+    lines, so production gave each its own palette entry and, undecoded, each
+    would come out as an "element"; in the MODEL pass they are MARK_COLOUR,
+    off-palette, and would be counted as contamination. Either way they are
+    removed here: the mark ids leave the decode map and the mark pixels
+    leave the off-palette count.
+
+    What this CANNOT restore: whatever the ticks were drawn over. A model
+    element under a tick loses those pixels; the count is reported so the
+    loss is visible rather than assumed zero.
+
+    A record this cannot read is ``refused`` and NOTHING is subtracted -- the
+    marks stay in the decode, visibly, rather than being removed on a guess.
+    """
+    colour_map = sidecar.get("color_assignment_map") or {}
+    payload, refusal = _registration_marks.recorded_marks(sidecar)
+    if payload is None:
+        if refusal is None:
+            return colour_map, {"status": "absent"}, None
+        return colour_map, {"status": "refused", "reason": refusal}, None
+    _by_id, _shared, refusal = _registration_marks.mark_colours(payload)
+    if refusal:
+        return colour_map, {"status": "refused", "reason": refusal}, None
+    mark_ids = sorted(str(int(m["id"])) for m in payload["marks"]
+                      if m.get("id") is not None)
+    palette = _registration_marks.palette_colours(sidecar)
+    fit = _registration_marks.fit_recorded_marks(rgb, payload,
+                                                 reserved_colours=palette)
+    block = {
+        "status": "subtracted", "pass": payload.get("pass"),
+        "excluded_element_ids": [int(k) for k in mark_ids if k in colour_map],
+        "fit_status": fit.get("status"), "fit_reason": fit.get("reason"),
+        "found_count": fit.get("found_count"),
+        "expected_count": fit.get("expected_count"),
+        "missing": [m.get("key") for m in fit.get("missing") or []],
+        "residual_max_px": fit.get("residual_max_px"),
+        "capture_faults": list(payload.get("faults") or []),
+    }
+    decode_map = dict((k, v) for k, v in colour_map.items() if k not in set(mark_ids))
+    return decode_map, block, _registration_marks.mark_ink_mask(rgb, payload, palette)
 
 
 def reconstruct_areal_tuple(decoded_doc: dict[str, Any], elem_id: int) -> tuple[list[dict[str, Any]] | None, str | None, str | None]:
@@ -1065,7 +1131,8 @@ def collect(paths: list[str]) -> list[Path]:
     for arg in paths:
         p = Path(arg)
         if p.is_dir():
-            out += sorted(x for x in p.rglob("*.json") if not x.name.endswith(".decoded.json"))
+            out += sorted(x for x in p.rglob("*.json")
+                          if not x.name.endswith((".decoded.json", ".registered.json")))
         else:
             out.append(p)
     return out
