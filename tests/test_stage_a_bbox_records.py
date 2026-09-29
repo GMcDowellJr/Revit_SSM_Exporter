@@ -447,6 +447,6 @@ def test_near_face_w_map_pre_step4_keys_are_unchanged(monkeypatch):
 
     pre_step4 = {
         "bbox_corners_uv", "near_face_w", "category", "source",
-        "category_state", "import_symbol_state", "view_specific_state",
+        "category_state",
     }
     assert pre_step4.issubset(set(result["host"]["1003"].keys()))

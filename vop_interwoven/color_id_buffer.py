@@ -1293,53 +1293,6 @@ def _near_face_w_category_name(elem):
     return getattr(cat, "Name", None)
 
 
-def _near_face_w_import_symbol_name(doc, elem):
-    """Reader (raises on failure) for a DWG import's SYMBOL (type) name.
-
-    Recorded ALONGSIDE the ImportInstance's own category rather than instead
-    of it (Greg, 2026-09-21): which of the two is stable across Revit versions
-    is unverified, so both are captured and post decides. This is the same
-    GetTypeId() -> Name read revit/linked_documents.py already uses to build a
-    DWG proxy's source_label.
-
-    UNCONFIRMED: no Revit API call was run this session. In particular, that
-    the type element resolves and exposes Name for every import flavour
-    (linked CAD vs imported CAD) is assumed, not verified.
-    """
-    type_id = elem.GetTypeId()
-    if type_id is None:
-        return None
-    import_type = doc.GetElement(type_id)
-    if import_type is None:
-        return None
-    return getattr(import_type, "Name", None)
-
-
-def _near_face_w_view_specific(elem):
-    """Reader (raises on failure) for whether an import is placed "this view
-    only".
-
-    A tag on the model pass's per-element record. Since 2026-09-29 a
-    view-specific import never reaches that record -- it is annotation, and
-    _partition_view_specific_imports takes it out of the model pass -- so on
-    a resolved import this reads False; the classification itself lives in
-    collection_policy.view_specific_import_state().
-    """
-    return bool(elem.ViewSpecific)
-
-
-def _dwg_only_state(elem, reader, diag=None, callsite=None, view_id=None):
-    """Three-valued wrapper for a field that exists only for a DWG import.
-
-    Gated on the ELEMENT, not on the resolved source: source can itself be
-    "unavailable" (no expansion record), and a field's applicability must not
-    inherit another field's failure.
-    """
-    if not _is_import_instance(elem):
-        return _gs_not_applicable("not a DWG ImportInstance")
-    return _gs_capture(reader, diag=diag, callsite=callsite, view_id=view_id)
-
-
 def _host_source_state(elem, elem_id_int, host_source_types):
     """Three-valued source for one entry in the near_face_w_map "host" bucket.
 
@@ -1454,14 +1407,6 @@ def _collect_near_face_w_data(
             else None
         )
         source_state = _host_source_state(elem, elem_id_int, host_source_types)
-        import_symbol_state = _dwg_only_state(
-            elem, lambda e=elem: _near_face_w_import_symbol_name(doc, e),
-            diag=diag, callsite="near_face_w.host.import_symbol", view_id=view_id,
-        )
-        view_specific_state = _dwg_only_state(
-            elem, lambda e=elem: _near_face_w_view_specific(e),
-            diag=diag, callsite="near_face_w.host.view_specific", view_id=view_id,
-        )
         bbox, _src = resolve_element_bbox(
             elem, view=None, diag=diag,
             context={"view_id": view_id, "elem_id": elem_id_int, "source_type": "HOST"},
@@ -1530,12 +1475,11 @@ def _collect_near_face_w_data(
             # same record it always did.
             "source": source_state,
             "category_state": category_state,
-            # DWG-only; "not_applicable" for a true HOST element. Both of the
-            # DWG's candidate identifiers are recorded because which one is
-            # stable across Revit versions is unverified -- see
-            # _near_face_w_import_symbol_name.
-            "import_symbol_state": import_symbol_state,
-            "view_specific_state": view_specific_state,
+            # No per-element import_symbol_state / view_specific_state: they
+            # were probe-debug data. Whether an import is view-specific is a
+            # capture decision, and it is recorded where it is made -- the
+            # sidecar's "view_specific_imports", which keeps every import
+            # whose ViewSpecific could not be read (it stays in this pass).
         }
 
     link_out = {}

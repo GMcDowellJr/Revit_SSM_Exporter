@@ -76,8 +76,6 @@ def _host_entry(rect, category="Walls", source="HOST", near_face_w=12.5):
         "bbox_3d": {"state": "value", "value": {"min": [0, 0, 0], "max": [1, 1, 1]}},
         "source": {"state": "value", "value": source},
         "category_state": {"state": "value", "value": category},
-        "import_symbol_state": {"state": "not_applicable", "reason": "not a DWG"},
-        "view_specific_state": {"state": "not_applicable", "reason": "not a DWG"},
     }
 
 
