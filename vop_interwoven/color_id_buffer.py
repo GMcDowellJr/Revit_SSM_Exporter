@@ -1293,6 +1293,15 @@ def _near_face_w_category_name(elem):
     return getattr(cat, "Name", None)
 
 
+def _plain_or_state(state):
+    """C2 writer shape for a field read three-valued: the bare value when the
+    read succeeded, the state object (with its reason) otherwise. Readers
+    that predate C2 get a state object for every entry; both are valid."""
+    if isinstance(state, dict) and state.get("state") == _GS_VALUE:
+        return state.get("value")
+    return state
+
+
 def _host_source_state(elem, elem_id_int, host_source_types):
     """Three-valued source for one entry in the near_face_w_map "host" bucket.
 
@@ -1373,9 +1382,11 @@ def _collect_near_face_w_data(
     their existing keys and values unchanged; the distinction is carried by
     the NEW three-valued "source" key on host entries only.
 
-    "source" is {"state": "value", "value": "HOST"|"DWG"} when it is known,
-    and {"state": "unavailable", "reason": ...} when it is not -- never a
-    guess and never a stand-in default, per the Stage A three-valued rule.
+    "source" is the plain string "HOST"|"DWG" when it is known (C2; sidecars
+    written before C2 carry {"state": "value", "value": ...}), and
+    {"state": "unavailable", "reason": ...} when it is not -- never a guess
+    and never a stand-in default, per the Stage A three-valued rule.
+    "category_state" is written only when the category read FAILED.
     Left None (the standalone/legacy call), every host entry records
     "unavailable" with that as the reason: this function cannot derive a top
     element's source from an element id alone.
@@ -1448,6 +1459,8 @@ def _collect_near_face_w_data(
         host_out[str(elem_id_int)] = {
             "bbox_corners_uv": bbox_corners_uv,
             "near_face_w": near_face_w,
+            # C2: one plain string (None = the element has no Category, or
+            # the read failed -- "category_state" below says which).
             "category": category_name,
             # --- Stage A step 4, additive. Decision B (2026-09-21): the 3D
             # AABB is captured per view alongside the projection, so depth
@@ -1473,14 +1486,20 @@ def _collect_near_face_w_data(
             # --- Stage A step 1, additive. Pre-existing keys above are
             # untouched; a consumer that does not know these exist reads the
             # same record it always did.
-            "source": source_state,
-            "category_state": category_state,
+            # C2: plain "HOST"/"DWG" when read; the three-valued state object
+            # only when it was NOT, so a failure still carries its reason.
+            "source": _plain_or_state(source_state),
             # No per-element import_symbol_state / view_specific_state: they
             # were probe-debug data. Whether an import is view-specific is a
             # capture decision, and it is recorded where it is made -- the
             # sidecar's "view_specific_imports", which keeps every import
             # whose ViewSpecific could not be read (it stays in this pass).
         }
+        # C2: a category that READ is exactly "category" above, so its state
+        # object is written only when the read failed (its reason is the only
+        # thing "category": None cannot carry).
+        if category_state.get("state") != _GS_VALUE:
+            host_out[str(elem_id_int)]["category_state"] = category_state
 
     link_out = {}
     colored_cat_names = set(link_category_color_map.keys())
