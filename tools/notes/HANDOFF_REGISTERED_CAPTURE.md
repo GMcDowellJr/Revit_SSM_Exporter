@@ -64,10 +64,12 @@ Findings: `tools/notes/ROUND2_ANNO_PASS_VARIANTS_FINDINGS.md`,
   resolution: Plan_CropInActive's crop A grew to ≈ 1033 × 2411 ft (4.15 px/ft)
   when the document gained property lines ~1,850 ft away. This is a model-pass
   property; Greg's call was to leave crop A as is.
-- **Nothing applies the registration yet.** No resampling of the annotation
-  capture onto the model lattice and no removal of mark pixels; the fit lives
-  only in the analyzer (`tools/notes/anno_pass_variant_report.py`,
-  `registration_mark_fit`).
+- **The registration is applied offline, not in the pipeline.** Step 3 below
+  landed as `tools/registration_marks.py` (the fit, lifted out of the
+  analyzer, which now imports it), `tools/register_stage_a_annotation.py`
+  (resample onto the model lattice, marks removed) and the decoder's mark
+  exclusion. Nothing in `vop_interwoven` calls them, and none has seen a real
+  capture yet -- only synthetic ones drawn at known lattices.
 
 ## 4. The order from here
 
@@ -78,7 +80,8 @@ Findings: `tools/notes/ROUND2_ANNO_PASS_VARIANTS_FINDINGS.md`,
    ModelCallout 19293458). This is the first real test of the entry point and
    needs no code. Check each view's result for `registration_success`, the
    `registration.faults` list, and both sidecars' `registration_marks` block.
-3. **Transform and mark removal — its own PR.** Fit the marks from
+3. **Transform and mark removal — its own PR.** *(Done offline: see
+   `tools/register_stage_a_annotation.py`. Run it over step 2's output.)* Fit the marks from
    `registration_marks` in both sidecars (lift `registration_mark_fit` /
    `compose_pixel_transform` out of the analyzer into a tool the decoder uses,
    don't copy them), resample the annotation capture onto the model lattice,
