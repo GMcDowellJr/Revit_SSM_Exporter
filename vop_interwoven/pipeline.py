@@ -813,61 +813,22 @@ def process_document_views(
                 )
             areal_cache = None
 
-    # PR13: Document-scoped element cache for bbox reuse across views
-    elem_cache_prev = None  # Previous run cache (for change detection)
-    elem_cache_path = None
-    if output_dir is not None:
-        cache_date = date_str
-        elem_cache_path = os.path.join(output_dir, f"vop_element_cache_{cache_date}.json")
-
+    # PR13: Document-scoped element cache for bbox reuse across views -- IN
+    # THIS RUN ONLY. Its cross-run role (loading and saving
+    # vop_element_cache_<date>.json, and detect_changes against the previous
+    # run) is RETIRED (Greg, 2026-09-29): change detection belongs to the
+    # analysis layer, from the sidecar's bbox_3d and bbox_transform.
     if elem_cache is None and getattr(cfg, "use_element_cache", True):
         try:
             from .core.element_cache import ElementCache
-            max_items = int(getattr(cfg, "element_cache_max_items", 10000))
-
-            # Load previous cache if persistence enabled
-            if getattr(cfg, "element_cache_persist", True) and elem_cache_path is not None:
-                try:
-                    elem_cache_prev = ElementCache.load_from_json(elem_cache_path, max_elements=max_items)
-                    # Start with previous cache (pre-populated) and keep prev ref for change detection.
-                    elem_cache = elem_cache_prev
-                    if diag is not None:
-                        try:
-                            prev_size = len(elem_cache.cache)
-                            diag.info(
-                                phase="pipeline",
-                                callsite="process_document_views.element_cache_load",
-                                message=f"Loaded element cache from previous run ({prev_size} elements)",
-                                extra={"cache_path": elem_cache_path, "prev_size": prev_size}
-                            )
-                        except Exception as e:
-                            if diag is not None:
-                                diag.error(
-                                    phase="pipeline",
-                                    callsite="_save_cached_view",
-                                    message="Exception in _save_cached_view: {}".format(e),
-                                    exc=e,
-                                )
-                except Exception as e:
-                    if diag is not None:
-                        diag.error(
-                            phase="pipeline",
-                            callsite="_save_cached_view",
-                            message="Exception in _save_cached_view: {}".format(e),
-                            exc=e,
-                        )
-                    # Failed to load - start fresh
-                    elem_cache = ElementCache(max_elements=max_items)
-            else:
-                # No persistence - start fresh
-                elem_cache = ElementCache(max_elements=max_items)
-
+            elem_cache = ElementCache(
+                max_elements=int(getattr(cfg, "element_cache_max_items", 10000)))
         except Exception as e:
             if diag is not None:
                 diag.error(
                     phase="pipeline",
-                    callsite="_save_cached_view",
-                    message="Exception in _save_cached_view: {}".format(e),
+                    callsite="process_document_views.element_cache_init",
+                    message="Exception creating the in-run element cache: {}".format(e),
                     exc=e,
                 )
             elem_cache = None  # Graceful degradation
@@ -1594,118 +1555,26 @@ def process_document_views(
                     message="Exception in _tmark: {}".format(e),
                     exc=e,
                 )
-    # Phase 2.5: Persistent element cache - save/export/detect changes
-    if elem_cache is not None and getattr(cfg, "element_cache_persist", True):
+    # The view-element map is THIS run's export (not a cross-run cache), so it
+    # stays; the cache save and change detection that shared its block are
+    # retired (see the element cache note above).
+    # Export view-element map JSON (view -> element ids)
+    if (elem_cache is not None and getattr(cfg, "element_cache_export_csv", True)
+            and output_dir is not None):
         try:
-            # Save cache to JSON for next run
-            if elem_cache_path is not None:
-                try:
-                    metadata = {
-                        "timestamp": time.time(),
-                        "date": cache_date,
-                        "doc_path": getattr(doc, "PathName", None),
-                        "doc_title": getattr(doc, "Title", None),
-                    }
-                    saved = elem_cache.save_to_json(elem_cache_path, metadata=metadata)
-                    if saved and diag is not None:
-                        diag.info(
-                            phase="pipeline",
-                            callsite="process_document_views.element_cache_save",
-                            message="Saved element cache for next run",
-                            extra={"cache_path": elem_cache_path, "size": len(elem_cache.cache)}
-                        )
-                except Exception as e:
-                    if diag is not None:
-                        diag.error(
-                            phase="pipeline",
-                            callsite="_tmark",
-                            message="Exception in _tmark: {}".format(e),
-                            exc=e,
-                        )
-            # Export view-element map JSON (view -> element ids)
-            if getattr(cfg, "element_cache_export_csv", True) and output_dir is not None:
-                try:
-                    analysis_path = os.path.join(output_dir, f"vop_view_element_map_{date_str}.json")
-                    exported = elem_cache.export_view_element_map_json(
-                        analysis_path,
-                        view_elements=view_elements,
-                        merge_existing=True,
-                    )
-                    if exported and diag is not None:
-                        diag.info(
-                            phase="pipeline",
-                            callsite="process_document_views.element_cache_export_view_element_map_json",
-                            message="Exported view-element map JSON",
-                            extra={"analysis_path": analysis_path, "elements": len(elem_cache.cache), "views": len(view_elements)}
-                        )
-                except Exception as e:
-                    if diag is not None:
-                        diag.error(
-                            phase="pipeline",
-                            callsite="_tmark",
-                            message="Exception in _tmark: {}".format(e),
-                            exc=e,
-                        )
-            # Detect changes from previous run
-            if getattr(cfg, "element_cache_detect_changes", True) and elem_cache_prev is not None:
-                try:
-                    tolerance = float(getattr(cfg, "element_cache_change_tolerance", 0.01))
-                    changes = elem_cache.detect_changes(elem_cache_prev, tolerance=tolerance)
-
-                    if diag is not None:
-                        diag.info(
-                            phase="pipeline",
-                            callsite="process_document_views.element_cache_changes",
-                            message="Element changes detected since last run",
-                            extra=changes
-                        )
-
-                    # Also export changes CSV if significant changes detected
-                    if output_dir is not None and (changes["added"] or changes["moved"] or changes["resized"]):
-                        try:
-                            import csv as csv_module
-                            changes_csv_path = os.path.join(output_dir, "element_changes.csv")
-                            with open(changes_csv_path, "w", newline="") as f:
-                                writer = csv_module.writer(f)
-                                writer.writerow(["change_type", "elem_id", "source_id", "distance_or_size_change"])
-
-                                for elem_id, source_id in changes["added"]:
-                                    writer.writerow(["ADDED", elem_id, source_id, ""])
-
-                                for elem_id, source_id in changes["removed"]:
-                                    writer.writerow(["REMOVED", elem_id, source_id, ""])
-
-                                for elem_id, source_id, distance in changes["moved"]:
-                                    writer.writerow(["MOVED", elem_id, source_id, f"{distance:.3f}"])
-
-                                for elem_id, source_id, size_change in changes["resized"]:
-                                    writer.writerow(["RESIZED", elem_id, source_id, f"{size_change:.3f}"])
-
-                            if diag is not None:
-                                diag.info(
-                                    phase="pipeline",
-                                    callsite="process_document_views.element_changes_export",
-                                    message="Exported element changes CSV",
-                                    extra={"csv_path": changes_csv_path}
-                                )
-                        except Exception as e:
-                            if diag is not None:
-                                diag.error(
-                                    phase="pipeline",
-                                    callsite="_tmark",
-                                    message="Exception in _tmark: {}".format(e),
-                                    exc=e,
-                                )
-                except Exception as e:
-                    if diag is not None:
-                        diag.error(
-                            phase="pipeline",
-                            callsite="_tmark",
-                            message="Exception in _tmark: {}".format(e),
-                            exc=e,
-                        )
-            # Release prev cache — no longer needed after change detection.
-            elem_cache_prev = None
+            analysis_path = os.path.join(output_dir, f"vop_view_element_map_{date_str}.json")
+            exported = elem_cache.export_view_element_map_json(
+                analysis_path,
+                view_elements=view_elements,
+                merge_existing=True,
+            )
+            if exported and diag is not None:
+                diag.info(
+                    phase="pipeline",
+                    callsite="process_document_views.element_cache_export_view_element_map_json",
+                    message="Exported view-element map JSON",
+                    extra={"analysis_path": analysis_path, "elements": len(elem_cache.cache), "views": len(view_elements)}
+                )
         except Exception as e:
             if diag is not None:
                 diag.error(

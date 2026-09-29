@@ -150,10 +150,15 @@ class Config:
         signature_bbox_precision=2,
 
         # Phase 2.5: Persistent element cache for cross-run reuse
-        element_cache_persist=True,  # Save/load cache between runs
-        element_cache_export_csv=True,  # Export analysis CSV
-        element_cache_detect_changes=True,  # Compare with previous run
-        element_cache_change_tolerance=1.0 * 10**-2,  # 0.01 ft position/size tolerance (~3mm)
+        # RETIRED (Greg, 2026-09-29): the element cache no longer crosses runs
+        # -- no vop_element_cache_<date>.json load/save, no detect_changes.
+        # Change detection is the analysis layer's, from sidecar bbox_3d +
+        # bbox_transform. These two are kept, defaulting False and read by
+        # nothing, only so configs written before still load.
+        element_cache_persist=False,
+        element_cache_export_csv=True,  # Export the view-element map JSON
+        element_cache_detect_changes=False,
+        element_cache_change_tolerance=1.0 * 10**-2,  # retired with detect_changes
 
         # Strategy diagnostics: track geometry extraction performance
         export_strategy_diagnostics=False,  # Export strategy diagnostics CSV and print summary
@@ -765,9 +770,9 @@ class Config:
             signature_bbox_precision=d.get("signature_bbox_precision", 2),
 
             # Phase 2.5: Persistent element cache
-            element_cache_persist=d.get("element_cache_persist", True),
+            element_cache_persist=d.get("element_cache_persist", False),
             element_cache_export_csv=d.get("element_cache_export_csv", True),
-            element_cache_detect_changes=d.get("element_cache_detect_changes", True),
+            element_cache_detect_changes=d.get("element_cache_detect_changes", False),
             element_cache_change_tolerance=d.get("element_cache_change_tolerance", 1.0 * 10**-2),
 
             # Strategy diagnostics
