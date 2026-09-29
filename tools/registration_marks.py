@@ -49,6 +49,14 @@ REGISTERED_CAPTURE_SCHEMA = "vop.stage_a.registered_capture.v1"
 
 MISSING_TICK_PAD_PX = 3
 
+# The worst centre-line residual a fit may carry and still be APPLIED. Every
+# fit on pipeline_0928_0953 that located its ticks correctly came in at or
+# under 0.39 px; the ones that had taken stray pixels for ticks were at
+# 199-596 px. A fit that far from its own ticks is not a registration, and
+# resampling through it would be a guess. Reporting (the probe analyzer) is
+# not bound by this; applying is.
+MAX_APPLIED_RESIDUAL_PX = 2.0
+
 
 def fit_axis(xs, ys):
     """Ordinary least squares ``y = slope * x + intercept``, or None.
@@ -129,81 +137,264 @@ def _components(ys, xs):
     return list(groups.values())
 
 
-def _tick_measure(ys, xs, orientation):
+def _tick_measure(ys, xs, orientation, weights=None):
     """A tick's centre line and extent, in continuous pixel coordinates (pixel
-    i spans [i, i+1], as every other fit here)."""
+    i spans [i, i+1], as every other fit here).
+
+    ``weights``: each pixel's COVERAGE (1.0 for the exact tick colour, the
+    blend fraction for an anti-aliased fringe). The centre line is then the
+    coverage-weighted mean, and the ends come from pixels at least half
+    covered. None weighs every pixel 1 -- the exact-colour behaviour."""
     ys = np.asarray(ys, dtype=float)
     xs = np.asarray(xs, dtype=float)
     out = {"pixel_count": int(len(xs)),
            "pixel_bbox": [int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())]}
-    if orientation == "horizontal":
-        out["centre_px"] = float(ys.mean()) + 0.5
-        out["end_px"] = [float(xs.min()), float(xs.max()) + 1.0]
+    if weights is None:
+        w = np.ones(len(xs))
+        solid = np.ones(len(xs), dtype=bool)
     else:
-        out["centre_px"] = float(xs.mean()) + 0.5
-        out["end_px"] = [float(ys.min()), float(ys.max()) + 1.0]
+        w = np.asarray(weights, dtype=float)
+        solid = w >= 0.5
+        if not solid.any():
+            solid = np.ones(len(xs), dtype=bool)
+        out["coverage_px"] = float(w.sum())
+        out["blended_px"] = int(np.count_nonzero(w < 1.0 - 1e-9))
+    if orientation == "horizontal":
+        out["centre_px"] = float((ys * w).sum() / w.sum()) + 0.5
+        out["end_px"] = [float(xs[solid].min()), float(xs[solid].max()) + 1.0]
+    else:
+        out["centre_px"] = float((xs * w).sum() / w.sum()) + 0.5
+        out["end_px"] = [float(ys[solid].min()), float(ys[solid].max()) + 1.0]
     return out
 
 
-def locate_mark_pixels(pixels, marks, colour_by_id=None, shared_colour=None):
-    """``{mark key: (ys, xs)}`` for each tick found, plus the reasons for the
-    ones that were not.
+# A pixel is an anti-aliased fringe of tick colour ``c`` when it lies on the
+# line from ``c`` to white: ``p = t*c + (1-t)*255`` in every channel, to within
+# BLEND_TOLERANCE levels, at a coverage ``t`` of at least BLEND_MIN_COVERAGE.
+# Measured on pipeline_0928_0953's elevation: every horizontal tick of the
+# annotation capture landed on a pixel BOUNDARY and exported as two rows at
+# t = 0.75 and 0.62, with no pixel of its exact colour -- so an exact-colour
+# locator found 4 of 12 ticks and the capture could not be registered.
+BLEND_TOLERANCE = 3.0
+BLEND_MIN_COVERAGE = 0.1
+# COLOUR ALONE CANNOT IDENTIFY A FRINGE. The annotation palette is a wheel of
+# ~300 saturated hues, and a faint fringe of one lies within BLEND_TOLERANCE of
+# a neighbour's line to white: on the same run's Plan_CropActive each tick
+# colour matched 40-370 pixels far from its tick, nearly all under 50 %
+# coverage, and the fit's residual went from 0.24 px to 522 px. So a blend
+# is a tick pixel only inside a TICK-SIZED connected piece: one holding at
+# least this fraction of the largest piece's coverage, with at least one
+# pixel at 50 % or more. A tick crossed by other ink splits into comparable
+# pieces and keeps both; a stray fringe is a few faint pixels and does not.
+TICK_PIECE_MIN_FRACTION = 0.25
+# ...and LINE-SHAPED. Coverage alone let compact fringe blobs through
+# (13 x 8 px beside text on Plan_CropInActive, 11 x 23 px on the RCP, both
+# still 596 / 199 px residuals): a tick piece's bbox must be at least this
+# many times longer than it is wide, and -- where the tick's orientation is
+# known (the annotation capture) -- long in THAT direction.
+TICK_PIECE_MIN_ASPECT = 3.0
+# ...and ON ONE LINE. Plan_CropInActive's ticks are 21 px long (4.15 px/ft),
+# so a 10 x 3 px fringe passes both tests above and still took the fit to a
+# 584 px residual. A tick split by crossing ink leaves pieces on ONE centre
+# line, abutting along it; a stray fringe lies anywhere. So, where the tick's
+# orientation is known, a piece is kept only if its centre line is within
+# this many pixels of the strongest piece's, and the gap between them along
+# the tick is no longer than the strongest piece itself.
+TICK_PIECE_MAX_OFF_LINE_PX = 2.0
 
-    ``colour_by_id``: the annotation capture, one palette colour per tick.
-    ``shared_colour``: the model capture, one reserved colour for all twelve;
-    components are assigned to ticks by their bbox aspect (the orientation)
-    and where their centroid falls: a horizontal tick by image HALF across and
-    THIRD down (left/right x top/mid/bottom), a vertical one by THIRD across and
-    HALF down. That needs no mapping, only the layout's promise that corner
-    ticks stay in the outer thirds and mid ticks on the centre line. Several
-    components landing on one tick (a tick crossed by other ink) are merged
-    and counted; a component that fits no tick is counted too.
-    """
+
+def blend_coverage(unique_packed, rgb):
+    """``(packed colours, coverage)`` for the members of ``unique_packed`` that
+    are ``rgb`` blended toward white (``rgb`` itself included, at 1.0)."""
+    unique_packed = np.asarray(unique_packed, dtype=np.int64)
+    colours = np.stack([(unique_packed >> 16) & 255, (unique_packed >> 8) & 255,
+                        unique_packed & 255], axis=1).astype(float)
+    depth = 255.0 - np.asarray(rgb, dtype=float)
+    norm = float(depth @ depth)
+    if norm <= 0.0:
+        return unique_packed[:0], np.zeros(0)
+    toward_white = 255.0 - colours
+    t = (toward_white @ depth) / norm
+    residual = np.abs(t[:, None] * depth[None, :] - toward_white).max(axis=1)
+    keep = ((t >= BLEND_MIN_COVERAGE) & (t <= 1.0 + 1e-9)
+            & (residual <= BLEND_TOLERANCE))
+    return unique_packed[keep], np.minimum(t[keep], 1.0)
+
+
+def mark_colour_keys(packed, colours, blends=False, reserved_colours=()):
+    """Which packed pixel values may belong to each mark colour, and at what
+    coverage: ``({colour: (keys, coverage)}, ambiguous keys)``.
+
+    Exact colour only unless ``blends``. A value that is some element's own
+    palette colour (``reserved_colours``) is never a blend -- it is that
+    element. A value that two mark colours could both explain is reported as
+    ambiguous and offered to BOTH: colour cannot say which tick it belongs to,
+    and position can -- ``_tick_pieces`` keeps it only where it touches a
+    tick-sized piece."""
+    colours = [tuple(int(c) for c in rgb) for rgb in colours]
+    if not blends:
+        return dict((c, (np.array([_pack(c)], dtype=np.int64), np.ones(1)))
+                    for c in colours), set()
+    unique = np.unique(packed[packed != 0xFFFFFF])
+    own = set(_pack(c) for c in colours)
+    reserved = set(_pack(c) for c in reserved_colours) - own
+    per, owners = {}, {}
+    for c in colours:
+        keys, cover = blend_coverage(unique, c)
+        if reserved:
+            ok = ~np.isin(keys, np.fromiter(reserved, dtype=np.int64))
+            keys, cover = keys[ok], cover[ok]
+        per[c] = (keys, cover)
+        for k in keys.tolist():
+            owners[k] = owners.get(k, 0) + 1
+    return per, set(k for k, n in owners.items() if n > 1)
+
+
+def _pixels_of(packed, keys, cover, weighted):
+    """``(ys, xs, weights or None)`` of the pixels holding ``keys``."""
+    select = np.isin(packed, keys)
+    ys, xs = np.nonzero(select)
+    if not weighted:
+        return ys, xs, None
+    order = np.argsort(keys)
+    values = packed[ys, xs].astype(np.int64)
+    weights = cover[order][np.searchsorted(keys[order], values)]
+    return ys, xs, weights
+
+
+def _line_shaped(ys, xs, orientation=None):
+    width = float(xs.max() - xs.min() + 1)
+    height = float(ys.max() - ys.min() + 1)
+    if orientation == "horizontal":
+        return width >= TICK_PIECE_MIN_ASPECT * height
+    if orientation == "vertical":
+        return height >= TICK_PIECE_MIN_ASPECT * width
+    return max(width, height) >= TICK_PIECE_MIN_ASPECT * min(width, height)
+
+
+def _tick_pieces(ys, xs, weights, orientation=None):
+    """The connected pieces of a candidate pixel set, as index arrays, and how
+    many were dropped as stray fringe: not line-shaped (TICK_PIECE_MIN_ASPECT,
+    along ``orientation`` when it is known), without one pixel half covered,
+    or under TICK_PIECE_MIN_FRACTION of the largest remaining piece's
+    coverage. Nothing is dropped from an exact-colour set (``weights`` None):
+    an exact tick colour is reserved, so every piece of it is a tick."""
+    pieces = [np.asarray(c) for c in _components(ys, xs)]
+    if weights is None or not pieces:
+        return pieces, 0
+    shaped = [c for c in pieces if float(weights[c].max()) >= 0.5
+              and _line_shaped(ys[c], xs[c], orientation)]
+    if not shaped:
+        return [], len(pieces)
+    coverage = [float(weights[c].sum()) for c in shaped]
+    floor = TICK_PIECE_MIN_FRACTION * max(coverage)
+    kept = [c for c, cov in zip(shaped, coverage) if cov >= floor]
+    if orientation in ("horizontal", "vertical") and len(kept) > 1:
+        best = kept[int(np.argmax([float(weights[c].sum()) for c in kept]))]
+        along, across = (xs, ys) if orientation == "horizontal" else (ys, xs)
+
+        def _on_line(c):
+            if abs(float(across[c].mean()) - float(across[best].mean())) > \
+                    TICK_PIECE_MAX_OFF_LINE_PX:
+                return False
+            length = float(along[best].max() - along[best].min() + 1)
+            gap = max(float(along[c].min() - along[best].max()),
+                      float(along[best].min() - along[c].max()), 0.0)
+            return gap <= length
+        kept = [c for c in kept if c is best or _on_line(c)]
+    return kept, len(pieces) - len(kept)
+
+
+def _take(ys, xs, weights, pieces):
+    if not pieces:
+        return ys[:0], xs[:0], None if weights is None else weights[:0]
+    index = np.concatenate(pieces)
+    return ys[index], xs[index], None if weights is None else weights[index]
+
+
+def _locate(pixels, marks, colour_by_id=None, shared_colour=None,
+            blends=False, reserved_colours=()):
+    """``locate_mark_pixels``, plus every pixel it attributed to a mark --
+    assigned to a tick or not -- as ``(ys, xs)``: what is subtracted."""
     found, missing = {}, []
     packed = pack_pixels(pixels)
+    ink_ys, ink_xs = [], []
     if shared_colour is None:
+        by_mark = dict((m["key"], (colour_by_id or {}).get(int(m["id"])))
+                       for m in marks if m.get("id") is not None)
+        per, ambiguous = mark_colour_keys(
+            packed, [c for c in by_mark.values() if c is not None], blends,
+            reserved_colours)
+        dropped = 0
         for mark in marks:
-            rgb = (colour_by_id or {}).get(int(mark["id"])) if mark.get(
-                "id") is not None else None
+            rgb = by_mark.get(mark["key"])
             if rgb is None:
                 missing.append({"key": mark["key"], "reason": "no colour in the "
                                 "capture's colour map for id {0}".format(mark.get("id"))})
                 continue
-            ys, xs = np.nonzero(packed == _pack(rgb))
+            keys, cover = per[tuple(int(c) for c in rgb)]
+            ys, xs, weights = _pixels_of(packed, keys, cover, blends)
+            if blends:
+                pieces, n = _tick_pieces(ys, xs, weights, mark.get("orientation"))
+                dropped += n
+                ys, xs, weights = _take(ys, xs, weights, pieces)
             if len(xs) == 0:
                 missing.append({"key": mark["key"], "reason": "its colour {0} drew "
-                                "no pixels".format(list(rgb))})
+                                "no pixels{1}".format(list(rgb), (
+                                    ", exact or blended toward white"
+                                    if blends else ""))})
                 continue
-            found[mark["key"]] = (ys, xs)
-        return found, missing, {}
-    ys, xs = np.nonzero(packed == _pack(shared_colour))
-    height, width = pixels.shape[0], pixels.shape[1]
+            found[mark["key"]] = (ys, xs, weights)
+            ink_ys.append(ys)
+            ink_xs.append(xs)
+        stats = ({"ambiguous_blend_colours": len(ambiguous),
+                  "stray_fringe_pieces_dropped": dropped} if blends else {})
+        return found, missing, stats, (ink_ys, ink_xs)
+    per, ambiguous = mark_colour_keys(packed, [shared_colour], blends,
+                                      reserved_colours)
+    keys, cover = per[tuple(int(c) for c in shared_colour)]
+    ys, xs, weights = _pixels_of(packed, keys, cover, blends)
+    pieces, dropped = _tick_pieces(ys, xs, weights)
     by_slot = {}
     stats = {"components": 0, "merged_into_one_tick": 0}
-    for component in _components(ys, xs):
+    if blends:
+        stats["ambiguous_blend_colours"] = len(ambiguous)
+        stats["stray_fringe_pieces_dropped"] = dropped
+    if pieces:
+        kept_ys, kept_xs, _w = _take(ys, xs, weights, pieces)
+        ink_ys.append(kept_ys)
+        ink_xs.append(kept_xs)
+        x_lo, x_hi = float(kept_xs.min()), float(kept_xs.max()) + 1.0
+        y_lo, y_hi = float(kept_ys.min()), float(kept_ys.max()) + 1.0
+        stats["frame_px"] = [x_lo, y_lo, x_hi, y_hi]
+
+    def _third(value, lo, hi, names):
+        f = (value - lo) / (hi - lo)
+        return names[0 if f < 1.0 / 3.0 else (1 if f < 2.0 / 3.0 else 2)]
+
+    for component in pieces:
         stats["components"] += 1
         cy, cx = ys[component], xs[component]
+        cw = weights[component] if weights is not None else None
         orientation = ("horizontal" if (cx.max() - cx.min()) >= (cy.max() - cy.min())
                        else "vertical")
-        x, y = cx.mean(), cy.mean()
-
-        def _third(value, extent, names):
-            return names[0 if value < extent / 3.0 else
-                         (1 if value < 2.0 * extent / 3.0 else 2)]
-
+        x, y = cx.mean() + 0.5, cy.mean() + 0.5
         if orientation == "horizontal":
-            corner = "{0}_{1}".format("left" if x < width / 2.0 else "right",
-                                      _third(y, height, ("top", "mid", "bottom")))
+            corner = "{0}_{1}".format(
+                "left" if x < (x_lo + x_hi) / 2.0 else "right",
+                _third(y, y_lo, y_hi, ("top", "mid", "bottom")))
         else:
-            corner = "{0}_{1}".format(_third(x, width, ("left", "mid", "right")),
-                                      "top" if y < height / 2.0 else "bottom")
+            corner = "{0}_{1}".format(
+                _third(x, x_lo, x_hi, ("left", "mid", "right")),
+                "top" if y < (y_lo + y_hi) / 2.0 else "bottom")
         slot = "{0}_{1}".format(corner, orientation[0])
         if slot in by_slot:
             stats["merged_into_one_tick"] += 1
-            by_slot[slot] = (np.concatenate([by_slot[slot][0], cy]),
-                             np.concatenate([by_slot[slot][1], cx]))
+            old = by_slot[slot]
+            by_slot[slot] = (np.concatenate([old[0], cy]), np.concatenate([old[1], cx]),
+                             None if cw is None else np.concatenate([old[2], cw]))
         else:
-            by_slot[slot] = (cy, cx)
+            by_slot[slot] = (cy, cx, cw)
     keys = set(m["key"] for m in marks)
     stats["unassigned_components"] = sorted(k for k in by_slot if k not in keys)
     for mark in marks:
@@ -212,11 +403,36 @@ def locate_mark_pixels(pixels, marks, colour_by_id=None, shared_colour=None):
         else:
             missing.append({"key": mark["key"], "reason": "no component of the "
                             "shared colour in that corner and orientation"})
+    return found, missing, stats, (ink_ys, ink_xs)
+
+
+def locate_mark_pixels(pixels, marks, colour_by_id=None, shared_colour=None,
+                       blends=False, reserved_colours=()):
+    """``{mark key: (ys, xs, weights)}`` for each tick found, plus the reasons
+    for the ones that were not. ``weights`` is None unless ``blends``.
+
+    ``colour_by_id``: the annotation capture, one palette colour per tick.
+    ``shared_colour``: the model capture, one reserved colour for all twelve;
+    components are assigned to ticks by their bbox aspect (the orientation)
+    and where their centroid falls within the MARKS' OWN EXTENT -- the bbox
+    of every mark pixel kept: a horizontal tick by HALF across and THIRD down
+    (left/right x top/mid/bottom), a vertical one by THIRD across and HALF
+    down. That needs no mapping, only the layout's promise that corner ticks
+    sit at the extremes and mid ticks inside the middle third. It is the
+    marks' extent, not the image's, because the marks need not span the
+    image: on a crop-inactive plan they sit on the raster frame in the middle
+    of a far larger crop A, and image thirds put all six horizontal ticks in
+    "mid" (pipeline_0928_0953, Plan_CropInActive: 8 of 12, 4 merged).
+    Several components landing on one tick (a tick crossed by other ink) are
+    merged and counted; a component that fits no tick is counted too.
+    """
+    found, missing, stats, _ink = _locate(pixels, marks, colour_by_id,
+                                          shared_colour, blends, reserved_colours)
     return found, missing, stats
 
 
 def fit_marks_in_pixels(pixels, marks, colour_by_id=None, shared_colour=None,
-                        identify_by_id=None):
+                        identify_by_id=None, blends=False, reserved_colours=()):
     """UV -> pixel from the ticks' CENTRE LINES, per axis, with residuals.
 
     Also an ENDPOINT fit (tick ends against their UV span), reported beside it
@@ -226,7 +442,8 @@ def fit_marks_in_pixels(pixels, marks, colour_by_id=None, shared_colour=None,
     if not marks:
         return {"status": "not_applicable", "reason": "no registration marks"}
     found, missing, stats = locate_mark_pixels(pixels, marks, colour_by_id,
-                                               shared_colour)
+                                               shared_colour, blends,
+                                               reserved_colours)
     ticks = []
     centre = {"horizontal": ([], []), "vertical": ([], [])}
     ends = {"horizontal": ([], []), "vertical": ([], [])}
@@ -234,8 +451,8 @@ def fit_marks_in_pixels(pixels, marks, colour_by_id=None, shared_colour=None,
     for mark in marks:
         if mark["key"] not in found:
             continue
-        ys, xs = found[mark["key"]]
-        measured = _tick_measure(ys, xs, mark["orientation"])
+        ys, xs, weights = found[mark["key"]]
+        measured = _tick_measure(ys, xs, mark["orientation"], weights)
         tick = dict(key=mark["key"], id=mark.get("id"),
                     orientation=mark["orientation"], level_uv=mark["level_uv"],
                     span_uv=mark["span_uv"], **measured)
@@ -361,6 +578,16 @@ def compose_pixel_transform(from_mapping, to_mapping):
             "scale_y": sy, "offset_y": to_mapping["b_v"] - sy * from_mapping["b_v"]}
 
 
+def residual_refusal(fit):
+    """Why a ``value`` fit is too inconsistent with its own ticks to apply."""
+    worst = max(v for v in (fit.get("residual_max_px") or {}).values()
+                if v is not None)
+    if worst > MAX_APPLIED_RESIDUAL_PX:
+        return "worst tick residual {0:.2f} px exceeds {1} px: the fit does not " \
+               "agree with its own ticks".format(worst, MAX_APPLIED_RESIDUAL_PX)
+    return None
+
+
 def transform_refusal(transform):
     """Why ``transform`` cannot be applied, or None. A negative scale mirrors
     an axis and a zero or non-finite one collapses it: both mean the two fits
@@ -464,31 +691,40 @@ def mark_colours(payload):
     return by_id, None, None
 
 
-def mark_ink_mask(pixels, payload):
-    """Every pixel drawn in a mark colour, as a boolean mask -- what is
-    SUBTRACTED.
-
-    Exact colour, not the ticks' pixel rects: a rect would also erase any
-    element ink crossing a tick. Both colour schemes are reserved to the
-    marks -- MARK_COLOUR is outside the model palette, and each annotation
-    tick has its own palette entry -- so every pixel of those colours is a
-    mark, including a component the fit could not assign to a tick.
+def mark_ink_mask(pixels, payload, reserved_colours=()):
+    """Every pixel attributed to a mark, as a boolean mask -- what is
+    SUBTRACTED. Exactly the pixels the fit locates (anti-aliased fringes
+    included, stray look-alike fringes elsewhere in the image not), plus any
+    piece of the model's reserved colour that fit no tick. Not the ticks'
+    pixel rects: a rect would also erase any element ink crossing a tick.
     """
     by_id, shared, _refusal = mark_colours(payload)
-    colours = [shared] if shared is not None else list((by_id or {}).values())
-    packed = pack_pixels(pixels)
-    if not colours:
-        return np.zeros(packed.shape, dtype=bool)
-    return np.isin(packed, np.array([_pack(c) for c in colours], dtype=np.int32))
+    mask = np.zeros(pixels.shape[:2], dtype=bool)
+    if shared is None and not by_id:
+        return mask
+    _found, _missing, _stats, (ink_ys, ink_xs) = _locate(
+        pixels, payload.get("marks") or [], colour_by_id=by_id,
+        shared_colour=shared, blends=True, reserved_colours=reserved_colours)
+    for ys, xs in zip(ink_ys, ink_xs):
+        mask[ys, xs] = True
+    return mask
 
 
-def fit_recorded_marks(pixels, payload, identify_by_id=None):
-    """The fit for a production capture, from its own ``registration_marks``."""
+def palette_colours(sidecar):
+    """The capture's own palette, as the ``reserved_colours`` above."""
+    return [tuple(int(c) for c in rgb)
+            for rgb in (sidecar.get("color_assignment_map") or {}).values()]
+
+
+def fit_recorded_marks(pixels, payload, identify_by_id=None, reserved_colours=()):
+    """The fit for a production capture, from its own ``registration_marks``,
+    anti-aliased fringes included (weighted by coverage)."""
     by_id, shared, refusal = mark_colours(payload)
     if refusal:
         return {"status": "unavailable", "reason": refusal}
     return fit_marks_in_pixels(pixels, payload.get("marks"), colour_by_id=by_id,
-                               shared_colour=shared, identify_by_id=identify_by_id)
+                               shared_colour=shared, identify_by_id=identify_by_id,
+                               blends=True, reserved_colours=reserved_colours)
 
 
 def marks_identity_refusal(first, second):

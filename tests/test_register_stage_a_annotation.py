@@ -71,6 +71,25 @@ def _anno_colours(marks):
     return dict((m["id"], (200, 8 * (i + 1), 16)) for i, m in enumerate(marks))
 
 
+def blend(colour, t):
+    """``colour`` at coverage ``t`` over white, as ExportImage anti-aliases."""
+    return tuple(int(round(t * c + (1.0 - t) * 255.0)) for c in colour)
+
+
+# pipeline_0928_0953's elevation: a tick on a pixel BOUNDARY exported as two
+# rows at these coverages, and not one pixel of its exact colour.
+FRINGE = (0.62, 0.75)
+
+
+def _draw_blended_h(img, seg, colour, to_x, to_y):
+    """A horizontal tick straddling the row boundary nearest its level."""
+    boundary = int(round(to_y(seg["level_uv"])))
+    xs = sorted(to_x(u) for u in seg["span_uv"])
+    x0, x1 = int(round(xs[0])), int(round(xs[1]))
+    img[boundary - 1, x0:x1] = blend(colour, FRINGE[0])
+    img[boundary, x0:x1] = blend(colour, FRINGE[1])
+
+
 def _draw_tick(img, seg, colour, to_x, to_y, thickness=2):
     if seg["orientation"] == "horizontal":
         yc = to_y(seg["level_uv"])
@@ -96,15 +115,22 @@ def _record(marks):
 
 
 def _write_pair(tmp_path, marks=None, drop_anno=(), drop_model=(),
-                anno_marks_record=None, with_marks=True):
+                anno_marks_record=None, with_marks=True, blended_anno_h=False,
+                model_crop_offset=None, extra_anno=None):
     """A model + annotation capture of one view, as production names them."""
     marks = marks if marks is not None else _marks()
     colours = _anno_colours(marks)
     anno = np.full((AH, AW, 3), 255, dtype=np.uint8)
-    for eid, (colour, rect) in ELEMENTS.items():
+    elements = dict(ELEMENTS)
+    elements.update(extra_anno or {})
+    for eid, (colour, rect) in elements.items():
         _fill(anno, rect, colour, ax, ay)
     for m in marks:
-        if m["key"] not in drop_anno:
+        if m["key"] in drop_anno:
+            continue
+        if blended_anno_h and m["orientation"] == "horizontal":
+            _draw_blended_h(anno, m, colours[m["id"]], ax, ay)
+        else:
             _draw_tick(anno, m, colours[m["id"]], ax, ay)
     model = np.full((MH, MW, 3), 255, dtype=np.uint8)
     _fill(model, MODEL_ELEMENT[2], MODEL_ELEMENT[1], mx, my)
@@ -114,7 +140,7 @@ def _write_pair(tmp_path, marks=None, drop_anno=(), drop_model=(),
     model_tiff, anno_tiff = tmp_path / "V_1.tiff", tmp_path / "V_1_anno.tiff"
     Image.fromarray(model).save(str(model_tiff), format="TIFF")
     Image.fromarray(anno).save(str(anno_tiff), format="TIFF")
-    anno_map = dict((str(eid), list(c)) for eid, (c, _r) in ELEMENTS.items())
+    anno_map = dict((str(eid), list(c)) for eid, (c, _r) in elements.items())
     anno_map.update((str(k), list(v)) for k, v in colours.items())
     model_side = {"view_id": 1, "tiff_path": str(model_tiff),
                   "bounds_xy": list(MODEL_BOUNDS),
@@ -124,6 +150,8 @@ def _write_pair(tmp_path, marks=None, drop_anno=(), drop_model=(),
                                            list(MODEL_ELEMENT[1])},
                   "applied_display_style": "FlatColors",
                   "applied_smooth_edges": False}
+    if model_crop_offset is not None:
+        model_side["model_crop_offset_uv"] = list(model_crop_offset)
     anno_side = {"view_id": 1, "pass": "annotation", "tiff_path": str(anno_tiff),
                  "model_pass_tiff_path": str(model_tiff),
                  "resolution": {"pixel_size": AW, "requested_pixel_size": AW,
@@ -372,3 +400,270 @@ def test_main_exit_codes(tmp_path):
     assert reg.main([str(good)]) == 0
     assert reg.main([str(bad)]) == 1
     assert reg.main([str(tmp_path / "empty_nothing_here")]) == 2
+
+
+# ======================================================================
+# found by the first real run (pipeline_0928_0953)
+# ======================================================================
+
+def test_anti_aliased_ticks_register(tmp_path):
+    """The elevation's annotation capture: every horizontal tick exported as a
+    two-row blend with no pixel of its exact colour. Registered, and placed
+    as well as the exact-colour fixture is."""
+    anno_path, _model, _c = _write_pair(tmp_path, blended_anno_h=True)
+    reg.register(anno_path)
+    record = _persisted(anno_path)
+    assert record["status"] == "registered", record["refusals"]
+    assert record["annotation_fit"]["found_count"] == 12
+    assert record["annotation_fit"]["residual_max_px"]["v"] < 0.6
+    assert record["annotation_to_model_px"]["scale_y"] == pytest.approx(M / A_U, rel=2e-3)
+
+
+def test_exact_colour_alone_cannot_see_those_ticks(tmp_path):
+    """The CONTROL, and the defect reproduced: the same capture read exact-
+    colour only is 6 of 12 and unfittable."""
+    anno_path, _model, colours = _write_pair(tmp_path, blended_anno_h=True)
+    px = rm.load_rgb(tmp_path / "V_1_anno.tiff")
+    fit = rm.fit_marks_in_pixels(px, _marks(), colour_by_id=colours)
+    assert fit["status"] == "unavailable" and fit["found_count"] == 6
+
+
+def test_blended_tick_pixels_are_subtracted(tmp_path):
+    anno_path, _model, colours = _write_pair(tmp_path, blended_anno_h=True)
+    reg.register(anno_path)
+    out = np.asarray(Image.open(_persisted(anno_path)["registered_tiff"]).convert("RGB"))
+    for colour in colours.values():
+        for t in FRINGE:
+            assert _bbox_of(out, blend(colour, t)) is None, (colour, t)
+
+
+def test_an_element_whose_colour_is_a_tick_blend_stays_an_element(tmp_path):
+    """A palette colour is an element, never a fringe -- even when it lies
+    exactly on a tick colour's line to white."""
+    marks = _marks()
+    victim = blend(_anno_colours(marks)[marks[0]["id"]], 0.5)
+    extra = {60: (victim, (5.0, 16.0, 7.0, 19.0))}
+    anno_path, _model, _c = _write_pair(tmp_path, extra_anno=extra)
+    reg.register(anno_path)
+    record = _persisted(anno_path)
+    out = np.asarray(Image.open(record["registered_tiff"]).convert("RGB"))
+    assert _bbox_of(out, victim) is not None
+    assert record["annotation_fit"]["residual_max_px"]["u"] < 0.6
+
+
+def test_the_same_colour_unreserved_would_be_taken_for_a_tick(tmp_path):
+    """The CONTROL: without the palette the element is absorbed into the
+    tick's pixels -- so the reservation is what kept it."""
+    marks = _marks()
+    colours = _anno_colours(marks)
+    victim = blend(colours[marks[0]["id"]], 0.5)
+    img = np.full((AH, AW, 3), 255, dtype=np.uint8)
+    _fill(img, (5.0, 16.0, 7.0, 19.0), victim, ax, ay)
+    packed = rm.pack_pixels(img)
+    free, _ = rm.mark_colour_keys(packed, [colours[marks[0]["id"]]], blends=True)
+    kept, _ = rm.mark_colour_keys(packed, [colours[marks[0]["id"]]], blends=True,
+                                  reserved_colours=[victim])
+    key = rm._pack(victim)
+    assert key in free[colours[marks[0]["id"]]][0].tolist()
+    assert key not in kept[colours[marks[0]["id"]]][0].tolist()
+
+
+def test_model_ticks_that_do_not_span_the_image_are_still_assigned():
+    """Plan_CropInActive: the marks sit on the raster frame in the middle of a
+    far larger crop A (y 4408-5592 of 10000). Image thirds put all six
+    horizontal ticks in "mid"; the marks' own extent does not."""
+    ref = (0.0, 0.0, 30.0, 20.0)
+    marks = [dict(seg, id=i) for i, seg in enumerate(
+        registration_mark_segments(ref, 1.0 / 12.0)["segments"])]
+    img = np.full((1200, 600, 3), 255, dtype=np.uint8)
+    to_x = lambda u: 12.0 * u + 120.0          # noqa: E731
+    to_y = lambda v: -12.0 * v + 720.0         # noqa: E731  (ref spans y 480-720)
+    for m in marks:
+        _draw_tick(img, m, MARK_COLOUR, to_x, to_y)
+    fit = rm.fit_marks_in_pixels(img, marks, shared_colour=MARK_COLOUR)
+    assert fit["status"] == "value", fit.get("missing")
+    assert fit["found_count"] == 12
+    assert fit["components"]["merged_into_one_tick"] == 0
+    assert fit["px_per_ft_v"] == pytest.approx(12.0, abs=0.05)
+
+
+def test_the_canvas_covers_a_grid_wider_than_the_model_crop(tmp_path):
+    """Plan_CropActive: the model crop sits inside the grid. Annotation ink in
+    the grid but beyond the model image is kept, at the model's pixel phase."""
+    offset = (2.0, 1.0, -3.0, -2.0)     # grid = bounds_xy - offset: wider
+    outside = {61: ((120, 8, 16), (-2.5, 1.0, -1.5, 3.0))}   # u < bounds_xy u0
+    anno_path, _model, _c = _write_pair(tmp_path, model_crop_offset=offset,
+                                        extra_anno=outside)
+    reg.register(anno_path)
+    record = _persisted(anno_path)
+    assert record["status"] == "registered", record["refusals"]
+    lattice = record["lattice"]
+    ox, oy = lattice["model_image_origin_px"]
+    assert (ox, oy) == (int(round(offset[0] * M)), int(round(-offset[3] * M)))
+    assert lattice["canvas_w"] == MW + ox + int(round(-offset[2] * M))
+    out = np.asarray(Image.open(record["registered_tiff"]).convert("RGB"))
+    colour, (u0, v0, u1, v1) = outside[61]
+    got = _bbox_of(out, colour)
+    want = (mx(u0) + ox, my(v1) + oy, mx(u1) + ox, my(v0) + oy)
+    assert got is not None
+    for g, w in zip(got, want):
+        assert abs(g - w) <= 1.5, (got, want)
+    # And the model image's own content keeps its place, shifted by the origin.
+    colour, (u0, v0, u1, v1) = ELEMENTS[50]
+    assert abs(_bbox_of(out, colour)[0] - (mx(u0) + ox)) <= 1.5
+
+
+def test_without_the_offset_that_ink_is_off_canvas_and_counted(tmp_path):
+    """The CONTROL: the same ink with the grid equal to the model crop is off
+    the canvas -- and said so, not silently dropped."""
+    outside = {61: ((120, 8, 16), (-2.5, 1.0, -1.5, 3.0))}
+    anno_path, _model, _c = _write_pair(tmp_path, extra_anno=outside)
+    reg.register(anno_path)
+    record = _persisted(anno_path)
+    assert record["lattice"]["model_image_origin_px"] == [0, 0]
+    assert record["losses"]["ink_pixels_off_canvas"] > 0
+    # Off the canvas is its own loss, not a colour the RESAMPLE lost.
+    assert record["losses"]["colours_lost_in_resample"] == []
+    out = np.asarray(Image.open(record["registered_tiff"]).convert("RGB"))
+    assert _bbox_of(out, outside[61][0]) is None
+
+
+def test_a_fringe_pulls_the_centre_line_by_its_coverage():
+    """Hand-computed: row 10 at coverage 0.2 and row 11 solid put the centre
+    line at (10.5*0.2 + 11.5*1.0) / 1.2 = 11.3333, not the unweighted 11.0."""
+    ys, xs = np.array([10] * 5 + [11] * 5), np.array(list(range(5)) * 2)
+    weights = np.array([0.2] * 5 + [1.0] * 5)
+    measured = rm._tick_measure(ys, xs, "horizontal", weights)
+    assert measured["centre_px"] == pytest.approx(11.0 + 1.0 / 3.0)
+    assert measured["blended_px"] == 5
+    # CONTROL: unweighted, as the probe analyzer measures.
+    assert rm._tick_measure(ys, xs, "horizontal")["centre_px"] == pytest.approx(11.0)
+
+
+# ----------------------------------------------------------------------
+# stray look-alike fringes (Plan_CropActive, RCP, Plan_CropInActive)
+# ----------------------------------------------------------------------
+
+def _stray(img, colour, x0, y0, w, h, t=0.55):
+    img[y0:y0 + h, x0:x0 + w] = blend(colour, t)
+
+
+def _pair_with_strays(tmp_path, draw):
+    """``_write_pair`` with ``draw(anno pixels, marks, colours)`` applied to
+    the annotation capture after it is written."""
+    marks = _marks()
+    anno_path, model_path, colours = _write_pair(tmp_path, marks=marks)
+    tiff = tmp_path / "V_1_anno.tiff"
+    img = np.array(Image.open(tiff).convert("RGB"))
+    draw(img, marks, colours)
+    Image.fromarray(img).save(str(tiff), format="TIFF")
+    return anno_path, marks, colours
+
+
+def _left_mid_h(marks):
+    return [m for m in marks if m["key"] == "left_mid_h"][0]
+
+
+def test_a_compact_fringe_blob_is_not_a_tick(tmp_path):
+    """13 x 8 px of a tick's blend colour far from the tick (the shape beside
+    text on Plan_CropInActive): not fitted, and not erased."""
+    def draw(img, marks, colours):
+        _stray(img, colours[_left_mid_h(marks)["id"]], 300, 200, 13, 8)
+    anno_path, marks, colours = _pair_with_strays(tmp_path, draw)
+    reg.register(anno_path)
+    record = _persisted(anno_path)
+    assert record["status"] == "registered", record["refusals"]
+    assert max(record["annotation_fit"]["residual_max_px"].values()) < 0.6
+    src = np.asarray(Image.open(tmp_path / "V_1_anno.tiff").convert("RGB"))
+    stray = blend(colours[_left_mid_h(marks)["id"]], 0.55)
+    assert (src[200:208, 300:313] == stray).all()      # still there to register
+
+
+def test_a_line_shaped_fringe_off_the_ticks_line_is_not_a_tick(tmp_path):
+    """10 x 3 px, horizontal like the tick, with a quarter of its coverage --
+    passes shape and size, and is still off the tick's line."""
+    def draw(img, marks, colours):
+        m = _left_mid_h(marks)
+        _stray(img, colours[m["id"]], 300, 200, 20, 3, t=0.9)
+    anno_path, marks, _c = _pair_with_strays(tmp_path, draw)
+    reg.register(anno_path)
+    record = _persisted(anno_path)
+    assert record["status"] == "registered", record["refusals"]
+    assert max(record["annotation_fit"]["residual_max_px"].values()) < 0.6
+
+
+def test_a_tick_split_by_crossing_ink_keeps_both_halves(tmp_path):
+    """The CONTROL for the line rule: the two halves of a crossed tick are on
+    one line, abutting, and both stay -- so the tick keeps its full length."""
+    def draw(img, marks, colours):
+        m = _left_mid_h(marks)
+        x_mid = int(round(ax(sum(m["span_uv"]) / 2.0)))
+        img[:, x_mid:x_mid + 3] = (0, 0, 0)
+    anno_path, marks, _c = _pair_with_strays(tmp_path, draw)
+    px = rm.load_rgb(tmp_path / "V_1_anno.tiff")
+    anno_side = json.loads(anno_path.read_text())
+    fit = rm.fit_recorded_marks(px, anno_side["registration_marks"],
+                                reserved_colours=rm.palette_colours(anno_side))
+    tick = [t for t in fit["ticks"] if t["key"] == "left_mid_h"][0]
+    m = _left_mid_h(marks)
+    assert tick["end_px"][1] - tick["end_px"][0] == pytest.approx(
+        abs(ax(m["span_uv"][1]) - ax(m["span_uv"][0])), abs=1.0)
+
+
+def test_a_fit_far_from_its_own_ticks_is_refused(tmp_path):
+    """The residual bound: both mid vertical ticks recorded 0.5 ft (6 px) from
+    where they drew. Fitted, and not applied."""
+    marks = _marks()
+    shifted = [dict(m, level_uv=m["level_uv"] + 0.5)
+               if m["key"] in ("mid_bottom_v", "mid_top_v") else m for m in marks]
+    anno_path, _model, _c = _write_pair(tmp_path, marks=marks,
+                                        anno_marks_record=_record(shifted))
+    # The model sidecar must describe the same ticks, or identity refuses first.
+    model_path = tmp_path / "V_1.json"
+    side = json.loads(model_path.read_text())
+    side["registration_marks"] = _registration_payload(
+        "model", _record(shifted), shared_colour=MARK_COLOUR)
+    model_path.write_text(json.dumps(side))
+    reg.register(anno_path)
+    record = _persisted(anno_path)
+    assert record["status"] == "refused"
+    assert any("residual" in r for r in record["refusals"]), record["refusals"]
+    assert record["annotation_fit"]["status"] == "value"
+
+
+def _model_fit_with(tmp_path, draw):
+    """The model capture's fit, production-path, after ``draw(pixels)``."""
+    _anno, model_path, _c = _write_pair(tmp_path)
+    tiff = tmp_path / "V_1.tiff"
+    img = np.array(Image.open(tiff).convert("RGB"))
+    draw(img)
+    Image.fromarray(img).save(str(tiff), format="TIFF")
+    side = json.loads(model_path.read_text())
+    return rm.fit_recorded_marks(img, side["registration_marks"],
+                                 reserved_colours=rm.palette_colours(side))
+
+
+def test_model_capture_a_compact_blob_of_the_mark_colour_is_not_a_tick(tmp_path):
+    """In the model capture all twelve ticks share one colour, so there is no
+    per-tick line to test against; a compact blob must fail on SHAPE."""
+    fit = _model_fit_with(tmp_path, lambda img: _stray(img, MARK_COLOUR, 5, 5, 13, 8))
+    assert fit["status"] == "value"
+    assert fit["components"]["components"] == 12
+    assert max(fit["residual_max_px"].values()) < 0.6
+
+
+def test_model_capture_a_faint_sliver_of_the_mark_colour_is_not_a_tick(tmp_path):
+    """Line-shaped but a sliver: fails on COVERAGE against the real ticks."""
+    fit = _model_fit_with(tmp_path, lambda img: _stray(img, MARK_COLOUR, 690, 510, 8, 1,
+                                                       t=0.6))
+    assert fit["status"] == "value"
+    assert fit["components"]["components"] == 12
+    assert fit["components"]["unassigned_components"] == []
+    assert max(fit["residual_max_px"].values()) < 0.6
+
+
+def test_model_capture_clean_is_twelve_pieces(tmp_path):
+    """The CONTROL: nothing dropped from a clean capture."""
+    fit = _model_fit_with(tmp_path, lambda img: None)
+    assert fit["components"]["components"] == 12
+    assert fit["components"]["stray_fringe_pieces_dropped"] == 0

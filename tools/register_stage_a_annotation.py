@@ -145,12 +145,60 @@ def _colour_set(pixels, mask):
     return set(np.unique(rm.pack_pixels(pixels)[mask]).tolist())
 
 
-def _ink_outside(ink, transform, out_w, out_h):
-    """Annotation ink pixels whose centres land outside the model image."""
+def _ink_off_canvas(ink, transform, out_w, out_h):
+    """Mask of annotation ink pixels whose centres land off the canvas."""
     ys, xs = np.nonzero(ink)
     xm = transform["scale_x"] * (xs + 0.5) + transform["offset_x"]
     ym = transform["scale_y"] * (ys + 0.5) + transform["offset_y"]
-    return int(np.count_nonzero((xm < 0) | (xm >= out_w) | (ym < 0) | (ym >= out_h)))
+    off = np.zeros(ink.shape, dtype=bool)
+    off[ys, xs] = (xm < 0) | (xm >= out_w) | (ym < 0) | (ym >= out_h)
+    return off
+
+
+def grid_bounds_uv(model_sidecar):
+    """``(grid rectangle, source)``: the pipeline's grid, which the model crop
+    may be NARROWER than. ``bounds_xy`` is the rectangle the model TIFF was
+    cropped to; ``model_crop_offset_uv`` is how far each side sits inside the
+    raster's own bounds (the decoder's ``grid_bounds_uv``, same arithmetic)."""
+    bounds = model_sidecar.get("bounds_xy")
+    if not bounds or len(bounds) != 4:
+        return None, "the model sidecar records no bounds_xy"
+    offset = model_sidecar.get("model_crop_offset_uv")
+    if not offset or len(offset) != 4:
+        return [float(v) for v in bounds], "bounds_xy"
+    return ([float(b) - float(o) for b, o in zip(bounds, offset)],
+            "bounds_xy - model_crop_offset_uv")
+
+
+def output_canvas(model_mapping, model_w, model_h, model_sidecar):
+    """The model lattice, extended to cover the pipeline's grid.
+
+    The model image alone is not enough: pipeline_0928_0953's
+    Plan_CropActive has a model crop narrower than its grid, and 26 % of its
+    annotation ink sat inside the grid but outside the model image. The
+    canvas keeps the model's pixel PHASE -- it is the model image with whole
+    pixels added on each side -- so the model image sits in it at an integer
+    offset, ``model_image_origin_px``, and overlaying the two needs no
+    resample of the model capture. Grid corners go through the model's MARK
+    fit, the same map the annotation is placed by.
+    """
+    grid, source = grid_bounds_uv(model_sidecar)
+    x0, y0, x1, y1 = 0, 0, int(model_w), int(model_h)
+    if grid is not None:
+        gx = sorted(model_mapping["a_u"] * u + model_mapping["b_u"]
+                    for u in (grid[0], grid[2]))
+        gy = sorted(model_mapping["a_v"] * v + model_mapping["b_v"]
+                    for v in (grid[1], grid[3]))
+        # To the NEAREST pixel boundary: the mark fit and the recorded crop
+        # disagree by a fraction of a pixel on every real capture (0.4-1.6 px
+        # at the corners on pipeline_0928_0953), and ceil/floor would turn
+        # that disagreement into a spurious extra row or column.
+        x0, x1 = min(x0, int(np.round(gx[0]))), max(x1, int(np.round(gx[1])))
+        y0, y1 = min(y0, int(np.round(gy[0]))), max(y1, int(np.round(gy[1])))
+    return {"canvas_w": x1 - x0, "canvas_h": y1 - y0,
+            "model_image_origin_px": [-x0, -y0], "shift_x": -x0, "shift_y": -y0,
+            "grid_bounds_uv": grid, "grid_source": source,
+            "covers": "the model image and the grid, on the model's pixel phase"}
 
 
 def _fit_summary(fit):
@@ -216,8 +264,12 @@ def register(anno_sidecar_path, model_sidecar_path=None):
     if not refusals:
         anno_px = rm.load_rgb(anno_tiff)
         model_px = rm.load_rgb(model_tiff)
-        anno_fit = rm.fit_recorded_marks(anno_px, anno_marks)
-        model_fit = rm.fit_recorded_marks(model_px, model_marks)
+        anno_palette = rm.palette_colours(anno_sidecar)
+        anno_fit = rm.fit_recorded_marks(anno_px, anno_marks,
+                                         reserved_colours=anno_palette)
+        model_fit = rm.fit_recorded_marks(model_px, model_marks,
+                                          reserved_colours=rm.palette_colours(
+                                              model_sidecar))
         record["annotation_fit"] = _fit_summary(anno_fit)
         record["model_fit"] = _fit_summary(model_fit)
         out_h, out_w = model_px.shape[0], model_px.shape[1]
@@ -229,6 +281,8 @@ def register(anno_sidecar_path, model_sidecar_path=None):
             if fit.get("status") != "value":
                 refusals.append("{0} capture's marks cannot be fitted: {1}".format(
                     name, fit.get("reason")))
+            elif rm.residual_refusal(fit):
+                refusals.append("{0} capture: {1}".format(name, rm.residual_refusal(fit)))
         if not refusals:
             transform = rm.compose_pixel_transform(anno_fit["mapping"],
                                                    model_fit["mapping"])
@@ -237,28 +291,36 @@ def register(anno_sidecar_path, model_sidecar_path=None):
                 refusals.append(why)
             record["annotation_to_model_px"] = transform
         if not refusals:
-            mask = rm.mark_ink_mask(anno_px, anno_marks)
+            mask = rm.mark_ink_mask(anno_px, anno_marks, anno_palette)
             cleaned = anno_px.copy()
             cleaned[mask] = 255
+            canvas = output_canvas(model_fit["mapping"], out_w, out_h, model_sidecar)
+            on_canvas = dict(transform, offset_x=transform["offset_x"] + canvas["shift_x"],
+                             offset_y=transform["offset_y"] + canvas["shift_y"])
             ink_before = _ink(cleaned)
-            out, uncovered = resample_onto(cleaned, transform, out_w, out_h)
+            off_canvas = _ink_off_canvas(ink_before, on_canvas, canvas["canvas_w"],
+                                         canvas["canvas_h"])
+            out, uncovered = resample_onto(cleaned, on_canvas, canvas["canvas_w"],
+                                           canvas["canvas_h"])
             ink_after = _ink(out)
-            before, after = _colour_set(cleaned, ink_before), _colour_set(out, ink_after)
+            before = _colour_set(cleaned, ink_before & ~off_canvas)
+            after = _colour_set(out, ink_after)
             record["mark_subtraction"] = {
                 "annotation_mark_pixels_removed": int(np.count_nonzero(mask)),
-                "method": "every pixel of a recorded tick colour set to white",
+                "method": "every pixel of a tick colour, or of its blend toward "
+                          "white, set to white",
                 "model_capture": "not rewritten; the decoder subtracts its marks",
             }
             record["excluded_element_ids"] = sorted(
                 int(m["id"]) for m in anno_marks["marks"] if m.get("id") is not None)
-            record["lattice"] = {"image_w": out_w, "image_h": out_h,
-                                 "bounds_xy": model_sidecar.get("bounds_xy")}
+            record["annotation_to_canvas_px"] = on_canvas
+            record["lattice"] = dict(canvas, model_image_w=out_w, model_image_h=out_h,
+                                     bounds_xy=model_sidecar.get("bounds_xy"))
             record["losses"] = {
                 "ink_pixels_before": int(np.count_nonzero(ink_before)),
                 "ink_pixels_after": int(np.count_nonzero(ink_after)),
-                "ink_pixels_outside_model_image": _ink_outside(
-                    ink_before, transform, out_w, out_h),
-                "model_pixels_not_covered": uncovered,
+                "ink_pixels_off_canvas": int(np.count_nonzero(off_canvas)),
+                "canvas_pixels_not_covered": uncovered,
                 "colours_lost_in_resample": [list(rm.unpack(c))
                                              for c in sorted(before - after)],
             }

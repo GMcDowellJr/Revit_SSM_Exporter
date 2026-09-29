@@ -1056,7 +1056,9 @@ def _registration_mark_exclusion(rgb, sidecar):
         return colour_map, {"status": "refused", "reason": refusal}, None
     mark_ids = sorted(str(int(m["id"])) for m in payload["marks"]
                       if m.get("id") is not None)
-    fit = _registration_marks.fit_recorded_marks(rgb, payload)
+    palette = _registration_marks.palette_colours(sidecar)
+    fit = _registration_marks.fit_recorded_marks(rgb, payload,
+                                                 reserved_colours=palette)
     block = {
         "status": "subtracted", "pass": payload.get("pass"),
         "excluded_element_ids": [int(k) for k in mark_ids if k in colour_map],
@@ -1068,7 +1070,7 @@ def _registration_mark_exclusion(rgb, sidecar):
         "capture_faults": list(payload.get("faults") or []),
     }
     decode_map = dict((k, v) for k, v in colour_map.items() if k not in set(mark_ids))
-    return decode_map, block, _registration_marks.mark_ink_mask(rgb, payload)
+    return decode_map, block, _registration_marks.mark_ink_mask(rgb, payload, palette)
 
 
 def reconstruct_areal_tuple(decoded_doc: dict[str, Any], elem_id: int) -> tuple[list[dict[str, Any]] | None, str | None, str | None]:

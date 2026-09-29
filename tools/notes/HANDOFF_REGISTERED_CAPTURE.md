@@ -68,13 +68,16 @@ Findings: `tools/notes/ROUND2_ANNO_PASS_VARIANTS_FINDINGS.md`,
   landed as `tools/registration_marks.py` (the fit, lifted out of the
   analyzer, which now imports it), `tools/register_stage_a_annotation.py`
   (resample onto the model lattice, marks removed) and the decoder's mark
-  exclusion. Nothing in `vop_interwoven` calls them, and none has seen a real
-  capture yet -- only synthetic ones drawn at known lattices.
+  exclusion. Nothing in `vop_interwoven` calls them. Step 2's run
+  (`pipeline_0928_0953`, all nine views) found three defects in them, since
+  fixed; all nine now register at <= 0.39 px residual. See
+  `RUN_pipeline_0928_0953_REGISTRATION.md`.
 
 ## 4. The order from here
 
 1. **Review and merge PR #217.** Production defaults are unchanged.
-2. **Greg: run the pipeline with the flag on** over all eight test views
+2. **Greg: run the pipeline with the flag on** *(Done: `pipeline_0928_0953`,
+   `RUN_pipeline_0928_0953_REGISTRATION.md`.)* over all eight test views
    (Elevation 19293413, Plan_CropActive 19290402, Plan_CropInActive 19291097,
    Plan_RVTLink 19293485, Plan_DWG 19294180, RCP 19293283, Section 19293421,
    ModelCallout 19293458). This is the first real test of the entry point and
