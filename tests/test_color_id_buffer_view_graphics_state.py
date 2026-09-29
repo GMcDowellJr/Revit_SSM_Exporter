@@ -589,6 +589,9 @@ def test_sidecar_top_level_keys_are_additive_only(tmp_path):
         # Round 3 of the annotation-pass variant probe: whether this capture
         # left OST_Lines visible (probe-only switch; False in production).
         "model_lines_visible",
+        # A view-specific DWG is annotation (Greg, 2026-09-29): every import
+        # the model pass resolved, classified, and the restore of any it hid.
+        "view_specific_imports",
     }
 
 

@@ -838,8 +838,8 @@ def _collect_from_dwg_imports(doc, view, cfg, omitted_out=None):
     Commentary:
         DWG imports appear as ImportInstance elements with geometry.
         Both model-level and view-specific ("this view only") imports are
-        collected; view-specificity is recorded as a tag on the capture
-        record rather than used to drop the import.
+        collected. Which pass a view-specific one belongs to is decided by
+        collection_policy.view_specific_import_state(), not here.
     """
     from Autodesk.Revit.DB import (
         FilteredElementCollector,
@@ -882,11 +882,13 @@ def _collect_from_dwg_imports(doc, view, cfg, omitted_out=None):
             # policy.py independently excludes every ImportInstance from the
             # HOST pass by type name, so a view-specific DWG previously
             # reached no pass at all -- never painted, no record. It is now
-            # painted like any other import and TAGGED, so post can attribute
-            # it and the Step 3 annotation pass (whose OwnerViewId membership
-            # would also claim it) can recognise what this pass already has.
-            # The tag is read off the element in color_id_buffer.py's
-            # _near_face_w_view_specific, not carried on the proxy.
+            # returned here like any other import. What it IS is decided in one
+            # place, revit/collection_policy.view_specific_import_state(): a
+            # view-specific import is ANNOTATION (Greg, 2026-09-29), so the
+            # Stage A model pass takes it out of its paint set and hides it for
+            # its export (color_id_buffer._partition_view_specific_imports),
+            # and the annotation pass claims it by OwnerViewId. The geometry
+            # path still receives it from here as model content.
             #
             # UNCONFIRMED: that get_BoundingBox(view) behaves the same for a
             # view-specific import as for a model-space one has not been run.

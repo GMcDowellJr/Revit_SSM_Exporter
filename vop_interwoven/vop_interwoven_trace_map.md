@@ -322,6 +322,8 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_specific_import_state`
+      - called from: color_id_buffer.py
     - `view_state`
       - called from: stage_a_registered_capture.py
     - `view_state_verdict`
@@ -653,6 +655,8 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_specific_import_state`
+      - called from: color_id_buffer.py
     - `view_state`
       - called from: stage_a_registered_capture.py
     - `view_state_verdict`
@@ -984,6 +988,8 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_specific_import_state`
+      - called from: color_id_buffer.py
     - `view_state`
       - called from: stage_a_registered_capture.py
     - `view_state_verdict`
@@ -1315,6 +1321,8 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_specific_import_state`
+      - called from: color_id_buffer.py
     - `view_state`
       - called from: stage_a_registered_capture.py
     - `view_state_verdict`
@@ -1648,6 +1656,8 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_specific_import_state`
+      - called from: color_id_buffer.py
     - `view_state`
       - called from: stage_a_registered_capture.py
     - `view_state_verdict`
@@ -1979,6 +1989,8 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_specific_import_state`
+      - called from: color_id_buffer.py
     - `view_state`
       - called from: stage_a_registered_capture.py
     - `view_state_verdict`
@@ -2310,6 +2322,8 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_specific_import_state`
+      - called from: color_id_buffer.py
     - `view_state`
       - called from: stage_a_registered_capture.py
     - `view_state_verdict`
@@ -2641,6 +2655,8 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_specific_import_state`
+      - called from: color_id_buffer.py
     - `view_state`
       - called from: stage_a_registered_capture.py
     - `view_state_verdict`
@@ -2972,6 +2988,8 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_specific_import_state`
+      - called from: color_id_buffer.py
     - `view_state`
       - called from: stage_a_registered_capture.py
     - `view_state_verdict`
@@ -3303,6 +3321,8 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_specific_import_state`
+      - called from: color_id_buffer.py
     - `view_state`
       - called from: stage_a_registered_capture.py
     - `view_state_verdict`
@@ -3634,6 +3654,8 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_specific_import_state`
+      - called from: color_id_buffer.py
     - `view_state`
       - called from: stage_a_registered_capture.py
     - `view_state_verdict`
@@ -3965,6 +3987,8 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_specific_import_state`
+      - called from: color_id_buffer.py
     - `view_state`
       - called from: stage_a_registered_capture.py
     - `view_state_verdict`
@@ -4296,6 +4320,8 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_specific_import_state`
+      - called from: color_id_buffer.py
     - `view_state`
       - called from: stage_a_registered_capture.py
     - `view_state_verdict`
@@ -4627,6 +4653,8 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_specific_import_state`
+      - called from: color_id_buffer.py
     - `view_state`
       - called from: stage_a_registered_capture.py
     - `view_state_verdict`
@@ -4958,6 +4986,8 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_specific_import_state`
+      - called from: color_id_buffer.py
     - `view_state`
       - called from: stage_a_registered_capture.py
     - `view_state_verdict`

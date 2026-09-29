@@ -421,6 +421,147 @@ def _is_import_instance(elem):
     return type(elem).__name__ == "ImportInstance"
 
 
+def _partition_view_specific_imports(doc, resolved_ids, diag=None, view_id=None):
+    """``(model paint set, import records)``: every DWG/DXF import in
+    ``resolved_ids`` classified by collection_policy.view_specific_import_
+    state(), and the view-specific ones taken OUT of the model pass.
+
+    A view-specific import is annotation (Greg, 2026-09-29): the annotation
+    pass claims it through OwnerViewId, so painting it here as well counted it
+    twice (pipeline_0928_0953, Plan_DWG). A model-placed import stays. One
+    whose ViewSpecific cannot be read also STAYS -- the behaviour before this
+    rule -- and is recorded as unresolved: dropping content on a failed read
+    would be the silent kind of wrong.
+    """
+    from .revit.collection_policy import view_specific_import_state
+    kept, records = [], []
+    for eid in resolved_ids:
+        state = view_specific_import_state(doc.GetElement(eid))
+        if state["state"] == "not_applicable":
+            kept.append(eid)
+            continue
+        record = {"element_id": eid.IntegerValue, "view_specific": state}
+        if state["state"] == "value" and state["value"]:
+            record["classification"] = "annotation"
+            record["in_model_paint_set"] = False
+        else:
+            kept.append(eid)
+            record["classification"] = ("model" if state["state"] == "value"
+                                        else "unresolved")
+            record["in_model_paint_set"] = True
+            if state["state"] != "value" and diag is not None:
+                diag.warn(
+                    phase="color_id_buffer",
+                    callsite="view_specific_import_classification",
+                    message="an import's ViewSpecific could not be read; it stays "
+                            "in the model pass as before: {0}".format(state["reason"]),
+                    view_id=view_id,
+                    elem_id=eid.IntegerValue,
+                )
+        records.append(record)
+    return kept, records
+
+
+def _hide_view_specific_imports(doc, view, records, diag=None, view_id=None):
+    """Hide the model pass's ANNOTATION imports for its export.
+
+    Leaving one out of the paint set is not enough: it would still draw, in
+    its own colours. A flat override is not enough either -- in the same run's
+    annotation capture ~40 of the DWG's layer colours survived its flat colour
+    override. Hiding is complete, and it is undone by
+    _unhide_view_specific_imports.
+
+    Only an import whose hidden state READ is hidden: one already hidden is
+    left alone (it draws nothing anyway, and restore must not unhide it), and
+    one whose state cannot be read is left visible and recorded, since hiding
+    it could not be undone exactly.
+    """
+    from Autodesk.Revit.DB import ElementId
+    import System.Collections.Generic as SCG
+    to_hide = []
+    for record in records:
+        if record.get("classification") != "annotation":
+            continue
+        record["hidden_by_capture"] = False
+        try:
+            elem = doc.GetElement(ElementId(int(record["element_id"])))
+            was_hidden = bool(elem.IsHidden(view))
+        except Exception as ex:
+            record["hidden_before_capture"] = {
+                "state": "unavailable",
+                "reason": "{0}: {1}".format(type(ex).__name__, ex)}
+            record["left_visible_reason"] = (
+                "its hidden state could not be read, so hiding it could not be "
+                "undone exactly; it draws, unpainted, in this capture")
+            if diag is not None:
+                diag.warn(phase="color_id_buffer",
+                          callsite="hide_view_specific_import",
+                          message=record["left_visible_reason"], view_id=view_id,
+                          elem_id=record["element_id"])
+            continue
+        record["hidden_before_capture"] = {"state": "value", "value": was_hidden}
+        if not was_hidden:
+            to_hide.append(record)
+    if not to_hide:
+        return
+    ids = SCG.List[ElementId]()
+    for record in to_hide:
+        ids.Add(ElementId(int(record["element_id"])))
+    try:
+        view.HideElements(ids)
+    except Exception as ex:
+        for record in to_hide:
+            record["left_visible_reason"] = "HideElements raised {0}: {1}".format(
+                type(ex).__name__, ex)
+        if diag is not None:
+            diag.warn(phase="color_id_buffer", callsite="hide_view_specific_import",
+                      message="HideElements raised; {0} view-specific import(s) draw, "
+                              "unpainted, in this capture".format(len(to_hide)),
+                      view_id=view_id, exc=ex)
+        return
+    for record in to_hide:
+        record["hidden_by_capture"] = True
+
+
+def _unhide_view_specific_imports(view, records):
+    """Undo _hide_view_specific_imports: exactly the imports it hid."""
+    from Autodesk.Revit.DB import ElementId
+    import System.Collections.Generic as SCG
+    hidden = [r for r in records if r.get("hidden_by_capture")]
+    if not hidden:
+        return
+    ids = SCG.List[ElementId]()
+    for record in hidden:
+        ids.Add(ElementId(int(record["element_id"])))
+    view.UnhideElements(ids)
+
+
+def _read_back_view_specific_imports(doc, view, records):
+    """After the restore: is every import this capture hid visible again?
+
+    ``restore`` is "restored", "not_restored" or "unverified" (the read
+    failed), and "not_touched" for an import the capture never hid. Read from
+    the view, never assumed from the unhide call having returned.
+    """
+    from Autodesk.Revit.DB import ElementId
+    for record in records:
+        if not record.get("hidden_by_capture"):
+            if record.get("classification") == "annotation":
+                record["restore"] = "not_touched"
+            continue
+        try:
+            elem = doc.GetElement(ElementId(int(record["element_id"])))
+            hidden_now = bool(elem.IsHidden(view))
+        except Exception as ex:
+            record["hidden_after_restore"] = {
+                "state": "unavailable",
+                "reason": "{0}: {1}".format(type(ex).__name__, ex)}
+            record["restore"] = "unverified"
+            continue
+        record["hidden_after_restore"] = {"state": "value", "value": hidden_now}
+        record["restore"] = "not_restored" if hidden_now else "restored"
+
+
 def get_or_create_neutral_phase_filter(doc):
     from Autodesk.Revit.DB import (
         FilteredElementCollector, PhaseFilter, ElementOnPhaseStatus,
@@ -1085,10 +1226,11 @@ def _near_face_w_view_specific(elem):
     """Reader (raises on failure) for whether an import is placed "this view
     only".
 
-    Both passes now record a view-specific DWG, tagged rather than dropped
-    (Greg, 2026-09-21), so this is the tag that lets post attribute it and
-    lets the Step 3 annotation pass recognise what the model pass already
-    claimed.
+    A tag on the model pass's per-element record. Since 2026-09-29 a
+    view-specific import never reaches that record -- it is annotation, and
+    _partition_view_specific_imports takes it out of the model pass -- so on
+    a resolved import this reads False; the classification itself lives in
+    collection_policy.view_specific_import_state().
     """
     return bool(elem.ViewSpecific)
 
@@ -3028,6 +3170,9 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "neutral_phase_filter_created": False,
     }
     category_halftone_state = {}
+    # Every DWG/DXF import the model pass resolved, with its classification;
+    # the view-specific ones are hidden for the export and unhidden after.
+    view_specific_imports = []
     # Deliberately NOT capturing/reusing prior OverrideGraphicSettings objects
     # here (a "restore to what it was" behavior this module used to have).
     # Reference SUPPRESS/RESTORE testing always resets element overrides to a
@@ -3684,6 +3829,11 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             expanded, source_out=host_source_types,
         )
         resolved_ids = resolve_all(doc, host_elements)
+        # A view-specific import is ANNOTATION -- out of the paint set, the
+        # palette and every per-element record below.
+        resolved_ids, view_specific_imports = _partition_view_specific_imports(
+            doc, resolved_ids, diag=diag, view_id=view_id,
+        )
         count_host = len(resolved_ids)
 
         # One colorability answer for this whole capture, resolved once here
@@ -3840,6 +3990,9 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 view_id=view_id,
             )
 
+        _hide_view_specific_imports(doc, view, view_specific_imports,
+                                    diag=diag, view_id=view_id)
+
         suppress_tx.Commit()
     except Exception:
         suppress_tx.RollBack()
@@ -3960,6 +4113,9 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 view.SetElementOverrides(ElementId(int(eid.IntegerValue)), OverrideGraphicSettings())
             _restore_step("restore_element_overrides", _restore_element_override)
 
+        _restore_step("restore_view_specific_imports",
+                      lambda: _unhide_view_specific_imports(view, view_specific_imports))
+
         # Filters and the phase filter are restored last (see note above) —
         # reverting the phase filter can trigger regeneration of curtain-grid
         # sub-elements, so nothing element-level should still depend on the
@@ -4044,6 +4200,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         except Exception:
             restore_tx.RollBack()
             raise
+        _read_back_view_specific_imports(doc, view, view_specific_imports)
 
     # The dpi this capture ACHIEVED, as opposed to the dpi that was asked
     # for. They come apart three ways, all in the sizing path above: the
@@ -4263,6 +4420,12 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # never means "not checked" -- those arrive as an entry with
         # element_id None. See revit/linked_documents._collect_from_dwg_imports.
         "dwg_imports_omitted": dwg_imports_omitted,
+        # Every DWG/DXF import this pass resolved and which pass it belongs to
+        # (revit/collection_policy.view_specific_import_state). "annotation"
+        # ones are NOT in color_assignment_map: hidden for this export and,
+        # per "restore", shown again after. An EMPTY list means the pass
+        # resolved no import at all.
+        "view_specific_imports": view_specific_imports,
         "applied_display_style": applied_display_style,
         "applied_smooth_edges": applied_smooth_edges,
         # The exception type when the SmoothEdges read raised; None whenever

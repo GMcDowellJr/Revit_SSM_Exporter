@@ -209,6 +209,39 @@ _ANNOTATION_INCLUDED_BIC_NAMES: Tuple[str, ...] = (
 )
 
 
+def view_specific_import_state(elem) -> Dict[str, object]:
+    """Which pass a DWG/DXF import belongs to, three-valued.
+
+    THE RULE (Greg, 2026-09-29): an import placed "in current view only" is
+    ANNOTATION; an import placed in the model, as a 3D element, is MODEL. It
+    supersedes 2026-09-21's "paint it in both passes and tag it", which on
+    run pipeline_0928_0953 left Plan_DWG's view-specific import in BOTH
+    captures' colour maps, drawn in both images -- counted twice.
+
+    This is the one place the classification is decided. The annotation
+    pass already agrees with it without reading it: a view-specific import is
+    owned by its view, so OwnerViewId membership claims it, and a model-placed
+    one has no owner view.
+
+    Returns:
+      {"state": "not_applicable", "reason": ...}  -- not an ImportInstance
+      {"state": "value", "value": True}           -- view-specific: annotation
+      {"state": "value", "value": False}          -- model-placed: model
+      {"state": "unavailable", "reason": ...}     -- ViewSpecific unreadable
+
+    ImportInstance is matched by type NAME, the same idiom as the HOST-pass
+    exclusion in should_include_element() below, so no Revit import is needed.
+    """
+    if type(elem).__name__ != "ImportInstance":
+        return {"state": "not_applicable", "reason": "not an ImportInstance"}
+    try:
+        return {"state": "value", "value": bool(elem.ViewSpecific)}
+    except Exception as ex:
+        return {"state": "unavailable",
+                "reason": "ViewSpecific read failed ({0}: {1})".format(
+                    type(ex).__name__, ex)}
+
+
 def annotation_included_bic_names() -> Tuple[str, ...]:
     """Category names collected by the VOP annotation pass.
 
