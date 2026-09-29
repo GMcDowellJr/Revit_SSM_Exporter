@@ -1,0 +1,1354 @@
+# Annotation-pass variant report
+
+Values only. No pass/fail, no score, no recommendation -- the probe brief puts the judgement with Greg, and a tool that rated the variants would replace that read.
+
+## View __Elevation_CropActive (id 19293413, 3, scale 1:96)
+
+Probe `stage_a_anno_pass_variants` version 2026-09-23.1; combined report `C:\Users\gmcdowell\Documents\VOP\Exports\FVoT\probe_0923_0936\anno_pass_variants_probe\__Elevation_CropActive_19293413.anno_pass_variants.json`.
+
+Model pass: success=True, failure_reason=None, achieved dpi=149.99, frame_px=[5164, 1267].
+Model re-export after the variants: **unchanged** -- the control held and the post-variant hash matches
+
+**The crop.** Authored crop active: yes; UV [-104.01772534812247, -4.810097715203943, 171.41561007680002, 62.7311886414472].
+- V0 widens it to frame B by (ft): left +0.00 / right -0.00 / top +0.04 / bottom +0.00
+- the MODEL pass sets it to crop A, which differs from the authored crop by (ft): left +0.00 / right -0.00 / top +0.04 / bottom +0.00
+- crop shape: 1 loop(s), 4 edge(s), rectangle: yes, oblique edges: 0
+- **white-suppression cost**: 23524 ms for 6536 element override(s), against 26234 ms for the whole model pass (ratio 0.90; a LOWER bound on suppression-vs-paint, since production does not time its paint alone)
+  - by mechanism (ms): category_override_writes 23331, element_overrides 100, category_override_reads 34, category_collect 10, build_override 4, subcategory_walk 3, link_category_filters 0
+  - API calls: category_override_reads 395, category_override_writes 391, element_override_writes 6536, subcategory_lists_read 40
+  - `v0_control`: pre-state commit 2 ms; restore = group rollback, 508 ms; post-rollback element-override read-back -- ms (not_applicable)
+  - `v7_no_crop` suppression: 23524 ms (category_override_writes 23331, element_overrides 100, category_override_reads 34, category_collect 10, build_override 4, subcategory_walk 3)
+  - `v7_no_crop`: pre-state commit 2286 ms; restore = group rollback, 1047 ms; post-rollback element-override read-back 2404 ms (restored)
+  - `v8_no_crop_fiducials` suppression: 22667 ms (category_override_writes 22507, element_overrides 75, category_override_reads 20, category_collect 11, subcategory_walk 5, build_override 2)
+  - `v8_no_crop_fiducials`: pre-state commit 1691 ms; restore = group rollback, 1063 ms; post-rollback element-override read-back 2758 ms (restored)
+  - `v9_registration_marks` suppression: 24296 ms (category_override_writes 24116, element_overrides 86, category_override_reads 27, category_collect 17, subcategory_walk 5, build_override 2)
+  - `v9_registration_marks`: pre-state commit 1706 ms; restore = group rollback, 1352 ms; post-rollback element-override read-back 3094 ms (restored)
+  - `v10_element_only_white` suppression WITHOUT the category layer: 90 ms (element_overrides 85, build_override 2)
+  - `v10_element_only_white`: pre-state commit 2075 ms; restore = group rollback, 970 ms; post-rollback element-override read-back 2520 ms (restored)
+- F2 fiducials: 8852504 (Fascias), 14208030 (Walls); separated 176.8 ft on u and 60.3 ft on v (1278 of 6535 candidates kept, reference authored_crop)
+
+### 0. What the capture reports it actually did
+
+| variant | suppression mode | applied_smooth_edges | display style | probe conclusion | measured its candidate | production success | capture faults | faults read from |
+|---|---|---|---|---|---|---|---|---|
+| v0_control | hide_categories | not_attempted | FlatColors | RAN | yes | yes | none | combined_record |
+| v7_no_crop | external | not_attempted | FlatColors | RAN | yes | yes | none | combined_record |
+| v8_no_crop_fiducials | external | no | FlatColors | RAN | yes | yes | none | combined_record |
+| v9_registration_marks | external | no | FlatColors | RAN | yes | yes | none | combined_record |
+| v10_element_only_white | external | not_attempted | FlatColors | RAN | yes | yes | none | combined_record |
+
+`capture faults` come from the probe's combined record (`annotation_pass.capture_faults`) in preference to the annotation sidecar, and the last column says which was used. The sidecar is the fallback because production wrote it before computing its own faults until `dcb4e65`, so an older capture's file carries none however faulted it was. `UNKNOWN (not recorded)` means neither source had the field -- which is not the same fact as `none`.
+
+`applied_smooth_edges` is four-valued: `not_attempted` (the pass was not asked), `read_failed`, `unchanged (failed)`, or `False` (**confirmed off**). A V2/V3 row that is anything but `False` did NOT have anti-aliasing disabled and therefore measures the same behaviour as the variant above it -- the probe reports that as `DID_NOT_MEASURE` rather than `RAN`.
+
+### 1. Image size vs `frame_px`, both axes
+
+| variant | image | frame_px | dw | dh | equal | sidecar dim_check |
+|---|---|---|---|---|---|---|
+| v0_control | 5164x1709 | 5164x1267 | 0 | 442 | no | pass |
+| v7_no_crop | 5164x1708 | 5164x1267 | 0 | 441 | no | pass |
+| v8_no_crop_fiducials | 5164x1708 | 5164x1267 | 0 | 441 | no | pass |
+| v9_registration_marks | 5164x1708 | 5164x1267 | 0 | 441 | no | pass |
+| v10_element_only_white | 5164x1708 | 5164x1267 | 0 | 441 | no | pass |
+
+`dw`/`dh` are image minus `frame_px`. `dim_check` is the sidecar's own verdict, which inspects the requested axis only (finding F4) -- so a nonzero `dh` beside `dim_check=pass` is exactly the case F4 names.
+
+### 2. Registration fit (measured from the pixels)
+
+| variant | samples | px/ft u | px/ft v | frame px/ft | offset at (u0,v1) px | residual med/max px | v axis |
+|---|---|---|---|---|---|---|---|
+| v0_control | NOT FITTED | -- | -- | -- | -- | -- | 0 matched sample(s); a linear fit needs at least 2 |
+| v7_no_crop | NOT FITTED | -- | -- | -- | -- | -- | 0 matched sample(s); a linear fit needs at least 2 |
+| v8_no_crop_fiducials | NOT FITTED | -- | -- | -- | -- | -- | 0 matched sample(s); a linear fit needs at least 2 |
+| v9_registration_marks | 8 pairs | 17.635 | 17.628 | 18.749 | (142.3, 258.4) | 0.18 / 0.72 | negative (expected) |
+| v10_element_only_white | NOT FITTED | -- | -- | -- | -- | -- | 0 matched sample(s); a linear fit needs at least 2 |
+
+- `v0_control` frame: registration.rendered_uv
+- `v7_no_crop` frame: the AUTHORED crop (crop_mode untouched)
+- `v8_no_crop_fiducials` frame: the AUTHORED crop (crop_mode untouched)
+- `v9_registration_marks` frame: the AUTHORED crop (crop_mode untouched)
+- `v10_element_only_white` frame: the AUTHORED crop (crop_mode untouched)
+
+#### 2b. Fitted per-side margin (how much bigger the render is than the frame)
+
+| variant | left | right | top | bottom |  |
+|---|---|---|---|---|---|
+| v0_control | -- | -- | -- | -- | NOT FITTED |
+| v7_no_crop | -- | -- | -- | -- | NOT FITTED |
+| v8_no_crop_fiducials | -- | -- | -- | -- | NOT FITTED |
+| v9_registration_marks | 8.07 ft / 1.009 in | 9.32 ft / 1.165 in | 14.66 ft / 1.832 in | 14.69 ft / 1.837 in |  |
+| v10_element_only_white | -- | -- | -- | -- | NOT FITTED |
+
+#### 2c. The fit's own premise: does the ink sit where the bbox says?
+
+The fit matches an element's exact-colour centroid against the centre of its recorded `bbox_uv`. **Those coincide only when the ink fills the box**, which real text, a tag with a leader or a dimension need not do. A displacement that is the SAME for every element is absorbed into the fitted intercept, so it leaves the residuals in 2 clean while shifting every margin in 2b by exactly that amount; one that varies with size or position corrupts the scale instead and does inflate the residuals. Both are surfaced here. No tolerance is applied -- what is close enough for a margin figure is your call.
+
+| variant | ink-bbox px/ft u | ink-bbox px/ft v | px/ft u delta | px/ft v delta | margin delta ft (l/r/t/b) |  |
+|---|---|---|---|---|---|---|
+| v0_control | -- | -- | -- | -- | -- | one of the two anchors did not fit (unavailable / unavailable) |
+| v7_no_crop | -- | -- | -- | -- | -- | one of the two anchors did not fit (unavailable / unavailable) |
+| v8_no_crop_fiducials | -- | -- | -- | -- | -- | one of the two anchors did not fit (unavailable / unavailable) |
+| v9_registration_marks | 17.635 | 17.628 | 0.0000 | 0.0000 | 0.000 / 0.000 / 0.000 / 0.000 |  |
+| v10_element_only_white | -- | -- | -- | -- | -- | one of the two anchors did not fit (unavailable / unavailable) |
+
+The second anchor is the centre of the ink's own bounding box rather than its centroid. The two are identical when the ink fills its bbox and diverge when it does not, so a row of ~0 deltas says the anchor choice does not matter on this capture and the margins above do not rest on the premise.
+
+A UNIFORM displacement -- every element's ink sitting the same distance off its box centre -- is NOT recoverable from a capture: nothing distinguishes it from the whole render sitting that far over, which is why it is the dangerous case. What IS recoverable is whether such a displacement is POSSIBLE, and by how much: ink that spans its whole box cannot be off-centre in it. The table below bounds it.
+
+- `v0_control` samples: matched 0, no bbox 1, colour absent 0, clipped at an image edge 0.
+- `v7_no_crop` samples: matched 0, no bbox 1, colour absent 0, clipped at an image edge 0.
+- `v8_no_crop_fiducials` samples: matched 0, no bbox 1, colour absent 0, clipped at an image edge 0.
+- `v9_registration_marks` samples: matched 8, no bbox 1, colour absent 0, clipped at an image edge 0.
+- `v10_element_only_white` samples: matched 0, no bbox 1, colour absent 0, clipped at an image edge 0.
+
+### 3. How far recorded annotation bboxes reach past the rendered frame
+
+| variant | left | right | top | bottom | bboxes outside |  |
+|---|---|---|---|---|---|---|
+| v0_control | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0 of 0 |  |
+| v7_no_crop | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0 of 0 |  |
+| v8_no_crop_fiducials | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0 of 0 |  |
+| v9_registration_marks | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0 of 8 |  |
+| v10_element_only_white | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0 of 0 |  |
+
+Read this table against 2b. Where they agree, the render is behaving as if it had been fitted to the crop unioned with the annotations drawn beyond it.
+
+### 4. Coverage per category
+
+#### `v0_control`
+
+Ink column UNMEASURED: no fitted mapping (measurement 2 is unavailable: 0 matched sample(s); a linear fit needs at least 2); the sidecar's mapping is deliberately NOT substituted
+
+| category | assigned | painted | colour present | bbox | ink tested | ink present | bbox off image | ink untested |
+|---|---|---|---|---|---|---|---|---|
+| <no category> | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+#### `v7_no_crop`
+
+Ink column UNMEASURED: no fitted mapping (measurement 2 is unavailable: 0 matched sample(s); a linear fit needs at least 2); the sidecar's mapping is deliberately NOT substituted
+
+| category | assigned | painted | colour present | bbox | ink tested | ink present | bbox off image | ink untested |
+|---|---|---|---|---|---|---|---|---|
+| <no category> | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+#### `v8_no_crop_fiducials`
+
+Ink column UNMEASURED: no fitted mapping (measurement 2 is unavailable: 0 matched sample(s); a linear fit needs at least 2); the sidecar's mapping is deliberately NOT substituted
+
+| category | assigned | painted | colour present | bbox | ink tested | ink present | bbox off image | ink untested |
+|---|---|---|---|---|---|---|---|---|
+| <no category> | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+#### `v9_registration_marks`
+
+Ink test threshold >2% non-white, placed through the fitted mapping from measurement (2).
+
+| category | assigned | painted | colour present | bbox | ink tested | ink present | bbox off image | ink untested |
+|---|---|---|---|---|---|---|---|---|
+| <no category> | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Lines | 8 | 8 | 8 | 8 | 8 | 8 | 0 | 0 |
+
+#### `v10_element_only_white`
+
+Ink column UNMEASURED: no fitted mapping (measurement 2 is unavailable: 0 matched sample(s); a linear fit needs at least 2); the sidecar's mapping is deliberately NOT substituted
+
+| category | assigned | painted | colour present | bbox | ink tested | ink present | bbox off image | ink untested |
+|---|---|---|---|---|---|---|---|---|
+| <no category> | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+### 5. Non-white, non-palette pixels
+
+| variant | total | white | palette | off-palette | off-palette frac | blend | grey | other | distinct | tally capped |
+|---|---|---|---|---|---|---|---|---|---|---|
+| v0_control | 8825276 | 8813199 | 0 | 12077 | 0.00137 | 0 | 11497 | 580 | 29 | no |
+| v7_no_crop | 8820112 | 8818772 | 0 | 1340 | 0.00015 | 0 | 1340 | 0 | 23 | no |
+| v8_no_crop_fiducials | 8820112 | 8818251 | 0 | 1340 | 0.00015 | 0 | 1340 | 0 | 23 | no |
+| v9_registration_marks | 8820112 | 8817530 | 721 | 1340 | 0.00015 | 0 | 1340 | 0 | 23 | no |
+| v10_element_only_white | 8820112 | 8818772 | 0 | 1340 | 0.00015 | 0 | 1340 | 0 | 23 | no |
+
+`blend` is within 3 RGB units of the segment between some palette colour and white. `grey` is all three channels within 3 of each other. The two OVERLAP -- a grey pixel is also collinear with white -- and blend is tested first; the `blend also grey` count below states what that ordering costs.
+
+- `v0_control` blend also grey: 0 px.
+- `v7_no_crop` blend also grey: 0 px.
+- `v8_no_crop_fiducials` blend also grey: 0 px.
+- `v9_registration_marks` blend also grey: 0 px.
+- `v10_element_only_white` blend also grey: 0 px.
+
+#### `v0_control` top 10 off-palette colours
+
+| rgb | pixels | class | also grey |
+|---|---|---|---|
+| [0, 0, 0] | 10518 | grey | yes |
+| [255, 207, 159] | 288 | other | no |
+| [255, 128, 0] | 287 | other | no |
+| [71, 71, 71] | 180 | grey | yes |
+| [195, 195, 195] | 126 | grey | yes |
+| [137, 137, 137] | 108 | grey | yes |
+| [17, 17, 17] | 78 | grey | yes |
+| [221, 221, 221] | 67 | grey | yes |
+| [236, 236, 236] | 59 | grey | yes |
+| [208, 208, 208] | 48 | grey | yes |
+
+#### `v7_no_crop` top 10 off-palette colours
+
+| rgb | pixels | class | also grey |
+|---|---|---|---|
+| [0, 0, 0] | 358 | grey | yes |
+| [71, 71, 71] | 180 | grey | yes |
+| [195, 195, 195] | 126 | grey | yes |
+| [137, 137, 137] | 108 | grey | yes |
+| [17, 17, 17] | 78 | grey | yes |
+| [221, 221, 221] | 67 | grey | yes |
+| [236, 236, 236] | 60 | grey | yes |
+| [208, 208, 208] | 48 | grey | yes |
+| [105, 105, 105] | 39 | grey | yes |
+| [35, 35, 35] | 38 | grey | yes |
+
+#### `v8_no_crop_fiducials` top 10 off-palette colours
+
+| rgb | pixels | class | also grey |
+|---|---|---|---|
+| [0, 0, 0] | 358 | grey | yes |
+| [71, 71, 71] | 180 | grey | yes |
+| [195, 195, 195] | 126 | grey | yes |
+| [137, 137, 137] | 108 | grey | yes |
+| [17, 17, 17] | 78 | grey | yes |
+| [221, 221, 221] | 67 | grey | yes |
+| [236, 236, 236] | 60 | grey | yes |
+| [208, 208, 208] | 48 | grey | yes |
+| [105, 105, 105] | 39 | grey | yes |
+| [35, 35, 35] | 38 | grey | yes |
+
+#### `v9_registration_marks` top 10 off-palette colours
+
+| rgb | pixels | class | also grey |
+|---|---|---|---|
+| [0, 0, 0] | 358 | grey | yes |
+| [71, 71, 71] | 180 | grey | yes |
+| [195, 195, 195] | 126 | grey | yes |
+| [137, 137, 137] | 108 | grey | yes |
+| [17, 17, 17] | 78 | grey | yes |
+| [221, 221, 221] | 67 | grey | yes |
+| [236, 236, 236] | 60 | grey | yes |
+| [208, 208, 208] | 48 | grey | yes |
+| [105, 105, 105] | 39 | grey | yes |
+| [35, 35, 35] | 38 | grey | yes |
+
+#### `v10_element_only_white` top 10 off-palette colours
+
+| rgb | pixels | class | also grey |
+|---|---|---|---|
+| [0, 0, 0] | 358 | grey | yes |
+| [71, 71, 71] | 180 | grey | yes |
+| [195, 195, 195] | 126 | grey | yes |
+| [137, 137, 137] | 108 | grey | yes |
+| [17, 17, 17] | 78 | grey | yes |
+| [221, 221, 221] | 67 | grey | yes |
+| [236, 236, 236] | 60 | grey | yes |
+| [208, 208, 208] | 48 | grey | yes |
+| [105, 105, 105] | 39 | grey | yes |
+| [35, 35, 35] | 38 | grey | yes |
+
+### 6. Model TIFF hash vs V0
+
+| variant | model sha256 (16) | V0 sha256 (16) | equal |
+|---|---|---|---|
+| v0_control | 330bcaf4ec45e592 | 330bcaf4ec45e592 | yes |
+| v7_no_crop | 330bcaf4ec45e592 | 330bcaf4ec45e592 | yes |
+| v8_no_crop_fiducials | 330bcaf4ec45e592 | 330bcaf4ec45e592 | yes |
+| v9_registration_marks | 330bcaf4ec45e592 | 330bcaf4ec45e592 | yes |
+| v10_element_only_white | 330bcaf4ec45e592 | 330bcaf4ec45e592 | yes |
+
+The model pass runs ONCE per view, so this column detects a variant CLOBBERING the model artifact -- a path collision, a stray write. Whether a variant changed how the model pass RENDERS is the probe's own `model_reexport_after_variants` verdict, quoted at the top of this view's section, which has its own repeatability control.
+
+### 7. F1 -- the crop boundary, recovered from the pixels
+
+Q1: does the exported image contain the crop boundary, and does its recovered position match `view.CropBox`? A boundary is a band of rows (or columns) each holding a straight run of non-white, non-palette, non-fiducial pixels of >= 25% of the image, closing into one rectangle (or matching the crop shape's levels). `NOT FOUND` on a V8 row is the answer that ImageExportOptions does not draw it.
+
+| variant | probe turned it on | boundary | row/col bands | px/ft u | px/ft v | lattice px/ft | u/v isotropy | boundary px rects (subtract these) |  |
+|---|---|---|---|---|---|---|---|---|---|
+| v0_control | no | NOT_FOUND | 0 / 3 | -- | -- | 18.7486 | -- | -- | 0 row band(s) and 3 column band(s) long enough to be a crop edge, but no four of them close into one rectangle |
+| v7_no_crop | no | NOT_FOUND | 0 / 0 | -- | -- | 18.7486 | -- | -- | no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture |
+| v8_no_crop_fiducials | yes | NOT_FOUND | 0 / 0 | -- | -- | 18.7486 | -- | -- | no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture |
+| v9_registration_marks | yes | NOT_FOUND | 0 / 0 | -- | -- | 18.7486 | -- | -- | no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture |
+| v10_element_only_white | no | NOT_FOUND | 0 / 0 | -- | -- | 18.7486 | -- | -- | no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture |
+
+`isotropy` of 1 means the boundary's pixel rectangle has the crop's own aspect -- the recovered position is the crop's shape at one uniform scale. `lattice px/ft` is the model capture's (1 / achieved fpp): an untouched capture that rendered exactly the authored crop at the requested count would match it.
+
+- `v8_no_crop_fiducials` MODEL capture (boundary drawn at crop A [-104.01772534812247, -4.810097715203943, 171.4156100768, 62.76814318010526]): NOT_FOUND -- no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture
+- `v9_registration_marks` MODEL capture (boundary drawn at crop A [-104.01772534812247, -4.810097715203943, 171.4156100768, 62.76814318010526]): NOT_FOUND -- no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture
+
+### 8. F2 -- the fiducial pair
+
+| variant | element | colour | found | pixels | ink px bbox | clipped | recorded rect_uv |
+|---|---|---|---|---|---|---|---|
+| v8_no_crop_fiducials | 8852504 | [251, 11, 139] | yes | 368 | [1246.0, 341.0, 1429.0, 342.0] | no | [-41.51502225001987, 57.58333333333331, -31.015022250016784, 60.916666666666664] |
+| v8_no_crop_fiducials | 14208030 | [11, 139, 251] | yes | 153 | [4452.0, 1376.0, 4459.0, 1395.0] | no | [140.37039441664712, -1.737695094585085, 140.7870610833138, -0.4166666666666676] |
+| v9_registration_marks | 8852504 | [251, 11, 139] | yes | 368 | [1246.0, 341.0, 1429.0, 342.0] | no | [-41.51502225001987, 57.58333333333331, -31.015022250016784, 60.916666666666664] |
+| v9_registration_marks | 14208030 | [11, 139, 251] | yes | 153 | [4452.0, 1376.0, 4459.0, 1395.0] | no | [140.37039441664712, -1.737695094585085, 140.7870610833138, -0.4166666666666676] |
+
+| fit | px/ft u | px/ft v | u/v isotropy | residual max px u / v |  |
+|---|---|---|---|---|---|
+| `v8_no_crop_fiducials` F2 (recorded bbox) | 17.6312 | 17.2797 | 1.02034 | 0.58 / 28.58 |  |
+| `v8_no_crop_fiducials` F2 (model-anchored) | 17.6346 | 17.6417 | 0.99960 | 0.30 / 0.53 |  |
+| `v9_registration_marks` F2 (recorded bbox) | 17.6312 | 17.2797 | 1.02034 | 0.58 / 28.58 |  |
+| `v9_registration_marks` F2 (model-anchored) | 17.6346 | 17.6417 | 0.99960 | 0.30 / 0.53 |  |
+
+- `v8_no_crop_fiducials` fiducial 8852504: 368 px in the annotation capture, 195 px in the model capture
+- `v8_no_crop_fiducials` fiducial 14208030: 153 px in the annotation capture, 190 px in the model capture
+- `v9_registration_marks` fiducial 8852504: 368 px in the annotation capture, 195 px in the model capture
+- `v9_registration_marks` fiducial 14208030: 153 px in the annotation capture, 190 px in the model capture
+
+F2 fits each fiducial's INK EDGES against its recorded extent: four points per axis for the pair, so it has a residual. The recorded extent is a projected 3-D bbox, which can be looser than the element; the model-anchored row replaces it with the element's drawn extent in the model capture, at the cost of assuming the model capture registers.
+
+### 9. F1 vs F2 vs F3 vs the bbox fit
+
+Q2: with the crop untouched, is the rendered rectangle stable, and do F1 and F2 agree? The disagreement is the number. Corners are the authored crop's, pushed through both maps.
+
+| variant | pair | px/ft u delta | px/ft v delta | worst corner px |  |
+|---|---|---|---|---|---|
+| v0_control | F1_vs_F2 | -- | -- | -- | one of the two mappings is not available |
+| v0_control | F1_vs_bbox_fit | -- | -- | -- | one of the two mappings is not available |
+| v0_control | F2_vs_bbox_fit | -- | -- | -- | one of the two mappings is not available |
+| v7_no_crop | F1_vs_F2 | -- | -- | -- | one of the two mappings is not available |
+| v7_no_crop | F1_vs_bbox_fit | -- | -- | -- | one of the two mappings is not available |
+| v7_no_crop | F2_vs_bbox_fit | -- | -- | -- | one of the two mappings is not available |
+| v8_no_crop_fiducials | F1_vs_F2 | -- | -- | -- | one of the two mappings is not available |
+| v8_no_crop_fiducials | F1_vs_bbox_fit | -- | -- | -- | one of the two mappings is not available |
+| v8_no_crop_fiducials | F2_vs_bbox_fit | -- | -- | -- | one of the two mappings is not available |
+| v9_registration_marks | F1_vs_F2 | -- | -- | -- | one of the two mappings is not available |
+| v9_registration_marks | F1_vs_bbox_fit | -- | -- | -- | one of the two mappings is not available |
+| v9_registration_marks | F2_vs_bbox_fit | -0.0040 | -0.3486 | 24.26 |  |
+| v9_registration_marks | F3_vs_F2 | +0.0034 | +0.3409 | 23.69 |  |
+| v9_registration_marks | F3_vs_bbox_fit | -0.0006 | -0.0077 | 0.59 |  |
+| v10_element_only_white | F1_vs_F2 | -- | -- | -- | one of the two mappings is not available |
+| v10_element_only_white | F1_vs_bbox_fit | -- | -- | -- | one of the two mappings is not available |
+| v10_element_only_white | F2_vs_bbox_fit | -- | -- | -- | one of the two mappings is not available |
+
+### 10. Datum extents: ink vs the recorded (authored-crop) bbox
+
+Q3: do datum extents in the capture match the drawing? Positive means the ink reaches FURTHER than the bbox recorded before the capture touched the view. Under V0 the crop was widened to B, which lengthens datums; under V7/V8 it was not.
+
+| variant | datum | category | map | length delta ft | paper in | per side ft l/r/t/b |  |
+|---|---|---|---|---|---|---|---|
+| v0_control | -- | -- | -- | -- | -- | -- | no mapping from pixels to UV |
+| v7_no_crop | -- | -- | -- | -- | -- | -- | no mapping from pixels to UV |
+| v10_element_only_white | -- | -- | -- | -- | -- | -- | no mapping from pixels to UV |
+
+Premise: `get_BoundingBox(view)` of a datum is its drawn extent in the view (UNCONFIRMED).
+
+### 11. Model-ink residue
+
+Q4: does membership suppression with subcategories leave any model ink? Off-palette pixels outside the fiducials and outside any recovered boundary band. Counted, not attributed: an annotation the pass could not paint lands here too.
+
+| variant | suppression | category layer | off-palette | fiducial px | boundary bands excluded | off-palette outside boundary |
+|---|---|---|---|---|---|---|
+| v0_control | hide_categories | -- | 12077 | 0 | 0 | 12077 |
+| v7_no_crop | external | yes | 1340 | 0 | 0 | 1340 |
+| v8_no_crop_fiducials | external | yes | 1340 | 521 | 0 | 1340 |
+| v9_registration_marks | external | yes | 1340 | 521 | 0 | 1340 |
+| v10_element_only_white | external | no | 1340 | 0 | 0 | 1340 |
+
+`category layer` is mechanism 3 (category and subcategory white overrides). V10 runs without it: the V7 vs V10 difference in this table is what that layer removes, and the cost section above is what it costs.
+
+### 12. F3 -- registration marks, in BOTH captures
+
+Eight detail-line ticks the probe drew at KNOWN view UV, inset inside the crop, then removed by rolling back. Horizontal ticks' centre rows give v, vertical ticks' centre columns give u: four points per axis at two levels. The model row is checked against the model capture's RECORDED lattice -- the one place this method meets a known answer. The endpoint fit uses tick ends (caps, anti-aliasing) and is shown beside the centre-line fit, never in its place.
+
+| variant | capture | ticks | px/ft u | px/ft v | u/v isotropy | residual max px u / v | endpoint fit px/ft u / v | vs model lattice worst px |  |
+|---|---|---|---|---|---|---|---|---|---|
+| v9_registration_marks | annotation | 8/8 | 17.6346 | 17.6205 | 1.00080 | 0.00 / 0.00 | 17.6358 / 17.6375 | -- |  |
+| v9_registration_marks | model | 8/8 | 18.7486 | 18.7439 | 1.00025 | 0.00 / 0.00 | 18.7486 / 18.7435 | 0.51 |  |
+
+- `v9_registration_marks` model lattice: 18.7486 px/ft
+- `v9_registration_marks` annotation -> model pixels via_model_lattice: x' = 1.063175 x -151.96, y' = 1.064024 y -274.83
+- `v9_registration_marks` annotation -> model pixels via_model_marks: x' = 1.063175 x -152.46, y' = 1.063755 y -274.95
+- `v9_registration_marks` annotation: 721 mark pixels in 8 rect(s) to subtract in post
+- `v9_registration_marks` model: 768 mark pixels in 8 rect(s) to subtract in post
+
+### Overlays
+
+The gate is measurement 1 only: image size == `frame_px`. IT IS A SIZE GATE AND NOTHING MORE. A capture can be exactly `frame_px` pixels and still have its CONTENT drawn at a different scale or origin -- which is finding F1 -- and `capture_overlay.py` maps UV through the SIDECAR's numbers, so on such a capture its boxes will not land on the ink. Measurement 2's fitted px/ft is echoed beside each line so that is visible here rather than only three sections up.
+
+- `v0_control`: OVERLAY WITHHELD (measurement 2 did not fit: 0 matched sample(s); a linear fit needs at least 2). measurement 1 shows image 5164x1709 against frame_px 5164x1267; the overlay is not run on a capture whose rendered region is not the frame its sidecar describes
+- `v7_no_crop`: OVERLAY WITHHELD (measurement 2 did not fit: 0 matched sample(s); a linear fit needs at least 2). measurement 1 shows image 5164x1708 against frame_px 5164x1267; the overlay is not run on a capture whose rendered region is not the frame its sidecar describes
+- `v8_no_crop_fiducials`: OVERLAY WITHHELD (measurement 2 did not fit: 0 matched sample(s); a linear fit needs at least 2). measurement 1 shows image 5164x1708 against frame_px 5164x1267; the overlay is not run on a capture whose rendered region is not the frame its sidecar describes
+- `v9_registration_marks`: OVERLAY WITHHELD (fitted 17.635 / 17.628 px/ft against the frame's 18.749). measurement 1 shows image 5164x1708 against frame_px 5164x1267; the overlay is not run on a capture whose rendered region is not the frame its sidecar describes
+- `v10_element_only_white`: OVERLAY WITHHELD (measurement 2 did not fit: 0 matched sample(s); a linear fit needs at least 2). measurement 1 shows image 5164x1708 against frame_px 5164x1267; the overlay is not run on a capture whose rendered region is not the frame its sidecar describes
+
+## View __Plan_CropActive (id 19290402, 1, scale 1:96)
+
+Probe `stage_a_anno_pass_variants` version 2026-09-23.1; combined report `C:\Users\gmcdowell\Documents\VOP\Exports\FVoT\probe_0923_0936\anno_pass_variants_probe\__Plan_CropActive_19290402.anno_pass_variants.json`.
+
+Model pass: success=True, failure_reason=None, achieved dpi=149.99, frame_px=[5274, 2124].
+Model re-export after the variants: **unchanged** -- the control held and the post-variant hash matches
+
+**The crop.** Authored crop active: yes; UV [-91.46926561670251, 2250.749394451395, 165.49485231475583, 2337.3310543423245].
+- V0 widens it to frame B by (ft): left +11.08 / right +13.26 / top +15.97 / bottom +10.73
+- the MODEL pass sets it to crop A, which differs from the authored crop by (ft): left +0.04 / right +0.03 / top +0.03 / bottom +0.01
+- crop shape: 1 loop(s), 4 edge(s), rectangle: yes, oblique edges: 0
+- **white-suppression cost**: 45313 ms for 4784 element override(s), against 31551 ms for the whole model pass (ratio 1.44; a LOWER bound on suppression-vs-paint, since production does not time its paint alone)
+  - by mechanism (ms): category_override_writes 45109, element_overrides 102, category_override_reads 35, category_collect 8, subcategory_walk 3, build_override 2, link_category_filters 0
+  - API calls: category_override_reads 396, category_override_writes 393, element_override_writes 4784, subcategory_lists_read 35
+  - `v0_control`: pre-state commit 3 ms; restore = group rollback, 2272 ms; post-rollback element-override read-back -- ms (not_applicable)
+  - `v7_no_crop` suppression: 45313 ms (category_override_writes 45109, element_overrides 102, category_override_reads 35, category_collect 8, subcategory_walk 3, build_override 2)
+  - `v7_no_crop`: pre-state commit 6079 ms; restore = group rollback, 3845 ms; post-rollback element-override read-back 1963 ms (restored)
+  - `v8_no_crop_fiducials` suppression: 39031 ms (category_override_writes 38842, element_overrides 91, category_override_reads 25, category_collect 9, build_override 4, subcategory_walk 3)
+  - `v8_no_crop_fiducials`: pre-state commit 4055 ms; restore = group rollback, 5481 ms; post-rollback element-override read-back 2516 ms (restored)
+  - `v9_registration_marks` suppression: 41529 ms (category_override_writes 41312, element_overrides 117, category_override_reads 28, category_collect 11, build_override 5, subcategory_walk 2)
+  - `v9_registration_marks`: pre-state commit 5014 ms; restore = group rollback, 4060 ms; post-rollback element-override read-back 2059 ms (restored)
+  - `v10_element_only_white` suppression WITHOUT the category layer: 82 ms (element_overrides 74, build_override 3)
+  - `v10_element_only_white`: pre-state commit 5123 ms; restore = group rollback, 3645 ms; post-rollback element-override read-back 2114 ms (restored)
+- F2 fiducials: 12261162 (Walls), 5850099 (Generic Models); separated 176.3 ft on u and 80.5 ft on v (1711 of 4784 candidates kept, reference authored_crop)
+
+### 0. What the capture reports it actually did
+
+| variant | suppression mode | applied_smooth_edges | display style | probe conclusion | measured its candidate | production success | capture faults | faults read from |
+|---|---|---|---|---|---|---|---|---|
+| v0_control | hide_categories | not_attempted | FlatColors | RAN | yes | yes | none | combined_record |
+| v7_no_crop | external | not_attempted | FlatColors | RAN | yes | yes | none | combined_record |
+| v8_no_crop_fiducials | external | no | FlatColors | RAN | yes | yes | none | combined_record |
+| v9_registration_marks | external | no | FlatColors | RAN | yes | yes | none | combined_record |
+| v10_element_only_white | external | not_attempted | FlatColors | RAN | yes | yes | none | combined_record |
+
+`capture faults` come from the probe's combined record (`annotation_pass.capture_faults`) in preference to the annotation sidecar, and the last column says which was used. The sidecar is the fallback because production wrote it before computing its own faults until `dcb4e65`, so an older capture's file carries none however faulted it was. `UNKNOWN (not recorded)` means neither source had the field -- which is not the same fact as `none`.
+
+`applied_smooth_edges` is four-valued: `not_attempted` (the pass was not asked), `read_failed`, `unchanged (failed)`, or `False` (**confirmed off**). A V2/V3 row that is anything but `False` did NOT have anti-aliasing disabled and therefore measures the same behaviour as the variant above it -- the probe reports that as `DID_NOT_MEASURE` rather than `RAN`.
+
+### 1. Image size vs `frame_px`, both axes
+
+| variant | image | frame_px | dw | dh | equal | sidecar dim_check |
+|---|---|---|---|---|---|---|
+| v0_control | 5274x2248 | 5274x2124 | 0 | 124 | no | pass |
+| v7_no_crop | 4819x2054 | 5274x2124 | -455 | -70 | no | pass |
+| v8_no_crop_fiducials | 4819x2054 | 5274x2124 | -455 | -70 | no | pass |
+| v9_registration_marks | 4819x2054 | 5274x2124 | -455 | -70 | no | pass |
+| v10_element_only_white | 4819x2054 | 5274x2124 | -455 | -70 | no | pass |
+
+`dw`/`dh` are image minus `frame_px`. `dim_check` is the sidecar's own verdict, which inspects the requested axis only (finding F4) -- so a nonzero `dh` beside `dim_check=pass` is exactly the case F4 names.
+
+### 2. Registration fit (measured from the pixels)
+
+| variant | samples | px/ft u | px/ft v | frame px/ft | offset at (u0,v1) px | residual med/max px | v axis |
+|---|---|---|---|---|---|---|---|
+| v0_control | 13 pairs | 17.788 | 17.582 | 18.749 | (132.5, 119.5) | 9.89 / 29.30 | negative (expected) |
+| v7_no_crop | 269 pairs | 16.337 | 16.871 | 18.754 | (290.8, 329.5) | 19.24 / 192.95 | negative (expected) |
+| v8_no_crop_fiducials | 269 pairs | 16.337 | 16.871 | 18.754 | (290.8, 329.5) | 19.24 / 192.95 | negative (expected) |
+| v9_registration_marks | 277 pairs | 16.333 | 16.833 | 18.754 | (291.3, 331.2) | 18.51 / 194.37 | negative (expected) |
+| v10_element_only_white | 269 pairs | 16.337 | 16.871 | 18.754 | (290.8, 329.5) | 19.24 / 192.95 | negative (expected) |
+
+- `v0_control` frame: registration.rendered_uv
+- `v7_no_crop` frame: the AUTHORED crop (crop_mode untouched)
+- `v8_no_crop_fiducials` frame: the AUTHORED crop (crop_mode untouched)
+- `v9_registration_marks` frame: the AUTHORED crop (crop_mode untouched)
+- `v10_element_only_white` frame: the AUTHORED crop (crop_mode untouched)
+
+#### 2b. Fitted per-side margin (how much bigger the render is than the frame)
+
+| variant | left | right | top | bottom |  |
+|---|---|---|---|---|---|
+| v0_control | 7.45 ft / 0.931 in | 7.74 ft / 0.967 in | 6.79 ft / 0.849 in | 7.77 ft / 0.972 in |  |
+| v7_no_crop | 17.80 ft / 2.225 in | 20.21 ft / 2.526 in | 19.53 ft / 2.441 in | 15.64 ft / 1.955 in |  |
+| v8_no_crop_fiducials | 17.80 ft / 2.225 in | 20.21 ft / 2.526 in | 19.53 ft / 2.441 in | 15.64 ft / 1.955 in |  |
+| v9_registration_marks | 17.84 ft / 2.230 in | 20.25 ft / 2.531 in | 19.68 ft / 2.459 in | 15.76 ft / 1.971 in |  |
+| v10_element_only_white | 17.80 ft / 2.225 in | 20.21 ft / 2.526 in | 19.53 ft / 2.441 in | 15.64 ft / 1.955 in |  |
+
+#### 2c. The fit's own premise: does the ink sit where the bbox says?
+
+The fit matches an element's exact-colour centroid against the centre of its recorded `bbox_uv`. **Those coincide only when the ink fills the box**, which real text, a tag with a leader or a dimension need not do. A displacement that is the SAME for every element is absorbed into the fitted intercept, so it leaves the residuals in 2 clean while shifting every margin in 2b by exactly that amount; one that varies with size or position corrupts the scale instead and does inflate the residuals. Both are surfaced here. No tolerance is applied -- what is close enough for a margin figure is your call.
+
+| variant | ink-bbox px/ft u | ink-bbox px/ft v | px/ft u delta | px/ft v delta | margin delta ft (l/r/t/b) |  |
+|---|---|---|---|---|---|---|
+| v0_control | 17.812 | 17.799 | -0.0235 | -0.2167 | 0.281 / 0.110 / 0.761 / 0.796 |  |
+| v7_no_crop | 16.289 | 16.319 | 0.0479 | 0.5518 | -0.345 / -0.522 / -2.307 / -1.810 |  |
+| v8_no_crop_fiducials | 16.289 | 16.319 | 0.0479 | 0.5518 | -0.345 / -0.522 / -2.307 / -1.810 |  |
+| v9_registration_marks | 16.289 | 16.317 | 0.0441 | 0.5160 | -0.313 / -0.487 / -2.167 / -1.691 |  |
+| v10_element_only_white | 16.289 | 16.319 | 0.0479 | 0.5518 | -0.345 / -0.522 / -2.307 / -1.810 |  |
+
+The second anchor is the centre of the ink's own bounding box rather than its centroid. The two are identical when the ink fills its bbox and diverge when it does not, so a row of ~0 deltas says the anchor choice does not matter on this capture and the margins above do not rest on the premise.
+
+A UNIFORM displacement -- every element's ink sitting the same distance off its box centre -- is NOT recoverable from a capture: nothing distinguishes it from the whole render sitting that far over, which is why it is the dangerous case. What IS recoverable is whether such a displacement is POSSIBLE, and by how much: ink that spans its whole box cannot be off-centre in it. The table below bounds it.
+
+##### `v0_control` does the ink fill its recorded bbox?
+
+| category | n | ink span / bbox u | ink span / bbox v | solidity | possible offset u px | possible offset v px |
+|---|---|---|---|---|---|---|
+| Dimensions | 2 | 0.947 (0.892 .. 1.002) | 0.965 (0.916 .. 1.014) | 0.058 (0.055 .. 0.061) | 1.1 (0.0 .. 2.2) | 0.6 (0.0 .. 1.2) |
+| Grids | 4 | 1.002 (1.002 .. 1.002) | 1.031 (1.024 .. 1.038) | 0.012 (0.012 .. 0.012) | 0.0 (0.0 .. 0.0) | 0.0 (0.0 .. 0.0) |
+| Lines | 1 | 1.034 (1.034 .. 1.034) | 1.046 (1.046 .. 1.046) | 0.167 (0.167 .. 0.167) | 0.0 (0.0 .. 0.0) | 0.0 (0.0 .. 0.0) |
+| Revision Cloud Tags | 1 | 0.938 (0.938 .. 0.938) | 0.916 (0.916 .. 0.916) | 0.094 (0.094 .. 0.094) | 1.6 (1.6 .. 1.6) | 2.2 (2.2 .. 2.2) |
+| Revision Clouds | 1 | 1.020 (1.020 .. 1.020) | 1.015 (1.015 .. 1.015) | 0.066 (0.066 .. 0.066) | 0.0 (0.0 .. 0.0) | 0.0 (0.0 .. 0.0) |
+| Views | 3 | 1.001 (1.001 .. 1.003) | 1.020 (1.011 .. 1.020) | 0.016 (0.015 .. 0.018) | 0.0 (0.0 .. 0.0) | 0.0 (0.0 .. 0.0) |
+
+`ink span / bbox` of 1.0 means the ink reaches both edges of its recorded box, so it cannot be off-centre in it and the margins above are bounded. `solidity` is ink pixels over ink bbox area: below 1 the ink is not a solid rectangle -- a glyph run, an L, a leader -- so its centroid can also sit away from its own bbox centre. `possible offset` is how far, in pixels, a margin in 2b could be wrong because of this.
+
+##### `v7_no_crop` does the ink fill its recorded bbox?
+
+| category | n | ink span / bbox u | ink span / bbox v | solidity | possible offset u px | possible offset v px |
+|---|---|---|---|---|---|---|
+| Dimensions | 135 | 0.985 (0.234 .. 1.003) | 0.958 (0.279 .. 0.973) | 0.035 (0.004 .. 0.160) | 0.8 (0.0 .. 106.6) | 3.1 (0.9 .. 135.5) |
+| Door Tags | 26 | 0.979 (0.808 .. 1.061) | 0.988 (0.588 .. 1.027) | 0.135 (0.073 .. 0.192) | 0.5 (0.0 .. 5.0) | 0.3 (0.0 .. 5.8) |
+| Grids | 4 | 0.997 (0.997 .. 0.997) | 0.978 (0.978 .. 0.993) | 0.013 (0.012 .. 0.013) | 7.4 (7.4 .. 7.4) | 0.7 (0.2 .. 0.7) |
+| Lines | 1 | 0.938 (0.938 .. 0.938) | 0.909 (0.909 .. 0.909) | 0.200 (0.200 .. 0.200) | 0.2 (0.2 .. 0.2) | 0.3 (0.3 .. 0.3) |
+| Revision Cloud Tags | 1 | 0.915 (0.915 .. 0.915) | 0.873 (0.873 .. 0.873) | 0.107 (0.107 .. 0.107) | 2.0 (2.0 .. 2.0) | 3.1 (3.1 .. 3.1) |
+| Revision Clouds | 1 | 1.014 (1.014 .. 1.014) | 0.965 (0.965 .. 0.965) | 0.068 (0.068 .. 0.068) | 0.0 (0.0 .. 0.0) | 3.8 (3.8 .. 3.8) |
+| Room Tags | 17 | 0.993 (0.961 .. 1.010) | 0.872 (0.872 .. 0.910) | 0.201 (0.125 .. 0.219) | 0.4 (0.0 .. 2.1) | 3.5 (3.0 .. 3.7) |
+| Views | 3 | 0.987 (0.981 .. 0.999) | 0.968 (0.963 .. 0.972) | 0.018 (0.016 .. 0.020) | 3.1 (0.3 .. 3.2) | 4.3 (3.6 .. 4.4) |
+| Wall Tags | 53 | 1.012 (0.978 .. 1.041) | 0.984 (0.968 .. 1.002) | 0.060 (0.034 .. 0.509) | 0.0 (0.0 .. 0.9) | 0.5 (0.0 .. 1.9) |
+| Window Tags | 27 | 0.971 (0.962 .. 0.989) | 0.874 (0.874 .. 0.899) | 0.215 (0.193 .. 0.235) | 0.8 (0.3 .. 1.1) | 2.5 (2.0 .. 2.5) |
+
+`ink span / bbox` of 1.0 means the ink reaches both edges of its recorded box, so it cannot be off-centre in it and the margins above are bounded. `solidity` is ink pixels over ink bbox area: below 1 the ink is not a solid rectangle -- a glyph run, an L, a leader -- so its centroid can also sit away from its own bbox centre. `possible offset` is how far, in pixels, a margin in 2b could be wrong because of this.
+
+##### `v8_no_crop_fiducials` does the ink fill its recorded bbox?
+
+| category | n | ink span / bbox u | ink span / bbox v | solidity | possible offset u px | possible offset v px |
+|---|---|---|---|---|---|---|
+| Dimensions | 135 | 0.985 (0.234 .. 1.003) | 0.958 (0.279 .. 0.973) | 0.035 (0.004 .. 0.160) | 0.8 (0.0 .. 106.6) | 3.1 (0.9 .. 135.5) |
+| Door Tags | 26 | 0.979 (0.808 .. 1.061) | 0.988 (0.588 .. 1.027) | 0.135 (0.073 .. 0.192) | 0.5 (0.0 .. 5.0) | 0.3 (0.0 .. 5.8) |
+| Grids | 4 | 0.997 (0.997 .. 0.997) | 0.978 (0.978 .. 0.993) | 0.013 (0.012 .. 0.013) | 7.4 (7.4 .. 7.4) | 0.7 (0.2 .. 0.7) |
+| Lines | 1 | 0.938 (0.938 .. 0.938) | 0.909 (0.909 .. 0.909) | 0.200 (0.200 .. 0.200) | 0.2 (0.2 .. 0.2) | 0.3 (0.3 .. 0.3) |
+| Revision Cloud Tags | 1 | 0.915 (0.915 .. 0.915) | 0.873 (0.873 .. 0.873) | 0.107 (0.107 .. 0.107) | 2.0 (2.0 .. 2.0) | 3.1 (3.1 .. 3.1) |
+| Revision Clouds | 1 | 1.014 (1.014 .. 1.014) | 0.965 (0.965 .. 0.965) | 0.068 (0.068 .. 0.068) | 0.0 (0.0 .. 0.0) | 3.8 (3.8 .. 3.8) |
+| Room Tags | 17 | 0.993 (0.961 .. 1.010) | 0.872 (0.872 .. 0.910) | 0.201 (0.125 .. 0.219) | 0.4 (0.0 .. 2.1) | 3.5 (3.0 .. 3.7) |
+| Views | 3 | 0.987 (0.981 .. 0.999) | 0.968 (0.963 .. 0.972) | 0.018 (0.016 .. 0.020) | 3.1 (0.3 .. 3.2) | 4.3 (3.6 .. 4.4) |
+| Wall Tags | 53 | 1.012 (0.978 .. 1.041) | 0.984 (0.968 .. 1.002) | 0.060 (0.034 .. 0.509) | 0.0 (0.0 .. 0.9) | 0.5 (0.0 .. 1.9) |
+| Window Tags | 27 | 0.971 (0.962 .. 0.989) | 0.874 (0.874 .. 0.899) | 0.215 (0.193 .. 0.235) | 0.8 (0.3 .. 1.1) | 2.5 (2.0 .. 2.5) |
+
+`ink span / bbox` of 1.0 means the ink reaches both edges of its recorded box, so it cannot be off-centre in it and the margins above are bounded. `solidity` is ink pixels over ink bbox area: below 1 the ink is not a solid rectangle -- a glyph run, an L, a leader -- so its centroid can also sit away from its own bbox centre. `possible offset` is how far, in pixels, a margin in 2b could be wrong because of this.
+
+##### `v9_registration_marks` does the ink fill its recorded bbox?
+
+| category | n | ink span / bbox u | ink span / bbox v | solidity | possible offset u px | possible offset v px |
+|---|---|---|---|---|---|---|
+| Dimensions | 135 | 0.985 (0.234 .. 1.003) | 0.960 (0.279 .. 0.975) | 0.035 (0.004 .. 0.160) | 0.8 (0.0 .. 106.6) | 2.9 (0.8 .. 135.0) |
+| Door Tags | 26 | 0.979 (0.808 .. 1.061) | 0.990 (0.589 .. 1.030) | 0.135 (0.073 .. 0.192) | 0.5 (0.0 .. 5.0) | 0.2 (0.0 .. 5.8) |
+| Grids | 4 | 0.997 (0.997 .. 0.997) | 0.980 (0.980 .. 0.995) | 0.013 (0.012 .. 0.013) | 6.8 (6.8 .. 6.8) | 0.7 (0.2 .. 0.7) |
+| Lines | 1 | 0.938 (0.938 .. 0.938) | 0.911 (0.911 .. 0.911) | 0.200 (0.200 .. 0.200) | 0.2 (0.2 .. 0.2) | 0.2 (0.2 .. 0.2) |
+| Revision Cloud Tags | 1 | 0.916 (0.916 .. 0.916) | 0.875 (0.875 .. 0.875) | 0.107 (0.107 .. 0.107) | 2.0 (2.0 .. 2.0) | 3.1 (3.1 .. 3.1) |
+| Revision Clouds | 1 | 1.014 (1.014 .. 1.014) | 0.967 (0.967 .. 0.967) | 0.068 (0.068 .. 0.068) | 0.0 (0.0 .. 0.0) | 3.5 (3.5 .. 3.5) |
+| Room Tags | 17 | 0.993 (0.962 .. 1.010) | 0.874 (0.874 .. 0.912) | 0.201 (0.125 .. 0.219) | 0.3 (0.0 .. 2.1) | 3.4 (2.9 .. 3.6) |
+| Views | 3 | 0.987 (0.981 .. 0.999) | 0.970 (0.965 .. 0.974) | 0.018 (0.016 .. 0.020) | 3.1 (0.2 .. 3.1) | 4.1 (3.3 .. 4.1) |
+| Wall Tags | 53 | 1.012 (0.979 .. 1.041) | 0.986 (0.971 .. 1.005) | 0.060 (0.034 .. 0.509) | 0.0 (0.0 .. 0.9) | 0.4 (0.0 .. 1.8) |
+| Window Tags | 27 | 0.971 (0.963 .. 0.989) | 0.876 (0.876 .. 0.901) | 0.215 (0.193 .. 0.235) | 0.8 (0.3 .. 1.1) | 2.5 (2.0 .. 2.5) |
+
+`ink span / bbox` of 1.0 means the ink reaches both edges of its recorded box, so it cannot be off-centre in it and the margins above are bounded. `solidity` is ink pixels over ink bbox area: below 1 the ink is not a solid rectangle -- a glyph run, an L, a leader -- so its centroid can also sit away from its own bbox centre. `possible offset` is how far, in pixels, a margin in 2b could be wrong because of this.
+
+##### `v10_element_only_white` does the ink fill its recorded bbox?
+
+| category | n | ink span / bbox u | ink span / bbox v | solidity | possible offset u px | possible offset v px |
+|---|---|---|---|---|---|---|
+| Dimensions | 135 | 0.985 (0.234 .. 1.003) | 0.958 (0.279 .. 0.973) | 0.035 (0.004 .. 0.160) | 0.8 (0.0 .. 106.6) | 3.1 (0.9 .. 135.5) |
+| Door Tags | 26 | 0.979 (0.808 .. 1.061) | 0.988 (0.588 .. 1.027) | 0.135 (0.073 .. 0.192) | 0.5 (0.0 .. 5.0) | 0.3 (0.0 .. 5.8) |
+| Grids | 4 | 0.997 (0.997 .. 0.997) | 0.978 (0.978 .. 0.993) | 0.013 (0.012 .. 0.013) | 7.4 (7.4 .. 7.4) | 0.7 (0.2 .. 0.7) |
+| Lines | 1 | 0.938 (0.938 .. 0.938) | 0.909 (0.909 .. 0.909) | 0.200 (0.200 .. 0.200) | 0.2 (0.2 .. 0.2) | 0.3 (0.3 .. 0.3) |
+| Revision Cloud Tags | 1 | 0.915 (0.915 .. 0.915) | 0.873 (0.873 .. 0.873) | 0.107 (0.107 .. 0.107) | 2.0 (2.0 .. 2.0) | 3.1 (3.1 .. 3.1) |
+| Revision Clouds | 1 | 1.014 (1.014 .. 1.014) | 0.965 (0.965 .. 0.965) | 0.068 (0.068 .. 0.068) | 0.0 (0.0 .. 0.0) | 3.8 (3.8 .. 3.8) |
+| Room Tags | 17 | 0.993 (0.961 .. 1.010) | 0.872 (0.872 .. 0.910) | 0.201 (0.125 .. 0.219) | 0.4 (0.0 .. 2.1) | 3.5 (3.0 .. 3.7) |
+| Views | 3 | 0.987 (0.981 .. 0.999) | 0.968 (0.963 .. 0.972) | 0.018 (0.016 .. 0.020) | 3.1 (0.3 .. 3.2) | 4.3 (3.6 .. 4.4) |
+| Wall Tags | 53 | 1.012 (0.978 .. 1.041) | 0.984 (0.968 .. 1.002) | 0.060 (0.034 .. 0.509) | 0.0 (0.0 .. 0.9) | 0.5 (0.0 .. 1.9) |
+| Window Tags | 27 | 0.971 (0.962 .. 0.989) | 0.874 (0.874 .. 0.899) | 0.215 (0.193 .. 0.235) | 0.8 (0.3 .. 1.1) | 2.5 (2.0 .. 2.5) |
+
+`ink span / bbox` of 1.0 means the ink reaches both edges of its recorded box, so it cannot be off-centre in it and the margins above are bounded. `solidity` is ink pixels over ink bbox area: below 1 the ink is not a solid rectangle -- a glyph run, an L, a leader -- so its centroid can also sit away from its own bbox centre. `possible offset` is how far, in pixels, a margin in 2b could be wrong because of this.
+
+- `v0_control` samples: matched 13, no bbox 1, colour absent 257, clipped at an image edge 12.
+- `v7_no_crop` samples: matched 269, no bbox 1, colour absent 1, clipped at an image edge 12.
+- `v8_no_crop_fiducials` samples: matched 269, no bbox 1, colour absent 1, clipped at an image edge 12.
+- `v9_registration_marks` samples: matched 277, no bbox 1, colour absent 1, clipped at an image edge 12.
+- `v10_element_only_white` samples: matched 269, no bbox 1, colour absent 1, clipped at an image edge 12.
+
+### 3. How far recorded annotation bboxes reach past the rendered frame
+
+| variant | left | right | top | bottom | bboxes outside |  |
+|---|---|---|---|---|---|---|
+| v0_control | 4.62 ft / 0.577 in | 4.51 ft / 0.564 in | 6.01 ft / 0.751 in | 6.86 ft / 0.858 in | 16 of 282 |  |
+| v7_no_crop | 15.70 ft / 1.962 in | 17.76 ft / 2.221 in | 21.98 ft / 2.748 in | 17.60 ft / 2.200 in | 69 of 282 |  |
+| v8_no_crop_fiducials | 15.70 ft / 1.962 in | 17.76 ft / 2.221 in | 21.98 ft / 2.748 in | 17.60 ft / 2.200 in | 69 of 282 |  |
+| v9_registration_marks | 15.70 ft / 1.962 in | 17.76 ft / 2.221 in | 21.98 ft / 2.748 in | 17.60 ft / 2.200 in | 69 of 290 |  |
+| v10_element_only_white | 15.70 ft / 1.962 in | 17.76 ft / 2.221 in | 21.98 ft / 2.748 in | 17.60 ft / 2.200 in | 69 of 282 |  |
+
+Read this table against 2b. Where they agree, the render is behaving as if it had been fitted to the crop unioned with the annotations drawn beyond it.
+
+### 4. Coverage per category
+
+#### `v0_control`
+
+Ink test threshold >2% non-white, placed through the fitted mapping from measurement (2).
+
+| category | assigned | painted | colour present | bbox | ink tested | ink present | bbox off image | ink untested |
+|---|---|---|---|---|---|---|---|---|
+| <no category> | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Attached Detail Groups | 1 | 1 | 0 | 1 | 1 | 0 | 0 | 0 |
+| Dimensions | 135 | 135 | 2 | 135 | 135 | 9 | 0 | 0 |
+| Door Tags | 26 | 26 | 0 | 26 | 26 | 1 | 0 | 0 |
+| Grids | 16 | 16 | 16 | 16 | 16 | 11 | 0 | 0 |
+| Lines | 2 | 2 | 2 | 2 | 2 | 2 | 0 | 0 |
+| Revision Cloud Tags | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 |
+| Revision Clouds | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 |
+| Room Tags | 17 | 17 | 0 | 17 | 17 | 1 | 0 | 0 |
+| Views | 3 | 3 | 3 | 3 | 3 | 2 | 0 | 0 |
+| Wall Tags | 53 | 53 | 0 | 53 | 53 | 3 | 0 | 0 |
+| Window Tags | 27 | 27 | 0 | 27 | 27 | 0 | 0 | 0 |
+
+#### `v7_no_crop`
+
+Ink test threshold >2% non-white, placed through the fitted mapping from measurement (2).
+
+| category | assigned | painted | colour present | bbox | ink tested | ink present | bbox off image | ink untested |
+|---|---|---|---|---|---|---|---|---|
+| <no category> | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Attached Detail Groups | 1 | 1 | 0 | 1 | 1 | 1 | 0 | 0 |
+| Dimensions | 135 | 135 | 135 | 135 | 135 | 132 | 0 | 0 |
+| Door Tags | 26 | 26 | 26 | 26 | 26 | 26 | 0 | 0 |
+| Grids | 16 | 16 | 16 | 16 | 16 | 16 | 0 | 0 |
+| Lines | 2 | 2 | 2 | 2 | 2 | 2 | 0 | 0 |
+| Revision Cloud Tags | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 |
+| Revision Clouds | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 |
+| Room Tags | 17 | 17 | 17 | 17 | 17 | 17 | 0 | 0 |
+| Views | 3 | 3 | 3 | 3 | 3 | 3 | 0 | 0 |
+| Wall Tags | 53 | 53 | 53 | 53 | 53 | 53 | 0 | 0 |
+| Window Tags | 27 | 27 | 27 | 27 | 27 | 27 | 0 | 0 |
+
+#### `v8_no_crop_fiducials`
+
+Ink test threshold >2% non-white, placed through the fitted mapping from measurement (2).
+
+| category | assigned | painted | colour present | bbox | ink tested | ink present | bbox off image | ink untested |
+|---|---|---|---|---|---|---|---|---|
+| <no category> | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Attached Detail Groups | 1 | 1 | 0 | 1 | 1 | 1 | 0 | 0 |
+| Dimensions | 135 | 135 | 135 | 135 | 135 | 132 | 0 | 0 |
+| Door Tags | 26 | 26 | 26 | 26 | 26 | 26 | 0 | 0 |
+| Grids | 16 | 16 | 16 | 16 | 16 | 16 | 0 | 0 |
+| Lines | 2 | 2 | 2 | 2 | 2 | 2 | 0 | 0 |
+| Revision Cloud Tags | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 |
+| Revision Clouds | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 |
+| Room Tags | 17 | 17 | 17 | 17 | 17 | 17 | 0 | 0 |
+| Views | 3 | 3 | 3 | 3 | 3 | 3 | 0 | 0 |
+| Wall Tags | 53 | 53 | 53 | 53 | 53 | 53 | 0 | 0 |
+| Window Tags | 27 | 27 | 27 | 27 | 27 | 27 | 0 | 0 |
+
+#### `v9_registration_marks`
+
+Ink test threshold >2% non-white, placed through the fitted mapping from measurement (2).
+
+| category | assigned | painted | colour present | bbox | ink tested | ink present | bbox off image | ink untested |
+|---|---|---|---|---|---|---|---|---|
+| <no category> | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Attached Detail Groups | 1 | 1 | 0 | 1 | 1 | 1 | 0 | 0 |
+| Dimensions | 135 | 135 | 135 | 135 | 135 | 132 | 0 | 0 |
+| Door Tags | 26 | 26 | 26 | 26 | 26 | 26 | 0 | 0 |
+| Grids | 16 | 16 | 16 | 16 | 16 | 16 | 0 | 0 |
+| Lines | 10 | 10 | 10 | 10 | 10 | 4 | 0 | 0 |
+| Revision Cloud Tags | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 |
+| Revision Clouds | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 |
+| Room Tags | 17 | 17 | 17 | 17 | 17 | 17 | 0 | 0 |
+| Views | 3 | 3 | 3 | 3 | 3 | 3 | 0 | 0 |
+| Wall Tags | 53 | 53 | 53 | 53 | 53 | 53 | 0 | 0 |
+| Window Tags | 27 | 27 | 27 | 27 | 27 | 27 | 0 | 0 |
+
+#### `v10_element_only_white`
+
+Ink test threshold >2% non-white, placed through the fitted mapping from measurement (2).
+
+| category | assigned | painted | colour present | bbox | ink tested | ink present | bbox off image | ink untested |
+|---|---|---|---|---|---|---|---|---|
+| <no category> | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Attached Detail Groups | 1 | 1 | 0 | 1 | 1 | 1 | 0 | 0 |
+| Dimensions | 135 | 135 | 135 | 135 | 135 | 132 | 0 | 0 |
+| Door Tags | 26 | 26 | 26 | 26 | 26 | 26 | 0 | 0 |
+| Grids | 16 | 16 | 16 | 16 | 16 | 16 | 0 | 0 |
+| Lines | 2 | 2 | 2 | 2 | 2 | 2 | 0 | 0 |
+| Revision Cloud Tags | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 |
+| Revision Clouds | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 |
+| Room Tags | 17 | 17 | 17 | 17 | 17 | 17 | 0 | 0 |
+| Views | 3 | 3 | 3 | 3 | 3 | 3 | 0 | 0 |
+| Wall Tags | 53 | 53 | 53 | 53 | 53 | 53 | 0 | 0 |
+| Window Tags | 27 | 27 | 27 | 27 | 27 | 27 | 0 | 0 |
+
+### 5. Non-white, non-palette pixels
+
+| variant | total | white | palette | off-palette | off-palette frac | blend | grey | other | distinct | tally capped |
+|---|---|---|---|---|---|---|---|---|---|---|
+| v0_control | 11855952 | 11765270 | 65167 | 25515 | 0.00215 | 10494 | 15015 | 6 | 320 | no |
+| v7_no_crop | 9898226 | 9664770 | 198986 | 34470 | 0.00348 | 33808 | 660 | 2 | 1388 | no |
+| v8_no_crop_fiducials | 9898226 | 9664290 | 198986 | 34470 | 0.00348 | 33808 | 660 | 2 | 1388 | no |
+| v9_registration_marks | 9898226 | 9663633 | 199643 | 34470 | 0.00348 | 33808 | 660 | 2 | 1388 | no |
+| v10_element_only_white | 9898226 | 9664770 | 198986 | 34470 | 0.00348 | 33808 | 660 | 2 | 1388 | no |
+
+`blend` is within 3 RGB units of the segment between some palette colour and white. `grey` is all three channels within 3 of each other. The two OVERLAP -- a grey pixel is also collinear with white -- and blend is tested first; the `blend also grey` count below states what that ordering costs.
+
+- `v0_control` blend also grey: 0 px.
+- `v7_no_crop` blend also grey: 0 px.
+- `v8_no_crop_fiducials` blend also grey: 0 px.
+- `v9_registration_marks` blend also grey: 0 px.
+- `v10_element_only_white` blend also grey: 0 px.
+
+#### `v0_control` top 10 off-palette colours
+
+| rgb | pixels | class | also grey |
+|---|---|---|---|
+| [0, 0, 0] | 14318 | grey | yes |
+| [137, 137, 137] | 198 | grey | yes |
+| [254, 172, 172] | 180 | blend | no |
+| [253, 164, 56] | 158 | blend | no |
+| [253, 59, 59] | 158 | blend | no |
+| [254, 183, 161] | 150 | blend | no |
+| [253, 55, 121] | 146 | blend | no |
+| [49, 253, 223] | 140 | blend | no |
+| [253, 186, 105] | 140 | blend | no |
+| [108, 56, 253] | 136 | blend | no |
+
+#### `v7_no_crop` top 10 off-palette colours
+
+| rgb | pixels | class | also grey |
+|---|---|---|---|
+| [0, 0, 0] | 278 | grey | yes |
+| [253, 94, 249] | 265 | blend | no |
+| [253, 223, 114] | 260 | blend | no |
+| [136, 112, 253] | 240 | blend | no |
+| [51, 253, 157] | 156 | blend | no |
+| [254, 172, 172] | 156 | blend | no |
+| [182, 168, 254] | 155 | blend | no |
+| [253, 47, 248] | 153 | blend | no |
+| [254, 183, 161] | 150 | blend | no |
+| [234, 253, 58] | 134 | blend | no |
+
+#### `v8_no_crop_fiducials` top 10 off-palette colours
+
+| rgb | pixels | class | also grey |
+|---|---|---|---|
+| [0, 0, 0] | 278 | grey | yes |
+| [253, 94, 249] | 265 | blend | no |
+| [253, 223, 114] | 260 | blend | no |
+| [136, 112, 253] | 240 | blend | no |
+| [51, 253, 157] | 156 | blend | no |
+| [254, 172, 172] | 156 | blend | no |
+| [182, 168, 254] | 155 | blend | no |
+| [253, 47, 248] | 153 | blend | no |
+| [254, 183, 161] | 150 | blend | no |
+| [234, 253, 58] | 134 | blend | no |
+
+#### `v9_registration_marks` top 10 off-palette colours
+
+| rgb | pixels | class | also grey |
+|---|---|---|---|
+| [0, 0, 0] | 278 | grey | yes |
+| [253, 94, 249] | 265 | blend | no |
+| [253, 223, 114] | 260 | blend | no |
+| [136, 112, 253] | 240 | blend | no |
+| [51, 253, 157] | 156 | blend | no |
+| [254, 172, 172] | 156 | blend | no |
+| [182, 168, 254] | 155 | blend | no |
+| [253, 47, 248] | 153 | blend | no |
+| [254, 183, 161] | 150 | blend | no |
+| [234, 253, 58] | 134 | blend | no |
+
+#### `v10_element_only_white` top 10 off-palette colours
+
+| rgb | pixels | class | also grey |
+|---|---|---|---|
+| [0, 0, 0] | 278 | grey | yes |
+| [253, 94, 249] | 265 | blend | no |
+| [253, 223, 114] | 260 | blend | no |
+| [136, 112, 253] | 240 | blend | no |
+| [51, 253, 157] | 156 | blend | no |
+| [254, 172, 172] | 156 | blend | no |
+| [182, 168, 254] | 155 | blend | no |
+| [253, 47, 248] | 153 | blend | no |
+| [254, 183, 161] | 150 | blend | no |
+| [234, 253, 58] | 134 | blend | no |
+
+### 6. Model TIFF hash vs V0
+
+| variant | model sha256 (16) | V0 sha256 (16) | equal |
+|---|---|---|---|
+| v0_control | ee9e812769ec2735 | ee9e812769ec2735 | yes |
+| v7_no_crop | ee9e812769ec2735 | ee9e812769ec2735 | yes |
+| v8_no_crop_fiducials | ee9e812769ec2735 | ee9e812769ec2735 | yes |
+| v9_registration_marks | ee9e812769ec2735 | ee9e812769ec2735 | yes |
+| v10_element_only_white | ee9e812769ec2735 | ee9e812769ec2735 | yes |
+
+The model pass runs ONCE per view, so this column detects a variant CLOBBERING the model artifact -- a path collision, a stray write. Whether a variant changed how the model pass RENDERS is the probe's own `model_reexport_after_variants` verdict, quoted at the top of this view's section, which has its own repeatability control.
+
+### 7. F1 -- the crop boundary, recovered from the pixels
+
+Q1: does the exported image contain the crop boundary, and does its recovered position match `view.CropBox`? A boundary is a band of rows (or columns) each holding a straight run of non-white, non-palette, non-fiducial pixels of >= 25% of the image, closing into one rectangle (or matching the crop shape's levels). `NOT FOUND` on a V8 row is the answer that ImageExportOptions does not draw it.
+
+| variant | probe turned it on | boundary | row/col bands | px/ft u | px/ft v | lattice px/ft | u/v isotropy | boundary px rects (subtract these) |  |
+|---|---|---|---|---|---|---|---|---|---|
+| v0_control | no | NOT_FOUND | 1 / 2 | -- | -- | 18.7487 | -- | -- | 1 row band(s) and 2 column band(s) long enough to be a crop edge, but no four of them close into one rectangle |
+| v7_no_crop | no | NOT_FOUND | 0 / 0 | -- | -- | 18.7487 | -- | -- | no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture |
+| v8_no_crop_fiducials | yes | NOT_FOUND | 0 / 0 | -- | -- | 18.7487 | -- | -- | no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture |
+| v9_registration_marks | yes | NOT_FOUND | 0 / 0 | -- | -- | 18.7487 | -- | -- | no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture |
+| v10_element_only_white | no | NOT_FOUND | 0 / 0 | -- | -- | 18.7487 | -- | -- | no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture |
+
+`isotropy` of 1 means the boundary's pixel rectangle has the crop's own aspect -- the recovered position is the crop's shape at one uniform scale. `lattice px/ft` is the model capture's (1 / achieved fpp): an untouched capture that rendered exactly the authored crop at the requested count would match it.
+
+- `v8_no_crop_fiducials` MODEL capture (boundary drawn at crop A [-91.50953986386723, 2250.738331334784, 165.52223653185607, 2337.3578799686616]): NOT_FOUND -- no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture
+- `v9_registration_marks` MODEL capture (boundary drawn at crop A [-91.50953986386723, 2250.738331334784, 165.52223653185607, 2337.3578799686616]): NOT_FOUND -- no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture
+
+### 8. F2 -- the fiducial pair
+
+| variant | element | colour | found | pixels | ink px bbox | clipped | recorded rect_uv |
+|---|---|---|---|---|---|---|---|
+| v8_no_crop_fiducials | 12261162 | [251, 11, 139] | yes | 463 | [1186.0, 415.0, 1340.0, 417.0] | no | [-37.3402448956206, 2332.8998997006133, -26.729670423215794, 2333.8998997006133] |
+| v8_no_crop_fiducials | 5850099 | [11, 139, 251] | yes | 17 | [4129.0, 1732.0, 4133.0, 1738.0] | no | [143.95663010436672, 2252.592608033942, 144.5763807605349, 2253.21235869011] |
+| v9_registration_marks | 12261162 | [251, 11, 139] | yes | 463 | [1186.0, 415.0, 1340.0, 417.0] | no | [-37.3402448956206, 2332.8998997006133, -26.729670423215794, 2333.8998997006133] |
+| v9_registration_marks | 5850099 | [11, 139, 251] | yes | 17 | [4129.0, 1732.0, 4133.0, 1738.0] | no | [143.95663010436672, 2252.592608033942, 144.5763807605349, 2253.21235869011] |
+
+| fit | px/ft u | px/ft v | u/v isotropy | residual max px u / v |  |
+|---|---|---|---|---|---|
+| `v8_no_crop_fiducials` F2 (recorded bbox) | 16.2645 | 16.3844 | 0.99268 | 9.06 / 6.74 |  |
+| `v8_no_crop_fiducials` F2 (model-anchored) | -- | -- | -- | -- | 1 usable fiducial(s) of 2; F2 needs both, unclipped, in their reserved colours, each with a UV extent |
+| `v9_registration_marks` F2 (recorded bbox) | 16.2645 | 16.3844 | 0.99268 | 9.06 / 6.74 |  |
+| `v9_registration_marks` F2 (model-anchored) | -- | -- | -- | -- | 1 usable fiducial(s) of 2; F2 needs both, unclipped, in their reserved colours, each with a UV extent |
+
+- `v8_no_crop_fiducials` fiducial 12261162: 463 px in the annotation capture, None px in the model capture -- the element drew NOTHING in the model capture in its model colour, so it has no model-drawn extent
+- `v8_no_crop_fiducials` fiducial 5850099: 17 px in the annotation capture, 24 px in the model capture
+- `v9_registration_marks` fiducial 12261162: 463 px in the annotation capture, None px in the model capture -- the element drew NOTHING in the model capture in its model colour, so it has no model-drawn extent
+- `v9_registration_marks` fiducial 5850099: 17 px in the annotation capture, 24 px in the model capture
+
+F2 fits each fiducial's INK EDGES against its recorded extent: four points per axis for the pair, so it has a residual. The recorded extent is a projected 3-D bbox, which can be looser than the element; the model-anchored row replaces it with the element's drawn extent in the model capture, at the cost of assuming the model capture registers.
+
+### 9. F1 vs F2 vs F3 vs the bbox fit
+
+Q2: with the crop untouched, is the rendered rectangle stable, and do F1 and F2 agree? The disagreement is the number. Corners are the authored crop's, pushed through both maps.
+
+| variant | pair | px/ft u delta | px/ft v delta | worst corner px |  |
+|---|---|---|---|---|---|
+| v0_control | F1_vs_F2 | -- | -- | -- | one of the two mappings is not available |
+| v0_control | F1_vs_bbox_fit | -- | -- | -- | one of the two mappings is not available |
+| v0_control | F2_vs_bbox_fit | -- | -- | -- | one of the two mappings is not available |
+| v7_no_crop | F1_vs_F2 | -- | -- | -- | one of the two mappings is not available |
+| v7_no_crop | F1_vs_bbox_fit | -- | -- | -- | one of the two mappings is not available |
+| v7_no_crop | F2_vs_bbox_fit | -- | -- | -- | one of the two mappings is not available |
+| v8_no_crop_fiducials | F1_vs_F2 | -- | -- | -- | one of the two mappings is not available |
+| v8_no_crop_fiducials | F1_vs_bbox_fit | -- | -- | -- | one of the two mappings is not available |
+| v8_no_crop_fiducials | F2_vs_bbox_fit | -0.0725 | -0.4868 | 22.69 |  |
+| v9_registration_marks | F1_vs_F2 | -- | -- | -- | one of the two mappings is not available |
+| v9_registration_marks | F1_vs_bbox_fit | -- | -- | -- | one of the two mappings is not available |
+| v9_registration_marks | F2_vs_bbox_fit | -0.0683 | -0.4486 | 20.93 |  |
+| v9_registration_marks | F3_vs_F2 | +0.0167 | -0.1029 | 5.52 |  |
+| v9_registration_marks | F3_vs_bbox_fit | -0.0516 | -0.5515 | 26.45 |  |
+| v10_element_only_white | F1_vs_F2 | -- | -- | -- | one of the two mappings is not available |
+| v10_element_only_white | F1_vs_bbox_fit | -- | -- | -- | one of the two mappings is not available |
+| v10_element_only_white | F2_vs_bbox_fit | -- | -- | -- | one of the two mappings is not available |
+
+### 10. Datum extents: ink vs the recorded (authored-crop) bbox
+
+Q3: do datum extents in the capture match the drawing? Positive means the ink reaches FURTHER than the bbox recorded before the capture touched the view. Under V0 the crop was widened to B, which lengthens datums; under V7/V8 it was not.
+
+| variant | datum | category | map | length delta ft | paper in | per side ft l/r/t/b |  |
+|---|---|---|---|---|---|---|---|
+| v0_control | 3693278 | Grids | bbox_fit | +0.55 | +0.069 | +0.30 / +0.25 / +0.15 / -0.05 |  |
+| v0_control | 3693539 | Grids | bbox_fit | +0.55 | +0.069 | +0.30 / +0.25 / +0.36 / -0.27 |  |
+| v0_control | 3693688 | Grids | bbox_fit | +0.55 | +0.069 | +0.30 / +0.25 / -0.42 / +0.57 |  |
+| v0_control | 3694573 | Grids | bbox_fit | +1.70 | +0.212 | +0.23 / -0.18 / +0.79 / +0.91 | CLIPPED at image edge |
+| v0_control | 3694705 | Grids | bbox_fit | +1.70 | +0.212 | +0.21 / -0.11 / +0.79 / +0.91 | CLIPPED at image edge |
+| v0_control | 3694782 | Grids | bbox_fit | +1.70 | +0.212 | +0.14 / -0.09 / +0.79 / +0.91 | CLIPPED at image edge |
+| v0_control | 3694880 | Grids | bbox_fit | +1.70 | +0.212 | +0.12 / -0.01 / +0.79 / +0.91 | CLIPPED at image edge |
+| v0_control | 3694982 | Grids | bbox_fit | +1.70 | +0.212 | +0.04 / +0.01 / +0.79 / +0.91 | CLIPPED at image edge |
+| v0_control | 3695045 | Grids | bbox_fit | +1.70 | +0.212 | +0.02 / +0.08 / +0.79 / +0.91 | CLIPPED at image edge |
+| v0_control | 3695123 | Grids | bbox_fit | +1.70 | +0.212 | -0.07 / +0.12 / +0.79 / +0.91 | CLIPPED at image edge |
+| v0_control | 3695201 | Grids | bbox_fit | +1.70 | +0.212 | -0.14 / +0.19 / +0.79 / +0.91 | CLIPPED at image edge |
+| v0_control | 3697629 | Grids | bbox_fit | +1.70 | +0.212 | -0.05 / +0.10 / +0.79 / +0.91 | CLIPPED at image edge |
+| v0_control | 3698218 | Grids | bbox_fit | +1.70 | +0.212 | -0.13 / +0.24 / +0.79 / +0.91 | CLIPPED at image edge |
+| v0_control | 3784562 | Grids | bbox_fit | +0.55 | +0.069 | +0.30 / +0.25 / -0.20 / +0.35 |  |
+| v0_control | 3923006 | Grids | bbox_fit | +1.70 | +0.212 | +0.27 / -0.23 / +0.79 / +0.91 | CLIPPED at image edge |
+| v0_control | 5136165 | Grids | bbox_fit | +1.70 | +0.212 | +0.19 / -0.09 / +0.79 / +0.91 | CLIPPED at image edge |
+| v7_no_crop | 3693278 | Grids | bbox_fit | -0.90 | -0.113 | -0.41 / -0.49 / -0.62 / +0.53 |  |
+| v7_no_crop | 3693539 | Grids | bbox_fit | -0.90 | -0.113 | -0.41 / -0.49 / -1.21 / +1.13 |  |
+| v7_no_crop | 3693688 | Grids | bbox_fit | -0.90 | -0.113 | -0.41 / -0.49 / +0.94 / -1.03 |  |
+| v7_no_crop | 3694573 | Grids | bbox_fit | -4.41 | -0.552 | -0.28 / +0.32 / -2.45 / -1.96 | CLIPPED at image edge |
+| v7_no_crop | 3694705 | Grids | bbox_fit | -4.41 | -0.552 | -0.21 / +0.25 / -2.45 / -1.96 | CLIPPED at image edge |
+| v7_no_crop | 3694782 | Grids | bbox_fit | -4.41 | -0.552 | -0.14 / +0.18 / -2.45 / -1.96 | CLIPPED at image edge |
+| v7_no_crop | 3694880 | Grids | bbox_fit | -4.41 | -0.552 | -0.01 / +0.05 / -2.45 / -1.96 | CLIPPED at image edge |
+| v7_no_crop | 3694982 | Grids | bbox_fit | -4.41 | -0.552 | +0.12 / -0.02 / -2.45 / -1.96 | CLIPPED at image edge |
+| v7_no_crop | 3695045 | Grids | bbox_fit | -4.41 | -0.552 | +0.19 / -0.15 / -2.45 / -1.96 | CLIPPED at image edge |
+| v7_no_crop | 3695123 | Grids | bbox_fit | -4.41 | -0.552 | +0.33 / -0.29 / -2.45 / -1.96 | CLIPPED at image edge |
+| v7_no_crop | 3695201 | Grids | bbox_fit | -4.41 | -0.552 | +0.46 / -0.36 / -2.45 / -1.96 | CLIPPED at image edge |
+| v7_no_crop | 3697629 | Grids | bbox_fit | -4.41 | -0.552 | +0.32 / -0.28 / -2.45 / -1.96 | CLIPPED at image edge |
+| v7_no_crop | 3698218 | Grids | bbox_fit | -4.41 | -0.552 | +0.52 / -0.42 / -2.45 / -1.96 | CLIPPED at image edge |
+| v7_no_crop | 3784562 | Grids | bbox_fit | -0.90 | -0.113 | -0.41 / -0.49 / +0.40 / -0.43 |  |
+| v7_no_crop | 3923006 | Grids | bbox_fit | -4.41 | -0.552 | -0.34 / +0.38 / -2.45 / -1.96 | CLIPPED at image edge |
+| v7_no_crop | 5136165 | Grids | bbox_fit | -4.41 | -0.552 | -0.13 / +0.17 / -2.45 / -1.96 | CLIPPED at image edge |
+| v8_no_crop_fiducials | 3693278 | Grids | F2 | +0.39 | +0.049 | +0.05 / +0.34 / -0.10 / +0.12 |  |
+| v8_no_crop_fiducials | 3693539 | Grids | F2 | +0.39 | +0.049 | +0.05 / +0.34 / -0.24 / +0.27 |  |
+| v8_no_crop_fiducials | 3693688 | Grids | F2 | +0.39 | +0.049 | +0.05 / +0.34 / +0.18 / -0.15 |  |
+| v8_no_crop_fiducials | 3694573 | Grids | F2 | -0.80 | -0.100 | +0.01 / +0.05 / -0.49 / -0.31 | CLIPPED at image edge |
+| v8_no_crop_fiducials | 3694705 | Grids | F2 | -0.80 | -0.100 | -0.06 / +0.11 / -0.49 / -0.31 | CLIPPED at image edge |
+| v8_no_crop_fiducials | 3694782 | Grids | F2 | -0.80 | -0.100 | -0.07 / +0.13 / -0.49 / -0.31 | CLIPPED at image edge |
+| v8_no_crop_fiducials | 3694880 | Grids | F2 | -0.80 | -0.100 | -0.08 / +0.14 / -0.49 / -0.31 | CLIPPED at image edge |
+| v8_no_crop_fiducials | 3694982 | Grids | F2 | -0.80 | -0.100 | -0.08 / +0.20 / -0.49 / -0.31 | CLIPPED at image edge |
+| v8_no_crop_fiducials | 3695045 | Grids | F2 | -0.80 | -0.100 | -0.15 / +0.21 / -0.49 / -0.31 | CLIPPED at image edge |
+| v8_no_crop_fiducials | 3695123 | Grids | F2 | -0.80 | -0.100 | -0.18 / +0.24 / -0.49 / -0.31 | CLIPPED at image edge |
+| v8_no_crop_fiducials | 3695201 | Grids | F2 | -0.80 | -0.100 | -0.19 / +0.31 / -0.49 / -0.31 | CLIPPED at image edge |
+| v8_no_crop_fiducials | 3697629 | Grids | F2 | -0.80 | -0.100 | -0.15 / +0.21 / -0.49 / -0.31 | CLIPPED at image edge |
+| v8_no_crop_fiducials | 3698218 | Grids | F2 | -0.80 | -0.100 | -0.20 / +0.32 / -0.49 / -0.31 | CLIPPED at image edge |
+| v8_no_crop_fiducials | 3784562 | Grids | F2 | +0.39 | +0.049 | +0.05 / +0.34 / +0.10 / -0.01 |  |
+| v8_no_crop_fiducials | 3923006 | Grids | F2 | -0.80 | -0.100 | +0.02 / +0.03 / -0.49 / -0.31 | CLIPPED at image edge |
+| v8_no_crop_fiducials | 5136165 | Grids | F2 | -0.80 | -0.100 | -0.03 / +0.08 / -0.49 / -0.31 | CLIPPED at image edge |
+| v9_registration_marks | 3693278 | Grids | F3 | +0.09 | +0.011 | +0.00 / +0.09 / +0.06 / -0.01 |  |
+| v9_registration_marks | 3693539 | Grids | F3 | +0.09 | +0.011 | +0.00 / +0.09 / +0.02 / +0.04 |  |
+| v9_registration_marks | 3693688 | Grids | F3 | +0.09 | +0.011 | +0.00 / +0.09 / +0.06 / -0.01 |  |
+| v9_registration_marks | 3694573 | Grids | F3 | -0.00 | -0.001 | +0.00 / +0.05 / -0.02 / +0.01 | CLIPPED at image edge |
+| v9_registration_marks | 3694705 | Grids | F3 | -0.00 | -0.001 | -0.03 / +0.08 / -0.02 / +0.01 | CLIPPED at image edge |
+| v9_registration_marks | 3694782 | Grids | F3 | -0.00 | -0.001 | -0.03 / +0.08 / -0.02 / +0.01 | CLIPPED at image edge |
+| v9_registration_marks | 3694880 | Grids | F3 | -0.00 | -0.001 | -0.00 / +0.05 / -0.02 / +0.01 | CLIPPED at image edge |
+| v9_registration_marks | 3694982 | Grids | F3 | -0.00 | -0.001 | +0.03 / +0.09 / -0.02 / +0.01 | CLIPPED at image edge |
+| v9_registration_marks | 3695045 | Grids | F3 | -0.00 | -0.001 | -0.01 / +0.06 / -0.02 / +0.01 | CLIPPED at image edge |
+| v9_registration_marks | 3695123 | Grids | F3 | -0.00 | -0.001 | -0.00 / +0.06 / -0.02 / +0.01 | CLIPPED at image edge |
+| v9_registration_marks | 3695201 | Grids | F3 | -0.00 | -0.001 | +0.02 / +0.09 / -0.02 / +0.01 | CLIPPED at image edge |
+| v9_registration_marks | 3697629 | Grids | F3 | -0.00 | -0.001 | +0.02 / +0.04 / -0.02 / +0.01 | CLIPPED at image edge |
+| v9_registration_marks | 3698218 | Grids | F3 | -0.00 | -0.001 | +0.03 / +0.09 / -0.02 / +0.01 | CLIPPED at image edge |
+| v9_registration_marks | 3784562 | Grids | F3 | +0.09 | +0.011 | +0.00 / +0.09 / +0.07 / +0.04 |  |
+| v9_registration_marks | 3923006 | Grids | F3 | -0.00 | -0.001 | +0.00 / +0.05 / -0.02 / +0.01 | CLIPPED at image edge |
+| v9_registration_marks | 5136165 | Grids | F3 | -0.00 | -0.001 | +0.01 / +0.04 / -0.02 / +0.01 | CLIPPED at image edge |
+| v10_element_only_white | 3693278 | Grids | bbox_fit | -0.90 | -0.113 | -0.41 / -0.49 / -0.62 / +0.53 |  |
+| v10_element_only_white | 3693539 | Grids | bbox_fit | -0.90 | -0.113 | -0.41 / -0.49 / -1.21 / +1.13 |  |
+| v10_element_only_white | 3693688 | Grids | bbox_fit | -0.90 | -0.113 | -0.41 / -0.49 / +0.94 / -1.03 |  |
+| v10_element_only_white | 3694573 | Grids | bbox_fit | -4.41 | -0.552 | -0.28 / +0.32 / -2.45 / -1.96 | CLIPPED at image edge |
+| v10_element_only_white | 3694705 | Grids | bbox_fit | -4.41 | -0.552 | -0.21 / +0.25 / -2.45 / -1.96 | CLIPPED at image edge |
+| v10_element_only_white | 3694782 | Grids | bbox_fit | -4.41 | -0.552 | -0.14 / +0.18 / -2.45 / -1.96 | CLIPPED at image edge |
+| v10_element_only_white | 3694880 | Grids | bbox_fit | -4.41 | -0.552 | -0.01 / +0.05 / -2.45 / -1.96 | CLIPPED at image edge |
+| v10_element_only_white | 3694982 | Grids | bbox_fit | -4.41 | -0.552 | +0.12 / -0.02 / -2.45 / -1.96 | CLIPPED at image edge |
+| v10_element_only_white | 3695045 | Grids | bbox_fit | -4.41 | -0.552 | +0.19 / -0.15 / -2.45 / -1.96 | CLIPPED at image edge |
+| v10_element_only_white | 3695123 | Grids | bbox_fit | -4.41 | -0.552 | +0.33 / -0.29 / -2.45 / -1.96 | CLIPPED at image edge |
+| v10_element_only_white | 3695201 | Grids | bbox_fit | -4.41 | -0.552 | +0.46 / -0.36 / -2.45 / -1.96 | CLIPPED at image edge |
+| v10_element_only_white | 3697629 | Grids | bbox_fit | -4.41 | -0.552 | +0.32 / -0.28 / -2.45 / -1.96 | CLIPPED at image edge |
+| v10_element_only_white | 3698218 | Grids | bbox_fit | -4.41 | -0.552 | +0.52 / -0.42 / -2.45 / -1.96 | CLIPPED at image edge |
+| v10_element_only_white | 3784562 | Grids | bbox_fit | -0.90 | -0.113 | -0.41 / -0.49 / +0.40 / -0.43 |  |
+| v10_element_only_white | 3923006 | Grids | bbox_fit | -4.41 | -0.552 | -0.34 / +0.38 / -2.45 / -1.96 | CLIPPED at image edge |
+| v10_element_only_white | 5136165 | Grids | bbox_fit | -4.41 | -0.552 | -0.13 / +0.17 / -2.45 / -1.96 | CLIPPED at image edge |
+
+Premise: `get_BoundingBox(view)` of a datum is its drawn extent in the view (UNCONFIRMED).
+
+### 11. Model-ink residue
+
+Q4: does membership suppression with subcategories leave any model ink? Off-palette pixels outside the fiducials and outside any recovered boundary band. Counted, not attributed: an annotation the pass could not paint lands here too.
+
+| variant | suppression | category layer | off-palette | fiducial px | boundary bands excluded | off-palette outside boundary |
+|---|---|---|---|---|---|---|
+| v0_control | hide_categories | -- | 25515 | 0 | 0 | 25515 |
+| v7_no_crop | external | yes | 34470 | 0 | 0 | 34470 |
+| v8_no_crop_fiducials | external | yes | 34470 | 480 | 0 | 34470 |
+| v9_registration_marks | external | yes | 34470 | 480 | 0 | 34470 |
+| v10_element_only_white | external | no | 34470 | 0 | 0 | 34470 |
+
+`category layer` is mechanism 3 (category and subcategory white overrides). V10 runs without it: the V7 vs V10 difference in this table is what that layer removes, and the cost section above is what it costs.
+
+### 12. F3 -- registration marks, in BOTH captures
+
+Eight detail-line ticks the probe drew at KNOWN view UV, inset inside the crop, then removed by rolling back. Horizontal ticks' centre rows give v, vertical ticks' centre columns give u: four points per axis at two levels. The model row is checked against the model capture's RECORDED lattice -- the one place this method meets a known answer. The endpoint fit uses tick ends (caps, anti-aliasing) and is shown beside the centre-line fit, never in its place.
+
+| variant | capture | ticks | px/ft u | px/ft v | u/v isotropy | residual max px u / v | endpoint fit px/ft u / v | vs model lattice worst px |  |
+|---|---|---|---|---|---|---|---|---|---|
+| v9_registration_marks | annotation | 8/8 | 16.2812 | 16.2816 | 0.99998 | 0.00 / 0.00 | 16.2832 / 16.2816 | -- |  |
+| v9_registration_marks | model | 8/8 | 18.7418 | 18.7571 | 0.99919 | 0.00 / 0.00 | 18.7457 / 18.7450 | 1.01 |  |
+
+- `v9_registration_marks` model lattice: 18.7487 px/ft
+- `v9_registration_marks` annotation -> model pixels via_model_lattice: x' = 1.151553 x -340.86, y' = 1.150818 y -411.10
+- `v9_registration_marks` annotation -> model pixels via_model_marks: x' = 1.151135 x -339.99, y' = 1.152047 y -412.55
+- `v9_registration_marks` annotation: 657 mark pixels in 8 rect(s) to subtract in post
+- `v9_registration_marks` model: 768 mark pixels in 8 rect(s) to subtract in post
+
+### Overlays
+
+The gate is measurement 1 only: image size == `frame_px`. IT IS A SIZE GATE AND NOTHING MORE. A capture can be exactly `frame_px` pixels and still have its CONTENT drawn at a different scale or origin -- which is finding F1 -- and `capture_overlay.py` maps UV through the SIDECAR's numbers, so on such a capture its boxes will not land on the ink. Measurement 2's fitted px/ft is echoed beside each line so that is visible here rather than only three sections up.
+
+- `v0_control`: OVERLAY WITHHELD (fitted 17.788 / 17.582 px/ft against the frame's 18.749). measurement 1 shows image 5274x2248 against frame_px 5274x2124; the overlay is not run on a capture whose rendered region is not the frame its sidecar describes
+- `v7_no_crop`: OVERLAY WITHHELD (fitted 16.337 / 16.871 px/ft against the frame's 18.754). measurement 1 shows image 4819x2054 against frame_px 5274x2124; the overlay is not run on a capture whose rendered region is not the frame its sidecar describes
+- `v8_no_crop_fiducials`: OVERLAY WITHHELD (fitted 16.337 / 16.871 px/ft against the frame's 18.754). measurement 1 shows image 4819x2054 against frame_px 5274x2124; the overlay is not run on a capture whose rendered region is not the frame its sidecar describes
+- `v9_registration_marks`: OVERLAY WITHHELD (fitted 16.333 / 16.833 px/ft against the frame's 18.754). measurement 1 shows image 4819x2054 against frame_px 5274x2124; the overlay is not run on a capture whose rendered region is not the frame its sidecar describes
+- `v10_element_only_white`: OVERLAY WITHHELD (fitted 16.337 / 16.871 px/ft against the frame's 18.754). measurement 1 shows image 4819x2054 against frame_px 5274x2124; the overlay is not run on a capture whose rendered region is not the frame its sidecar describes
+
+## View __Plan_RVTLink (id 19293485, 1, scale 1:96)
+
+Probe `stage_a_anno_pass_variants` version 2026-09-23.1; combined report `C:\Users\gmcdowell\Documents\VOP\Exports\FVoT\probe_0923_0936\anno_pass_variants_probe\__Plan_RVTLink_19293485.anno_pass_variants.json`.
+
+Model pass: success=True, failure_reason=None, achieved dpi=150.00, frame_px=[4818, 1624].
+Model re-export after the variants: **unchanged** -- the control held and the post-variant hash matches
+
+**The crop.** Authored crop active: yes; UV [-91.46926561670251, 2250.749394451395, 165.49485231475583, 2337.3310543423245].
+- V0 widens it to frame B by (ft): left +0.00 / right +0.00 / top +0.03 / bottom +0.00
+- the MODEL pass sets it to crop A, which differs from the authored crop by (ft): left +0.00 / right +0.00 / top +0.03 / bottom +0.00
+- crop shape: 1 loop(s), 4 edge(s), rectangle: yes, oblique edges: 0
+- **white-suppression cost**: 80897 ms for 4745 element override(s), against 29105 ms for the whole model pass (ratio 2.78; a LOWER bound on suppression-vs-paint, since production does not time its paint alone)
+  - by mechanism (ms): category_override_writes 79631, link_category_filters 1033, element_overrides 118, category_override_reads 23, category_collect 20, build_override 5, subcategory_walk 2
+  - API calls: category_override_reads 387, category_override_writes 384, element_override_writes 4745, subcategory_lists_read 32
+  - `v0_control`: pre-state commit 3 ms; restore = group rollback, 1190 ms; post-rollback element-override read-back -- ms (not_applicable)
+  - `v7_no_crop` suppression: 80897 ms (category_override_writes 79631, link_category_filters 1033, element_overrides 118, category_override_reads 23, category_collect 20, build_override 5, subcategory_walk 2)
+  - `v7_no_crop`: pre-state commit 4409 ms; restore = group rollback, 2393 ms; post-rollback element-override read-back 2036 ms (restored)
+  - `v8_no_crop_fiducials` suppression: 88614 ms (category_override_writes 87338, link_category_filters 1101, element_overrides 96, category_override_reads 27, category_collect 7, build_override 5)
+  - `v8_no_crop_fiducials`: pre-state commit 3196 ms; restore = group rollback, 2630 ms; post-rollback element-override read-back 2036 ms (restored)
+  - `v9_registration_marks` suppression: 85875 ms (category_override_writes 84641, link_category_filters 1033, element_overrides 106, category_override_reads 29, category_collect 8, build_override 2)
+  - `v9_registration_marks`: pre-state commit 3279 ms; restore = group rollback, 2656 ms; post-rollback element-override read-back 1927 ms (restored)
+  - `v10_element_only_white` suppression WITHOUT the category layer: 948 ms (link_category_filters 873, element_overrides 70, build_override 1)
+  - `v10_element_only_white`: pre-state commit 3477 ms; restore = group rollback, 2611 ms; post-rollback element-override read-back 2251 ms (restored)
+- F2 fiducials: 12261162 (Walls), 5850099 (Generic Models); separated 176.3 ft on u and 80.5 ft on v (1707 of 4745 candidates kept, reference authored_crop)
+
+### 0. What the capture reports it actually did
+
+| variant | suppression mode | applied_smooth_edges | display style | probe conclusion | measured its candidate | production success | capture faults | faults read from |
+|---|---|---|---|---|---|---|---|---|
+| v0_control | hide_categories | not_attempted | FlatColors | RAN | yes | yes | none | combined_record |
+| v7_no_crop | external | not_attempted | FlatColors | RAN | yes | yes | none | combined_record |
+| v8_no_crop_fiducials | external | no | FlatColors | RAN | yes | yes | none | combined_record |
+| v9_registration_marks | external | no | FlatColors | RAN | yes | yes | none | combined_record |
+| v10_element_only_white | external | not_attempted | FlatColors | RAN | yes | yes | none | combined_record |
+
+`capture faults` come from the probe's combined record (`annotation_pass.capture_faults`) in preference to the annotation sidecar, and the last column says which was used. The sidecar is the fallback because production wrote it before computing its own faults until `dcb4e65`, so an older capture's file carries none however faulted it was. `UNKNOWN (not recorded)` means neither source had the field -- which is not the same fact as `none`.
+
+`applied_smooth_edges` is four-valued: `not_attempted` (the pass was not asked), `read_failed`, `unchanged (failed)`, or `False` (**confirmed off**). A V2/V3 row that is anything but `False` did NOT have anti-aliasing disabled and therefore measures the same behaviour as the variant above it -- the probe reports that as `DID_NOT_MEASURE` rather than `RAN`.
+
+### 1. Image size vs `frame_px`, both axes
+
+| variant | image | frame_px | dw | dh | equal | sidecar dim_check |
+|---|---|---|---|---|---|---|
+| v0_control | 4818x1623 | 4818x1624 | 0 | -1 | no | pass |
+| v7_no_crop | 4818x1623 | 4818x1624 | 0 | -1 | no | pass |
+| v8_no_crop_fiducials | 4818x1623 | 4818x1624 | 0 | -1 | no | pass |
+| v9_registration_marks | 4818x1623 | 4818x1624 | 0 | -1 | no | pass |
+| v10_element_only_white | 4818x1623 | 4818x1624 | 0 | -1 | no | pass |
+
+`dw`/`dh` are image minus `frame_px`. `dim_check` is the sidecar's own verdict, which inspects the requested axis only (finding F4) -- so a nonzero `dh` beside `dim_check=pass` is exactly the case F4 names.
+
+### 2. Registration fit (measured from the pixels)
+
+| variant | samples | px/ft u | px/ft v | frame px/ft | offset at (u0,v1) px | residual med/max px | v axis |
+|---|---|---|---|---|---|---|---|
+| v0_control | 2 pairs | 20.009 | 21.459 | 18.738 | (-54.7, -112.7) | 0.00 / 0.00 | negative (expected) |
+| v7_no_crop | 2 pairs | 20.009 | 21.459 | 18.745 | (-54.7, -112.0) | 0.00 / 0.00 | negative (expected) |
+| v8_no_crop_fiducials | 2 pairs | 20.009 | 21.459 | 18.745 | (-54.7, -112.0) | 0.00 / 0.00 | negative (expected) |
+| v9_registration_marks | 10 pairs | 18.744 | 18.751 | 18.745 | (0.2, -0.8) | 0.39 / 0.66 | negative (expected) |
+| v10_element_only_white | 2 pairs | 20.009 | 21.459 | 18.745 | (-54.7, -112.0) | 0.00 / 0.00 | negative (expected) |
+
+- `v0_control` frame: registration.rendered_uv
+- `v7_no_crop` frame: the AUTHORED crop (crop_mode untouched)
+- `v8_no_crop_fiducials` frame: the AUTHORED crop (crop_mode untouched)
+- `v9_registration_marks` frame: the AUTHORED crop (crop_mode untouched)
+- `v10_element_only_white` frame: the AUTHORED crop (crop_mode untouched)
+
+#### 2b. Fitted per-side margin (how much bigger the render is than the frame)
+
+| variant | left | right | top | bottom |  |
+|---|---|---|---|---|---|
+| v0_control | -2.73 ft / -0.341 in | -13.44 ft / -1.680 in | -5.25 ft / -0.657 in | -5.73 ft / -0.716 in |  |
+| v7_no_crop | -2.73 ft / -0.341 in | -13.44 ft / -1.680 in | -5.22 ft / -0.653 in | -5.73 ft / -0.716 in |  |
+| v8_no_crop_fiducials | -2.73 ft / -0.341 in | -13.44 ft / -1.680 in | -5.22 ft / -0.653 in | -5.73 ft / -0.716 in |  |
+| v9_registration_marks | 0.01 ft / 0.002 in | 0.07 ft / 0.008 in | -0.04 ft / -0.006 in | 0.02 ft / 0.002 in |  |
+| v10_element_only_white | -2.73 ft / -0.341 in | -13.44 ft / -1.680 in | -5.22 ft / -0.653 in | -5.73 ft / -0.716 in |  |
+
+#### 2c. The fit's own premise: does the ink sit where the bbox says?
+
+The fit matches an element's exact-colour centroid against the centre of its recorded `bbox_uv`. **Those coincide only when the ink fills the box**, which real text, a tag with a leader or a dimension need not do. A displacement that is the SAME for every element is absorbed into the fitted intercept, so it leaves the residuals in 2 clean while shifting every margin in 2b by exactly that amount; one that varies with size or position corrupts the scale instead and does inflate the residuals. Both are surfaced here. No tolerance is applied -- what is close enough for a margin figure is your call.
+
+| variant | ink-bbox px/ft u | ink-bbox px/ft v | px/ft u delta | px/ft v delta | margin delta ft (l/r/t/b) |  |
+|---|---|---|---|---|---|---|
+| v0_control | 20.009 | 21.459 | 0.0000 | 0.0000 | 0.000 / 0.000 / 0.000 / 0.000 |  |
+| v7_no_crop | 20.009 | 21.459 | 0.0000 | 0.0000 | 0.000 / 0.000 / 0.000 / 0.000 |  |
+| v8_no_crop_fiducials | 20.009 | 21.459 | 0.0000 | 0.0000 | 0.000 / 0.000 / 0.000 / 0.000 |  |
+| v9_registration_marks | 18.744 | 18.751 | 0.0000 | 0.0000 | 0.000 / 0.000 / 0.000 / 0.000 |  |
+| v10_element_only_white | 20.009 | 21.459 | 0.0000 | 0.0000 | 0.000 / 0.000 / 0.000 / 0.000 |  |
+
+The second anchor is the centre of the ink's own bounding box rather than its centroid. The two are identical when the ink fills its bbox and diverge when it does not, so a row of ~0 deltas says the anchor choice does not matter on this capture and the margins above do not rest on the premise.
+
+A UNIFORM displacement -- every element's ink sitting the same distance off its box centre -- is NOT recoverable from a capture: nothing distinguishes it from the whole render sitting that far over, which is why it is the dangerous case. What IS recoverable is whether such a displacement is POSSIBLE, and by how much: ink that spans its whole box cannot be off-centre in it. The table below bounds it.
+
+##### `v0_control` does the ink fill its recorded bbox?
+
+| category | n | ink span / bbox u | ink span / bbox v | solidity | possible offset u px | possible offset v px |
+|---|---|---|---|---|---|---|
+| Lines | 1 | 0.919 (0.919 .. 0.919) | 0.857 (0.857 .. 0.857) | 0.167 (0.167 .. 0.167) | 0.3 (0.3 .. 0.3) | 0.5 (0.5 .. 0.5) |
+
+`ink span / bbox` of 1.0 means the ink reaches both edges of its recorded box, so it cannot be off-centre in it and the margins above are bounded. `solidity` is ink pixels over ink bbox area: below 1 the ink is not a solid rectangle -- a glyph run, an L, a leader -- so its centroid can also sit away from its own bbox centre. `possible offset` is how far, in pixels, a margin in 2b could be wrong because of this.
+
+##### `v7_no_crop` does the ink fill its recorded bbox?
+
+| category | n | ink span / bbox u | ink span / bbox v | solidity | possible offset u px | possible offset v px |
+|---|---|---|---|---|---|---|
+| Lines | 1 | 0.919 (0.919 .. 0.919) | 0.857 (0.857 .. 0.857) | 0.167 (0.167 .. 0.167) | 0.3 (0.3 .. 0.3) | 0.5 (0.5 .. 0.5) |
+
+`ink span / bbox` of 1.0 means the ink reaches both edges of its recorded box, so it cannot be off-centre in it and the margins above are bounded. `solidity` is ink pixels over ink bbox area: below 1 the ink is not a solid rectangle -- a glyph run, an L, a leader -- so its centroid can also sit away from its own bbox centre. `possible offset` is how far, in pixels, a margin in 2b could be wrong because of this.
+
+##### `v8_no_crop_fiducials` does the ink fill its recorded bbox?
+
+| category | n | ink span / bbox u | ink span / bbox v | solidity | possible offset u px | possible offset v px |
+|---|---|---|---|---|---|---|
+| Lines | 1 | 0.919 (0.919 .. 0.919) | 0.857 (0.857 .. 0.857) | 0.167 (0.167 .. 0.167) | 0.3 (0.3 .. 0.3) | 0.5 (0.5 .. 0.5) |
+
+`ink span / bbox` of 1.0 means the ink reaches both edges of its recorded box, so it cannot be off-centre in it and the margins above are bounded. `solidity` is ink pixels over ink bbox area: below 1 the ink is not a solid rectangle -- a glyph run, an L, a leader -- so its centroid can also sit away from its own bbox centre. `possible offset` is how far, in pixels, a margin in 2b could be wrong because of this.
+
+##### `v9_registration_marks` does the ink fill its recorded bbox?
+
+| category | n | ink span / bbox u | ink span / bbox v | solidity | possible offset u px | possible offset v px |
+|---|---|---|---|---|---|---|
+| Lines | 1 | 0.981 (0.981 .. 0.981) | 0.981 (0.981 .. 0.981) | 0.167 (0.167 .. 0.167) | 0.1 (0.1 .. 0.1) | 0.1 (0.1 .. 0.1) |
+
+`ink span / bbox` of 1.0 means the ink reaches both edges of its recorded box, so it cannot be off-centre in it and the margins above are bounded. `solidity` is ink pixels over ink bbox area: below 1 the ink is not a solid rectangle -- a glyph run, an L, a leader -- so its centroid can also sit away from its own bbox centre. `possible offset` is how far, in pixels, a margin in 2b could be wrong because of this.
+
+##### `v10_element_only_white` does the ink fill its recorded bbox?
+
+| category | n | ink span / bbox u | ink span / bbox v | solidity | possible offset u px | possible offset v px |
+|---|---|---|---|---|---|---|
+| Lines | 1 | 0.919 (0.919 .. 0.919) | 0.857 (0.857 .. 0.857) | 0.167 (0.167 .. 0.167) | 0.3 (0.3 .. 0.3) | 0.5 (0.5 .. 0.5) |
+
+`ink span / bbox` of 1.0 means the ink reaches both edges of its recorded box, so it cannot be off-centre in it and the margins above are bounded. `solidity` is ink pixels over ink bbox area: below 1 the ink is not a solid rectangle -- a glyph run, an L, a leader -- so its centroid can also sit away from its own bbox centre. `possible offset` is how far, in pixels, a margin in 2b could be wrong because of this.
+
+- `v0_control` samples: matched 2, no bbox 72, colour absent 1, clipped at an image edge 0.
+- `v7_no_crop` samples: matched 2, no bbox 72, colour absent 1, clipped at an image edge 0.
+- `v8_no_crop_fiducials` samples: matched 2, no bbox 72, colour absent 1, clipped at an image edge 0.
+- `v9_registration_marks` samples: matched 10, no bbox 72, colour absent 1, clipped at an image edge 0.
+- `v10_element_only_white` samples: matched 2, no bbox 72, colour absent 1, clipped at an image edge 0.
+
+### 3. How far recorded annotation bboxes reach past the rendered frame
+
+| variant | left | right | top | bottom | bboxes outside |  |
+|---|---|---|---|---|---|---|
+| v0_control | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0 of 3 |  |
+| v7_no_crop | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0 of 3 |  |
+| v8_no_crop_fiducials | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0 of 3 |  |
+| v9_registration_marks | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0 of 11 |  |
+| v10_element_only_white | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0.00 ft / 0.000 in | 0 of 3 |  |
+
+Read this table against 2b. Where they agree, the render is behaving as if it had been fitted to the crop unioned with the annotations drawn beyond it.
+
+### 4. Coverage per category
+
+#### `v0_control`
+
+Ink test threshold >2% non-white, placed through the fitted mapping from measurement (2).
+
+| category | assigned | painted | colour present | bbox | ink tested | ink present | bbox off image | ink untested |
+|---|---|---|---|---|---|---|---|---|
+| <no category> | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Attached Detail Groups | 1 | 1 | 0 | 1 | 1 | 0 | 0 | 0 |
+| Dimensions | 40 | 40 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Door Tags | 14 | 14 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Lines | 2 | 2 | 2 | 2 | 2 | 2 | 0 | 0 |
+| Wall Tags | 17 | 17 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+#### `v7_no_crop`
+
+Ink test threshold >2% non-white, placed through the fitted mapping from measurement (2).
+
+| category | assigned | painted | colour present | bbox | ink tested | ink present | bbox off image | ink untested |
+|---|---|---|---|---|---|---|---|---|
+| <no category> | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Attached Detail Groups | 1 | 1 | 0 | 1 | 1 | 0 | 0 | 0 |
+| Dimensions | 40 | 40 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Door Tags | 14 | 14 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Lines | 2 | 2 | 2 | 2 | 2 | 2 | 0 | 0 |
+| Wall Tags | 17 | 17 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+#### `v8_no_crop_fiducials`
+
+Ink test threshold >2% non-white, placed through the fitted mapping from measurement (2).
+
+| category | assigned | painted | colour present | bbox | ink tested | ink present | bbox off image | ink untested |
+|---|---|---|---|---|---|---|---|---|
+| <no category> | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Attached Detail Groups | 1 | 1 | 0 | 1 | 1 | 0 | 0 | 0 |
+| Dimensions | 40 | 40 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Door Tags | 14 | 14 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Lines | 2 | 2 | 2 | 2 | 2 | 2 | 0 | 0 |
+| Wall Tags | 17 | 17 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+#### `v9_registration_marks`
+
+Ink test threshold >2% non-white, placed through the fitted mapping from measurement (2).
+
+| category | assigned | painted | colour present | bbox | ink tested | ink present | bbox off image | ink untested |
+|---|---|---|---|---|---|---|---|---|
+| <no category> | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Attached Detail Groups | 1 | 1 | 0 | 1 | 1 | 1 | 0 | 0 |
+| Dimensions | 40 | 40 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Door Tags | 14 | 14 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Lines | 10 | 10 | 10 | 10 | 10 | 10 | 0 | 0 |
+| Wall Tags | 17 | 17 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+#### `v10_element_only_white`
+
+Ink test threshold >2% non-white, placed through the fitted mapping from measurement (2).
+
+| category | assigned | painted | colour present | bbox | ink tested | ink present | bbox off image | ink untested |
+|---|---|---|---|---|---|---|---|---|
+| <no category> | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Attached Detail Groups | 1 | 1 | 0 | 1 | 1 | 0 | 0 | 0 |
+| Dimensions | 40 | 40 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Door Tags | 14 | 14 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Lines | 2 | 2 | 2 | 2 | 2 | 2 | 0 | 0 |
+| Wall Tags | 17 | 17 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+### 5. Non-white, non-palette pixels
+
+| variant | total | white | palette | off-palette | off-palette frac | blend | grey | other | distinct | tally capped |
+|---|---|---|---|---|---|---|---|---|---|---|
+| v0_control | 7819614 | 7819521 | 25 | 68 | 0.00001 | 0 | 68 | 0 | 1 | no |
+| v7_no_crop | 7819614 | 7819589 | 25 | 0 | 0.00000 | 0 | 0 | 0 | 0 | no |
+| v8_no_crop_fiducials | 7819614 | 7819440 | 25 | 0 | 0.00000 | 0 | 0 | 0 | 0 | no |
+| v9_registration_marks | 7819614 | 7818672 | 793 | 0 | 0.00000 | 0 | 0 | 0 | 0 | no |
+| v10_element_only_white | 7819614 | 7819589 | 25 | 0 | 0.00000 | 0 | 0 | 0 | 0 | no |
+
+`blend` is within 3 RGB units of the segment between some palette colour and white. `grey` is all three channels within 3 of each other. The two OVERLAP -- a grey pixel is also collinear with white -- and blend is tested first; the `blend also grey` count below states what that ordering costs.
+
+- `v0_control` blend also grey: 0 px.
+- `v7_no_crop` blend also grey: 0 px.
+- `v8_no_crop_fiducials` blend also grey: 0 px.
+- `v9_registration_marks` blend also grey: 0 px.
+- `v10_element_only_white` blend also grey: 0 px.
+
+#### `v0_control` top 10 off-palette colours
+
+| rgb | pixels | class | also grey |
+|---|---|---|---|
+| [0, 0, 0] | 68 | grey | yes |
+
+#### `v7_no_crop` top 10 off-palette colours
+
+| rgb | pixels | class | also grey |
+|---|---|---|---|
+| -- | -- | -- | -- |
+
+#### `v8_no_crop_fiducials` top 10 off-palette colours
+
+| rgb | pixels | class | also grey |
+|---|---|---|---|
+| -- | -- | -- | -- |
+
+#### `v9_registration_marks` top 10 off-palette colours
+
+| rgb | pixels | class | also grey |
+|---|---|---|---|
+| -- | -- | -- | -- |
+
+#### `v10_element_only_white` top 10 off-palette colours
+
+| rgb | pixels | class | also grey |
+|---|---|---|---|
+| -- | -- | -- | -- |
+
+### 6. Model TIFF hash vs V0
+
+| variant | model sha256 (16) | V0 sha256 (16) | equal |
+|---|---|---|---|
+| v0_control | e34029ab391db360 | e34029ab391db360 | yes |
+| v7_no_crop | e34029ab391db360 | e34029ab391db360 | yes |
+| v8_no_crop_fiducials | e34029ab391db360 | e34029ab391db360 | yes |
+| v9_registration_marks | e34029ab391db360 | e34029ab391db360 | yes |
+| v10_element_only_white | e34029ab391db360 | e34029ab391db360 | yes |
+
+The model pass runs ONCE per view, so this column detects a variant CLOBBERING the model artifact -- a path collision, a stray write. Whether a variant changed how the model pass RENDERS is the probe's own `model_reexport_after_variants` verdict, quoted at the top of this view's section, which has its own repeatability control.
+
+### 7. F1 -- the crop boundary, recovered from the pixels
+
+Q1: does the exported image contain the crop boundary, and does its recovered position match `view.CropBox`? A boundary is a band of rows (or columns) each holding a straight run of non-white, non-palette, non-fiducial pixels of >= 25% of the image, closing into one rectangle (or matching the crop shape's levels). `NOT FOUND` on a V8 row is the answer that ImageExportOptions does not draw it.
+
+| variant | probe turned it on | boundary | row/col bands | px/ft u | px/ft v | lattice px/ft | u/v isotropy | boundary px rects (subtract these) |  |
+|---|---|---|---|---|---|---|---|---|---|
+| v0_control | no | NOT_FOUND | 0 / 0 | -- | -- | 18.7497 | -- | -- | no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture |
+| v7_no_crop | no | NOT_FOUND | 0 / 0 | -- | -- | 18.7497 | -- | -- | no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture |
+| v8_no_crop_fiducials | yes | NOT_FOUND | 0 / 0 | -- | -- | 18.7497 | -- | -- | no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture |
+| v9_registration_marks | yes | NOT_FOUND | 0 / 0 | -- | -- | 18.7497 | -- | -- | no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture |
+| v10_element_only_white | no | NOT_FOUND | 0 / 0 | -- | -- | 18.7497 | -- | -- | no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture |
+
+`isotropy` of 1 means the boundary's pixel rectangle has the crop's own aspect -- the recovered position is the crop's shape at one uniform scale. `lattice px/ft` is the model capture's (1 / achieved fpp): an untouched capture that rendered exactly the authored crop at the requested count would match it.
+
+- `v8_no_crop_fiducials` MODEL capture (boundary drawn at crop A [-91.46926561670251, 2250.749394451395, 165.49485231475586, 2337.3641158130986]): NOT_FOUND -- no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture
+- `v9_registration_marks` MODEL capture (boundary drawn at crop A [-91.46926561670251, 2250.749394451395, 165.49485231475586, 2337.3641158130986]): NOT_FOUND -- no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture
+
+### 8. F2 -- the fiducial pair
+
+| variant | element | colour | found | pixels | ink px bbox | clipped | recorded rect_uv |
+|---|---|---|---|---|---|---|---|
+| v8_no_crop_fiducials | 12261162 | [251, 11, 139] | yes | 133 | [1038.0, 65.0, 1181.0, 69.0] | no | [-37.3402448956206, 2332.8998997006133, -26.729670423215794, 2333.8998997006133] |
+| v8_no_crop_fiducials | 5850099 | [11, 139, 251] | yes | 16 | [4413.0, 1582.0, 4415.0, 1588.0] | no | [143.95663010436672, 2252.592608033942, 144.5763807605349, 2253.21235869011] |
+| v9_registration_marks | 12261162 | [251, 11, 139] | yes | 133 | [1038.0, 65.0, 1181.0, 69.0] | no | [-37.3402448956206, 2332.8998997006133, -26.729670423215794, 2333.8998997006133] |
+| v9_registration_marks | 5850099 | [11, 139, 251] | yes | 16 | [4413.0, 1582.0, 4415.0, 1588.0] | no | [143.95663010436672, 2252.592608033942, 144.5763807605349, 2253.21235869011] |
+
+| fit | px/ft u | px/ft v | u/v isotropy | residual max px u / v |  |
+|---|---|---|---|---|---|
+| `v8_no_crop_fiducials` F2 (recorded bbox) | 18.7340 | 18.8565 | 0.99351 | 28.22 / 6.98 |  |
+| `v8_no_crop_fiducials` F2 (model-anchored) | -- | -- | -- | -- | 1 usable fiducial(s) of 2; F2 needs both, unclipped, in their reserved colours, each with a UV extent |
+| `v9_registration_marks` F2 (recorded bbox) | 18.7340 | 18.8565 | 0.99351 | 28.22 / 6.98 |  |
+| `v9_registration_marks` F2 (model-anchored) | -- | -- | -- | -- | 1 usable fiducial(s) of 2; F2 needs both, unclipped, in their reserved colours, each with a UV extent |
+
+- `v8_no_crop_fiducials` fiducial 12261162: 133 px in the annotation capture, None px in the model capture -- the element drew NOTHING in the model capture in its model colour, so it has no model-drawn extent
+- `v8_no_crop_fiducials` fiducial 5850099: 16 px in the annotation capture, 24 px in the model capture
+- `v9_registration_marks` fiducial 12261162: 133 px in the annotation capture, None px in the model capture -- the element drew NOTHING in the model capture in its model colour, so it has no model-drawn extent
+- `v9_registration_marks` fiducial 5850099: 16 px in the annotation capture, 24 px in the model capture
+
+F2 fits each fiducial's INK EDGES against its recorded extent: four points per axis for the pair, so it has a residual. The recorded extent is a projected 3-D bbox, which can be looser than the element; the model-anchored row replaces it with the element's drawn extent in the model capture, at the cost of assuming the model capture registers.
+
+### 9. F1 vs F2 vs F3 vs the bbox fit
+
+Q2: with the crop untouched, is the rendered rectangle stable, and do F1 and F2 agree? The disagreement is the number. Corners are the authored crop's, pushed through both maps.
+
+| variant | pair | px/ft u delta | px/ft v delta | worst corner px |  |
+|---|---|---|---|---|---|
+| v0_control | F1_vs_F2 | -- | -- | -- | one of the two mappings is not available |
+| v0_control | F1_vs_bbox_fit | -- | -- | -- | one of the two mappings is not available |
+| v0_control | F2_vs_bbox_fit | -- | -- | -- | one of the two mappings is not available |
+| v7_no_crop | F1_vs_F2 | -- | -- | -- | one of the two mappings is not available |
+| v7_no_crop | F1_vs_bbox_fit | -- | -- | -- | one of the two mappings is not available |
+| v7_no_crop | F2_vs_bbox_fit | -- | -- | -- | one of the two mappings is not available |
+| v8_no_crop_fiducials | F1_vs_F2 | -- | -- | -- | one of the two mappings is not available |
+| v8_no_crop_fiducials | F1_vs_bbox_fit | -- | -- | -- | one of the two mappings is not available |
+| v8_no_crop_fiducials | F2_vs_bbox_fit | -1.2750 | -2.6026 | 275.57 |  |
+| v9_registration_marks | F1_vs_F2 | -- | -- | -- | one of the two mappings is not available |
+| v9_registration_marks | F1_vs_bbox_fit | -- | -- | -- | one of the two mappings is not available |
+| v9_registration_marks | F2_vs_bbox_fit | -0.0098 | +0.1050 | 5.74 |  |
+| v9_registration_marks | F3_vs_F2 | +0.0117 | -0.0994 | 6.13 |  |
+| v9_registration_marks | F3_vs_bbox_fit | +0.0020 | +0.0056 | 0.81 |  |
+| v10_element_only_white | F1_vs_F2 | -- | -- | -- | one of the two mappings is not available |
+| v10_element_only_white | F1_vs_bbox_fit | -- | -- | -- | one of the two mappings is not available |
+| v10_element_only_white | F2_vs_bbox_fit | -- | -- | -- | one of the two mappings is not available |
+
+### 10. Datum extents: ink vs the recorded (authored-crop) bbox
+
+Q3: do datum extents in the capture match the drawing? Positive means the ink reaches FURTHER than the bbox recorded before the capture touched the view. Under V0 the crop was widened to B, which lengthens datums; under V7/V8 it was not.
+
+| variant | datum | category | map | length delta ft | paper in | per side ft l/r/t/b |  |
+|---|---|---|---|---|---|---|---|
+| -- | -- | -- | -- | -- | -- | -- | -- |
+
+Premise: `get_BoundingBox(view)` of a datum is its drawn extent in the view (UNCONFIRMED).
+
+### 11. Model-ink residue
+
+Q4: does membership suppression with subcategories leave any model ink? Off-palette pixels outside the fiducials and outside any recovered boundary band. Counted, not attributed: an annotation the pass could not paint lands here too.
+
+| variant | suppression | category layer | off-palette | fiducial px | boundary bands excluded | off-palette outside boundary |
+|---|---|---|---|---|---|---|
+| v0_control | hide_categories | -- | 68 | 0 | 0 | 68 |
+| v7_no_crop | external | yes | 0 | 0 | 0 | 0 |
+| v8_no_crop_fiducials | external | yes | 0 | 149 | 0 | 0 |
+| v9_registration_marks | external | yes | 0 | 149 | 0 | 0 |
+| v10_element_only_white | external | no | 0 | 0 | 0 | 0 |
+
+`category layer` is mechanism 3 (category and subcategory white overrides). V10 runs without it: the V7 vs V10 difference in this table is what that layer removes, and the cost section above is what it costs.
+
+### 12. F3 -- registration marks, in BOTH captures
+
+Eight detail-line ticks the probe drew at KNOWN view UV, inset inside the crop, then removed by rolling back. Horizontal ticks' centre rows give v, vertical ticks' centre columns give u: four points per axis at two levels. The model row is checked against the model capture's RECORDED lattice -- the one place this method meets a known answer. The endpoint fit uses tick ends (caps, anti-aliasing) and is shown beside the centre-line fit, never in its place.
+
+| variant | capture | ticks | px/ft u | px/ft v | u/v isotropy | residual max px u / v | endpoint fit px/ft u / v | vs model lattice worst px |  |
+|---|---|---|---|---|---|---|---|---|---|
+| v9_registration_marks | annotation | 8/8 | 18.7458 | 18.7571 | 0.99940 | 0.00 / 0.00 | 18.7417 / 18.7449 | -- |  |
+| v9_registration_marks | model | 8/8 | 18.7458 | 18.7571 | 0.99940 | 0.00 / 0.00 | 18.7417 / 18.7449 | 1.13 |  |
+
+- `v9_registration_marks` model lattice: 18.7497 px/ft
+- `v9_registration_marks` annotation -> model pixels via_model_lattice: x' = 1.000210 x -0.51, y' = 0.998991 y +1.13
+- `v9_registration_marks` annotation -> model pixels via_model_marks: x' = 1.000000 x +0.00, y' = 1.000000 y +0.00
+- `v9_registration_marks` annotation: 768 mark pixels in 8 rect(s) to subtract in post
+- `v9_registration_marks` model: 768 mark pixels in 8 rect(s) to subtract in post
+
+### Overlays
+
+The gate is measurement 1 only: image size == `frame_px`. IT IS A SIZE GATE AND NOTHING MORE. A capture can be exactly `frame_px` pixels and still have its CONTENT drawn at a different scale or origin -- which is finding F1 -- and `capture_overlay.py` maps UV through the SIDECAR's numbers, so on such a capture its boxes will not land on the ink. Measurement 2's fitted px/ft is echoed beside each line so that is visible here rather than only three sections up.
+
+- `v0_control`: OVERLAY WITHHELD (fitted 20.009 / 21.459 px/ft against the frame's 18.738). measurement 1 shows image 4818x1623 against frame_px 4818x1624; the overlay is not run on a capture whose rendered region is not the frame its sidecar describes
+- `v7_no_crop`: OVERLAY WITHHELD (fitted 20.009 / 21.459 px/ft against the frame's 18.745). measurement 1 shows image 4818x1623 against frame_px 4818x1624; the overlay is not run on a capture whose rendered region is not the frame its sidecar describes
+- `v8_no_crop_fiducials`: OVERLAY WITHHELD (fitted 20.009 / 21.459 px/ft against the frame's 18.745). measurement 1 shows image 4818x1623 against frame_px 4818x1624; the overlay is not run on a capture whose rendered region is not the frame its sidecar describes
+- `v9_registration_marks`: OVERLAY WITHHELD (fitted 18.744 / 18.751 px/ft against the frame's 18.745). measurement 1 shows image 4818x1623 against frame_px 4818x1624; the overlay is not run on a capture whose rendered region is not the frame its sidecar describes
+- `v10_element_only_white`: OVERLAY WITHHELD (fitted 20.009 / 21.459 px/ft against the frame's 18.745). measurement 1 shows image 4818x1623 against frame_px 4818x1624; the overlay is not run on a capture whose rendered region is not the frame its sidecar describes

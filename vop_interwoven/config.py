@@ -182,6 +182,16 @@ class Config:
         # the model TIFF and its sidecar are byte-for-byte what they are with
         # it off, and the annotation pass writes its own "_anno" files.
         color_id_buffer_annotation_pass=False,
+        # Stage A REGISTERED capture (stage_a_registered_capture.py): both
+        # passes inside one TransactionGroup that is ROLLED BACK; registration
+        # marks drawn in both; model content suppressed in the annotation pass
+        # by membership (white element overrides + white link filters) with
+        # the crop untouched, instead of by hiding model categories over frame
+        # B. Measured by the annotation-pass variant probe (rounds 2-3). Implies
+        # the annotation pass. Default OFF: not yet run through the pipeline in
+        # Revit, and it changes what the annotation TIFF shows (dependent
+        # annotation is kept; the crop is not widened).
+        color_id_buffer_registered_capture=False,
         # Stage A: swap the view onto a neutral phase filter for the capture.
         # Default OFF -- the swap shows phase-hidden content the view as
         # authored does not show, so the ID buffer would describe a phase
@@ -378,6 +388,7 @@ class Config:
         self.color_id_buffer_export_dpi = float(color_id_buffer_export_dpi)
         self.color_id_buffer_global_assignment_threshold = int(color_id_buffer_global_assignment_threshold)
         self.color_id_buffer_annotation_pass = bool(color_id_buffer_annotation_pass)
+        self.color_id_buffer_registered_capture = bool(color_id_buffer_registered_capture)
         # Which axis ImageExportOptions.PixelSize sets. "horizontal" is the
         # shipped behaviour and the default; nothing changes unless a caller
         # asks for "vertical".
@@ -644,6 +655,7 @@ class Config:
             "color_id_buffer_fit_direction": self.color_id_buffer_fit_direction,
             "color_id_buffer_cap_axis_px": self.color_id_buffer_cap_axis_px,
             "color_id_buffer_annotation_pass": self.color_id_buffer_annotation_pass,
+            "color_id_buffer_registered_capture": self.color_id_buffer_registered_capture,
             "color_id_buffer_global_assignment_threshold": (
                 self.color_id_buffer_global_assignment_threshold
             ),
@@ -724,6 +736,8 @@ class Config:
                 "color_id_buffer_export_dpi", DEFAULT_COLOR_ID_EXPORT_DPI),
             color_id_buffer_annotation_pass=d.get(
                 "color_id_buffer_annotation_pass", False),
+            color_id_buffer_registered_capture=d.get(
+                "color_id_buffer_registered_capture", False),
             color_id_buffer_cap_axis_px=d.get("color_id_buffer_cap_axis_px"),
             color_id_buffer_fit_direction=d.get("color_id_buffer_fit_direction", "horizontal"),
             color_id_neutral_phase_swap=d.get("color_id_neutral_phase_swap", False),

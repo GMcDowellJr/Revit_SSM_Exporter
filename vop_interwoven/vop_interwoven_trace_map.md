@@ -62,6 +62,8 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotate_sidecar`
+    - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
   - `bbox_world_aabb`
@@ -86,8 +88,8 @@ Notes:
     - called from: revit/annotation.py
   - `classify_keynote`
     - called from: revit/annotation.py
-  - `collect_2d_annotations`
-    - called from: revit/annotation.py, revit/view_basis.py
+    - `collect_2d_annotations`
+      - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
@@ -110,8 +112,12 @@ Notes:
       - called from: csv_export.py
     - `convex_hull_uv`
       - called from: pipeline.py
+    - `create_registration_marks`
+      - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `discover_link_categories`
+      - called from: stage_a_registered_capture.py
     - `element_id_value`
       - called from: thinrunner_streaming.py
     - `estimate_depth_from_loops_or_bbox`
@@ -127,9 +133,9 @@ Notes:
     - `expand_host_link_import_model_elements`
       - called from: pipeline.py
     - `export_annotation_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
     - `export_pipeline_results_to_pngs`
@@ -138,6 +144,8 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_registered_stage_a_view`
+      - called from: pipeline.py
     - `export_view_image`
       - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
@@ -152,6 +160,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `flat_colour_override`
+      - called from: stage_a_registration.py
     - `frame_export_geometry`
       - called from: color_id_buffer.py
     - `get_annotation_bbox`
@@ -192,6 +202,14 @@ Notes:
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
+    - `mark_reference_rectangle`
+      - called from: stage_a_registered_capture.py
+    - `marks_still_in_project`
+      - called from: stage_a_registered_capture.py
+    - `missing_override_setters`
+      - called from: stage_a_registration.py
+    - `nominal_fpp_ft`
+      - called from: stage_a_registered_capture.py
     - `normalize_applied_smooth_edges`
       - called from: thinrunner_streaming.py
     - `pca_oriented_extents_uv`
@@ -203,7 +221,7 @@ Notes:
     - `process_document_views_streaming`
       - called from: streaming.py
     - `project_bbox_corners_uv`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `project_bbox_uv_and_near_face_w`
       - called from: color_id_buffer.py
     - `projected_outer_loop_area_uv`
@@ -218,6 +236,8 @@ Notes:
       - called from: color_id_buffer.py
     - `record_error`
       - called from: revit/safe_api.py
+    - `registration_mark_segments`
+      - called from: stage_a_registered_capture.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `reset_family_region_caches`
@@ -265,7 +285,7 @@ Notes:
     - `sort_views_by_level`
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -302,6 +322,16 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_state`
+      - called from: stage_a_registered_capture.py
+    - `view_state_verdict`
+      - called from: stage_a_registered_capture.py
+    - `white_membership_suppression`
+      - called from: stage_a_registered_capture.py
+    - `white_override_capability`
+      - called from: stage_a_registered_capture.py, stage_a_registration.py
+    - `white_override_capability_record`
+      - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
     - `xy_bounds_from_crop_box_all_corners`
@@ -363,6 +393,8 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotate_sidecar`
+    - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
   - `bbox_world_aabb`
@@ -387,8 +419,8 @@ Notes:
     - called from: revit/annotation.py
   - `classify_keynote`
     - called from: revit/annotation.py
-  - `collect_2d_annotations`
-    - called from: revit/annotation.py, revit/view_basis.py
+    - `collect_2d_annotations`
+      - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
@@ -411,8 +443,12 @@ Notes:
       - called from: csv_export.py
     - `convex_hull_uv`
       - called from: pipeline.py
+    - `create_registration_marks`
+      - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `discover_link_categories`
+      - called from: stage_a_registered_capture.py
     - `element_id_value`
       - called from: thinrunner_streaming.py
     - `estimate_depth_from_loops_or_bbox`
@@ -428,9 +464,9 @@ Notes:
     - `expand_host_link_import_model_elements`
       - called from: pipeline.py
     - `export_annotation_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
     - `export_pipeline_results_to_pngs`
@@ -439,6 +475,8 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_registered_stage_a_view`
+      - called from: pipeline.py
     - `export_view_image`
       - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
@@ -453,6 +491,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `flat_colour_override`
+      - called from: stage_a_registration.py
     - `frame_export_geometry`
       - called from: color_id_buffer.py
     - `get_annotation_bbox`
@@ -493,6 +533,14 @@ Notes:
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
+    - `mark_reference_rectangle`
+      - called from: stage_a_registered_capture.py
+    - `marks_still_in_project`
+      - called from: stage_a_registered_capture.py
+    - `missing_override_setters`
+      - called from: stage_a_registration.py
+    - `nominal_fpp_ft`
+      - called from: stage_a_registered_capture.py
     - `normalize_applied_smooth_edges`
       - called from: thinrunner_streaming.py
     - `pca_oriented_extents_uv`
@@ -504,7 +552,7 @@ Notes:
     - `process_document_views_streaming`
       - called from: streaming.py
     - `project_bbox_corners_uv`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `project_bbox_uv_and_near_face_w`
       - called from: color_id_buffer.py
     - `projected_outer_loop_area_uv`
@@ -519,6 +567,8 @@ Notes:
       - called from: color_id_buffer.py
     - `record_error`
       - called from: revit/safe_api.py
+    - `registration_mark_segments`
+      - called from: stage_a_registered_capture.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `reset_family_region_caches`
@@ -566,7 +616,7 @@ Notes:
     - `sort_views_by_level`
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -603,6 +653,16 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_state`
+      - called from: stage_a_registered_capture.py
+    - `view_state_verdict`
+      - called from: stage_a_registered_capture.py
+    - `white_membership_suppression`
+      - called from: stage_a_registered_capture.py
+    - `white_override_capability`
+      - called from: stage_a_registered_capture.py, stage_a_registration.py
+    - `white_override_capability_record`
+      - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
     - `xy_bounds_from_crop_box_all_corners`
@@ -664,6 +724,8 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotate_sidecar`
+    - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
   - `bbox_world_aabb`
@@ -688,8 +750,8 @@ Notes:
     - called from: revit/annotation.py
   - `classify_keynote`
     - called from: revit/annotation.py
-  - `collect_2d_annotations`
-    - called from: revit/annotation.py, revit/view_basis.py
+    - `collect_2d_annotations`
+      - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
@@ -712,8 +774,12 @@ Notes:
       - called from: csv_export.py
     - `convex_hull_uv`
       - called from: pipeline.py
+    - `create_registration_marks`
+      - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `discover_link_categories`
+      - called from: stage_a_registered_capture.py
     - `element_id_value`
       - called from: thinrunner_streaming.py
     - `estimate_depth_from_loops_or_bbox`
@@ -729,9 +795,9 @@ Notes:
     - `expand_host_link_import_model_elements`
       - called from: pipeline.py
     - `export_annotation_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
     - `export_pipeline_results_to_pngs`
@@ -740,6 +806,8 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_registered_stage_a_view`
+      - called from: pipeline.py
     - `export_view_image`
       - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
@@ -754,6 +822,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `flat_colour_override`
+      - called from: stage_a_registration.py
     - `frame_export_geometry`
       - called from: color_id_buffer.py
     - `get_annotation_bbox`
@@ -794,6 +864,14 @@ Notes:
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
+    - `mark_reference_rectangle`
+      - called from: stage_a_registered_capture.py
+    - `marks_still_in_project`
+      - called from: stage_a_registered_capture.py
+    - `missing_override_setters`
+      - called from: stage_a_registration.py
+    - `nominal_fpp_ft`
+      - called from: stage_a_registered_capture.py
     - `normalize_applied_smooth_edges`
       - called from: thinrunner_streaming.py
     - `pca_oriented_extents_uv`
@@ -805,7 +883,7 @@ Notes:
     - `process_document_views_streaming`
       - called from: streaming.py
     - `project_bbox_corners_uv`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `project_bbox_uv_and_near_face_w`
       - called from: color_id_buffer.py
     - `projected_outer_loop_area_uv`
@@ -820,6 +898,8 @@ Notes:
       - called from: color_id_buffer.py
     - `record_error`
       - called from: revit/safe_api.py
+    - `registration_mark_segments`
+      - called from: stage_a_registered_capture.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `reset_family_region_caches`
@@ -867,7 +947,7 @@ Notes:
     - `sort_views_by_level`
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -904,6 +984,16 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_state`
+      - called from: stage_a_registered_capture.py
+    - `view_state_verdict`
+      - called from: stage_a_registered_capture.py
+    - `white_membership_suppression`
+      - called from: stage_a_registered_capture.py
+    - `white_override_capability`
+      - called from: stage_a_registered_capture.py, stage_a_registration.py
+    - `white_override_capability_record`
+      - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
     - `xy_bounds_from_crop_box_all_corners`
@@ -965,6 +1055,8 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotate_sidecar`
+    - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
   - `bbox_world_aabb`
@@ -989,8 +1081,8 @@ Notes:
     - called from: revit/annotation.py
   - `classify_keynote`
     - called from: revit/annotation.py
-  - `collect_2d_annotations`
-    - called from: revit/annotation.py, revit/view_basis.py
+    - `collect_2d_annotations`
+      - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
@@ -1013,8 +1105,12 @@ Notes:
       - called from: csv_export.py
     - `convex_hull_uv`
       - called from: pipeline.py
+    - `create_registration_marks`
+      - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `discover_link_categories`
+      - called from: stage_a_registered_capture.py
     - `element_id_value`
       - called from: thinrunner_streaming.py
     - `estimate_depth_from_loops_or_bbox`
@@ -1030,9 +1126,9 @@ Notes:
     - `expand_host_link_import_model_elements`
       - called from: pipeline.py
     - `export_annotation_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
     - `export_pipeline_results_to_pngs`
@@ -1041,6 +1137,8 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_registered_stage_a_view`
+      - called from: pipeline.py
     - `export_view_image`
       - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
@@ -1055,6 +1153,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `flat_colour_override`
+      - called from: stage_a_registration.py
     - `frame_export_geometry`
       - called from: color_id_buffer.py
     - `get_annotation_bbox`
@@ -1095,6 +1195,14 @@ Notes:
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
+    - `mark_reference_rectangle`
+      - called from: stage_a_registered_capture.py
+    - `marks_still_in_project`
+      - called from: stage_a_registered_capture.py
+    - `missing_override_setters`
+      - called from: stage_a_registration.py
+    - `nominal_fpp_ft`
+      - called from: stage_a_registered_capture.py
     - `normalize_applied_smooth_edges`
       - called from: thinrunner_streaming.py
     - `pca_oriented_extents_uv`
@@ -1106,7 +1214,7 @@ Notes:
     - `process_document_views_streaming`
       - called from: streaming.py
     - `project_bbox_corners_uv`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `project_bbox_uv_and_near_face_w`
       - called from: color_id_buffer.py
     - `projected_outer_loop_area_uv`
@@ -1121,6 +1229,8 @@ Notes:
       - called from: color_id_buffer.py
     - `record_error`
       - called from: revit/safe_api.py
+    - `registration_mark_segments`
+      - called from: stage_a_registered_capture.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `reset_family_region_caches`
@@ -1168,7 +1278,7 @@ Notes:
     - `sort_views_by_level`
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -1205,6 +1315,16 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_state`
+      - called from: stage_a_registered_capture.py
+    - `view_state_verdict`
+      - called from: stage_a_registered_capture.py
+    - `white_membership_suppression`
+      - called from: stage_a_registered_capture.py
+    - `white_override_capability`
+      - called from: stage_a_registered_capture.py, stage_a_registration.py
+    - `white_override_capability_record`
+      - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
     - `xy_bounds_from_crop_box_all_corners`
@@ -1266,6 +1386,8 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotate_sidecar`
+    - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
   - `bbox_world_aabb`
@@ -1290,8 +1412,8 @@ Notes:
     - called from: revit/annotation.py
   - `classify_keynote`
     - called from: revit/annotation.py
-  - `collect_2d_annotations`
-    - called from: revit/annotation.py, revit/view_basis.py
+    - `collect_2d_annotations`
+      - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
@@ -1314,8 +1436,12 @@ Notes:
       - called from: csv_export.py
     - `convex_hull_uv`
       - called from: pipeline.py
+    - `create_registration_marks`
+      - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `discover_link_categories`
+      - called from: stage_a_registered_capture.py
     - `element_id_value`
       - called from: thinrunner_streaming.py
     - `estimate_depth_from_loops_or_bbox`
@@ -1331,9 +1457,9 @@ Notes:
     - `expand_host_link_import_model_elements`
       - called from: pipeline.py
     - `export_annotation_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
     - `export_pipeline_results_to_pngs`
@@ -1342,6 +1468,8 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_registered_stage_a_view`
+      - called from: pipeline.py
     - `export_view_image`
       - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
@@ -1356,6 +1484,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `flat_colour_override`
+      - called from: stage_a_registration.py
     - `frame_export_geometry`
       - called from: color_id_buffer.py
     - `get_annotation_bbox`
@@ -1396,6 +1526,14 @@ Notes:
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
+    - `mark_reference_rectangle`
+      - called from: stage_a_registered_capture.py
+    - `marks_still_in_project`
+      - called from: stage_a_registered_capture.py
+    - `missing_override_setters`
+      - called from: stage_a_registration.py
+    - `nominal_fpp_ft`
+      - called from: stage_a_registered_capture.py
     - `normalize_applied_smooth_edges`
       - called from: thinrunner_streaming.py
     - `pca_oriented_extents_uv`
@@ -1407,7 +1545,7 @@ Notes:
     - `process_document_views_streaming`
       - called from: streaming.py
     - `project_bbox_corners_uv`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `project_bbox_uv_and_near_face_w`
       - called from: color_id_buffer.py
     - `projected_outer_loop_area_uv`
@@ -1422,6 +1560,8 @@ Notes:
       - called from: color_id_buffer.py
     - `record_error`
       - called from: revit/safe_api.py
+    - `registration_mark_segments`
+      - called from: stage_a_registered_capture.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `reset_family_region_caches`
@@ -1471,7 +1611,7 @@ Notes:
     - `sort_views_by_level`
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -1508,6 +1648,16 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_state`
+      - called from: stage_a_registered_capture.py
+    - `view_state_verdict`
+      - called from: stage_a_registered_capture.py
+    - `white_membership_suppression`
+      - called from: stage_a_registered_capture.py
+    - `white_override_capability`
+      - called from: stage_a_registered_capture.py, stage_a_registration.py
+    - `white_override_capability_record`
+      - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
     - `xy_bounds_from_crop_box_all_corners`
@@ -1569,6 +1719,8 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotate_sidecar`
+    - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
   - `bbox_world_aabb`
@@ -1593,8 +1745,8 @@ Notes:
     - called from: revit/annotation.py
   - `classify_keynote`
     - called from: revit/annotation.py
-  - `collect_2d_annotations`
-    - called from: revit/annotation.py, revit/view_basis.py
+    - `collect_2d_annotations`
+      - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
@@ -1617,8 +1769,12 @@ Notes:
       - called from: csv_export.py
     - `convex_hull_uv`
       - called from: pipeline.py
+    - `create_registration_marks`
+      - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `discover_link_categories`
+      - called from: stage_a_registered_capture.py
     - `element_id_value`
       - called from: thinrunner_streaming.py
     - `estimate_depth_from_loops_or_bbox`
@@ -1634,9 +1790,9 @@ Notes:
     - `expand_host_link_import_model_elements`
       - called from: pipeline.py
     - `export_annotation_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
     - `export_pipeline_results_to_pngs`
@@ -1645,6 +1801,8 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_registered_stage_a_view`
+      - called from: pipeline.py
     - `export_view_image`
       - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
@@ -1659,6 +1817,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `flat_colour_override`
+      - called from: stage_a_registration.py
     - `frame_export_geometry`
       - called from: color_id_buffer.py
     - `get_annotation_bbox`
@@ -1699,6 +1859,14 @@ Notes:
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
+    - `mark_reference_rectangle`
+      - called from: stage_a_registered_capture.py
+    - `marks_still_in_project`
+      - called from: stage_a_registered_capture.py
+    - `missing_override_setters`
+      - called from: stage_a_registration.py
+    - `nominal_fpp_ft`
+      - called from: stage_a_registered_capture.py
     - `normalize_applied_smooth_edges`
       - called from: thinrunner_streaming.py
     - `pca_oriented_extents_uv`
@@ -1708,7 +1876,7 @@ Notes:
     - `process_document_views_streaming`
       - called from: streaming.py
     - `project_bbox_corners_uv`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `project_bbox_uv_and_near_face_w`
       - called from: color_id_buffer.py
     - `projected_outer_loop_area_uv`
@@ -1723,6 +1891,8 @@ Notes:
       - called from: color_id_buffer.py
     - `record_error`
       - called from: revit/safe_api.py
+    - `registration_mark_segments`
+      - called from: stage_a_registered_capture.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `reset_family_region_caches`
@@ -1772,7 +1942,7 @@ Notes:
     - `sort_views_by_level`
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -1809,6 +1979,16 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_state`
+      - called from: stage_a_registered_capture.py
+    - `view_state_verdict`
+      - called from: stage_a_registered_capture.py
+    - `white_membership_suppression`
+      - called from: stage_a_registered_capture.py
+    - `white_override_capability`
+      - called from: stage_a_registered_capture.py, stage_a_registration.py
+    - `white_override_capability_record`
+      - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
     - `xy_bounds_from_crop_box_all_corners`
@@ -1870,6 +2050,8 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotate_sidecar`
+    - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
   - `bbox_world_aabb`
@@ -1894,8 +2076,8 @@ Notes:
     - called from: revit/annotation.py
   - `classify_keynote`
     - called from: revit/annotation.py
-  - `collect_2d_annotations`
-    - called from: revit/annotation.py, revit/view_basis.py
+    - `collect_2d_annotations`
+      - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
@@ -1918,8 +2100,12 @@ Notes:
       - called from: csv_export.py
     - `convex_hull_uv`
       - called from: pipeline.py
+    - `create_registration_marks`
+      - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `discover_link_categories`
+      - called from: stage_a_registered_capture.py
     - `element_id_value`
       - called from: thinrunner_streaming.py
     - `estimate_depth_from_loops_or_bbox`
@@ -1935,9 +2121,9 @@ Notes:
     - `expand_host_link_import_model_elements`
       - called from: pipeline.py
     - `export_annotation_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
     - `export_pipeline_results_to_pngs`
@@ -1946,6 +2132,8 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_registered_stage_a_view`
+      - called from: pipeline.py
     - `export_view_image`
       - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
@@ -1960,6 +2148,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `flat_colour_override`
+      - called from: stage_a_registration.py
     - `frame_export_geometry`
       - called from: color_id_buffer.py
     - `get_annotation_bbox`
@@ -2000,6 +2190,14 @@ Notes:
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
+    - `mark_reference_rectangle`
+      - called from: stage_a_registered_capture.py
+    - `marks_still_in_project`
+      - called from: stage_a_registered_capture.py
+    - `missing_override_setters`
+      - called from: stage_a_registration.py
+    - `nominal_fpp_ft`
+      - called from: stage_a_registered_capture.py
     - `normalize_applied_smooth_edges`
       - called from: thinrunner_streaming.py
     - `pca_oriented_extents_uv`
@@ -2009,7 +2207,7 @@ Notes:
     - `process_document_views`
       - called from: entry_dynamo.py, streaming.py
     - `project_bbox_corners_uv`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `project_bbox_uv_and_near_face_w`
       - called from: color_id_buffer.py
     - `projected_outer_loop_area_uv`
@@ -2024,6 +2222,8 @@ Notes:
       - called from: color_id_buffer.py
     - `record_error`
       - called from: revit/safe_api.py
+    - `registration_mark_segments`
+      - called from: stage_a_registered_capture.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `reset_family_region_caches`
@@ -2073,7 +2273,7 @@ Notes:
     - `sort_views_by_level`
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -2110,12 +2310,22 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_state`
+      - called from: stage_a_registered_capture.py
+    - `view_state_verdict`
+      - called from: stage_a_registered_capture.py
+    - `white_membership_suppression`
+      - called from: stage_a_registered_capture.py
+    - `white_override_capability`
+      - called from: stage_a_registered_capture.py, stage_a_registration.py
+    - `white_override_capability_record`
+      - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `render_model_front_to_back` (pipeline.py:L2348)
+## Trace: `render_model_front_to_back` (pipeline.py:L2366)
 
   - `Bounds2D`
     - called from: color_id_buffer.py, core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -2171,6 +2381,8 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotate_sidecar`
+    - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
   - `bbox_world_aabb`
@@ -2195,8 +2407,8 @@ Notes:
     - called from: revit/annotation.py
   - `classify_keynote`
     - called from: revit/annotation.py
-  - `collect_2d_annotations`
-    - called from: revit/annotation.py, revit/view_basis.py
+    - `collect_2d_annotations`
+      - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
@@ -2219,8 +2431,12 @@ Notes:
       - called from: csv_export.py
     - `convex_hull_uv`
       - called from: pipeline.py
+    - `create_registration_marks`
+      - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `discover_link_categories`
+      - called from: stage_a_registered_capture.py
     - `element_id_value`
       - called from: thinrunner_streaming.py
     - `estimate_depth_from_loops_or_bbox`
@@ -2236,9 +2452,9 @@ Notes:
     - `expand_host_link_import_model_elements`
       - called from: pipeline.py
     - `export_annotation_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
     - `export_pipeline_results_to_pngs`
@@ -2247,6 +2463,8 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_registered_stage_a_view`
+      - called from: pipeline.py
     - `export_view_image`
       - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
@@ -2261,6 +2479,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `flat_colour_override`
+      - called from: stage_a_registration.py
     - `frame_export_geometry`
       - called from: color_id_buffer.py
     - `get_annotation_bbox`
@@ -2301,6 +2521,14 @@ Notes:
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
+    - `mark_reference_rectangle`
+      - called from: stage_a_registered_capture.py
+    - `marks_still_in_project`
+      - called from: stage_a_registered_capture.py
+    - `missing_override_setters`
+      - called from: stage_a_registration.py
+    - `nominal_fpp_ft`
+      - called from: stage_a_registered_capture.py
     - `normalize_applied_smooth_edges`
       - called from: thinrunner_streaming.py
     - `pca_oriented_extents_uv`
@@ -2312,7 +2540,7 @@ Notes:
     - `process_document_views_streaming`
       - called from: streaming.py
     - `project_bbox_corners_uv`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `project_bbox_uv_and_near_face_w`
       - called from: color_id_buffer.py
     - `projected_outer_loop_area_uv`
@@ -2327,6 +2555,8 @@ Notes:
       - called from: color_id_buffer.py
     - `record_error`
       - called from: revit/safe_api.py
+    - `registration_mark_segments`
+      - called from: stage_a_registered_capture.py
     - `reset_family_region_caches`
       - called from: pipeline.py, streaming.py
     - `resolve_all`
@@ -2374,7 +2604,7 @@ Notes:
     - `sort_views_by_level`
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -2411,12 +2641,22 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_state`
+      - called from: stage_a_registered_capture.py
+    - `view_state_verdict`
+      - called from: stage_a_registered_capture.py
+    - `white_membership_suppression`
+      - called from: stage_a_registered_capture.py
+    - `white_override_capability`
+      - called from: stage_a_registered_capture.py, stage_a_registration.py
+    - `white_override_capability_record`
+      - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `init_view_raster` (pipeline.py:L1788)
+## Trace: `init_view_raster` (pipeline.py:L1806)
 
   - `Bounds2D`
     - called from: color_id_buffer.py, core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -2472,6 +2712,8 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotate_sidecar`
+    - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
   - `bbox_world_aabb`
@@ -2496,8 +2738,8 @@ Notes:
     - called from: revit/annotation.py
   - `classify_keynote`
     - called from: revit/annotation.py
-  - `collect_2d_annotations`
-    - called from: revit/annotation.py, revit/view_basis.py
+    - `collect_2d_annotations`
+      - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
@@ -2520,8 +2762,12 @@ Notes:
       - called from: csv_export.py
     - `convex_hull_uv`
       - called from: pipeline.py
+    - `create_registration_marks`
+      - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `discover_link_categories`
+      - called from: stage_a_registered_capture.py
     - `element_id_value`
       - called from: thinrunner_streaming.py
     - `estimate_depth_from_loops_or_bbox`
@@ -2537,9 +2783,9 @@ Notes:
     - `expand_host_link_import_model_elements`
       - called from: pipeline.py
     - `export_annotation_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
     - `export_pipeline_results_to_pngs`
@@ -2548,6 +2794,8 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_registered_stage_a_view`
+      - called from: pipeline.py
     - `export_view_image`
       - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
@@ -2562,6 +2810,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `flat_colour_override`
+      - called from: stage_a_registration.py
     - `frame_export_geometry`
       - called from: color_id_buffer.py
     - `get_annotation_bbox`
@@ -2600,6 +2850,14 @@ Notes:
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
+    - `mark_reference_rectangle`
+      - called from: stage_a_registered_capture.py
+    - `marks_still_in_project`
+      - called from: stage_a_registered_capture.py
+    - `missing_override_setters`
+      - called from: stage_a_registration.py
+    - `nominal_fpp_ft`
+      - called from: stage_a_registered_capture.py
     - `normalize_applied_smooth_edges`
       - called from: thinrunner_streaming.py
     - `pca_oriented_extents_uv`
@@ -2611,7 +2869,7 @@ Notes:
     - `process_document_views_streaming`
       - called from: streaming.py
     - `project_bbox_corners_uv`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `project_bbox_uv_and_near_face_w`
       - called from: color_id_buffer.py
     - `projected_outer_loop_area_uv`
@@ -2626,6 +2884,8 @@ Notes:
       - called from: color_id_buffer.py
     - `record_error`
       - called from: revit/safe_api.py
+    - `registration_mark_segments`
+      - called from: stage_a_registered_capture.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `reset_family_region_caches`
@@ -2675,7 +2935,7 @@ Notes:
     - `sort_views_by_level`
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -2712,6 +2972,16 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_state`
+      - called from: stage_a_registered_capture.py
+    - `view_state_verdict`
+      - called from: stage_a_registered_capture.py
+    - `white_membership_suppression`
+      - called from: stage_a_registered_capture.py
+    - `white_override_capability`
+      - called from: stage_a_registered_capture.py, stage_a_registration.py
+    - `white_override_capability_record`
+      - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
     - `xy_bounds_from_crop_box_all_corners`
@@ -2771,6 +3041,8 @@ Notes:
     - called from: revit/view_basis.py
   - `ViewRaster`
     - called from: csv_export.py, pipeline.py, root_cache.py
+  - `annotate_sidecar`
+    - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
   - `bbox_world_aabb`
@@ -2797,8 +3069,8 @@ Notes:
     - called from: revit/annotation.py
   - `collect_2d_annotations`
     - called from: revit/annotation.py, revit/view_basis.py
-  - `collect_all_linked_elements`
-    - called from: color_id_buffer.py, revit/collection.py
+    - `collect_all_linked_elements`
+      - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
       - called from: pipeline.py
     - `compute_annotation_extents`
@@ -2819,8 +3091,12 @@ Notes:
       - called from: csv_export.py
     - `convex_hull_uv`
       - called from: pipeline.py
+    - `create_registration_marks`
+      - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `discover_link_categories`
+      - called from: stage_a_registered_capture.py
     - `element_id_value`
       - called from: thinrunner_streaming.py
     - `estimate_depth_from_loops_or_bbox`
@@ -2836,9 +3112,9 @@ Notes:
     - `expand_host_link_import_model_elements`
       - called from: pipeline.py
     - `export_annotation_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
     - `export_pipeline_results_to_pngs`
@@ -2847,6 +3123,8 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_registered_stage_a_view`
+      - called from: pipeline.py
     - `export_view_image`
       - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
@@ -2861,6 +3139,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `flat_colour_override`
+      - called from: stage_a_registration.py
     - `frame_export_geometry`
       - called from: color_id_buffer.py
     - `get_annotation_bbox`
@@ -2901,6 +3181,14 @@ Notes:
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
+    - `mark_reference_rectangle`
+      - called from: stage_a_registered_capture.py
+    - `marks_still_in_project`
+      - called from: stage_a_registered_capture.py
+    - `missing_override_setters`
+      - called from: stage_a_registration.py
+    - `nominal_fpp_ft`
+      - called from: stage_a_registered_capture.py
     - `normalize_applied_smooth_edges`
       - called from: thinrunner_streaming.py
     - `pca_oriented_extents_uv`
@@ -2912,7 +3200,7 @@ Notes:
     - `process_document_views_streaming`
       - called from: streaming.py
     - `project_bbox_corners_uv`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `project_bbox_uv_and_near_face_w`
       - called from: color_id_buffer.py
     - `projected_outer_loop_area_uv`
@@ -2927,6 +3215,8 @@ Notes:
       - called from: color_id_buffer.py
     - `record_error`
       - called from: revit/safe_api.py
+    - `registration_mark_segments`
+      - called from: stage_a_registered_capture.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `reset_family_region_caches`
@@ -2976,7 +3266,7 @@ Notes:
     - `sort_views_by_level`
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -3013,6 +3303,16 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_state`
+      - called from: stage_a_registered_capture.py
+    - `view_state_verdict`
+      - called from: stage_a_registered_capture.py
+    - `white_membership_suppression`
+      - called from: stage_a_registered_capture.py
+    - `white_override_capability`
+      - called from: stage_a_registered_capture.py, stage_a_registration.py
+    - `white_override_capability_record`
+      - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
     - `xy_bounds_from_crop_box_all_corners`
@@ -3074,6 +3374,8 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotate_sidecar`
+    - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
   - `bbox_world_aabb`
@@ -3098,8 +3400,8 @@ Notes:
     - called from: revit/annotation.py
   - `classify_keynote`
     - called from: revit/annotation.py
-  - `collect_2d_annotations`
-    - called from: revit/annotation.py, revit/view_basis.py
+    - `collect_2d_annotations`
+      - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
@@ -3122,8 +3424,12 @@ Notes:
       - called from: csv_export.py
     - `convex_hull_uv`
       - called from: pipeline.py
+    - `create_registration_marks`
+      - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `discover_link_categories`
+      - called from: stage_a_registered_capture.py
     - `element_id_value`
       - called from: thinrunner_streaming.py
     - `estimate_depth_from_loops_or_bbox`
@@ -3139,9 +3445,9 @@ Notes:
     - `expand_host_link_import_model_elements`
       - called from: pipeline.py
     - `export_annotation_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
     - `export_pipeline_results_to_pngs`
@@ -3150,6 +3456,8 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_registered_stage_a_view`
+      - called from: pipeline.py
     - `export_view_image`
       - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
@@ -3164,6 +3472,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `flat_colour_override`
+      - called from: stage_a_registration.py
     - `frame_export_geometry`
       - called from: color_id_buffer.py
     - `get_annotation_bbox`
@@ -3204,6 +3514,14 @@ Notes:
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
+    - `mark_reference_rectangle`
+      - called from: stage_a_registered_capture.py
+    - `marks_still_in_project`
+      - called from: stage_a_registered_capture.py
+    - `missing_override_setters`
+      - called from: stage_a_registration.py
+    - `nominal_fpp_ft`
+      - called from: stage_a_registered_capture.py
     - `normalize_applied_smooth_edges`
       - called from: thinrunner_streaming.py
     - `pca_oriented_extents_uv`
@@ -3215,7 +3533,7 @@ Notes:
     - `process_document_views_streaming`
       - called from: streaming.py
     - `project_bbox_corners_uv`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `project_bbox_uv_and_near_face_w`
       - called from: color_id_buffer.py
     - `projected_outer_loop_area_uv`
@@ -3230,6 +3548,8 @@ Notes:
       - called from: color_id_buffer.py
     - `record_error`
       - called from: revit/safe_api.py
+    - `registration_mark_segments`
+      - called from: stage_a_registered_capture.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `reset_family_region_caches`
@@ -3277,7 +3597,7 @@ Notes:
     - `sort_views_by_level`
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -3314,6 +3634,16 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_state`
+      - called from: stage_a_registered_capture.py
+    - `view_state_verdict`
+      - called from: stage_a_registered_capture.py
+    - `white_membership_suppression`
+      - called from: stage_a_registered_capture.py
+    - `white_override_capability`
+      - called from: stage_a_registered_capture.py, stage_a_registration.py
+    - `white_override_capability_record`
+      - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
     - `xy_bounds_from_crop_box_all_corners`
@@ -3375,6 +3705,8 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotate_sidecar`
+    - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
   - `bbox_world_aabb`
@@ -3399,8 +3731,8 @@ Notes:
     - called from: revit/annotation.py
   - `classify_keynote`
     - called from: revit/annotation.py
-  - `collect_2d_annotations`
-    - called from: revit/annotation.py, revit/view_basis.py
+    - `collect_2d_annotations`
+      - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
@@ -3423,8 +3755,12 @@ Notes:
       - called from: csv_export.py
     - `convex_hull_uv`
       - called from: pipeline.py
+    - `create_registration_marks`
+      - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `discover_link_categories`
+      - called from: stage_a_registered_capture.py
     - `element_id_value`
       - called from: thinrunner_streaming.py
     - `estimate_depth_from_loops_or_bbox`
@@ -3440,9 +3776,9 @@ Notes:
     - `expand_host_link_import_model_elements`
       - called from: pipeline.py
     - `export_annotation_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
     - `export_pipeline_results_to_pngs`
@@ -3451,6 +3787,8 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_registered_stage_a_view`
+      - called from: pipeline.py
     - `export_view_image`
       - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
@@ -3465,6 +3803,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `flat_colour_override`
+      - called from: stage_a_registration.py
     - `frame_export_geometry`
       - called from: color_id_buffer.py
     - `get_annotation_bbox`
@@ -3505,6 +3845,14 @@ Notes:
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
+    - `mark_reference_rectangle`
+      - called from: stage_a_registered_capture.py
+    - `marks_still_in_project`
+      - called from: stage_a_registered_capture.py
+    - `missing_override_setters`
+      - called from: stage_a_registration.py
+    - `nominal_fpp_ft`
+      - called from: stage_a_registered_capture.py
     - `normalize_applied_smooth_edges`
       - called from: thinrunner_streaming.py
     - `pca_oriented_extents_uv`
@@ -3516,7 +3864,7 @@ Notes:
     - `process_document_views_streaming`
       - called from: streaming.py
     - `project_bbox_corners_uv`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `project_bbox_uv_and_near_face_w`
       - called from: color_id_buffer.py
     - `projected_outer_loop_area_uv`
@@ -3531,6 +3879,8 @@ Notes:
       - called from: color_id_buffer.py
     - `record_error`
       - called from: revit/safe_api.py
+    - `registration_mark_segments`
+      - called from: stage_a_registered_capture.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `reset_family_region_caches`
@@ -3578,7 +3928,7 @@ Notes:
     - `sort_views_by_level`
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -3615,6 +3965,16 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_state`
+      - called from: stage_a_registered_capture.py
+    - `view_state_verdict`
+      - called from: stage_a_registered_capture.py
+    - `white_membership_suppression`
+      - called from: stage_a_registered_capture.py
+    - `white_override_capability`
+      - called from: stage_a_registered_capture.py, stage_a_registration.py
+    - `white_override_capability_record`
+      - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
     - `xy_bounds_from_crop_box_all_corners`
@@ -3676,6 +4036,8 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotate_sidecar`
+    - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
   - `bbox_world_aabb`
@@ -3700,8 +4062,8 @@ Notes:
     - called from: revit/annotation.py
   - `classify_keynote`
     - called from: revit/annotation.py
-  - `collect_2d_annotations`
-    - called from: revit/annotation.py, revit/view_basis.py
+    - `collect_2d_annotations`
+      - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
@@ -3724,8 +4086,12 @@ Notes:
       - called from: csv_export.py
     - `convex_hull_uv`
       - called from: pipeline.py
+    - `create_registration_marks`
+      - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `discover_link_categories`
+      - called from: stage_a_registered_capture.py
     - `element_id_value`
       - called from: thinrunner_streaming.py
     - `estimate_depth_from_loops_or_bbox`
@@ -3741,9 +4107,9 @@ Notes:
     - `expand_host_link_import_model_elements`
       - called from: pipeline.py
     - `export_annotation_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
     - `export_pipeline_results_to_pngs`
@@ -3752,6 +4118,8 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_registered_stage_a_view`
+      - called from: pipeline.py
     - `export_view_image`
       - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
@@ -3766,6 +4134,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `flat_colour_override`
+      - called from: stage_a_registration.py
     - `frame_export_geometry`
       - called from: color_id_buffer.py
     - `get_annotation_bbox`
@@ -3806,6 +4176,14 @@ Notes:
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
+    - `mark_reference_rectangle`
+      - called from: stage_a_registered_capture.py
+    - `marks_still_in_project`
+      - called from: stage_a_registered_capture.py
+    - `missing_override_setters`
+      - called from: stage_a_registration.py
+    - `nominal_fpp_ft`
+      - called from: stage_a_registered_capture.py
     - `normalize_applied_smooth_edges`
       - called from: thinrunner_streaming.py
     - `pca_oriented_extents_uv`
@@ -3817,7 +4195,7 @@ Notes:
     - `process_document_views_streaming`
       - called from: streaming.py
     - `project_bbox_corners_uv`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `project_bbox_uv_and_near_face_w`
       - called from: color_id_buffer.py
     - `projected_outer_loop_area_uv`
@@ -3830,6 +4208,8 @@ Notes:
       - called from: color_id_buffer.py
     - `record_error`
       - called from: revit/safe_api.py
+    - `registration_mark_segments`
+      - called from: stage_a_registered_capture.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `reset_family_region_caches`
@@ -3879,7 +4259,7 @@ Notes:
     - `sort_views_by_level`
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -3916,6 +4296,16 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_state`
+      - called from: stage_a_registered_capture.py
+    - `view_state_verdict`
+      - called from: stage_a_registered_capture.py
+    - `white_membership_suppression`
+      - called from: stage_a_registered_capture.py
+    - `white_override_capability`
+      - called from: stage_a_registered_capture.py, stage_a_registration.py
+    - `white_override_capability_record`
+      - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
     - `xy_bounds_from_crop_box_all_corners`
@@ -3977,6 +4367,8 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotate_sidecar`
+    - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
   - `bbox_world_aabb`
@@ -4001,8 +4393,8 @@ Notes:
     - called from: revit/annotation.py
   - `classify_keynote`
     - called from: revit/annotation.py
-  - `collect_2d_annotations`
-    - called from: revit/annotation.py, revit/view_basis.py
+    - `collect_2d_annotations`
+      - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
       - called from: color_id_buffer.py, revit/collection.py
     - `compute_annotation_extents`
@@ -4023,8 +4415,12 @@ Notes:
       - called from: csv_export.py
     - `convex_hull_uv`
       - called from: pipeline.py
+    - `create_registration_marks`
+      - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `discover_link_categories`
+      - called from: stage_a_registered_capture.py
     - `element_id_value`
       - called from: thinrunner_streaming.py
     - `estimate_depth_from_loops_or_bbox`
@@ -4040,9 +4436,9 @@ Notes:
     - `expand_host_link_import_model_elements`
       - called from: pipeline.py
     - `export_annotation_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
     - `export_pipeline_results_to_pngs`
@@ -4051,6 +4447,8 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_registered_stage_a_view`
+      - called from: pipeline.py
     - `export_view_image`
       - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
@@ -4065,6 +4463,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `flat_colour_override`
+      - called from: stage_a_registration.py
     - `frame_export_geometry`
       - called from: color_id_buffer.py
     - `get_annotation_bbox`
@@ -4105,6 +4505,14 @@ Notes:
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
+    - `mark_reference_rectangle`
+      - called from: stage_a_registered_capture.py
+    - `marks_still_in_project`
+      - called from: stage_a_registered_capture.py
+    - `missing_override_setters`
+      - called from: stage_a_registration.py
+    - `nominal_fpp_ft`
+      - called from: stage_a_registered_capture.py
     - `normalize_applied_smooth_edges`
       - called from: thinrunner_streaming.py
     - `pca_oriented_extents_uv`
@@ -4116,7 +4524,7 @@ Notes:
     - `process_document_views_streaming`
       - called from: streaming.py
     - `project_bbox_corners_uv`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `project_bbox_uv_and_near_face_w`
       - called from: color_id_buffer.py
     - `projected_outer_loop_area_uv`
@@ -4131,6 +4539,8 @@ Notes:
       - called from: color_id_buffer.py
     - `record_error`
       - called from: revit/safe_api.py
+    - `registration_mark_segments`
+      - called from: stage_a_registered_capture.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `reset_family_region_caches`
@@ -4180,7 +4590,7 @@ Notes:
     - `sort_views_by_level`
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -4217,6 +4627,16 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_state`
+      - called from: stage_a_registered_capture.py
+    - `view_state_verdict`
+      - called from: stage_a_registered_capture.py
+    - `white_membership_suppression`
+      - called from: stage_a_registered_capture.py
+    - `white_override_capability`
+      - called from: stage_a_registered_capture.py, stage_a_registration.py
+    - `white_override_capability_record`
+      - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
     - `xy_bounds_from_crop_box_all_corners`
@@ -4278,6 +4698,8 @@ Notes:
     - called from: csv_export.py, pipeline.py, root_cache.py
   - `_view_signature`
     - called from: pipeline.py
+  - `annotate_sidecar`
+    - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
   - `bbox_world_aabb`
@@ -4302,8 +4724,8 @@ Notes:
     - called from: revit/annotation.py
   - `classify_keynote`
     - called from: revit/annotation.py
-  - `collect_2d_annotations`
-    - called from: revit/annotation.py, revit/view_basis.py
+    - `collect_2d_annotations`
+      - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
@@ -4326,8 +4748,12 @@ Notes:
       - called from: csv_export.py
     - `convex_hull_uv`
       - called from: pipeline.py
+    - `create_registration_marks`
+      - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `discover_link_categories`
+      - called from: stage_a_registered_capture.py
     - `element_id_value`
       - called from: thinrunner_streaming.py
     - `estimate_depth_from_loops_or_bbox`
@@ -4343,9 +4769,9 @@ Notes:
     - `expand_host_link_import_model_elements`
       - called from: pipeline.py
     - `export_annotation_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_color_id_buffer_view`
-      - called from: pipeline.py
+      - called from: pipeline.py, stage_a_registered_capture.py
     - `export_occlusion_diagnostics_csv`
       - called from: csv_export.py
     - `export_pipeline_results_to_pngs`
@@ -4354,6 +4780,8 @@ Notes:
       - called from: entry_dynamo.py
     - `export_raster_to_png`
       - called from: png_export.py, streaming.py
+    - `export_registered_stage_a_view`
+      - called from: pipeline.py
     - `export_view_image`
       - called from: streaming.py, view_raster_export.py
     - `export_view_raster`
@@ -4368,6 +4796,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `flat_colour_override`
+      - called from: stage_a_registration.py
     - `frame_export_geometry`
       - called from: color_id_buffer.py
     - `get_annotation_bbox`
@@ -4406,6 +4836,14 @@ Notes:
       - called from: core/geometry.py, pipeline.py
     - `make_view_basis`
       - called from: pipeline.py, revit/annotation.py
+    - `mark_reference_rectangle`
+      - called from: stage_a_registered_capture.py
+    - `marks_still_in_project`
+      - called from: stage_a_registered_capture.py
+    - `missing_override_setters`
+      - called from: stage_a_registration.py
+    - `nominal_fpp_ft`
+      - called from: stage_a_registered_capture.py
     - `normalize_applied_smooth_edges`
       - called from: thinrunner_streaming.py
     - `pca_oriented_extents_uv`
@@ -4417,7 +4855,7 @@ Notes:
     - `process_document_views_streaming`
       - called from: streaming.py
     - `project_bbox_corners_uv`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `project_bbox_uv_and_near_face_w`
       - called from: color_id_buffer.py
     - `projected_outer_loop_area_uv`
@@ -4432,6 +4870,8 @@ Notes:
       - called from: color_id_buffer.py
     - `record_error`
       - called from: revit/safe_api.py
+    - `registration_mark_segments`
+      - called from: stage_a_registered_capture.py
     - `render_model_front_to_back`
       - called from: pipeline.py
     - `reset_family_region_caches`
@@ -4481,7 +4921,7 @@ Notes:
     - `sort_views_by_level`
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
-      - called from: color_id_buffer.py
+      - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -4518,6 +4958,16 @@ Notes:
       - called from: entry_dynamo.py, streaming.py
     - `view_result_to_vop_row`
       - called from: streaming.py
+    - `view_state`
+      - called from: stage_a_registered_capture.py
+    - `view_state_verdict`
+      - called from: stage_a_registered_capture.py
+    - `white_membership_suppression`
+      - called from: stage_a_registered_capture.py
+    - `white_override_capability`
+      - called from: stage_a_registered_capture.py, stage_a_registration.py
+    - `white_override_capability_record`
+      - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
     - `xy_bounds_from_crop_box_all_corners`

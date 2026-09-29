@@ -11,6 +11,11 @@ Usage:
     IN[3] = Optional batch size (int)
     IN[4] = Export view raster PNGs — raw Revit view images for comparison (bool, default True)
     IN[5] = Enable Stage A color ID-buffer extraction (bool, default False)
+    IN[6] = Enable the Stage A REGISTERED capture (bool, default False): both
+            passes in one rolled-back TransactionGroup, registration marks,
+            membership white suppression, crop left alone (crop A on a
+            crop-inactive view). Needs IN[5] True; runs the annotation pass
+            itself. See tools/notes/HANDOFF_REGISTERED_CAPTURE.md.
 
 Output:
     Summary string with view count, annotation count, CSV paths
@@ -472,6 +477,9 @@ try:
         bool(IN[5]) if len(IN) > 5 and IN[5] is not None else False
     )
     cfg.enable_color_id_buffer_stage_a = enable_color_id_buffer_stage_a
+    cfg.color_id_buffer_registered_capture = (
+        bool(IN[6]) if len(IN) > 6 and IN[6] is not None else False
+    )
 
     print("="*60)
     print("DEBUG: About to call streaming")
@@ -479,6 +487,9 @@ try:
     print("  cfg.view_cache_dir = {}".format(cfg.view_cache_dir))
     print("  cfg.enable_color_id_buffer_stage_a = {}".format(
         cfg.enable_color_id_buffer_stage_a
+    ))
+    print("  cfg.color_id_buffer_registered_capture = {}".format(
+        cfg.color_id_buffer_registered_capture
     ))
     print("="*60)
 

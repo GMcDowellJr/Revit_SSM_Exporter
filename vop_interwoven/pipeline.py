@@ -1149,11 +1149,28 @@ def process_document_views(
                     # streaming.py copies every key of `out` into
                     # full_results, which is serialised.
                     export_geometry = {}
-                    out = export_color_id_buffer_view(
-                        doc, view, elements, cfg, diag=diag,
-                        raster=raster, elem_cache=elem_cache,
-                        geometry_out=export_geometry,
-                    )
+                    # The REGISTERED capture (Config.color_id_buffer_registered_
+                    # capture, default off) runs BOTH passes itself, inside one
+                    # rolled-back TransactionGroup, and returns the same shape
+                    # the two calls below build: the model result with the
+                    # annotation result nested under "annotation_pass". So the
+                    # separate annotation call is skipped for it.
+                    registered = bool(getattr(
+                        cfg, "color_id_buffer_registered_capture", False))
+                    if registered:
+                        from .stage_a_registered_capture import (
+                            export_registered_stage_a_view,
+                        )
+                        out = export_registered_stage_a_view(
+                            doc, view, elements, cfg, diag=diag,
+                            raster=raster, elem_cache=elem_cache,
+                        )
+                    else:
+                        out = export_color_id_buffer_view(
+                            doc, view, elements, cfg, diag=diag,
+                            raster=raster, elem_cache=elem_cache,
+                            geometry_out=export_geometry,
+                        )
                     t1 = _perf_now()
                     _tmark(TIMING_KEYS["RASTER_MODEL_MS"], t0, t1)
                     if isinstance(out, dict):
@@ -1185,7 +1202,8 @@ def process_document_views(
                     # annotation outcome is surfaced beside it, in the entry
                     # and in the Stage A summary, so it cannot go unnoticed
                     # either.
-                    if getattr(cfg, "color_id_buffer_annotation_pass", False):
+                    if (getattr(cfg, "color_id_buffer_annotation_pass", False)
+                            and not registered):
                         from .color_id_buffer import (
                             export_annotation_color_id_buffer_view,
                         )

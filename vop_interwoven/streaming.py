@@ -140,6 +140,25 @@ def _stage_a_annotation_summary(view_result):
     }
 
 
+def _stage_a_registration_summary(view_result):
+    """The REGISTERED capture's outcome (Config.color_id_buffer_registered_
+    capture), three-valued like the annotation summary above: "not_applicable"
+    when the view did not run it, else its success and the NAMES of its faults
+    -- a rollback that left marks behind or a view that did not read back
+    is a document fault, and has to be visible from the summary, not only from
+    a sidecar nobody opens."""
+    if "registration" not in view_result:
+        return {"registration_success": "not_applicable"}
+    record = view_result.get("registration") or {}
+    return {
+        "registration_success": bool(view_result.get("registration_success")),
+        "registration_faults": [f.get("fault") for f in record.get("faults") or []],
+        "registration_marks_drawn": "{0}/{1}".format(
+            (record.get("marks") or {}).get("created_count"),
+            (record.get("marks") or {}).get("expected_count")),
+    }
+
+
 class StreamingExporter:
     """Manages incremental export of pipeline results."""
     
@@ -350,6 +369,7 @@ class StreamingExporter:
                     "sidecar_path": view_result.get("sidecar_path"),
                 })
                 summary.update(_stage_a_annotation_summary(view_result))
+                summary.update(_stage_a_registration_summary(view_result))
             self.view_summaries.append(summary)
             return
 
@@ -372,6 +392,7 @@ class StreamingExporter:
             # it -- an absent annotation pass is distinguishable from a
             # failed one, which a bare False could not express.
             stage_a_summary.update(_stage_a_annotation_summary(view_result))
+            stage_a_summary.update(_stage_a_registration_summary(view_result))
             if stage_a_summary.get("annotation_pass_success") is False:
                 self.annotation_passes_failed += 1
             self.view_summaries.append(stage_a_summary)

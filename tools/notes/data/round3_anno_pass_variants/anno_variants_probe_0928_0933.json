@@ -1,0 +1,320 @@
+{
+  "captures": [
+    {
+      "annotation_tiff": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_0928_0933\\anno_pass_variants_probe\\v9_registration_marks\\color_id_buffer\\__Elevation_CropActive_19293413_anno.tiff",
+      "crop_boundary": {
+        "boundary_px_rects": null,
+        "mapping": null,
+        "must_be_subtracted": false,
+        "reason": "no row or column holds a straight non-palette run of >= 25% of the image: the crop boundary is NOT in this capture",
+        "status": "not_found"
+      },
+      "fiducials": {
+        "mapping": null,
+        "per_fiducial": null,
+        "status": "not_applicable"
+      },
+      "mapping_agreement": {
+        "F1_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F1_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F2_vs_bbox_fit": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F3_vs_F2": {
+          "reason": "one of the two mappings is not available",
+          "status": "unavailable"
+        },
+        "F3_vs_bbox_fit": {
+          "corners": [
+            {
+              "dx_px": 0.5448227601514191,
+              "dy_px": 0.6905709383015619,
+              "uv": [
+                -104.01772534812247,
+                62.7311886414472
+              ]
+            },
+            {
+              "dx_px": 0.3550514999151346,
+              "dy_px": 0.6905709383015619,
+              "uv": [
+                171.41561007680002,
+                62.7311886414472
+              ]
+            },
+            {
+              "dx_px": 0.5448227601514191,
+              "dy_px": 0.1545888036080214,
+              "uv": [
+                -104.01772534812247,
+                -4.810097715203943
+              ]
+            },
+            {
+              "dx_px": 0.3550514999151346,
+              "dy_px": 0.1545888036080214,
+              "uv": [
+                171.41561007680002,
+                -4.810097715203943
+              ]
+            }
+          ],
+          "px_per_ft_u_delta": -0.000688991620943824,
+          "px_per_ft_v_delta": -0.007935622248343321,
+          "status": "value",
+          "worst_corner_px": 0.6905709383015619
+        },
+        "probe_uv": [
+          -104.01772534812247,
+          -4.810097715203943,
+          171.41561007680002,
+          62.7311886414472
+        ]
+      },
+      "model_crop_boundary": {
+        "boundary_px_rects": null,
+        "model_tiff": "C:\\Users\\gmcdowell\\Documents\\VOP\\Exports\\FVoT\\probe_0928_0933\\anno_pass_variants_probe\\v9_registration_marks\\model\\color_id_buffer\\__Elevation_CropActive_19293413.tiff",
+        "status": "not_found"
+      },
+      "registration_marks": {
+        "annotation_to_model_px": {
+          "via_model_lattice": {
+            "offset_x": -151.83428577828545,
+            "offset_y": -274.9477337072524,
+            "scale_x": 1.063167027368729,
+            "scale_y": 1.0639616585178395
+          },
+          "via_model_marks": {
+            "offset_x": -152.17435791784237,
+            "offset_y": -274.97408714451876,
+            "scale_x": 1.0631559900053298,
+            "scale_y": 1.0637412871279346
+          }
+        },
+        "mapping": {
+          "a_u": 17.634706385735214,
+          "a_v": -17.621535716578727,
+          "b_u": 1977.135245863813,
+          "b_v": 1364.4899132540863
+        },
+        "mark_pixel_rects": [
+          [
+            173,
+            1426,
+            262,
+            1426
+          ],
+          [
+            165,
+            1330,
+            165,
+            1419
+          ],
+          [
+            4880,
+            1426,
+            4969,
+            1426
+          ],
+          [
+            4977,
+            1329,
+            4977,
+            1419
+          ],
+          [
+            173,
+            281,
+            262,
+            281
+          ],
+          [
+            165,
+            289,
+            165,
+            378
+          ],
+          [
+            4880,
+            281,
+            4969,
+            281
+          ],
+          [
+            4977,
+            289,
+            4977,
+            378
+          ],
+          [
+            173,
+            973,
+            262,
+            973
+          ],
+          [
+            4880,
+            973,
+            4969,
+            973
+          ],
+          [
+            2085,
+            1329,
+            2085,
+            1419
+          ],
+          [
+            2085,
+            289,
+            2085,
+            378
+          ]
+        ],
+        "model": {
+          "lattice_mapping": {
+            "a_u": 18.74863836664245,
+            "a_v": -18.74863836664245,
+            "b_u": 1950.1907162726857,
+            "b_v": 1176.8172174294282
+          },
+          "mapping": {
+            "a_u": 18.748443725979634,
+            "a_v": -18.744755084324325,
+            "b_u": 1949.828821772931,
+            "b_v": 1176.490169453467
+          },
+          "mark_pixel_rects": [
+            [
+              32,
+              1242,
+              127,
+              1242
+            ],
+            [
+              23,
+              1139,
+              23,
+              1234
+            ],
+            [
+              5036,
+              1242,
+              5131,
+              1242
+            ],
+            [
+              5139,
+              1139,
+              5139,
+              1234
+            ],
+            [
+              32,
+              24,
+              127,
+              24
+            ],
+            [
+              23,
+              33,
+              23,
+              128
+            ],
+            [
+              5036,
+              24,
+              5131,
+              24
+            ],
+            [
+              5139,
+              33,
+              5139,
+              128
+            ],
+            [
+              32,
+              760,
+              127,
+              760
+            ],
+            [
+              5036,
+              760,
+              5131,
+              760
+            ],
+            [
+              2065,
+              1139,
+              2065,
+              1234
+            ],
+            [
+              2065,
+              33,
+              2065,
+              128
+            ]
+          ],
+          "reason": null,
+          "status": "value",
+          "vs_lattice": {
+            "corners": [
+              {
+                "dx_px": -0.34164842074847,
+                "dy_px": -0.08344506031494348,
+                "uv": [
+                  -104.01772534812247,
+                  62.7311886414472
+                ]
+              },
+              {
+                "dx_px": -0.3952589477157744,
+                "dy_px": -0.08344506031494348,
+                "uv": [
+                  171.41561007680002,
+                  62.7311886414472
+                ]
+              },
+              {
+                "dx_px": -0.34164842074847,
+                "dy_px": -0.34572694336702625,
+                "uv": [
+                  -104.01772534812247,
+                  -4.810097715203943
+                ]
+              },
+              {
+                "dx_px": -0.3952589477157744,
+                "dy_px": -0.34572694336702625,
+                "uv": [
+                  171.41561007680002,
+                  -4.810097715203943
+                ]
+              }
+            ],
+            "px_per_ft_u_delta": -0.0001946406628157149,
+            "px_per_ft_v_delta": -0.0038832823181245146,
+            "status": "value",
+            "worst_corner_px": 0.3952589477157744
+          }
+        },
+        "must_be_subtracted": true,
+        "reason": null,
+        "status": "value"
+      },
+      "variant": "v9_registration_marks",
+      "view_id": 19293413,
+      "view_name": "__Elevation_CropActive"
+    }
+  ]
+}
