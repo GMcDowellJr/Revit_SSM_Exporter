@@ -189,3 +189,61 @@ each tick appears in the OTHER capture, so none is missing from the document.
 Each capture drops a different pair of the same four detail lines, all
 created, all read back at their requested UV. Why is not established; it
 needs a Revit run, not the analyzer.
+
+---
+
+# Run `probe_0928_0848` (probe `2026-09-23.3`, crop mode `authored_else_crop_a`)
+
+Views: `__Elevation_CropActive` 19293413 and `__Plan_CropInActive` 19291097.
+All ten variants `RAN`; every one `document_safe`; model re-export unchanged.
+
+## 1. Crop A works: the annotation capture lands ON the model lattice
+
+Plan_CropInActive, V7–V10: image **4285 × 10000 = frame_px exactly** (no
+`annotation_lattice_mismatch`, production success), `crop_applied: crop_a`.
+The V9 marks sit on the same pixels in both captures: annotation → model is
+the identity (x' = x, y' = y), and the model marks are ≤ 0.50 px from the
+recorded lattice. With crop A written, FitToPage's extent IS crop A, so the
+two passes register by construction, as the Plan_RVTLink view did by
+coincidence in round 3.
+
+Elevation (crop active): `authored_else_crop_a` left it alone, and every
+annotation TIFF is **byte-identical** to the `.2` run's `untouched` capture
+(V7/V10 `4cf7a33e…`, V9 `80e7efdf…`). On an active crop the mode is the same
+capture as before, which is what it claims to be.
+
+## 2. BUT: this plan's crop A is now the whole site — a DOCUMENT change, not code
+
+| run | model pass crop A (ft) | crop px | px/ft | model members | F2 pair |
+|---|---|---|---|---|---|
+| `probe_0923_1239` | [−119.9, 2226.2, 194.0, 2383.0] ≈ 314 × 157 | 5885 × 2940 | 18.75 | 4833 | Elevations, Views |
+| `probe_0928_0848` | [−666.1, 385.7, 367.0, 2796.8] ≈ 1033 × 2411 | 4285 × **10000** (capped) | **4.15** (33 dpi) | 4837 | Rooms, **Property Line Segments** |
+
+The model pass computes crop A before anything this round changed runs.
+Between the two runs `vop_interwoven/` changed only in the annotation pass's
+crop mode and in the registered capture, which the probe does not call. What
+changed is the view's content: four more model members, and an extent that
+now reaches property lines ~1,850 ft south of the authored crop. On a
+crop-inactive view, crop A is the content's extent, so one far-flung element
+sets the resolution of BOTH captures (here the 10 000 px height cap, 33 dpi).
+V0 is equally affected (4.14 px/ft). That is a model-pass property of
+crop-inactive views, separate from the annotation crop decision.
+
+## 3. The dropped mid-edge ticks are deterministic per view
+
+| view | annotation missing | model missing | same as before? |
+|---|---|---|---|
+| Elevation | `left_mid_h`, `right_mid_h` (white) | `mid_bottom_v` (model ink), `mid_top_v` (white) | **identical** to `probe_0923_1239` |
+| Plan_CropInActive | `left_mid_h`, `right_mid_h` (white) | `left_mid_h`, `right_mid_h` (white) | previous run: 12/12 in both |
+
+Repeatable on the elevation, and the same four detail lines each time: created,
+read back at their requested UV, collected and painted by the annotation pass
+(they have palette colours), and still not drawn. Only the four mid-edge
+ticks are ever lost; the eight corner ticks have never failed. The residual
+on an axis that loses its middle level goes back to 0 by construction.
+
+## 4. Unchanged
+
+V7 = V10 byte-identical again on both views (six views now). V8 = V7 on the
+plan too, because both F2 fiducials (a room and a property line segment) drew
+nothing.
