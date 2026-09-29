@@ -72,14 +72,33 @@ sidecars, and excludes the 12 tick ids from every annotation decode.
 - **Elevation annotation is nearly empty** (one non-mark element, which did not
   draw; three black view-reference labels). Round 3 already recorded that this
   elevation has no levels or grids.
-- **Plan_DWG's annotation capture is mostly the DWG.** A view-specific import is
-  view-owned, so membership (`OwnerViewId`) makes it annotation: 346 k px of its
-  palette colour, plus ~40 off-palette greens where its layers were not
-  flattened. 71 of its 88 annotation records have membership basis `unknown`
-  and no bbox, and none of them drew (Plan_RVTLink: the same shape).
-- **Section_CropActiveHidden's model capture holds only the marks**: two model
-  elements in its palette, neither drew. Its annotation TIFF is byte-identical to
-  Section_CropActive's. Why the model pass collected almost nothing for this
-  view is open.
+- **Plan_DWG's view-specific DWG is claimed by BOTH passes.** Import 19296946
+  ("in current view only", `membership_basis: owner_view`) is in the annotation
+  sidecar's `color_assignment_map` AND the model sidecar's, and it drew in both
+  images. Greg's rule: a view-specific DWG is annotation, a model-placed (3D)
+  DWG is model. The annotation side follows it; the model pass does not
+  exclude the view-owned import, so it is double-counted. ~40 off-palette
+  greens in the annotation render are DWG layers the flat override did not
+  reach. 71 of the view's 88 annotation records have membership basis
+  `unknown` and no bbox, and none of them drew (Plan_RVTLink: the same shape).
+- **Section_CropActiveHidden's model capture holds only the marks** -- by
+  design: the view has its model elements hidden (an early test). The
+  registration still fitted 12/12 in it, since the marks are not model
+  elements.
 - Model-capture off-palette counts are high on Plan_RVTLink (210 k) and RCP
   (214 k) — linked content, coloured by filters outside `color_assignment_map`.
+
+## 5. Error budget for coarse-grid use
+
+At the default ``cell_size_paper_in`` (1/8") and 150 dpi a grid cell is
+18.75 px on every uncapped view, whatever the view scale.
+
+| error source | worst on this run | as a share of a cell |
+|---|---|---|
+| annotation fit + model fit residuals, summed | 0.63 px | 3.4 % |
+| model marks vs the model's recorded crop lattice (``bounds_xy``) | 1.57 px (RCP) | 8.4 % |
+| known answer: Plan_DWG was captured at the model's own crop, so its transform should be the identity; measured | 1.17 px off at worst | 6.2 % |
+
+Plan_CropInActive is the exception: its crop A is capped to 10 000 px, so a cell
+is 4.15 px, and 0.61 px of residual is 15 % of a cell. That is the capture's
+coarseness, not the registration's -- in feet it is 0.15 ft.
