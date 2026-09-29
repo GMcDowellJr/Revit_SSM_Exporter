@@ -3290,8 +3290,8 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     created_link_category_filter_ids = []
     reused_link_category_filter_ids = []
     category_hidden_state = _hidden_category_state(doc, view)
-    # PROBE-ONLY SWITCH, read by getattr and absent from Config, like the
-    # annotation pass's three (see export_annotation_color_id_buffer_view):
+    # A Config parameter (config.py), read by getattr so a caller's partial
+    # config object still reaches the shipped default:
     #
     #   color_id_buffer_model_lines_visible
     #       False (default) -- OST_Lines is hidden with the other view-only
@@ -4668,9 +4668,8 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
 
 ANNOTATION_PASS_SCHEMA = "vop.stage_a.annotation_pass.v1"
 
-# The annotation pass's crop modes (probe-only switch
-# color_id_buffer_anno_crop_mode; see export_annotation_color_id_buffer_view).
-ANNO_CROP_MODES = ("frame_b", "untouched", "authored_else_crop_a")
+# The annotation pass's crop and suppression modes: Config's, the one list.
+from .config import ANNO_CROP_MODES, ANNO_MODEL_SUPPRESSION_MODES  # noqa: E402
 
 
 def _model_category_hidden_state(doc, view, diag=None, view_id=None):
@@ -4947,15 +4946,16 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     ).strip().lower()
     vertical = (fit_direction == "vertical")
 
-    # ---- two PROBE-ONLY opt-in switches -------------------------------
+    # ---- this pass's switches ----------------------------------------
     #
-    # Read with getattr and defaulted to today's behaviour, and DELIBERATELY
-    # absent from Config: they are not production settings, they have no
-    # to_dict()/from_dict() representation, and a capture that does not set
-    # them behaves exactly as it did before this block existed. A probe sets
-    # the attribute on its own cfg object. Both exist because the behaviour
-    # they change happens INSIDE this function's suppress transaction, where
-    # a caller has no window to do it itself:
+    # color_id_buffer_anno_model_suppression and color_id_buffer_anno_crop_mode
+    # are Config parameters (config.py), defaulted to the shipped frame-B
+    # behaviour; the registered capture sets the values it needs on its own
+    # copy. color_id_buffer_anno_smooth_edges_off is still probe-only and
+    # absent from Config. All three are read with getattr, so a caller's
+    # partial config object reaches the shipped default. They exist because
+    # the behaviour they change happens INSIDE this function's suppress
+    # transaction, where a caller has no window to do it itself:
     #
     #   color_id_buffer_anno_model_suppression
     #       "hide_categories" (default) -- hide every model category and
@@ -5014,7 +5014,7 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     # variant that measured nothing indistinguishable from one that did.
     anno_model_suppression = str(getattr(
         cfg, "color_id_buffer_anno_model_suppression", "hide_categories"))
-    if anno_model_suppression not in ("hide_categories", "external"):
+    if anno_model_suppression not in ANNO_MODEL_SUPPRESSION_MODES:
         raise ValueError(
             "color_id_buffer_anno_model_suppression must be 'hide_categories' or "
             "'external', got {0!r}".format(anno_model_suppression))

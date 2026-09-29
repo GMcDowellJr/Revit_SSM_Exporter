@@ -10,6 +10,12 @@ import os
 
 from .resolution_contract import DEFAULT_COLOR_ID_EXPORT_DPI
 
+# The Stage A annotation pass's crop modes and model-suppression modes. The
+# ONE list of each: color_id_buffer.py imports them for its own per-call check.
+# Their meaning is documented at export_annotation_color_id_buffer_view.
+ANNO_CROP_MODES = ("frame_b", "untouched", "authored_else_crop_a")
+ANNO_MODEL_SUPPRESSION_MODES = ("hide_categories", "external")
+
 
 class Config:
     """Configuration for VOP interwoven pipeline.
@@ -192,6 +198,21 @@ class Config:
         # Revit, and it changes what the annotation TIFF shows (dependent
         # annotation is kept; the crop is not widened).
         color_id_buffer_registered_capture=False,
+        # The Stage A passes' own knobs. Probe-only getattr switches until the
+        # registered capture became the default; the defaults are the SHIPPED
+        # two-pass behaviour, and the registered capture sets the values it
+        # needs on its own copies of the config (stage_a_registered_capture.py),
+        # so these matter only to the frame-B path, the named fallback.
+        #   color_id_buffer_anno_crop_mode: "frame_b" (widen the crop to frame
+        #     B), "untouched", or "authored_else_crop_a".
+        #   color_id_buffer_anno_model_suppression: "hide_categories" (hide
+        #     model categories and disable view filters) or "external" (the
+        #     caller has suppressed model content).
+        #   color_id_buffer_model_lines_visible: leave OST_Lines visible in the
+        #     MODEL pass, so the registration marks draw.
+        color_id_buffer_anno_crop_mode="frame_b",
+        color_id_buffer_anno_model_suppression="hide_categories",
+        color_id_buffer_model_lines_visible=False,
         # Stage A: swap the view onto a neutral phase filter for the capture.
         # Default OFF -- the swap shows phase-hidden content the view as
         # authored does not show, so the ID buffer would describe a phase
@@ -389,6 +410,19 @@ class Config:
         self.color_id_buffer_global_assignment_threshold = int(color_id_buffer_global_assignment_threshold)
         self.color_id_buffer_annotation_pass = bool(color_id_buffer_annotation_pass)
         self.color_id_buffer_registered_capture = bool(color_id_buffer_registered_capture)
+        self.color_id_buffer_anno_crop_mode = str(color_id_buffer_anno_crop_mode)
+        if self.color_id_buffer_anno_crop_mode not in ANNO_CROP_MODES:
+            raise ValueError("color_id_buffer_anno_crop_mode must be one of {0}, "
+                             "got {1!r}".format(ANNO_CROP_MODES,
+                                                self.color_id_buffer_anno_crop_mode))
+        self.color_id_buffer_anno_model_suppression = str(
+            color_id_buffer_anno_model_suppression)
+        if self.color_id_buffer_anno_model_suppression not in ANNO_MODEL_SUPPRESSION_MODES:
+            raise ValueError("color_id_buffer_anno_model_suppression must be one of "
+                             "{0}, got {1!r}".format(
+                                 ANNO_MODEL_SUPPRESSION_MODES,
+                                 self.color_id_buffer_anno_model_suppression))
+        self.color_id_buffer_model_lines_visible = bool(color_id_buffer_model_lines_visible)
         # Which axis ImageExportOptions.PixelSize sets. "horizontal" is the
         # shipped behaviour and the default; nothing changes unless a caller
         # asks for "vertical".
@@ -656,6 +690,10 @@ class Config:
             "color_id_buffer_cap_axis_px": self.color_id_buffer_cap_axis_px,
             "color_id_buffer_annotation_pass": self.color_id_buffer_annotation_pass,
             "color_id_buffer_registered_capture": self.color_id_buffer_registered_capture,
+            "color_id_buffer_anno_crop_mode": self.color_id_buffer_anno_crop_mode,
+            "color_id_buffer_anno_model_suppression": (
+                self.color_id_buffer_anno_model_suppression),
+            "color_id_buffer_model_lines_visible": self.color_id_buffer_model_lines_visible,
             "color_id_buffer_global_assignment_threshold": (
                 self.color_id_buffer_global_assignment_threshold
             ),
@@ -738,6 +776,12 @@ class Config:
                 "color_id_buffer_annotation_pass", False),
             color_id_buffer_registered_capture=d.get(
                 "color_id_buffer_registered_capture", False),
+            color_id_buffer_anno_crop_mode=d.get(
+                "color_id_buffer_anno_crop_mode", "frame_b"),
+            color_id_buffer_anno_model_suppression=d.get(
+                "color_id_buffer_anno_model_suppression", "hide_categories"),
+            color_id_buffer_model_lines_visible=d.get(
+                "color_id_buffer_model_lines_visible", False),
             color_id_buffer_cap_axis_px=d.get("color_id_buffer_cap_axis_px"),
             color_id_buffer_fit_direction=d.get("color_id_buffer_fit_direction", "horizontal"),
             color_id_neutral_phase_swap=d.get("color_id_neutral_phase_swap", False),
