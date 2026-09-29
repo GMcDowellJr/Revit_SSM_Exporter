@@ -440,7 +440,8 @@ def _partition_view_specific_imports(doc, resolved_ids, diag=None, view_id=None)
         if state["state"] == "not_applicable":
             kept.append(eid)
             continue
-        record = {"element_id": eid.IntegerValue, "view_specific": state}
+        record = {"element_id": eid.IntegerValue, "view_specific": state,
+                  "found_by": "paint_set"}
         if state["state"] == "value" and state["value"]:
             record["classification"] = "annotation"
             record["in_model_paint_set"] = False
@@ -462,6 +463,53 @@ def _partition_view_specific_imports(doc, resolved_ids, diag=None, view_id=None)
     return kept, records
 
 
+def _scan_view_specific_imports(doc, view, records, diag=None, view_id=None):
+    """Add every view-specific import IN THE VIEW that the paint set never saw.
+
+    The paint set reaches imports only through DWG collection, which
+    ``cfg.include_dwg_imports`` can switch off -- and switching it off stops
+    collection, not Revit drawing the import. A view-specific import is
+    annotation whatever that setting says, so it is found here, from the
+    view itself, and hidden with the rest (review, PR #218). Model-placed
+    imports the paint set did not collect stay as the setting left them.
+
+    A scan that fails appends a record with ``element_id`` None: the capture
+    cannot then say no annotation import is drawn, and fails loudly.
+    """
+    from Autodesk.Revit.DB import FilteredElementCollector, ImportInstance
+    from .revit.collection_policy import view_specific_import_state
+    known = set(r["element_id"] for r in records if r.get("element_id") is not None)
+    try:
+        found = list(FilteredElementCollector(doc, view.Id).OfClass(ImportInstance))
+    except Exception as ex:
+        records.append({
+            "element_id": None, "classification": "annotation",
+            "found_by": "view_scan", "suppressed": False,
+            "scan": {"state": "unavailable",
+                     "reason": "{0}: {1}".format(type(ex).__name__, ex)}})
+        if diag is not None:
+            diag.error(phase="color_id_buffer", callsite="scan_view_specific_imports",
+                       message="the view's imports could not be enumerated; a "
+                               "view-specific import may draw in this capture",
+                       view_id=view_id, exc=ex)
+        return
+    for elem in found:
+        eid = elem.Id.IntegerValue
+        if eid in known:
+            continue
+        state = view_specific_import_state(elem)
+        if state["state"] == "value" and state["value"]:
+            records.append({"element_id": eid, "view_specific": state,
+                            "found_by": "view_scan", "classification": "annotation",
+                            "in_model_paint_set": False})
+
+
+def _unsuppressed_view_specific_imports(records):
+    """The annotation imports this capture could not keep out of its image."""
+    return [r for r in records
+            if r.get("classification") == "annotation" and not r.get("suppressed")]
+
+
 def _hide_view_specific_imports(doc, view, records, diag=None, view_id=None):
     """Hide the model pass's ANNOTATION imports for its export.
 
@@ -473,16 +521,22 @@ def _hide_view_specific_imports(doc, view, records, diag=None, view_id=None):
 
     Only an import whose hidden state READ is hidden: one already hidden is
     left alone (it draws nothing anyway, and restore must not unhide it), and
-    one whose state cannot be read is left visible and recorded, since hiding
-    it could not be undone exactly.
+    one whose state cannot be read is left visible, since hiding it could not
+    be undone exactly. ``suppressed`` says whether each is absent from the
+    image; one that is not FAILS the capture (see
+    _unsuppressed_view_specific_imports): unpainted, its native pixels can
+    cover model geometry and erase model ids nothing can recover (review,
+    PR #218).
     """
     from Autodesk.Revit.DB import ElementId
     import System.Collections.Generic as SCG
     to_hide = []
     for record in records:
-        if record.get("classification") != "annotation":
+        if record.get("classification") != "annotation" or record.get(
+                "element_id") is None:
             continue
         record["hidden_by_capture"] = False
+        record["suppressed"] = False
         try:
             elem = doc.GetElement(ElementId(int(record["element_id"])))
             was_hidden = bool(elem.IsHidden(view))
@@ -492,7 +546,8 @@ def _hide_view_specific_imports(doc, view, records, diag=None, view_id=None):
                 "reason": "{0}: {1}".format(type(ex).__name__, ex)}
             record["left_visible_reason"] = (
                 "its hidden state could not be read, so hiding it could not be "
-                "undone exactly; it draws, unpainted, in this capture")
+                "undone exactly; it draws, unpainted, in this capture, which "
+                "therefore fails")
             if diag is not None:
                 diag.warn(phase="color_id_buffer",
                           callsite="hide_view_specific_import",
@@ -500,7 +555,9 @@ def _hide_view_specific_imports(doc, view, records, diag=None, view_id=None):
                           elem_id=record["element_id"])
             continue
         record["hidden_before_capture"] = {"state": "value", "value": was_hidden}
-        if not was_hidden:
+        if was_hidden:
+            record["suppressed"] = True
+        else:
             to_hide.append(record)
     if not to_hide:
         return
@@ -521,6 +578,7 @@ def _hide_view_specific_imports(doc, view, records, diag=None, view_id=None):
         return
     for record in to_hide:
         record["hidden_by_capture"] = True
+        record["suppressed"] = True
 
 
 def _unhide_view_specific_imports(view, records):
@@ -3851,6 +3909,8 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         resolved_ids, view_specific_imports = _partition_view_specific_imports(
             doc, resolved_ids, diag=diag, view_id=view_id,
         )
+        _scan_view_specific_imports(doc, view, view_specific_imports,
+                                    diag=diag, view_id=view_id)
         count_host = len(resolved_ids)
 
         # One colorability answer for this whole capture, resolved once here
@@ -4504,6 +4564,23 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     # cannot report a clean Stage A pass over an export whose size Revit
     # never actually delivered.
     failure_reason = None
+    unsuppressed_imports = _unsuppressed_view_specific_imports(view_specific_imports)
+    if unsuppressed_imports:
+        # An annotation import drew in the MODEL image: its unpainted pixels
+        # may cover model geometry, and no decode can tell them apart from
+        # background. A failed view, not a clean one with a note (the same
+        # rule as the dimension mismatch below). The files are still written.
+        failure_reason = "view_specific_import_not_suppressed"
+        if diag is not None:
+            diag.error(
+                phase="color_id_buffer",
+                callsite="view_specific_import_suppression",
+                message="view failed: {0} view-specific import(s) could not be kept "
+                        "out of the model capture: {1}".format(
+                            len(unsuppressed_imports),
+                            [r.get("element_id") for r in unsuppressed_imports]),
+                view_id=view_id,
+            )
     if dim_report.get("dim_check") == "mismatch":
         failure_reason = "export_dim_mismatch"
         if diag is not None:

@@ -55,7 +55,7 @@ def _world(view_dwg=None):
 
 
 def _run(tmp_path, monkeypatch, doc, view, elements, imports, diag=None,
-         at_export=None):
+         at_export=None, results=None):
     def _expand(doc_, view_, elems, cfg, diag=None, elem_cache=None,
                 dwg_omitted_out=None):
         return ([{"element": e, "source_type": "HOST"} for e in elems]
@@ -70,6 +70,8 @@ def _run(tmp_path, monkeypatch, doc, view, elements, imports, diag=None,
             at_export()
     doc.on_export_image = _on_export
     result = _export(doc, view, elements, _cfg(tmp_path), diag or FakeDiag(), _raster())
+    if results is not None:
+        results.append(result)
     with open(result["sidecar_path"]) as handle:
         return json.load(handle), hidden_at_export
 
@@ -217,6 +219,92 @@ def test_an_unreadable_hidden_state_is_left_visible_not_guessed(tmp_path, monkey
 
 
 def test_a_view_without_imports_records_an_empty_list(tmp_path, monkeypatch):
-    doc, view, elements, _imports = _world()
+    doc, view, elements = _furnished_world()
     sidecar, _hidden = _run(tmp_path, monkeypatch, doc, view, elements, [])
     assert sidecar["view_specific_imports"] == []
+
+
+# ---- review, PR #218: an annotation import that stays in the image fails ----
+
+def test_an_import_that_cannot_be_hidden_fails_the_capture(tmp_path, monkeypatch):
+    """Unpainted, its native pixels can cover model ids nothing can recover:
+    a failed view, not a clean one with a note. The files are still written."""
+    diag, results = FakeDiag(), []
+    doc, view, elements, imports = _world(
+        view_dwg=_Unreadable(VIEW_DWG, True, owner_view_id=42))
+    sidecar, _hidden = _run(tmp_path, monkeypatch, doc, view, elements, imports,
+                            diag=diag, results=results)
+    [result] = results
+    assert result["success"] is False
+    assert result["failure_reason"] == "view_specific_import_not_suppressed"
+    assert _record(sidecar, VIEW_DWG)["suppressed"] is False
+    assert any(e.get("callsite") == "view_specific_import_suppression"
+               for e in diag.errors)
+
+
+def test_a_hide_that_raises_fails_the_capture(tmp_path, monkeypatch):
+    results = []
+    doc, view, elements, imports = _world()
+
+    def _refuse(_ids):
+        raise RuntimeError("HideElements refused")
+    view.HideElements = _refuse
+    sidecar, _hidden = _run(tmp_path, monkeypatch, doc, view, elements, imports,
+                            results=results)
+    assert results[0]["failure_reason"] == "view_specific_import_not_suppressed"
+    assert "HideElements raised" in _record(sidecar, VIEW_DWG)["left_visible_reason"]
+
+
+def test_a_suppressed_import_leaves_the_capture_successful(tmp_path, monkeypatch):
+    """The CONTROL for both: hidden, or already hidden, is suppressed."""
+    for already_hidden in (False, True):
+        results = []
+        doc, view, elements, imports = _world()
+        if already_hidden:
+            view.hidden_elements.add(VIEW_DWG)
+        sidecar, _hidden = _run(tmp_path, monkeypatch, doc, view, elements, imports,
+                                results=results)
+        assert results[0]["success"] is True, already_hidden
+        assert _record(sidecar, VIEW_DWG)["suppressed"] is True
+
+
+def test_a_view_specific_import_the_paint_set_never_saw_is_still_hidden(
+        tmp_path, monkeypatch):
+    """include_dwg_imports off stops COLLECTION, not Revit drawing the import:
+    the view's own imports are scanned, and the view-specific one hidden."""
+    doc, view, elements, imports = _world()
+    sidecar, hidden_at_export = _run(tmp_path, monkeypatch, doc, view, elements, [])
+    record = _record(sidecar, VIEW_DWG)
+    assert record["found_by"] == "view_scan"
+    assert record["suppressed"] is True and record["restore"] == "restored"
+    assert all(VIEW_DWG in h for h in hidden_at_export)
+    assert VIEW_DWG not in view.hidden_elements
+
+
+def test_the_scan_leaves_a_model_placed_import_to_the_dwg_setting(tmp_path, monkeypatch):
+    """The CONTROL: a model-placed import the paint set did not collect is
+    neither recorded nor hidden -- that is the setting's call, not this rule's."""
+    doc, view, elements, imports = _world()
+    sidecar, hidden_at_export = _run(tmp_path, monkeypatch, doc, view, elements, [])
+    assert [r for r in sidecar["view_specific_imports"]
+            if r["element_id"] == MODEL_DWG] == []
+    assert all(MODEL_DWG not in h for h in hidden_at_export)
+
+
+def test_a_failed_scan_fails_the_capture(tmp_path, monkeypatch):
+    """Cannot enumerate the view's imports -> cannot say none is drawn."""
+    import tests.stage_a_capture_fakes as fakes
+    results = []
+    doc, view, elements, imports = _world()
+    original = fakes.FakeCollector.OfClass
+
+    def _of_class(self, cls):
+        if cls is fakes.FakeImportInstanceClass:
+            raise RuntimeError("collector gone")
+        return original(self, cls)
+    monkeypatch.setattr(fakes.FakeCollector, "OfClass", _of_class)
+    sidecar, _hidden = _run(tmp_path, monkeypatch, doc, view, elements, imports,
+                            results=results)
+    assert results[0]["failure_reason"] == "view_specific_import_not_suppressed"
+    [sentinel] = [r for r in sidecar["view_specific_imports"] if r["element_id"] is None]
+    assert sentinel["scan"]["state"] == "unavailable"
