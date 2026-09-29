@@ -308,3 +308,32 @@ def test_a_failed_scan_fails_the_capture(tmp_path, monkeypatch):
     assert results[0]["failure_reason"] == "view_specific_import_not_suppressed"
     [sentinel] = [r for r in sidecar["view_specific_imports"] if r["element_id"] is None]
     assert sentinel["scan"]["state"] == "unavailable"
+
+
+def test_an_unclassifiable_import_outside_the_paint_set_fails_the_capture(
+        tmp_path, monkeypatch):
+    """The scan finds an import the paint set never saw and cannot read its
+    ViewSpecific: if it is view-specific it draws unpainted, so the capture
+    cannot claim success (review, PR #218)."""
+    results = []
+    doc, view, elements, imports = _world(
+        view_dwg=ImportInstance(VIEW_DWG, RuntimeError("no ViewSpecific")))
+    sidecar, _hidden = _run(tmp_path, monkeypatch, doc, view, elements, [],
+                            results=results)
+    record = _record(sidecar, VIEW_DWG)
+    assert record["classification"] == "unresolved"
+    assert record["found_by"] == "view_scan"
+    assert results[0]["failure_reason"] == "view_specific_import_not_suppressed"
+
+
+def test_an_unclassifiable_import_in_the_paint_set_does_not_fail_it(
+        tmp_path, monkeypatch):
+    """The CONTROL: painted with its own palette colour, its pixels stay
+    identifiable -- the behaviour before the rule, and no failure."""
+    results = []
+    doc, view, elements, imports = _world(
+        view_dwg=ImportInstance(VIEW_DWG, RuntimeError("no ViewSpecific")))
+    sidecar, _hidden = _run(tmp_path, monkeypatch, doc, view, elements, imports,
+                            results=results)
+    assert _record(sidecar, VIEW_DWG)["found_by"] == "paint_set"
+    assert results[0]["success"] is True

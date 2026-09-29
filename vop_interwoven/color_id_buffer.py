@@ -502,12 +502,30 @@ def _scan_view_specific_imports(doc, view, records, diag=None, view_id=None):
             records.append({"element_id": eid, "view_specific": state,
                             "found_by": "view_scan", "classification": "annotation",
                             "in_model_paint_set": False})
+        elif state["state"] != "value":
+            # Unclassifiable AND outside the paint set: if it is view-specific
+            # it draws unpainted over model ids, and nothing here can say it
+            # is not. Recorded, and it fails the capture (review, PR #218).
+            records.append({"element_id": eid, "view_specific": state,
+                            "found_by": "view_scan", "classification": "unresolved",
+                            "in_model_paint_set": False, "suppressed": False})
+            if diag is not None:
+                diag.error(phase="color_id_buffer",
+                           callsite="scan_view_specific_imports",
+                           message="an import outside the paint set could not be "
+                                   "classified: {0}".format(state.get("reason")),
+                           view_id=view_id, elem_id=eid)
 
 
 def _unsuppressed_view_specific_imports(records):
-    """The annotation imports this capture could not keep out of its image."""
+    """The imports that may draw UNPAINTED in this capture: annotation ones it
+    could not hide, and unclassifiable ones outside the paint set. (An
+    unclassifiable import IN the paint set is painted with its own palette
+    colour, so its pixels stay identifiable; it does not fail the capture.)"""
     return [r for r in records
-            if r.get("classification") == "annotation" and not r.get("suppressed")]
+            if (r.get("classification") == "annotation" and not r.get("suppressed"))
+            or (r.get("classification") == "unresolved"
+                and not r.get("in_model_paint_set"))]
 
 
 def _hide_view_specific_imports(doc, view, records, diag=None, view_id=None):
