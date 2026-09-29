@@ -109,7 +109,7 @@ def _probe_contract():
 
 
 PROBE_NAME = "stage_a_anno_pass_variants"
-PROBE_VERSION = "2026-09-29.2"
+PROBE_VERSION = "2026-09-29.3"
 
 V0 = "v0_control"
 V7 = "v7_no_crop"
@@ -3269,8 +3269,12 @@ def _run_native(raw_view, output_dir, selection="all", export_dpi=DEFAULT_EXPORT
 
     # ---- F2: the fiducial pair, chosen once --------------------------------
     fiducial_choice = {"state": "unavailable",
-                       "reason": "{0} was not requested for this run".format(V8)}
-    if V8 in selected:
+                       "reason": "no fiducial variant ({0}) was requested for this "
+                                 "run".format(", ".join(sorted(FIDUCIAL_VARIANTS)))}
+    # EVERY fiducial variant, not only V8: V9 paints the pair too, and a V9-only
+    # run (probe_0928_0918) came back DID_NOT_MEASURE because the pair was
+    # only chosen when V8 was selected.
+    if any(v in FIDUCIAL_VARIANTS for v in selected):
         if view_basis is None:
             fiducial_choice = {"state": "unavailable",
                                "reason": "no view basis, so no model element can be "

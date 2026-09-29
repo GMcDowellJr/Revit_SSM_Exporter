@@ -2172,3 +2172,15 @@ def test_a_parameter_filter_is_judged_by_its_categories_and_its_rule():
     assert hit[0]["passes"]["value"] is True
     assert miss[0]["passes"]["value"] is False
     assert other_category[0]["passes"]["value"] is False
+
+
+def test_the_fiducial_pair_is_chosen_for_ANY_fiducial_variant_not_only_v8():
+    """A V9-only run (probe_0928_0918) came back DID_NOT_MEASURE: the pair was
+    chosen only when V8 was selected, and V9 paints it too. Read from the
+    source because _run_native needs a Revit document. Mutation: restore
+    ``if V8 in selected:``."""
+    import inspect
+    source = inspect.getsource(probe._run_native)
+    assert "if any(v in FIDUCIAL_VARIANTS for v in selected):" in source
+    assert "if V8 in selected:" not in source
+    assert probe.V9 in probe.FIDUCIAL_VARIANTS

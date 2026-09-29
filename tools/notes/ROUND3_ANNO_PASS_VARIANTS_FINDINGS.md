@@ -276,3 +276,29 @@ In probe `2026-09-29.2` the middle level moves to 40 % of the crop
 (`MARK_MID_FRACTION`): still in the middle third, off both centre lines. That
 sidesteps the loss, and it tests the correlation: if the mid ticks draw there,
 the centre line was the cause.
+
+---
+
+# Run `probe_0928_0933` (probe `2026-09-29.2`, V9 only, elevation) — mid level at 40 %
+
+**12/12 ticks in both captures**, on the view that lost the same four mid-edge
+ticks in three earlier runs. The only change was the middle level moving from
+50 % to 40 % of the crop, so every mid tick left the image centre lines. That
+is consistent with the centre-line explanation and does not prove the
+mechanism; it does remove the loss here.
+
+| capture | px/ft u / v | residual max px u / v | vs recorded lattice |
+|---|---|---|---|
+| annotation | 17.6347 / 17.6215 | **0.19 / 0.32** | — |
+| model | 18.7484 / 18.7448 | **0.26 / 0.26** | **0.40 px** worst corner |
+
+The residuals are real now: three levels per axis, and they agree to a third
+of a pixel. Annotation → model: via the marks x' = 1.063156 x − 152.17,
+y' = 1.063741 y − 274.97; via the lattice x' = 1.063167 x − 151.83,
+y' = 1.063962 y − 274.95. The two agree to 0.34 px in offset. The elevation
+scale is unchanged from every earlier run (17.635).
+
+`DID_NOT_MEASURE` on this row is a probe defect, not a capture one: the F2
+pair was chosen only when V8 was in the selection, so a V9-only run painted no
+fiducials. Fixed in `2026-09-29.3`: the pair is now chosen for any fiducial
+variant.
