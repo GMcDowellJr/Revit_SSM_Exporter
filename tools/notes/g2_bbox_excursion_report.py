@@ -137,6 +137,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from tools.clamp_pad_geometry import clamp_pad_geometry  # noqa: E402
+from tools.stage_a_sidecar_shapes import model_entry_uv_corners  # noqa: E402
 
 
 # A summary statistic is printed only for a cell with at least this many
@@ -318,7 +319,7 @@ def measure_view(sidecar_path, mappings):
     no_ref = 0
     for elem_id_str, (c0, r0, c1, r1, npx) in extents.items():
         entry = host_ref.get(elem_id_str) or {}
-        corners = entry.get("bbox_corners_uv")
+        corners = model_entry_uv_corners(entry)
         if not corners:
             no_ref += 1
             continue

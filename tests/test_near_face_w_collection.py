@@ -171,7 +171,7 @@ def test_collects_host_and_link_entries_with_bbox_and_near_face_w(monkeypatch):
     host_entry = result["host"]["1001"]
     assert host_entry["category"] == "Walls"
     assert host_entry["near_face_w"] is not None
-    assert host_entry["bbox_corners_uv"] == [[0, 0], [2, 0], [2, 2], [0, 2]]
+    assert host_entry["uv_rect"] == [0, 0, 2, 2]
 
     assert set(result["link"].keys()) == {"9001:501", "9001:502"}
     link_entry_a = result["link"]["9001:501"]
@@ -179,10 +179,10 @@ def test_collects_host_and_link_entries_with_bbox_and_near_face_w(monkeypatch):
     assert link_entry_a["link_elem_id"] == 501
     assert link_entry_a["category"] == "Walls"
     assert link_entry_a["near_face_w"] is not None
-    assert link_entry_a["bbox_corners_uv"] == [[10, 10], [12, 10], [12, 12], [10, 12]]
+    assert link_entry_a["uv_rect"] == [10, 10, 12, 12]
 
     link_entry_b = result["link"]["9001:502"]
-    assert link_entry_b["bbox_corners_uv"] == [[20, 20], [22, 20], [22, 22], [20, 22]]
+    assert link_entry_b["uv_rect"] == [20, 20, 22, 22]
 
     assert not diag.errors
 
@@ -204,7 +204,8 @@ def test_host_element_with_no_bbox_still_gets_an_entry_recorded_as_none():
     # whole dict: Stage A step 1 adds "source"/"category_state" alongside
     # them (see test_dwg_source_identity.py, which is where that addition is
     # pinned). Their meaning is unchanged, which is what this asserts.
-    assert entry["bbox_corners_uv"] is None
+    assert entry["uv_rect"]["state"] == "unavailable"
+    assert entry["uv_rect"]["reason"]
     assert entry["near_face_w"] is None
     assert entry["category"] == "Walls"
     assert any(w["callsite"] == "near_face_w.host" for w in diag.warnings), (

@@ -1293,6 +1293,56 @@ def _near_face_w_category_name(elem):
     return getattr(cat, "Name", None)
 
 
+def _uv_rect_or_state(corners_uv):
+    """C3: the UV AABB as ``[umin, vmin, umax, vmax]`` from
+    project_bbox_uv_and_near_face_w's four corners, or an "unavailable" state
+    when the projection failed (no view basis, or see diagnostics)."""
+    if corners_uv is None:
+        return _gs_unavailable(
+            "bbox present but it could not be projected to view UV (no view "
+            "basis, or see diagnostics for the failing transform)")
+    (u0, v0), _c1, (u1, v1), _c3 = corners_uv
+    return [u0, v0, u1, v1]
+
+
+def _bbox_transform_or_state(bbox, outer_transform, diag=None, view_id=None,
+                             elem_id=None, callsite="near_face_w.bbox_transform"):
+    """C3: None when the AABB is exact; the oriented-box record when the
+    transform rotates; an "unavailable" state when it could not be read."""
+    from .revit.collection import bbox_oriented_transform
+    try:
+        return bbox_oriented_transform(bbox, outer_transform=outer_transform)
+    except Exception as ex:
+        if diag is not None:
+            diag.warn(phase="collection", callsite=callsite,
+                      message="bbox transform could not be read; the AABB is kept "
+                              "and the oriented box is not recoverable: {0}".format(ex),
+                      view_id=view_id, elem_id=elem_id)
+        return _gs_unavailable("{0}: {1}".format(type(ex).__name__, ex))
+
+
+def _link_bbox_transform_or_state(proxy, diag=None, view_id=None, elem_id=None):
+    """C3 for a LINK element: the linked element's own bbox under the link
+    transform. An element that cannot be re-read is recorded, not assumed
+    axis-aligned."""
+    elem = getattr(proxy, "element", None)
+    try:
+        link_bbox = elem.get_BoundingBox(None) if elem is not None else None
+    except Exception as ex:
+        link_bbox = None
+        reason = "linked element bbox read raised {0}: {1}".format(type(ex).__name__, ex)
+    else:
+        reason = "the linked element's own bbox could not be read"
+    if link_bbox is None:
+        if diag is not None:
+            diag.warn(phase="collection", callsite="near_face_w.link.bbox_transform",
+                      message=reason, view_id=view_id, elem_id=elem_id)
+        return _gs_unavailable(reason)
+    return _bbox_transform_or_state(
+        link_bbox, getattr(proxy, "transform", None), diag=diag, view_id=view_id,
+        elem_id=elem_id, callsite="near_face_w.link.bbox_transform")
+
+
 def _plain_or_state(state):
     """C2 writer shape for a field read three-valued: the bare value when the
     read succeeded, the state object (with its reason) otherwise. Readers
@@ -1357,15 +1407,18 @@ def _collect_near_face_w_data(
     instances at all.
 
     Returns {"host": {"<elem_id>": entry}, "link": {"<link_inst_id>:<link_elem_id>": entry}}
-    where entry is {"bbox_corners_uv": [[u,v],...] | None, "near_face_w": float | None,
-    "category": str | None, "bbox_3d": <three-valued>}; LINK entries additionally
+    where entry is {"uv_rect": [umin, vmin, umax, vmax] | <unavailable state>,
+    "near_face_w": float | None, "category": str | None,
+    "bbox_3d": {"min": [x,y,z], "max": [x,y,z]} | <unavailable state>} plus
+    "bbox_transform" ONLY when the bbox's transform rotates it (C3: see
+    revit/collection.bbox_oriented_transform); LINK entries additionally
     carry "link_inst_id"/"link_elem_id" ints for the identity resolver's
     convenience. "bbox_3d" (Stage A step 4, decision B) is the element's
     model/host-space axis-aligned extent, three-valued, from the same
-    transformed corner set as bbox_corners_uv -- see bbox_world_aabb() for
+    transformed corner set as uv_rect -- see bbox_world_aabb() for
     why it is an upper bound rather than the element's oriented shape. A bbox or
-    view basis that cannot be resolved records near_face_w/bbox_corners_uv
-    as None rather than omitting the element entirely -- CLAUDE.md's "no
+    view basis that cannot be resolved records near_face_w None and uv_rect as
+    an "unavailable" state object rather than omitting the element entirely -- CLAUDE.md's "no
     silent failure": every element in the resolved set gets an entry.
 
     ``link_proxies`` lets the caller hand in an already-collected view-scoped
@@ -1423,8 +1476,9 @@ def _collect_near_face_w_data(
             context={"view_id": view_id, "elem_id": elem_id_int, "source_type": "HOST"},
         )
         near_face_w = None
-        bbox_corners_uv = None
+        uv_rect = _gs_unavailable("no bbox resolvable for this element")
         bbox_3d = _gs_unavailable("no bbox resolvable for this element")
+        bbox_transform = None
         if bbox is not None:
             # Computed together (not via a separate estimate_nearest_depth_
             # from_bbox() call) so near_face_w and bbox_corners_uv are always
@@ -1436,6 +1490,7 @@ def _collect_near_face_w_data(
                 bbox, vb, diag=diag, view_id=view_id, elem_id=elem_id_int,
             )
             near_face_w = _finite_or_none(near_face_w)
+            uv_rect = _uv_rect_or_state(bbox_corners_uv)
             # Stage A step 4 / decision B: the 3D extent, from the SAME bbox
             # and the same transform ladder. bbox_world_aabb() shares
             # _bbox_world_corners() with the projection above precisely so
@@ -1443,21 +1498,25 @@ def _collect_near_face_w_data(
             aabb = bbox_world_aabb(
                 bbox, diag=diag, view_id=view_id, elem_id=elem_id_int)
             bbox_3d = (
-                _gs_value(aabb) if aabb is not None
+                aabb if aabb is not None
                 else _gs_unavailable(
                     "bbox present but its corners could not be resolved to "
                     "host space (see diagnostics for the failing transform)")
             )
+            bbox_transform = _bbox_transform_or_state(
+                bbox, None, diag=diag, view_id=view_id, elem_id=elem_id_int)
         elif diag is not None:
             diag.warn(
                 phase="collection",
                 callsite="near_face_w.host",
-                message="No bbox resolvable; near_face_w/bbox_corners_uv recorded as None",
+                message="No bbox resolvable; near_face_w/uv_rect recorded as unavailable",
                 view_id=view_id,
                 elem_id=elem_id_int,
             )
         host_out[str(elem_id_int)] = {
-            "bbox_corners_uv": bbox_corners_uv,
+            # C3: the UV AABB as [umin, vmin, umax, vmax] (pre-C3 sidecars:
+            # "bbox_corners_uv", its four corners -- exactly derivable).
+            "uv_rect": uv_rect,
             "near_face_w": near_face_w,
             # C2: one plain string (None = the element has no Category, or
             # the read failed -- "category_state" below says which).
@@ -1495,6 +1554,8 @@ def _collect_near_face_w_data(
             # sidecar's "view_specific_imports", which keeps every import
             # whose ViewSpecific could not be read (it stays in this pass).
         }
+        if bbox_transform is not None:
+            host_out[str(elem_id_int)]["bbox_transform"] = bbox_transform
         # C2: a category that READ is exactly "category" above, so its state
         # object is written only when the read failed (its reason is the only
         # thing "category": None cannot carry).
@@ -1547,13 +1608,15 @@ def _collect_near_face_w_data(
                 context={"view_id": view_id, "elem_id": link_elem_id_int, "source_type": "LINK"},
             )
             near_face_w = None
-            bbox_corners_uv = None
+            uv_rect = _gs_unavailable("no bbox resolvable for this link element")
             bbox_3d = _gs_unavailable("no bbox resolvable for this link element")
+            bbox_transform = None
             if bbox_host is not None:
                 bbox_corners_uv, near_face_w = project_bbox_uv_and_near_face_w(
                     bbox_host, vb, diag=diag, view_id=view_id, elem_id=link_elem_id_int,
                 )
                 near_face_w = _finite_or_none(near_face_w)
+                uv_rect = _uv_rect_or_state(bbox_corners_uv)
                 # Already host-space (see the note above on
                 # LinkedElementProxy.get_BoundingBox), so no link transform
                 # is passed here either -- the 3D AABB and the UV footprint
@@ -1561,22 +1624,29 @@ def _collect_near_face_w_data(
                 aabb = bbox_world_aabb(
                     bbox_host, diag=diag, view_id=view_id, elem_id=link_elem_id_int)
                 bbox_3d = (
-                    _gs_value(aabb) if aabb is not None
+                    aabb if aabb is not None
                     else _gs_unavailable(
                         "bbox present but its corners could not be resolved to "
                         "host space (see diagnostics for the failing transform)")
                 )
+                # The proxy's bbox is ALREADY an AABB of the linked element's
+                # bbox under (link transform after bbox.Transform) -- see
+                # linked_documents._transform_bbox_to_host -- so its own
+                # Transform says nothing. The orientation is read from the
+                # linked element's bbox and the link transform, composed.
+                bbox_transform = _link_bbox_transform_or_state(
+                    proxy, diag=diag, view_id=view_id, elem_id=link_elem_id_int)
             elif diag is not None:
                 diag.warn(
                     phase="collection",
                     callsite="near_face_w.link",
-                    message="No bbox resolvable; near_face_w/bbox_corners_uv recorded as None",
+                    message="No bbox resolvable; near_face_w/uv_rect recorded as unavailable",
                     view_id=view_id,
                     elem_id=link_elem_id_int,
                 )
             key = "{0}:{1}".format(link_inst_id_int, link_elem_id_int)
             link_out[key] = {
-                "bbox_corners_uv": bbox_corners_uv,
+                "uv_rect": uv_rect,
                 "near_face_w": near_face_w,
                 "category": cat_name,
                 # Stage A step 4, additive -- see the host entry's note.
@@ -1584,6 +1654,8 @@ def _collect_near_face_w_data(
                 "link_inst_id": link_inst_id_int,
                 "link_elem_id": link_elem_id_int,
             }
+            if bbox_transform is not None:
+                link_out[key]["bbox_transform"] = bbox_transform
     return {"host": host_out, "link": link_out}
 
 

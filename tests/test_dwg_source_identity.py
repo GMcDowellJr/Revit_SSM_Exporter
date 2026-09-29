@@ -97,6 +97,11 @@ class _FakeLinkedElementProxy:
         self.Category = category
         self.source_type = source_type
         self._bbox = bbox
+        # C3 reads the linked element's own bbox and the link transform.
+        # This proxy's bbox is already host-space and untransformed, so the
+        # element is itself and the link transform is the identity.
+        self.element = self
+        self.transform = None
 
     def get_BoundingBox(self, _view):
         return self._bbox
@@ -241,7 +246,7 @@ def test_dwg_entry_has_source_dwg_category_and_bbox():
     assert entry["category"] == "site-plan.dwg"
     assert "category_state" not in entry
     # Same bbox shape as a host record, from the same projection call.
-    assert entry["bbox_corners_uv"] == [[5, 5], [9, 5], [9, 9], [5, 9]]
+    assert entry["uv_rect"] == [5, 5, 9, 9]
     assert entry["near_face_w"] is not None
     assert not diag.errors
 
@@ -372,9 +377,10 @@ def test_import_instance_detection_agrees_with_collection_policy():
 
 # --- HOST/LINK records are untouched ----------------------------------------
 
-_PRE_CHANGE_HOST_KEYS = ("bbox_corners_uv", "near_face_w", "category")
+# C3: "bbox_corners_uv" became "uv_rect" ([umin, vmin, umax, vmax]).
+_PRE_CHANGE_HOST_KEYS = ("uv_rect", "near_face_w", "category")
 _PRE_CHANGE_LINK_KEYS = (
-    "bbox_corners_uv", "near_face_w", "category", "link_inst_id", "link_elem_id",
+    "uv_rect", "near_face_w", "category", "link_inst_id", "link_elem_id",
 )
 # Stage A step 1: source identity, host entries only.
 # C1 (2026-09-29): import_symbol_state / view_specific_state are no longer
@@ -405,7 +411,7 @@ def test_fixture_without_dwg_is_unchanged_under_the_pre_change_keys(monkeypatch)
 
     host_entry = result["host"]["1001"]
     assert {k: host_entry[k] for k in _PRE_CHANGE_HOST_KEYS} == {
-        "bbox_corners_uv": [[0, 0], [2, 0], [2, 2], [0, 2]],
+        "uv_rect": [0, 0, 2, 2],
         "near_face_w": host_entry["near_face_w"],
         "category": "Walls",
     }
@@ -421,7 +427,7 @@ def test_fixture_without_dwg_is_unchanged_under_the_pre_change_keys(monkeypatch)
     assert link_entry["category"] == "Walls"
     assert link_entry["link_inst_id"] == 9001
     assert link_entry["link_elem_id"] == 501
-    assert link_entry["bbox_corners_uv"] == [[10, 10], [12, 10], [12, 12], [10, 12]]
+    assert link_entry["uv_rect"] == [10, 10, 12, 12]
 
 
 def test_host_record_gains_exactly_the_reviewed_new_keys():
@@ -469,7 +475,7 @@ def test_a_failing_type_or_view_specific_read_no_longer_warns_per_element():
     diag = _FakeDiag()
 
     entry = _collect(doc, [dwg.Id], {2002: "DWG"}, diag=diag)["host"]["2002"]
-    assert entry["bbox_corners_uv"] == [[5, 5], [9, 5], [9, 9], [5, 9]]
+    assert entry["uv_rect"] == [5, 5, 9, 9]
     assert not any(w["callsite"].startswith("near_face_w.host.import_symbol")
                    or w["callsite"].startswith("near_face_w.host.view_specific")
                    for w in diag.warnings)

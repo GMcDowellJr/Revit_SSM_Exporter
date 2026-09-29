@@ -79,6 +79,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools.clamp_pad_geometry import clamp_pad_geometry  # noqa: E402
+from tools.stage_a_sidecar_shapes import model_entry_uv_corners  # noqa: E402
 
 TOOL_VERSION = "1.0.0"
 SCHEMA_VERSION = "1.0"
@@ -411,7 +412,7 @@ def resolve_category(rgb, link_candidates, rgb_array, bounds_uv, image_w, image_
             "link_inst_id": cand.get("link_inst_id"),
             "link_elem_id": cand.get("link_elem_id"),
             "near_face_w": cand.get("near_face_w"),
-            "pixel_bbox": _uv_rect_to_pixel_bbox(cand.get("bbox_corners_uv"), bounds_uv, image_w, image_h),
+            "pixel_bbox": _uv_rect_to_pixel_bbox(model_entry_uv_corners(cand), bounds_uv, image_w, image_h),
         }
         for cand in link_candidates
     ]

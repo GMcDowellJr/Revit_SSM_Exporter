@@ -983,10 +983,10 @@ def bbox_world_aabb(bbox, transform=None, bbox_is_link_space=False, diag=None, v
     LIMIT, stated because it is not recoverable afterwards: this is the
     ENCLOSING axis-aligned box of the transformed corners, not the oriented
     box. For a bbox carrying a rotating Transform it is larger than the
-    element's own extent, and the orientation is NOT stored. Recovering the
-    oriented box would need bbox.Transform persisted alongside; decision B
-    chose min/max. A consumer must therefore read this as an upper bound on
-    where the element is, never as its shape.
+    element's own extent. A consumer must therefore read this as an upper
+    bound on where the element is, never as its shape. Since C3 the Stage A
+    record ALSO carries bbox_oriented_transform()'s record for exactly those
+    bboxes, which is what recovers the oriented box.
 
     Returns None when ``_bbox_world_corners`` cannot complete (missing bbox,
     a link-space bbox with no transform, or a Revit API failure), which is
@@ -1022,6 +1022,84 @@ def bbox_world_aabb(bbox, transform=None, bbox_is_link_space=False, diag=None, v
                 elem_id=elem_id,
             )
         return None
+
+
+# C3: a basis vector is axis-aligned when all but one of its components are
+# within this of zero. Such a transform (identity, a translation, or an axis
+# permutation/flip) maps the bbox onto an axis-aligned box, so the AABB of
+# its transformed corners IS the oriented box and nothing extra is stored.
+BBOX_AXIS_ALIGNED_TOL = 1e-9
+
+
+def _transform_parts(trf):
+    """``(origin, basis_x, basis_y, basis_z)`` of a Revit Transform as float
+    triples. Raises when the Transform cannot be read -- the caller records
+    that as a failed read, never as "not rotated"."""
+    def _xyz(p):
+        return (float(p.X), float(p.Y), float(p.Z))
+    return (_xyz(trf.Origin), _xyz(trf.BasisX), _xyz(trf.BasisY), _xyz(trf.BasisZ))
+
+
+_IDENTITY_PARTS = ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+
+
+def _compose_parts(outer, inner):
+    """``outer`` after ``inner``: p -> outer(inner(p)), as transform parts."""
+    o_origin, ox, oy, oz = outer
+    i_origin, ix, iy, iz = inner
+
+    def _rot(v):
+        return tuple(v[0] * ox[k] + v[1] * oy[k] + v[2] * oz[k] for k in range(3))
+
+    origin = tuple(o_origin[k] + _rot(i_origin)[k] for k in range(3))
+    return (origin, _rot(ix), _rot(iy), _rot(iz))
+
+
+def _basis_is_axis_aligned(basis, tol=BBOX_AXIS_ALIGNED_TOL):
+    for vec in basis:
+        if sum(1 for c in vec if abs(c) > tol) != 1:
+            return False
+    return True
+
+
+def bbox_oriented_transform(bbox, outer_transform=None):
+    """C3: what the AABB loses, and only when it loses something.
+
+    ``bbox_world_aabb()`` and the UV footprint are AABBs of the
+    Transform-applied corners (there is no OBB path in the Stage A record).
+    For a transform whose basis is axis-aligned (to BBOX_AXIS_ALIGNED_TOL)
+    that AABB is exact, and this returns None. Otherwise it returns
+
+        {"origin": [x, y, z], "basis_x": [...], "basis_y": [...],
+         "basis_z": [...], "min": [...], "max": [...]}
+
+    -- the composed transform (``outer_transform`` after ``bbox.Transform``)
+    AND the bbox-local Min/Max it maps. The local box is not optional: the
+    transform plus the world AABB do not determine it. For a 45 degree turn
+    about Z the |R| matrix relating local half-extents to AABB half-extents
+    is singular, so a 2 x 1 and a 1.5 x 1.5 footprint give the same AABB.
+
+    ``outer_transform`` is for a LINK element: its proxy's bbox is already a
+    host-space AABB (linked_documents._transform_bbox_to_host), so the
+    caller passes the linked element's own bbox and the link transform.
+
+    Raises when a present Transform cannot be read; the caller records that.
+    """
+    inner_trf = getattr(bbox, "Transform", None)
+    inner = _transform_parts(inner_trf) if inner_trf is not None else _IDENTITY_PARTS
+    parts = inner
+    if outer_transform is not None:
+        parts = _compose_parts(_transform_parts(outer_transform), inner)
+    origin, bx, by, bz = parts
+    if _basis_is_axis_aligned((bx, by, bz)):
+        return None
+    mn, mx = bbox.Min, bbox.Max
+    return {
+        "origin": list(origin), "basis_x": list(bx), "basis_y": list(by),
+        "basis_z": list(bz),
+        "min": [float(mn.X), float(mn.Y), float(mn.Z)],
+        "max": [float(mx.X), float(mx.Y), float(mx.Z)],
+    }
 
 
 def _project_element_bbox_to_cell_rect(elem, vb, raster, bbox=None, diag=None, view=None, transform=None, bbox_is_link_space=False):

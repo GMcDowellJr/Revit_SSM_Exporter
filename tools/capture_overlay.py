@@ -64,8 +64,8 @@ USAGE
 
 LEAF MODULE
 -----------
-Standard library + PIL + ``tools/clamp_pad_geometry.py`` (which is
-standard-library-only). NumPy is not needed: nothing here reads the
+Standard library + PIL + ``tools/clamp_pad_geometry.py`` and
+``tools/stage_a_sidecar_shapes.py`` (both standard-library-only). NumPy is not needed: nothing here reads the
 capture's pixels, it only draws on top of them. Imports nothing from
 ``vop_interwoven`` and nothing
 from ``tools/decode_stage_a_color_id.py``, which would put the package on
@@ -94,6 +94,7 @@ from PIL import Image, ImageDraw, ImageFont
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools.clamp_pad_geometry import clamp_pad_geometry, uv_to_pixel  # noqa: E402
+from tools.stage_a_sidecar_shapes import model_entry_uv  # noqa: E402
 
 TOOL_VERSION = "1.0.0"
 
@@ -309,7 +310,7 @@ def _read_model_records(sidecar: dict[str, Any]) -> list[dict[str, Any]]:
 
     for key, entry in sorted((near_face_w_map.get("host") or {}).items()):
         cls, class_reason = _source_class_for_host_entry(entry)
-        state, payload = _gs_read(entry.get("bbox_corners_uv"))
+        state, payload = model_entry_uv(entry)
         near_w = _number(entry.get("near_face_w"))
         records.append({
             "key": str(key),
@@ -323,7 +324,7 @@ def _read_model_records(sidecar: dict[str, Any]) -> list[dict[str, Any]]:
         })
 
     for key, entry in sorted((near_face_w_map.get("link") or {}).items()):
-        state, payload = _gs_read(entry.get("bbox_corners_uv"))
+        state, payload = model_entry_uv(entry)
         near_w = _number(entry.get("near_face_w"))
         records.append({
             "key": str(key),

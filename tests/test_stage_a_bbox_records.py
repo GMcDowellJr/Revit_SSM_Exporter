@@ -71,6 +71,13 @@ class _RotateZ90:
     Accepts and returns plain tuples, which is the stub path
     _bbox_world_corners() documents for running outside Revit.
     """
+    # The Revit Transform surface C3's rotation check reads. A quarter turn
+    # is AXIS-ALIGNED: its AABB is exact, so no bbox_transform is written.
+    Origin = _P(0.0, 0.0, 0.0)
+    BasisX = _P(0.0, 1.0, 0.0)
+    BasisY = _P(-1.0, 0.0, 0.0)
+    BasisZ = _P(0.0, 0.0, 1.0)
+
     def OfPoint(self, p):
         return (-p[1], p[0], p[2])
 
@@ -393,13 +400,13 @@ def test_host_entry_carries_three_valued_bbox_3d_from_the_same_bbox(monkeypatch)
         )
 
     entry = result["host"]["1001"]
-    assert entry["bbox_3d"]["state"] == "value"
-    assert entry["bbox_3d"]["value"]["min"] == pytest.approx([0.0, 0.0, 0.0])
-    assert entry["bbox_3d"]["value"]["max"] == pytest.approx([2.0, 4.0, 6.0])
+    # C3: a bbox_3d that resolved is the plain {min, max}.
+    assert entry["bbox_3d"]["min"] == pytest.approx([0.0, 0.0, 0.0])
+    assert entry["bbox_3d"]["max"] == pytest.approx([2.0, 4.0, 6.0])
 
     # The pre-existing keys keep their exact meaning -- near_face_w in
     # particular, which tools/link_identity_resolver.py tie-breaks on.
-    assert entry["bbox_corners_uv"] == [[0, 0], [2, 0], [2, 4], [0, 4]]
+    assert entry["uv_rect"] == [0, 0, 2, 4]
     assert entry["near_face_w"] is not None
     assert not diag.errors
 
@@ -446,6 +453,6 @@ def test_near_face_w_map_pre_step4_keys_are_unchanged(monkeypatch):
         )
 
     pre_step4 = {
-        "bbox_corners_uv", "near_face_w", "category", "source",
+        "uv_rect", "near_face_w", "category", "source",
     }
     assert pre_step4.issubset(set(result["host"]["1003"].keys()))
