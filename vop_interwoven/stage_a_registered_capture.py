@@ -203,6 +203,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
     model_out = None
     anno_out = None
     model_member_ids = []
+    detail_lines = {"ids": [], "hidden": []}
 
     def _fault(fault, message, exc=None):
         record["faults"].append({"fault": fault, "message": message,
@@ -232,6 +233,12 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         record["membership"] = {"model": len(model_member_ids),
                                 "annotation": len(_anno),
                                 "unresolved": len(unresolved)}
+        line_ids, lines_error = registration.detail_line_ids(_anno)
+        if lines_error is not None:
+            _fault("detail_lines_unresolved",
+                   "the view's detail lines could not be identified, so they may "
+                   "draw in the model capture: {0}".format(lines_error))
+        detail_lines["ids"] = list(line_ids or [])
         _t = time.time()
         record["_authored_before"] = _non_blank_override_ids(view, model_member_ids)
         record["timings_ms"]["authored_override_scan"] = round(
@@ -267,6 +274,38 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                    "the view hides OST_Lines, or its state could not be read "
                    "({0})".format(marks.get("lines_category_hidden_in_view")))
 
+        # ---- 1b: the view's OTHER detail lines, hidden for the model pass --
+        # OST_Lines stays visible there so the marks draw; without this every
+        # other detail line -- annotation -- would draw into the model image
+        # unpainted. Hidden only for the model pass, shown again before the
+        # annotation pass, which is where they belong; the group's rollback
+        # is the backstop, and the read-back below checks it.
+        if detail_lines["ids"]:
+            tx = Transaction(doc, "VOP Stage A hide detail lines for the model pass")
+            tx.Start()
+            try:
+                hide = registration.hide_in_view(doc, view, detail_lines["ids"])
+                if tx.Commit() != TransactionStatus.Committed:
+                    raise RuntimeError("detail-line Transaction.Commit did not commit")
+            except Exception:
+                tx.RollBack()
+                raise
+            detail_lines["hidden"] = list(hide["hidden"])
+            record["detail_lines"] = {
+                "count": len(detail_lines["ids"]),
+                "hidden_for_model_pass": len(hide["hidden"]),
+                "already_hidden": len(hide["already_hidden"]),
+                "unreadable": hide["unreadable"][:50],
+                "hide_error": hide["error"],
+            }
+            if hide["error"] or hide["unreadable"]:
+                _fault("detail_lines_may_draw_in_model_capture",
+                       "not every detail line could be hidden for the model pass "
+                       "({0}; {1} unreadable)".format(
+                           hide["error"], len(hide["unreadable"])))
+        else:
+            record["detail_lines"] = {"count": 0}
+
         # ---- 2: MODEL pass, OST_Lines visible so the marks draw ------------
         model_cfg = copy.copy(cfg)
         model_cfg.color_id_buffer_model_lines_visible = True
@@ -276,6 +315,20 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             doc, view, elements, model_cfg, diag=diag, raster=raster,
             elem_cache=elem_cache, geometry_out=geom)
         record["timings_ms"]["model_pass"] = round((time.time() - _t) * 1000.0, 3)
+        if detail_lines["hidden"]:
+            tx = Transaction(doc, "VOP Stage A show detail lines for the annotation pass")
+            tx.Start()
+            try:
+                show_error = registration.show_in_view(view, detail_lines["hidden"])
+                if tx.Commit() != TransactionStatus.Committed:
+                    raise RuntimeError("detail-line Transaction.Commit did not commit")
+            except Exception:
+                tx.RollBack()
+                raise
+            if show_error is not None:
+                _fault("detail_lines_missing_from_annotation_capture",
+                       "the detail lines hidden for the model pass could not be "
+                       "shown again before the annotation pass: {0}".format(show_error))
         if not (model_out or {}).get("success"):
             raise RuntimeError("the model pass reported failure: {0}".format(
                 (model_out or {}).get("failure_reason")))
@@ -365,6 +418,19 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             _fault("registration_marks_left_in_project",
                    "{0} mark(s) survived the rollback".format(
                        len(restore["marks_still_in_project"])))
+        if detail_lines["hidden"]:
+            left_hidden, unreadable_lines = registration.still_hidden(
+                doc, view, detail_lines["hidden"])
+            restore["detail_lines"] = {"left_hidden": left_hidden[:200],
+                                       "unreadable": unreadable_lines[:200]}
+            if left_hidden:
+                _fault("detail_lines_left_hidden",
+                       "{0} detail line(s) this capture hid are still hidden".format(
+                           len(left_hidden)))
+            elif unreadable_lines:
+                _fault("detail_lines_unverified",
+                       "{0} detail line(s) could not be read back".format(
+                           len(unreadable_lines)))
         authored_before = record.pop("_authored_before", None)
         if authored_before is not None:
             _t = time.time()

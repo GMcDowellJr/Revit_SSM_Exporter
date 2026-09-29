@@ -430,6 +430,97 @@ def white_membership_suppression(doc, view, view_id, model_elements,
     return record
 
 
+def detail_line_ids(annotation_members):
+    """The view's DETAIL LINES: annotation members (view-owned, so claimed by
+    OwnerViewId) in OST_Lines. Model lines are not view-owned and are not
+    here -- they are model members and the model pass paints them.
+
+    The registered capture leaves OST_Lines VISIBLE in its model pass so the
+    registration marks draw, and every other detail line would then draw into
+    the model image unpainted: annotation in the model capture, the same
+    double-count as a view-specific DWG. These are the lines to hide there.
+    The marks are drawn after membership is read, so they are never in this
+    set. Returns ``(ids, None)`` or ``(None, reason)``.
+    """
+    try:
+        from Autodesk.Revit.DB import BuiltInCategory
+        bic = getattr(BuiltInCategory, "OST_Lines", None)
+        if bic is None:
+            return None, "BuiltInCategory.OST_Lines did not resolve"
+        lines_id = int(bic)
+    except Exception as ex:
+        return None, "{0}: {1}".format(type(ex).__name__, ex)
+    ids = []
+    for elem in annotation_members:
+        category = getattr(elem, "Category", None)
+        cat_id = getattr(getattr(category, "Id", None), "IntegerValue", None)
+        if cat_id is not None and int(cat_id) == lines_id:
+            elem_id = _element_id_int(getattr(elem, "Id", None))
+            if elem_id is not None:
+                ids.append(elem_id)
+    return sorted(ids), None
+
+
+def hide_in_view(doc, view, element_ids):
+    """Hide ``element_ids`` in ``view``, only those that read as VISIBLE, so
+    the caller can show exactly what this hid and nothing the author hid.
+    Call inside an open Transaction. Never raises: returns the record, whose
+    ``error`` is set when HideElements itself refused."""
+    from Autodesk.Revit.DB import ElementId
+    import System.Collections.Generic as SCG
+    record = {"hidden": [], "already_hidden": [], "unreadable": [], "error": None}
+    for elem_id in element_ids:
+        try:
+            elem = doc.GetElement(ElementId(int(elem_id)))
+            if bool(elem.IsHidden(view)):
+                record["already_hidden"].append(elem_id)
+            else:
+                record["hidden"].append(elem_id)
+        except Exception as ex:
+            record["unreadable"].append(
+                {"id": elem_id, "error": "{0}: {1}".format(type(ex).__name__, ex)})
+    if record["hidden"]:
+        ids = SCG.List[ElementId]()
+        for elem_id in record["hidden"]:
+            ids.Add(ElementId(int(elem_id)))
+        try:
+            view.HideElements(ids)
+        except Exception as ex:
+            record["error"] = "HideElements raised {0}: {1}".format(
+                type(ex).__name__, ex)
+            record["hidden"] = []
+    return record
+
+
+def show_in_view(view, element_ids):
+    """UnhideElements for exactly ``element_ids``; the reason on failure."""
+    if not element_ids:
+        return None
+    from Autodesk.Revit.DB import ElementId
+    import System.Collections.Generic as SCG
+    ids = SCG.List[ElementId]()
+    for elem_id in element_ids:
+        ids.Add(ElementId(int(elem_id)))
+    try:
+        view.UnhideElements(ids)
+        return None
+    except Exception as ex:
+        return "UnhideElements raised {0}: {1}".format(type(ex).__name__, ex)
+
+
+def still_hidden(doc, view, element_ids):
+    """``(hidden ids, unreadable ids)``: read from the view, never assumed."""
+    from Autodesk.Revit.DB import ElementId
+    hidden, unreadable = [], []
+    for elem_id in element_ids:
+        try:
+            if bool(doc.GetElement(ElementId(int(elem_id))).IsHidden(view)):
+                hidden.append(elem_id)
+        except Exception:
+            unreadable.append(elem_id)
+    return hidden, unreadable
+
+
 def _lines_category_hidden(view):
     """Whether the view hides OST_Lines, three-valued. The marks are detail
     lines: a view that hides Lines draws none of them, in either pass."""
