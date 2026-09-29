@@ -109,7 +109,7 @@ def _probe_contract():
 
 
 PROBE_NAME = "stage_a_anno_pass_variants"
-PROBE_VERSION = "2026-09-23.3"
+PROBE_VERSION = "2026-09-29.1"
 
 V0 = "v0_control"
 V7 = "v7_no_crop"
@@ -1796,6 +1796,166 @@ def marks_still_in_project(doc, mark_ids):
     return _reg().marks_still_in_project(doc, mark_ids)
 
 
+# ======================================================================
+# WHY A MARK DOES NOT DRAW -- the Revit-side audit (V9)
+# ======================================================================
+#
+# Round 3 lost the same four mid-edge ticks on the elevation run after run --
+# a different pair in each capture -- while all eight corner ticks drew. Each
+# lost tick was created, read back at its requested UV and (in the annotation
+# pass) painted, and the pixels where it belonged were white. The pixels
+# cannot say why; Revit can say what it thinks of each element. So just before
+# EACH export the probe reads, per mark, everything known to decide whether a
+# detail line draws in a view, and the analyzer lines that up against which
+# ticks actually drew. READ-ONLY: nothing here writes the document.
+
+def _audit_read(fn):
+    try:
+        return {"state": "value", "value": fn()}
+    except Exception as ex:
+        return {"state": "unavailable",
+                "reason": "{0}: {1}".format(type(ex).__name__, ex)}
+
+
+def _colour_rgb(colour):
+    if colour is None or getattr(colour, "IsValid", True) is False:
+        return None
+    for names in (("Red", "Green", "Blue"), ("r", "g", "b")):
+        if all(hasattr(colour, n) for n in names):
+            return [int(getattr(colour, n)) for n in names]
+    return None
+
+
+def _filters_hiding(doc, view, elem_id, elem_category_id):
+    """Every view filter that applies to this element, with whether it is
+    enabled, visible, and overrides projection lines. A filter that passes the
+    element and is invisible HIDES it -- the leading suspect for a detail line
+    that is in the view and does not draw."""
+    from Autodesk.Revit.DB import ElementId
+    out = []
+    for fid in list(view.GetFilters()):
+        fid_int = _element_id_int(fid)
+        entry = {"filter_id": fid_int}
+        filt = doc.GetElement(fid)
+        entry["name"] = str(getattr(filt, "Name", ""))
+        entry["enabled"] = _audit_read(lambda: bool(view.GetIsFilterEnabled(fid)))
+        entry["visible"] = _audit_read(lambda: bool(view.GetFilterVisibility(fid)))
+        if hasattr(filt, "GetElementIds"):          # SelectionFilterElement
+            entry["kind"] = "selection"
+            entry["passes"] = _audit_read(lambda: int(elem_id) in set(
+                _element_id_int(e) for e in filt.GetElementIds()))
+        else:                                        # ParameterFilterElement
+            entry["kind"] = "parameter"
+
+            def _passes():
+                cats = set(_element_id_int(c) for c in filt.GetCategories())
+                if elem_category_id is not None and elem_category_id not in cats:
+                    return False
+                element_filter = filt.GetElementFilter()
+                if element_filter is None:
+                    return True  # category-only filter: every element passes
+                return bool(element_filter.PassesFilter(doc, ElementId(int(elem_id))))
+            entry["passes"] = _audit_read(_passes)
+        entry["projection_line_colour"] = _audit_read(
+            lambda: _colour_rgb(view.GetFilterOverrides(fid).ProjectionLineColor))
+        out.append(entry)
+    return out
+
+
+def audit_registration_marks(doc, view, mark_ids, stage):
+    """Per mark, what Revit says just before an export (``stage``)."""
+    from Autodesk.Revit.DB import ElementId, FilteredElementCollector
+    record = {"stage": stage, "marks": []}
+    in_view = _audit_read(lambda: set(
+        _element_id_int(e.Id) for e in
+        FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType()))
+    record["view_collector"] = (
+        {"state": in_view["state"], "reason": in_view.get("reason")}
+        if in_view["state"] != "value" else {"state": "value",
+                                             "count": len(in_view["value"])})
+    workshared = _audit_read(lambda: bool(doc.IsWorkshared))
+    for mark_id in mark_ids or []:
+        entry = {"id": int(mark_id)}
+        elem = doc.GetElement(ElementId(int(mark_id)))
+        entry["exists"] = elem is not None
+        if elem is None:
+            record["marks"].append(entry)
+            continue
+        entry["in_view_collector"] = (
+            int(mark_id) in in_view["value"] if in_view["state"] == "value"
+            else None)
+        entry["owner_view_id"] = _audit_read(lambda: _element_id_int(elem.OwnerViewId))
+        entry["is_hidden"] = _audit_read(lambda: bool(elem.IsHidden(view)))
+        entry["category_id"] = _audit_read(lambda: _element_id_int(elem.Category.Id))
+        entry["category_hidden"] = _audit_read(
+            lambda: bool(view.GetCategoryHidden(elem.Category.Id)))
+        entry["line_style"] = _audit_read(lambda: str(elem.LineStyle.Name))
+        entry["line_style_category_id"] = _audit_read(
+            lambda: _element_id_int(elem.LineStyle.GraphicsStyleCategory.Id))
+        entry["line_style_hidden"] = _audit_read(
+            lambda: bool(view.GetCategoryHidden(elem.LineStyle.GraphicsStyleCategory.Id)))
+        entry["length_ft"] = _audit_read(lambda: float(elem.GeometryCurve.Length))
+        entry["override_projection_line_colour"] = _audit_read(
+            lambda: _colour_rgb(view.GetElementOverrides(
+                ElementId(int(mark_id))).ProjectionLineColor))
+
+        def _bbox_uv():
+            box = elem.get_BoundingBox(view)
+            if box is None:
+                return None
+            return [_xyz_tuple(box.Min), _xyz_tuple(box.Max)]
+        entry["bbox_in_view"] = _audit_read(_bbox_uv)
+        if workshared.get("value"):
+            entry["workset_visibility"] = _audit_read(
+                lambda: str(view.GetWorksetVisibility(elem.WorksetId)))
+        cat_id = (entry["category_id"].get("value")
+                  if entry["category_id"]["state"] == "value" else None)
+        entry["filters"] = _audit_read(
+            lambda: _filters_hiding(doc, view, mark_id, cat_id))
+        entry["suspects"] = mark_draw_suspects(entry)
+        record["marks"].append(entry)
+    return record
+
+
+def mark_draw_suspects(entry):
+    """PURE. What in one audit entry could stop the mark drawing. Named, not
+    scored: an empty list says the audit found no reason, which -- if the tick
+    still did not draw -- is itself the finding."""
+    suspects = []
+
+    def _v(key):
+        item = entry.get(key) or {}
+        return item.get("value") if item.get("state") == "value" else None
+    if entry.get("exists") is False:
+        return ["element does not exist"]
+    if entry.get("in_view_collector") is False:
+        suspects.append("not returned by FilteredElementCollector(doc, view.Id)")
+    if _v("is_hidden") is True:
+        suspects.append("hidden in the view (Element.IsHidden)")
+    if _v("category_hidden") is True:
+        suspects.append("its category is hidden in the view")
+    if _v("line_style_hidden") is True:
+        suspects.append("its line style subcategory is hidden in the view")
+    for filt in _v("filters") or []:
+        passes = (filt.get("passes") or {}).get("value")
+        enabled = (filt.get("enabled") or {}).get("value")
+        visible = (filt.get("visible") or {}).get("value")
+        if passes and enabled is not False and visible is False:
+            suspects.append("hidden by view filter {0} ({1})".format(
+                filt.get("filter_id"), filt.get("name")))
+        elif passes and enabled is not False and filt.get(
+                "projection_line_colour", {}).get("value") is not None:
+            suspects.append("line colour overridden by view filter {0} ({1})".format(
+                filt.get("filter_id"), filt.get("name")))
+    ws = _v("workset_visibility")
+    if ws is not None and "Hidden" in ws:
+        suspects.append("its workset is hidden in the view ({0})".format(ws))
+    if _v("bbox_in_view") is None and (entry.get("bbox_in_view") or {}).get(
+            "state") == "value":
+        suspects.append("no bounding box in the view")
+    return suspects
+
+
 def annotate_sidecar(path, key, payload):
     """Production's: add ``key`` to a sidecar, refusing to overwrite one."""
     return _reg().annotate_sidecar(path, key, payload)
@@ -2424,6 +2584,19 @@ def _run_variant(doc, view, variant, model_context, settings):
             report["pre_state"]["registration_marks"] = marks
             probe_state["registration_marks"] = marks
 
+        # ---- the marks as Revit sees them, before the MODEL export --------
+        if plan["registration_marks"]:
+            _mark_ids = [m.get("id") for m in (probe_state.get(
+                "registration_marks") or {}).get("created") or []
+                if m.get("id") is not None]
+            try:
+                report["pre_state"]["mark_audit_before_model_export"] = (
+                    audit_registration_marks(doc, view, _mark_ids, "before_model_export"))
+            except Exception as ex:
+                report["pre_state"]["mark_audit_before_model_export"] = {
+                    "state": "unavailable",
+                    "reason": "{0}: {1}".format(type(ex).__name__, ex)}
+
         # ---- 3b: this variant's OWN model capture (V8, V9) ---------------
         if plan["own_model_pass"]:
             report["own_model_pass"] = _own_model_pass(
@@ -2512,6 +2685,19 @@ def _run_variant(doc, view, variant, model_context, settings):
             probe_state["crop_box_visible"]["before_annotation_pass"] = reading
             probe_state["crop_box_visible"]["during_capture"] = (
                 reading.get("state") == "value" and reading.get("value") is True)
+
+        # ---- the marks as Revit sees them, before the ANNOTATION export ---
+        # (after the model pass restored itself and the white suppression ran;
+        # the annotation pass then paints them from inside its own transaction)
+        if plan["registration_marks"]:
+            try:
+                report["pre_state"]["mark_audit_before_annotation_export"] = (
+                    audit_registration_marks(doc, view, _mark_ids,
+                                             "before_annotation_export"))
+            except Exception as ex:
+                report["pre_state"]["mark_audit_before_annotation_export"] = {
+                    "state": "unavailable",
+                    "reason": "{0}: {1}".format(type(ex).__name__, ex)}
 
         # ---- 4: production's annotation pass ---------------------------
         report["transaction_group"]["no_child_transaction_open_at_export"] = (

@@ -17,6 +17,20 @@ Round 1's measured output is in
 
 ---
 
+## Why some marks do not draw — the Revit-side audit (probe `2026-09-29.1`)
+
+The same four mid-edge ticks drop on the elevation run after run, a different
+pair per capture; the corner ticks never do. V9 now reads, per mark, just
+before EACH export (read-only): whether the view collector returns it,
+`OwnerViewId`, `IsHidden(view)`, its category and line-style subcategory
+hidden state, its line style, length, element override colour, bounding box in
+the view, workset visibility (workshared models), and every view filter —
+enabled, visible, whether it passes the mark (selection or parameter filter,
+category and rule). `mark_draw_suspects()` names what could stop it drawing.
+The analyzer's section 12 prints a per-tick table: drew in annotation / drew
+in model beside those fields. A tick that did not draw with no suspect is one
+Revit considers visible — itself the finding.
+
 ## Crop-inactive views (probe `2026-09-23.3`)
 
 V7–V10 now ask production for crop mode **`authored_else_crop_a`**, not
@@ -123,7 +137,7 @@ is deleted, not left unused.
 `selection` default is all five. Per view: 5 annotation pairs (10) + the shared
 model pair (2) + V8's and V9's own model pairs (4) + 1 combined report = **17**;
 three views **51**. The Dynamo runner's version check must read
-**`2026-09-23.3`** (or later).
+**`2026-09-29.1`** (or later).
 
 ---
 

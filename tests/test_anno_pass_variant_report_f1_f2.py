@@ -991,3 +991,21 @@ def test_crop_left_alone_follows_what_the_capture_DID_not_the_mode_name():
         {"crop_mode": "authored_else_crop_a", "crop_applied": "crop_a",
          "rendered_uv": [1.0, 2.0, 9.0, 8.0]}, authored_crop_uv=[0, 0, 5, 5])
     assert rect == (1.0, 2.0, 9.0, 8.0) and reason is None
+
+
+def test_mark_draw_audit_lines_up_drew_against_revits_view_of_each_tick():
+    marks = [{"key": "a_h", "id": 1}, {"key": "b_v", "id": 2}]
+    f3 = {"ticks": [{"key": "a_h"}], "model": {"ticks": [{"key": "a_h"}, {"key": "b_v"}]}}
+    audits = {"before_model_export": {"marks": [
+                  {"id": 1, "suspects": [], "line_style": {"state": "value", "value": "Lines"}},
+                  {"id": 2, "suspects": ["x"]}]},
+              "before_annotation_export": {"marks": [
+                  {"id": 2, "suspects": ["hidden by view filter 9 (f)"],
+                   "filters": {"state": "value", "value": [
+                       {"filter_id": 9, "passes": {"state": "value", "value": True}}]}}]}}
+    rows = dict((r["key"], r) for r in report.mark_draw_audit(marks, f3, audits))
+    assert rows["a_h"]["drew_in_annotation"] is True and rows["a_h"]["line_style"] == "Lines"
+    assert rows["b_v"]["drew_in_annotation"] is False and rows["b_v"]["drew_in_model"] is True
+    assert rows["b_v"]["suspects_before_annotation"] == ["hidden by view filter 9 (f)"]
+    assert rows["b_v"]["filters_passing"] == [9]
+    assert report.mark_draw_audit(marks, f3, None)[0]["audited"] is False

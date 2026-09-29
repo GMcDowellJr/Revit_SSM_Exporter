@@ -68,8 +68,12 @@ class _Create(object):
 
     def NewDetailCurve(self, view, line):
         self.calls += 1
+        p0, p1 = line.GetEndPoint(0), line.GetEndPoint(1)
+        box = FakeBoundingBoxXYZ()
+        box.Min = FakeXYZ(min(p0.X, p1.X), min(p0.Y, p1.Y), min(p0.Z, p1.Z))
+        box.Max = FakeXYZ(max(p0.X, p1.X), max(p0.Y, p1.Y), max(p0.Z, p1.Z))
         elem = FakeElement(MARK_ID_BASE + self.calls, LINES_CAT,
-                           owner_view_id=view.Id.IntegerValue)
+                           owner_view_id=view.Id.IntegerValue, bbox=box)
         elem.GeometryCurve = line
         return self._doc.register(elem)
 
@@ -526,3 +530,74 @@ def test_marks_the_rollback_left_behind_are_not_safe_on_their_own(
     assert detail["element_overrides_after_rollback"] == "restored"
     assert len(detail["probe_marks_still_in_project"]) == 12
     assert report["document_safe"] is False
+
+
+# ---- round 3b: why a mark does not draw -- the Revit-side audit ------------
+
+class _SelectionFilter(object):
+    """A SelectionFilterElement: a named set of element ids."""
+
+    def __init__(self, name, ids):
+        self.Name = name
+        self._ids = list(ids)
+
+    def GetElementIds(self):
+        from tests.stage_a_capture_fakes import FakeElementId
+        return [FakeElementId(i) for i in self._ids]
+
+
+def _run_with_hiding_filter(tmp_path, monkeypatch, hidden_ids):
+    """V9 with a view filter that HIDES ``hidden_ids`` (marks are numbered
+    from MARK_ID_BASE + 1 in creation order, so 9-12 are the mid ticks)."""
+    from tests.stage_a_capture_fakes import FakeElementId
+    original = FakeViewPlan.__init__
+
+    def _init(self, view_id, *a, **k):
+        original(self, view_id, *a, **k)
+        self.filters.append(FakeElementId(900))
+        self.filter_enabled[900] = True
+        self.filter_visibility[900] = False
+    monkeypatch.setattr(FakeViewPlan, "__init__", _init)
+    original_doc = world_doc_init = _SizedDoc.__init__
+
+    def _doc_init(self, *a, **k):
+        world_doc_init(self, *a, **k)
+        self.register(types.SimpleNamespace(
+            Id=FakeElementId(900), Name="hide mids",
+            GetElementIds=_SelectionFilter("hide mids", hidden_ids).GetElementIds))
+    monkeypatch.setattr(_SizedDoc, "__init__", _doc_init)
+    try:
+        return _run(tmp_path, monkeypatch, probe.V9)
+    finally:
+        monkeypatch.setattr(_SizedDoc, "__init__", original_doc)
+
+
+def test_the_audit_names_a_view_filter_that_hides_a_mark(tmp_path, monkeypatch):
+    """The leading suspect for a detail line that is in the view and does not
+    draw. Mutation: drop the filter check from mark_draw_suspects."""
+    hidden = [MARK_ID_BASE + 9, MARK_ID_BASE + 10]
+    report, view, exports, doc = _run_with_hiding_filter(tmp_path, monkeypatch, hidden)
+    for stage in ("mark_audit_before_model_export",
+                  "mark_audit_before_annotation_export"):
+        audit = report["pre_state"][stage]
+        assert len(audit["marks"]) == 12, stage
+        by_id = dict((m["id"], m) for m in audit["marks"])
+        for mark_id, entry in by_id.items():
+            named = [s for s in entry["suspects"] if "view filter 900" in s]
+            assert bool(named) == (mark_id in hidden), (stage, mark_id, entry["suspects"])
+            assert entry["in_view_collector"] is True
+            assert entry["owner_view_id"]["value"] == VIEW_ID
+
+
+def test_with_no_filter_the_audit_finds_no_suspect(tmp_path, monkeypatch):
+    """The CONTROL: the suspects above must come from the filter, not from an
+    audit that always finds something."""
+    report, view, exports, doc = _run(tmp_path, monkeypatch, probe.V9)
+    audit = report["pre_state"]["mark_audit_before_annotation_export"]
+    assert len(audit["marks"]) == 12
+    assert all(m["suspects"] == [] for m in audit["marks"]), audit["marks"]
+
+
+def test_v8_takes_no_mark_audit(tmp_path, monkeypatch):
+    report, view, exports, doc = _run(tmp_path, monkeypatch, probe.V8)
+    assert "mark_audit_before_model_export" not in report["pre_state"]

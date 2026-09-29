@@ -1380,6 +1380,44 @@ def _model_registration_marks(marks, context, probe_uv):
     return fit
 
 
+def mark_draw_audit(marks, f3, audits):
+    """PURE. Per tick: did it draw in each capture, beside what Revit said
+    about it just before that capture's export (the probe's
+    mark_audit_before_*). The point is the CONTRAST: a field that differs
+    between the ticks that drew and the ticks that did not is the lead."""
+    audits = audits or {}
+    drew = {"annotation": set(t["key"] for t in f3.get("ticks") or []),
+            "model": set(t["key"] for t in (f3.get("model") or {}).get("ticks") or [])}
+    by_stage = {}
+    for stage, record in audits.items():
+        by_stage[stage] = dict((e.get("id"), e) for e in
+                               (record or {}).get("marks") or [])
+    rows = []
+    for mark in marks:
+        before_model = by_stage.get("before_model_export", {}).get(mark.get("id"))
+        before_anno = by_stage.get("before_annotation_export", {}).get(mark.get("id"))
+
+        def _field(entry, key):
+            item = (entry or {}).get(key) or {}
+            return item.get("value") if item.get("state") == "value" else None
+        rows.append({
+            "key": mark["key"], "id": mark.get("id"),
+            "drew_in_annotation": mark["key"] in drew["annotation"],
+            "drew_in_model": mark["key"] in drew["model"],
+            "suspects_before_model": (before_model or {}).get("suspects"),
+            "suspects_before_annotation": (before_anno or {}).get("suspects"),
+            "line_style": _field(before_model, "line_style"),
+            "is_hidden": _field(before_model, "is_hidden"),
+            "in_view_collector": (before_model or {}).get("in_view_collector"),
+            "length_ft": _field(before_model, "length_ft"),
+            "filters_passing": sorted(
+                f.get("filter_id") for f in (_field(before_anno, "filters") or [])
+                if (f.get("passes") or {}).get("value")),
+            "audited": before_model is not None or before_anno is not None,
+        })
+    return rows
+
+
 def compose_pixel_transform(from_mapping, to_mapping):
     """Pixel in one capture -> pixel in the other, through view UV. PURE.
 
@@ -1960,6 +1998,8 @@ def analyze_capture(sidecar_path, tiff_path, model_tiff_sha=None,
               "reason": "this capture has no registration marks (only V9 draws them)"}
     if context.get("achieved_fpp_ft"):
         f3["lattice_px_per_ft"] = 1.0 / float(context["achieved_fpp_ft"])
+    if marks:
+        f3["draw_audit"] = mark_draw_audit(marks, f3, context.get("mark_audits"))
     measurements["registration_marks"] = f3
 
     # ---- (9) F1 vs F2 vs F3 vs the bbox fit -----------------------------
@@ -2312,6 +2352,10 @@ def capture_context(run, capture):
             "registration_marks") or {}).get("colour"),
         "category_layer": ((variant_report.get("pre_state") or {}).get(
             "white_membership_suppression") or {}).get("category_layer"),
+        "mark_audits": dict(
+            (stage, (variant_report.get("pre_state") or {}).get(
+                "mark_audit_" + stage))
+            for stage in ("before_model_export", "before_annotation_export")),
         "model_sidecar": capture.get("own_model_sidecar") or run.get("model_sidecar"),
         "model_tiff": capture.get("own_model_tiff") or run.get("model_tiff"),
         "achieved_fpp_ft": geometry.get("achieved_fpp_ft"),
@@ -2785,6 +2829,36 @@ def _render_registration_marks(analyses):
                                               record["mark_pixels"],
                                               len(record.get("mark_pixel_rects") or [])))
     lines.append("")
+    for item in items:
+        rows = item["analysis"]["measurements"]["registration_marks"].get("draw_audit")
+        if not rows or not any(r.get("audited") for r in rows):
+            continue
+        lines.append("#### `{0}` -- why a tick did or did not draw (Revit's view of "
+                     "each mark, just before each export)".format(item["variant"]))
+        lines.append("")
+        table = []
+        for row in rows:
+            table.append([
+                row["key"], row["id"],
+                _fmt(row["drew_in_annotation"]), _fmt(row["drew_in_model"]),
+                _fmt(row["in_view_collector"]), _fmt(row["is_hidden"]),
+                row.get("line_style") or "--",
+                _fmt(row.get("length_ft"), "{0:.3f}"),
+                ", ".join(str(f) for f in row["filters_passing"]) or "--",
+                "; ".join(row.get("suspects_before_model") or []) or "none",
+                "; ".join(row.get("suspects_before_annotation") or []) or "none"])
+        lines.extend(_table(["tick", "id", "drew (anno)", "drew (model)",
+                             "in view collector", "IsHidden", "line style",
+                             "length ft", "filters passing", "suspects before model",
+                             "suspects before annotation"], table))
+        lines.append("")
+        lines.append("A tick that did NOT draw with `none` in both suspect columns "
+                     "is one Revit considers visible: the reason is not in the "
+                     "element's visibility state, and that is the finding. The "
+                     "model export runs AFTER the first audit and changes the view "
+                     "itself (it hides annotation categories and handles filters "
+                     "inside its own transaction).")
+        lines.append("")
     return lines
 
 

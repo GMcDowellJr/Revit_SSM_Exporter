@@ -2087,3 +2087,76 @@ def test_v9_measured_only_when_every_mark_drew_in_both_passes():
                   _v9_state(lines_visible=None)):
         check = probe.variant_measurement_check(plan, _v9_metadata(), state)
         assert check["measured"] is False, state
+
+
+# ---- round 3b: mark_draw_suspects, pure -----------------------------------
+
+def _entry(**kw):
+    base = {"exists": True, "in_view_collector": True,
+            "is_hidden": {"state": "value", "value": False},
+            "category_hidden": {"state": "value", "value": False},
+            "line_style_hidden": {"state": "value", "value": False},
+            "bbox_in_view": {"state": "value", "value": [[0, 0, 0], [1, 1, 0]]},
+            "filters": {"state": "value", "value": []}}
+    base.update(kw)
+    return base
+
+
+def test_a_clean_mark_has_no_suspects():
+    assert probe.mark_draw_suspects(_entry()) == []
+
+
+def test_each_visibility_reason_is_named():
+    cases = [
+        (dict(in_view_collector=False), "FilteredElementCollector"),
+        (dict(is_hidden={"state": "value", "value": True}), "IsHidden"),
+        (dict(category_hidden={"state": "value", "value": True}), "category is hidden"),
+        (dict(line_style_hidden={"state": "value", "value": True}), "line style"),
+        (dict(bbox_in_view={"state": "value", "value": None}), "bounding box"),
+        (dict(workset_visibility={"state": "value", "value": "Hidden"}), "workset"),
+        (dict(filters={"state": "value", "value": [
+            {"filter_id": 7, "name": "f", "passes": {"state": "value", "value": True},
+             "enabled": {"state": "value", "value": True},
+             "visible": {"state": "value", "value": False}}]}), "view filter 7"),
+    ]
+    for override, needle in cases:
+        suspects = probe.mark_draw_suspects(_entry(**override))
+        assert any(needle in s for s in suspects), (override, suspects)
+
+
+def test_a_filter_that_does_not_pass_the_mark_or_is_disabled_is_not_a_suspect():
+    for passes, enabled in ((False, True), (True, False)):
+        entry = _entry(filters={"state": "value", "value": [
+            {"filter_id": 7, "name": "f",
+             "passes": {"state": "value", "value": passes},
+             "enabled": {"state": "value", "value": enabled},
+             "visible": {"state": "value", "value": False}}]})
+        assert probe.mark_draw_suspects(entry) == [], (passes, enabled)
+
+
+def test_a_parameter_filter_is_judged_by_its_categories_and_its_rule():
+    """ParameterFilterElement: the element must be in one of its categories
+    AND pass its rule. Mutation: ignore PassesFilter, or the category check."""
+    import types
+    from tests.stage_a_capture_fakes import FakeElementId, FakeOGS, install_fake_revit_db
+
+    class _Rule(object):
+        def PassesFilter(self, doc, eid):
+            return int(eid.IntegerValue) in (11, 12)
+
+    pfe = types.SimpleNamespace(Name="by comment",
+                                GetCategories=lambda: [FakeElementId(-2000051)],
+                                GetElementFilter=lambda: _Rule())
+    doc = types.SimpleNamespace(GetElement=lambda fid: pfe)
+    view = types.SimpleNamespace(
+        GetFilters=lambda: [FakeElementId(900)],
+        GetIsFilterEnabled=lambda fid: True,
+        GetFilterVisibility=lambda fid: False,
+        GetFilterOverrides=lambda fid: FakeOGS())
+    with install_fake_revit_db():
+        hit = probe._filters_hiding(doc, view, 11, -2000051)
+        miss = probe._filters_hiding(doc, view, 13, -2000051)
+        other_category = probe._filters_hiding(doc, view, 11, -2000011)
+    assert hit[0]["passes"]["value"] is True
+    assert miss[0]["passes"]["value"] is False
+    assert other_category[0]["passes"]["value"] is False
