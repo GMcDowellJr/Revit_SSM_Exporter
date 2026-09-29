@@ -250,16 +250,18 @@ def mark_colour_keys(packed, colours, blends=False, reserved_colours=()):
     return per, set(k for k, n in owners.items() if n > 1)
 
 
-def _pixels_of(packed, keys, cover, weighted):
-    """``(ys, xs, weights or None)`` of the pixels holding ``keys``."""
+def _pixels_of(packed, keys, cover, weighted, exact_colour=None):
+    """``(ys, xs, weights or None, exact or None)`` of the pixels holding
+    ``keys``; ``exact`` marks those of ``exact_colour`` itself."""
     select = np.isin(packed, keys)
     ys, xs = np.nonzero(select)
     if not weighted:
-        return ys, xs, None
+        return ys, xs, None, None
     order = np.argsort(keys)
     values = packed[ys, xs].astype(np.int64)
     weights = cover[order][np.searchsorted(keys[order], values)]
-    return ys, xs, weights
+    exact = (values == _pack(exact_colour)) if exact_colour is not None else None
+    return ys, xs, weights, exact
 
 
 def _line_shaped(ys, xs, orientation=None):
@@ -272,23 +274,32 @@ def _line_shaped(ys, xs, orientation=None):
     return max(width, height) >= TICK_PIECE_MIN_ASPECT * min(width, height)
 
 
-def _tick_pieces(ys, xs, weights, orientation=None):
+def _tick_pieces(ys, xs, weights, orientation=None, exact=None):
     """The connected pieces of a candidate pixel set, as index arrays, and how
-    many were dropped as stray fringe: not line-shaped (TICK_PIECE_MIN_ASPECT,
-    along ``orientation`` when it is known), without one pixel half covered,
-    or under TICK_PIECE_MIN_FRACTION of the largest remaining piece's
-    coverage. Nothing is dropped from an exact-colour set (``weights`` None):
-    an exact tick colour is reserved, so every piece of it is a tick."""
+    many were dropped as stray fringe.
+
+    A piece holding any pixel of the tick's EXACT colour (``exact``) is always
+    kept: that colour is reserved to the mark, so every piece of it is the
+    mark's -- including a short one left where crossing ink cut a tick near
+    its end, which the filters below would otherwise drop and leave
+    unsubtracted (review, PR #219). Only BLEND-ONLY pieces are filtered: not
+    line-shaped (TICK_PIECE_MIN_ASPECT, along ``orientation`` when it is
+    known), without one pixel half covered, under TICK_PIECE_MIN_FRACTION of
+    the strongest piece's coverage, or off its line. Nothing is dropped from
+    an exact-colour-only set (``weights`` None)."""
     pieces = [np.asarray(c) for c in _components(ys, xs)]
     if weights is None or not pieces:
         return pieces, 0
-    shaped = [c for c in pieces if float(weights[c].max()) >= 0.5
+    anchored = [c for c in pieces if exact is not None and bool(exact[c].any())]
+    anchored_ids = set(id(c) for c in anchored)
+    blend_only = [c for c in pieces if id(c) not in anchored_ids]
+    shaped = [c for c in blend_only if float(weights[c].max()) >= 0.5
               and _line_shaped(ys[c], xs[c], orientation)]
-    if not shaped:
+    if not shaped and not anchored:
         return [], len(pieces)
-    coverage = [float(weights[c].sum()) for c in shaped]
-    floor = TICK_PIECE_MIN_FRACTION * max(coverage)
-    kept = [c for c, cov in zip(shaped, coverage) if cov >= floor]
+    strongest = max(float(weights[c].sum()) for c in anchored + shaped)
+    floor = TICK_PIECE_MIN_FRACTION * strongest
+    kept = anchored + [c for c in shaped if float(weights[c].sum()) >= floor]
     if orientation in ("horizontal", "vertical") and len(kept) > 1:
         best = kept[int(np.argmax([float(weights[c].sum()) for c in kept]))]
         along, across = (xs, ys) if orientation == "horizontal" else (ys, xs)
@@ -301,7 +312,8 @@ def _tick_pieces(ys, xs, weights, orientation=None):
             gap = max(float(along[c].min() - along[best].max()),
                       float(along[best].min() - along[c].max()), 0.0)
             return gap <= length
-        kept = [c for c in kept if c is best or _on_line(c)]
+        kept = [c for c in kept
+                if c is best or id(c) in anchored_ids or _on_line(c)]
     return kept, len(pieces) - len(kept)
 
 
@@ -333,9 +345,10 @@ def _locate(pixels, marks, colour_by_id=None, shared_colour=None,
                                 "capture's colour map for id {0}".format(mark.get("id"))})
                 continue
             keys, cover = per[tuple(int(c) for c in rgb)]
-            ys, xs, weights = _pixels_of(packed, keys, cover, blends)
+            ys, xs, weights, exact = _pixels_of(packed, keys, cover, blends, rgb)
             if blends:
-                pieces, n = _tick_pieces(ys, xs, weights, mark.get("orientation"))
+                pieces, n = _tick_pieces(ys, xs, weights, mark.get("orientation"),
+                                         exact)
                 dropped += n
                 ys, xs, weights = _take(ys, xs, weights, pieces)
             if len(xs) == 0:
@@ -353,8 +366,8 @@ def _locate(pixels, marks, colour_by_id=None, shared_colour=None,
     per, ambiguous = mark_colour_keys(packed, [shared_colour], blends,
                                       reserved_colours)
     keys, cover = per[tuple(int(c) for c in shared_colour)]
-    ys, xs, weights = _pixels_of(packed, keys, cover, blends)
-    pieces, dropped = _tick_pieces(ys, xs, weights)
+    ys, xs, weights, exact = _pixels_of(packed, keys, cover, blends, shared_colour)
+    pieces, dropped = _tick_pieces(ys, xs, weights, exact=exact)
     by_slot = {}
     stats = {"components": 0, "merged_into_one_tick": 0}
     if blends:

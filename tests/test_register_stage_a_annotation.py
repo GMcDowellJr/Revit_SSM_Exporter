@@ -667,3 +667,24 @@ def test_model_capture_clean_is_twelve_pieces(tmp_path):
     fit = _model_fit_with(tmp_path, lambda img: None)
     assert fit["components"]["components"] == 12
     assert fit["components"]["stray_fringe_pieces_dropped"] == 0
+
+
+def test_a_short_exact_piece_of_a_crossed_tick_is_still_subtracted(tmp_path):
+    """Ink crossing a tick near one END leaves a short exact-colour piece,
+    well under a quarter of the long one's coverage. The tick's own colour is
+    reserved to it, so the piece is the tick's: fitted and subtracted, never
+    filtered out as a stray fringe (review, PR #219)."""
+    def draw(img, marks, colours):
+        m = _left_mid_h(marks)
+        xs = sorted(ax(u) for u in m["span_uv"])
+        x_cut = int(round(xs[0])) + 4          # 4 px of tick before the cut
+        img[:, x_cut:x_cut + 3] = (0, 0, 0)
+    anno_path, marks, colours = _pair_with_strays(tmp_path, draw)
+    reg.register(anno_path)
+    record = _persisted(anno_path)
+    assert record["status"] == "registered", record["refusals"]
+    out = np.asarray(Image.open(record["registered_tiff"]).convert("RGB"))
+    assert _bbox_of(out, colours[_left_mid_h(marks)["id"]]) is None
+    # And the decoder: the same tick colour is gone from the off-palette count.
+    doc = json.loads(dsc.decode_one(anno_path).read_text())
+    assert doc["off_palette_foreground_pixel_count"] == 0
