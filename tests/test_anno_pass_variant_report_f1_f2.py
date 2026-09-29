@@ -704,10 +704,14 @@ def test_f3_recovers_the_annotation_mapping_from_the_tick_centre_lines(tmp_path)
     assert f3["status"] == "value", f3
     assert f3["found_count"] == 12
     assert f3["points"] == {"u": 6, "v": 6}
-    assert f3["px_per_ft_u"] == pytest.approx(A_U, abs=1e-6)
-    assert f3["px_per_ft_v"] == pytest.approx(abs(A_V), abs=1e-6)
-    assert f3["mapping"]["b_u"] == pytest.approx(B_U, abs=0.05)
-    assert f3["mapping"]["b_v"] == pytest.approx(B_V, abs=0.05)
+    # The mid level (MARK_MID_FRACTION of the crop) does not land on a whole
+    # pixel in this drawing, so the synthetic tick is rounded by up to half a
+    # pixel -- the tolerance is that rounding, not the analyzer's.
+    assert f3["px_per_ft_u"] == pytest.approx(A_U, abs=0.01)
+    assert f3["px_per_ft_v"] == pytest.approx(abs(A_V), abs=0.01)
+    assert f3["mapping"]["b_u"] == pytest.approx(B_U, abs=0.2)
+    assert f3["mapping"]["b_v"] == pytest.approx(B_V, abs=0.2)
+    assert max(f3["residual_max_px"].values()) <= 0.5
 
 
 def test_f3_in_the_model_capture_meets_the_recorded_lattice(tmp_path):

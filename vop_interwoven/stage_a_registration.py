@@ -68,6 +68,13 @@ MARK_MIN_ARM_PX = 32.0
 MARK_CORNERS = (("left_bottom", 1.0, 1.0), ("right_bottom", -1.0, 1.0),
                 ("left_top", 1.0, -1.0), ("right_top", -1.0, -1.0))
 # Mid-edge ticks: (name, orientation, which edge the tick starts from, sign).
+# WHERE the middle level sits, as a fraction of the reference rectangle from
+# its min corner. NOT 0.5: every mid-edge tick ever lost (elevation, two runs;
+# plan, one) lay within half a pixel of its image's exact centre line, while
+# Revit's own audit found each one in the view, unhidden and unfiltered
+# (probe_0928_0918). 0.4 keeps the level in the middle THIRD -- which the
+# model-capture component split needs -- and off both centre lines.
+MARK_MID_FRACTION = 0.4
 MARK_MIDS = (("left_mid", "horizontal", "u0", 1.0),
              ("right_mid", "horizontal", "u1", -1.0),
              ("mid_bottom", "vertical", "v0", 1.0),
@@ -128,7 +135,8 @@ def registration_mark_segments(reference_uv, fpp_ft, inset_px=MARK_INSET_PX,
                          "span_uv": v_span,
                          "uv0": [cu, v_span[0]], "uv1": [cu, v_span[1]]})
     edges = {"u0": u0 + inset, "u1": u1 - inset, "v0": v0 + inset, "v1": v1 - inset}
-    mid_u, mid_v = (u0 + u1) / 2.0, (v0 + v1) / 2.0
+    mid_u = u0 + MARK_MID_FRACTION * (u1 - u0)
+    mid_v = v0 + MARK_MID_FRACTION * (v1 - v0)
     for name, orientation, edge, sign in MARK_MIDS:
         start = edges[edge]
         span = sorted((start + sign * gap, start + sign * (gap + arm_ft)))

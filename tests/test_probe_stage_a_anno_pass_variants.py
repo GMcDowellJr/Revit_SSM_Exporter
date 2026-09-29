@@ -1988,10 +1988,22 @@ def test_marks_are_twelve_ticks_two_per_corner_and_one_per_edge_middle():
         mine = [s for s in segments if s["corner"] == corner]
         assert sorted(s["orientation"] for s in mine) == ["horizontal", "vertical"]
     by_key = dict((s["key"], s) for s in segments)
-    # The mid ticks sit ON the centre lines: v for the horizontal ones, u for
-    # the vertical ones.
-    assert by_key["left_mid_h"]["level_uv"] == by_key["right_mid_h"]["level_uv"] == 25.0
-    assert by_key["mid_bottom_v"]["level_uv"] == by_key["mid_top_v"]["level_uv"] == 50.0
+    # The mid level sits at MARK_MID_FRACTION (0.4) of each axis -- off the
+    # centre line, where every lost tick had been (probe_0928_0918).
+    assert by_key["left_mid_h"]["level_uv"] == by_key["right_mid_h"]["level_uv"] == (
+        pytest.approx(20.0))
+    assert by_key["mid_bottom_v"]["level_uv"] == by_key["mid_top_v"]["level_uv"] == (
+        pytest.approx(40.0))
+
+
+def test_no_mid_tick_sits_on_the_reference_centre_line():
+    """Mutation: put MARK_MID_FRACTION back to 0.5."""
+    layout = _layout(uv=(0.0, 0.0, 100.0, 50.0), fpp=0.1)
+    for seg in layout["segments"]:
+        if "mid" in seg["corner"]:
+            centre = 25.0 if seg["orientation"] == "horizontal" else 50.0
+            # at least 5 lattice px away from the centre line
+            assert abs(seg["level_uv"] - centre) >= 5 * 0.1, seg
 
 
 def test_marks_sit_inside_the_reference_by_the_inset_and_never_touch():

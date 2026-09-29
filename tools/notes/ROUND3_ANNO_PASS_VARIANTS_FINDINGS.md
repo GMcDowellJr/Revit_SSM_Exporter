@@ -247,3 +247,32 @@ on an axis that loses its middle level goes back to 0 by construction.
 V7 = V10 byte-identical again on both views (six views now). V8 = V7 on the
 plan too, because both F2 fiducials (a room and a property line segment) drew
 nothing.
+
+---
+
+# Run `probe_0928_0918` (probe `2026-09-29.1`, V9 only, elevation) — the audit
+
+Revit's view of every mark, read just before each export, is **clean for all
+twelve**: each is returned by the view's collector, owned by the view, not
+hidden, its category and line-style subcategory visible, line style
+`<Thin Lines>`, 5.12 ft long, overridden to the mark colour, with a bbox in
+the view. None of the view's seven filters passes any mark. **Revit considers
+every one visible.** The same four still did not draw, the same pair per
+capture as in the two earlier runs, so the loss is in the export.
+
+Position is the only thing that separates them:
+
+| capture | tick | expected centre px | image centre | drew |
+|---|---|---|---|---|
+| annotation (5164 × 1708) | mid-height horizontal | row 854.00 | 854.0 | **no** |
+| annotation | mid-width vertical | col 2571.50 | 2582.0 | yes |
+| model (5164 × 1267) | mid-height horizontal | row 633.50 | 633.5 | yes |
+| model | mid-width vertical | col 2581.50 | 2582.0 | **no** |
+
+Every tick ever lost (here, and the plan in `probe_0928_0848`) lay within half
+a pixel of its image's centre line. Not every tick on a centre line was lost
+(the model's mid-height one drew), so this is a correlation, not a mechanism.
+In probe `2026-09-29.2` the middle level moves to 40 % of the crop
+(`MARK_MID_FRACTION`): still in the middle third, off both centre lines. That
+sidesteps the loss, and it tests the correlation: if the mid ticks draw there,
+the centre line was the cause.

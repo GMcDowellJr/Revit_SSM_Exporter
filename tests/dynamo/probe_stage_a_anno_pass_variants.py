@@ -109,7 +109,7 @@ def _probe_contract():
 
 
 PROBE_NAME = "stage_a_anno_pass_variants"
-PROBE_VERSION = "2026-09-29.1"
+PROBE_VERSION = "2026-09-29.2"
 
 V0 = "v0_control"
 V7 = "v7_no_crop"
