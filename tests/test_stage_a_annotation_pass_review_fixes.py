@@ -385,3 +385,36 @@ def test_no_authored_overrides_records_zero_not_unavailable(tmp_path):
     assert authored["checked_count"] == 5
     assert authored["replaced_count"] == 0
     assert authored["replaced_element_ids"] == []
+
+
+# ---- the registered capture's outcome in the view summary ------------------
+
+def test_a_view_without_the_registered_capture_is_not_applicable_not_false():
+    from vop_interwoven import streaming
+    assert streaming._stage_a_registration_summary({"success": True}) == {
+        "registration_success": "not_applicable"}
+
+
+def test_a_registered_capture_carries_its_success_and_fault_names():
+    """Mutation: drop the fault names, or report success from the model pass."""
+    from vop_interwoven import streaming
+    summary = streaming._stage_a_registration_summary({
+        "success": True, "registration_success": False,
+        "registration": {"faults": [{"fault": "registration_marks_left_in_project"}],
+                         "marks": {"created_count": 12, "expected_count": 12}}})
+    assert summary == {"registration_success": False,
+                       "registration_faults": ["registration_marks_left_in_project"],
+                       "registration_marks_drawn": "12/12"}
+
+
+def test_the_stage_a_summary_path_includes_the_registration_outcome(tmp_path):
+    """Driven through the exporter the pipeline uses, not the helper alone."""
+    exporter = _Recorder()
+    result = _stage_a_result()
+    result.update({"registration_success": True,
+                   "registration": {"faults": [], "marks": {"created_count": 12,
+                                                            "expected_count": 12}}})
+    exporter.on_view_complete(result)
+    [summary] = exporter.view_summaries
+    assert summary["registration_success"] is True
+    assert summary["registration_faults"] == []
