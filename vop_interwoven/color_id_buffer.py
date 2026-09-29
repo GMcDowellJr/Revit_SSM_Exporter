@@ -536,14 +536,28 @@ def _unhide_view_specific_imports(view, records):
     view.UnhideElements(ids)
 
 
-def _read_back_view_specific_imports(doc, view, records):
+def _read_back_view_specific_imports(doc, view, records, diag=None, view_id=None):
     """After the restore: is every import this capture hid visible again?
 
     ``restore`` is "restored", "not_restored" or "unverified" (the read
     failed), and "not_touched" for an import the capture never hid. Read from
-    the view, never assumed from the unhide call having returned.
+    the view, never assumed from the unhide call having returned. Either
+    failure is also a Diagnostics ERROR: it means the user's view is left
+    with an import hidden that the capture hid, and a sidecar field alone is
+    too easy for a pipeline caller to miss.
     """
     from Autodesk.Revit.DB import ElementId
+
+    def _report(record, what):
+        if diag is not None:
+            diag.error(
+                phase="color_id_buffer",
+                callsite="restore_view_specific_imports_readback",
+                message="a view-specific import this capture hid is {0} after the "
+                        "restore; the view may keep it hidden".format(what),
+                view_id=view_id,
+                elem_id=record["element_id"],
+            )
     for record in records:
         if not record.get("hidden_by_capture"):
             if record.get("classification") == "annotation":
@@ -557,9 +571,12 @@ def _read_back_view_specific_imports(doc, view, records):
                 "state": "unavailable",
                 "reason": "{0}: {1}".format(type(ex).__name__, ex)}
             record["restore"] = "unverified"
+            _report(record, "unverifiable (its hidden state could not be read)")
             continue
         record["hidden_after_restore"] = {"state": "value", "value": hidden_now}
         record["restore"] = "not_restored" if hidden_now else "restored"
+        if hidden_now:
+            _report(record, "still hidden")
 
 
 def get_or_create_neutral_phase_filter(doc):
@@ -4200,7 +4217,8 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         except Exception:
             restore_tx.RollBack()
             raise
-        _read_back_view_specific_imports(doc, view, view_specific_imports)
+        _read_back_view_specific_imports(doc, view, view_specific_imports,
+                                         diag=diag, view_id=view_id)
 
     # The dpi this capture ACHIEVED, as opposed to the dpi that was asked
     # for. They come apart three ways, all in the sizing path above: the

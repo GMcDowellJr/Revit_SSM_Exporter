@@ -54,7 +54,8 @@ def _world(view_dwg=None):
     return doc, view, elements, imports
 
 
-def _run(tmp_path, monkeypatch, doc, view, elements, imports, diag=None):
+def _run(tmp_path, monkeypatch, doc, view, elements, imports, diag=None,
+         at_export=None):
     def _expand(doc_, view_, elems, cfg, diag=None, elem_cache=None,
                 dwg_omitted_out=None):
         return ([{"element": e, "source_type": "HOST"} for e in elems]
@@ -62,8 +63,12 @@ def _run(tmp_path, monkeypatch, doc, view, elements, imports, diag=None):
     monkeypatch.setattr(revit_collection, "expand_host_link_import_model_elements",
                         _expand)
     hidden_at_export = []
-    doc.on_export_image = lambda _opts: hidden_at_export.append(
-        set(view.hidden_elements))
+
+    def _on_export(_opts):
+        hidden_at_export.append(set(view.hidden_elements))
+        if at_export is not None:
+            at_export()
+    doc.on_export_image = _on_export
     result = _export(doc, view, elements, _cfg(tmp_path), diag or FakeDiag(), _raster())
     with open(result["sidecar_path"]) as handle:
         return json.load(handle), hidden_at_export
@@ -132,14 +137,52 @@ def test_an_import_already_hidden_stays_hidden(tmp_path, monkeypatch):
     assert record["restore"] == "not_touched"
 
 
+def _readback_errors(diag):
+    return [e for e in diag.errors
+            if e.get("callsite") == "restore_view_specific_imports_readback"]
+
+
 def test_a_failed_unhide_is_read_back_as_not_restored(tmp_path, monkeypatch):
+    """And reported to Diagnostics: the view is left modified."""
+    diag = FakeDiag()
     doc, view, elements, imports = _world()
 
     def _refuse(_ids):
         raise RuntimeError("UnhideElements refused")
     view.UnhideElements = _refuse
-    sidecar, _hidden = _run(tmp_path, monkeypatch, doc, view, elements, imports)
+    sidecar, _hidden = _run(tmp_path, monkeypatch, doc, view, elements, imports,
+                            diag=diag)
     assert _record(sidecar, VIEW_DWG)["restore"] == "not_restored"
+    [error] = _readback_errors(diag)
+    assert error["elem_id"] == VIEW_DWG and error["view_id"] == 42
+
+
+def test_an_unreadable_read_back_is_unverified_and_reported(tmp_path, monkeypatch):
+    """The hidden state reads before the export and fails after it."""
+    diag = FakeDiag()
+    doc, view, elements, imports = _world()
+    view_dwg = imports[0]
+
+    def _break_is_hidden():
+        def _raise(_view):
+            raise RuntimeError("IsHidden gone")
+        view_dwg.IsHidden = _raise
+    sidecar, _hidden = _run(tmp_path, monkeypatch, doc, view, elements, imports,
+                            diag=diag, at_export=_break_is_hidden)
+    record = _record(sidecar, VIEW_DWG)
+    assert record["restore"] == "unverified"
+    assert record["hidden_after_restore"]["state"] == "unavailable"
+    assert len(_readback_errors(diag)) == 1
+
+
+def test_a_clean_restore_reports_nothing(tmp_path, monkeypatch):
+    """The CONTROL for the two above."""
+    diag = FakeDiag()
+    doc, view, elements, imports = _world()
+    sidecar, _hidden = _run(tmp_path, monkeypatch, doc, view, elements, imports,
+                            diag=diag)
+    assert _record(sidecar, VIEW_DWG)["restore"] == "restored"
+    assert _readback_errors(diag) == []
 
 
 def test_an_unreadable_view_specific_flag_keeps_the_import_in_the_model_pass(
