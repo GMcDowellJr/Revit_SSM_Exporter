@@ -284,8 +284,11 @@ def _run_pipeline(monkeypatch, tmp_path, anno):
     monkeypatch.setattr(pipeline, "collect_view_elements", lambda *a, **k: [])
     monkeypatch.setattr(pipeline, "rasterize_annotations", lambda *a, **k: {})
 
+    # The frame-B two-pass capture -- the named fallback since the registered
+    # capture became the default -- is what these tests are about.
     cfg = Config(enable_color_id_buffer_stage_a=True,
                  color_id_buffer_annotation_pass=True,
+                 color_id_buffer_registered_capture=False,
                  view_cache_enabled=False, perf_collect_timings=False)
     cfg.output_dir = str(tmp_path)
     with _fake_revit_db():

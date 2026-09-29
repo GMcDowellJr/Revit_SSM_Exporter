@@ -1,6 +1,7 @@
 """Stage A REGISTERED capture: both passes, registration marks, one rollback.
 
-Behind ``Config.color_id_buffer_registered_capture`` (default OFF). What it
+The default Stage A capture (``Config.color_id_buffer_registered_capture``,
+default ON; False selects the frame-B two-pass fallback). What it
 changes against the shipped two-pass capture, and the measurement behind each
 (tools/notes/ROUND2_ and ROUND3_ANNO_PASS_VARIANTS_FINDINGS.md):
 

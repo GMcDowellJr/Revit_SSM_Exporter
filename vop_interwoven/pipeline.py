@@ -1150,13 +1150,13 @@ def process_document_views(
                     # full_results, which is serialised.
                     export_geometry = {}
                     # The REGISTERED capture (Config.color_id_buffer_registered_
-                    # capture, default off) runs BOTH passes itself, inside one
+                    # capture, default ON) runs BOTH passes itself, inside one
                     # rolled-back TransactionGroup, and returns the same shape
                     # the two calls below build: the model result with the
                     # annotation result nested under "annotation_pass". So the
                     # separate annotation call is skipped for it.
                     registered = bool(getattr(
-                        cfg, "color_id_buffer_registered_capture", False))
+                        cfg, "color_id_buffer_registered_capture", True))
                     if registered:
                         from .stage_a_registered_capture import (
                             export_registered_stage_a_view,

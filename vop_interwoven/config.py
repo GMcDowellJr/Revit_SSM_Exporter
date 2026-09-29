@@ -194,10 +194,13 @@ class Config:
         # by membership (white element overrides + white link filters) with
         # the crop untouched, instead of by hiding model categories over frame
         # B. Measured by the annotation-pass variant probe (rounds 2-3). Implies
-        # the annotation pass. Default OFF: not yet run through the pipeline in
-        # Revit, and it changes what the annotation TIFF shows (dependent
-        # annotation is kept; the crop is not widened).
-        color_id_buffer_registered_capture=False,
+        # the annotation pass. Default ON since run pipeline_0928_0953: all nine
+        # test views registered at <= 0.39 px (tools/notes/RUN_pipeline_0928_
+        # 0953_REGISTRATION.md). Its annotation TIFF is NOT on the model
+        # lattice; tools/register_stage_a_annotation.py puts it there. Only
+        # takes effect with enable_color_id_buffer_stage_a. Set False for the
+        # shipped frame-B two-pass capture, kept as the named fallback.
+        color_id_buffer_registered_capture=True,
         # The Stage A passes' own knobs. Probe-only getattr switches until the
         # registered capture became the default; the defaults are the SHIPPED
         # two-pass behaviour, and the registered capture sets the values it
@@ -775,7 +778,7 @@ class Config:
             color_id_buffer_annotation_pass=d.get(
                 "color_id_buffer_annotation_pass", False),
             color_id_buffer_registered_capture=d.get(
-                "color_id_buffer_registered_capture", False),
+                "color_id_buffer_registered_capture", True),
             color_id_buffer_anno_crop_mode=d.get(
                 "color_id_buffer_anno_crop_mode", "frame_b"),
             color_id_buffer_anno_model_suppression=d.get(
