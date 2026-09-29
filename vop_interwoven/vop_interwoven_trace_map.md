@@ -76,6 +76,8 @@ Notes:
     - called from: csv_export.py
   - `build_palette`
     - called from: color_id_buffer.py
+  - `build_run_meta`
+    - called from: streaming.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
@@ -86,8 +88,8 @@ Notes:
     - called from: pipeline.py
   - `choose_step`
     - called from: color_id_buffer.py
-  - `classify_annotation`
-    - called from: revit/annotation.py
+    - `classify_annotation`
+      - called from: revit/annotation.py
     - `classify_keynote`
       - called from: revit/annotation.py
     - `collect_2d_annotations`
@@ -96,6 +98,8 @@ Notes:
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
       - called from: pipeline.py
+    - `complete_capture_integrity`
+      - called from: stage_a_registered_capture.py
     - `compute_annotation_extents`
       - called from: revit/view_basis.py
     - `compute_annotation_type_metrics`
@@ -164,6 +168,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `finalize_run_meta`
+      - called from: streaming.py
     - `flat_colour_override`
       - called from: stage_a_registration.py
     - `frame_export_geometry`
@@ -192,6 +198,8 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
+    - `git_commit`
+      - called from: run_meta.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `hide_in_view`
@@ -214,6 +222,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `marks_still_in_project`
       - called from: stage_a_registered_capture.py
+    - `merge_run_metas`
+      - called from: thinrunner_streaming.py
     - `missing_override_setters`
       - called from: stage_a_registration.py
     - `nominal_fpp_ft`
@@ -264,6 +274,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `revit_version`
+      - called from: run_meta.py
     - `round_half_up_positive`
       - called from: resolution_contract.py
     - `run`
@@ -297,7 +309,7 @@ Notes:
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_capture_status`
-      - called from: csv_export.py, pipeline.py
+      - called from: csv_export.py, pipeline.py, run_meta.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -352,8 +364,8 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_run_config_snapshot`
-      - called from: streaming.py
+    - `write_run_meta`
+      - called from: streaming.py, thinrunner_streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -427,6 +439,8 @@ Notes:
     - called from: csv_export.py
   - `build_palette`
     - called from: color_id_buffer.py
+  - `build_run_meta`
+    - called from: streaming.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
@@ -437,8 +451,8 @@ Notes:
     - called from: pipeline.py
   - `choose_step`
     - called from: color_id_buffer.py
-  - `classify_annotation`
-    - called from: revit/annotation.py
+    - `classify_annotation`
+      - called from: revit/annotation.py
     - `classify_keynote`
       - called from: revit/annotation.py
     - `collect_2d_annotations`
@@ -447,6 +461,8 @@ Notes:
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
       - called from: pipeline.py
+    - `complete_capture_integrity`
+      - called from: stage_a_registered_capture.py
     - `compute_annotation_extents`
       - called from: revit/view_basis.py
     - `compute_annotation_type_metrics`
@@ -515,6 +531,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `finalize_run_meta`
+      - called from: streaming.py
     - `flat_colour_override`
       - called from: stage_a_registration.py
     - `frame_export_geometry`
@@ -543,6 +561,8 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
+    - `git_commit`
+      - called from: run_meta.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `hide_in_view`
@@ -565,6 +585,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `marks_still_in_project`
       - called from: stage_a_registered_capture.py
+    - `merge_run_metas`
+      - called from: thinrunner_streaming.py
     - `missing_override_setters`
       - called from: stage_a_registration.py
     - `nominal_fpp_ft`
@@ -615,6 +637,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `revit_version`
+      - called from: run_meta.py
     - `round_half_up_positive`
       - called from: resolution_contract.py
     - `run`
@@ -648,7 +672,7 @@ Notes:
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_capture_status`
-      - called from: csv_export.py, pipeline.py
+      - called from: csv_export.py, pipeline.py, run_meta.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -703,8 +727,8 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_run_config_snapshot`
-      - called from: streaming.py
+    - `write_run_meta`
+      - called from: streaming.py, thinrunner_streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -778,6 +802,8 @@ Notes:
     - called from: csv_export.py
   - `build_palette`
     - called from: color_id_buffer.py
+  - `build_run_meta`
+    - called from: streaming.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
@@ -788,8 +814,8 @@ Notes:
     - called from: pipeline.py
   - `choose_step`
     - called from: color_id_buffer.py
-  - `classify_annotation`
-    - called from: revit/annotation.py
+    - `classify_annotation`
+      - called from: revit/annotation.py
     - `classify_keynote`
       - called from: revit/annotation.py
     - `collect_2d_annotations`
@@ -798,6 +824,8 @@ Notes:
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
       - called from: pipeline.py
+    - `complete_capture_integrity`
+      - called from: stage_a_registered_capture.py
     - `compute_annotation_extents`
       - called from: revit/view_basis.py
     - `compute_annotation_type_metrics`
@@ -866,6 +894,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `finalize_run_meta`
+      - called from: streaming.py
     - `flat_colour_override`
       - called from: stage_a_registration.py
     - `frame_export_geometry`
@@ -894,6 +924,8 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
+    - `git_commit`
+      - called from: run_meta.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `hide_in_view`
@@ -916,6 +948,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `marks_still_in_project`
       - called from: stage_a_registered_capture.py
+    - `merge_run_metas`
+      - called from: thinrunner_streaming.py
     - `missing_override_setters`
       - called from: stage_a_registration.py
     - `nominal_fpp_ft`
@@ -966,6 +1000,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `revit_version`
+      - called from: run_meta.py
     - `round_half_up_positive`
       - called from: resolution_contract.py
     - `run`
@@ -999,7 +1035,7 @@ Notes:
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_capture_status`
-      - called from: csv_export.py, pipeline.py
+      - called from: csv_export.py, pipeline.py, run_meta.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -1054,12 +1090,12 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_run_config_snapshot`
-      - called from: streaming.py
+    - `write_run_meta`
+      - called from: streaming.py, thinrunner_streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `run_vop_pipeline_streaming` (streaming.py:L1114)
+## Trace: `run_vop_pipeline_streaming` (streaming.py:L1139)
 
   - `Bounds2D`
     - called from: color_id_buffer.py, core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1129,6 +1165,8 @@ Notes:
     - called from: csv_export.py
   - `build_palette`
     - called from: color_id_buffer.py
+  - `build_run_meta`
+    - called from: streaming.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
@@ -1139,8 +1177,8 @@ Notes:
     - called from: pipeline.py
   - `choose_step`
     - called from: color_id_buffer.py
-  - `classify_annotation`
-    - called from: revit/annotation.py
+    - `classify_annotation`
+      - called from: revit/annotation.py
     - `classify_keynote`
       - called from: revit/annotation.py
     - `collect_2d_annotations`
@@ -1149,6 +1187,8 @@ Notes:
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
       - called from: pipeline.py
+    - `complete_capture_integrity`
+      - called from: stage_a_registered_capture.py
     - `compute_annotation_extents`
       - called from: revit/view_basis.py
     - `compute_annotation_type_metrics`
@@ -1217,6 +1257,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `finalize_run_meta`
+      - called from: streaming.py
     - `flat_colour_override`
       - called from: stage_a_registration.py
     - `frame_export_geometry`
@@ -1245,6 +1287,8 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
+    - `git_commit`
+      - called from: run_meta.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `hide_in_view`
@@ -1267,6 +1311,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `marks_still_in_project`
       - called from: stage_a_registered_capture.py
+    - `merge_run_metas`
+      - called from: thinrunner_streaming.py
     - `missing_override_setters`
       - called from: stage_a_registration.py
     - `nominal_fpp_ft`
@@ -1317,6 +1363,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `revit_version`
+      - called from: run_meta.py
     - `round_half_up_positive`
       - called from: resolution_contract.py
     - `run`
@@ -1350,7 +1398,7 @@ Notes:
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_capture_status`
-      - called from: csv_export.py, pipeline.py
+      - called from: csv_export.py, pipeline.py, run_meta.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -1405,8 +1453,8 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_run_config_snapshot`
-      - called from: streaming.py
+    - `write_run_meta`
+      - called from: streaming.py, thinrunner_streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -1480,6 +1528,8 @@ Notes:
     - called from: csv_export.py
   - `build_palette`
     - called from: color_id_buffer.py
+  - `build_run_meta`
+    - called from: streaming.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
@@ -1490,8 +1540,8 @@ Notes:
     - called from: pipeline.py
   - `choose_step`
     - called from: color_id_buffer.py
-  - `classify_annotation`
-    - called from: revit/annotation.py
+    - `classify_annotation`
+      - called from: revit/annotation.py
     - `classify_keynote`
       - called from: revit/annotation.py
     - `collect_2d_annotations`
@@ -1500,6 +1550,8 @@ Notes:
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
       - called from: pipeline.py
+    - `complete_capture_integrity`
+      - called from: stage_a_registered_capture.py
     - `compute_annotation_extents`
       - called from: revit/view_basis.py
     - `compute_annotation_type_metrics`
@@ -1568,6 +1620,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `finalize_run_meta`
+      - called from: streaming.py
     - `flat_colour_override`
       - called from: stage_a_registration.py
     - `frame_export_geometry`
@@ -1596,6 +1650,8 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
+    - `git_commit`
+      - called from: run_meta.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `hide_in_view`
@@ -1618,6 +1674,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `marks_still_in_project`
       - called from: stage_a_registered_capture.py
+    - `merge_run_metas`
+      - called from: thinrunner_streaming.py
     - `missing_override_setters`
       - called from: stage_a_registration.py
     - `nominal_fpp_ft`
@@ -1668,6 +1726,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `revit_version`
+      - called from: run_meta.py
     - `round_half_up_positive`
       - called from: resolution_contract.py
     - `run`
@@ -1703,7 +1763,7 @@ Notes:
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_capture_status`
-      - called from: csv_export.py, pipeline.py
+      - called from: csv_export.py, pipeline.py, run_meta.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -1758,8 +1818,8 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_run_config_snapshot`
-      - called from: streaming.py
+    - `write_run_meta`
+      - called from: streaming.py, thinrunner_streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -1833,6 +1893,8 @@ Notes:
     - called from: csv_export.py
   - `build_palette`
     - called from: color_id_buffer.py
+  - `build_run_meta`
+    - called from: streaming.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
@@ -1843,8 +1905,8 @@ Notes:
     - called from: pipeline.py
   - `choose_step`
     - called from: color_id_buffer.py
-  - `classify_annotation`
-    - called from: revit/annotation.py
+    - `classify_annotation`
+      - called from: revit/annotation.py
     - `classify_keynote`
       - called from: revit/annotation.py
     - `collect_2d_annotations`
@@ -1853,6 +1915,8 @@ Notes:
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
       - called from: pipeline.py
+    - `complete_capture_integrity`
+      - called from: stage_a_registered_capture.py
     - `compute_annotation_extents`
       - called from: revit/view_basis.py
     - `compute_annotation_type_metrics`
@@ -1921,6 +1985,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `finalize_run_meta`
+      - called from: streaming.py
     - `flat_colour_override`
       - called from: stage_a_registration.py
     - `frame_export_geometry`
@@ -1949,6 +2015,8 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
+    - `git_commit`
+      - called from: run_meta.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `hide_in_view`
@@ -1971,6 +2039,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `marks_still_in_project`
       - called from: stage_a_registered_capture.py
+    - `merge_run_metas`
+      - called from: thinrunner_streaming.py
     - `missing_override_setters`
       - called from: stage_a_registration.py
     - `nominal_fpp_ft`
@@ -2019,6 +2089,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `revit_version`
+      - called from: run_meta.py
     - `round_half_up_positive`
       - called from: resolution_contract.py
     - `run`
@@ -2054,7 +2126,7 @@ Notes:
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_capture_status`
-      - called from: csv_export.py, pipeline.py
+      - called from: csv_export.py, pipeline.py, run_meta.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -2109,12 +2181,12 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_run_config_snapshot`
-      - called from: streaming.py
+    - `write_run_meta`
+      - called from: streaming.py, thinrunner_streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `process_document_views_streaming` (streaming.py:L823)
+## Trace: `process_document_views_streaming` (streaming.py:L848)
 
   - `Bounds2D`
     - called from: color_id_buffer.py, core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -2184,6 +2256,8 @@ Notes:
     - called from: csv_export.py
   - `build_palette`
     - called from: color_id_buffer.py
+  - `build_run_meta`
+    - called from: streaming.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
@@ -2194,8 +2268,8 @@ Notes:
     - called from: pipeline.py
   - `choose_step`
     - called from: color_id_buffer.py
-  - `classify_annotation`
-    - called from: revit/annotation.py
+    - `classify_annotation`
+      - called from: revit/annotation.py
     - `classify_keynote`
       - called from: revit/annotation.py
     - `collect_2d_annotations`
@@ -2204,6 +2278,8 @@ Notes:
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
       - called from: pipeline.py
+    - `complete_capture_integrity`
+      - called from: stage_a_registered_capture.py
     - `compute_annotation_extents`
       - called from: revit/view_basis.py
     - `compute_annotation_type_metrics`
@@ -2272,6 +2348,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `finalize_run_meta`
+      - called from: streaming.py
     - `flat_colour_override`
       - called from: stage_a_registration.py
     - `frame_export_geometry`
@@ -2300,6 +2378,8 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
+    - `git_commit`
+      - called from: run_meta.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `hide_in_view`
@@ -2322,6 +2402,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `marks_still_in_project`
       - called from: stage_a_registered_capture.py
+    - `merge_run_metas`
+      - called from: thinrunner_streaming.py
     - `missing_override_setters`
       - called from: stage_a_registration.py
     - `nominal_fpp_ft`
@@ -2370,6 +2452,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `revit_version`
+      - called from: run_meta.py
     - `round_half_up_positive`
       - called from: resolution_contract.py
     - `run`
@@ -2405,7 +2489,7 @@ Notes:
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_capture_status`
-      - called from: csv_export.py, pipeline.py
+      - called from: csv_export.py, pipeline.py, run_meta.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -2460,12 +2544,12 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_run_config_snapshot`
-      - called from: streaming.py
+    - `write_run_meta`
+      - called from: streaming.py, thinrunner_streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `render_model_front_to_back` (pipeline.py:L2400)
+## Trace: `render_model_front_to_back` (pipeline.py:L2269)
 
   - `Bounds2D`
     - called from: color_id_buffer.py, core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -2535,6 +2619,8 @@ Notes:
     - called from: csv_export.py
   - `build_palette`
     - called from: color_id_buffer.py
+  - `build_run_meta`
+    - called from: streaming.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
@@ -2545,8 +2631,8 @@ Notes:
     - called from: pipeline.py
   - `choose_step`
     - called from: color_id_buffer.py
-  - `classify_annotation`
-    - called from: revit/annotation.py
+    - `classify_annotation`
+      - called from: revit/annotation.py
     - `classify_keynote`
       - called from: revit/annotation.py
     - `collect_2d_annotations`
@@ -2555,6 +2641,8 @@ Notes:
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
       - called from: pipeline.py
+    - `complete_capture_integrity`
+      - called from: stage_a_registered_capture.py
     - `compute_annotation_extents`
       - called from: revit/view_basis.py
     - `compute_annotation_type_metrics`
@@ -2623,6 +2711,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `finalize_run_meta`
+      - called from: streaming.py
     - `flat_colour_override`
       - called from: stage_a_registration.py
     - `frame_export_geometry`
@@ -2651,6 +2741,8 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
+    - `git_commit`
+      - called from: run_meta.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `hide_in_view`
@@ -2673,6 +2765,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `marks_still_in_project`
       - called from: stage_a_registered_capture.py
+    - `merge_run_metas`
+      - called from: thinrunner_streaming.py
     - `missing_override_setters`
       - called from: stage_a_registration.py
     - `nominal_fpp_ft`
@@ -2721,6 +2815,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `revit_version`
+      - called from: run_meta.py
     - `round_half_up_positive`
       - called from: resolution_contract.py
     - `run`
@@ -2756,7 +2852,7 @@ Notes:
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_capture_status`
-      - called from: csv_export.py, pipeline.py
+      - called from: csv_export.py, pipeline.py, run_meta.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -2811,12 +2907,12 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_run_config_snapshot`
-      - called from: streaming.py
+    - `write_run_meta`
+      - called from: streaming.py, thinrunner_streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `init_view_raster` (pipeline.py:L1840)
+## Trace: `init_view_raster` (pipeline.py:L1709)
 
   - `Bounds2D`
     - called from: color_id_buffer.py, core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -2886,6 +2982,8 @@ Notes:
     - called from: csv_export.py
   - `build_palette`
     - called from: color_id_buffer.py
+  - `build_run_meta`
+    - called from: streaming.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
@@ -2896,8 +2994,8 @@ Notes:
     - called from: pipeline.py
   - `choose_step`
     - called from: color_id_buffer.py
-  - `classify_annotation`
-    - called from: revit/annotation.py
+    - `classify_annotation`
+      - called from: revit/annotation.py
     - `classify_keynote`
       - called from: revit/annotation.py
     - `collect_2d_annotations`
@@ -2906,6 +3004,8 @@ Notes:
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
       - called from: pipeline.py
+    - `complete_capture_integrity`
+      - called from: stage_a_registered_capture.py
     - `compute_annotation_extents`
       - called from: revit/view_basis.py
     - `compute_annotation_type_metrics`
@@ -2974,6 +3074,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `finalize_run_meta`
+      - called from: streaming.py
     - `flat_colour_override`
       - called from: stage_a_registration.py
     - `frame_export_geometry`
@@ -3002,6 +3104,8 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
+    - `git_commit`
+      - called from: run_meta.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `hide_in_view`
@@ -3022,6 +3126,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `marks_still_in_project`
       - called from: stage_a_registered_capture.py
+    - `merge_run_metas`
+      - called from: thinrunner_streaming.py
     - `missing_override_setters`
       - called from: stage_a_registration.py
     - `nominal_fpp_ft`
@@ -3072,6 +3178,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `revit_version`
+      - called from: run_meta.py
     - `round_half_up_positive`
       - called from: resolution_contract.py
     - `run`
@@ -3107,7 +3215,7 @@ Notes:
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_capture_status`
-      - called from: csv_export.py, pipeline.py
+      - called from: csv_export.py, pipeline.py, run_meta.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -3162,8 +3270,8 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_run_config_snapshot`
-      - called from: streaming.py
+    - `write_run_meta`
+      - called from: streaming.py, thinrunner_streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -3235,6 +3343,8 @@ Notes:
     - called from: csv_export.py
   - `build_palette`
     - called from: color_id_buffer.py
+  - `build_run_meta`
+    - called from: streaming.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
@@ -3247,14 +3357,16 @@ Notes:
     - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
-  - `classify_keynote`
-    - called from: revit/annotation.py
+    - `classify_keynote`
+      - called from: revit/annotation.py
     - `collect_2d_annotations`
       - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
       - called from: pipeline.py
+    - `complete_capture_integrity`
+      - called from: stage_a_registered_capture.py
     - `compute_annotation_extents`
       - called from: revit/view_basis.py
     - `compute_annotation_type_metrics`
@@ -3323,6 +3435,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `finalize_run_meta`
+      - called from: streaming.py
     - `flat_colour_override`
       - called from: stage_a_registration.py
     - `frame_export_geometry`
@@ -3351,6 +3465,8 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
+    - `git_commit`
+      - called from: run_meta.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `hide_in_view`
@@ -3373,6 +3489,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `marks_still_in_project`
       - called from: stage_a_registered_capture.py
+    - `merge_run_metas`
+      - called from: thinrunner_streaming.py
     - `missing_override_setters`
       - called from: stage_a_registration.py
     - `nominal_fpp_ft`
@@ -3423,6 +3541,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `revit_version`
+      - called from: run_meta.py
     - `round_half_up_positive`
       - called from: resolution_contract.py
     - `run`
@@ -3458,7 +3578,7 @@ Notes:
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_capture_status`
-      - called from: csv_export.py, pipeline.py
+      - called from: csv_export.py, pipeline.py, run_meta.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -3513,8 +3633,8 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_run_config_snapshot`
-      - called from: streaming.py
+    - `write_run_meta`
+      - called from: streaming.py, thinrunner_streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -3588,6 +3708,8 @@ Notes:
     - called from: csv_export.py
   - `build_palette`
     - called from: color_id_buffer.py
+  - `build_run_meta`
+    - called from: streaming.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
@@ -3598,8 +3720,8 @@ Notes:
     - called from: pipeline.py
   - `choose_step`
     - called from: color_id_buffer.py
-  - `classify_annotation`
-    - called from: revit/annotation.py
+    - `classify_annotation`
+      - called from: revit/annotation.py
     - `classify_keynote`
       - called from: revit/annotation.py
     - `collect_2d_annotations`
@@ -3608,6 +3730,8 @@ Notes:
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
       - called from: pipeline.py
+    - `complete_capture_integrity`
+      - called from: stage_a_registered_capture.py
     - `compute_annotation_extents`
       - called from: revit/view_basis.py
     - `compute_annotation_type_metrics`
@@ -3676,6 +3800,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `finalize_run_meta`
+      - called from: streaming.py
     - `flat_colour_override`
       - called from: stage_a_registration.py
     - `frame_export_geometry`
@@ -3704,6 +3830,8 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
+    - `git_commit`
+      - called from: run_meta.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `hide_in_view`
@@ -3726,6 +3854,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `marks_still_in_project`
       - called from: stage_a_registered_capture.py
+    - `merge_run_metas`
+      - called from: thinrunner_streaming.py
     - `missing_override_setters`
       - called from: stage_a_registration.py
     - `nominal_fpp_ft`
@@ -3774,6 +3904,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `revit_version`
+      - called from: run_meta.py
     - `round_half_up_positive`
       - called from: resolution_contract.py
     - `run`
@@ -3809,7 +3941,7 @@ Notes:
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_capture_status`
-      - called from: csv_export.py, pipeline.py
+      - called from: csv_export.py, pipeline.py, run_meta.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -3864,8 +3996,8 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_run_config_snapshot`
-      - called from: streaming.py
+    - `write_run_meta`
+      - called from: streaming.py, thinrunner_streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -3939,6 +4071,8 @@ Notes:
     - called from: csv_export.py
   - `build_palette`
     - called from: color_id_buffer.py
+  - `build_run_meta`
+    - called from: streaming.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
@@ -3949,8 +4083,8 @@ Notes:
     - called from: pipeline.py
   - `choose_step`
     - called from: color_id_buffer.py
-  - `classify_annotation`
-    - called from: revit/annotation.py
+    - `classify_annotation`
+      - called from: revit/annotation.py
     - `classify_keynote`
       - called from: revit/annotation.py
     - `collect_2d_annotations`
@@ -3959,6 +4093,8 @@ Notes:
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
       - called from: pipeline.py
+    - `complete_capture_integrity`
+      - called from: stage_a_registered_capture.py
     - `compute_annotation_extents`
       - called from: revit/view_basis.py
     - `compute_annotation_type_metrics`
@@ -4027,6 +4163,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `finalize_run_meta`
+      - called from: streaming.py
     - `flat_colour_override`
       - called from: stage_a_registration.py
     - `frame_export_geometry`
@@ -4055,6 +4193,8 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
+    - `git_commit`
+      - called from: run_meta.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `hide_in_view`
@@ -4077,6 +4217,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `marks_still_in_project`
       - called from: stage_a_registered_capture.py
+    - `merge_run_metas`
+      - called from: thinrunner_streaming.py
     - `missing_override_setters`
       - called from: stage_a_registration.py
     - `nominal_fpp_ft`
@@ -4125,6 +4267,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `revit_version`
+      - called from: run_meta.py
     - `round_half_up_positive`
       - called from: resolution_contract.py
     - `run`
@@ -4160,7 +4304,7 @@ Notes:
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_capture_status`
-      - called from: csv_export.py, pipeline.py
+      - called from: csv_export.py, pipeline.py, run_meta.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -4215,8 +4359,8 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_run_config_snapshot`
-      - called from: streaming.py
+    - `write_run_meta`
+      - called from: streaming.py, thinrunner_streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -4290,6 +4434,8 @@ Notes:
     - called from: csv_export.py
   - `build_palette`
     - called from: color_id_buffer.py
+  - `build_run_meta`
+    - called from: streaming.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
@@ -4300,8 +4446,8 @@ Notes:
     - called from: pipeline.py
   - `choose_step`
     - called from: color_id_buffer.py
-  - `classify_annotation`
-    - called from: revit/annotation.py
+    - `classify_annotation`
+      - called from: revit/annotation.py
     - `classify_keynote`
       - called from: revit/annotation.py
     - `collect_2d_annotations`
@@ -4310,6 +4456,8 @@ Notes:
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
       - called from: pipeline.py
+    - `complete_capture_integrity`
+      - called from: stage_a_registered_capture.py
     - `compute_annotation_extents`
       - called from: revit/view_basis.py
     - `compute_annotation_type_metrics`
@@ -4378,6 +4526,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `finalize_run_meta`
+      - called from: streaming.py
     - `flat_colour_override`
       - called from: stage_a_registration.py
     - `frame_export_geometry`
@@ -4406,6 +4556,8 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
+    - `git_commit`
+      - called from: run_meta.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `hide_in_view`
@@ -4428,6 +4580,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `marks_still_in_project`
       - called from: stage_a_registered_capture.py
+    - `merge_run_metas`
+      - called from: thinrunner_streaming.py
     - `missing_override_setters`
       - called from: stage_a_registration.py
     - `nominal_fpp_ft`
@@ -4476,6 +4630,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `revit_version`
+      - called from: run_meta.py
     - `round_half_up_positive`
       - called from: resolution_contract.py
     - `run`
@@ -4511,7 +4667,7 @@ Notes:
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_capture_status`
-      - called from: csv_export.py, pipeline.py
+      - called from: csv_export.py, pipeline.py, run_meta.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -4566,8 +4722,8 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_run_config_snapshot`
-      - called from: streaming.py
+    - `write_run_meta`
+      - called from: streaming.py, thinrunner_streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -4641,6 +4797,8 @@ Notes:
     - called from: csv_export.py
   - `build_palette`
     - called from: color_id_buffer.py
+  - `build_run_meta`
+    - called from: streaming.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
@@ -4651,14 +4809,16 @@ Notes:
     - called from: pipeline.py
   - `choose_step`
     - called from: color_id_buffer.py
-  - `classify_annotation`
-    - called from: revit/annotation.py
+    - `classify_annotation`
+      - called from: revit/annotation.py
     - `classify_keynote`
       - called from: revit/annotation.py
     - `collect_2d_annotations`
       - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
       - called from: color_id_buffer.py, revit/collection.py
+    - `complete_capture_integrity`
+      - called from: stage_a_registered_capture.py
     - `compute_annotation_extents`
       - called from: revit/view_basis.py
     - `compute_annotation_type_metrics`
@@ -4727,6 +4887,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `finalize_run_meta`
+      - called from: streaming.py
     - `flat_colour_override`
       - called from: stage_a_registration.py
     - `frame_export_geometry`
@@ -4755,6 +4917,8 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
+    - `git_commit`
+      - called from: run_meta.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `hide_in_view`
@@ -4777,6 +4941,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `marks_still_in_project`
       - called from: stage_a_registered_capture.py
+    - `merge_run_metas`
+      - called from: thinrunner_streaming.py
     - `missing_override_setters`
       - called from: stage_a_registration.py
     - `nominal_fpp_ft`
@@ -4827,6 +4993,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `revit_version`
+      - called from: run_meta.py
     - `round_half_up_positive`
       - called from: resolution_contract.py
     - `run`
@@ -4862,7 +5030,7 @@ Notes:
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_capture_status`
-      - called from: csv_export.py, pipeline.py
+      - called from: csv_export.py, pipeline.py, run_meta.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -4917,8 +5085,8 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_run_config_snapshot`
-      - called from: streaming.py
+    - `write_run_meta`
+      - called from: streaming.py, thinrunner_streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -4992,6 +5160,8 @@ Notes:
     - called from: csv_export.py
   - `build_palette`
     - called from: color_id_buffer.py
+  - `build_run_meta`
+    - called from: streaming.py
   - `build_vop_csv_row`
     - called from: csv_export.py
   - `canonicalize_manifest_json`
@@ -5002,8 +5172,8 @@ Notes:
     - called from: pipeline.py
   - `choose_step`
     - called from: color_id_buffer.py
-  - `classify_annotation`
-    - called from: revit/annotation.py
+    - `classify_annotation`
+      - called from: revit/annotation.py
     - `classify_keynote`
       - called from: revit/annotation.py
     - `collect_2d_annotations`
@@ -5012,6 +5182,8 @@ Notes:
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
       - called from: pipeline.py
+    - `complete_capture_integrity`
+      - called from: stage_a_registered_capture.py
     - `compute_annotation_extents`
       - called from: revit/view_basis.py
     - `compute_annotation_type_metrics`
@@ -5080,6 +5252,8 @@ Notes:
       - called from: resolution_contract.py
     - `filter_supported_views`
       - called from: dynamo_helpers.py
+    - `finalize_run_meta`
+      - called from: streaming.py
     - `flat_colour_override`
       - called from: stage_a_registration.py
     - `frame_export_geometry`
@@ -5106,6 +5280,8 @@ Notes:
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
+    - `git_commit`
+      - called from: run_meta.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
     - `hide_in_view`
@@ -5128,6 +5304,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `marks_still_in_project`
       - called from: stage_a_registered_capture.py
+    - `merge_run_metas`
+      - called from: thinrunner_streaming.py
     - `missing_override_setters`
       - called from: stage_a_registration.py
     - `nominal_fpp_ft`
@@ -5178,6 +5356,8 @@ Notes:
       - called from: pipeline.py
     - `resolve_view_w_volume`
       - called from: pipeline.py
+    - `revit_version`
+      - called from: run_meta.py
     - `round_half_up_positive`
       - called from: resolution_contract.py
     - `run`
@@ -5213,7 +5393,7 @@ Notes:
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
     - `stage_a_capture_status`
-      - called from: csv_export.py, pipeline.py
+      - called from: csv_export.py, pipeline.py, run_meta.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
@@ -5268,7 +5448,7 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
-    - `write_run_config_snapshot`
-      - called from: streaming.py
+    - `write_run_meta`
+      - called from: streaming.py, thinrunner_streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
