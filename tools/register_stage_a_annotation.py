@@ -32,6 +32,7 @@ REFUSALS -- a refused view gets a record with ``status: "refused"`` and its
 reasons, and no TIFF (a stale one from an earlier run is removed, so a TIFF
 beside a record is always that record's):
   * a sidecar has no ``registration_marks``, or one of an unknown schema;
+  * the two sidecars do not carry the same ``view_id``;
   * the two sidecars' marks are not the same ticks (key, id, UV);
   * either capture's fit is unavailable -- above all an axis with ticks at
     fewer than two levels, which fixes no scale. That is refused, never
@@ -257,6 +258,14 @@ def register(anno_sidecar_path, model_sidecar_path=None):
         why = rm.marks_identity_refusal(anno_marks, model_marks)
         if why:
             refusals.append(why)
+        # The marks alone do not name the view: a model sidecar from another
+        # view (a wrong --model) carrying a copied record would pass the tick
+        # comparison and register two different views (review, PR #219).
+        if (anno_sidecar.get("view_id") is None or model_sidecar.get("view_id") is None
+                or str(anno_sidecar.get("view_id")) != str(model_sidecar.get("view_id"))):
+            refusals.append("the sidecars do not name the same view (annotation "
+                            "view_id {0!r}, model view_id {1!r})".format(
+                                anno_sidecar.get("view_id"), model_sidecar.get("view_id")))
         # The capture's own faults travel with the result: a registration can
         # succeed on a capture whose restore did not.
         record["capture_faults"] = list(anno_marks.get("faults") or [])

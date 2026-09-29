@@ -724,9 +724,17 @@ def mark_ink_mask(pixels, payload, reserved_colours=()):
 
 
 def palette_colours(sidecar):
-    """The capture's own palette, as the ``reserved_colours`` above."""
-    return [tuple(int(c) for c in rgb)
-            for rgb in (sidecar.get("color_assignment_map") or {}).values()]
+    """The capture's own palette, as the ``reserved_colours`` above: its
+    element colours AND its linked-category colours, which production slices
+    from the same palette. A link colour such as (138, 252, 12) lies within
+    BLEND_TOLERANCE of MARK_COLOUR's line to white, so leaving the link map
+    out would let a linked category's line pass for a tick's fringe (review,
+    PR #219)."""
+    colours = []
+    for key in ("color_assignment_map", "link_category_color_map"):
+        colours.extend(tuple(int(c) for c in rgb)
+                       for rgb in (sidecar.get(key) or {}).values())
+    return colours
 
 
 def fit_recorded_marks(pixels, payload, identify_by_id=None, reserved_colours=()):

@@ -688,3 +688,40 @@ def test_a_short_exact_piece_of_a_crossed_tick_is_still_subtracted(tmp_path):
     # And the decoder: the same tick colour is gone from the off-palette count.
     doc = json.loads(dsc.decode_one(anno_path).read_text())
     assert doc["off_palette_foreground_pixel_count"] == 0
+
+
+def test_sidecars_of_two_views_are_refused(tmp_path):
+    """Matching ticks do not name a view: a model sidecar from another view,
+    carrying a copied record, must not register (review, PR #219)."""
+    anno_path, model_path, _c = _write_pair(tmp_path)
+    side = json.loads(model_path.read_text())
+    side["view_id"] = 2
+    model_path.write_text(json.dumps(side))
+    reg.register(anno_path)
+    record = _persisted(anno_path)
+    assert record["status"] == "refused"
+    assert any("same view" in r for r in record["refusals"]), record["refusals"]
+
+
+def test_a_link_category_colour_near_the_mark_colour_is_not_a_tick(tmp_path):
+    """(138, 252, 12) is within blend tolerance of MARK_COLOUR's line to white.
+    As a linked category's colour it is reserved: its long line is not a
+    fringe, not fitted, not subtracted (review, PR #219)."""
+    link = (138, 252, 12)
+    assert rm.blend_coverage(np.array([rm._pack(link)]), MARK_COLOUR)[0].size == 1
+    _anno, model_path, _c = _write_pair(tmp_path)
+    tiff = tmp_path / "V_1.tiff"
+    img = np.array(Image.open(tiff).convert("RGB"))
+    ref = _left_mid_h(_marks())
+    y = int(round(my(ref["level_uv"])))
+    img[y - 1:y + 1, 60:300] = link          # a long link line ON a tick's row
+    Image.fromarray(img).save(str(tiff), format="TIFF")
+    side = json.loads(model_path.read_text())
+    side["link_category_color_map"] = {"Walls": list(link)}
+    model_path.write_text(json.dumps(side))
+    fit = rm.fit_recorded_marks(img, side["registration_marks"],
+                                reserved_colours=rm.palette_colours(side))
+    assert fit["status"] == "value"
+    assert max(fit["residual_max_px"].values()) < 0.6
+    mask = rm.mark_ink_mask(img, side["registration_marks"], rm.palette_colours(side))
+    assert not mask[y - 1:y + 1, 150:250].any()
