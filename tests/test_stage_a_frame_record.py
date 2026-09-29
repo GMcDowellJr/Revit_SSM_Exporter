@@ -19,6 +19,9 @@ from vop_interwoven.core.math_utils import Bounds2D
 
 _FOLDED = ("resolution", "export_frame", "bounds_xy")
 _EXACT_DUPLICATES = ("export_dpi", "requested_px")
+# C6: requested values and the derived dpi are not recorded.
+_C6_DROPPED = ("requested_export_dpi", "requested_pixel_size", "requested_axis",
+               "requested_fpp_ft", "effective_export_dpi")
 
 
 def _narrowed(tmp_path):
@@ -30,6 +33,7 @@ def test_one_frame_record_and_no_folded_blocks(tmp_path):
     assert isinstance(md["frame"], dict)
     assert not (set(_FOLDED) & set(md)), set(_FOLDED) & set(md)
     assert not (set(_EXACT_DUPLICATES) & set(md["frame"]))
+    assert not (set(_C6_DROPPED) & set(md["frame"])), set(_C6_DROPPED) & set(md["frame"])
     # The crop was applied, so the snapped crop IS crop_uv: written once.
     assert md["frame"]["status"] == "value"
     assert md["frame"]["crop_uv"] is not None
@@ -41,17 +45,22 @@ def test_one_frame_record_and_no_folded_blocks(tmp_path):
 def test_the_folded_keys_rebuild_exactly_from_the_frame(tmp_path):
     md = _narrowed(tmp_path)
     f = md["frame"]
-    old = legacy_view(md)
+    run_config = {"config": {"color_id_buffer_export_dpi": 150.0}}
+    old = legacy_view(md, run_config)
     assert old["bounds_xy"] == f["crop_uv"]
     assert old["export_frame"]["crop_snapped_uv"] == f["crop_uv"]
     assert old["export_frame"]["raster_bounds_uv"] == f["frame_uv"]
-    assert old["export_frame"]["requested_px"] == f["requested_pixel_size"]
-    assert old["resolution"]["requested_px"] == f["requested_pixel_size"]
-    assert old["resolution"]["export_dpi"] == f["requested_export_dpi"]
-    for key in ("pre_cap_px", "cap_applied", "max_axis_px", "requested_export_dpi"):
+    requested_px = f["dim_check_attempts"][0]["requested_px"]
+    assert old["export_frame"]["requested_px"] == requested_px
+    assert old["resolution"]["requested_px"] == requested_px
+    assert old["resolution"]["requested_pixel_size"] == requested_px
+    assert old["resolution"]["export_dpi"] == 150.0
+    assert old["resolution"]["requested_axis"] == "width"   # horizontal fit
+    for key in ("pre_cap_px", "cap_applied", "max_axis_px"):
         assert old["export_frame"][key] == old["resolution"][key] == f[key]
-    # And the request the first export attempt made is the recorded one.
-    assert f["dim_check_attempts"][0]["requested_px"] == f["requested_pixel_size"]
+    assert old["export_frame"]["requested_export_dpi"] == 150.0
+    assert old["export_frame"]["requested_fpp_ft"] == pytest.approx(
+        f["view_scale"] / (12.0 * 150.0))
 
 
 def test_an_old_shape_folds_back_to_the_same_frame(tmp_path):
@@ -62,8 +71,10 @@ def test_an_old_shape_folds_back_to_the_same_frame(tmp_path):
     old_only = dict(legacy_view(md))
     del old_only["frame"]
     rebuilt = frame_record(old_only)
-    expected = dict(md["frame"], crop_snapped_uv=md["frame"]["crop_uv"],
-                    raster_bounds_uv=md["frame"]["frame_uv"])
+    f = md["frame"]
+    expected = dict(f, crop_snapped_uv=f["crop_uv"], raster_bounds_uv=f["frame_uv"],
+                    requested_pixel_size=f["dim_check_attempts"][0]["requested_px"],
+                    requested_axis="width")
     assert rebuilt == expected
 
 

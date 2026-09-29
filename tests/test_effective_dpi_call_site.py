@@ -148,8 +148,15 @@ def test_reported_dpi_describes_the_rendered_crop_not_the_grid(tmp_path):
         _install_geometry_types()
         result = _run(tmp_path)
 
+    # C6: the sidecar records no dpi of its own. The achieved dpi is DERIVED
+    # from what it records -- crop_uv and the measured size -- through the one
+    # implementation, so the binding is now on the recorded crop: it must be
+    # the rendered crop, not the grid.
+    frame = result["metadata"]["frame"]
+    assert "effective_export_dpi" not in frame
     res = legacy_view(result["metadata"])["resolution"]
-    reported = res["effective_export_dpi"]
+    reported = effective_export_dpi(frame["crop_uv"], frame["actual_w"],
+                                    frame["actual_h"], float(frame["view_scale"]))
     assert reported is not None
 
     aw, ah = res["actual_w"], res["actual_h"]
@@ -186,5 +193,7 @@ def test_reported_dpi_matches_what_a_decoder_derives_from_the_sidecar(tmp_path):
     from clamp_pad_geometry import clamp_pad_geometry
 
     fpp, _px, _py = clamp_pad_geometry(bounds, aw, ah, measured_w=aw, measured_h=ah)
-    assert res["effective_export_dpi"] == pytest.approx(
-        scale / (12.0 * fpp), rel=1e-9)
+    # C6: composed -- the dpi resolution_contract derives from the sidecar and
+    # the fpp the decoder's clamp model derives from it are one statement.
+    derived = effective_export_dpi(bounds, aw, ah, scale)
+    assert derived == pytest.approx(scale / (12.0 * fpp), rel=1e-9)

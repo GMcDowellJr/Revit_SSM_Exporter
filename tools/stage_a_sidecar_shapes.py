@@ -117,11 +117,50 @@ def frame_record(sidecar: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def legacy_view(sidecar: dict[str, Any]) -> dict[str, Any]:
-    """``sidecar`` with the pre-C5 keys present. Unchanged if it predates C5."""
+def with_requested(frame: dict[str, Any], run_config: dict[str, Any] | None = None
+                   ) -> dict[str, Any]:
+    """C6: the frame plus the REQUESTED values it no longer records.
+
+    Exactly derivable from the frame itself:
+      requested_pixel_size == dim_check_attempts[0]["requested_px"]
+      requested_axis       == "height" if fit_direction == "vertical" else "width"
+    From the run config snapshot (C9's vop_run_config_<run_id>.json, passed
+    as ``run_config``) when given, never guessed without it:
+      requested_export_dpi == config["color_id_buffer_export_dpi"]
+      requested_fpp_ft     == view_scale / (12 * requested_export_dpi)
+    effective_export_dpi is NOT rebuilt here: it is
+    ``vop_interwoven.resolution_contract.effective_export_dpi(crop_uv,
+    actual_w, actual_h, view_scale)``, and this leaf module does not copy it.
+    A pre-C6 frame already carries all of these and is returned unchanged.
+    """
+    out = dict(frame)
+    attempts = frame.get("dim_check_attempts") or []
+    if "requested_pixel_size" not in out and attempts:
+        out["requested_pixel_size"] = attempts[0].get("requested_px")
+    if "requested_axis" not in out and frame.get("fit_direction"):
+        out["requested_axis"] = ("height" if frame["fit_direction"] == "vertical"
+                                 else "width")
+    cfg = (run_config or {}).get("config", run_config) if run_config else None
+    if cfg and "requested_export_dpi" not in out:
+        dpi = cfg.get("color_id_buffer_export_dpi")
+        if dpi:
+            out["requested_export_dpi"] = float(dpi)
+            if out.get("view_scale") and "status" in out and out["status"] == VALUE:
+                out.setdefault("requested_fpp_ft",
+                               float(out["view_scale"]) / (12.0 * float(dpi)))
+    return out
+
+
+def legacy_view(sidecar: dict[str, Any], run_config: dict[str, Any] | None = None
+                ) -> dict[str, Any]:
+    """``sidecar`` with the pre-C5 keys present. Unchanged if it predates C5.
+
+    Since C6 the requested values are rebuilt by with_requested(); pass the
+    run's config snapshot to get the requested dpi and fpp back as well."""
     frame = sidecar.get("frame")
     if not isinstance(frame, dict):
         return sidecar
+    frame = with_requested(frame, run_config)
     out = dict(sidecar)
     res = {k: frame[k] for k in _RESOLUTION_KEYS if k in frame}
     if "requested_export_dpi" in frame and "crop_uv" in frame:

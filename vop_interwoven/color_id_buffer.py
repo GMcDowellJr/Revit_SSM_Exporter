@@ -17,7 +17,6 @@ from .resolution_contract import (
     DEFAULT_COLOR_ID_EXPORT_DPI,
     MAX_STAGE_A_AXIS_PX,
     cap_axes,
-    effective_export_dpi as _effective_export_dpi,
     frame_export_geometry,
 )
 
@@ -4368,17 +4367,6 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         _read_back_view_specific_imports(doc, view, view_specific_imports,
                                          diag=diag, view_id=view_id)
 
-    # The dpi this capture ACHIEVED, as opposed to the dpi that was asked
-    # for. They come apart three ways, all in the sizing path above: the
-    # max(64, ...) floor on pre_cap_px, the two-axis cap, and the
-    # dimension-mismatch backoff.
-    #
-    # The arithmetic lives in resolution_contract.effective_export_dpi() and is
-    # CALLED, not replicated: a test that reimplements the formula binds itself
-    # to its own copy, so production could regress to the fitted-axis or
-    # grid-extent form with the test still green. That is a review finding on
-    # PR #202, not a hypothetical. See that function for why the denominator is
-    # the rendered crop and why BOTH axes are used with the smaller winning.
     # Stage A step 3. The lattice this pass PUBLISHED is a request; what
     # Revit accepted is a measurement, and only the second one tells the
     # annotation pass whether the model image is actually on that lattice.
@@ -4389,9 +4377,6 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     if geometry_out is not None and geom is not None:
         geometry_out["model_accepted_px"] = int(actual_pixel_size)
         geometry_out["model_dim_check"] = dim_report.get("dim_check")
-
-    effective_export_dpi = _effective_export_dpi(
-        crop_bounds_xy, dim_report.get("actual_w"), dim_report.get("actual_h"), scale)
 
     # C5: ONE frame record. What used to be two blocks ("resolution" and
     # "export_frame") plus the top-level "bounds_xy" is folded into "frame",
@@ -4404,19 +4389,22 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     #   crop_snapped_uv     written only when != crop_uv
     #   raster_bounds_uv    written only when != frame_uv
     # Readers fall back to the old keys (tools/stage_a_sidecar_shapes.py).
+    #
+    # C6: ACHIEVED values only. Not written, each derivable:
+    #   requested_export_dpi  -> the run config snapshot (C9),
+    #                            color_id_buffer_export_dpi
+    #   requested_pixel_size  == dim_check_attempts[0]["requested_px"]
+    #   requested_axis        == "height" if fit_direction == "vertical"
+    #                            else "width"
+    #   requested_fpp_ft      == view_scale / (12 * requested_export_dpi)
+    #   effective_export_dpi  == resolution_contract.effective_export_dpi(
+    #                            crop_uv, actual_w, actual_h, view_scale)
     frame_record = {
         "view_scale": scale,
-        # Which axis pixel_size set, and the axis the request was made on.
+        # Which axis pixel_size set (the sizing input, normalised).
         "fit_direction": fit_direction,
-        "requested_axis": requested_axis,
+        # The pixel size the FINAL export attempt used.
         "pixel_size": actual_pixel_size,
-        "requested_pixel_size": pixel_size,
-        # The dpi REQUESTED; nothing here verifies Revit delivered it.
-        "requested_export_dpi": export_dpi,
-        # The dpi the file carries on its unpadded axis, measured against the
-        # rendered crop (resolution_contract.effective_export_dpi). None when
-        # the file's dimensions or the crop rectangle are unknown.
-        "effective_export_dpi": effective_export_dpi,
         # The frame's real paper extent; see the sizing block above.
         "paper_fit_in": paper_fit_in,
         "paper_width_in": paper_width_in,
@@ -4469,7 +4457,6 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             # True when no narrower model crop applied, so A IS B.
             "crop_is_frame": bool(geom["crop_is_frame"]),
             "achieved_export_dpi": float(geom["achieved_export_dpi"]),
-            "requested_fpp_ft": float(geom["requested_fpp_ft"]),
             "achieved_fpp_ft": float(geom["achieved_fpp_ft"]),
             "min_axis_px": int(geom["min_axis_px"]),
             "floor_applied_to_crop": bool(geom["floor_applied_to_crop"]),
@@ -4486,7 +4473,10 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             # The capped grid window, when it differs from B.
             # model_crop_offset_uv is defined against THIS rectangle.
             frame_record["raster_bounds_uv"] = raster_bounds_uv
-    else:
+    if not frame_record["dim_check_attempts"]:
+        # Only then is the request not derivable from the attempts.
+        frame_record["requested_pixel_size"] = pixel_size
+    if "status" not in frame_record:
         frame_record.update({
             "status": "unavailable",
             "reason": ("no usable frame bounds for this view; the export fell back "
@@ -5831,9 +5821,6 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
                 view_id=view_id,
             )
 
-    effective_export_dpi = _effective_export_dpi(
-        crop_bounds_xy, dim_report.get("actual_w"), dim_report.get("actual_h"), scale)
-
     state_out = {
         "schema": ANNOTATION_PASS_SCHEMA,
         "view_id": view_id,
@@ -5843,15 +5830,13 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         "model_pass_tiff_path": os.path.join(
             out_dir, "{0}_{1}.tiff".format(safe_name, view_id)),
         # C5: one frame record per sidecar (pre-C5: "resolution").
+        # C6: achieved values only -- see the model pass's frame record for
+        # where each dropped request is derived from.
         "frame": {
             "pixel_size": actual_pixel_size,
-            "requested_pixel_size": pixel_size,
-            "requested_export_dpi": float(geom["requested_export_dpi"]),
             "achieved_export_dpi": float(geom["achieved_export_dpi"]),
-            "effective_export_dpi": effective_export_dpi,
             "view_scale": scale,
             "fit_direction": fit_direction,
-            "requested_axis": requested_axis,
             "actual_w": dim_report.get("actual_w"),
             "actual_h": dim_report.get("actual_h"),
             "dim_check": dim_report.get("dim_check"),
