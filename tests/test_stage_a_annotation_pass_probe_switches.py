@@ -461,7 +461,9 @@ def test_the_persisted_sidecar_carries_capture_faults_and_failure_reason(tmp_pat
     # AND THE FILE SAYS THE SAME THING. This is the assertion that was false.
     with open(anno["sidecar_path"], encoding="utf-8") as handle:
         persisted = json.load(handle)
-    assert persisted["capture_faults"] == faults_in_memory
+    # P1: through the reader, which also accepts a pre-P1 file.
+    from tools.stage_a_sidecar_shapes import capture_integrity
+    assert capture_integrity(persisted)["capture_faults"] == faults_in_memory
     assert persisted["failure_reason"] == "annotation_lattice_mismatch"
 
 
@@ -480,8 +482,10 @@ def test_a_clean_capture_persists_an_empty_fault_list_not_a_missing_key(tmp_path
     assert anno["failure_reason"] is None
     with open(anno["sidecar_path"], encoding="utf-8") as handle:
         persisted = json.load(handle)
-    assert "capture_faults" in persisted
-    assert persisted["capture_faults"] == []
+    from tools.stage_a_sidecar_shapes import capture_integrity
+    integrity = capture_integrity(persisted)
+    assert integrity is not None and integrity["status"] == "value"
+    assert integrity["capture_faults"] == []
     assert "failure_reason" in persisted
     assert persisted["failure_reason"] is None
 

@@ -586,6 +586,10 @@ def test_sidecar_top_level_keys_are_additive_only(tmp_path):
         # C5: the one frame record (replaces "resolution", "export_frame",
         # "bounds_xy").
         "frame",
+        # P1: the one integrity record, and the model pass's failure_reason
+        # now persisted beside it (it used to exist only in the return value).
+        "capture_integrity",
+        "failure_reason",
         "view_graphics_state",
         "phase_swap_element_set_audit",
         # Stage A step 1.
@@ -619,6 +623,8 @@ def test_record_round_trips_through_the_written_sidecar_file(tmp_path):
     with open(result["sidecar_path"]) as f:
         on_disk = json.load(f)
 
+    # KEPT in the file (Greg, 2026-09-21).
     assert on_disk["view_graphics_state"] == result["metadata"]["view_graphics_state"]
-    assert on_disk["phase_swap_element_set_audit"] == (
-        result["metadata"]["phase_swap_element_set_audit"])
+    # P1: the audit is probe data -- in memory, not in the file.
+    assert "phase_swap_element_set_audit" in result["metadata"]
+    assert "phase_swap_element_set_audit" not in on_disk

@@ -1292,6 +1292,56 @@ def _near_face_w_category_name(elem):
     return getattr(cat, "Name", None)
 
 
+# P1 (Greg, 2026-09-29): probe/restore blocks are NOT written to the sidecar
+# file. They stay on the in-memory record (the "metadata" a pass returns,
+# which the Dynamo probes read); the FILE carries one capture_integrity
+# record in their place. restore_failures, capture_faults and paint_failures
+# are folded INTO that record.
+SIDECAR_PROBE_ONLY_KEYS = (
+    "categories_hidden", "filter_state", "phase_filter_state",
+    "phase_swap_element_set_audit", "category_halftone_state",
+    "category_halftone_outcomes", "unconfirmed_api_claims",
+    "authored_overrides_replaced", "override_restore_check",
+    "colorable_category_source", "palette_step",
+    "restore_failures", "capture_faults", "paint_failures",
+)
+
+
+def _capture_integrity(pass_name, capture_faults, restore_failure_count,
+                       paint_failure_count):
+    """P1: ONE per-view integrity record, always complete.
+
+    ``status: "value"`` and every field present, so a clean record (no
+    faults, zero counts) is never mistaken for an absent one. rolled_back and
+    marks_still_in_project are not this pass's to know: the registered capture
+    fills them in AFTER its rollback (stage_a_registration.complete_capture_
+    integrity) and appends itself to ``completed_by``; until then they read
+    "not_applicable" with the reason.
+    """
+    return {
+        "status": "value",
+        "completed_by": [pass_name],
+        "rolled_back": _gs_not_applicable(
+            "this pass restores the view step by step; a registered capture's "
+            "TransactionGroup rollback is recorded by the registered capture"),
+        "marks_still_in_project": _gs_not_applicable(
+            "registration marks are drawn and counted by the registered capture"),
+        "restore_failures": int(restore_failure_count),
+        "capture_faults": list(capture_faults),
+        "paint_failures": int(paint_failure_count),
+    }
+
+
+def _write_sidecar(json_path, out_dir, state_out):
+    """Write the sidecar FILE: the record minus SIDECAR_PROBE_ONLY_KEYS."""
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
+    record = dict((k, v) for k, v in state_out.items()
+                  if k not in SIDECAR_PROBE_ONLY_KEYS)
+    with open(json_path, "w") as f:
+        json.dump(record, f, indent=2, sort_keys=True)
+
+
 # C4: per-element geometry in near_face_w_map is rounded to this many decimal
 # places of a foot (1e-6 ft, ~0.3 micron) -- far under any pixel. Frame, fpp,
 # resolution and registration values are NEVER rounded; this is used only on
@@ -4196,6 +4246,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     finally:
         restore_tx = Transaction(doc, "VOP Stage A RESTORE color ID buffer")
         restore_tx.Start()
+        model_restore_failures = []
 
         # Best-effort restore: every step below is independently guarded. Revit
         # transactions are all-or-nothing on RollBack, so a single failing step
@@ -4208,6 +4259,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             try:
                 fn()
             except Exception as ex:
+                model_restore_failures.append(callsite)
                 if diag is not None:
                     diag.error(
                         phase="color_id_buffer",
@@ -4603,10 +4655,6 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             orig_view_template_id.IntegerValue if orig_view_template_id is not None else None
         ),
     }
-    if not os.path.exists(out_dir):
-        os.makedirs(out_dir)
-    with open(json_path, "w") as f:
-        json.dump(state_out, f, indent=2, sort_keys=True)
 
     # A dimension mismatch that survived the halving backoff is a failed
     # view, not a successful one with a note attached. The TIFF and sidecar
@@ -4647,6 +4695,25 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                             len(dim_report.get("attempts") or [])),
                 view_id=view_id,
             )
+
+    # P1: the integrity record, then THE WRITE -- after failure_reason is
+    # known, so the file carries the faults (defect class 4; the model
+    # sidecar used to be written before they were computed).
+    model_faults = []
+    if unsuppressed_imports:
+        model_faults.append({"fault": "view_specific_import_not_suppressed",
+                             "detail": [r.get("element_id") for r in unsuppressed_imports]})
+    if dim_report.get("dim_check") == "mismatch":
+        model_faults.append({"fault": "export_dim_mismatch",
+                             "detail": dim_report.get("dim_read_error")})
+    if model_restore_failures:
+        model_faults.append({"fault": "model_view_state_not_restored",
+                             "detail": "{0} restore step(s) raised: {1}".format(
+                                 len(model_restore_failures), model_restore_failures)})
+    state_out["capture_integrity"] = _capture_integrity(
+        "model_pass", model_faults, len(model_restore_failures), paint_failures)
+    state_out["failure_reason"] = failure_reason
+    _write_sidecar(json_path, out_dir, state_out)
 
     return {
         "view_id": view_id,
@@ -6130,15 +6197,16 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     # derived from. A consumer reading the file should not have to re-derive
     # "which fault is reported" from an ordering rule stated only in a comment.
     state_out["failure_reason"] = failure_reason
+    state_out["capture_integrity"] = _capture_integrity(
+        "annotation_pass", capture_faults, len(restore_failures), paint_failures)
 
     # THE WRITE, AFTER THE RECORD IS COMPLETE. Everything state_out carries is
     # assigned by this point, so the file and the returned metadata are the same
-    # facts. They were not: capture_faults and failure_reason were computed
-    # after the old write site and existed only in memory.
-    if not os.path.exists(out_dir):
-        os.makedirs(out_dir)
-    with open(json_path, "w") as f:
-        json.dump(state_out, f, indent=2, sort_keys=True)
+    # facts (P1: the file minus SIDECAR_PROBE_ONLY_KEYS, whose integrity facts
+    # are in capture_integrity). They were not: capture_faults and
+    # failure_reason were computed after the old write site and existed only
+    # in memory.
+    _write_sidecar(json_path, out_dir, state_out)
 
     return {
         "view_id": view_id,

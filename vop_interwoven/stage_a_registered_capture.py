@@ -473,6 +473,12 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             record["sidecar_writes"]["annotation"] = registration.annotate_sidecar(
                 anno_out["sidecar_path"], "registration_marks",
                 _registration_payload("annotation", record, colours_by_id=colours))
+        # P1: the integrity record, completed with the rollback verdict and
+        # the faults above -- still after the read-back, so it is final.
+        for name, out in (("model", model_out), ("annotation", anno_out)):
+            if out and out.get("sidecar_path") and record["sidecar_writes"].get(name) is None:
+                record["sidecar_writes"][name] = registration.complete_capture_integrity(
+                    out["sidecar_path"], record)
         for name, error in record["sidecar_writes"].items():
             if error is not None:
                 _fault("registration_sidecar_write_failed",

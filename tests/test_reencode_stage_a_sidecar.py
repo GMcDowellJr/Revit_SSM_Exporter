@@ -51,11 +51,27 @@ def test_decode_and_register_are_identical_on_old_and_reencoded_shapes(tmp_path)
     old_dir = tmp_path / "old"
     old_dir.mkdir()
     old_anno, old_model, _c = pair._write_pair(old_dir)
+    # A pre-P1 sidecar carries the probe/restore blocks; put them in, so the
+    # P1 gate below has something to remove.
+    for path, extra in ((old_model, {"palette_step": 7, "categories_hidden": {"-2000011": {}},
+                                     "filter_state": {}, "paint_failures": 0}),
+                        (old_anno, {"palette_step": 5, "capture_faults": [],
+                                    "restore_failures": [], "override_restore_check": {},
+                                    "unconfirmed_api_claims": ["x"], "paint_failures": 0})):
+        side = json.loads(path.read_text())
+        side.update(extra)
+        path.write_text(json.dumps(side))
     new_anno, new_model = _reencoded_copy(old_dir, tmp_path / "new")
 
     # The re-encoded files really are the new shape (else this proves nothing).
     new_side = json.loads(new_model.read_text())
     assert "frame" in new_side and "resolution" not in new_side and "bounds_xy" not in new_side
+    # P1 gate: capture_integrity present, none of the removed keys.
+    from vop_interwoven.color_id_buffer import SIDECAR_PROBE_ONLY_KEYS
+    for path in (new_model, new_anno):
+        side = json.loads(path.read_text())
+        assert side["capture_integrity"]["status"] == "rebuilt_from_pre_p1_keys"
+        assert not (set(SIDECAR_PROBE_ONLY_KEYS) & set(side)), path
 
     for old, new in ((old_model, new_model), (old_anno, new_anno)):
         a, b = _decoded(old), _decoded(new)

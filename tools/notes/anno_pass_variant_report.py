@@ -99,7 +99,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from tools.clamp_pad_geometry import clamp_pad_geometry  # noqa: E402
-from tools.stage_a_sidecar_shapes import legacy_view  # noqa: E402
+from tools.stage_a_sidecar_shapes import capture_integrity, legacy_view  # noqa: E402
 # The registration-mark fit is production's now (tools/registration_marks.py,
 # which the decoder and register_stage_a_annotation.py also use). Imported,
 # not copied: one implementation, so the probe's F3 and production's
@@ -1274,6 +1274,12 @@ def _block_ok(raw) -> tuple[bool, str | None]:
     return (False, "{0}: {1}".format(status, raw.get("reason") or "no reason recorded"))
 
 
+def _integrity_faults(sidecar):
+    integrity = capture_integrity(sidecar)
+    faults = (integrity or {}).get("capture_faults")
+    return list(faults) if isinstance(faults, list) else None
+
+
 def read_annotation_sidecar(path):
     """Everything this report needs out of one annotation sidecar.
 
@@ -1307,8 +1313,10 @@ def read_annotation_sidecar(path):
         # already-defaulted list; "capture_faults_raw" preserves ABSENT as None,
         # which is a different fact from an empty list and is what lets
         # _capture_faults_for report "UNKNOWN" instead of "none".
-        "capture_faults": sidecar.get("capture_faults") or [],
-        "capture_faults_raw": sidecar.get("capture_faults"),
+        # P1: the faults live in capture_integrity; the reader rebuilds them
+        # from a pre-P1 sidecar's top-level list, and ABSENT stays None.
+        "capture_faults": _integrity_faults(sidecar) or [],
+        "capture_faults_raw": _integrity_faults(sidecar),
         "tiff_path": sidecar.get("tiff_path"),
         "paint_failed_element_ids": set(
             int(v) for v in (sidecar.get("paint_failed_element_ids") or [])),

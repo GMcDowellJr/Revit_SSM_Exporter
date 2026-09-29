@@ -182,3 +182,42 @@ def legacy_view(sidecar: dict[str, Any], run_config: dict[str, Any] | None = Non
             ef = {"status": frame["status"], "reason": frame.get("reason")}
         out.setdefault("export_frame", ef)
     return out
+
+
+# --- P1: one capture_integrity record ---------------------------------------
+
+def capture_integrity(sidecar: dict[str, Any]) -> dict[str, Any] | None:
+    """The sidecar's capture_integrity record, or one rebuilt from the pre-P1
+    keys, or None when the sidecar carries neither (so "absent" is never read
+    as "clean").
+
+    A rebuilt record says so (``status: "rebuilt_from_pre_p1_keys"``), and a
+    field the old shape never recorded is an "unavailable" state, not a zero:
+    the pre-P1 model pass wrote no restore-failure list and no fault list.
+    """
+    if isinstance(sidecar.get("capture_integrity"), dict):
+        return sidecar["capture_integrity"]
+    old_keys = ("capture_faults", "restore_failures", "paint_failures", "registration_marks")
+    if not any(k in sidecar for k in old_keys):
+        return None
+
+    def _missing(what):
+        return {"state": UNAVAILABLE,
+                "reason": "the pre-P1 sidecar recorded no {0}".format(what)}
+    restore = ((sidecar.get("registration_marks") or {}).get("restore") or {})
+    marks_left = restore.get("marks_still_in_project")
+    return {
+        "status": "rebuilt_from_pre_p1_keys",
+        "rolled_back": (restore["rolled_back"] if "rolled_back" in restore
+                        else _missing("rollback verdict")),
+        "marks_still_in_project": (len(marks_left) if isinstance(marks_left, (list, dict))
+                                   else _missing("marks_still_in_project")),
+        "restore_failures": (len(sidecar["restore_failures"])
+                             if isinstance(sidecar.get("restore_failures"), list)
+                             else _missing("restore_failures")),
+        "capture_faults": (list(sidecar["capture_faults"])
+                           if isinstance(sidecar.get("capture_faults"), list)
+                           else _missing("capture_faults")),
+        "paint_failures": (sidecar["paint_failures"] if "paint_failures" in sidecar
+                           else _missing("paint_failures")),
+    }

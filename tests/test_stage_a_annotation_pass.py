@@ -734,7 +734,9 @@ def test_the_persisted_annotation_sidecar_carries_capture_faults(tmp_path):
     # AND THE FILE SAYS THE SAME THING. This is the assertion that was false.
     with open(anno_result["sidecar_path"]) as handle:
         persisted = json.load(handle)
-    assert persisted["capture_faults"] == faults_in_memory
+    # P1: the faults persist inside capture_integrity.
+    assert persisted["capture_integrity"]["capture_faults"] == faults_in_memory
+    assert "capture_faults" not in persisted
     assert persisted["failure_reason"] == "annotation_lattice_mismatch"
 
 
@@ -753,8 +755,12 @@ def test_a_clean_annotation_capture_persists_an_empty_fault_list(tmp_path):
     assert anno_result["failure_reason"] is None
     with open(anno_result["sidecar_path"]) as handle:
         persisted = json.load(handle)
-    assert "capture_faults" in persisted
-    assert persisted["capture_faults"] == []
+    # P1: present-and-clean, never absent: status value, every field there.
+    integrity = persisted["capture_integrity"]
+    assert integrity["status"] == "value"
+    assert integrity["capture_faults"] == []
+    assert integrity["restore_failures"] == 0
+    assert integrity["paint_failures"] == 0
     assert "failure_reason" in persisted
     assert persisted["failure_reason"] is None
 
@@ -780,11 +786,18 @@ def test_the_model_passs_own_sidecar_is_also_final_when_written(tmp_path):
     # on the same fact. The round trip is what "the file holds this record"
     # can honestly mean; naming it here beats a bare == that would fail for a
     # reason unrelated to whether the write is final.
-    assert persisted == json.loads(json.dumps(model_result["metadata"],
-                                              sort_keys=True))
+    # P1: the file is the record minus the probe-only keys (which stay in
+    # memory for the probes) -- nothing else differs.
+    from vop_interwoven.color_id_buffer import SIDECAR_PROBE_ONLY_KEYS
+
+    def _filed(md):
+        return json.loads(json.dumps(
+            dict((k, v) for k, v in md.items() if k not in SIDECAR_PROBE_ONLY_KEYS),
+            sort_keys=True))
+    assert persisted == _filed(model_result["metadata"])
 
     # And the same for the annotation pass, which is the one that was wrong.
     with open(anno_result["sidecar_path"]) as handle:
         persisted_anno = json.load(handle)
-    assert persisted_anno == json.loads(json.dumps(anno_result["metadata"],
-                                                   sort_keys=True))
+    assert persisted_anno == _filed(anno_result["metadata"])
+    assert not (set(SIDECAR_PROBE_ONLY_KEYS) & set(persisted) | set(SIDECAR_PROBE_ONLY_KEYS) & set(persisted_anno))

@@ -28,9 +28,9 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tools.stage_a_sidecar_shapes import frame_record  # noqa: E402
+from tools.stage_a_sidecar_shapes import capture_integrity, frame_record  # noqa: E402
 from vop_interwoven.color_id_buffer import (  # noqa: E402
-    _plain_or_state, _round_ft, _round_geometry,
+    SIDECAR_PROBE_ONLY_KEYS, _plain_or_state, _round_ft, _round_geometry,
 )
 
 _C1_DROPPED = ("import_symbol_state", "view_specific_state")
@@ -79,9 +79,17 @@ def reencode_frame(sidecar: dict[str, Any]) -> dict[str, Any]:
 
 
 def reencode(sidecar: dict[str, Any]) -> dict[str, Any]:
-    if isinstance(sidecar.get("frame"), dict):
-        return sidecar                    # already the current shape
     out = dict(sidecar)
+    # P1: the probe/restore blocks fold into ONE capture_integrity record
+    # (rebuilt, and marked so, by the shared reader).
+    if "capture_integrity" not in out:
+        integrity = capture_integrity(sidecar)
+        if integrity is not None:
+            out["capture_integrity"] = integrity
+    for key in SIDECAR_PROBE_ONLY_KEYS:
+        out.pop(key, None)
+    if isinstance(sidecar.get("frame"), dict):
+        return out                        # C1-C6 shape already
     out["frame"] = reencode_frame(sidecar)
     for key in ("resolution", "export_frame", "bounds_xy"):
         out.pop(key, None)

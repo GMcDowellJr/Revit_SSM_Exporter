@@ -374,3 +374,32 @@ def test_c7_control_the_frame_b_fallback_still_records_frame_B(tmp_path):
     assert "sizing_frame" not in frame
     for key in ("frame_uv", "frame_px", "frame_source", "paper_fit_in", "crop_offset_px"):
         assert key in frame, key
+
+
+# --- P1: one capture_integrity record per view, completed after the rollback -
+
+def test_p1_a_clean_registered_capture_files_a_complete_clean_integrity_record(tmp_path):
+    from vop_interwoven.color_id_buffer import SIDECAR_PROBE_ONLY_KEYS
+    out, _view, _doc, _exports, _diag = _run(tmp_path)
+    for path in (out["sidecar_path"], out["annotation_sidecar_path"]):
+        side = _sidecar(path)
+        integrity = side["capture_integrity"]
+        assert integrity["status"] == "value"
+        assert integrity["completed_by"][-1] == "registered_capture"
+        assert integrity["rolled_back"] is True
+        assert integrity["marks_still_in_project"] == 0
+        assert integrity["restore_failures"] == 0
+        assert integrity["capture_faults"] == []
+        assert integrity["paint_failures"] == 0
+        assert not (set(SIDECAR_PROBE_ONLY_KEYS) & set(side)), path
+        assert "view_graphics_state" in side or path == out["annotation_sidecar_path"]
+
+
+def test_p1_a_rollback_that_undoes_nothing_is_counted_in_the_FILE(tmp_path):
+    """The CONTROL for the clean record: the same fields, not clean."""
+    out, _view, _doc, _exports, _diag = _run(tmp_path, rollback_restores=())
+    integrity = _sidecar(out["annotation_sidecar_path"])["capture_integrity"]
+    assert integrity["marks_still_in_project"] == 12
+    assert [f["fault"] for f in integrity["capture_faults"]
+            if f.get("source") == "registered_capture"] == [
+        "registration_marks_left_in_project", "element_overrides_left_behind"]

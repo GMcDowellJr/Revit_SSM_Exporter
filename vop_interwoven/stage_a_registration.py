@@ -729,6 +729,40 @@ def annotate_sidecar(path, key, payload):
 
 
 
+def complete_capture_integrity(path, record):
+    """P1: finish a pass's ``capture_integrity`` with what only the registered
+    capture knows, AFTER its rollback and read-back.
+
+    Sets ``rolled_back`` (the verdict), ``marks_still_in_project`` (a COUNT),
+    appends the registered capture's own faults to ``capture_faults`` and
+    itself to ``completed_by``. A sidecar with no integrity record to complete
+    is refused, not given a fresh one: the pass that should have written it
+    did not, and that is the fact. Returns ``None`` on success, else the reason.
+    """
+    try:
+        with open(path) as handle:
+            sidecar = json.load(handle)
+        integrity = sidecar.get("capture_integrity")
+        if not isinstance(integrity, dict):
+            return "the sidecar carries no capture_integrity record to complete"
+        restore = record.get("restore") or {}
+        marks_left = restore.get("marks_still_in_project")
+        integrity["rolled_back"] = bool(restore.get("rolled_back"))
+        integrity["marks_still_in_project"] = (
+            len(marks_left) if isinstance(marks_left, (list, dict)) else
+            {"state": "unavailable",
+             "reason": "the mark read-back did not complete: {0!r}".format(marks_left)})
+        integrity["capture_faults"] = list(integrity.get("capture_faults") or []) + [
+            dict(f, source="registered_capture") for f in record.get("faults") or []]
+        integrity["completed_by"] = list(integrity.get("completed_by") or []) + [
+            "registered_capture"]
+        with open(path, "w") as handle:
+            json.dump(sidecar, handle, indent=2, sort_keys=True, default=str)
+        return None
+    except Exception as ex:
+        return "{0}: {1}".format(type(ex).__name__, ex)
+
+
 def discover_link_categories(doc, view, diag=None, view_id=None):
     """LINKED RVT categories for mechanism 2, through production's own policy.
 
