@@ -573,19 +573,24 @@ def test_sidecar_top_level_keys_are_additive_only(tmp_path):
     result = _export(doc, view, elements, _cfg(tmp_path), FakeDiag(), _raster())
 
     keys = set(result["metadata"])
-    assert SIDECAR_KEYS_BEFORE <= keys, SIDECAR_KEYS_BEFORE - keys
+    # C5 (2026-09-29) is the one reviewed REMOVAL: "resolution" and
+    # "bounds_xy" are folded, with "export_frame", into one "frame" record.
+    # Readers rebuild them exactly (tools/stage_a_sidecar_shapes.legacy_view).
+    c5_folded = {"resolution", "bounds_xy"}
+    assert SIDECAR_KEYS_BEFORE - c5_folded <= keys, SIDECAR_KEYS_BEFORE - c5_folded - keys
+    assert not (c5_folded & keys)
     # Each name here is a reviewed addition. The frozen set below it is never
     # edited: an "additive" change that renamed or dropped a pre-change key
     # still fails on the subset assertion above.
     assert keys - SIDECAR_KEYS_BEFORE == {
+        # C5: the one frame record (replaces "resolution", "export_frame",
+        # "bounds_xy").
+        "frame",
         "view_graphics_state",
         "phase_swap_element_set_audit",
         # Stage A step 1.
         "dwg_imports_omitted",
-        # Stage A step 2: the frame-derived export geometry, including the
-        # requested-vs-achieved dpi/px/fpp triple and decision A's
-        # whole-pixel registration offset.
-        "export_frame",
+        # Stage A step 2's "export_frame" is folded into "frame" by C5.
         # Round 3 of the annotation-pass variant probe: whether this capture
         # left OST_Lines visible (probe-only switch; False in production).
         "model_lines_visible",

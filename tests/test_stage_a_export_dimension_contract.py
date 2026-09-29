@@ -7,6 +7,7 @@ writes a TIFF header of whatever size the fake says Revit produced.
 import struct
 
 import pytest
+from tools.stage_a_sidecar_shapes import legacy_view
 
 from vop_interwoven import color_id_buffer as cib
 from vop_interwoven.resolution_contract import MAX_STAGE_A_AXIS_PX, cap_axes
@@ -408,7 +409,7 @@ def test_matching_export_records_pass_and_the_cap_fields(tmp_path):
         doc = _SizedDoc(lambda px: (px, px))
         result, diag = _run_view(tmp_path, doc, _FakeView(view_id=101))
 
-    res = result["metadata"]["resolution"]
+    res = legacy_view(result["metadata"])["resolution"]
     assert result["success"] is True
     assert result["failure_reason"] is None
     assert res["dim_check"] == "pass"
@@ -424,7 +425,7 @@ def test_half_size_export_fails_the_view_with_export_dim_mismatch(tmp_path):
         doc = _SizedDoc(lambda px: (px // 2, px // 2))
         result, diag = _run_view(tmp_path, doc, _FakeView(view_id=102))
 
-    res = result["metadata"]["resolution"]
+    res = legacy_view(result["metadata"])["resolution"]
     assert res["dim_check"] == "mismatch"
     assert result["success"] is False
     assert result["failure_reason"] == "export_dim_mismatch"
@@ -442,7 +443,7 @@ def test_unreadable_export_is_flagged_but_does_not_fail_the_view(tmp_path):
         doc = _FakeDoc()  # writes b"FAKE_TIFF", which has no TIFF header
         result, diag = _run_view(tmp_path, doc, _FakeView(view_id=103))
 
-    res = result["metadata"]["resolution"]
+    res = legacy_view(result["metadata"])["resolution"]
     assert res["dim_check"] == "read_failed"
     assert res["actual_w"] is None and res["actual_h"] is None
     assert res["dim_read_error"]
@@ -702,7 +703,7 @@ def test_backoff_floor_is_the_captures_own_minimum_not_the_cell_grid(
                               bounds=Bounds2D(0.0, 0.0, 800.0, 250.0)),
             color_id_buffer_fit_direction=fit)
 
-    res = result["metadata"]["resolution"]
+    res = legacy_view(result["metadata"])["resolution"]
     assert res["requested_axis"] == expected_axis
     assert res["backoff_floor_px"] == 64
     # ... and that is not either grid extent, so the assertion above is not
@@ -721,9 +722,9 @@ def test_a_capture_with_no_frame_falls_back_to_the_absolute_floor(tmp_path):
         result, _diag = _run_view_with_raster(
             tmp_path, doc, _FakeView(view_id=113), _FakeRaster(W=800, H=250))
 
-    res = result["metadata"]["resolution"]
+    res = legacy_view(result["metadata"])["resolution"]
     assert res["backoff_floor_px"] == cib._PIXEL_SIZE_BACKOFF_FLOOR
-    assert result["metadata"]["export_frame"]["status"] == "unavailable"
+    assert legacy_view(result["metadata"])["export_frame"]["status"] == "unavailable"
 
 
 def test_the_fitted_axis_is_still_chosen_correctly(tmp_path):
@@ -740,7 +741,7 @@ def test_the_fitted_axis_is_still_chosen_correctly(tmp_path):
                 _FakeFramedRaster(W=800, H=250,
                                   bounds=Bounds2D(0.0, 0.0, 800.0, 250.0)),
                 color_id_buffer_fit_direction=fit)
-        res = result["metadata"]["resolution"]
+        res = legacy_view(result["metadata"])["resolution"]
         seen[fit] = (res["requested_axis"], res["paper_fit_in"])
 
     assert seen["horizontal"][0] == "width"

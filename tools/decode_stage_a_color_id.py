@@ -204,6 +204,7 @@ from vop_interwoven.resolution_contract import DEFAULT_COLOR_ID_EXPORT_DPI
 # standard library only, so tools/link_identity_resolver.py shares it without
 # taking on this module's vop_interwoven dependency.
 from tools.clamp_pad_geometry import clamp_pad_geometry as _shared_clamp_pad_geometry
+from tools.stage_a_sidecar_shapes import legacy_view  # noqa: E402
 
 # The ONE registration-mark implementation, shared with
 # tools/register_stage_a_annotation.py and the probe analyzer.
@@ -534,6 +535,7 @@ def _capture_reliability(sidecar: dict[str, Any]) -> tuple[bool, str | None]:
     authority it has not earned (AREAL HIGH is the only elem_class/confidence
     combination that gates occlusion, pipeline.py:2443-2444).
     """
+    sidecar = legacy_view(sidecar)
     display_style = sidecar.get("applied_display_style")
     # A sidecar written before "read_failed" existed records a failed AA read
     # as "unchanged". Both are the same fact -- the AA state was never
@@ -688,6 +690,7 @@ def build_decoded_document(
     bounds_uv: tuple[float, float, float, float] | None,
     model_crop_offset_uv: tuple[float, float, float, float] | None = None,
 ) -> dict[str, Any]:
+    sidecar = legacy_view(sidecar)
     t0 = time.time()
     rgb = _load_rgb_array(tiff_path)
     h, w = rgb.shape[:2]
@@ -1104,7 +1107,7 @@ def _resolve_tiff_path(sidecar_path: Path, sidecar: dict[str, Any]) -> Path:
 
 
 def decode_one(sidecar_path: Path, bounds_uv=None) -> Path:
-    sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    sidecar = legacy_view(json.loads(sidecar_path.read_text(encoding="utf-8")))
     model_crop_offset_uv = None
     if bounds_uv is None:
         sidecar_bounds = sidecar.get("bounds_xy")

@@ -24,6 +24,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tools.stage_a_sidecar_shapes import legacy_view
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -90,7 +91,7 @@ def _recorded_size(sidecar):
     actually claims; passing a made-up pair makes the frame refuse on a
     size mismatch and masks whatever the test was really asking about.
     """
-    resolution = sidecar["resolution"]
+    resolution = legacy_view(sidecar)["resolution"]
     return (resolution["actual_w"], resolution["actual_h"])
 
 

@@ -36,6 +36,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tools.stage_a_sidecar_shapes import legacy_view
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -128,7 +129,7 @@ def test_the_crop_path_is_actually_reached(tmp_path):
     with _install_fake_revit_db():
         _install_geometry_types()
         result = _run(tmp_path)
-    bounds = result["metadata"].get("bounds_xy")
+    bounds = legacy_view(result["metadata"]).get("bounds_xy")
     assert bounds is not None, (
         "the crop was not applied, so this file proves nothing; check that "
         "XYZ/BoundingBoxXYZ reached the fake Autodesk.Revit.DB")
@@ -147,7 +148,7 @@ def test_reported_dpi_describes_the_rendered_crop_not_the_grid(tmp_path):
         _install_geometry_types()
         result = _run(tmp_path)
 
-    res = result["metadata"]["resolution"]
+    res = legacy_view(result["metadata"])["resolution"]
     reported = res["effective_export_dpi"]
     assert reported is not None
 
@@ -176,8 +177,8 @@ def test_reported_dpi_matches_what_a_decoder_derives_from_the_sidecar(tmp_path):
         result = _run(tmp_path)
 
     meta = result["metadata"]
-    res = meta["resolution"]
-    bounds = meta["bounds_xy"]
+    res = legacy_view(meta)["resolution"]
+    bounds = legacy_view(meta)["bounds_xy"]
     aw, ah = res["actual_w"], res["actual_h"]
     scale = float(res["view_scale"])
 

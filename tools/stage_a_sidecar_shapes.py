@@ -64,3 +64,81 @@ def model_entry_bbox_3d(entry: dict[str, Any]) -> tuple[str, Any]:
     """``bbox_3d`` as ``(state, {"min", "max"}|reason)``. C3 writes the plain
     ``{min, max}``; before it, ``{"state": "value", "value": {min, max}}``."""
     return _state_read(entry.get("bbox_3d"), "no bbox_3d recorded")
+
+
+# --- C5: one frame record per sidecar ---------------------------------------
+#
+# Before C5 a model sidecar carried "resolution", "export_frame" and a
+# top-level "bounds_xy"; an annotation sidecar carried "resolution". Since C5
+# both carry one "frame" record with the exact duplicates written once.
+# legacy_view() rebuilds the pre-C5 keys from it EXACTLY, so a reader written
+# against the old shape reads a new sidecar unchanged, and an old sidecar
+# passes through untouched.
+
+# Keys of the pre-C5 "resolution" block (model and annotation pass).
+_RESOLUTION_KEYS = (
+    "pixel_size", "requested_pixel_size", "requested_export_dpi",
+    "effective_export_dpi", "achieved_export_dpi", "view_scale", "fit_direction",
+    "paper_fit_in", "paper_width_in", "paper_height_in", "requested_axis",
+    "pre_cap_px", "cap_applied", "max_axis_px", "predicted_derived_px",
+    "actual_w", "actual_h", "dim_check", "dim_check_ceiling_px",
+    "dim_read_error", "dim_check_attempts", "backoff_stop_reason",
+    "backoff_floor_px", "backoff_max_retries",
+)
+# Keys of the pre-C5 "export_frame" block, besides the ones rebuilt below.
+_EXPORT_FRAME_KEYS = (
+    "frame_uv", "frame_source", "anno_cap_envelope_applied", "frame_extent_ft",
+    "frame_snapped_uv", "frame_px", "crop_px", "crop_offset_px",
+    "crop_is_frame", "requested_export_dpi", "achieved_export_dpi",
+    "requested_fpp_ft", "achieved_fpp_ft", "pre_cap_px", "cap_applied",
+    "max_axis_px", "min_axis_px", "floor_applied_to_crop",
+    "cap_applied_by_cap_axes", "lattice_corrections", "verified_against_revit",
+)
+
+
+def frame_record(sidecar: dict[str, Any]) -> dict[str, Any]:
+    """The sidecar's frame record, new shape or rebuilt from the old one.
+
+    The pre-C5 keys fold in the same way the writer folds them: resolution
+    first, then the export_frame block, then ``bounds_xy`` as ``crop_uv``.
+    """
+    if isinstance(sidecar.get("frame"), dict):
+        return sidecar["frame"]
+    out: dict[str, Any] = dict(sidecar.get("resolution") or {})
+    out.pop("export_dpi", None)
+    out.pop("requested_px", None)
+    ef = sidecar.get("export_frame")
+    if isinstance(ef, dict):
+        for key, value in ef.items():
+            if key != "requested_px":
+                out.setdefault(key, value)
+    if "bounds_xy" in sidecar:
+        out["crop_uv"] = sidecar.get("bounds_xy")
+    return out
+
+
+def legacy_view(sidecar: dict[str, Any]) -> dict[str, Any]:
+    """``sidecar`` with the pre-C5 keys present. Unchanged if it predates C5."""
+    frame = sidecar.get("frame")
+    if not isinstance(frame, dict):
+        return sidecar
+    out = dict(sidecar)
+    res = {k: frame[k] for k in _RESOLUTION_KEYS if k in frame}
+    if "requested_export_dpi" in frame and "crop_uv" in frame:
+        res["export_dpi"] = frame["requested_export_dpi"]
+    if "requested_pixel_size" in frame and "crop_uv" in frame:
+        res["requested_px"] = frame["requested_pixel_size"]
+    out.setdefault("resolution", res)
+    if "crop_uv" in frame:          # the model pass; the annotation pass has none
+        out.setdefault("bounds_xy", frame["crop_uv"])
+    if "status" in frame:
+        if frame["status"] == VALUE:
+            ef = {k: frame[k] for k in _EXPORT_FRAME_KEYS if k in frame}
+            ef["status"] = VALUE
+            ef["requested_px"] = frame.get("requested_pixel_size")
+            ef["crop_snapped_uv"] = frame.get("crop_snapped_uv", frame.get("crop_uv"))
+            ef["raster_bounds_uv"] = frame.get("raster_bounds_uv", frame.get("frame_uv"))
+        else:
+            ef = {"status": frame["status"], "reason": frame.get("reason")}
+        out.setdefault("export_frame", ef)
+    return out

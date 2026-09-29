@@ -20,6 +20,7 @@ import struct
 import types
 
 import pytest
+from tools.stage_a_sidecar_shapes import legacy_view
 
 import vop_interwoven.color_id_buffer as color_id_buffer
 from vop_interwoven.config import Config
@@ -912,7 +913,7 @@ def test_untouched_crop_mode_requests_the_model_pass_crop_pixel_count(tmp_path):
     assert int(geom["crop_px"][0]) != int(geom["frame_px"][0])
     assert at_export["pixel_size"] == int(geom["crop_px"][0])
     assert anno["metadata"]["registration"]["requested_px_source"] == "model_crop_px"
-    assert anno["metadata"]["resolution"]["requested_pixel_size"] == int(geom["crop_px"][0])
+    assert legacy_view(anno["metadata"])["resolution"]["requested_pixel_size"] == int(geom["crop_px"][0])
 
 
 def test_an_unknown_crop_mode_raises_rather_than_defaulting(tmp_path):

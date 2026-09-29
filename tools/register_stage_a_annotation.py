@@ -67,6 +67,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools import registration_marks as rm  # noqa: E402
+from tools.stage_a_sidecar_shapes import legacy_view  # noqa: E402
 
 Image.MAX_IMAGE_PIXELS = None
 
@@ -161,6 +162,7 @@ def grid_bounds_uv(model_sidecar):
     may be NARROWER than. ``bounds_xy`` is the rectangle the model TIFF was
     cropped to; ``model_crop_offset_uv`` is how far each side sits inside the
     raster's own bounds (the decoder's ``grid_bounds_uv``, same arithmetic)."""
+    model_sidecar = legacy_view(model_sidecar)
     bounds = model_sidecar.get("bounds_xy")
     if not bounds or len(bounds) != 4:
         return None, "the model sidecar records no bounds_xy"
@@ -215,14 +217,14 @@ def register(anno_sidecar_path, model_sidecar_path=None):
     t0 = time.time()
     anno_sidecar_path = Path(anno_sidecar_path)
     tiff_out, json_out = output_paths(anno_sidecar_path)
-    anno_sidecar = json.loads(anno_sidecar_path.read_text(encoding="utf-8"))
+    anno_sidecar = legacy_view(json.loads(anno_sidecar_path.read_text(encoding="utf-8")))
     if model_sidecar_path is None:
         model_sidecar_path = model_sidecar_for(anno_sidecar_path, anno_sidecar)
     if model_sidecar_path is None or not Path(model_sidecar_path).exists():
         raise FileNotFoundError("no model sidecar for {0} (tried {1})".format(
             anno_sidecar_path, model_sidecar_path))
     model_sidecar_path = Path(model_sidecar_path)
-    model_sidecar = json.loads(model_sidecar_path.read_text(encoding="utf-8"))
+    model_sidecar = legacy_view(json.loads(model_sidecar_path.read_text(encoding="utf-8")))
     anno_tiff = resolve_tiff(anno_sidecar_path, anno_sidecar)
     model_tiff = resolve_tiff(model_sidecar_path, model_sidecar)
 

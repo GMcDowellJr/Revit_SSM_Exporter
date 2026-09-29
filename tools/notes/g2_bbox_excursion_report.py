@@ -137,7 +137,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from tools.clamp_pad_geometry import clamp_pad_geometry  # noqa: E402
-from tools.stage_a_sidecar_shapes import model_entry_uv_corners  # noqa: E402
+from tools.stage_a_sidecar_shapes import legacy_view, model_entry_uv_corners  # noqa: E402
 
 
 # A summary statistic is printed only for a cell with at least this many
@@ -261,6 +261,7 @@ def capture_fields(sidecar, fpp):
     max(64, ...) floor on pre_cap_px, the two-axis cap, and the dimension-
     mismatch backoff.
     """
+    sidecar = legacy_view(sidecar)
     res = sidecar.get("resolution") or {}
     view_scale = res.get("view_scale")
     effective_dpi = None
@@ -282,7 +283,7 @@ def capture_fields(sidecar, fpp):
 
 
 def measure_view(sidecar_path, mappings):
-    sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    sidecar = legacy_view(json.loads(sidecar_path.read_text(encoding="utf-8")))
     bounds = sidecar.get("bounds_xy")
     if not bounds or len(bounds) != 4:
         return {"view": sidecar_path.stem, "skip": "no bounds_xy (crop did not apply)"}

@@ -29,6 +29,7 @@ import types
 import vop_interwoven.color_id_buffer as color_id_buffer
 import vop_interwoven.revit.collection as revit_collection
 from vop_interwoven.config import Config
+from tools.stage_a_sidecar_shapes import legacy_view
 from vop_interwoven.core.math_utils import Bounds2D
 from vop_interwoven.revit.view_basis import ViewBasis
 
@@ -418,5 +419,5 @@ def test_fake_surface_reaches_the_crop_path(tmp_path, monkeypatch):
 
     result = _run(doc, view, elements, _cfg(tmp_path), diag, _raster())
 
-    assert result["metadata"]["bounds_xy"] == [0.0, 0.0, 64.0, 48.0]
+    assert legacy_view(result["metadata"])["bounds_xy"] == [0.0, 0.0, 64.0, 48.0]
     assert not [w for w in diag.warnings if w.get("callsite") == "crop_box_set"]

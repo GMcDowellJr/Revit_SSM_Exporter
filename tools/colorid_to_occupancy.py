@@ -54,6 +54,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools.clamp_pad_geometry import clamp_pad_geometry  # noqa: E402
+from tools.stage_a_sidecar_shapes import legacy_view  # noqa: E402
 
 Image.MAX_IMAGE_PIXELS = None
 
@@ -96,7 +97,7 @@ def pack(rgb) -> int:
 
 def load_sidecar(path: Path):
     with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
+        return legacy_view(json.load(f))
 
 
 def tiff_for(sidecar_path: Path) -> Path:
@@ -124,6 +125,7 @@ def frame_from_capture(sidecar, img_w, img_h):
     To go the other way -- crop -> the wider shared grid -- SUBTRACT it, as
     decode_stage_a_color_id.py:678-685 does for grid_bounds_uv.
     """
+    sidecar = legacy_view(sidecar)
     bounds = sidecar.get("bounds_xy")
     if not bounds or len(bounds) != 4:
         raise ValueError("sidecar has no usable bounds_xy")
@@ -192,6 +194,7 @@ def grid_assumed(sidecar, grid_bounds):
     difference, and the other dimension then comes out wrong too. Take both
     extents from the grid's own rectangle.
     """
+    sidecar = legacy_view(sidecar)
     res = sidecar.get("resolution") or {}
     axis = res.get("requested_axis") or "width"
     grid_axis_px = res.get("backoff_floor_px")

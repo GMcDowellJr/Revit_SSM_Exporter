@@ -4393,179 +4393,116 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     effective_export_dpi = _effective_export_dpi(
         crop_bounds_xy, dim_report.get("actual_w"), dim_report.get("actual_h"), scale)
 
+    # C5: ONE frame record. What used to be two blocks ("resolution" and
+    # "export_frame") plus the top-level "bounds_xy" is folded into "frame",
+    # with the exact duplicates between them written once:
+    #   export_dpi          == requested_export_dpi        (dropped)
+    #   requested_px (both) == requested_pixel_size        (dropped)
+    #   export_frame's pre_cap_px / cap_applied / max_axis_px /
+    #     requested_export_dpi == the resolution copies    (written once)
+    #   bounds_xy           -> "crop_uv", same value
+    #   crop_snapped_uv     written only when != crop_uv
+    #   raster_bounds_uv    written only when != frame_uv
+    # Readers fall back to the old keys (tools/stage_a_sidecar_shapes.py).
+    frame_record = {
+        "view_scale": scale,
+        # Which axis pixel_size set, and the axis the request was made on.
+        "fit_direction": fit_direction,
+        "requested_axis": requested_axis,
+        "pixel_size": actual_pixel_size,
+        "requested_pixel_size": pixel_size,
+        # The dpi REQUESTED; nothing here verifies Revit delivered it.
+        "requested_export_dpi": export_dpi,
+        # The dpi the file carries on its unpadded axis, measured against the
+        # rendered crop (resolution_contract.effective_export_dpi). None when
+        # the file's dimensions or the crop rectangle are unknown.
+        "effective_export_dpi": effective_export_dpi,
+        # The frame's real paper extent; see the sizing block above.
+        "paper_fit_in": paper_fit_in,
+        "paper_width_in": paper_width_in,
+        "paper_height_in": paper_height_in,
+        # The two-axis cap: pre_cap_px is the uncapped request.
+        "pre_cap_px": cap["pre_cap_px"],
+        "cap_applied": bool(cap["cap_applied"]),
+        "max_axis_px": cap["max_axis_px"],
+        "predicted_derived_px": cap["accepted_derived_px"],
+        # MEASURED. dim_check is "pass" only when the fitted axis came back
+        # within 1 px of the request and neither axis exceeds the ceiling;
+        # "read_failed" is NOT a pass.
+        "actual_w": dim_report.get("actual_w"),
+        "actual_h": dim_report.get("actual_h"),
+        "dim_check": dim_report.get("dim_check"),
+        "dim_check_ceiling_px": dim_report.get("dim_check_ceiling_px"),
+        "dim_read_error": dim_report.get("dim_read_error"),
+        "dim_check_attempts": dim_report.get("attempts"),
+        "backoff_stop_reason": dim_report.get("backoff_stop_reason"),
+        "backoff_floor_px": backoff_floor_px,
+        "backoff_max_retries": MAX_MISMATCH_RETRIES,
+        # The rectangle actually set as view.CropBox (pre-C5 "bounds_xy").
+        # None when no crop could be applied: the TIFF's extent is then
+        # FitToPage's and must not be read from this record.
+        "crop_uv": list(crop_bounds_xy) if crop_bounds_xy is not None else None,
+    }
+    if geom is not None and frame_uv is not None:
+        # Stage A step 2's frame-derived lattice. THREE-VALUED as a block: a
+        # capture with no usable frame writes status "unavailable" + reason.
+        raster_bounds_uv = (
+            [float(raster.bounds_xy.xmin), float(raster.bounds_xy.ymin),
+             float(raster.bounds_xy.xmax), float(raster.bounds_xy.ymax)]
+            if raster is not None and getattr(raster, "bounds_xy", None) is not None
+            else None)
+        frame_record.update({
+            "status": "value",
+            # B as resolved, unclipped and un-re-centred.
+            "frame_uv": [float(v) for v in frame_uv],
+            # "anno_uncapped" or "raster_bounds" (then the grid IS the frame).
+            "frame_source": frame_source,
+            "anno_cap_envelope_applied": bool(
+                getattr(raster, "anno_cap_envelope_applied", False)),
+            "frame_extent_ft": [float(v) for v in geom["frame_extent_ft"]],
+            # B rounded OUT to the pixel lattice; B.min does not move.
+            "frame_snapped_uv": [float(v) for v in geom["frame_snapped_uv"]],
+            "frame_px": [int(v) for v in geom["frame_px"]],
+            # A snapped onto B's lattice, and its whole-pixel offset from B.min.
+            "crop_px": [int(v) for v in geom["crop_px"]],
+            "crop_offset_px": [int(v) for v in geom["crop_offset_px"]],
+            # True when no narrower model crop applied, so A IS B.
+            "crop_is_frame": bool(geom["crop_is_frame"]),
+            "achieved_export_dpi": float(geom["achieved_export_dpi"]),
+            "requested_fpp_ft": float(geom["requested_fpp_ft"]),
+            "achieved_fpp_ft": float(geom["achieved_fpp_ft"]),
+            "min_axis_px": int(geom["min_axis_px"]),
+            "floor_applied_to_crop": bool(geom["floor_applied_to_crop"]),
+            "cap_applied_by_cap_axes": bool(geom["cap_applied_by_cap_axes"]),
+            "lattice_corrections": int(geom["lattice_corrections"]),
+            # The producer's intent; dim_check above is the measurement.
+            "verified_against_revit": False,
+        })
+        crop_snapped_uv = [float(v) for v in geom["crop_snapped_uv"]]
+        if crop_snapped_uv != frame_record["crop_uv"]:
+            # Only when the crop could not be applied (crop_uv None).
+            frame_record["crop_snapped_uv"] = crop_snapped_uv
+        if raster_bounds_uv != frame_record["frame_uv"]:
+            # The capped grid window, when it differs from B.
+            # model_crop_offset_uv is defined against THIS rectangle.
+            frame_record["raster_bounds_uv"] = raster_bounds_uv
+    else:
+        frame_record.update({
+            "status": "unavailable",
+            "reason": ("no usable frame bounds for this view; the export fell back "
+                       "to the 1 paper-inch minimum and is not frame-derived"),
+        })
+
     state_out = {
         "view_id": view_id,
-        "resolution": {
-            "pixel_size": actual_pixel_size,
-            "requested_pixel_size": pixel_size,
-            # The dpi that was REQUESTED. Named for that, because the old name
-            # ("export_dpi") reads as a property of the export and has already
-            # been consumed as a measurement once. Nothing here verifies that
-            # Revit delivered it; effective_export_dpi below is the measurement.
-            "requested_export_dpi": export_dpi,
-            # The dpi the exported file actually carries on its UNPADDED axis,
-            # measured against the RENDERED CROP (see above). Identically
-            # view_scale / (12 * feet_per_pixel) for the feet_per_pixel a
-            # decoder derives from this same sidecar's "bounds_xy", so the
-            # producer's figure and the decoder's cannot drift apart. None
-            # when the file's dimensions or the crop rectangle are unknown.
-            "effective_export_dpi": effective_export_dpi,
-            # RETAINED, not renamed away: every sidecar already written carries
-            # this name, and tools/decode_stage_a_color_id.py's pixel-space
-            # fallback reads it. Dropping it would orphan those captures. It is
-            # the request -- the same value as requested_export_dpi -- and new
-            # readers should prefer that name.
-            "export_dpi": export_dpi,
-            "view_scale": scale,
-            # Which axis pixel_size set. Without it a reader cannot tell
-            # whether the other dimension was requested or derived, and every
-            # size-derived metric downstream assumes one of the two.
-            "fit_direction": fit_direction,
-            # The paper dimension pixel_size was derived from, so a reader can
-            # reproduce the request instead of assuming it came from the width.
-            # This is the view's real paper extent along requested_axis, and
-            # it is the ONLY field that survives both the 64 px floor on
-            # pre_cap_px and the axis cap: a reader reconstructing physical
-            # scale should start here and fall back to pre_cap_px/export_dpi
-            # only for sidecars written before it existed.
-            "paper_fit_in": paper_fit_in,
-            # Both axes, so a reader never has to infer the other one from
-            # an aspect ratio it would have to derive from the pixels.
-            "paper_width_in": paper_width_in,
-            "paper_height_in": paper_height_in,
-            # The two-axis cap. pre_cap_px is the uncapped request, which is
-            # what makes a capped export reconstructable: before this field
-            # existed the pre-cap value was discarded and no consumer could
-            # recover the view's real paper extent from the sidecar.
-            "requested_axis": requested_axis,
-            "requested_px": pixel_size,
-            "pre_cap_px": cap["pre_cap_px"],
-            "cap_applied": bool(cap["cap_applied"]),
-            "max_axis_px": cap["max_axis_px"],
-            "predicted_derived_px": cap["accepted_derived_px"],
-            # What the exported file MEASURED, as opposed to everything above
-            # it, which is what was asked for. dim_check is "pass" only when
-            # the fitted axis came back within 1 px of the request and
-            # neither axis exceeds dim_check_ceiling_px; "read_failed" means
-            # the dimensions could not be read at all and is NOT a pass.
-            "actual_w": dim_report.get("actual_w"),
-            "actual_h": dim_report.get("actual_h"),
-            "dim_check": dim_report.get("dim_check"),
-            "dim_check_ceiling_px": dim_report.get("dim_check_ceiling_px"),
-            "dim_read_error": dim_report.get("dim_read_error"),
-            "dim_check_attempts": dim_report.get("attempts"),
-            "backoff_stop_reason": dim_report.get("backoff_stop_reason"),
-            "backoff_floor_px": backoff_floor_px,
-            "backoff_max_retries": MAX_MISMATCH_RETRIES,
-        },
-        # Stage A step 2. ADDITIVE: every key above keeps its meaning and its
-        # name; this records what the frame-derived sizing did, which the
-        # shipped keys have no place for.
-        #
-        # THREE-VALUED, per the standing rule. A capture that could not resolve
-        # a frame carries {"status": "unavailable", "reason": ...} rather than
-        # zeros or a silently absent key -- a zero here would read as "the
-        # frame is degenerate" and an absent key as "written before step 2".
-        #
-        # requested vs achieved is spelled out for dpi, px AND fpp because
-        # this project has misread that distinction four times (dpi, CellSize,
-        # IsOnSheet, cap) and treats it as a class, not as three incidents.
-        "export_frame": (
-            {
-                "status": "value",
-                # B as resolved, unclipped and un-re-centred.
-                "frame_uv": [float(v) for v in frame_uv],
-                # Which rectangle B came from. "anno_uncapped" is the
-                # annotation frame as computed; "raster_bounds" means no
-                # annotation expansion applied, so the grid's own rectangle
-                # already IS the frame. Recorded rather than inferable,
-                # because the two are equal whenever the cap envelope did not
-                # fire and a reader cannot otherwise tell which path ran.
-                "frame_source": frame_source,
-                # True when view_basis' cap envelope clipped and re-centred
-                # the grid's bounds. On those views raster.bounds_xy is a
-                # model-centred window rather than the annotation extent, and
-                # the capture is deliberately NOT sized against it.
-                "anno_cap_envelope_applied": bool(
-                    getattr(raster, "anno_cap_envelope_applied", False)),
-                # The grid's own rectangle, for the capped case where it
-                # differs from the frame. model_crop_offset_uv is defined
-                # against THIS rectangle, not against frame_uv.
-                "raster_bounds_uv": (
-                    [float(raster.bounds_xy.xmin), float(raster.bounds_xy.ymin),
-                     float(raster.bounds_xy.xmax), float(raster.bounds_xy.ymax)]
-                    if raster is not None and getattr(raster, "bounds_xy", None) is not None
-                    else None),
-                "frame_extent_ft": [float(v) for v in geom["frame_extent_ft"]],
-                # B rounded OUT to the pixel lattice: what the capture
-                # realises. Grows only at the max corner, so B.min -- the
-                # single origin the frame-reconciliation invariant rests on --
-                # does not move.
-                "frame_snapped_uv": [float(v) for v in geom["frame_snapped_uv"]],
-                "frame_px": [int(v) for v in geom["frame_px"]],
-                # A snapped onto B's lattice, and its whole-pixel offset from
-                # B.min. This is decision A's registration data: B overlays A
-                # by translating this many pixels, with no resampling.
-                "crop_snapped_uv": [float(v) for v in geom["crop_snapped_uv"]],
-                "crop_px": [int(v) for v in geom["crop_px"]],
-                "crop_offset_px": [int(v) for v in geom["crop_offset_px"]],
-                # True when no narrower model crop applied, so A IS B. Kept
-                # separate from crop_offset_px == [0, 0], which a crop that
-                # starts at B's own corner also produces.
-                "crop_is_frame": bool(geom["crop_is_frame"]),
-                "requested_export_dpi": float(geom["requested_export_dpi"]),
-                "achieved_export_dpi": float(geom["achieved_export_dpi"]),
-                "requested_fpp_ft": float(geom["requested_fpp_ft"]),
-                "achieved_fpp_ft": float(geom["achieved_fpp_ft"]),
-                "requested_px": int(geom["requested_px"]),
-                "pre_cap_px": int(geom["pre_cap_px"]),
-                "cap_applied": bool(geom["cap_applied"]),
-                "max_axis_px": geom["max_axis_px"],
-                "min_axis_px": int(geom["min_axis_px"]),
-                # True when the crop fell below the floor and feet-per-pixel
-                # was re-derived from it, putting achieved dpi ABOVE the
-                # request. False both when the floor was not needed and when
-                # the ceiling refused it -- requested_px below min_axis_px
-                # with this False is the refused case.
-                "floor_applied_to_crop": bool(geom["floor_applied_to_crop"]),
-                # Whether the ceiling moved the request through cap_axes
-                # itself, as opposed to through the lattice correction. Both
-                # set cap_applied; this says which.
-                "cap_applied_by_cap_axes": bool(geom["cap_applied_by_cap_axes"]),
-                # How many times the lattice had to step down to keep both of
-                # B's axes inside the ceiling. Normally 0. Non-zero is not an
-                # error, but it means the achieved figures above are a step or
-                # more below what the cap alone would predict.
-                "lattice_corrections": int(geom["lattice_corrections"]),
-                # UNCONFIRMED (no Revit run in this session): that Revit
-                # renders the snapped rectangle at exactly crop_px pixels. The
-                # post-export dim_check above is what measures it; these are
-                # the producer's intent, not a measurement.
-                "verified_against_revit": False,
-            }
-            if geom is not None and frame_uv is not None else
-            {
-                "status": "unavailable",
-                "reason": ("no usable frame bounds for this view; the export fell back "
-                           "to the 1 paper-inch minimum and is not frame-derived"),
-            }
-        ),
-        # View-local UV rectangle (min_u, min_v, max_u, max_v) the export
-        # was cropped to -- the same tuple set as view.CropBox above, not
-        # recomputed here. None when the crop could not be applied (no
-        # raster/bounds_xy provided, or the view has no CropBox), in which
-        # case the TIFF's extent is whatever FitToPage auto-computed and a
-        # decode step cannot assume this field describes it. May now be
-        # narrower than the raster's own bounds_xy (see compute_model_crop()
-        # above) -- model_crop_offset_uv below records that relationship.
-        "bounds_xy": list(crop_bounds_xy) if crop_bounds_xy is not None else None,
+        "frame": frame_record,
         # (dxmin, dymin, dxmax, dymax) such that ADDING this to raster.
         # bounds_xy's own corners reconstructs this capture's actual crop
-        # (the "bounds_xy" rectangle above): render.xmin = raster.bounds_xy.
+        # (frame["crop_uv"] above): render.xmin = raster.bounds_xy.
         # xmin + dxmin, etc. Always (0.0, 0.0, 0.0, 0.0) when this capture's
         # crop IS raster.bounds_xy unchanged (no narrower model_clip_bounds
         # was available, or the crop could not be applied at all -- in which
-        # case "bounds_xy" above is also None). Diagnostic/reconstruction
+        # case frame["crop_uv"] is None). Diagnostic/reconstruction
         # data only -- see compute_model_crop()'s docstring and tools/
         # decode_stage_a_color_id.py for why decoded UV points must not be
         # shifted by this a second time.
@@ -4694,7 +4631,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "tiff_path": tiff_path,
         "sidecar_path": json_path,
         "output_dir": out_dir,
-        "resolution": state_out["resolution"],
+        "frame": state_out["frame"],
         "color_assignment_count": count_host + count_link_categories,
         "timings": {"color_id_buffer_ms": round((time.time() - t0) * 1000.0, 3)},
         "metadata": state_out,
@@ -5905,7 +5842,8 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         # "_anno" suffix, so a reader never has to reconstruct a path.
         "model_pass_tiff_path": os.path.join(
             out_dir, "{0}_{1}.tiff".format(safe_name, view_id)),
-        "resolution": {
+        # C5: one frame record per sidecar (pre-C5: "resolution").
+        "frame": {
             "pixel_size": actual_pixel_size,
             "requested_pixel_size": pixel_size,
             "requested_export_dpi": float(geom["requested_export_dpi"]),
@@ -6183,7 +6121,7 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         "tiff_path": tiff_path,
         "sidecar_path": json_path,
         "output_dir": out_dir,
-        "resolution": state_out["resolution"],
+        "frame": state_out["frame"],
         "color_assignment_count": count_anno,
         "timings": {
             "annotation_color_id_buffer_ms": round((time.time() - t0) * 1000.0, 3)
