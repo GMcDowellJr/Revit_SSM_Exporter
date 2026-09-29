@@ -63,7 +63,11 @@ def _xyz_tuple(point):
 MARK_COLOUR = (139, 251, 11)
 MARK_INSET_PX = 24.0
 MARK_GAP_PX = 8.0
-MARK_ARM_PX = 96.0
+# T1 (2026-09-29): ticks at their minimum size. 96 px arms were probe-era
+# generosity; 32 px is the smallest arm registration_marks is proven to
+# locate, including on a capture drawn at 0.63x (ModelCallout's annotation
+# scale) -- tests/test_register_stage_a_annotation.py pins that.
+MARK_ARM_PX = 32.0
 MARK_MIN_ARM_PX = 32.0
 MARK_CORNERS = (("left_bottom", 1.0, 1.0), ("right_bottom", -1.0, 1.0),
                 ("left_top", 1.0, -1.0), ("right_top", -1.0, -1.0))
@@ -534,6 +538,49 @@ def _lines_category_hidden(view):
         return None, "{0}: {1}".format(type(ex).__name__, ex)
 
 
+def _thinnest_line_style(doc, curve):
+    """``(style, record)``: the thinnest line style this detail curve may take.
+
+    No override in either pass sets a line weight (both paint colour and
+    patterns only), so a tick draws at its LINE STYLE's projection weight --
+    which was never chosen, only inherited from the document's default detail
+    line style. T1 picks the minimum over ``curve.GetLineStyleIds()``, keeping
+    the current style on a tie. A style whose weight will not read is skipped
+    and named; ``style`` is None when nothing could be chosen.
+    """
+    from Autodesk.Revit.DB import GraphicsStyleType
+    record = {"state": "value", "unreadable": []}
+    current = curve.LineStyle
+    current_id = _element_id_int(getattr(current, "Id", None))
+    candidates = []
+    for style_id in curve.GetLineStyleIds():
+        style = doc.GetElement(style_id)
+        try:
+            weight = int(style.GraphicsStyleCategory.GetLineWeight(
+                GraphicsStyleType.Projection))
+        except Exception as ex:
+            record["unreadable"].append({
+                "id": _element_id_int(style_id),
+                "error": "{0}: {1}".format(type(ex).__name__, ex)})
+            continue
+        style_int = _element_id_int(getattr(style, "Id", None))
+        candidates.append((weight, 0 if style_int == current_id else 1,
+                           style_int, style))
+        if style_int == current_id:
+            record["default_style"] = {"id": style_int,
+                                       "name": getattr(style, "Name", None),
+                                       "projection_line_weight": weight}
+    if not candidates:
+        record["state"] = "unavailable"
+        record["reason"] = "no line style of the detail curve had a readable weight"
+        return None, record
+    weight, _pref, style_int, style = min(candidates, key=lambda c: c[:3])
+    record.update({"id": style_int, "name": getattr(style, "Name", None),
+                   "projection_line_weight": weight,
+                   "candidates": len(candidates)})
+    return style, record
+
+
 def create_registration_marks(doc, view, view_basis, layout):
     """Draw the registration ticks as DETAIL LINES and paint them MARK_COLOUR.
 
@@ -587,6 +634,7 @@ def create_registration_marks(doc, view, view_basis, layout):
                    float(origin.Z) + du * float(right.Z) + dv * float(up.Z))
 
     paint = flat_colour_override(doc, colour=MARK_COLOUR)
+    thinnest = None
     for segment in segments:
         entry = dict(segment)
         try:
@@ -599,6 +647,22 @@ def create_registration_marks(doc, view, view_basis, layout):
                 type(ex).__name__, ex)
             record["failed"].append(entry)
             continue
+        # T1: the thinnest line style, chosen once and applied to every tick.
+        # The style is the element's own, so it holds in BOTH passes; the
+        # record says which style and weight the ticks were drawn at.
+        try:
+            if "line_style" not in record:
+                thinnest, record["line_style"] = _thinnest_line_style(doc, curve)
+            if thinnest is not None:
+                curve.LineStyle = thinnest
+            entry["line_style_applied"] = thinnest is not None
+        except Exception as ex:
+            entry["line_style_applied"] = False
+            entry["line_style_error"] = "{0}: {1}".format(type(ex).__name__, ex)
+            record.setdefault("line_style", {
+                "state": "unavailable",
+                "reason": "the line style could not be read or set: " + entry[
+                    "line_style_error"]})
         try:
             geometry_curve = curve.GeometryCurve
             ends = [tuple(view_basis.transform_to_view_uv(

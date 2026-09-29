@@ -28,7 +28,7 @@ from tools import register_stage_a_annotation as reg
 from tools import registration_marks as rm
 from vop_interwoven.stage_a_registered_capture import _registration_payload
 from vop_interwoven.stage_a_registration import (
-    MARK_COLOUR, registration_mark_segments)
+    MARK_ARM_PX, MARK_COLOUR, registration_mark_segments)
 
 # Annotation capture: 12 px/ft, u origin at x = 30, v = 0 at y = 330.
 A_U, B_U, A_V, B_V = 12.0, 30.0, -12.0, 330.0
@@ -110,7 +110,7 @@ def _fill(img, rect_uv, colour, to_x, to_y):
 
 
 def _record(marks):
-    return {"marks": {"created": marks, "layout": {"arm_px": 96.0}},
+    return {"marks": {"created": marks, "layout": {"arm_px": MARK_ARM_PX}},
             "mark_reference_source": "test", "faults": [], "restore": {}}
 
 
@@ -725,3 +725,57 @@ def test_a_link_category_colour_near_the_mark_colour_is_not_a_tick(tmp_path):
     assert max(fit["residual_max_px"].values()) < 0.6
     mask = rm.mark_ink_mask(img, side["registration_marks"], rm.palette_colours(side))
     assert not mask[y - 1:y + 1, 150:250].any()
+
+
+# ======================================================================
+# T1: minimum-size ticks at ModelCallout's annotation scale
+# ======================================================================
+
+@pytest.mark.parametrize("thickness", [1, 2])
+def test_32px_ticks_register_at_0_63x_annotation_scale(tmp_path, monkeypatch, thickness):
+    """T1 shrinks the ticks to MARK_ARM_PX = 32 px on the MODEL lattice.
+    pipeline_0928_0953's ModelCallout drew its annotation capture at
+    1/1.587 = 0.63x the model lattice, so there each tick is ~20 px long --
+    the smallest this run will see. Drawn at 1 px (the thinnest lineweight
+    T1 selects) and at 2 px, registration_marks must still find all twelve
+    and register at the known scale."""
+    assert MARK_ARM_PX == 32.0
+    scale = 0.63
+    import sys as _sys
+    mod = _sys.modules[__name__]
+    monkeypatch.setattr(mod, "A_U", scale * M)
+    monkeypatch.setattr(mod, "A_V", -scale * M)
+    # Marks are laid out in MODEL-lattice pixels, as production lays them.
+    layout = registration_mark_segments(CROP_UV, 1.0 / M)
+    assert layout["state"] == "value" and layout["arm_px"] == 32.0, layout
+    marks = [dict(seg, id=9000 + i) for i, seg in enumerate(layout["segments"])]
+    tick_len_anno = 32.0 * scale
+    assert 19.0 < tick_len_anno < 21.0
+
+    def _tick(img, seg, colour, to_x, to_y):
+        # Exactly ``thickness`` rows/columns, starting at the pixel holding the
+        # tick's level (_draw_tick's rounded slice can come out EMPTY at 1 px).
+        if seg["orientation"] == "horizontal":
+            y0 = int(np.floor(to_y(seg["level_uv"])))
+            xs = sorted(to_x(u) for u in seg["span_uv"])
+            img[y0:y0 + thickness, int(round(xs[0])):int(round(xs[1]))] = colour
+        else:
+            x0 = int(np.floor(to_x(seg["level_uv"])))
+            ys = sorted(to_y(v) for v in seg["span_uv"])
+            img[int(round(ys[0])):int(round(ys[1])), x0:x0 + thickness] = colour
+
+    monkeypatch.setattr(mod, "_draw_tick", _tick)
+    anno_path, _model, _c = _write_pair(tmp_path, marks=marks)
+    reg.register(anno_path)
+    record = _persisted(anno_path)
+    assert record["status"] == "registered", record.get("refusals")
+    for name in ("annotation_fit", "model_fit"):
+        assert record[name]["found_count"] == 12, record[name]
+        assert max(record[name]["residual_max_px"].values()) <= 2.0, record[name]
+    t = record["annotation_to_model_px"]
+    # 0.5 %: the fixture's ticks sit on whole pixels, so a 1 px tick's level
+    # is quantised by up to half a pixel over a ~200 px baseline (measured
+    # here at 0.22 %). pipeline_0928_0953's ModelCallout itself fitted
+    # 1.587381 / 1.591730 on x / y.
+    assert t["scale_x"] == pytest.approx(1.0 / scale, rel=5e-3)
+    assert t["scale_y"] == pytest.approx(1.0 / scale, rel=5e-3)
