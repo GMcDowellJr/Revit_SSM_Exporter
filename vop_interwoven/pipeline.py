@@ -194,6 +194,32 @@ def _diagnose_link_geometry_transform(elem, link_trf, basis, stage_name):
     print("="*80 + "\n")
 
 
+def _stage_a_view_diagnostics(view_id_int, out, diag):
+    """C9: a Stage A view's views_diagnostics entry.
+
+    The raster path's entry comes from render_model_front_to_back, which
+    Stage A never runs, so under Stage A views_diagnostics.views used to be
+    empty. This one carries the capture outcome and the view's own
+    Diagnostics record (every warning and error the capture raised).
+    """
+    from .csv_export import stage_a_capture_status
+    status, reason = stage_a_capture_status(out)
+    try:
+        diag_record = diag.to_dict() if diag is not None else None
+    except Exception as ex:
+        diag_record = {"status": "unavailable",
+                       "reason": "{0}: {1}".format(type(ex).__name__, ex)}
+    return {
+        "view_id": view_id_int,
+        "view_name": out.get("view_name"),
+        "stage": out.get("stage"),
+        "capture_status": status,
+        "capture_failure_reason": reason,
+        "elapsed_sec": out.get("elapsed_sec"),
+        "diagnostics": diag_record,
+    }
+
+
 def _perf_now():
     # perf_counter is monotonic and high-resolution where available.
     return time.perf_counter()
@@ -1252,6 +1278,14 @@ def process_document_views(
                             out["annotation_tiff_path"] = anno_out.get("tiff_path")
                             out["annotation_sidecar_path"] = anno_out.get(
                                 "sidecar_path")
+                    # C9: what views_core and views_diagnostics need from a
+                    # Stage A view, set AFTER both passes so the elapsed time
+                    # covers the annotation capture too.
+                    if isinstance(out, dict):
+                        out["elapsed_sec"] = round(
+                            _perf_ms(t_view0, _perf_now()) / 1000.0, 3)
+                        out["diagnostics"] = _stage_a_view_diagnostics(
+                            view_id_int, out, diag)
                     continue
 
                 t0 = _perf_now()

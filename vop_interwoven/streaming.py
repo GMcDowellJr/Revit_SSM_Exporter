@@ -219,7 +219,15 @@ class StreamingExporter:
         self.csv_vop_file = None
         self.perf_writer = None
         self.perf_file = None
-        
+        self.csv_occlusion_file = None
+
+        # C9: under Stage A the CSV set is views_core only (view metadata +
+        # capture status), and the run writes ONE config snapshot whose hash
+        # every views_core row carries.
+        self.stage_a = bool(getattr(cfg, "enable_color_id_buffer_stage_a", False))
+        self.run_config_path = None
+        self.config_hash = None
+
         # Lightweight view summaries (no raster data)
         self.view_summaries = []
 
@@ -249,6 +257,10 @@ class StreamingExporter:
 
         # Setup
         os.makedirs(output_dir, exist_ok=True)
+        if self.stage_a:
+            from vop_interwoven.csv_export import write_run_config_snapshot
+            self.run_config_path, self.config_hash = write_run_config_snapshot(
+                cfg, output_dir, self.run_id)
         if export_png:
             self.png_dir = os.path.join(output_dir, "vop_raster")
             os.makedirs(self.png_dir, exist_ok=True)
@@ -283,9 +295,19 @@ class StreamingExporter:
         else:
             date_str = datetime.now().strftime("%Y-%m-%d")
             
+        self.date_str = date_str
         core_filename = f"views_core_{date_str}.csv"
         self.core_csv_path = os.path.join(csv_output_dir, core_filename)
         self.csv_core_file = open(self.core_csv_path, 'w', newline='', encoding='utf-8')
+        if self.stage_a:
+            # C9: views_core only. No views_vop / views_occlusion / views_perf
+            # file is opened, so none is left behind holding only a header.
+            from vop_interwoven.csv_export import get_stage_a_core_csv_header
+            self.csv_core_writer = csv.DictWriter(
+                self.csv_core_file, fieldnames=get_stage_a_core_csv_header(),
+                extrasaction='ignore')
+            self.csv_core_writer.writeheader()
+            return
         self.csv_core_writer = csv.DictWriter(
             self.csv_core_file, 
             fieldnames=get_core_csv_header(),
@@ -370,6 +392,7 @@ class StreamingExporter:
                 })
                 summary.update(_stage_a_annotation_summary(view_result))
                 summary.update(_stage_a_registration_summary(view_result))
+                self._write_stage_a_core_row(view_result)
             self.view_summaries.append(summary)
             return
 
@@ -395,6 +418,7 @@ class StreamingExporter:
             stage_a_summary.update(_stage_a_registration_summary(view_result))
             if stage_a_summary.get("annotation_pass_success") is False:
                 self.annotation_passes_failed += 1
+            self._write_stage_a_core_row(view_result)
             self.view_summaries.append(stage_a_summary)
             if self.full_results is not None:
                 self.full_results.append({
@@ -566,6 +590,21 @@ class StreamingExporter:
                   "(check [view_raster] messages above for detail)".format(view_name))
 
         return png_path
+
+    def _write_stage_a_core_row(self, view_result):
+        """C9: the Stage A views_core row -- success or failure alike."""
+        # getattr: callers that build a bare exporter (no CSV set-up) skip it.
+        if not getattr(self, "export_csv", False) or getattr(
+                self, "csv_core_writer", None) is None:
+            return
+        from vop_interwoven.csv_export import stage_a_view_result_to_core_row
+        row = stage_a_view_result_to_core_row(
+            view_result, self.cfg, self.doc, run_id=self.run_id,
+            date_str=getattr(self, "date_str", ""),
+            config_hash=getattr(self, "config_hash", None))
+        self.csv_core_writer.writerow(row)
+        self.csv_core_file.flush()
+        self.csv_rows_written += 1
 
     def _write_csv_rows(self, view_result):
         """Write CSV rows for a single view result."""
@@ -773,6 +812,8 @@ class StreamingExporter:
             "vop_csv_path": getattr(self, 'vop_csv_path', None),
             "occlusion_csv_path": getattr(self, 'occlusion_csv_path', None),
             "perf_csv_path": getattr(self, 'perf_csv_path', None),
+            "run_config_path": self.run_config_path,
+            "config_hash": self.config_hash,
             "csv_rows_written": self.csv_rows_written,
             "json_path": json_path,
             "view_summaries": self.view_summaries

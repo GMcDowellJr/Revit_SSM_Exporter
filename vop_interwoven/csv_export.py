@@ -948,6 +948,119 @@ def extract_view_metadata(view, doc, diag=None):
     return metadata
 
 
+# --- C9: Stage A views_core -------------------------------------------------
+#
+# Under Stage A there is no in-memory raster: cell fill and occlusion are
+# analysis-layer outputs, derived later from the captures. So views_core
+# carries VIEW METADATA ONLY -- every field below is read off the View (or
+# the run's Config), none off a raster -- plus the capture's own outcome.
+# views_vop, views_occlusion and views_perf are not written at all.
+STAGE_A_CORE_CSV_HEADER = [
+    "Date", "RunId", "ViewId", "ViewUniqueId", "ViewName", "ViewType",
+    "Scale", "SheetNumber", "IsOnSheet", "Discipline", "Phase",
+    "ViewTemplate_Name", "CaptureStatus", "CaptureFailureReason",
+    "ElapsedSec", "ConfigHash", "ExporterVersion",
+]
+
+
+def get_stage_a_core_csv_header():
+    return list(STAGE_A_CORE_CSV_HEADER)
+
+
+def stage_a_capture_status(view_result):
+    """``(status, reason)`` for one Stage A view result.
+
+    "failed" -- the model capture failed; "annotation_failed" -- the model
+    capture stands but the annotation capture failed; "registration_failed"
+    -- the registered capture recorded faults; else "success". Each carries
+    the reason the result recorded, so a failure is never a bare flag.
+    """
+    if view_result.get("success") is False:
+        return "failed", view_result.get("failure_reason") or view_result.get("error") or ""
+    if view_result.get("annotation_pass_success") is False:
+        return "annotation_failed", view_result.get("annotation_pass_failure_reason") or ""
+    if view_result.get("registration_success") is False:
+        faults = (view_result.get("registration") or {}).get("faults") or []
+        return "registration_failed", ";".join(
+            str(f.get("fault")) for f in faults if isinstance(f, dict))
+    return "success", ""
+
+
+def stage_a_view_result_to_core_row(view_result, config, doc, run_id, date_str,
+                                    config_hash=None):
+    """One Stage A views_core row: view metadata + capture status + elapsed.
+
+    Written for FAILED captures too -- the row is the inventory of what was
+    attempted, and CaptureStatus says how it went.
+    """
+    view = view_result.get("view")
+    if view is None and doc is not None:
+        try:
+            from Autodesk.Revit.DB import ElementId  # type: ignore
+            vid = _coerce_view_id_int(view_result.get("view_id", None))
+            if vid is not None:
+                view = doc.GetElement(ElementId(vid))
+        except Exception:
+            view = None
+    view_metadata = extract_view_metadata(view, doc) if view is not None else {}
+    status, reason = stage_a_capture_status(view_result)
+    try:
+        elapsed_sec = float(view_result.get("elapsed_sec") or 0.0)
+    except (TypeError, ValueError):
+        elapsed_sec = 0.0
+    return {
+        "Date": date_str,
+        "RunId": run_id,
+        "ViewId": view_metadata.get("ViewId", view_result.get("view_id", 0)),
+        "ViewUniqueId": _extract_view_unique_id(view_result=view_result, view=view,
+                                                metadata=view_metadata),
+        "ViewName": view_metadata.get("ViewName", view_result.get("view_name", "")),
+        "ViewType": view_metadata.get("ViewType", ""),
+        "Scale": view_metadata.get("Scale", 0),
+        "SheetNumber": view_metadata.get("SheetNumber", ""),
+        "IsOnSheet": view_metadata.get("IsOnSheet", "N"),
+        "Discipline": view_metadata.get("Discipline", ""),
+        "Phase": view_metadata.get("Phase", ""),
+        "ViewTemplate_Name": view_metadata.get("ViewTemplate_Name", ""),
+        "CaptureStatus": status,
+        "CaptureFailureReason": reason,
+        "ElapsedSec": "{0:.3f}".format(elapsed_sec),
+        "ConfigHash": config_hash if config_hash is not None else compute_config_hash(config),
+        "ExporterVersion": "vop_interwoven",
+    }
+
+
+RUN_CONFIG_SCHEMA = "vop.run_config.v1"
+
+
+def write_run_config_snapshot(config, output_dir, run_id):
+    """C9: ONE config snapshot per run -- ``cfg.to_dict()`` and its hash.
+
+    The hash is compute_config_hash()'s, the same one views_core.ConfigHash
+    and root_cache.json carry, so a row joins to its snapshot by value. Its
+    basis is written into the file rather than left to be remembered.
+    Requested capture values (dpi, fit direction, cap) are read from here;
+    the sidecars record what was ACHIEVED.
+
+    Returns ``(path, config_hash)``.
+    """
+    import json as _json
+    config_hash = compute_config_hash(config)
+    payload = {
+        "schema": RUN_CONFIG_SCHEMA,
+        "run_id": run_id,
+        "config_hash": config_hash,
+        "config_hash_basis": ("root_cache.compute_config_hash: sha256 of "
+                              "Config.to_dict() minus the view_cache_* location "
+                              "keys, first 8 hex characters"),
+        "config": config.to_dict(),
+    }
+    path = os.path.join(output_dir, "vop_run_config_{0}.json".format(run_id))
+    with open(path, "w", encoding="utf-8") as handle:
+        _json.dump(payload, handle, indent=2, sort_keys=True, default=str)
+    return path, config_hash
+
+
 def compute_config_hash(config):
     """Compute stable hash of config for reproducibility tracking.
 
