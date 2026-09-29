@@ -80,10 +80,10 @@
 - `_export_tiff` (function, L2422)
 - `compute_model_crop` (function, L2593)
 - `export_color_id_buffer_view` (function, L2673)
-- `_model_category_hidden_state` (function, L4396)
-- `_override_is_cleared` (function, L4475)
-- `_verify_annotation_overrides_restored` (function, L4543)
-- `export_annotation_color_id_buffer_view` (function, L4597)
+- `_model_category_hidden_state` (function, L4400)
+- `_override_is_cleared` (function, L4479)
+- `_verify_annotation_overrides_restored` (function, L4547)
+- `export_annotation_color_id_buffer_view` (function, L4601)
 
 ### `config.py`
 
@@ -856,15 +856,15 @@
 - `time`
 
 **Definitions**
-- `_read` (function, L51)
-- `_xyz` (function, L60)
-- `view_state` (function, L65)
-- `view_state_verdict` (function, L79)
-- `_non_blank_override_ids` (function, L97)
-- `mark_reference_rectangle` (function, L111)
-- `nominal_fpp_ft` (function, L142)
-- `_registration_payload` (function, L149)
-- `export_registered_stage_a_view` (function, L176)
+- `_read` (function, L56)
+- `_xyz` (function, L65)
+- `view_state` (function, L70)
+- `view_state_verdict` (function, L84)
+- `_non_blank_override_ids` (function, L102)
+- `mark_reference_rectangle` (function, L116)
+- `nominal_fpp_ft` (function, L147)
+- `_registration_payload` (function, L154)
+- `export_registered_stage_a_view` (function, L181)
 
 ### `stage_a_registration.py`
 
@@ -877,17 +877,17 @@
 - `_value` (function, L30)
 - `_unavailable` (function, L34)
 - `_xyz_tuple` (function, L38)
-- `registration_mark_segments` (function, L77)
-- `missing_override_setters` (function, L165)
-- `white_override_capability_record` (function, L177)
-- `white_override_capability` (function, L208)
-- `flat_colour_override` (function, L246)
-- `white_membership_suppression` (function, L296)
-- `_lines_category_hidden` (function, L425)
-- `create_registration_marks` (function, L438)
-- `marks_still_in_project` (function, L532)
-- `annotate_sidecar` (function, L546)
-- `discover_link_categories` (function, L569)
+- `registration_mark_segments` (function, L84)
+- `missing_override_setters` (function, L173)
+- `white_override_capability_record` (function, L185)
+- `white_override_capability` (function, L216)
+- `flat_colour_override` (function, L254)
+- `white_membership_suppression` (function, L304)
+- `_lines_category_hidden` (function, L433)
+- `create_registration_marks` (function, L446)
+- `marks_still_in_project` (function, L540)
+- `annotate_sidecar` (function, L554)
+- `discover_link_categories` (function, L577)
 
 ### `streaming.py`
 
@@ -902,17 +902,18 @@
 **Definitions**
 - `process_with_streaming` (function, L25)
 - `_stage_a_annotation_summary` (function, L115)
-- `StreamingExporter` (class, L143)
-- `StreamingExporter.__init__` (method, L146)
-- `StreamingExporter._init_csv_writers` (method, L243)
-- `StreamingExporter.on_view_complete` (method, L312)
-- `StreamingExporter._write_png` (method, L451)
-- `StreamingExporter._write_view_raster` (method, L479)
-- `StreamingExporter._write_csv_rows` (method, L549)
-- `StreamingExporter._extract_summary` (method, L688)
-- `StreamingExporter.finalize` (method, L701)
-- `process_document_views_streaming` (function, L761)
-- `run_vop_pipeline_streaming` (function, L1052)
+- `_stage_a_registration_summary` (function, L143)
+- `StreamingExporter` (class, L162)
+- `StreamingExporter.__init__` (method, L165)
+- `StreamingExporter._init_csv_writers` (method, L262)
+- `StreamingExporter.on_view_complete` (method, L331)
+- `StreamingExporter._write_png` (method, L472)
+- `StreamingExporter._write_view_raster` (method, L500)
+- `StreamingExporter._write_csv_rows` (method, L570)
+- `StreamingExporter._extract_summary` (method, L709)
+- `StreamingExporter.finalize` (method, L722)
+- `process_document_views_streaming` (function, L782)
+- `run_vop_pipeline_streaming` (function, L1073)
 
 ### `thinrunner_streaming.py`
 
@@ -925,18 +926,18 @@
 - `vop_interwoven.entry_dynamo:get_current_document,get_current_view`
 
 **Definitions**
-- `_to_sequence` (function, L45)
-- `_resolve_view_object` (function, L80)
-- `_build_views_from_input` (function, L130)
-- `_coerce_view_id` (function, L146)
-- `_safe_level_elevation` (function, L189)
-- `sort_views_by_level` (function, L220)
-- `_chunk_list` (function, L295)
-- `_append_csv` (function, L301)
-- `_run_gc_between_chunks` (function, L322)
-- `_describe_suppression` (function, L336)
-- `_summarize_stage_a_sidecar` (function, L356)
-- `_relocate_batch_stage_a_outputs` (function, L408)
+- `_to_sequence` (function, L50)
+- `_resolve_view_object` (function, L85)
+- `_build_views_from_input` (function, L135)
+- `_coerce_view_id` (function, L151)
+- `_safe_level_elevation` (function, L194)
+- `sort_views_by_level` (function, L225)
+- `_chunk_list` (function, L300)
+- `_append_csv` (function, L306)
+- `_run_gc_between_chunks` (function, L327)
+- `_describe_suppression` (function, L341)
+- `_summarize_stage_a_sidecar` (function, L361)
+- `_relocate_batch_stage_a_outputs` (function, L413)
 
 ### `view_raster_export.py`
 

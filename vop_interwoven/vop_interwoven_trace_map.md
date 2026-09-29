@@ -999,7 +999,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `run_vop_pipeline_streaming` (streaming.py:L1052)
+## Trace: `run_vop_pipeline_streaming` (streaming.py:L1073)
 
   - `Bounds2D`
     - called from: color_id_buffer.py, core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1994,7 +1994,7 @@ Notes:
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `process_document_views_streaming` (streaming.py:L761)
+## Trace: `process_document_views_streaming` (streaming.py:L782)
 
   - `Bounds2D`
     - called from: color_id_buffer.py, core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
