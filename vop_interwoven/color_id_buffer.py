@@ -1307,6 +1307,64 @@ SIDECAR_PROBE_ONLY_KEYS = (
 )
 
 
+def _drop_not_visible_in_view(doc, view, resolved_ids, diag=None, view_id=None):
+    """M1: ``(ids the view shows, not_painted record)``.
+
+    An element is NOT shown when the view hides all annotation categories
+    ("Show annotation categories in this view" off) and its category is an
+    annotation one, when its category is hidden in the view, or when the
+    element itself is hidden in the view. Those are left unpainted and
+    COUNTED per category under reason "not_visible_in_view" -- never listed
+    per element.
+
+    A visibility that cannot be READ keeps the element painted, as before
+    this gate (dropping content on a failed read is the silent kind of
+    wrong), and is counted separately under "visibility_unreadable".
+    """
+    from Autodesk.Revit.DB import CategoryType
+    record = {"not_visible_in_view": {}, "not_visible_by_rule": {},
+              "visibility_unreadable": {}}
+    try:
+        anno_hidden = bool(view.AreAnnotationCategoriesHidden)
+        record["annotation_categories_hidden"] = anno_hidden
+    except Exception as ex:
+        anno_hidden = None
+        record["annotation_categories_hidden"] = _gs_unavailable(
+            "{0}: {1}".format(type(ex).__name__, ex))
+    shown = []
+    for eid in resolved_ids:
+        elem = doc.GetElement(eid)
+        cat = getattr(elem, "Category", None)
+        cat_name = getattr(cat, "Name", None) or "<no category>"
+        try:
+            rule = None
+            if cat is not None:
+                if anno_hidden and cat.CategoryType == CategoryType.Annotation:
+                    rule = "annotation_categories_hidden"
+                elif view.GetCategoryHidden(cat.Id):
+                    rule = "category_hidden"
+            if rule is None and elem is not None and elem.IsHidden(view):
+                rule = "element_hidden"
+        except Exception:
+            record["visibility_unreadable"][cat_name] = (
+                record["visibility_unreadable"].get(cat_name, 0) + 1)
+            shown.append(eid)
+            continue
+        if rule is None:
+            shown.append(eid)
+            continue
+        record["not_visible_in_view"][cat_name] = (
+            record["not_visible_in_view"].get(cat_name, 0) + 1)
+        record["not_visible_by_rule"][rule] = record["not_visible_by_rule"].get(rule, 0) + 1
+    if record["visibility_unreadable"] and diag is not None:
+        diag.warn(phase="color_id_buffer", callsite="annotation_visibility",
+                  message="visibility could not be read for {0} element(s); they are "
+                          "painted as before".format(
+                              sum(record["visibility_unreadable"].values())),
+                  view_id=view_id)
+    return shown, record
+
+
 def _capture_integrity(pass_name, capture_faults, restore_failure_count,
                        paint_failure_count):
     """P1: ONE per-view integrity record, always complete.
@@ -5211,6 +5269,15 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         membership["reason"] = membership_error
 
     resolved_ids = resolve_all(doc, anno_elements)
+    # M1: elements the view does not SHOW are not painted. The route that
+    # admitted them: the view-scoped collector above applies no category
+    # visibility, split_stage_a_pass_membership decides on ownership only,
+    # and resolve_all then expands Group members / FamilyInstance
+    # sub-components with no check at all (those arrive with no membership
+    # basis -- pipeline_0928_0953's 71 on Plan_DWG and Plan_RVTLink). So the
+    # gate runs HERE, after expansion, over every id about to be painted.
+    resolved_ids, not_painted = _drop_not_visible_in_view(
+        doc, view, resolved_ids, diag=diag, view_id=view_id)
     count_anno = len(resolved_ids)
 
     # ---- this pass's OWN palette (see the section comment) -------------
@@ -5994,6 +6061,9 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
             str(eid): list(color_map[eid]) for eid in color_map
         },
         "color_assignment_count": count_anno,
+        # M1: what this pass collected and did NOT paint because the view
+        # does not show it -- counts per category, never per element.
+        "not_painted": not_painted,
         # --- Stage A step 4, additive -------------------------------------
         # Per-annotation bbox in ABSOLUTE view UV, so a cap re-centre of B
         # cannot change these numbers. bbox_3d is "not_applicable" on every
