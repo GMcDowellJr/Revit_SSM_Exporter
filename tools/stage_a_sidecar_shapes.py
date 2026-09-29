@@ -124,8 +124,9 @@ def with_requested(frame: dict[str, Any], run_config: dict[str, Any] | None = No
     Exactly derivable from the frame itself:
       requested_pixel_size == dim_check_attempts[0]["requested_px"]
       requested_axis       == "height" if fit_direction == "vertical" else "width"
-    From the run config snapshot (C9's vop_run_config_<run_id>.json, passed
-    as ``run_config``) when given, never guessed without it:
+    From the run's metadata file (C9's run_meta.json, whose "config" holds
+    cfg.to_dict(); passed as ``run_config``) when given, never guessed
+    without it:
       requested_export_dpi == config["color_id_buffer_export_dpi"]
       requested_fpp_ft     == view_scale / (12 * requested_export_dpi)
     effective_export_dpi is NOT rebuilt here: it is

@@ -169,7 +169,9 @@ class StreamingExporter:
                  export_view_raster=False,
                  pixels_per_cell=4,
                  date_override=None,
-                 root_cache=None):
+                 root_cache=None,
+                 view_ids=None,
+                 run_id=None):
         """Initialize streaming exporter.
 
         Args:
@@ -222,10 +224,12 @@ class StreamingExporter:
         self.csv_occlusion_file = None
 
         # C9: under Stage A the CSV set is views_core only (view metadata +
-        # capture status), and the run writes ONE config snapshot whose hash
-        # every views_core row carries.
+        # capture status), and the run writes ONE run_meta.json holding
+        # everything that is not per-view; views_core rows carry RunId +
+        # ConfigHash as its keys.
         self.stage_a = bool(getattr(cfg, "enable_color_id_buffer_stage_a", False))
-        self.run_config_path = None
+        self.run_meta = None
+        self.run_meta_path = None
         self.config_hash = None
 
         # Lightweight view summaries (no raster data)
@@ -254,13 +258,27 @@ class StreamingExporter:
 
         base_run_id = run_dt.strftime("%Y%m%dT%H%M%S")
         self.run_id = f"{base_run_id}_{tag}" if tag else base_run_id
+        # A caller running one run in several batches (thinrunner) passes the
+        # first batch's id, so every views_core row of the run keys into ONE
+        # run_meta.
+        if run_id:
+            self.run_id = run_id
 
         # Setup
         os.makedirs(output_dir, exist_ok=True)
         if self.stage_a:
-            from vop_interwoven.csv_export import write_run_config_snapshot
-            self.run_config_path, self.config_hash = write_run_config_snapshot(
-                cfg, output_dir, self.run_id)
+            from vop_interwoven.csv_export import compute_config_hash
+            from vop_interwoven.run_meta import build_run_meta, write_run_meta
+            self.config_hash = compute_config_hash(cfg)
+            if isinstance(date_override, datetime):
+                meta_date = date_override.strftime("%Y-%m-%d")
+            elif isinstance(date_override, str) and date_override.strip():
+                meta_date = date_override.strip()
+            else:
+                meta_date = run_dt.strftime("%Y-%m-%d")
+            self.run_meta = build_run_meta(cfg, doc, self.run_id, meta_date,
+                                           view_ids, self.config_hash)
+            self.run_meta_path = write_run_meta(self.run_meta, output_dir)
         if export_png:
             self.png_dir = os.path.join(output_dir, "vop_raster")
             os.makedirs(self.png_dir, exist_ok=True)
@@ -600,7 +618,6 @@ class StreamingExporter:
         from vop_interwoven.csv_export import stage_a_view_result_to_core_row
         row = stage_a_view_result_to_core_row(
             view_result, self.cfg, self.doc, run_id=self.run_id,
-            date_str=getattr(self, "date_str", ""),
             config_hash=getattr(self, "config_hash", None))
         self.csv_core_writer.writerow(row)
         self.csv_core_file.flush()
@@ -764,6 +781,13 @@ class StreamingExporter:
         Returns:
             Dict with export summary and file paths
         """
+        # C9: the run's per-view outcomes, and finalized: true -- LAST write
+        # of run_meta, after every view has reported.
+        if self.run_meta is not None:
+            from vop_interwoven.run_meta import finalize_run_meta, write_run_meta
+            finalize_run_meta(self.run_meta, self.view_summaries)
+            self.run_meta_path = write_run_meta(self.run_meta, self.output_dir)
+
         # Close CSV files
         if self.csv_core_file:
             self.csv_core_file.close()
@@ -812,7 +836,8 @@ class StreamingExporter:
             "vop_csv_path": getattr(self, 'vop_csv_path', None),
             "occlusion_csv_path": getattr(self, 'occlusion_csv_path', None),
             "perf_csv_path": getattr(self, 'perf_csv_path', None),
-            "run_config_path": self.run_config_path,
+            "run_id": self.run_id,
+            "run_meta_path": self.run_meta_path,
             "config_hash": self.config_hash,
             "csv_rows_written": self.csv_rows_written,
             "json_path": json_path,
@@ -1114,7 +1139,7 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
 def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
                                 export_png=True, export_csv=True, export_json=False,
                                 pixels_per_cell=4, date_override=None,
-                                export_view_raster=False):
+                                export_view_raster=False, run_id=None):
     """Run VOP pipeline with streaming export to minimize memory usage.
     
     This is the recommended entry point for large view sets where memory
@@ -1204,7 +1229,9 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
         export_view_raster=export_view_raster,
         pixels_per_cell=pixels_per_cell,
         date_override=date_override,
-        root_cache=root_cache
+        root_cache=root_cache,
+        view_ids=view_ids,
+        run_id=run_id,
     )
     
     # Process with streaming callback

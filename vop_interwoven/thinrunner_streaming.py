@@ -564,6 +564,11 @@ try:
                 "perf_csv_path": None,
             }
 
+            # C9: one run, one RunId, one run_meta.json -- the first batch's
+            # id is handed to every later batch, and their run_meta files are
+            # merged into output_dir at the end.
+            shared_run_id = None
+            batch_meta_paths = []
             for batch_index, batch_view_ids in enumerate(batches):
                 start_idx = batch_index * batch_size + 1
                 end_idx = start_idx + len(batch_view_ids) - 1
@@ -585,7 +590,11 @@ try:
                     export_view_raster=export_view_raster,
                     pixels_per_cell=10,
                     date_override=tag_override,
+                    run_id=shared_run_id,
                 )
+                shared_run_id = shared_run_id or batch_result.get("run_id")
+                if batch_result.get("run_meta_path"):
+                    batch_meta_paths.append(batch_result["run_meta_path"])
 
                 merged["views_processed"] += batch_result.get("views_processed", 0)
                 merged["views_failed"] += batch_result.get("views_failed", 0)
@@ -615,6 +624,16 @@ try:
                     )
 
                 _run_gc_between_chunks()
+
+            if batch_meta_paths:
+                import json as _json
+                from vop_interwoven.run_meta import merge_run_metas, write_run_meta
+                metas = []
+                for path in batch_meta_paths:
+                    with open(path) as handle:
+                        metas.append(_json.load(handle))
+                merged["run_meta_path"] = write_run_meta(merge_run_metas(metas), output_dir)
+            merged["run_id"] = shared_run_id
 
             result = merged
 

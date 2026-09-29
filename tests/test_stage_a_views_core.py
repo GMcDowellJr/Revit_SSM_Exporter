@@ -1,6 +1,7 @@
 """C9: under Stage A the run emits views_core (view metadata + capture
-status + elapsed + ConfigHash), views_diagnostics.views, and ONE run-level
-config snapshot -- and no views_vop / views_occlusion / views_perf.
+status + elapsed + RunId/ConfigHash), views_diagnostics.views, and ONE
+run_meta.json holding everything that is not per-view -- and no views_vop /
+views_occlusion / views_perf.
 
 Driven through the real StreamingExporter and the real per-view loop.
 """
@@ -25,10 +26,21 @@ def _view(view_id=4242, name="L1 Plan"):
     )
 
 
-def _exporter(tmp_path, stage_a=True, perf=True):
+class _Doc:
+    Title = "Tower.rvt"
+    PathName = r"C:\\models\\Tower.rvt"
+    Application = types.SimpleNamespace(VersionNumber="2024", VersionBuild="24.1.0.66",
+                                        VersionName="Autodesk Revit 2024")
+
+    def GetElement(self, _eid):
+        raise AssertionError("views_core must use view_result['view'] here")
+
+
+def _exporter(tmp_path, stage_a=True, perf=True, run_id=None):
     cfg = Config(enable_color_id_buffer_stage_a=stage_a, export_perf_csv=perf)
-    return StreamingExporter(str(tmp_path), cfg, doc=None, export_png=False,
-                             export_csv=True, date_override="2026-09-29"), cfg
+    return StreamingExporter(str(tmp_path), cfg, doc=_Doc(), export_png=False,
+                             export_csv=True, date_override="2026-09-29",
+                             view_ids=[4242, 7], run_id=run_id), cfg
 
 
 def _rows(path):
@@ -50,13 +62,20 @@ def test_stage_a_run_writes_views_core_and_one_snapshot_only(tmp_path):
     names = sorted(os.listdir(str(tmp_path)))
     assert not any(n.startswith(("views_vop_", "views_occlusion_", "views_perf_"))
                    for n in names), names
-    snapshots = [n for n in names if n.startswith("vop_run_config_")]
-    assert snapshots == [os.path.basename(out["run_config_path"])]
+    assert out["run_meta_path"] == str(tmp_path / "run_meta.json")
 
-    snap = json.loads((tmp_path / snapshots[0]).read_text())
+    snap = json.loads((tmp_path / "run_meta.json").read_text())
+    assert snap["finalized"] is True
     assert snap["config"] == cfg.to_dict()
     assert snap["config_hash"] == compute_config_hash(cfg) == out["config_hash"]
-    assert snap["run_id"] == exp.run_id
+    assert snap["run_id"] == exp.run_id and snap["date"] == "2026-09-29"
+    assert snap["doc_title"] == {"state": "value", "value": "Tower.rvt"}
+    assert snap["revit_version"]["value"]["version_number"] == "2024"
+    assert snap["exporter_version"] == "vop_interwoven"
+    assert snap["git_commit"]["state"] == "value" and len(snap["git_commit"]["value"]) == 40
+    assert snap["views_requested"] == [4242, 7]
+    assert [(v["view_id"], v["capture_status"]) for v in snap["views"]] == [
+        (4242, "success"), (7, "failed")]
 
     rows = _rows(out["core_csv_path"])
     assert list(rows[0].keys()) == STAGE_A_CORE_CSV_HEADER
@@ -78,8 +97,8 @@ def test_control_the_raster_path_still_writes_the_full_csv_set(tmp_path):
     names = os.listdir(str(tmp_path))
     for prefix in ("views_core_", "views_vop_", "views_occlusion_", "views_perf_"):
         assert any(n.startswith(prefix) for n in names), (prefix, names)
-    assert out["run_config_path"] is None
-    assert not any(n.startswith("vop_run_config_") for n in names)
+    assert out["run_meta_path"] is None
+    assert "run_meta.json" not in names
 
 
 def test_capture_status_names_each_failure():
@@ -106,3 +125,34 @@ def test_the_pipeline_gives_a_stage_a_view_elapsed_and_a_diagnostics_entry(monke
     assert diag_files, os.listdir(str(tmp_path))
     payload = json.loads((tmp_path / diag_files[0]).read_text())
     assert str(loop.VIEW_ID) in payload["views"]
+
+
+def test_run_meta_is_written_unfinalized_at_the_start(tmp_path):
+    """An interrupted run leaves run_meta saying so, not a clean-looking file."""
+    _exporter(tmp_path)
+    snap = json.loads((tmp_path / "run_meta.json").read_text())
+    assert snap["finalized"] is False and snap["views"] == []
+
+
+def test_batches_share_one_run_id_and_merge_into_one_run_meta(tmp_path):
+    from vop_interwoven.run_meta import merge_run_metas
+    a, _ = _exporter(tmp_path / "b1")
+    b, _ = _exporter(tmp_path / "b2", run_id=a.run_id)
+    assert b.run_id == a.run_id
+    metas = [json.loads((p / "run_meta.json").read_text())
+             for p in (tmp_path / "b1", tmp_path / "b2")]
+    merged = merge_run_metas(metas)
+    assert merged["run_id"] == a.run_id and merged["batches"] == 2
+    assert merged["views_requested"] == [4242, 7, 4242, 7]
+    assert merged["finalized"] is False
+    metas[1]["run_id"] = "other"
+    import pytest
+    with pytest.raises(ValueError):
+        merge_run_metas(metas)
+
+
+def test_a_deployed_copy_without_git_says_so(tmp_path):
+    from vop_interwoven.run_meta import git_commit, revit_version
+    got = git_commit(str(tmp_path))
+    assert got["state"] in ("unavailable", "value")   # tmp may sit under a repo
+    assert revit_version(None) == {"state": "unavailable", "reason": "no document"}

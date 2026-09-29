@@ -955,11 +955,13 @@ def extract_view_metadata(view, doc, diag=None):
 # carries VIEW METADATA ONLY -- every field below is read off the View (or
 # the run's Config), none off a raster -- plus the capture's own outcome.
 # views_vop, views_occlusion and views_perf are not written at all.
+# RunId and ConfigHash are the KEYS into run_meta.json (vop_interwoven/
+# run_meta.py), which holds everything run-level -- the date, the exporter
+# version and commit, the document, the Config -- so no row repeats it.
 STAGE_A_CORE_CSV_HEADER = [
-    "Date", "RunId", "ViewId", "ViewUniqueId", "ViewName", "ViewType",
+    "RunId", "ConfigHash", "ViewId", "ViewUniqueId", "ViewName", "ViewType",
     "Scale", "SheetNumber", "IsOnSheet", "Discipline", "Phase",
-    "ViewTemplate_Name", "CaptureStatus", "CaptureFailureReason",
-    "ElapsedSec", "ConfigHash", "ExporterVersion",
+    "ViewTemplate_Name", "CaptureStatus", "CaptureFailureReason", "ElapsedSec",
 ]
 
 
@@ -986,7 +988,7 @@ def stage_a_capture_status(view_result):
     return "success", ""
 
 
-def stage_a_view_result_to_core_row(view_result, config, doc, run_id, date_str,
+def stage_a_view_result_to_core_row(view_result, config, doc, run_id,
                                     config_hash=None):
     """One Stage A views_core row: view metadata + capture status + elapsed.
 
@@ -1009,8 +1011,8 @@ def stage_a_view_result_to_core_row(view_result, config, doc, run_id, date_str,
     except (TypeError, ValueError):
         elapsed_sec = 0.0
     return {
-        "Date": date_str,
         "RunId": run_id,
+        "ConfigHash": config_hash if config_hash is not None else compute_config_hash(config),
         "ViewId": view_metadata.get("ViewId", view_result.get("view_id", 0)),
         "ViewUniqueId": _extract_view_unique_id(view_result=view_result, view=view,
                                                 metadata=view_metadata),
@@ -1025,40 +1027,7 @@ def stage_a_view_result_to_core_row(view_result, config, doc, run_id, date_str,
         "CaptureStatus": status,
         "CaptureFailureReason": reason,
         "ElapsedSec": "{0:.3f}".format(elapsed_sec),
-        "ConfigHash": config_hash if config_hash is not None else compute_config_hash(config),
-        "ExporterVersion": "vop_interwoven",
     }
-
-
-RUN_CONFIG_SCHEMA = "vop.run_config.v1"
-
-
-def write_run_config_snapshot(config, output_dir, run_id):
-    """C9: ONE config snapshot per run -- ``cfg.to_dict()`` and its hash.
-
-    The hash is compute_config_hash()'s, the same one views_core.ConfigHash
-    and root_cache.json carry, so a row joins to its snapshot by value. Its
-    basis is written into the file rather than left to be remembered.
-    Requested capture values (dpi, fit direction, cap) are read from here;
-    the sidecars record what was ACHIEVED.
-
-    Returns ``(path, config_hash)``.
-    """
-    import json as _json
-    config_hash = compute_config_hash(config)
-    payload = {
-        "schema": RUN_CONFIG_SCHEMA,
-        "run_id": run_id,
-        "config_hash": config_hash,
-        "config_hash_basis": ("root_cache.compute_config_hash: sha256 of "
-                              "Config.to_dict() minus the view_cache_* location "
-                              "keys, first 8 hex characters"),
-        "config": config.to_dict(),
-    }
-    path = os.path.join(output_dir, "vop_run_config_{0}.json".format(run_id))
-    with open(path, "w", encoding="utf-8") as handle:
-        _json.dump(payload, handle, indent=2, sort_keys=True, default=str)
-    return path, config_hash
 
 
 def compute_config_hash(config):
