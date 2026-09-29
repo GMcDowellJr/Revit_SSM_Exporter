@@ -3066,6 +3066,10 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     geom = None
     frame_uv = None
     frame_source = "unavailable"
+    # C7: "crop_a" (the registered capture) sizes this pass from the model
+    # crop A alone -- frame B is neither computed into the lattice nor
+    # recorded. "frame_b" is the two-pass fallback's sizing, unchanged.
+    sizing_frame = str(getattr(cfg, "color_id_buffer_model_frame", "frame_b") or "frame_b")
     if raster is not None and getattr(raster, "bounds_xy", None) is not None:
         # FRAME B IS THE ANNOTATION FRAME AS COMPUTED, not as the cap envelope
         # left it. view_basis clips the annotation-expanded bounds to a sheet
@@ -3113,7 +3117,17 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                             "sizing the export from the frame alone".format(ex),
                     view_id=view_id,
                 )
+        if sizing_frame == "crop_a":
+            # A is still clamped into the rectangle above (compute_model_crop
+            # needs one to clamp into); with no narrower model clip it IS that
+            # rectangle, exactly as before. What changes is that the lattice
+            # is A's own: fpp and the cap are decided on A's axes.
+            frame_uv = crop_uv
+            frame_source = "crop_a"
         try:
+            if frame_uv is None:
+                raise ValueError("crop A could not be resolved, and the "
+                                 "registered capture does not size from frame B")
             geom = frame_export_geometry(
                 frame_uv, crop_uv, scale, export_dpi,
                 fit_direction=fit_direction, max_axis_px=cap_axis_px,
@@ -3233,6 +3247,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     # same object this pass sized itself from rather than a later copy.
     if geometry_out is not None and geom is not None:
         geometry_out.update(geom)
+        geometry_out["sizing_frame"] = sizing_frame
 
     # The floor on the dimension-mismatch backoff.
     #
@@ -4405,10 +4420,6 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "fit_direction": fit_direction,
         # The pixel size the FINAL export attempt used.
         "pixel_size": actual_pixel_size,
-        # The frame's real paper extent; see the sizing block above.
-        "paper_fit_in": paper_fit_in,
-        "paper_width_in": paper_width_in,
-        "paper_height_in": paper_height_in,
         # The two-axis cap: pre_cap_px is the uncapped request.
         "pre_cap_px": cap["pre_cap_px"],
         "cap_applied": bool(cap["cap_applied"]),
@@ -4431,7 +4442,32 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # FitToPage's and must not be read from this record.
         "crop_uv": list(crop_bounds_xy) if crop_bounds_xy is not None else None,
     }
-    if geom is not None and frame_uv is not None:
+    if sizing_frame != "crop_a":
+        # Frame B's paper extent (the frame-B fallback only; C7).
+        frame_record.update({"paper_fit_in": paper_fit_in,
+                             "paper_width_in": paper_width_in,
+                             "paper_height_in": paper_height_in})
+    if geom is not None and frame_uv is not None and sizing_frame == "crop_a":
+        # C7: the lattice is crop A's own. No frame B: no frame_uv,
+        # frame_source, frame_extent_ft, frame_snapped_uv, frame_px,
+        # raster_bounds_uv, crop_offset_px or crop_is_frame -- every one of
+        # them described B or A-within-B.
+        frame_record.update({
+            "status": "value",
+            "sizing_frame": "crop_a",
+            "crop_px": [int(v) for v in geom["crop_px"]],
+            "achieved_export_dpi": float(geom["achieved_export_dpi"]),
+            "achieved_fpp_ft": float(geom["achieved_fpp_ft"]),
+            "min_axis_px": int(geom["min_axis_px"]),
+            "floor_applied_to_crop": bool(geom["floor_applied_to_crop"]),
+            "cap_applied_by_cap_axes": bool(geom["cap_applied_by_cap_axes"]),
+            "lattice_corrections": int(geom["lattice_corrections"]),
+            "verified_against_revit": False,
+        })
+        crop_snapped_uv = [float(v) for v in geom["crop_snapped_uv"]]
+        if crop_snapped_uv != frame_record["crop_uv"]:
+            frame_record["crop_snapped_uv"] = crop_snapped_uv
+    elif geom is not None and frame_uv is not None:
         # Stage A step 2's frame-derived lattice. THREE-VALUED as a block: a
         # capture with no usable frame writes status "unavailable" + reason.
         raster_bounds_uv = (
@@ -6082,6 +6118,13 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
                "{0} restore step(s) raised".format(len(restore_failures)))
 
     failure_reason = capture_faults[0]["fault"] if capture_faults else None
+    if geom.get("sizing_frame") == "crop_a":
+        # C7: the model pass was sized from crop A, so there is no frame B to
+        # copy: these four described B, or A's place inside it.
+        for key in ("frame_snapped_uv", "frame_px", "model_crop_offset_px",
+                    "crop_is_frame"):
+            state_out["registration"].pop(key, None)
+        state_out["registration"]["sizing_frame"] = "crop_a"
     state_out["capture_faults"] = capture_faults
     # The single documented contract string, persisted beside the list it is
     # derived from. A consumer reading the file should not have to re-derive

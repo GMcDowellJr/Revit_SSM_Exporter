@@ -117,6 +117,9 @@ Revit-rendered colour-ID captures. With it on, the **registered capture**
 - **The annotation TIFF is therefore not on the model lattice.**
   `tools/register_stage_a_annotation.py` fits the ticks in both captures and
   resamples it onto the model lattice, nearest-neighbour, removing the ticks.
+  Its canvas is union(model crop A, measured annotation rect) on the model's
+  pixel phase, origin recorded; the model pass is sized from crop A alone and
+  frame B is not recorded (`color_id_buffer_model_frame="crop_a"`).
   It refuses rather than guesses. `tools/decode_stage_a_color_id.py` removes the
   ticks from either capture. Accuracy on the nine test views is recorded in
   `tools/notes/RUN_pipeline_0928_0953_REGISTRATION.md`: at most 0.39 px of fit

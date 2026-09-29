@@ -13,6 +13,8 @@ genuinely rolls view and document state back), so the probe and production
 are held to the same harness.
 """
 import json
+
+import pytest
 import types
 
 import vop_interwoven.stage_a_registration as registration
@@ -333,3 +335,42 @@ def test_a_line_the_rollback_left_hidden_is_a_fault(tmp_path):
     faults = [f["fault"] for f in out["registration"]["faults"]]
     assert "detail_lines_left_hidden" in faults
     assert out["registration"]["restore"]["detail_lines"]["left_hidden"] == [DETAIL_LINE]
+
+
+# --- C7: the registered capture neither computes nor records frame B ---------
+
+_FRAME_B_KEYS = ("frame_uv", "frame_source", "frame_extent_ft", "frame_snapped_uv",
+                 "frame_px", "raster_bounds_uv", "crop_offset_px", "crop_is_frame",
+                 "paper_fit_in", "paper_width_in", "paper_height_in",
+                 "anno_cap_envelope_applied")
+
+
+def test_c7_the_model_lattice_is_crop_As_own_and_frame_B_is_not_recorded(tmp_path):
+    from tests.test_stage_a_annotation_pass_probe_switches import MODEL_BOUNDS
+    from vop_interwoven.resolution_contract import frame_export_geometry
+    out, _view, _doc, _exports, _diag = _run(tmp_path)
+    frame = _sidecar(out["sidecar_path"])["frame"]
+    assert frame["status"] == "value" and frame["sizing_frame"] == "crop_a"
+    assert not (set(_FRAME_B_KEYS) & set(frame)), set(_FRAME_B_KEYS) & set(frame)
+    # The lattice is A's: exactly what frame_export_geometry gives with A as
+    # its own frame -- and NOT what it gives with the wider raster frame.
+    a = (MODEL_BOUNDS.xmin, MODEL_BOUNDS.ymin, MODEL_BOUNDS.xmax, MODEL_BOUNDS.ymax)
+    own = frame_export_geometry(a, a, 96.0, 150.0)
+    assert frame["crop_px"] == list(own["crop_px"])
+    assert frame["crop_uv"] == pytest.approx(list(own["crop_snapped_uv"]))
+    assert frame["achieved_fpp_ft"] == pytest.approx(own["achieved_fpp_ft"])
+    anno_reg = _sidecar(out["annotation_sidecar_path"])["registration"]
+    assert anno_reg["sizing_frame"] == "crop_a"
+    for key in ("frame_snapped_uv", "frame_px", "model_crop_offset_px", "crop_is_frame"):
+        assert key not in anno_reg, key
+
+
+def test_c7_control_the_frame_b_fallback_still_records_frame_B(tmp_path):
+    """Without it a writer that dropped frame B everywhere would pass above."""
+    from tests.test_frame_export_geometry_call_site import _export, _raster_at
+    from vop_interwoven.core.math_utils import Bounds2D
+    frame = _export(tmp_path, _raster_at(1.0, Bounds2D(12.0, 9.0, 40.0, 30.0)))[
+        "metadata"]["frame"]
+    assert "sizing_frame" not in frame
+    for key in ("frame_uv", "frame_px", "frame_source", "paper_fit_in", "crop_offset_px"):
+        assert key in frame, key

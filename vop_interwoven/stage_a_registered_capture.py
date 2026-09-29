@@ -310,6 +310,8 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         # ---- 2: MODEL pass, OST_Lines visible so the marks draw ------------
         model_cfg = copy.copy(cfg)
         model_cfg.color_id_buffer_model_lines_visible = True
+        # C7: sized from crop A alone; frame B is not computed or recorded.
+        model_cfg.color_id_buffer_model_frame = "crop_a"
         geom = {}
         _t = time.time()
         model_out = export_color_id_buffer_view(

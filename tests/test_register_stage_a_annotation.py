@@ -195,11 +195,14 @@ def test_the_annotation_capture_lands_on_the_model_lattice(tmp_path):
     assert record["annotation_to_model_px"]["scale_x"] == pytest.approx(M / A_U, rel=1e-3)
     assert record["annotation_to_model_px"]["scale_y"] == pytest.approx(M / A_U, rel=1e-3)
     out = np.asarray(Image.open(record["registered_tiff"]).convert("RGB"))
-    assert out.shape == (MH, MW, 3)
+    lattice = record["lattice"]
+    assert out.shape == (lattice["canvas_h"], lattice["canvas_w"], 3)
+    ox, oy = lattice["model_image_origin_px"]
     for eid, (colour, (u0, v0, u1, v1)) in ELEMENTS.items():
         # Where the MODEL lattice puts this UV rectangle, from the drawing's
-        # constants. Half a source pixel of drawing rounding is 0.75 model px.
-        want = (mx(u0), my(v1), mx(u1), my(v0))
+        # constants, shifted by where the model image sits in the canvas.
+        # Half a source pixel of drawing rounding is 0.75 model px.
+        want = (mx(u0) + ox, my(v1) + oy, mx(u1) + ox, my(v0) + oy)
         got = _bbox_of(out, colour)
         assert got is not None, eid
         for g, w in zip(got, want):
@@ -487,45 +490,71 @@ def test_model_ticks_that_do_not_span_the_image_are_still_assigned():
     assert fit["px_per_ft_v"] == pytest.approx(12.0, abs=0.05)
 
 
-def test_the_canvas_covers_a_grid_wider_than_the_model_crop(tmp_path):
-    """Plan_CropActive: the model crop sits inside the grid. Annotation ink in
-    the grid but beyond the model image is kept, at the model's pixel phase."""
-    offset = (2.0, 1.0, -3.0, -2.0)     # grid = bounds_xy - offset: wider
-    outside = {61: ((120, 8, 16), (-2.5, 1.0, -1.5, 3.0))}   # u < bounds_xy u0
-    anno_path, _model, _c = _write_pair(tmp_path, model_crop_offset=offset,
-                                        extra_anno=outside)
+def _expected_annotation_rect():
+    """The annotation capture's pixel-centre extent on the model lattice, from
+    the DRAWING's constants (never the tool's fit): annotation x -> u ->
+    model x, same for y."""
+    def to_mx(x):
+        return mx((x - B_U) / A_U)
+
+    def to_my(y):
+        return my((y - B_V) / A_V)
+    xs = sorted((to_mx(0.5), to_mx(AW - 0.5)))
+    ys = sorted((to_my(0.5), to_my(AH - 0.5)))
+    return (int(np.floor(xs[0])), int(np.floor(ys[0])),
+            int(np.floor(xs[1])) + 1, int(np.floor(ys[1])) + 1)
+
+
+def test_the_canvas_is_the_union_of_crop_a_and_the_measured_annotation_rect(tmp_path):
+    """C7 (Greg, 2026-09-29). Ink beyond the model image -- here an element
+    left of crop A -- is kept, on the model's pixel phase, and nothing is
+    off the canvas."""
+    outside = {61: ((120, 8, 16), (-2.5, 1.0, -1.5, 3.0))}   # u < crop A's u0
+    anno_path, _model, _c = _write_pair(tmp_path, extra_anno=outside)
     reg.register(anno_path)
     record = _persisted(anno_path)
     assert record["status"] == "registered", record["refusals"]
     lattice = record["lattice"]
-    ox, oy = lattice["model_image_origin_px"]
-    assert (ox, oy) == (int(round(offset[0] * M)), int(round(-offset[3] * M)))
-    assert lattice["canvas_w"] == MW + ox + int(round(-offset[2] * M))
+    ax0, ay0, ax1, ay1 = _expected_annotation_rect()
+    x0, y0 = min(0, ax0), min(0, ay0)
+    x1, y1 = max(MW, ax1), max(MH, ay1)
+    # The fixture must make the union differ from crop A on both axes.
+    assert x0 < 0 and y0 < 0 and y1 > MH
+    assert lattice["model_image_origin_px"] == [-x0, -y0]
+    assert (lattice["canvas_w"], lattice["canvas_h"]) == (x1 - x0, y1 - y0)
+    assert lattice["canvas_origin_model_px"] == [x0, y0]
+    # The canvas origin in view UV is the model lattice's inverse at (x0, y0).
+    assert lattice["canvas_origin_uv"] == pytest.approx(
+        [MODEL_BOUNDS[0] + x0 / M, MODEL_BOUNDS[3] - y0 / M], abs=0.05)
+    assert record["losses"]["ink_pixels_off_canvas"] == 0
     out = np.asarray(Image.open(record["registered_tiff"]).convert("RGB"))
+    ox, oy = lattice["model_image_origin_px"]
     colour, (u0, v0, u1, v1) = outside[61]
     got = _bbox_of(out, colour)
     want = (mx(u0) + ox, my(v1) + oy, mx(u1) + ox, my(v0) + oy)
     assert got is not None
     for g, w in zip(got, want):
         assert abs(g - w) <= 1.5, (got, want)
-    # And the model image's own content keeps its place, shifted by the origin.
+    # The model image's own content keeps its place, shifted by the origin.
     colour, (u0, v0, u1, v1) = ELEMENTS[50]
     assert abs(_bbox_of(out, colour)[0] - (mx(u0) + ox)) <= 1.5
 
 
-def test_without_the_offset_that_ink_is_off_canvas_and_counted(tmp_path):
-    """The CONTROL: the same ink with the grid equal to the model crop is off
-    the canvas -- and said so, not silently dropped."""
-    outside = {61: ((120, 8, 16), (-2.5, 1.0, -1.5, 3.0))}
-    anno_path, _model, _c = _write_pair(tmp_path, extra_anno=outside)
-    reg.register(anno_path)
-    record = _persisted(anno_path)
-    assert record["lattice"]["model_image_origin_px"] == [0, 0]
-    assert record["losses"]["ink_pixels_off_canvas"] > 0
-    # Off the canvas is its own loss, not a colour the RESAMPLE lost.
-    assert record["losses"]["colours_lost_in_resample"] == []
-    out = np.asarray(Image.open(record["registered_tiff"]).convert("RGB"))
-    assert _bbox_of(out, outside[61][0]) is None
+def test_the_grid_is_no_longer_a_term_of_the_canvas(tmp_path):
+    """The CONTROL that discriminates the new rule from the old one: the old
+    canvas grew with model_crop_offset_uv (the grid, frame B); the new one
+    must not move when it changes."""
+    a_dir, b_dir = tmp_path / "a", tmp_path / "b"
+    a_dir.mkdir()
+    b_dir.mkdir()
+    anno_a, _m, _c = _write_pair(a_dir)
+    anno_b, _m, _c = _write_pair(b_dir, model_crop_offset=(2.0, 1.0, -3.0, -2.0))
+    reg.register(anno_a)
+    reg.register(anno_b)
+    la, lb = _persisted(anno_a)["lattice"], _persisted(anno_b)["lattice"]
+    for key in ("canvas_w", "canvas_h", "model_image_origin_px",
+                "annotation_rect_model_px"):
+        assert la[key] == lb[key], key
 
 
 def test_a_fringe_pulls_the_centre_line_by_its_coverage():
