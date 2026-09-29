@@ -66,6 +66,8 @@ Notes:
     - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
+  - `bbox_oriented_transform`
+    - called from: color_id_buffer.py
   - `bbox_world_aabb`
     - called from: color_id_buffer.py
   - `build_core_csv_row`
@@ -86,8 +88,8 @@ Notes:
     - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
-  - `classify_keynote`
-    - called from: revit/annotation.py
+    - `classify_keynote`
+      - called from: revit/annotation.py
     - `collect_2d_annotations`
       - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
@@ -116,6 +118,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `detail_line_ids`
+      - called from: stage_a_registered_capture.py
     - `discover_link_categories`
       - called from: stage_a_registered_capture.py
     - `element_id_value`
@@ -182,12 +186,16 @@ Notes:
       - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
+    - `get_stage_a_core_csv_header`
+      - called from: streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
+    - `hide_in_view`
+      - called from: stage_a_registered_capture.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -278,6 +286,8 @@ Notes:
       - called from: core/silhouette.py
     - `should_include_element`
       - called from: color_id_buffer.py, pipeline.py, revit/collection.py, revit/linked_documents.py
+    - `show_in_view`
+      - called from: stage_a_registered_capture.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -286,12 +296,18 @@ Notes:
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
+    - `stage_a_capture_status`
+      - called from: csv_export.py, pipeline.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
       - called from: revit/annotation.py
     - `stage_a_pass_membership_summary`
       - called from: color_id_buffer.py
+    - `stage_a_view_result_to_core_row`
+      - called from: streaming.py
+    - `still_hidden`
+      - called from: stage_a_registered_capture.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -336,6 +352,8 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
+    - `write_run_config_snapshot`
+      - called from: streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -399,6 +417,8 @@ Notes:
     - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
+  - `bbox_oriented_transform`
+    - called from: color_id_buffer.py
   - `bbox_world_aabb`
     - called from: color_id_buffer.py
   - `build_core_csv_row`
@@ -419,8 +439,8 @@ Notes:
     - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
-  - `classify_keynote`
-    - called from: revit/annotation.py
+    - `classify_keynote`
+      - called from: revit/annotation.py
     - `collect_2d_annotations`
       - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
@@ -449,6 +469,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `detail_line_ids`
+      - called from: stage_a_registered_capture.py
     - `discover_link_categories`
       - called from: stage_a_registered_capture.py
     - `element_id_value`
@@ -515,12 +537,16 @@ Notes:
       - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
+    - `get_stage_a_core_csv_header`
+      - called from: streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
+    - `hide_in_view`
+      - called from: stage_a_registered_capture.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -611,6 +637,8 @@ Notes:
       - called from: core/silhouette.py
     - `should_include_element`
       - called from: color_id_buffer.py, pipeline.py, revit/collection.py, revit/linked_documents.py
+    - `show_in_view`
+      - called from: stage_a_registered_capture.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -619,12 +647,18 @@ Notes:
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
+    - `stage_a_capture_status`
+      - called from: csv_export.py, pipeline.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
       - called from: revit/annotation.py
     - `stage_a_pass_membership_summary`
       - called from: color_id_buffer.py
+    - `stage_a_view_result_to_core_row`
+      - called from: streaming.py
+    - `still_hidden`
+      - called from: stage_a_registered_capture.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -669,6 +703,8 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
+    - `write_run_config_snapshot`
+      - called from: streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -732,6 +768,8 @@ Notes:
     - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
+  - `bbox_oriented_transform`
+    - called from: color_id_buffer.py
   - `bbox_world_aabb`
     - called from: color_id_buffer.py
   - `build_core_csv_row`
@@ -752,8 +790,8 @@ Notes:
     - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
-  - `classify_keynote`
-    - called from: revit/annotation.py
+    - `classify_keynote`
+      - called from: revit/annotation.py
     - `collect_2d_annotations`
       - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
@@ -782,6 +820,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `detail_line_ids`
+      - called from: stage_a_registered_capture.py
     - `discover_link_categories`
       - called from: stage_a_registered_capture.py
     - `element_id_value`
@@ -848,12 +888,16 @@ Notes:
       - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
+    - `get_stage_a_core_csv_header`
+      - called from: streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
+    - `hide_in_view`
+      - called from: stage_a_registered_capture.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -944,6 +988,8 @@ Notes:
       - called from: core/silhouette.py
     - `should_include_element`
       - called from: color_id_buffer.py, pipeline.py, revit/collection.py, revit/linked_documents.py
+    - `show_in_view`
+      - called from: stage_a_registered_capture.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -952,12 +998,18 @@ Notes:
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
+    - `stage_a_capture_status`
+      - called from: csv_export.py, pipeline.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
       - called from: revit/annotation.py
     - `stage_a_pass_membership_summary`
       - called from: color_id_buffer.py
+    - `stage_a_view_result_to_core_row`
+      - called from: streaming.py
+    - `still_hidden`
+      - called from: stage_a_registered_capture.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -1002,10 +1054,12 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
+    - `write_run_config_snapshot`
+      - called from: streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `run_vop_pipeline_streaming` (streaming.py:L1073)
+## Trace: `run_vop_pipeline_streaming` (streaming.py:L1114)
 
   - `Bounds2D`
     - called from: color_id_buffer.py, core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1065,6 +1119,8 @@ Notes:
     - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
+  - `bbox_oriented_transform`
+    - called from: color_id_buffer.py
   - `bbox_world_aabb`
     - called from: color_id_buffer.py
   - `build_core_csv_row`
@@ -1085,8 +1141,8 @@ Notes:
     - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
-  - `classify_keynote`
-    - called from: revit/annotation.py
+    - `classify_keynote`
+      - called from: revit/annotation.py
     - `collect_2d_annotations`
       - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
@@ -1115,6 +1171,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `detail_line_ids`
+      - called from: stage_a_registered_capture.py
     - `discover_link_categories`
       - called from: stage_a_registered_capture.py
     - `element_id_value`
@@ -1181,12 +1239,16 @@ Notes:
       - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
+    - `get_stage_a_core_csv_header`
+      - called from: streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
+    - `hide_in_view`
+      - called from: stage_a_registered_capture.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -1277,6 +1339,8 @@ Notes:
       - called from: core/silhouette.py
     - `should_include_element`
       - called from: color_id_buffer.py, pipeline.py, revit/collection.py, revit/linked_documents.py
+    - `show_in_view`
+      - called from: stage_a_registered_capture.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -1285,12 +1349,18 @@ Notes:
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
+    - `stage_a_capture_status`
+      - called from: csv_export.py, pipeline.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
       - called from: revit/annotation.py
     - `stage_a_pass_membership_summary`
       - called from: color_id_buffer.py
+    - `stage_a_view_result_to_core_row`
+      - called from: streaming.py
+    - `still_hidden`
+      - called from: stage_a_registered_capture.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -1335,6 +1405,8 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
+    - `write_run_config_snapshot`
+      - called from: streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -1398,6 +1470,8 @@ Notes:
     - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
+  - `bbox_oriented_transform`
+    - called from: color_id_buffer.py
   - `bbox_world_aabb`
     - called from: color_id_buffer.py
   - `build_core_csv_row`
@@ -1418,8 +1492,8 @@ Notes:
     - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
-  - `classify_keynote`
-    - called from: revit/annotation.py
+    - `classify_keynote`
+      - called from: revit/annotation.py
     - `collect_2d_annotations`
       - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
@@ -1448,6 +1522,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `detail_line_ids`
+      - called from: stage_a_registered_capture.py
     - `discover_link_categories`
       - called from: stage_a_registered_capture.py
     - `element_id_value`
@@ -1514,12 +1590,16 @@ Notes:
       - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
+    - `get_stage_a_core_csv_header`
+      - called from: streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
+    - `hide_in_view`
+      - called from: stage_a_registered_capture.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -1612,6 +1692,8 @@ Notes:
       - called from: core/silhouette.py
     - `should_include_element`
       - called from: color_id_buffer.py, pipeline.py, revit/collection.py, revit/linked_documents.py
+    - `show_in_view`
+      - called from: stage_a_registered_capture.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -1620,12 +1702,18 @@ Notes:
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
+    - `stage_a_capture_status`
+      - called from: csv_export.py, pipeline.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
       - called from: revit/annotation.py
     - `stage_a_pass_membership_summary`
       - called from: color_id_buffer.py
+    - `stage_a_view_result_to_core_row`
+      - called from: streaming.py
+    - `still_hidden`
+      - called from: stage_a_registered_capture.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -1670,10 +1758,12 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
+    - `write_run_config_snapshot`
+      - called from: streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `process_document_views` (pipeline.py:L567)
+## Trace: `process_document_views` (pipeline.py:L593)
 
   - `Bounds2D`
     - called from: color_id_buffer.py, core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -1733,6 +1823,8 @@ Notes:
     - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
+  - `bbox_oriented_transform`
+    - called from: color_id_buffer.py
   - `bbox_world_aabb`
     - called from: color_id_buffer.py
   - `build_core_csv_row`
@@ -1753,8 +1845,8 @@ Notes:
     - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
-  - `classify_keynote`
-    - called from: revit/annotation.py
+    - `classify_keynote`
+      - called from: revit/annotation.py
     - `collect_2d_annotations`
       - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
@@ -1783,6 +1875,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `detail_line_ids`
+      - called from: stage_a_registered_capture.py
     - `discover_link_categories`
       - called from: stage_a_registered_capture.py
     - `element_id_value`
@@ -1849,12 +1943,16 @@ Notes:
       - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
+    - `get_stage_a_core_csv_header`
+      - called from: streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
+    - `hide_in_view`
+      - called from: stage_a_registered_capture.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -1945,6 +2043,8 @@ Notes:
       - called from: core/silhouette.py
     - `should_include_element`
       - called from: color_id_buffer.py, pipeline.py, revit/collection.py, revit/linked_documents.py
+    - `show_in_view`
+      - called from: stage_a_registered_capture.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -1953,12 +2053,18 @@ Notes:
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
+    - `stage_a_capture_status`
+      - called from: csv_export.py, pipeline.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
       - called from: revit/annotation.py
     - `stage_a_pass_membership_summary`
       - called from: color_id_buffer.py
+    - `stage_a_view_result_to_core_row`
+      - called from: streaming.py
+    - `still_hidden`
+      - called from: stage_a_registered_capture.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -2003,10 +2109,12 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
+    - `write_run_config_snapshot`
+      - called from: streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `process_document_views_streaming` (streaming.py:L782)
+## Trace: `process_document_views_streaming` (streaming.py:L823)
 
   - `Bounds2D`
     - called from: color_id_buffer.py, core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -2066,6 +2174,8 @@ Notes:
     - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
+  - `bbox_oriented_transform`
+    - called from: color_id_buffer.py
   - `bbox_world_aabb`
     - called from: color_id_buffer.py
   - `build_core_csv_row`
@@ -2086,8 +2196,8 @@ Notes:
     - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
-  - `classify_keynote`
-    - called from: revit/annotation.py
+    - `classify_keynote`
+      - called from: revit/annotation.py
     - `collect_2d_annotations`
       - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
@@ -2116,6 +2226,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `detail_line_ids`
+      - called from: stage_a_registered_capture.py
     - `discover_link_categories`
       - called from: stage_a_registered_capture.py
     - `element_id_value`
@@ -2182,12 +2294,16 @@ Notes:
       - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
+    - `get_stage_a_core_csv_header`
+      - called from: streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
+    - `hide_in_view`
+      - called from: stage_a_registered_capture.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -2278,6 +2394,8 @@ Notes:
       - called from: core/silhouette.py
     - `should_include_element`
       - called from: color_id_buffer.py, pipeline.py, revit/collection.py, revit/linked_documents.py
+    - `show_in_view`
+      - called from: stage_a_registered_capture.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -2286,12 +2404,18 @@ Notes:
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
+    - `stage_a_capture_status`
+      - called from: csv_export.py, pipeline.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
       - called from: revit/annotation.py
     - `stage_a_pass_membership_summary`
       - called from: color_id_buffer.py
+    - `stage_a_view_result_to_core_row`
+      - called from: streaming.py
+    - `still_hidden`
+      - called from: stage_a_registered_capture.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -2336,10 +2460,12 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
+    - `write_run_config_snapshot`
+      - called from: streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `render_model_front_to_back` (pipeline.py:L2366)
+## Trace: `render_model_front_to_back` (pipeline.py:L2400)
 
   - `Bounds2D`
     - called from: color_id_buffer.py, core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -2399,6 +2525,8 @@ Notes:
     - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
+  - `bbox_oriented_transform`
+    - called from: color_id_buffer.py
   - `bbox_world_aabb`
     - called from: color_id_buffer.py
   - `build_core_csv_row`
@@ -2419,8 +2547,8 @@ Notes:
     - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
-  - `classify_keynote`
-    - called from: revit/annotation.py
+    - `classify_keynote`
+      - called from: revit/annotation.py
     - `collect_2d_annotations`
       - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
@@ -2449,6 +2577,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `detail_line_ids`
+      - called from: stage_a_registered_capture.py
     - `discover_link_categories`
       - called from: stage_a_registered_capture.py
     - `element_id_value`
@@ -2515,12 +2645,16 @@ Notes:
       - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
+    - `get_stage_a_core_csv_header`
+      - called from: streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
+    - `hide_in_view`
+      - called from: stage_a_registered_capture.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -2611,6 +2745,8 @@ Notes:
       - called from: core/silhouette.py
     - `should_include_element`
       - called from: color_id_buffer.py, pipeline.py, revit/collection.py, revit/linked_documents.py
+    - `show_in_view`
+      - called from: stage_a_registered_capture.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -2619,12 +2755,18 @@ Notes:
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
+    - `stage_a_capture_status`
+      - called from: csv_export.py, pipeline.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
       - called from: revit/annotation.py
     - `stage_a_pass_membership_summary`
       - called from: color_id_buffer.py
+    - `stage_a_view_result_to_core_row`
+      - called from: streaming.py
+    - `still_hidden`
+      - called from: stage_a_registered_capture.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -2669,10 +2811,12 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
+    - `write_run_config_snapshot`
+      - called from: streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `init_view_raster` (pipeline.py:L1806)
+## Trace: `init_view_raster` (pipeline.py:L1840)
 
   - `Bounds2D`
     - called from: color_id_buffer.py, core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -2732,6 +2876,8 @@ Notes:
     - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
+  - `bbox_oriented_transform`
+    - called from: color_id_buffer.py
   - `bbox_world_aabb`
     - called from: color_id_buffer.py
   - `build_core_csv_row`
@@ -2752,8 +2898,8 @@ Notes:
     - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
-  - `classify_keynote`
-    - called from: revit/annotation.py
+    - `classify_keynote`
+      - called from: revit/annotation.py
     - `collect_2d_annotations`
       - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
@@ -2782,6 +2928,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `detail_line_ids`
+      - called from: stage_a_registered_capture.py
     - `discover_link_categories`
       - called from: stage_a_registered_capture.py
     - `element_id_value`
@@ -2848,12 +2996,16 @@ Notes:
       - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
+    - `get_stage_a_core_csv_header`
+      - called from: streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
+    - `hide_in_view`
+      - called from: stage_a_registered_capture.py
     - `is_extent_driver_annotation`
       - called from: revit/annotation.py, revit/view_basis.py
     - `iter_front_facing_planar_faces`
@@ -2944,6 +3096,8 @@ Notes:
       - called from: core/silhouette.py
     - `should_include_element`
       - called from: color_id_buffer.py, pipeline.py, revit/collection.py, revit/linked_documents.py
+    - `show_in_view`
+      - called from: stage_a_registered_capture.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -2952,12 +3106,18 @@ Notes:
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
+    - `stage_a_capture_status`
+      - called from: csv_export.py, pipeline.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
       - called from: revit/annotation.py
     - `stage_a_pass_membership_summary`
       - called from: color_id_buffer.py
+    - `stage_a_view_result_to_core_row`
+      - called from: streaming.py
+    - `still_hidden`
+      - called from: stage_a_registered_capture.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -3002,10 +3162,12 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
+    - `write_run_config_snapshot`
+      - called from: streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
-## Trace: `_view_signature` (pipeline.py:L264)
+## Trace: `_view_signature` (pipeline.py:L290)
 
   - `Bounds2D`
     - called from: color_id_buffer.py, core/math_utils.py, core/raster.py, csv_export.py, pipeline.py, revit/annotation.py, revit/view_basis.py, root_cache.py
@@ -3063,6 +3225,8 @@ Notes:
     - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
+  - `bbox_oriented_transform`
+    - called from: color_id_buffer.py
   - `bbox_world_aabb`
     - called from: color_id_buffer.py
   - `build_core_csv_row`
@@ -3085,8 +3249,8 @@ Notes:
     - called from: revit/annotation.py
   - `classify_keynote`
     - called from: revit/annotation.py
-  - `collect_2d_annotations`
-    - called from: revit/annotation.py, revit/view_basis.py
+    - `collect_2d_annotations`
+      - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
       - called from: color_id_buffer.py, revit/collection.py
     - `collect_view_elements`
@@ -3113,6 +3277,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `detail_line_ids`
+      - called from: stage_a_registered_capture.py
     - `discover_link_categories`
       - called from: stage_a_registered_capture.py
     - `element_id_value`
@@ -3179,12 +3345,16 @@ Notes:
       - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
+    - `get_stage_a_core_csv_header`
+      - called from: streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
+    - `hide_in_view`
+      - called from: stage_a_registered_capture.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -3277,6 +3447,8 @@ Notes:
       - called from: core/silhouette.py
     - `should_include_element`
       - called from: color_id_buffer.py, pipeline.py, revit/collection.py, revit/linked_documents.py
+    - `show_in_view`
+      - called from: stage_a_registered_capture.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -3285,12 +3457,18 @@ Notes:
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
+    - `stage_a_capture_status`
+      - called from: csv_export.py, pipeline.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
       - called from: revit/annotation.py
     - `stage_a_pass_membership_summary`
       - called from: color_id_buffer.py
+    - `stage_a_view_result_to_core_row`
+      - called from: streaming.py
+    - `still_hidden`
+      - called from: stage_a_registered_capture.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -3335,6 +3513,8 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
+    - `write_run_config_snapshot`
+      - called from: streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -3398,6 +3578,8 @@ Notes:
     - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
+  - `bbox_oriented_transform`
+    - called from: color_id_buffer.py
   - `bbox_world_aabb`
     - called from: color_id_buffer.py
   - `build_core_csv_row`
@@ -3418,8 +3600,8 @@ Notes:
     - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
-  - `classify_keynote`
-    - called from: revit/annotation.py
+    - `classify_keynote`
+      - called from: revit/annotation.py
     - `collect_2d_annotations`
       - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
@@ -3448,6 +3630,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `detail_line_ids`
+      - called from: stage_a_registered_capture.py
     - `discover_link_categories`
       - called from: stage_a_registered_capture.py
     - `element_id_value`
@@ -3514,12 +3698,16 @@ Notes:
       - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
+    - `get_stage_a_core_csv_header`
+      - called from: streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
+    - `hide_in_view`
+      - called from: stage_a_registered_capture.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -3610,6 +3798,8 @@ Notes:
       - called from: core/silhouette.py
     - `should_include_element`
       - called from: color_id_buffer.py, pipeline.py, revit/collection.py, revit/linked_documents.py
+    - `show_in_view`
+      - called from: stage_a_registered_capture.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -3618,12 +3808,18 @@ Notes:
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
+    - `stage_a_capture_status`
+      - called from: csv_export.py, pipeline.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
       - called from: revit/annotation.py
     - `stage_a_pass_membership_summary`
       - called from: color_id_buffer.py
+    - `stage_a_view_result_to_core_row`
+      - called from: streaming.py
+    - `still_hidden`
+      - called from: stage_a_registered_capture.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -3668,6 +3864,8 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
+    - `write_run_config_snapshot`
+      - called from: streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -3731,6 +3929,8 @@ Notes:
     - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
+  - `bbox_oriented_transform`
+    - called from: color_id_buffer.py
   - `bbox_world_aabb`
     - called from: color_id_buffer.py
   - `build_core_csv_row`
@@ -3751,8 +3951,8 @@ Notes:
     - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
-  - `classify_keynote`
-    - called from: revit/annotation.py
+    - `classify_keynote`
+      - called from: revit/annotation.py
     - `collect_2d_annotations`
       - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
@@ -3781,6 +3981,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `detail_line_ids`
+      - called from: stage_a_registered_capture.py
     - `discover_link_categories`
       - called from: stage_a_registered_capture.py
     - `element_id_value`
@@ -3847,12 +4049,16 @@ Notes:
       - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
+    - `get_stage_a_core_csv_header`
+      - called from: streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
+    - `hide_in_view`
+      - called from: stage_a_registered_capture.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -3943,6 +4149,8 @@ Notes:
       - called from: core/silhouette.py
     - `should_include_element`
       - called from: color_id_buffer.py, pipeline.py, revit/collection.py, revit/linked_documents.py
+    - `show_in_view`
+      - called from: stage_a_registered_capture.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -3951,12 +4159,18 @@ Notes:
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
+    - `stage_a_capture_status`
+      - called from: csv_export.py, pipeline.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
       - called from: revit/annotation.py
     - `stage_a_pass_membership_summary`
       - called from: color_id_buffer.py
+    - `stage_a_view_result_to_core_row`
+      - called from: streaming.py
+    - `still_hidden`
+      - called from: stage_a_registered_capture.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -4001,6 +4215,8 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
+    - `write_run_config_snapshot`
+      - called from: streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -4064,6 +4280,8 @@ Notes:
     - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
+  - `bbox_oriented_transform`
+    - called from: color_id_buffer.py
   - `bbox_world_aabb`
     - called from: color_id_buffer.py
   - `build_core_csv_row`
@@ -4084,8 +4302,8 @@ Notes:
     - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
-  - `classify_keynote`
-    - called from: revit/annotation.py
+    - `classify_keynote`
+      - called from: revit/annotation.py
     - `collect_2d_annotations`
       - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
@@ -4114,6 +4332,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `detail_line_ids`
+      - called from: stage_a_registered_capture.py
     - `discover_link_categories`
       - called from: stage_a_registered_capture.py
     - `element_id_value`
@@ -4180,12 +4400,16 @@ Notes:
       - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
+    - `get_stage_a_core_csv_header`
+      - called from: streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
+    - `hide_in_view`
+      - called from: stage_a_registered_capture.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -4276,6 +4500,8 @@ Notes:
       - called from: core/silhouette.py
     - `should_include_element`
       - called from: color_id_buffer.py, pipeline.py, revit/collection.py, revit/linked_documents.py
+    - `show_in_view`
+      - called from: stage_a_registered_capture.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -4284,12 +4510,18 @@ Notes:
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
+    - `stage_a_capture_status`
+      - called from: csv_export.py, pipeline.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
       - called from: revit/annotation.py
     - `stage_a_pass_membership_summary`
       - called from: color_id_buffer.py
+    - `stage_a_view_result_to_core_row`
+      - called from: streaming.py
+    - `still_hidden`
+      - called from: stage_a_registered_capture.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -4334,6 +4566,8 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
+    - `write_run_config_snapshot`
+      - called from: streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -4397,6 +4631,8 @@ Notes:
     - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
+  - `bbox_oriented_transform`
+    - called from: color_id_buffer.py
   - `bbox_world_aabb`
     - called from: color_id_buffer.py
   - `build_core_csv_row`
@@ -4417,8 +4653,8 @@ Notes:
     - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
-  - `classify_keynote`
-    - called from: revit/annotation.py
+    - `classify_keynote`
+      - called from: revit/annotation.py
     - `collect_2d_annotations`
       - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
@@ -4445,6 +4681,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `detail_line_ids`
+      - called from: stage_a_registered_capture.py
     - `discover_link_categories`
       - called from: stage_a_registered_capture.py
     - `element_id_value`
@@ -4511,12 +4749,16 @@ Notes:
       - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
+    - `get_stage_a_core_csv_header`
+      - called from: streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
+    - `hide_in_view`
+      - called from: stage_a_registered_capture.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -4609,6 +4851,8 @@ Notes:
       - called from: core/silhouette.py
     - `should_include_element`
       - called from: color_id_buffer.py, pipeline.py, revit/collection.py, revit/linked_documents.py
+    - `show_in_view`
+      - called from: stage_a_registered_capture.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -4617,12 +4861,18 @@ Notes:
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
+    - `stage_a_capture_status`
+      - called from: csv_export.py, pipeline.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
       - called from: revit/annotation.py
     - `stage_a_pass_membership_summary`
       - called from: color_id_buffer.py
+    - `stage_a_view_result_to_core_row`
+      - called from: streaming.py
+    - `still_hidden`
+      - called from: stage_a_registered_capture.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -4667,6 +4917,8 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
+    - `write_run_config_snapshot`
+      - called from: streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
 
@@ -4730,6 +4982,8 @@ Notes:
     - called from: stage_a_registered_capture.py
   - `annotation_included_bic_names`
     - called from: view_raster_export.py
+  - `bbox_oriented_transform`
+    - called from: color_id_buffer.py
   - `bbox_world_aabb`
     - called from: color_id_buffer.py
   - `build_core_csv_row`
@@ -4750,8 +5004,8 @@ Notes:
     - called from: color_id_buffer.py
   - `classify_annotation`
     - called from: revit/annotation.py
-  - `classify_keynote`
-    - called from: revit/annotation.py
+    - `classify_keynote`
+      - called from: revit/annotation.py
     - `collect_2d_annotations`
       - called from: revit/annotation.py, revit/view_basis.py
     - `collect_all_linked_elements`
@@ -4780,6 +5034,8 @@ Notes:
       - called from: stage_a_registered_capture.py
     - `decompose_to_rects`
       - called from: pipeline.py
+    - `detail_line_ids`
+      - called from: stage_a_registered_capture.py
     - `discover_link_categories`
       - called from: stage_a_registered_capture.py
     - `element_id_value`
@@ -4844,12 +5100,16 @@ Notes:
       - called from: color_id_buffer.py
     - `get_perf_csv_header`
       - called from: entry_dynamo.py, streaming.py
+    - `get_stage_a_core_csv_header`
+      - called from: streaming.py
     - `get_views_from_input_or_current`
       - called from: dynamo_helpers.py
     - `get_vop_csv_header`
       - called from: csv_export.py, streaming.py
     - `group_faces_by_plane`
       - called from: core/silhouette.py
+    - `hide_in_view`
+      - called from: stage_a_registered_capture.py
     - `init_view_raster`
       - called from: pipeline.py
     - `is_extent_driver_annotation`
@@ -4942,6 +5202,8 @@ Notes:
       - called from: core/silhouette.py
     - `should_include_element`
       - called from: color_id_buffer.py, pipeline.py, revit/collection.py, revit/linked_documents.py
+    - `show_in_view`
+      - called from: stage_a_registered_capture.py
     - `signed_polygon_area_2d`
       - called from: core/face_selection.py, core/silhouette.py
     - `sort_front_to_back`
@@ -4950,12 +5212,18 @@ Notes:
       - called from: thinrunner_streaming.py
     - `split_stage_a_pass_membership`
       - called from: color_id_buffer.py, stage_a_registered_capture.py
+    - `stage_a_capture_status`
+      - called from: csv_export.py, pipeline.py
     - `stage_a_datum_category_ids`
       - called from: revit/annotation.py
     - `stage_a_pass_membership`
       - called from: revit/annotation.py
     - `stage_a_pass_membership_summary`
       - called from: color_id_buffer.py
+    - `stage_a_view_result_to_core_row`
+      - called from: streaming.py
+    - `still_hidden`
+      - called from: stage_a_registered_capture.py
     - `supports_crop_bounds`
       - called from: revit/view_basis.py
     - `supports_depth`
@@ -5000,5 +5268,7 @@ Notes:
       - called from: stage_a_registration.py
     - `world_to_view`
       - called from: core/silhouette.py, revit/collection.py
+    - `write_run_config_snapshot`
+      - called from: streaming.py
     - `xy_bounds_from_crop_box_all_corners`
       - called from: revit/view_basis.py
