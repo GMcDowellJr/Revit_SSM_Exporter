@@ -304,8 +304,9 @@ def test_writer_link_entry_under_a_rotated_link(monkeypatch):
                    monkeypatch=monkeypatch)["link"]["900:501"]
     rec = out["bbox_transform"]
     got_mn, got_mx = _aabb_of(_obb_corners(rec))
-    assert got_mn == pytest.approx(out["bbox_3d"]["min"], abs=1e-9)
-    assert got_mx == pytest.approx(out["bbox_3d"]["max"], abs=1e-9)
+    # 1e-6: both sides are the writer's C4-rounded values.
+    assert got_mn == pytest.approx(out["bbox_3d"]["min"], abs=1e-6)
+    assert got_mx == pytest.approx(out["bbox_3d"]["max"], abs=1e-6)
 
 
 def test_writer_link_entry_whose_element_cannot_be_reread(monkeypatch):
@@ -344,3 +345,38 @@ def test_reader_keeps_a_failed_projection_reason(monkeypatch):
     state, reason = model_entry_uv(new)
     assert state == "unavailable" and "no bbox" in reason
     assert model_entry_uv({"bbox_corners_uv": None})[0] == "unavailable"
+
+
+# --- C4: per-element floats rounded to 1e-6 ft --------------------------------
+
+def test_c4_per_element_geometry_is_rounded_to_a_micro_foot(monkeypatch):
+    elem = _Elem(1, _BBox((0.12345678, -0.00000004, 1.0), (4.98765432, 1.0, 2.0),
+                          _rot_z(30, origin=(10.123456789, 0, 0))))
+    entry = _collect(_Doc([elem]), [elem.Id], monkeypatch=monkeypatch)["host"]["1"]
+
+    def _decimals_ok(v, d):
+        return v == round(v, d)
+
+    for v in entry["uv_rect"] + entry["bbox_3d"]["min"] + entry["bbox_3d"]["max"] + [entry["near_face_w"]]:
+        assert _decimals_ok(v, 6), v
+    rec = entry["bbox_transform"]
+    for key in ("origin", "min", "max"):
+        assert all(_decimals_ok(v, 6) for v in rec[key]), (key, rec[key])
+    for key in ("basis_x", "basis_y", "basis_z"):
+        assert all(_decimals_ok(v, 9) for v in rec[key]), (key, rec[key])
+    # -0.0 never reaches the file.
+    assert all(str(v) != "-0.0" for v in rec["min"] + entry["bbox_3d"]["min"])
+
+    # Within budget: the rounded OBB still reproduces the rounded AABB to
+    # 1e-6 ft, so rounding the basis at 1e-9 kept its error inside it.
+    mn, mx = _aabb_of(_obb_corners(rec))
+    assert mn == pytest.approx(entry["bbox_3d"]["min"], abs=1e-6)
+    assert mx == pytest.approx(entry["bbox_3d"]["max"], abs=1e-6)
+
+
+def test_c4_leaves_failure_states_untouched(monkeypatch):
+    elem = _Elem(1, None)
+    entry = _collect(_Doc([elem]), [elem.Id], monkeypatch=monkeypatch)["host"]["1"]
+    assert entry["uv_rect"]["state"] == "unavailable"
+    assert entry["bbox_3d"]["state"] == "unavailable"
+    assert entry["near_face_w"] is None

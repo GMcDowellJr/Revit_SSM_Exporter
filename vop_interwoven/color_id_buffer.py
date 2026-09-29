@@ -1293,6 +1293,41 @@ def _near_face_w_category_name(elem):
     return getattr(cat, "Name", None)
 
 
+# C4: per-element geometry in near_face_w_map is rounded to this many decimal
+# places of a foot (1e-6 ft, ~0.3 micron) -- far under any pixel. Frame, fpp,
+# resolution and registration values are NEVER rounded; this is used only on
+# the per-element entries below.
+ELEMENT_GEOMETRY_DECIMALS = 6
+# A basis vector is dimensionless, so rounding it to 1e-6 would put an error
+# of |local coordinate| * 5e-7 ft on the recovered corners -- 5e-4 ft for a
+# bbox whose local coordinates reach 1000 ft. Rounded at the axis-alignment
+# tolerance instead, so the recovered box stays within the 1e-6 ft budget.
+BASIS_DECIMALS = 9
+
+
+def _round_ft(value, decimals=ELEMENT_GEOMETRY_DECIMALS):
+    """Round one per-element float; None passes through. ``+ 0.0`` turns a
+    rounded -0.0 into 0.0 so a json dump never writes "-0.0"."""
+    if value is None:
+        return None
+    return round(float(value), decimals) + 0.0
+
+
+def _round_geometry(value):
+    """C4 rounding for a per-element geometry VALUE (a list, an {min, max}
+    dict, or a bbox_transform record). State objects pass through untouched."""
+    if isinstance(value, dict):
+        if "state" in value:
+            return value
+        return dict(
+            (k, [_round_ft(c, BASIS_DECIMALS if k.startswith("basis_") else
+                           ELEMENT_GEOMETRY_DECIMALS) for c in v])
+            for k, v in value.items())
+    if isinstance(value, list):
+        return [_round_ft(c) for c in value]
+    return value
+
+
 def _uv_rect_or_state(corners_uv):
     """C3: the UV AABB as ``[umin, vmin, umax, vmax]`` from
     project_bbox_uv_and_near_face_w's four corners, or an "unavailable" state
@@ -1516,8 +1551,8 @@ def _collect_near_face_w_data(
         host_out[str(elem_id_int)] = {
             # C3: the UV AABB as [umin, vmin, umax, vmax] (pre-C3 sidecars:
             # "bbox_corners_uv", its four corners -- exactly derivable).
-            "uv_rect": uv_rect,
-            "near_face_w": near_face_w,
+            "uv_rect": _round_geometry(uv_rect),
+            "near_face_w": _round_ft(near_face_w),
             # C2: one plain string (None = the element has no Category, or
             # the read failed -- "category_state" below says which).
             "category": category_name,
@@ -1535,13 +1570,13 @@ def _collect_near_face_w_data(
             # in tools/notes/data/stage_a_excursion_byColor_20260917T104744
             # .csv, the only real multi-view Stage A run committed here --
             # costs +305.5 B/element, +40.1% of that map. Rounding the six
-            # coordinates to 1e-6 ft would make it +258.9 B (+34.0%); no
-            # rounding is applied, because precision is a decision nobody
-            # has taken. Storing the 3D once per RUN instead saves only the
+            # coordinates to 1e-6 ft would make it +258.9 B (+34.0%). C4
+            # (Greg, 2026-09-29) took that decision: per-element geometry is
+            # rounded to 1e-6 ft (_round_geometry). Storing the 3D once per RUN instead saves only the
             # duplication between views, which on that run is 1.17x (800
             # element slots, 683 distinct elements) = ~15%, and costs a
             # second artifact and a join -- so it is per-view here.
-            "bbox_3d": bbox_3d,
+            "bbox_3d": _round_geometry(bbox_3d),
             # --- Stage A step 1, additive. Pre-existing keys above are
             # untouched; a consumer that does not know these exist reads the
             # same record it always did.
@@ -1555,7 +1590,7 @@ def _collect_near_face_w_data(
             # whose ViewSpecific could not be read (it stays in this pass).
         }
         if bbox_transform is not None:
-            host_out[str(elem_id_int)]["bbox_transform"] = bbox_transform
+            host_out[str(elem_id_int)]["bbox_transform"] = _round_geometry(bbox_transform)
         # C2: a category that READ is exactly "category" above, so its state
         # object is written only when the read failed (its reason is the only
         # thing "category": None cannot carry).
@@ -1646,16 +1681,16 @@ def _collect_near_face_w_data(
                 )
             key = "{0}:{1}".format(link_inst_id_int, link_elem_id_int)
             link_out[key] = {
-                "uv_rect": uv_rect,
-                "near_face_w": near_face_w,
+                "uv_rect": _round_geometry(uv_rect),
+                "near_face_w": _round_ft(near_face_w),
                 "category": cat_name,
                 # Stage A step 4, additive -- see the host entry's note.
-                "bbox_3d": bbox_3d,
+                "bbox_3d": _round_geometry(bbox_3d),
                 "link_inst_id": link_inst_id_int,
                 "link_elem_id": link_elem_id_int,
             }
             if bbox_transform is not None:
-                link_out[key]["bbox_transform"] = bbox_transform
+                link_out[key]["bbox_transform"] = _round_geometry(bbox_transform)
     return {"host": host_out, "link": link_out}
 
 
