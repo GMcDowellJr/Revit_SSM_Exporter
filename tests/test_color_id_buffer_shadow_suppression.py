@@ -315,6 +315,9 @@ def _install_fake_revit_db():
     fake_db.ZoomFitType = _FakeZoomFitType
     fake_db.FitDirectionType = _FakeFitDirectionType
     fake_db.RevitLinkInstance = type("RevitLinkInstance", (), {})
+    # The model pass scans the view for view-specific imports; this harness's
+    # collector answers that OfClass with none.
+    fake_db.ImportInstance = type("ImportInstance", (), {})
     fake_db.ParameterFilterElement = type("ParameterFilterElement", (), {})
 
     fake_system = types.ModuleType("System")

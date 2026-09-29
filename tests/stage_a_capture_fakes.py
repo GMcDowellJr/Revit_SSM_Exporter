@@ -95,6 +95,10 @@ class FakeElement(object):
     def get_BoundingBox(self, _view):
         return self._bbox
 
+    def IsHidden(self, view):
+        """Element.IsHidden(view): hidden in THAT view by HideElements."""
+        return int(self.Id.IntegerValue) in getattr(view, "hidden_elements", set())
+
     def __repr__(self):
         return "FakeElement({0})".format(self.Id.IntegerValue)
 
@@ -387,6 +391,11 @@ class FakeParameter(object):
         return True
 
 
+class FakeImportInstanceClass(object):
+    """Stands for Autodesk.Revit.DB.ImportInstance in OfClass(); the elements
+    it returns are any registered object whose type is NAMED ImportInstance."""
+
+
 class FakeCollector(object):
     def __init__(self, source, _view_id=None):
         self._source = source
@@ -398,6 +407,10 @@ class FakeCollector(object):
             return list(getattr(self._source, "fill_patterns", []))
         if cls is FakeRevitLinkInstance:
             return list(getattr(self._source, "link_instances", []))
+        if cls is FakeImportInstanceClass:
+            # Matched by type NAME, as production matches an ImportInstance.
+            return [e for e in getattr(self._source, "_by_id", {}).values()
+                    if type(e).__name__ == "ImportInstance"]
         return []
 
     def WhereElementIsNotElementType(self):
@@ -485,6 +498,7 @@ class FakeView(object):
 
         self.crop_box_writes = []
         self.set_category_hidden_calls = []
+        self.hidden_elements = set()
 
     # --- parameters ---
     def get_Parameter(self, bip):
@@ -532,6 +546,15 @@ class FakeView(object):
 
     def SetElementOverrides(self, eid, ogs):
         self.element_overrides[int(eid.IntegerValue)] = ogs
+
+    # --- element visibility (View.HideElements / UnhideElements) ---
+    def HideElements(self, ids):
+        for eid in ids:
+            self.hidden_elements.add(int(eid.IntegerValue))
+
+    def UnhideElements(self, ids):
+        for eid in ids:
+            self.hidden_elements.discard(int(eid.IntegerValue))
 
     def GetLinkOverrides(self, link_id):
         return self.link_overrides.get(int(link_id.IntegerValue))
@@ -604,6 +627,7 @@ def install_fake_revit_db():
     fake_db.FitDirectionType = FakeFitDirectionType
     fake_db.DisplayStyle = FakeDisplayStyle
     fake_db.RevitLinkInstance = FakeRevitLinkInstance
+    fake_db.ImportInstance = FakeImportInstanceClass
     fake_db.ParameterFilterElement = FakeParameterFilterElement
     fake_db.Group = FakeGroup
     fake_db.FamilyInstance = FakeFamilyInstance
