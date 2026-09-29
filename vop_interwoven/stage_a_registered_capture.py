@@ -38,9 +38,11 @@ written LAST, after the read-back, so the
 file a consumer reads carries the restore verdict (CLAUDE.md defect class 4: a
 record serialised before it is finished).
 
-What this does NOT do: fit the marks. Pixels are read after the capture, by
-whatever decodes it (today tools/notes/anno_pass_variant_report.py's
-registration_mark_fit); the sidecars carry the marks' UV and colours for it.
+What this does NOT do: fit the marks. Pixels are read after the capture,
+outside Revit, by tools/registration_marks.py -- which
+tools/register_stage_a_annotation.py uses to resample the annotation capture
+onto the model lattice and tools/decode_stage_a_color_id.py uses to subtract
+the ticks; the sidecars carry the marks' UV and colours for it.
 """
 
 import copy
