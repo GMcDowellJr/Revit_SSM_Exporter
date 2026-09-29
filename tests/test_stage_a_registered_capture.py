@@ -32,12 +32,16 @@ WHITE = (255, 255, 255)
 
 
 def _run(tmp_path, rollback_restores=("view", "doc"), break_model_pass=False,
-         monkeypatch=None, leave_view_changed=False, crop_active=True):
+         monkeypatch=None, leave_view_changed=False, crop_active=True,
+         extra_elements=(), view_setup=None):
     del world._LOG[:]
     elements = _elements()
     elements[0].bbox = _BBox((25, 18, 0), (26, 19, 0))
     elements.append(FakeElement(1003, MODEL_CAT))
+    elements.extend(extra_elements)
     view = world._ProbeView(VIEW_ID)
+    if view_setup is not None:
+        view_setup(view)
     view.Scale = 96
     object.__setattr__(view, "CropBoxActive", bool(crop_active))
     doc = _SizedDoc(elements=elements, link_instances=[],
@@ -56,6 +60,7 @@ def _run(tmp_path, rollback_restores=("view", "doc"), break_model_pass=False,
                 world.LINES_CAT.Id.IntegerValue, False),
             "marks_in_doc": sorted(i for i in doc._by_id if i > world.MARK_ID_BASE),
             "crop_box_active": view.CropBoxActive,
+            "hidden_elements": sorted(view.hidden_elements),
             "crop_box": (view.CropBox.Min.X, view.CropBox.Min.Y,
                          view.CropBox.Max.X, view.CropBox.Max.Y),
         })
@@ -238,3 +243,93 @@ def test_a_crop_INACTIVE_view_is_captured_with_crop_A_and_put_back(tmp_path):
     assert view.CropBoxActive is False
     assert out["registration"]["faults"] == []
     assert out["registration"]["mark_reference_source"] == "model_crop_a"
+
+
+# ---- the view's other detail lines, out of the MODEL capture ----------------
+
+DETAIL_LINE, MODEL_LINE = 3001, 3002
+
+
+def _lines():
+    return [FakeElement(DETAIL_LINE, world.LINES_CAT, owner_view_id=VIEW_ID),
+            FakeElement(MODEL_LINE, world.LINES_CAT)]
+
+
+def test_detail_lines_are_hidden_for_the_model_pass_only(tmp_path):
+    """OST_Lines stays visible in the model pass so the marks draw; the view's
+    OTHER detail lines are annotation and must not draw there. Hidden for the
+    model export, shown for the annotation export, and gone from the hidden
+    set afterwards. A model line is never touched: it is model content."""
+    out, view, doc, exports, diag = _run(tmp_path, extra_elements=_lines())
+    model_export, anno_export = exports
+    assert DETAIL_LINE in model_export["hidden_elements"]
+    assert DETAIL_LINE not in anno_export["hidden_elements"]
+    assert MODEL_LINE not in model_export["hidden_elements"]
+    assert DETAIL_LINE not in view.hidden_elements
+    reg = out["registration"]
+    assert reg["faults"] == [], reg["faults"]
+    assert reg["detail_lines"]["hidden_for_model_pass"] == 1
+    assert reg["restore"]["detail_lines"]["left_hidden"] == []
+    # The FILE carries it: written last, after the read-back.
+    assert _sidecar(out["sidecar_path"])["registration_marks"]["faults"] == []
+
+
+def test_without_detail_lines_nothing_is_hidden(tmp_path):
+    """The CONTROL: no view-owned line, no hide, and the record says so."""
+    out, view, doc, exports, diag = _run(tmp_path)
+    assert all(e["hidden_elements"] == [] for e in exports)
+    assert out["registration"]["detail_lines"] == {"count": 0}
+
+
+def test_a_detail_line_the_author_hid_stays_hidden(tmp_path):
+    def _hide(view):
+        view.hidden_elements.add(DETAIL_LINE)
+    out, view, doc, exports, diag = _run(tmp_path, extra_elements=_lines(),
+                                         view_setup=_hide)
+    assert all(DETAIL_LINE in e["hidden_elements"] for e in exports)
+    assert DETAIL_LINE in view.hidden_elements
+    assert out["registration"]["detail_lines"]["already_hidden"] == 1
+    assert out["registration"]["detail_lines"]["hidden_for_model_pass"] == 0
+
+
+def test_a_hide_that_fails_is_a_fault(tmp_path):
+    def _refuse(view):
+        def _raise(_ids):
+            raise RuntimeError("HideElements refused")
+        view.HideElements = _raise
+    out, view, doc, exports, diag = _run(tmp_path, extra_elements=_lines(),
+                                         view_setup=_refuse)
+    faults = [f["fault"] for f in out["registration"]["faults"]]
+    assert faults == ["detail_lines_may_draw_in_model_capture"]
+    assert out["registration_success"] is False
+
+
+def test_a_show_that_fails_is_a_fault_and_the_rollback_still_restores(tmp_path):
+    """The annotation capture then lacks the line -- a fault. The group's
+    rollback puts the view back regardless, and the read-back confirms it."""
+    def _refuse(view):
+        def _raise(_ids):
+            raise RuntimeError("UnhideElements refused")
+        view.UnhideElements = _raise
+    out, view, doc, exports, diag = _run(tmp_path, extra_elements=_lines(),
+                                         view_setup=_refuse)
+    faults = [f["fault"] for f in out["registration"]["faults"]]
+    assert faults == ["detail_lines_missing_from_annotation_capture"]
+    assert DETAIL_LINE in exports[1]["hidden_elements"]
+    assert DETAIL_LINE not in view.hidden_elements
+    assert out["registration"]["restore"]["detail_lines"]["left_hidden"] == []
+
+
+def test_a_line_the_rollback_left_hidden_is_a_fault(tmp_path):
+    """The read-back is the check, not the rollback's word: a group that does
+    not restore the VIEW leaves the line hidden, and that is reported."""
+    def _refuse(view):
+        def _raise(_ids):
+            raise RuntimeError("UnhideElements refused")
+        view.UnhideElements = _raise
+    out, view, doc, exports, diag = _run(tmp_path, extra_elements=_lines(),
+                                         view_setup=_refuse,
+                                         rollback_restores=("doc",))
+    faults = [f["fault"] for f in out["registration"]["faults"]]
+    assert "detail_lines_left_hidden" in faults
+    assert out["registration"]["restore"]["detail_lines"]["left_hidden"] == [DETAIL_LINE]

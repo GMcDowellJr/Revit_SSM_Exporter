@@ -245,6 +245,8 @@ def test_a_failed_annotation_pass_does_not_fail_the_model_capture(
     cfg = Config(
         enable_color_id_buffer_stage_a=True,
         color_id_buffer_annotation_pass=True,
+        # The frame-B fallback's separate annotation call is the subject.
+        color_id_buffer_registered_capture=False,
         view_cache_enabled=False,
         perf_collect_timings=False,
     )
@@ -292,9 +294,11 @@ def test_the_registered_flag_runs_the_registered_capture_INSTEAD(
     assert results[0]["registration_success"] is True
 
 
-def test_the_registered_flag_defaults_off():
-    assert Config().color_id_buffer_registered_capture is False
-    assert Config().to_dict()["color_id_buffer_registered_capture"] is False
-    assert Config.from_dict({}).color_id_buffer_registered_capture is False
-    assert Config.from_dict({"color_id_buffer_registered_capture": True}
-                            ).color_id_buffer_registered_capture is True
+def test_the_registered_capture_is_the_default():
+    """Handoff step 4: the registered capture is the default; the frame-B
+    two-pass capture is the named fallback, reached by setting it False."""
+    assert Config().color_id_buffer_registered_capture is True
+    assert Config().to_dict()["color_id_buffer_registered_capture"] is True
+    assert Config.from_dict({}).color_id_buffer_registered_capture is True
+    assert Config.from_dict({"color_id_buffer_registered_capture": False}
+                            ).color_id_buffer_registered_capture is False

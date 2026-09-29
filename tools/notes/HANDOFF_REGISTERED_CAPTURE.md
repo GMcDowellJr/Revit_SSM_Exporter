@@ -96,6 +96,11 @@ Findings: `tools/notes/ROUND2_ANNO_PASS_VARIANTS_FINDINGS.md`,
    orchestrator sets on a copied cfg (`color_id_buffer_anno_crop_mode`,
    `color_id_buffer_anno_model_suppression`, `color_id_buffer_model_lines_visible`)
    with real parameters. Update CLAUDE.md's Stage A description.
+   *(Done: the registered capture is the default; frame B is kept as the named
+   fallback (`color_id_buffer_registered_capture=False`); the three switches
+   are `Config` parameters; the registered model pass hides the view's other
+   detail lines, which OST_Lines being visible for the marks used to let
+   through. CLAUDE.md has a Stage A section.)*
 
 Do not do step 4 before step 3: the shipped annotation pass lands on the model
 lattice by forcing the crop to frame B, and the registered one does not (6–15 %

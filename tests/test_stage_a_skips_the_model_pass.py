@@ -188,11 +188,18 @@ def _run_one_view(monkeypatch, tmp_path, stage_a):
             "stage": "color_id_buffer_stage_a",
         }
 
-    # raising=True (the default) is deliberate on all four: if production renames
+    # raising=True (the default) is deliberate on all five: if production renames
     # or drops any of these, this file errors rather than quietly testing nothing.
     monkeypatch.setattr(pipeline, "render_model_front_to_back", _recorder)
     monkeypatch.setattr(
         "vop_interwoven.color_id_buffer.export_color_id_buffer_view", _capture
+    )
+    # The REGISTERED capture is the default Stage A capture (handoff step 4),
+    # so it is recorded too: the claim is about the Stage A BRANCH, whichever
+    # capture it runs.
+    monkeypatch.setattr(
+        "vop_interwoven.stage_a_registered_capture.export_registered_stage_a_view",
+        _capture,
     )
     monkeypatch.setattr(
         pipeline, "init_view_raster",

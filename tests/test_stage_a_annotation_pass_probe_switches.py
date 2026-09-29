@@ -922,11 +922,45 @@ def test_an_unknown_crop_mode_raises_rather_than_defaulting(tmp_path):
     assert "untuoched" in str(excinfo.value)
 
 
-def test_crop_mode_is_not_a_config_field():
-    """Probe-only, like the other two switches: no production default, no
-    to_dict() representation, no way to reach a production run."""
-    assert not hasattr(Config(), "color_id_buffer_anno_crop_mode")
-    assert "color_id_buffer_anno_crop_mode" not in Config().to_dict()
+# The three switches became Config PARAMETERS when the registered capture
+# became the default (handoff step 4). The contract now pinned: present,
+# defaulted to the SHIPPED frame-B behaviour, validated at construction, and
+# round-tripped by to_dict/from_dict so a production config can carry them.
+
+SWITCHES = {
+    "color_id_buffer_anno_crop_mode": ("frame_b", "authored_else_crop_a"),
+    "color_id_buffer_anno_model_suppression": ("hide_categories", "external"),
+    "color_id_buffer_model_lines_visible": (False, True),
+}
+
+
+@pytest.mark.parametrize("name", sorted(SWITCHES))
+def test_each_switch_is_a_config_parameter_defaulted_to_the_shipped_path(name):
+    default, _other = SWITCHES[name]
+    assert getattr(Config(), name) == default
+    assert Config().to_dict()[name] == default
+
+
+@pytest.mark.parametrize("name", sorted(SWITCHES))
+def test_each_switch_round_trips_through_to_dict(name):
+    _default, other = SWITCHES[name]
+    cfg = Config(**{name: other})
+    assert getattr(Config.from_dict(cfg.to_dict()), name) == other
+
+
+def test_a_config_refuses_an_unknown_crop_or_suppression_mode():
+    with pytest.raises(ValueError) as excinfo:
+        Config(color_id_buffer_anno_crop_mode="untuoched")
+    assert "color_id_buffer_anno_crop_mode" in str(excinfo.value)
+    with pytest.raises(ValueError) as excinfo:
+        Config(color_id_buffer_anno_model_suppression="hide")
+    assert "color_id_buffer_anno_model_suppression" in str(excinfo.value)
+
+
+def test_smooth_edges_off_is_still_probe_only():
+    """The CONTROL: the one switch step 4 did not promote stays out."""
+    assert not hasattr(Config(), "color_id_buffer_anno_smooth_edges_off")
+    assert "color_id_buffer_anno_smooth_edges_off" not in Config().to_dict()
 
 
 # ---- color_id_buffer_model_lines_visible (MODEL pass, probe-only) ----------
@@ -974,9 +1008,6 @@ def test_model_lines_visible_leaves_lines_visible_and_nothing_else(tmp_path):
         str(k) for k in out["metadata"]["categories_hidden"]}
 
 
-def test_model_lines_visible_is_not_a_config_field():
-    assert not hasattr(Config(), "color_id_buffer_model_lines_visible")
-    assert "color_id_buffer_model_lines_visible" not in Config().to_dict()
 
 
 

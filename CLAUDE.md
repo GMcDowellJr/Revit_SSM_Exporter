@@ -100,6 +100,40 @@ Config(
 )
 ```
 
+### Stage A capture (color ID buffer)
+
+`enable_color_id_buffer_stage_a=True` replaces the in-memory model pass with
+Revit-rendered colour-ID captures. With it on, the **registered capture**
+(`vop_interwoven/stage_a_registered_capture.py`) is the default
+(`color_id_buffer_registered_capture=True`):
+
+- **Both passes run inside one TransactionGroup that is rolled back.** The
+  rollback is the restore, and the view is read back afterwards.
+- **Twelve registration ticks are drawn as detail lines, into both captures.**
+  The view's other detail lines are hidden for the model pass only.
+- **The annotation pass keeps the authored crop.** A crop-inactive view gets
+  the model pass's crop A. Model content is suppressed by membership: white
+  element overrides and white link filters.
+- **The annotation TIFF is therefore not on the model lattice.**
+  `tools/register_stage_a_annotation.py` fits the ticks in both captures and
+  resamples it onto the model lattice, nearest-neighbour, removing the ticks.
+  It refuses rather than guesses. `tools/decode_stage_a_color_id.py` removes the
+  ticks from either capture. Accuracy on the nine test views is recorded in
+  `tools/notes/RUN_pipeline_0928_0953_REGISTRATION.md`: at most 0.39 px of fit
+  residual, about 8 % of a 1/8" cell.
+- **A view-specific ("in current view only") DWG is annotation, a model-placed
+  one is model.** The decision is `collection_policy.view_specific_import_state()`.
+  The model pass hides view-specific imports and fails the capture
+  (`view_specific_import_not_suppressed`) if one could draw unpainted.
+
+`color_id_buffer_registered_capture=False` selects the frame-B two-pass
+capture, kept as the named fallback: the crop is widened to frame B and model
+categories are hidden. Its knobs are `Config` parameters too:
+`color_id_buffer_anno_crop_mode`, `color_id_buffer_anno_model_suppression` and
+`color_id_buffer_model_lines_visible`. The registered capture sets the values
+it needs on its own copies. The history is in
+`tools/notes/HANDOFF_REGISTERED_CAPTURE.md`.
+
 ## Refactor Rules
 
 All changes touching pipeline, collection, rasterization, or export must follow these rules (from `vop_interwoven/docs/refactor_rules.md`):
