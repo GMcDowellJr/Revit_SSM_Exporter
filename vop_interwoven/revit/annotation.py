@@ -2038,6 +2038,30 @@ def stage_a_pass_membership(elem, capture_view_id_int=None, datum_category_ids=N
         "reason": None,
     }
 
+    # D2 (Greg, 2026-09-30): an IMPORT is placed by collection_policy.
+    # import_pass(), the predicate the model pass uses too -- owned by this
+    # view -> annotation; anything else, an unreadable OwnerViewId included,
+    # -> model. So an import is never unresolved here, never claimed by both
+    # passes, and never by neither.
+    from .collection_policy import import_pass, IMPORT_PASS_ANNOTATION
+    decided = import_pass(elem, capture_view_id_int)
+    if decided["state"] != "not_applicable":
+        record["state"] = "value"
+        record["owner_view_id"] = decided.get("owner_view_id")
+        record["reason"] = decided.get("reason")
+        if decided["pass"] == IMPORT_PASS_ANNOTATION:
+            record["pass"] = STAGE_A_PASS_ANNOTATION
+            record["basis"] = "owner_view"
+            record["owner_view_matches_capture_view"] = True
+        else:
+            record["pass"] = STAGE_A_PASS_MODEL
+            record["basis"] = ("no_owner_view" if decided["state"] == "value"
+                               and decided.get("owner_view_id") == _invalid_element_id_int()
+                               else "import_not_owned_by_view")
+            record["owner_view_matches_capture_view"] = (
+                False if decided["state"] == "value" else "unavailable")
+        return record
+
     owner = None
     try:
         owner = elem.OwnerViewId
@@ -2137,7 +2161,10 @@ def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
     model = []
     annotation = []
     unresolved = []
-    basis_counts = {"owner_view": 0, "datum_category": 0, "no_owner_view": 0}
+    # import_not_owned_by_view (D2): an import owned by another view, or
+    # whose OwnerViewId could not be read -- placed in the model pass.
+    basis_counts = {"owner_view": 0, "datum_category": 0, "no_owner_view": 0,
+                    "import_not_owned_by_view": 0}
     # Seeded with EVERY datum category that resolved, so a category present
     # in the set but matching nothing reads as 0 rather than being absent.
     # That distinction is the whole measurement: "OST_GridHeads": 0 beside

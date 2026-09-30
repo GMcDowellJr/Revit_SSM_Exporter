@@ -422,39 +422,38 @@ def _is_import_instance(elem):
 
 def _partition_view_specific_imports(doc, resolved_ids, diag=None, view_id=None):
     """``(model paint set, import records)``: every DWG/DXF import in
-    ``resolved_ids`` classified by collection_policy.view_specific_import_
-    state(), and the view-specific ones taken OUT of the model pass.
+    ``resolved_ids`` classified by collection_policy.import_pass() -- the
+    predicate the annotation pass's membership uses too (D2) -- and the ones
+    the annotation pass claims taken OUT of the model pass.
 
-    A view-specific import is annotation (Greg, 2026-09-29): the annotation
-    pass claims it through OwnerViewId, so painting it here as well counted it
-    twice (pipeline_0928_0953, Plan_DWG). A model-placed import stays. One
-    whose ViewSpecific cannot be read also STAYS -- the behaviour before this
-    rule -- and is recorded as unresolved: dropping content on a failed read
-    would be the silent kind of wrong.
+    An import whose OwnerViewId is this view is annotation (Greg,
+    2026-09-30); anything else, INCLUDING an unreadable OwnerViewId, is
+    model and stays here. A failed read is recorded (``import_pass`` carries
+    the reason) and warned, never silent. ``view_specific`` is kept as a
+    recorded diagnostic; it no longer decides anything.
     """
-    from .revit.collection_policy import view_specific_import_state
+    from .revit.collection_policy import import_pass, view_specific_import_state
     kept, records = [], []
     for eid in resolved_ids:
-        state = view_specific_import_state(doc.GetElement(eid))
-        if state["state"] == "not_applicable":
+        elem = doc.GetElement(eid)
+        decided = import_pass(elem, view_id)
+        if decided["state"] == "not_applicable":
             kept.append(eid)
             continue
-        record = {"element_id": eid.IntegerValue, "view_specific": state,
-                  "found_by": "paint_set"}
-        if state["state"] == "value" and state["value"]:
-            record["classification"] = "annotation"
+        record = {"element_id": eid.IntegerValue, "import_pass": decided,
+                  "view_specific": view_specific_import_state(elem),
+                  "found_by": "paint_set", "classification": decided["pass"]}
+        if decided["pass"] == "annotation":
             record["in_model_paint_set"] = False
         else:
             kept.append(eid)
-            record["classification"] = ("model" if state["state"] == "value"
-                                        else "unresolved")
             record["in_model_paint_set"] = True
-            if state["state"] != "value" and diag is not None:
+            if decided["state"] != "value" and diag is not None:
                 diag.warn(
                     phase="color_id_buffer",
-                    callsite="view_specific_import_classification",
-                    message="an import's ViewSpecific could not be read; it stays "
-                            "in the model pass as before: {0}".format(state["reason"]),
+                    callsite="import_pass_classification",
+                    message="an import's OwnerViewId could not be read; it is model "
+                            "(D2) and stays in this pass: {0}".format(decided["reason"]),
                     view_id=view_id,
                     elem_id=eid.IntegerValue,
                 )
@@ -463,20 +462,25 @@ def _partition_view_specific_imports(doc, resolved_ids, diag=None, view_id=None)
 
 
 def _scan_view_specific_imports(doc, view, records, diag=None, view_id=None):
-    """Add every view-specific import IN THE VIEW that the paint set never saw.
+    """Add every import IN THE VIEW that the annotation pass claims and the
+    paint set never saw.
 
     The paint set reaches imports only through DWG collection, which
     ``cfg.include_dwg_imports`` can switch off -- and switching it off stops
-    collection, not Revit drawing the import. A view-specific import is
+    collection, not Revit drawing the import. An import owned by this view is
     annotation whatever that setting says, so it is found here, from the
-    view itself, and hidden with the rest (review, PR #218). Model-placed
-    imports the paint set did not collect stay as the setting left them.
+    view itself, and hidden with the rest (review, PR #218). Imports
+    import_pass() calls model -- model-placed, or with an unreadable
+    OwnerViewId -- stay as the DWG setting left them; an unreadable one is
+    RECORDED (classification "model", found_by "view_scan") so the read
+    failure is in the file, but it does not fail the capture: under D2 it is
+    model content, exactly like a model-placed import the setting skipped.
 
     A scan that fails appends a record with ``element_id`` None: the capture
     cannot then say no annotation import is drawn, and fails loudly.
     """
     from Autodesk.Revit.DB import FilteredElementCollector, ImportInstance
-    from .revit.collection_policy import view_specific_import_state
+    from .revit.collection_policy import import_pass, view_specific_import_state
     known = set(r["element_id"] for r in records if r.get("element_id") is not None)
     try:
         found = list(FilteredElementCollector(doc, view.Id).OfClass(ImportInstance))
@@ -488,43 +492,40 @@ def _scan_view_specific_imports(doc, view, records, diag=None, view_id=None):
                      "reason": "{0}: {1}".format(type(ex).__name__, ex)}})
         if diag is not None:
             diag.error(phase="color_id_buffer", callsite="scan_view_specific_imports",
-                       message="the view's imports could not be enumerated; a "
-                               "view-specific import may draw in this capture",
+                       message="the view's imports could not be enumerated; an "
+                               "annotation import may draw in this capture",
                        view_id=view_id, exc=ex)
         return
     for elem in found:
         eid = elem.Id.IntegerValue
         if eid in known:
             continue
-        state = view_specific_import_state(elem)
-        if state["state"] == "value" and state["value"]:
-            records.append({"element_id": eid, "view_specific": state,
+        decided = import_pass(elem, view_id)
+        if decided.get("pass") == "annotation":
+            records.append({"element_id": eid, "import_pass": decided,
+                            "view_specific": view_specific_import_state(elem),
                             "found_by": "view_scan", "classification": "annotation",
                             "in_model_paint_set": False})
-        elif state["state"] != "value":
-            # Unclassifiable AND outside the paint set: if it is view-specific
-            # it draws unpainted over model ids, and nothing here can say it
-            # is not. Recorded, and it fails the capture (review, PR #218).
-            records.append({"element_id": eid, "view_specific": state,
-                            "found_by": "view_scan", "classification": "unresolved",
-                            "in_model_paint_set": False, "suppressed": False})
+        elif decided["state"] == "unavailable":
+            records.append({"element_id": eid, "import_pass": decided,
+                            "view_specific": view_specific_import_state(elem),
+                            "found_by": "view_scan", "classification": "model",
+                            "in_model_paint_set": False})
             if diag is not None:
-                diag.error(phase="color_id_buffer",
-                           callsite="scan_view_specific_imports",
-                           message="an import outside the paint set could not be "
-                                   "classified: {0}".format(state.get("reason")),
-                           view_id=view_id, elem_id=eid)
+                diag.warn(phase="color_id_buffer",
+                          callsite="scan_view_specific_imports",
+                          message="an import outside the paint set has no readable "
+                                  "OwnerViewId; it is model (D2) and left to the DWG "
+                                  "setting: {0}".format(decided.get("reason")),
+                          view_id=view_id, elem_id=eid)
 
 
 def _unsuppressed_view_specific_imports(records):
     """The imports that may draw UNPAINTED in this capture: annotation ones it
-    could not hide, and unclassifiable ones outside the paint set. (An
-    unclassifiable import IN the paint set is painted with its own palette
-    colour, so its pixels stay identifiable; it does not fail the capture.)"""
+    could not hide. (Since D2 there is no "unresolved" import: import_pass()
+    places every one, an unreadable OwnerViewId in the model pass.)"""
     return [r for r in records
-            if (r.get("classification") == "annotation" and not r.get("suppressed"))
-            or (r.get("classification") == "unresolved"
-                and not r.get("in_model_paint_set"))]
+            if r.get("classification") == "annotation" and not r.get("suppressed")]
 
 
 def _hide_view_specific_imports(doc, view, records, diag=None, view_id=None):
@@ -1771,7 +1772,7 @@ def _collect_near_face_w_data(
             # were probe-debug data. Whether an import is view-specific is a
             # capture decision, and it is recorded where it is made -- the
             # sidecar's "view_specific_imports", which keeps every import
-            # whose ViewSpecific could not be read (it stays in this pass).
+            # whose OwnerViewId could not be read (D2: model, in this pass).
         }
         if bbox_transform is not None:
             host_out[str(elem_id_int)]["bbox_transform"] = _round_geometry(bbox_transform)
@@ -4774,7 +4775,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # element_id None. See revit/linked_documents._collect_from_dwg_imports.
         "dwg_imports_omitted": dwg_imports_omitted,
         # Every DWG/DXF import this pass resolved and which pass it belongs to
-        # (revit/collection_policy.view_specific_import_state). "annotation"
+        # (revit/collection_policy.import_pass, D2). "annotation"
         # ones are NOT in color_assignment_map: hidden for this export and,
         # per "restore", shown again after. An EMPTY list means the pass
         # resolved no import at all.

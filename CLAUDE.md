@@ -131,9 +131,11 @@ Revit-rendered colour-ID captures. With it on, the **registered capture**
   ticks from either capture. Accuracy on the nine test views is recorded in
   `tools/notes/RUN_pipeline_0928_0953_REGISTRATION.md`: at most 0.39 px of fit
   residual, about 8 % of a 1/8" cell.
-- **A view-specific ("in current view only") DWG is annotation, a model-placed
-  one is model.** The decision is `collection_policy.view_specific_import_state()`.
-  The model pass hides view-specific imports and fails the capture
+- **An import owned by the view (OwnerViewId) is annotation; anything else,
+  including an unreadable OwnerViewId, is model** (D2, 2026-09-30). The one
+  predicate is `collection_policy.import_pass()`, used by both passes;
+  `view_specific_import_state()` is a recorded diagnostic only. The model pass
+  hides the view's own imports and fails the capture
   (`view_specific_import_not_suppressed`) if one could draw unpainted.
 - **The annotation pass paints only what the view shows** (M1): hidden
   annotation categories, hidden categories and hidden elements are left
