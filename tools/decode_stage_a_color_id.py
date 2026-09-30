@@ -863,6 +863,15 @@ def build_decoded_document(
             # for -- which is why the basis string below says "requested".
             export_dpi = resolution.get("requested_export_dpi")
             dpi_basis = "sidecar_requested_export_dpi"
+            if not resolution.get("pre_cap_px") and resolution.get("achieved_export_dpi"):
+                # Without pre_cap_px the count is "requested_pixel_size": the
+                # lattice's pixels AFTER the axis cap / minimum-pixel floor,
+                # so it is on the ACHIEVED dpi, not the requested one. Divided
+                # by the requested dpi, a capped or floored view reported an
+                # extent off by requested/achieved (Codex, PR #221). pre_cap_px
+                # is the uncapped request and stays on the requested dpi.
+                export_dpi = resolution.get("achieved_export_dpi")
+                dpi_basis = "sidecar_achieved_export_dpi"
             if not export_dpi:
                 export_dpi = resolution.get("export_dpi")
                 dpi_basis = "sidecar_legacy_export_dpi"

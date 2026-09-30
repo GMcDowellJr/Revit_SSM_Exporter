@@ -159,3 +159,30 @@ def test_a_crop_less_sidecar_decodes_at_the_runs_dpi_from_run_meta(tmp_path):
     assert with_meta["feet_per_pixel"] == before["feet_per_pixel"]
     assert with_meta["feet_per_pixel_basis"] == before["feet_per_pixel_basis"]
     assert no_meta["feet_per_pixel"] != before["feet_per_pixel"]
+
+
+def test_a_crop_less_capped_capture_decodes_on_the_achieved_dpi(tmp_path):
+    """Codex, PR #221: with no crop and no pre_cap_px, the pixel count is
+    requested_pixel_size -- the lattice AFTER the axis cap / floor, so on the
+    ACHIEVED dpi. Divided by the requested dpi (restored from run_meta since
+    C6, and carried in the sidecar before it) a capped view's extent came out
+    requested/achieved too large. Here the cap halved 300 dpi to 150."""
+    old_anno, _m, _c = pair._write_pair(tmp_path)
+    old = json.loads(old_anno.read_text())
+    px = old["resolution"]["requested_pixel_size"]
+    old["resolution"].update({"requested_export_dpi": 300.0, "achieved_export_dpi": 150.0})
+    old_anno.write_text(json.dumps(old))
+    before = _decoded(old_anno)
+    assert before["feet_per_pixel_basis"]["numerator"].endswith("sidecar_achieved_export_dpi")
+    # The fixture's annotation image is exactly px wide, so the measured fit
+    # axis is px: fpp == (px / achieved_dpi) * scale / 12 / px.
+    assert before["feet_per_pixel"] == pytest.approx(px / 150.0 * 96.0 / 12.0 / px)
+
+    # The re-encoded shape, with the run's REQUESTED 300 dpi in run_meta,
+    # still decodes on the achieved dpi the sidecar keeps.
+    old_anno.write_text(json.dumps(reencode(old)))
+    (tmp_path / "run_meta.json").write_text(json.dumps(
+        {"config": {"color_id_buffer_export_dpi": 300.0}}))
+    after = _decoded(old_anno)
+    assert after["feet_per_pixel"] == before["feet_per_pixel"]
+    assert after["feet_per_pixel_basis"] == before["feet_per_pixel_basis"]
