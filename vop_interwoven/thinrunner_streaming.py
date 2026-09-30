@@ -404,7 +404,12 @@ def _summarize_stage_a_sidecar(sidecar_path):
     link_count = len((near_face_w.get("link") or {}))
     lines.append("    Near-face-W collected: host={} link={}".format(host_count, link_count))
 
-    paint_failures = meta.get("paint_failures")
+    # P1 moved the count into capture_integrity; an archived (pre-P1)
+    # sidecar still carries it top-level (review, PR #221).
+    integrity = meta.get("capture_integrity")
+    paint_failures = (integrity.get("paint_failures")
+                      if isinstance(integrity, dict) and "paint_failures" in integrity
+                      else meta.get("paint_failures"))
     if paint_failures:
         lines.append("    HOST paint failures: {}".format(paint_failures))
 
