@@ -4381,6 +4381,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "dim_check_ceiling_px": MAX_STAGE_A_AXIS_PX,
         "attempts": [],
     }
+    _export_t0 = time.time()
     try:
         _tiff_path, actual_pixel_size, dim_report = _export_tiff(
             doc, view, tiff_path, pixel_size, diag=diag, view_id=view_id,
@@ -4388,6 +4389,9 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             grid_axis_px=backoff_floor_px,
         )
     finally:
+        # P2: the export alone (every dimension-check attempt), for the
+        # registered capture's timings_ms. In memory only.
+        export_ms = round((time.time() - _export_t0) * 1000.0, 3)
         restore_tx = Transaction(doc, "VOP Stage A RESTORE color ID buffer")
         restore_tx.Start()
         model_restore_failures = []
@@ -4863,7 +4867,9 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     state_out["capture_integrity"] = _capture_integrity(
         "model_pass", model_faults, len(model_restore_failures), paint_failures)
     state_out["failure_reason"] = failure_reason
+    _write_t0 = time.time()
     _write_sidecar(json_path, out_dir, state_out)
+    sidecar_write_ms = round((time.time() - _write_t0) * 1000.0, 3)
 
     return {
         "view_id": view_id,
@@ -4876,7 +4882,10 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "output_dir": out_dir,
         "frame": state_out["frame"],
         "color_assignment_count": count_host + count_link_categories,
-        "timings": {"color_id_buffer_ms": round((time.time() - t0) * 1000.0, 3)},
+        # export_ms / sidecar_write_ms: P2, read by the registered capture
+        # into its timings_ms. The sidecar cannot carry its own write time.
+        "timings": {"color_id_buffer_ms": round((time.time() - t0) * 1000.0, 3),
+                    "export_ms": export_ms, "sidecar_write_ms": sidecar_write_ms},
         "metadata": state_out,
     }
 
@@ -5924,6 +5933,7 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         "status": "unavailable",
         "reason": "the restore transaction did not run",
     }
+    _export_t0 = time.time()
     try:
         _tiff_path, actual_pixel_size, dim_report = _export_tiff(
             doc, view, tiff_path, pixel_size, diag=diag, view_id=view_id,
@@ -5931,6 +5941,8 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
             grid_axis_px=int(geom.get("min_axis_px") or _PIXEL_SIZE_BACKOFF_FLOOR),
         )
     finally:
+        # P2: the export alone, for the registered capture's timings_ms.
+        export_ms = round((time.time() - _export_t0) * 1000.0, 3)
         restore_tx = Transaction(doc, "VOP Stage A ANNO RESTORE color ID buffer")
         restore_tx.Start()
 
@@ -6369,7 +6381,9 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     # are in capture_integrity). They were not: capture_faults and
     # failure_reason were computed after the old write site and existed only
     # in memory.
+    _write_t0 = time.time()
     _write_sidecar(json_path, out_dir, state_out)
+    sidecar_write_ms = round((time.time() - _write_t0) * 1000.0, 3)
 
     return {
         "view_id": view_id,
@@ -6383,7 +6397,9 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         "frame": state_out["frame"],
         "color_assignment_count": count_anno,
         "timings": {
-            "annotation_color_id_buffer_ms": round((time.time() - t0) * 1000.0, 3)
+            "annotation_color_id_buffer_ms": round((time.time() - t0) * 1000.0, 3),
+            # P2, read by the registered capture into its timings_ms.
+            "export_ms": export_ms, "sidecar_write_ms": sidecar_write_ms,
         },
         "metadata": state_out,
     }

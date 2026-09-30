@@ -220,6 +220,26 @@ def mark_fpp_ft(view, raster, cfg):
             type(ex).__name__, ex)
 
 
+# P2: the phases that PARTITION ``total`` -- sequential, non-overlapping.
+# Every other key in timings_ms is nested inside one of these (model_export
+# and sidecar_write_model inside model_pass, ...), so it is not summed again.
+# What total holds beyond their sum -- the membership collection, detail-line
+# hide/show, link-category discovery, the view-state and mark read-backs --
+# is reported as ``unaccounted``, not hidden.
+TIMING_PARTITION = ("authored_override_scan", "mark_layout", "marks_create",
+                    "model_pass", "suppression", "annotation_pass", "rollback",
+                    "restore_element_overrides")
+
+
+def unaccounted_ms(timings_ms):
+    """PURE. ``total`` minus the partition phases that were timed."""
+    total = timings_ms.get("total")
+    if total is None:
+        return None
+    return round(float(total) - sum(float(timings_ms[k]) for k in TIMING_PARTITION
+                                    if timings_ms.get(k) is not None), 3)
+
+
 def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=None):
     marks = []
     for mark in (record.get("marks") or {}).get("created") or []:
@@ -251,6 +271,13 @@ def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=N
         "model_suppression": record.get("suppression_summary"),
         "restore": record.get("restore"),
         "faults": list(record.get("faults") or []),
+        # P2: filled since the registered capture shipped, never written
+        # (pipeline_0930_1133: {} on every sidecar). Complete here: the
+        # payload is built after total. What it cannot hold is the duration
+        # of the registration_marks / capture_integrity writes themselves,
+        # which happen after it is built.
+        "timings_ms": dict(record.get("timings_ms") or {}),
+        "timing_partition": list(TIMING_PARTITION),
     }
 
 
@@ -290,6 +317,15 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                        message="{0}: {1}".format(fault, message),
                        view_id=view_id, exc=exc)
 
+    def _pass_timings(name, out):
+        # The pass's export and its own sidecar write, measured inside the
+        # pass (nested in model_pass / annotation_pass, not additional).
+        timings = (out or {}).get("timings") or {}
+        for key, label in (("export_ms", "{0}_export"),
+                           ("sidecar_write_ms", "sidecar_write_{0}")):
+            if timings.get(key) is not None:
+                record["timings_ms"][label.format(name)] = timings[key]
+
     before = view_state(view)
     group = TransactionGroup(doc, "VOP Stage A registered capture")
     started = False
@@ -321,6 +357,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             (time.time() - _t) * 1000.0, 3)
 
         # ---- 1: registration marks -----------------------------------------
+        _t = time.time()
         reference, source = mark_reference_rectangle(view, raster, diag=diag,
                                                      view_id=view_id)
         record["mark_reference_source"] = source
@@ -334,6 +371,9 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             view, _anno, getattr(raster, "view_basis", None), diag=diag,
             view_id=view_id)
         layout = registration.relocate_marks_clear_of(layout, avoid)
+        # P2: reference rectangle, sizing, segments and avoidance together.
+        record["timings_ms"]["mark_layout"] = round((time.time() - _t) * 1000.0, 3)
+        _t = time.time()
         tx = Transaction(doc, "VOP Stage A registration marks")
         tx.Start()
         try:
@@ -344,6 +384,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         except Exception:
             tx.RollBack()
             raise
+        record["timings_ms"]["marks_create"] = round((time.time() - _t) * 1000.0, 3)
         record["marks"] = marks
         if marks.get("created_count") != marks.get("expected_count") or not marks.get(
                 "expected_count"):
@@ -399,6 +440,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             doc, view, elements, model_cfg, diag=diag, raster=raster,
             elem_cache=elem_cache, geometry_out=geom)
         record["timings_ms"]["model_pass"] = round((time.time() - _t) * 1000.0, 3)
+        _pass_timings("model", model_out)
         if detail_lines["hidden"]:
             tx = Transaction(doc, "VOP Stage A show detail lines for the annotation pass")
             tx.Start()
@@ -473,6 +515,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                         "stage": "color_id_buffer_stage_a_annotation",
                         "tiff_path": None, "sidecar_path": None}
         record["timings_ms"]["annotation_pass"] = round((time.time() - _t) * 1000.0, 3)
+        _pass_timings("annotation", anno_out)
     except Exception as ex:
         _fault("registered_capture_raised", "the registered capture stopped", ex)
     finally:
@@ -487,6 +530,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             except Exception as ex:
                 _fault("rollback_raised", "TransactionGroup.RollBack raised", ex)
             restore["rollback_ms"] = round((time.time() - _t) * 1000.0, 3)
+            record["timings_ms"]["rollback"] = restore["rollback_ms"]
             if not restore["rolled_back"]:
                 _fault("rollback_failed", "the capture's TransactionGroup did not "
                                           "roll back; the view may keep marks, "
@@ -531,6 +575,8 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                 "unreadable_after": len(authored_after[1]),
                 "elapsed_ms": round((time.time() - _t) * 1000.0, 3),
             }
+            record["timings_ms"]["restore_element_overrides"] = (
+                restore["element_overrides"]["elapsed_ms"])
             left = sorted(set(authored_after[0]) - set(authored_before[0]))
             restore["element_overrides"]["left_behind"] = left[:200]
             if left:
@@ -543,6 +589,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                            len(authored_after[1])))
         record["restore"] = restore
         record["timings_ms"]["total"] = round((time.time() - t_total) * 1000.0, 3)
+        record["timings_ms"]["unaccounted"] = unaccounted_ms(record["timings_ms"])
         record["success"] = bool(
             model_out and model_out.get("success")
             and anno_out and anno_out.get("success") and not record["faults"])
