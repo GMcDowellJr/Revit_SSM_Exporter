@@ -110,7 +110,14 @@ Revit-rendered colour-ID captures. With it on, the **registered capture**
 - **Both passes run inside one TransactionGroup that is rolled back.** The
   rollback is the restore, and the view is read back afterwards.
 - **Twelve registration ticks are drawn as detail lines, into both captures.**
-  The view's other detail lines are hidden for the model pass only.
+  The view's other detail lines are hidden for the model pass only. Ticks are
+  32 px arms in the thinnest line style the curve allows, sized on the model
+  pass's own achieved lattice (`mark_fpp_ft()`, so a capped view keeps 32 px),
+  and moved within their corner/edge band to clear annotation bboxes; each
+  segment records `placement` (original / moved / blocked). The annotation
+  pass runs with smooth edges off; tick-blend handling in
+  `tools/registration_marks.py` is the fallback. Revit anti-aliases TEXT
+  regardless, so text edges stay off-palette.
 - **The annotation pass keeps the authored crop.** A crop-inactive view gets
   the model pass's crop A. Model content is suppressed by membership: white
   element overrides and white link filters.
@@ -128,6 +135,39 @@ Revit-rendered colour-ID captures. With it on, the **registered capture**
   one is model.** The decision is `collection_policy.view_specific_import_state()`.
   The model pass hides view-specific imports and fails the capture
   (`view_specific_import_not_suppressed`) if one could draw unpainted.
+- **The annotation pass paints only what the view shows** (M1): hidden
+  annotation categories, hidden categories and hidden elements are left
+  unpainted and counted per category under `not_painted`.
+
+**Sidecar shape (PR #221).** Readers must accept the old and new shapes
+alike; `tools/stage_a_sidecar_shapes.py` is the one reader for every field
+that exists in more than one shape, and `tools/reencode_stage_a_sidecar.py`
+turns an archive sidecar into the current shape.
+
+- `frame`: one record replacing `resolution`, `export_frame` and `bounds_xy`,
+  achieved values only. Requested values come from the run's
+  `run_meta.json` (`find_run_meta()` in the decoder).
+- `near_face_w_map` entries: `uv_rect` `[umin, vmin, umax, vmax]`, `bbox_3d`
+  `{min, max}`, plain `category` / `source` strings, geometry rounded to 1e-6
+  ft (basis vectors 1e-9). `bbox_transform` only when the bbox transform
+  rotates; `rotation` (from `GetTransform()`, a straight `LocationCurve`, or
+  a rotated link) only when the element is rotated. The model sidecar's
+  `rotation_read` records the read's count and cost.
+- `capture_integrity`: one always-complete record (rolled_back,
+  marks_still_in_project, restore_failures, capture_faults, paint_failures),
+  finished by the registered capture after its rollback. Probe/restore
+  detail stays in the in-memory result only (`SIDECAR_PROBE_ONLY_KEYS`).
+- The decoder takes a registered annotation capture's feet-per-pixel from its
+  own tick fit; with no usable fit it reports none rather than guessing.
+
+**Run outputs.** `run_meta.json` is written once per run, `finalized: false`
+at the start and `finalized: true` with an outcome for every requested view
+(a view that never reported is backfilled as failed). `views_core` holds
+view metadata plus CaptureStatus, keyed by RunId and ConfigHash; the
+occlusion/vop/perf CSVs are not written under Stage A. The per-date
+`views_diagnostics` and view-element map files merge only within one run,
+keyed by the exporter's run id. The element cache is in-run only; change
+detection belongs to the analysis layer.
 
 `color_id_buffer_registered_capture=False` selects the frame-B two-pass
 capture, kept as the named fallback: the crop is widened to frame B and model
