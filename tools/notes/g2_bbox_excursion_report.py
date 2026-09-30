@@ -283,7 +283,13 @@ def capture_fields(sidecar, fpp):
 
 
 def measure_view(sidecar_path, mappings):
-    sidecar = legacy_view(json.loads(sidecar_path.read_text(encoding="utf-8")))
+    # Since C6 the requested dpi lives in the run's run_meta.json, not the
+    # sidecar; without it every current capture reported
+    # requested_export_dpi n/a (Codex, PR #221). capture_fields() below
+    # re-applies legacy_view, which keeps what this call rebuilt.
+    from tools.decode_stage_a_color_id import find_run_meta
+    sidecar = legacy_view(json.loads(sidecar_path.read_text(encoding="utf-8")),
+                          run_config=find_run_meta(sidecar_path))
     bounds = sidecar.get("bounds_xy")
     if not bounds or len(bounds) != 4:
         return {"view": sidecar_path.stem, "skip": "no bounds_xy (crop did not apply)"}
