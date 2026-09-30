@@ -555,8 +555,14 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         anno_cfg.color_id_buffer_anno_smooth_edges_off = True
         _t = time.time()
         try:
+            # The ticks are the capture's own lines, drawn with its own line
+            # style: not an AUTHORED override (1249: "12 of N" on every view
+            # was exactly the 12 ticks).
             anno_out = export_annotation_color_id_buffer_view(
-                doc, view, anno_cfg, geom, diag=diag, raster=raster)
+                doc, view, anno_cfg, geom, diag=diag, raster=raster,
+                authored_check_exclude_ids=[
+                    m.get("id") for m in (record.get("marks") or {}).get("created") or []
+                    if m.get("id") is not None])
         except Exception as ex:
             _fault("annotation_pass_raised", "the annotation pass raised", ex)
             anno_out = {"view_id": view_id, "success": False,

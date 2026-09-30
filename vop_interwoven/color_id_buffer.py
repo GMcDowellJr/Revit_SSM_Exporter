@@ -5161,7 +5161,8 @@ def _verify_annotation_overrides_restored(view, painted_ids, diag=None, view_id=
 
 
 def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
-                                           raster=None, elements=None):
+                                           raster=None, elements=None,
+                                           authored_check_exclude_ids=None):
     """Export one view's ANNOTATION color ID buffer, over frame B.
 
     Args:
@@ -5859,11 +5860,18 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
             "replaced_count": 0,
             "replaced_element_ids": [],
             "unreadable_count": 0,
+            # The registered capture's own ticks: drawn by it, in its line
+            # style, so not an authored override and not checked as one.
+            "registration_marks_excluded": 0,
             "note": "painting replaces these and restore writes a BLANK override, "
                     "not the authored one; they are not recoverable from this "
                     "capture",
         }
+        _not_authored = set(int(i) for i in (authored_check_exclude_ids or ()))
         for eid in resolved_ids:
+            if int(eid.IntegerValue) in _not_authored:
+                authored_overrides["registration_marks_excluded"] += 1
+                continue
             authored_overrides["checked_count"] += 1
             state, cleared, _reason = _override_is_cleared(view, eid.IntegerValue)
             if state != "value":

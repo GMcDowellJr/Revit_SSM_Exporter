@@ -92,3 +92,40 @@ def test_the_verdict_is_pure_and_exact():
     same = rc.view_membership_verdict([3, 1], [1, 3])
     assert same["status"] == "unchanged" and same["before"] == same["after"]
     assert rc.membership_fingerprint([1, 2]) != rc.membership_fingerprint([1, 3])
+
+
+# --- the ticks are not authored overrides ------------------------------------
+# authored_overrides_replaced is one of SIDECAR_PROBE_ONLY_KEYS: by design it
+# is in the returned record, not the sidecar file. Where 1249's false warning
+# surfaced is Diagnostics (views_diagnostics), so both are asserted.
+
+def _authored(out):
+    return out["annotation_pass"]["metadata"]["authored_overrides_replaced"]
+
+
+def _authored_warnings(diag):
+    return [w for w in diag.warnings
+            if w.get("callsite") == "annotation_authored_override_replaced"]
+
+
+def test_the_ticks_are_not_counted_as_authored_overrides(tmp_path):
+    out, _v, _d, _e, diag = _run(tmp_path)
+    record = _authored(out)
+    assert record["registration_marks_excluded"] == 12
+    assert record["replaced_count"] == 0
+    assert _authored_warnings(diag) == []
+
+
+def test_control_a_real_authored_override_is_still_counted(tmp_path):
+    colour = type("C", (), {"IsValid": True, "r": 1, "g": 2, "b": 3,
+                            "Red": 1, "Green": 2, "Blue": 3})()
+
+    def _author(view):
+        ogs = FakeOGS()
+        ogs.ProjectionLineColor = colour
+        view.element_overrides[2001] = ogs
+    out, _v, _d, _e, diag = _run(tmp_path, view_setup=_author)
+    record = _authored(out)
+    assert record["replaced_element_ids"] == [2001]
+    assert record["registration_marks_excluded"] == 12
+    assert len(_authored_warnings(diag)) == 1
