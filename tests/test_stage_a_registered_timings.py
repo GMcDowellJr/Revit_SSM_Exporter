@@ -56,23 +56,37 @@ def test_p2_unaccounted_is_total_minus_the_partition_only():
     assert unaccounted_ms({"model_pass": 1.0}) is None
 
 
-def test_p2_the_report_reconciles_ElapsedSec_with_the_written_total(tmp_path):
-    """Composes the offline report with a sidecar the capture really wrote."""
+def _report_run(tmp_path, statuses, extra_rows=()):
     import csv
     import os
     import shutil
-    from tools.stage_a_timing_report import timing_rows
 
     out, _v, _d, _e, _diag = _run(tmp_path / "cap")
     run = tmp_path / "run"
     os.makedirs(str(run / "color_id_buffer"))
     shutil.copy(out["sidecar_path"], str(run / "color_id_buffer" / "v.json"))
     view_id = _file(out["sidecar_path"])["view_id"]
+    # "v" is the captured view; any other key is a view id as written.
+    views = [{"view_id": view_id, "capture_status": statuses.get("v", "success")}]
+    views += [{"view_id": vid, "capture_status": st}
+              for vid, st in statuses.items() if vid != "v"]
+    with open(str(run / "run_meta.json"), "w") as handle:
+        json.dump({"run_id": "RUN_B", "views": views}, handle)
     with open(str(run / "views_core_x.csv"), "w", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["ViewId", "ViewName", "ElapsedSec"])
-        writer.writerow([view_id, "v", "10.0"])
-        writer.writerow([999, "never_captured", "2.0"])
+        writer.writerow(["RunId", "ViewId", "ViewName", "ElapsedSec"])
+        writer.writerow(["RUN_B", view_id, "v", "10.0"])
+        for row in extra_rows:
+            writer.writerow(row)
+    return out, run, view_id
+
+
+def test_p2_the_report_reconciles_ElapsedSec_with_the_written_total(tmp_path):
+    """Composes the offline report with a sidecar the capture really wrote."""
+    from tools.stage_a_timing_report import timing_rows
+
+    out, run, _vid = _report_run(tmp_path, {999: "success"},
+                                 extra_rows=[["RUN_B", 999, "never_captured", "2.0"]])
     rows = dict((r["view_name"], r) for r in timing_rows(str(run)))
     total = _file(out["sidecar_path"])["registration_marks"]["timings_ms"]["total"]
     assert rows["v"]["capture_total_ms"] == total
@@ -80,3 +94,37 @@ def test_p2_the_report_reconciles_ElapsedSec_with_the_written_total(tmp_path):
     assert rows["v"]["unaccounted_ms"] is not None
     # Reported, never dropped.
     assert rows["never_captured"]["reason"] == "no model sidecar"
+
+
+def test_p2_the_report_joins_one_run_only(tmp_path):
+    """Codex, PR #222: a historical views_core row for the same ViewId gets
+    no timings from this run's sidecar -- it is not this run's row at all."""
+    from tools.stage_a_timing_report import timing_rows
+
+    _out, run, view_id = _report_run(
+        tmp_path, {}, extra_rows=[["RUN_A", "PLACEHOLDER", "v_old", "99.0"]])
+    # The old run's row carries the SAME ViewId.
+    text = (run / "views_core_x.csv").read_text().replace("PLACEHOLDER", str(view_id))
+    (run / "views_core_x.csv").write_text(text)
+    rows = timing_rows(str(run))
+    assert [r["view_name"] for r in rows] == ["v"]
+    assert rows[0]["run_id"] == "RUN_B"
+
+
+def test_p2_a_failed_capture_is_not_joined_to_a_sidecar_beside_it(tmp_path):
+    from tools.stage_a_timing_report import timing_rows
+
+    _out, run, _vid = _report_run(tmp_path, {"v": "failed"})
+    [row] = timing_rows(str(run))
+    assert row["capture_total_ms"] is None and row["outside_capture_ms"] is None
+    assert "failed" in row["reason"]
+
+
+def test_p2_a_run_without_run_meta_is_refused(tmp_path):
+    import pytest
+    from tools.stage_a_timing_report import timing_rows
+
+    _out, run, _vid = _report_run(tmp_path, {})
+    (run / "run_meta.json").unlink()
+    with pytest.raises((OSError, IOError)):
+        timing_rows(str(run))

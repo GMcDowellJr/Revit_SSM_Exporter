@@ -11,6 +11,15 @@ reports, per view:
     sidecar writes);
   * ``unaccounted_ms``      -- what total holds beyond its partition phases.
 
+ONE RUN ONLY (Codex, PR #222). A sidecar carries no run id, so a join on
+ViewId alone would hand a historical views_core row -- or a view whose capture
+failed and left an older sidecar in place -- plausible timings from another
+run. So the run is fixed by ``run_meta.json``: only views_core rows whose
+RunId is that run's are read, and a view's sidecar is joined only when
+run_meta records its capture as "success". Any other row is reported with the
+reason, never joined. A run directory without a readable run_meta.json is
+refused.
+
 Nothing is hidden: a view whose sidecar carries no timings (a run before P2)
 is reported with the reason, never dropped. Standard library only.
 
@@ -43,8 +52,23 @@ def _model_sidecars(run_dir):
     return out
 
 
+def _run_identity(run_dir):
+    """``(run_id, {view_id: capture_status})`` from run_meta.json, or raises."""
+    path = os.path.join(run_dir, "run_meta.json")
+    with open(path) as handle:
+        meta = json.load(handle)
+    run_id = meta.get("run_id")
+    if not run_id:
+        raise ValueError("{0} carries no run_id; refusing to join timings "
+                         "across runs".format(path))
+    status = dict((str(v.get("view_id")), v.get("capture_status"))
+                  for v in meta.get("views") or [] if isinstance(v, dict))
+    return str(run_id), status
+
+
 def timing_rows(run_dir):
-    """PURE over the files: one row per views_core view."""
+    """PURE over the files: one row per views_core view OF THIS RUN."""
+    run_id, capture_status = _run_identity(run_dir)
     cores = sorted(glob.glob(os.path.join(run_dir, "views_core*.csv")))
     if not cores:
         raise FileNotFoundError("no views_core*.csv under {0}".format(run_dir))
@@ -53,6 +77,8 @@ def timing_rows(run_dir):
     for core in cores:
         with open(core, newline="") as handle:
             for rec in csv.DictReader(handle):
+                if str(rec.get("RunId")) != run_id:
+                    continue
                 view_id = str(rec.get("ViewId"))
                 row = {"view_id": view_id, "view_name": rec.get("ViewName"),
                        "elapsed_ms": None, "capture_total_ms": None,
@@ -62,6 +88,14 @@ def timing_rows(run_dir):
                     row["elapsed_ms"] = round(float(rec.get("ElapsedSec")) * 1000.0, 3)
                 except (TypeError, ValueError):
                     row["reason"] = "ElapsedSec unreadable: {0!r}".format(rec.get("ElapsedSec"))
+                row["run_id"] = run_id
+                status = capture_status.get(view_id)
+                if status != "success":
+                    row["reason"] = row["reason"] or (
+                        "run_meta records capture_status {0!r}; a sidecar beside "
+                        "it may be another run's, so it is not joined".format(status))
+                    rows.append(row)
+                    continue
                 timings = ((sidecars.get(view_id) or {}).get("registration_marks") or {}
                            ).get("timings_ms")
                 if not timings or timings.get("total") is None:
