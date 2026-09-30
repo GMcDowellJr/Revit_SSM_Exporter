@@ -157,17 +157,30 @@ def _ink_off_canvas(ink, transform, out_w, out_h):
     return off
 
 
+def _resample_support(scale, offset, src_n):
+    """``[lo, hi)``: the output pixels resample_onto() fills from a source axis
+    of ``src_n`` pixels. It samples output pixel j at source
+    ``floor((j + 0.5 - offset) / scale)``, which lies in ``[0, src_n)`` iff
+    ``offset - 0.5 <= j < offset + scale * src_n - 0.5`` (scale > 0; a
+    non-positive scale is refused before this is reached). Derived from the
+    resampler's own inequality, not from the forward map of pixel centres: at
+    scale 2, offset -10 the centre of source column 0 maps to -9, but the
+    resampler also fills -10 from it (review, PR #221)."""
+    lo = int(np.ceil(offset - 0.5))
+    hi = int(np.ceil(offset + scale * src_n - 0.5))
+    return lo, hi
+
+
 def output_canvas(model_mapping, model_w, model_h, transform, anno_w, anno_h):
     """C7 (Greg, 2026-09-29): union(model crop A, measured annotation rect).
 
     Crop A is the model image itself -- the model capture renders exactly A
     -- so it is ``[0, model_w] x [0, model_h]`` on the model lattice. The
     annotation rect is MEASURED: the annotation capture's own pixel extent
-    carried onto the model lattice by the fitted mark transform. Bounded by
-    the annotation pixels' CENTRES (floor of the lowest, floor of the highest
-    plus one), so every annotation pixel lands on the canvas -- ink off canvas
-    is 0 by construction -- and a sub-pixel disagreement at the image edge
-    cannot add a spurious row or column.
+    carried onto the model lattice by the fitted mark transform, bounded by
+    exactly the output pixels resample_onto() fills from it -- see
+    _resample_support(). So nothing the resample would draw falls off the
+    canvas, and no row or column is added that it would leave white.
 
     The canvas keeps the model's pixel PHASE: it is the model image with
     whole pixels added on each side, so the model image sits in it at the
@@ -178,12 +191,8 @@ def output_canvas(model_mapping, model_w, model_h, transform, anno_w, anno_h):
     Replaces the grid-extended canvas (frame B), which the registered
     capture no longer records.
     """
-    cx = sorted(transform["scale_x"] * x + transform["offset_x"]
-                for x in (0.5, anno_w - 0.5))
-    cy = sorted(transform["scale_y"] * y + transform["offset_y"]
-                for y in (0.5, anno_h - 0.5))
-    ax0, ax1 = int(np.floor(cx[0])), int(np.floor(cx[1])) + 1
-    ay0, ay1 = int(np.floor(cy[0])), int(np.floor(cy[1])) + 1
+    ax0, ax1 = _resample_support(transform["scale_x"], transform["offset_x"], anno_w)
+    ay0, ay1 = _resample_support(transform["scale_y"], transform["offset_y"], anno_h)
     x0, y0 = min(0, ax0), min(0, ay0)
     x1, y1 = max(int(model_w), ax1), max(int(model_h), ay1)
     origin_uv = None

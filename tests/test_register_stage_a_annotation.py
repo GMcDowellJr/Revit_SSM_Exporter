@@ -490,21 +490,6 @@ def test_model_ticks_that_do_not_span_the_image_are_still_assigned():
     assert fit["px_per_ft_v"] == pytest.approx(12.0, abs=0.05)
 
 
-def _expected_annotation_rect():
-    """The annotation capture's pixel-centre extent on the model lattice, from
-    the DRAWING's constants (never the tool's fit): annotation x -> u ->
-    model x, same for y."""
-    def to_mx(x):
-        return mx((x - B_U) / A_U)
-
-    def to_my(y):
-        return my((y - B_V) / A_V)
-    xs = sorted((to_mx(0.5), to_mx(AW - 0.5)))
-    ys = sorted((to_my(0.5), to_my(AH - 0.5)))
-    return (int(np.floor(xs[0])), int(np.floor(ys[0])),
-            int(np.floor(xs[1])) + 1, int(np.floor(ys[1])) + 1)
-
-
 def test_the_canvas_is_the_union_of_crop_a_and_the_measured_annotation_rect(tmp_path):
     """C7 (Greg, 2026-09-29). Ink beyond the model image -- here an element
     left of crop A -- is kept, on the model's pixel phase, and nothing is
@@ -515,7 +500,7 @@ def test_the_canvas_is_the_union_of_crop_a_and_the_measured_annotation_rect(tmp_
     record = _persisted(anno_path)
     assert record["status"] == "registered", record["refusals"]
     lattice = record["lattice"]
-    ax0, ay0, ax1, ay1 = _expected_annotation_rect()
+    ax0, ay0, ax1, ay1 = lattice["annotation_rect_model_px"]
     x0, y0 = min(0, ax0), min(0, ay0)
     x1, y1 = max(MW, ax1), max(MH, ay1)
     # The fixture must make the union differ from crop A on both axes.
@@ -523,6 +508,12 @@ def test_the_canvas_is_the_union_of_crop_a_and_the_measured_annotation_rect(tmp_
     assert lattice["model_image_origin_px"] == [-x0, -y0]
     assert (lattice["canvas_w"], lattice["canvas_h"]) == (x1 - x0, y1 - y0)
     assert lattice["canvas_origin_model_px"] == [x0, y0]
+    # The measured rect is where the drawing's own constants put the
+    # annotation image, to within a pixel (the fit is not exact).
+    for got, want in zip((ax0, ay0, ax1, ay1),
+                         (mx((0 - B_U) / A_U), my((0 - B_V) / A_V),
+                          mx((AW - B_U) / A_U), my((AH - B_V) / A_V))):
+        assert abs(got - want) <= 1.5, (got, want)
     # The canvas origin in view UV is the model lattice's inverse at (x0, y0).
     assert lattice["canvas_origin_uv"] == pytest.approx(
         [MODEL_BOUNDS[0] + x0 / M, MODEL_BOUNDS[3] - y0 / M], abs=0.05)
@@ -808,3 +799,38 @@ def test_32px_ticks_register_at_0_63x_annotation_scale(tmp_path, monkeypatch, th
     # 1.587381 / 1.591730 on x / y.
     assert t["scale_x"] == pytest.approx(1.0 / scale, rel=5e-3)
     assert t["scale_y"] == pytest.approx(1.0 / scale, rel=5e-3)
+
+
+@pytest.mark.parametrize("scale,offset", [(2.0, -10.0), (1.5, -40.3), (1.0, -7.0),
+                                          (0.63, -12.4), (1.1516, 3.2)])
+def test_the_canvas_holds_exactly_what_the_resampler_draws(scale, offset):
+    """Composed with resample_onto, not restated (review, PR #221): at scale
+    2, offset -10 the old centre-based bound started the canvas at -9 while
+    the resampler also fills -10 from source column 0, clipping it.
+
+    A source row with a distinct colour per column is resampled onto the
+    canvas output_canvas() returns. Every column the resampler would draw
+    must land on the canvas, and the canvas must not add a column the
+    resampler leaves white beyond the model image."""
+    src_w, model_w = 40, 60
+    source = np.zeros((1, src_w, 3), dtype=np.uint8)
+    source[0, :, 0] = np.arange(src_w)
+    source[0, :, 1] = 7
+    transform = {"scale_x": scale, "offset_x": offset, "scale_y": 1.0, "offset_y": 0.0}
+    canvas = reg.output_canvas(None, model_w, 1, transform, src_w, 1)
+    on_canvas = dict(transform, offset_x=offset + canvas["shift_x"])
+    out, _uncovered = reg.resample_onto(source, on_canvas, canvas["canvas_w"], 1)
+    drawn = out[0][out[0][:, 1] == 7]
+    # What an UNBOUNDED resample would draw: every column in its support.
+    wide = 10 * (src_w + model_w)
+    ref, _u = reg.resample_onto(source, dict(transform, offset_x=offset + wide),
+                                3 * wide, 1)
+    want = set(ref[0][ref[0][:, 1] == 7][:, 0].tolist())
+    assert set(drawn[:, 0].tolist()) == want
+    assert int((ref[0][:, 1] == 7).sum()) == len(drawn)   # no pixel clipped
+    # Tight: the canvas edges beyond the model image are drawn, not white.
+    ink = out[0][:, 1] == 7
+    if canvas["shift_x"] > 0:
+        assert ink[0]
+    if canvas["canvas_w"] - canvas["shift_x"] > model_w:
+        assert ink[-1]
