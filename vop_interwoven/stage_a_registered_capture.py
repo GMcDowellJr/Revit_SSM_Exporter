@@ -181,6 +181,45 @@ def nominal_fpp_ft(view, cfg):
     return float(view.Scale) / (12.0 * float(getattr(cfg, "color_id_buffer_export_dpi")))
 
 
+def mark_fpp_ft(view, raster, cfg):
+    """``(fpp_ft, basis)`` the registration ticks are sized at: the MODEL
+    lattice's achieved feet-per-pixel.
+
+    The ticks are drawn before the model pass sizes itself, and were sized at
+    the requested dpi (nominal_fpp_ft). When the axis cap fires, the achieved
+    lattice is coarser, so a 32 px arm came out 32 * achieved/requested px --
+    below the minimum registration_marks is proven to locate (Codex, PR #221).
+    This is the model pass's own sizing, composed rather than copied: crop A
+    from compute_model_crop() against the same frame, then
+    resolution_contract.frame_export_geometry() on crop A with the same scale,
+    dpi, fit direction and cap (export_color_id_buffer_view, sizing_frame
+    "crop_a"). tests/test_stage_a_registered_capture.py asserts the two agree
+    on a capped view. Unresolvable -> the requested dpi, with the reason as
+    the basis.
+    """
+    from .color_id_buffer import MAX_STAGE_A_AXIS_PX, compute_model_crop
+    from .core.math_utils import Bounds2D
+    from .resolution_contract import frame_export_geometry
+    try:
+        frame = getattr(raster, "anno_frame_bounds", None) or raster.bounds_xy
+        crop, _offset = compute_model_crop(
+            getattr(raster, "model_clip_bounds", None),
+            Bounds2D(float(frame.xmin), float(frame.ymin),
+                     float(frame.xmax), float(frame.ymax)))
+        crop_uv = (float(crop.xmin), float(crop.ymin), float(crop.xmax), float(crop.ymax))
+        geom = frame_export_geometry(
+            crop_uv, crop_uv, float(view.Scale),
+            float(getattr(cfg, "color_id_buffer_export_dpi")),
+            fit_direction=str(getattr(cfg, "color_id_buffer_fit_direction", "horizontal")
+                              or "horizontal"),
+            max_axis_px=(getattr(cfg, "color_id_buffer_cap_axis_px", None)
+                         or MAX_STAGE_A_AXIS_PX))
+        return float(geom["achieved_fpp_ft"]), "model_lattice"
+    except (AttributeError, TypeError, ValueError) as ex:
+        return nominal_fpp_ft(view, cfg), "requested_dpi ({0}: {1})".format(
+            type(ex).__name__, ex)
+
+
 def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=None):
     marks = []
     for mark in (record.get("marks") or {}).get("created") or []:
@@ -285,8 +324,8 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         reference, source = mark_reference_rectangle(view, raster, diag=diag,
                                                      view_id=view_id)
         record["mark_reference_source"] = source
-        layout = (registration.registration_mark_segments(
-                      reference, nominal_fpp_ft(view, cfg))
+        mark_fpp, record["mark_fpp_basis"] = mark_fpp_ft(view, raster, cfg)
+        layout = (registration.registration_mark_segments(reference, mark_fpp)
                   if reference is not None else {"state": "unavailable",
                                                  "reason": source})
         # Ticks clear of annotation (Greg, 2026-09-30): a tick under a tag or

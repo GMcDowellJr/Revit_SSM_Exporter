@@ -35,7 +35,7 @@ WHITE = (255, 255, 255)
 
 def _run(tmp_path, rollback_restores=("view", "doc"), break_model_pass=False,
          monkeypatch=None, leave_view_changed=False, crop_active=True,
-         extra_elements=(), view_setup=None):
+         extra_elements=(), view_setup=None, cfg_setup=None):
     del world._LOG[:]
     elements = _elements()
     elements[0].bbox = _BBox((25, 18, 0), (26, 19, 0))
@@ -73,6 +73,8 @@ def _run(tmp_path, rollback_restores=("view", "doc"), break_model_pass=False,
                  color_id_buffer_export_dpi=150.0)
     cfg.include_linked_rvt = False
     cfg.debug_dump_path = str(tmp_path)
+    if cfg_setup is not None:
+        cfg_setup(cfg)
     diag = FakeDiag()
     with install_fake_revit_db() as fake_db:
         fake_db.Transaction = world._Tx
@@ -503,3 +505,45 @@ def test_completing_an_integrity_record_twice_gives_the_second_faults_once(tmp_p
     integrity = json.loads(path.read_text())["capture_integrity"]
     assert [f["fault"] for f in integrity["capture_faults"]] == ["pass_own", "a", "b"]
     assert integrity["completed_by"] == ["annotation_pass", "registered_capture"]
+
+
+
+# --- ticks sized on the ACHIEVED model lattice ------------------------------
+
+def _arm_px(out):
+    frame = _sidecar(out["sidecar_path"])["frame"]
+    fpp = frame["achieved_fpp_ft"]
+    arms = []
+    for seg in out["registration"]["marks"]["created"]:
+        lo, hi = sorted(seg["span_uv"])
+        arms.append((hi - lo) / fpp)
+    return fpp, arms
+
+
+def test_ticks_are_sized_on_the_capped_model_lattice(tmp_path):
+    """Codex, PR #221: the ticks were sized at the REQUESTED dpi, so when the
+    axis cap coarsened the model lattice a 32 px arm came out
+    32 * achieved/requested px. They are now sized with the model pass's own
+    lattice (composed, not copied), so the prediction must EQUAL what the
+    model sidecar records, and every arm is >= 32 px on it."""
+    def _cap(cfg):
+        cfg.color_id_buffer_cap_axis_px = 400
+    out, _v, _d, _e, _diag = _run(tmp_path, cfg_setup=_cap)
+    frame = _sidecar(out["sidecar_path"])["frame"]
+    assert frame["cap_applied"] is True, frame          # the cap really fired
+    assert out["registration"]["mark_fpp_basis"] == "model_lattice"
+    fpp, arms = _arm_px(out)
+    # The prediction IS the model pass's lattice, and it is coarser than the
+    # requested dpi's (96 / (12 * 150)), which is what the ticks used to use.
+    assert out["registration"]["marks"]["layout"]["fpp_ft"] == frame["achieved_fpp_ft"]
+    assert frame["achieved_fpp_ft"] > 96.0 / (12.0 * 150.0)
+    assert min(arms) >= registration.MARK_MIN_ARM_PX - 1e-6, arms
+
+
+def test_control_uncapped_ticks_are_unchanged(tmp_path):
+    out, _v, _d, _e, _diag = _run(tmp_path)
+    frame = _sidecar(out["sidecar_path"])["frame"]
+    assert frame["cap_applied"] is False
+    _fpp, arms = _arm_px(out)
+    assert out["registration"]["marks"]["layout"]["fpp_ft"] == frame["achieved_fpp_ft"]
+    assert min(arms) >= registration.MARK_MIN_ARM_PX - 1e-6, arms
