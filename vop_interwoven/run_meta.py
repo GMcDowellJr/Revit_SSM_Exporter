@@ -163,7 +163,34 @@ def merge_run_metas(metas):
 
 
 def write_run_meta(meta, output_dir):
+    """Write run_meta.json ATOMICALLY: to a sibling temporary file, then
+    replace. Opening the final path with "w" truncated the readable
+    finalized:false record before the finalized one was serialised, so a
+    process that stopped mid-write left empty or partial JSON (review,
+    PR #221) -- the opposite of the interrupted-run record promised above.
+    The temporary file is removed if the write fails."""
+    import tempfile
     path = os.path.join(output_dir, RUN_META_FILENAME)
-    with open(path, "w") as handle:
-        json.dump(meta, handle, indent=2, sort_keys=True, default=str)
+    fd, tmp_path = tempfile.mkstemp(prefix=".run_meta_", suffix=".json.tmp",
+                                    dir=output_dir)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            json.dump(meta, handle, indent=2, sort_keys=True, default=str)
+        _replace(tmp_path, path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
     return path
+
+
+def _replace(src, dst):
+    """os.replace, which IronPython 2 lacks. Its fallback removes the old file
+    first, so it is not atomic there -- stated, not hidden: the window is one
+    rename, not a whole serialisation."""
+    replace = getattr(os, "replace", None)
+    if replace is not None:
+        replace(src, dst)
+        return
+    if os.path.exists(dst):
+        os.remove(dst)
+    os.rename(src, dst)

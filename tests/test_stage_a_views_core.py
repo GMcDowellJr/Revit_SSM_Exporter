@@ -174,3 +174,27 @@ def test_control_a_date_override_is_the_date_and_no_tag(tmp_path):
     _exporter(tmp_path)          # date_override="2026-09-29"
     meta = json.loads((tmp_path / "run_meta.json").read_text())
     assert meta["date"] == "2026-09-29" and meta["run_tag"] is None
+
+
+def test_run_meta_is_replaced_atomically_and_survives_a_failed_write(tmp_path, monkeypatch):
+    """review, PR #221: writing with "w" truncated the finalized:false record
+    first. A serialisation that fails mid-way must leave the PREVIOUS record
+    readable and no temporary file behind."""
+    from vop_interwoven import run_meta as rm
+    _exporter(tmp_path)                                    # finalized:false on disk
+    before = (tmp_path / "run_meta.json").read_text()
+
+    real_dump = json.dump
+
+    def _dies(obj, handle, **kw):
+        handle.write('{"partial": ')
+        raise RuntimeError("process killed mid-write")
+    monkeypatch.setattr(rm.json, "dump", _dies)
+    import pytest
+    with pytest.raises(RuntimeError):
+        rm.write_run_meta({"finalized": True}, str(tmp_path))
+    monkeypatch.setattr(rm.json, "dump", real_dump)
+
+    assert (tmp_path / "run_meta.json").read_text() == before
+    assert json.loads(before)["finalized"] is False
+    assert not [p for p in os.listdir(str(tmp_path)) if p.endswith(".tmp")]
