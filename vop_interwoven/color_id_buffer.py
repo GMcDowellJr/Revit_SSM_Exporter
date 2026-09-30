@@ -1511,7 +1511,11 @@ def _link_bbox_transform_or_state(proxy, diag=None, view_id=None, elem_id=None):
 def _new_rotation_stats():
     """R1: the per-capture cost of the rotation read, so its price at scale is
     measured rather than estimated. Written to the sidecar as "rotation_read"."""
-    return {"elements_read": 0, "rotated": 0, "unavailable": 0, "elapsed_ms": 0.0}
+    # R2: no_single_rotation (with its per-reason split) is neither rotated
+    # nor unavailable -- the element was read and has no one rotation.
+    return {"elements_read": 0, "rotated": 0, "unavailable": 0,
+            "no_single_rotation": 0, "no_single_rotation_by_reason": {},
+            "elapsed_ms": 0.0}
 
 
 def _round_rotation(record):
@@ -1549,7 +1553,12 @@ def _rotation_or_state(elem, outer_transform, stats, diag=None, view_id=None,
         if stats is not None:
             stats["unavailable"] += 1
     else:
-        if record is not None and stats is not None:
+        if (isinstance(record, dict) and record.get("state") == "no_single_rotation"
+                and stats is not None):
+            stats["no_single_rotation"] += 1
+            by_reason = stats["no_single_rotation_by_reason"]
+            by_reason[record["reason"]] = by_reason.get(record["reason"], 0) + 1
+        elif record is not None and stats is not None:
             stats["rotated"] += 1
     if stats is not None:
         stats["elements_read"] += 1

@@ -389,6 +389,11 @@ _PRE_CHANGE_LINK_KEYS = (
 _NEW_HOST_KEYS = {"source"}
 # Stage A step 4 (decision B, 2026-09-21): the 3D AABB, on host AND link.
 _STEP4_NEW_KEYS = {"bbox_3d"}
+# R2 (2026-09-30): an element with no single rotation (these fixtures have no
+# Location) now says so, where it used to be indistinguishable from
+# axis-aligned by an absent key.
+_R2_NEW_KEYS = {"rotation"}
+_R2_NO_LOCATION = {"state": "no_single_rotation", "reason": "no_location"}
 
 
 def test_fixture_without_dwg_is_unchanged_under_the_pre_change_keys(monkeypatch):
@@ -423,7 +428,9 @@ def test_fixture_without_dwg_is_unchanged_under_the_pre_change_keys(monkeypatch)
     # a link element is model geometry with the same 3D extent to record --
     # excluding it would leave one half of the model record shaped
     # differently from the other for no reason anyone could state later.
-    assert set(link_entry.keys()) == set(_PRE_CHANGE_LINK_KEYS) | _STEP4_NEW_KEYS
+    assert set(link_entry.keys()) == (
+        set(_PRE_CHANGE_LINK_KEYS) | _STEP4_NEW_KEYS | _R2_NEW_KEYS)
+    assert link_entry["rotation"] == _R2_NO_LOCATION
     assert link_entry["category"] == "Walls"
     assert link_entry["link_inst_id"] == 9001
     assert link_entry["link_elem_id"] == 501
@@ -437,7 +444,8 @@ def test_host_record_gains_exactly_the_reviewed_new_keys():
 
     entry = _collect(doc, [host_elem.Id], {1001: "HOST"})["host"]["1001"]
     assert set(entry.keys()) == (
-        set(_PRE_CHANGE_HOST_KEYS) | _NEW_HOST_KEYS | _STEP4_NEW_KEYS)
+        set(_PRE_CHANGE_HOST_KEYS) | _NEW_HOST_KEYS | _STEP4_NEW_KEYS | _R2_NEW_KEYS)
+    assert entry["rotation"] == _R2_NO_LOCATION
 
 
 # --- C1: the per-element DWG probe states are gone ------------------------

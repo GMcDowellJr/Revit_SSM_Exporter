@@ -1106,6 +1106,17 @@ def _vector_is_axis_aligned(vec, tol=BBOX_AXIS_ALIGNED_TOL):
     return sum(1 for c in vec if abs(c) > tol) <= 1
 
 
+# R2: why an element has no single rotation. "location_not_curve" is a
+# Location with no Curve (a LocationPoint on a non-FamilyInstance, or the
+# bare Location of a sketch-based element).
+NO_SINGLE_ROTATION_REASONS = ("no_location", "location_not_curve",
+                              "curve_not_line", "zero_length_line")
+
+
+def _no_single_rotation(reason):
+    return {"state": "no_single_rotation", "reason": reason}
+
+
 def element_rotation(elem, outer_transform=None):
     """R1: an element's ORIENTATION in model space, when it has one that the
     AABB cannot show. None when it is axis-aligned or has no single rotation.
@@ -1119,9 +1130,15 @@ def element_rotation(elem, outer_transform=None):
         (``source: "instance_transform"``);
       - an element located by a straight LocationCurve (walls, beams):
         the line's unit direction (``source: "location_line"``);
-      - anything else (floors, roofs, sketch-based elements): no single
-        rotation, so None -- unless it sits in a rotated LINK, when the link's
+      - anything else (floors, roofs, sketch-based elements, arcs): no
+        single rotation -- unless it sits in a rotated LINK, when the link's
         own transform is its rotation (``source: "link_transform"``).
+
+    R2: None means AXIS-ALIGNED only. An element with no single rotation
+    returns ``{"state": "no_single_rotation", "reason": ...}``, reason one of
+    NO_SINGLE_ROTATION_REASONS, so the file can tell "not rotated" from "has
+    no one rotation to record". Decided from what is already read here; no
+    new Revit read.
 
     ``outer_transform`` is a LINK's transform (link -> host), composed on so
     the record is in host model space. One read per element, no geometry.
@@ -1152,7 +1169,9 @@ def element_rotation(elem, outer_transform=None):
             origin, bx, by, bz = outer
             return {"source": "link_transform", "origin": list(origin),
                     "basis_x": list(bx), "basis_y": list(by), "basis_z": list(bz)}
-        return None
+        return _no_single_rotation(
+            "no_location" if location is None else
+            "location_not_curve" if curve is None else "curve_not_line")
     p0, p1 = curve.GetEndPoint(0), curve.GetEndPoint(1)
     d = (float(p1.X) - float(p0.X), float(p1.Y) - float(p0.Y), float(p1.Z) - float(p0.Z))
     if outer is not None:
@@ -1160,7 +1179,7 @@ def element_rotation(elem, outer_transform=None):
         d = tuple(d[0] * ox[k] + d[1] * oy[k] + d[2] * oz[k] for k in range(3))
     length = (d[0] ** 2 + d[1] ** 2 + d[2] ** 2) ** 0.5
     if length <= 0.0:
-        return None
+        return _no_single_rotation("zero_length_line")
     d = tuple(c / length for c in d)
     if _vector_is_axis_aligned(d):
         return None
