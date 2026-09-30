@@ -984,6 +984,18 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                         except Exception:
                             err = None
                     print(f"[Streaming] WARNING: View {view_id} failed in pipeline; skipping exports. error={err}")
+                    if getattr(cfg, "enable_color_id_buffer_stage_a", False):
+                        # A failed Stage A view still goes to the exporter: its
+                        # views_core row, run_meta entry and views_failed count
+                        # are the inventory of what was attempted. Skipping the
+                        # callback here made a failed capture (export_dim_
+                        # mismatch, or a pipeline exception) vanish from all
+                        # three (Codex, PR #221). An exception stub carries no
+                        # stage, so it is stamped, with its error as the reason.
+                        view_result.setdefault("stage", "color_id_buffer_stage_a")
+                        if not view_result.get("failure_reason"):
+                            view_result["failure_reason"] = err or "pipeline_view_failure"
+                        on_view_complete(view_result)
                     summaries.append({
                         "view_id": view_id,
                         "view_name": view_result.get("view_name"),

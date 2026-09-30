@@ -240,3 +240,40 @@ def test_thinrunner_writes_the_root_run_meta_before_relocating_a_batch():
     write = src.index("write_merged_run_meta(batch_meta_paths, output_dir, run_complete=False)")
     move = src.index("_relocate_batch_stage_a_outputs(\n", src.index("for batch_index"))
     assert write < move
+
+
+def test_a_failed_stage_a_view_reaches_views_core_through_the_real_loop(tmp_path, monkeypatch):
+    """Codex, PR #221: process_document_views_streaming `continue`d on a
+    success-False result before on_view_complete, so a failed capture never
+    reached the exporter -- no views_core row, no run_meta entry, and
+    views_failed 0. Driven through the REAL loop, not on_view_complete."""
+    from vop_interwoven import streaming
+    results = {
+        4242: {"view_id": 4242, "view_name": "L1 Plan", "success": True,
+               "stage": "color_id_buffer_stage_a", "elapsed_sec": 1.0, "view": _view()},
+        # A capture failure the capture itself stamped...
+        7: {"view_id": 7, "view_name": "Sec", "success": False,
+            "failure_reason": "export_dim_mismatch",
+            "stage": "color_id_buffer_stage_a", "view": _view(7, "Sec")},
+        # ...and a pipeline exception stub, which carries no stage at all.
+        8: {"view_id": 8, "view_name": "Elev", "success": False,
+            "error": "RuntimeError: boom"},
+    }
+    monkeypatch.setattr(
+        "vop_interwoven.pipeline.process_document_views",
+        lambda doc, ids, cfg, **k: [dict(results[ids[0]])])
+    exp, cfg = _exporter(tmp_path)
+    streaming.process_document_views_streaming(
+        exp.doc, [4242, 7, 8], cfg, on_view_complete=exp.on_view_complete)
+    out = exp.finalize()
+
+    assert out["views_failed"] == 2
+    core = [f for f in os.listdir(str(tmp_path)) if f.startswith("views_core_")]
+    rows = {r["ViewId"]: r for r in _rows(str(tmp_path / core[0]))}
+    assert rows["7"]["CaptureStatus"] == "failed"
+    assert rows["7"]["CaptureFailureReason"] == "export_dim_mismatch"
+    assert rows["8"]["CaptureStatus"] == "failed"
+    assert "boom" in rows["8"]["CaptureFailureReason"]
+    assert rows["4242"]["CaptureStatus"] == "success"
+    meta = json.loads((tmp_path / "run_meta.json").read_text())
+    assert sorted(v["view_id"] for v in meta["views"]) == [7, 8, 4242]
