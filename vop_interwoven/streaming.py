@@ -780,6 +780,25 @@ class StreamingExporter:
             "timings": view_result.get("timings")
         }
     
+    def _backfill_missing_outcomes(self):
+        """Every requested view that reported nothing gets a failed outcome:
+        a views_core row, a summary and a views_failed count."""
+        def _vid(v):
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return v
+        seen = set(_vid(s.get("view_id")) for s in self.view_summaries)
+        for vid in (self.run_meta or {}).get("views_requested") or []:
+            if _vid(vid) in seen:
+                continue
+            seen.add(_vid(vid))
+            self.on_view_complete({
+                "view_id": vid, "success": False,
+                "stage": "color_id_buffer_stage_a",
+                "failure_reason": "no_outcome_reported: the view never reached the "
+                                  "exporter (see the streaming log for its error)"})
+
     def finalize(self):
         """Finalize export and return results.
         
@@ -787,8 +806,12 @@ class StreamingExporter:
             Dict with export summary and file paths
         """
         # C9: the run's per-view outcomes, and finalized: true -- LAST write
-        # of run_meta, after every view has reported.
+        # of run_meta, after every view has reported. A requested view with no
+        # outcome at all (its failure never reached this exporter) is recorded
+        # as failed FIRST, so a finalized record is never short a view it
+        # lists in views_requested (Codex, PR #221).
         if self.run_meta is not None:
+            self._backfill_missing_outcomes()
             from vop_interwoven.run_meta import finalize_run_meta, write_run_meta
             finalize_run_meta(self.run_meta, self.view_summaries)
             self.run_meta_path = write_run_meta(self.run_meta, self.output_dir)
@@ -926,6 +949,10 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
         print("[Streaming] memory mark run_start failed: {}".format(e))
 
     for view_id in view_ids:
+        # Whether this view's result has been handed to the exporter. A view
+        # that raises BEFORE that still owes the exporter an outcome under
+        # Stage A (see the outer except below).
+        callback_entered = False
         try:
             try:
                 mem_tracker.mark("view_start_{}".format(view_id))
@@ -999,6 +1026,7 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                         view_result.setdefault("stage", "color_id_buffer_stage_a")
                         if not view_result.get("failure_reason"):
                             view_result["failure_reason"] = err or "pipeline_view_failure"
+                        callback_entered = True
                         on_view_complete(view_result)
                     summaries.append({
                         "view_id": view_id,
@@ -1073,6 +1101,7 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                     print("[Streaming] memory mark after_raster failed: {}".format(e))
 
                 # Call user callback
+                callback_entered = True
                 on_view_complete(view_result)
 
                 # Retain only lightweight summary
@@ -1104,6 +1133,21 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                 "success": False,
                 "error": str(e)
             })
+            if getattr(cfg, "enable_color_id_buffer_stage_a", False) and not callback_entered:
+                # The view raised before its result reached the exporter, so
+                # the exporter would finalize without it (Codex, PR #221).
+                # A failure INSIDE the callback is not re-sent (it may already
+                # be recorded); StreamingExporter.finalize() backfills any
+                # requested view that still has no outcome.
+                try:
+                    on_view_complete({
+                        "view_id": view_id, "success": False,
+                        "stage": "color_id_buffer_stage_a",
+                        "failure_reason": "view_processing_raised: {0}: {1}".format(
+                            type(e).__name__, e)})
+                except Exception as cb_ex:
+                    print("[Streaming] could not record the failure of view {0}: "
+                          "{1}".format(view_id, cb_ex))
     
     # Persist geometry cache to disk (only writes if new entries were added)
     try:

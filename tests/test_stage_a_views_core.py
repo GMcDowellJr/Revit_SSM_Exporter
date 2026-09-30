@@ -277,3 +277,50 @@ def test_a_failed_stage_a_view_reaches_views_core_through_the_real_loop(tmp_path
     assert rows["4242"]["CaptureStatus"] == "success"
     meta = json.loads((tmp_path / "run_meta.json").read_text())
     assert sorted(v["view_id"] for v in meta["views"]) == [7, 8, 4242]
+
+
+def test_a_view_that_raises_still_has_an_outcome_in_the_finalized_record(tmp_path, monkeypatch):
+    """Codex, PR #221: an exception caught by the loop's OUTER handler was
+    recorded only in the loop's local summaries, so the exporter finalized
+    run_meta (finalized: true) without that view in `views` or views_core,
+    while views_requested still listed it. Two routes, both through the REAL
+    loop: processing raises (the real error is recorded), and the exporter
+    callback itself raises (finalize backfills no_outcome_reported)."""
+    from vop_interwoven import streaming
+
+    def _process(doc, ids, cfg, **k):
+        if ids[0] == 7:
+            raise RuntimeError("collector blew up")
+        return [{"view_id": ids[0], "view_name": "V", "success": True,
+                 "stage": "color_id_buffer_stage_a", "elapsed_sec": 1.0,
+                 "view": _view(ids[0], "V")}]
+    monkeypatch.setattr("vop_interwoven.pipeline.process_document_views", _process)
+    cfg = Config(enable_color_id_buffer_stage_a=True, export_perf_csv=True)
+    exp = StreamingExporter(str(tmp_path), cfg, doc=_Doc(), export_png=False,
+                            export_csv=True, date_override="2026-09-30",
+                            view_ids=[4242, 7, 8, 9])
+
+    def _callback(result):
+        if result.get("view_id") == 8:
+            raise RuntimeError("summary writer failed")
+        exp.on_view_complete(result)
+        if result.get("view_id") == 9:
+            # Recorded, THEN raised: must not be re-sent as a second outcome.
+            raise RuntimeError("raised after recording")
+    streaming.process_document_views_streaming(exp.doc, [4242, 7, 8, 9], cfg,
+                                               on_view_complete=_callback)
+    out = exp.finalize()
+
+    meta = json.loads((tmp_path / "run_meta.json").read_text())
+    assert meta["finalized"] is True
+    by_id = {v["view_id"]: v for v in meta["views"]}
+    assert sorted(by_id) == sorted(meta["views_requested"]) == [7, 8, 9, 4242]
+    assert [v["view_id"] for v in meta["views"]].count(9) == 1
+    assert by_id[9]["capture_status"] == "success"
+    assert by_id[7]["capture_status"] == "failed"
+    assert "collector blew up" in by_id[7]["capture_failure_reason"]
+    assert by_id[8]["capture_failure_reason"].startswith("no_outcome_reported")
+    assert by_id[4242]["capture_status"] == "success"
+    assert out["views_failed"] == 2
+    core = [f for f in os.listdir(str(tmp_path)) if f.startswith("views_core_")]
+    assert sorted(r["ViewId"] for r in _rows(str(tmp_path / core[0]))) == ["4242", "7", "8", "9"]
