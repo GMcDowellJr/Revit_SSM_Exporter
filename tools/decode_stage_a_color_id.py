@@ -879,7 +879,30 @@ def build_decoded_document(
                 export_dpi = DEFAULT_COLOR_ID_EXPORT_DPI
                 dpi_basis = "default_export_dpi"
 
-            if paper_fit_in and view_scale and measured_fit_px:
+            # A REGISTERED capture's annotation image is NOT on the model
+            # lattice: it renders the authored crop at the model pass's pixel
+            # count, so every formula below -- all of them the model's extent
+            # over this image's pixels -- understated its feet-per-pixel by
+            # the registration scale (0.63x on pipeline_0930_0919's
+            # ModelCallout). Its own ticks measure it directly: the decoder's
+            # fit of them gives pixels per foot on each axis (Greg,
+            # 2026-09-30). A fit that is not a value reports NO scale rather
+            # than falling back to a formula known to be wrong here.
+            ticks_drawn = marks_block.get("status") == "subtracted"
+            if ticks_drawn and marks_block.get("fit_status") == "value":
+                px_per_ft = marks_block.get(
+                    "px_per_ft_v" if fitted_axis == "height" else "px_per_ft_u")
+                feet_per_pixel = 1.0 / float(px_per_ft)
+                feet_per_pixel_numerator_basis = "registration_tick_fit"
+                feet_per_pixel_denominator_basis = "registration_tick_fit"
+            elif ticks_drawn:
+                feet_per_pixel_unreliable_reason = (
+                    "registered capture: this image is not on the model lattice, "
+                    "so its scale comes from its registration ticks, and their fit "
+                    "is {0}: {1}. The .registered output carries this capture on "
+                    "the model lattice".format(marks_block.get("fit_status"),
+                                               marks_block.get("fit_reason")))
+            elif paper_fit_in and view_scale and measured_fit_px:
                 model_fit_ft = float(paper_fit_in) * float(view_scale) / 12.0
                 feet_per_pixel = model_fit_ft / measured_fit_px
                 feet_per_pixel_numerator_basis = "sidecar_paper_fit_in"
@@ -1079,6 +1102,10 @@ def _registration_mark_exclusion(rgb, sidecar):
         "expected_count": fit.get("expected_count"),
         "missing": [m.get("key") for m in fit.get("missing") or []],
         "residual_max_px": fit.get("residual_max_px"),
+        # The image's own scale, measured by the ticks: a crop-less capture's
+        # feet_per_pixel comes from here (build_decoded_document).
+        "px_per_ft_u": fit.get("px_per_ft_u"),
+        "px_per_ft_v": fit.get("px_per_ft_v"),
         "capture_faults": list(payload.get("faults") or []),
     }
     decode_map = dict((k, v) for k, v in colour_map.items() if k not in set(mark_ids))

@@ -139,7 +139,9 @@ def test_a_crop_less_sidecar_decodes_at_the_runs_dpi_from_run_meta(tmp_path):
     the dpi to run_meta.json, so a re-encoded sidecar decoded at the 150 dpi
     DEFAULT -- identical only because that run used 150. With run_meta
     present the decoder must use the run's dpi."""
-    old_anno, _m, _c = pair._write_pair(tmp_path)
+    # No registration ticks: this is the model-lattice formula's path (a
+    # registered capture takes its scale from the ticks instead -- below).
+    old_anno, _m, _c = pair._write_pair(tmp_path, with_marks=False)
     old = json.loads(old_anno.read_text())
     old["resolution"]["requested_export_dpi"] = 300.0
     old_anno.write_text(json.dumps(old))
@@ -167,7 +169,9 @@ def test_a_crop_less_capped_capture_decodes_on_the_achieved_dpi(tmp_path):
     ACHIEVED dpi. Divided by the requested dpi (restored from run_meta since
     C6, and carried in the sidecar before it) a capped view's extent came out
     requested/achieved too large. Here the cap halved 300 dpi to 150."""
-    old_anno, _m, _c = pair._write_pair(tmp_path)
+    # No registration ticks: this is the model-lattice formula's path (a
+    # registered capture takes its scale from the ticks instead -- below).
+    old_anno, _m, _c = pair._write_pair(tmp_path, with_marks=False)
     old = json.loads(old_anno.read_text())
     px = old["resolution"]["requested_pixel_size"]
     old["resolution"].update({"requested_export_dpi": 300.0, "achieved_export_dpi": 150.0})
@@ -186,3 +190,35 @@ def test_a_crop_less_capped_capture_decodes_on_the_achieved_dpi(tmp_path):
     after = _decoded(old_anno)
     assert after["feet_per_pixel"] == before["feet_per_pixel"]
     assert after["feet_per_pixel_basis"] == before["feet_per_pixel_basis"]
+
+
+def test_a_registered_annotation_capture_takes_its_scale_from_its_ticks(tmp_path):
+    """Greg, 2026-09-30: a registered capture's annotation image renders the
+    AUTHORED crop, so it is not on the model lattice, and the model-extent
+    formula understated its feet-per-pixel (0.63x on pipeline_0930_0919's
+    ModelCallout). The fixture draws it at a KNOWN 12 px/ft against the
+    model's 18, so the truth is 1/12 ft/px; the old formula gave the model's
+    extent over this image's pixels instead."""
+    old_anno, _m, _c = pair._write_pair(tmp_path)
+    doc = _decoded(old_anno)
+    assert doc["feet_per_pixel_basis"] == {"numerator": "registration_tick_fit",
+                                           "denominator": "registration_tick_fit"}
+    assert doc["feet_per_pixel"] == pytest.approx(1.0 / pair.A_U, rel=1e-3)
+    assert doc["registration_marks"]["px_per_ft_u"] == pytest.approx(pair.A_U, rel=1e-3)
+    # The formula it replaces is visibly different on this fixture, so the
+    # assertion above discriminates.
+    no_ticks = tmp_path / "plain"
+    no_ticks.mkdir()
+    plain_anno, _m2, _c2 = pair._write_pair(no_ticks, with_marks=False)
+    assert _decoded(plain_anno)["feet_per_pixel"] != pytest.approx(1.0 / pair.A_U, rel=1e-2)
+
+
+def test_a_registered_capture_whose_tick_fit_fails_reports_no_scale(tmp_path):
+    """No fallback to the model-lattice formula, which is known to be wrong
+    for this image: no scale, and the reason says why."""
+    horizontal = [m["key"] for m in pair._marks() if m["orientation"] == "horizontal"]
+    old_anno, _m, _c = pair._write_pair(tmp_path, drop_anno=tuple(horizontal))
+    doc = _decoded(old_anno)
+    assert doc["registration_marks"]["fit_status"] != "value"
+    assert doc["feet_per_pixel"] is None
+    assert "registration ticks" in doc["feet_per_pixel_unreliable_reason"]
