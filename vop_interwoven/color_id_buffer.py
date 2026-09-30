@@ -1333,10 +1333,14 @@ def _drop_not_visible_in_view(doc, view, resolved_ids, diag=None, view_id=None):
             "{0}: {1}".format(type(ex).__name__, ex))
     shown = []
     for eid in resolved_ids:
-        elem = doc.GetElement(eid)
-        cat = getattr(elem, "Category", None)
-        cat_name = getattr(cat, "Name", None) or "<no category>"
+        # The element and category reads are inside the guard too: a stale
+        # element whose GetElement/Category/Name RAISES is a visibility that
+        # cannot be read, not a reason to abort the pass (Codex, PR #221).
+        cat_name = "<unreadable category>"
         try:
+            elem = doc.GetElement(eid)
+            cat = getattr(elem, "Category", None)
+            cat_name = getattr(cat, "Name", None) or "<no category>"
             rule = None
             if cat is not None:
                 if anno_hidden and cat.CategoryType == CategoryType.Annotation:

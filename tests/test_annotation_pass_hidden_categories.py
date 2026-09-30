@@ -86,3 +86,34 @@ def test_control_a_view_that_shows_everything_paints_everything(tmp_path):
     assert {2101, 2102, 2001, 2002, 2100} <= painted
     assert not_painted["not_visible_in_view"] == {}
     assert not_painted["annotation_categories_hidden"] is False
+
+
+def test_an_element_whose_reads_raise_is_kept_and_counted_not_fatal():
+    """Codex, PR #221: GetElement/Category/Name ran OUTSIDE the guarded
+    visibility block, so a stale element that raised aborted the whole
+    annotation pass instead of being kept and counted under
+    visibility_unreadable, as documented."""
+    from tests.stage_a_capture_fakes import FakeElementId, install_fake_revit_db
+    from vop_interwoven.color_id_buffer import _drop_not_visible_in_view
+
+    class _StaleCategory(FakeElement):
+        @property
+        def Category(self):
+            raise RuntimeError("InvalidObjectException")
+
+    good = FakeElement(2001, ANNO_CAT, owner_view_id=VIEW_ID)
+    stale = _StaleCategory.__new__(_StaleCategory)
+    stale.Id = FakeElementId(2005)
+
+    class _Doc:
+        def GetElement(self, eid):
+            if eid.IntegerValue == 2009:
+                raise RuntimeError("element deleted")
+            return {2001: good, 2005: stale}[eid.IntegerValue]
+
+    ids = [FakeElementId(i) for i in (2001, 2005, 2009)]
+    with install_fake_revit_db():
+        shown, record = _drop_not_visible_in_view(_Doc(), FakeViewPlan(view_id=VIEW_ID), ids)
+    assert [e.IntegerValue for e in shown] == [2001, 2005, 2009]
+    assert record["visibility_unreadable"] == {"<unreadable category>": 2}
+    assert record["not_visible_in_view"] == {}
