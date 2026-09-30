@@ -2038,6 +2038,34 @@ def stage_a_pass_membership(elem, capture_view_id_int=None, datum_category_ids=N
         "reason": None,
     }
 
+    # D2 (Greg, 2026-09-30): an IMPORT is placed by collection_policy.
+    # import_pass(), the predicate the model pass uses too -- owned by this
+    # view -> annotation; anything else, an unreadable OwnerViewId included,
+    # -> model. So an import is never unresolved here, never claimed by both
+    # passes, and never by neither.
+    from .collection_policy import import_pass, IMPORT_PASS_ANNOTATION
+    decided = import_pass(elem, capture_view_id_int)
+    if decided["state"] != "not_applicable":
+        # The READ's state is kept: an unreadable OwnerViewId is "unavailable"
+        # even though D2 places it (in the model pass) -- placed, not read
+        # (Codex, PR #222). split_stage_a_pass_membership reports it.
+        record["state"] = decided["state"]
+        record["owner_view_id"] = decided.get("owner_view_id")
+        record["reason"] = decided.get("reason")
+        if decided["pass"] == IMPORT_PASS_ANNOTATION:
+            record["pass"] = STAGE_A_PASS_ANNOTATION
+            record["basis"] = "owner_view"
+            record["owner_view_matches_capture_view"] = True
+        else:
+            record["pass"] = STAGE_A_PASS_MODEL
+            record["basis"] = (
+                "import_owner_unreadable" if decided["state"] != "value" else
+                "no_owner_view" if decided.get("owner_view_id") == _invalid_element_id_int()
+                else "import_not_owned_by_view")
+            record["owner_view_matches_capture_view"] = (
+                False if decided["state"] == "value" else "unavailable")
+        return record
+
     owner = None
     try:
         owner = elem.OwnerViewId
@@ -2090,7 +2118,8 @@ def stage_a_pass_membership(elem, capture_view_id_int=None, datum_category_ids=N
 
 
 def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
-                                  datum_category_ids=None, basis_out=None):
+                                  datum_category_ids=None, basis_out=None,
+                                  unreadable_imports_out=None):
     """Partition ``elements`` into the Stage A model and annotation passes.
 
     Returns ``(model, annotation, unresolved, basis_counts)``. ``unresolved``
@@ -2137,7 +2166,13 @@ def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
     model = []
     annotation = []
     unresolved = []
-    basis_counts = {"owner_view": 0, "datum_category": 0, "no_owner_view": 0}
+    # D2: import_not_owned_by_view -- an import owned by another view;
+    # import_owner_unreadable -- one whose OwnerViewId could not be read.
+    # Both placed in the model pass; the second is also listed, with its
+    # reason, in ``unreadable_imports_out`` and warned below.
+    basis_counts = {"owner_view": 0, "datum_category": 0, "no_owner_view": 0,
+                    "import_not_owned_by_view": 0, "import_owner_unreadable": 0}
+    unreadable_imports = []
     # Seeded with EVERY datum category that resolved, so a category present
     # in the set but matching nothing reads as 0 rather than being absent.
     # That distinction is the whole measurement: "OST_GridHeads": 0 beside
@@ -2155,6 +2190,10 @@ def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
             key = datum_names.get(record["category_id"],
                                   str(record["category_id"]))
             datum_category_counts[key] = datum_category_counts.get(key, 0) + 1
+        if record["basis"] == "import_owner_unreadable":
+            unreadable_imports.append({"element_id": _stage_a_element_id_int(elem),
+                                       "state": record["state"],
+                                       "reason": record["reason"]})
         if record["pass"] == STAGE_A_PASS_MODEL:
             model.append(elem)
         elif record["pass"] == STAGE_A_PASS_ANNOTATION:
@@ -2167,6 +2206,17 @@ def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
             if elem_id_int is not None:
                 basis_out[elem_id_int] = record["basis"]
 
+    if unreadable_imports_out is not None:
+        unreadable_imports_out.extend(unreadable_imports)
+    if unreadable_imports and diag is not None:
+        diag.warn(
+            phase="annotation",
+            callsite="split_stage_a_pass_membership.import_owner_unreadable",
+            message="{0} import(s) have no readable OwnerViewId; placed in the MODEL "
+                    "pass (D2). First reason: {1}".format(
+                        len(unreadable_imports), unreadable_imports[0]["reason"]),
+            view_id=capture_view_id_int,
+        )
     if unresolved and diag is not None:
         diag.warn(
             phase="annotation",
@@ -2186,7 +2236,8 @@ def split_stage_a_pass_membership(elements, capture_view_id_int=None, diag=None,
     return model, annotation, unresolved, basis_counts
 
 
-def stage_a_pass_membership_summary(model, annotation, unresolved, basis_counts=None):
+def stage_a_pass_membership_summary(model, annotation, unresolved, basis_counts=None,
+                                    unreadable_imports=None):
     """The sidecar record for one split. Counts are always present.
 
     A zero here means "none of these", because the split always ran; it is
@@ -2214,6 +2265,10 @@ def stage_a_pass_membership_summary(model, annotation, unresolved, basis_counts=
     }
     if basis_counts is not None:
         summary["basis_counts"] = basis_counts
+    if unreadable_imports is not None:
+        # D2: placed in the model pass, NOT unresolved -- but the failed read
+        # and its reason are the file's to carry (Codex, PR #222).
+        summary["import_owner_unreadable"] = list(unreadable_imports)
     return summary
 
 

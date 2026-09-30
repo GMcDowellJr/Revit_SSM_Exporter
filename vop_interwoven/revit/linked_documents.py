@@ -838,8 +838,8 @@ def _collect_from_dwg_imports(doc, view, cfg, omitted_out=None):
     Commentary:
         DWG imports appear as ImportInstance elements with geometry.
         Both model-level and view-specific ("this view only") imports are
-        collected. Which pass a view-specific one belongs to is decided by
-        collection_policy.view_specific_import_state(), not here.
+        collected. Which Stage A pass an import belongs to is decided by
+        collection_policy.import_pass() (OwnerViewId, D2), not here.
     """
     from Autodesk.Revit.DB import (
         FilteredElementCollector,
@@ -883,12 +883,16 @@ def _collect_from_dwg_imports(doc, view, cfg, omitted_out=None):
             # HOST pass by type name, so a view-specific DWG previously
             # reached no pass at all -- never painted, no record. It is now
             # returned here like any other import. What it IS is decided in one
-            # place, revit/collection_policy.view_specific_import_state(): a
-            # view-specific import is ANNOTATION (Greg, 2026-09-29), so the
-            # Stage A model pass takes it out of its paint set and hides it for
-            # its export (color_id_buffer._partition_view_specific_imports),
-            # and the annotation pass claims it by OwnerViewId. The geometry
-            # path still receives it from here as model content.
+            # place, revit/collection_policy.import_pass() (D2, 2026-09-30): an
+            # import OWNED BY THIS VIEW is ANNOTATION, anything else model, so
+            # the Stage A model pass takes an owned one out of its paint set and
+            # hides it for its export (color_id_buffer._partition_view_specific_
+            # imports), and the annotation pass claims it through the same
+            # helper. The geometry path does NOT receive it (G1, Greg
+            # 2026-09-30): pipeline.render_model_front_to_back drops every
+            # DWG entry after expansion, since DWG line work belongs to the
+            # colour analysis layer. This collector still returns it, because
+            # Stage A enumerates imports through it.
             #
             # UNCONFIRMED: that get_BoundingBox(view) behaves the same for a
             # view-specific import as for a model-space one has not been run.

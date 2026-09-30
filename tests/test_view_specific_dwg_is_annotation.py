@@ -1,4 +1,7 @@
-"""A view-specific DWG is annotation; a model-placed DWG is model.
+"""A view-owned DWG is annotation; a model-placed DWG is model.
+
+Since D2 (2026-09-30) the predicate is OwnerViewId (collection_policy.
+import_pass); ViewSpecific is recorded only. The fixtures keep both in step.
 
 Greg's rule (2026-09-29). On run pipeline_0928_0953 Plan_DWG's "in current
 view only" import (19296946) was in BOTH sidecars' color_assignment_map and
@@ -187,9 +190,11 @@ def test_a_clean_restore_reports_nothing(tmp_path, monkeypatch):
     assert _readback_errors(diag) == []
 
 
-def test_an_unreadable_view_specific_flag_keeps_the_import_in_the_model_pass(
+def test_an_unreadable_view_specific_flag_no_longer_decides_anything(
         tmp_path, monkeypatch):
-    """No content dropped on a failed read: painted as before, and said so."""
+    """D2 (2026-09-30): ViewSpecific is a recorded diagnostic only. Unreadable,
+    with no owner view, the import is model by OwnerViewId -- painted, and
+    classified "model" (it was "unresolved" under the ViewSpecific rule)."""
     diag = FakeDiag()
     doc, view, elements, imports = _world(
         view_dwg=ImportInstance(VIEW_DWG, RuntimeError("no ViewSpecific")))
@@ -197,11 +202,11 @@ def test_an_unreadable_view_specific_flag_keeps_the_import_in_the_model_pass(
                                      imports, diag=diag)
     assert str(VIEW_DWG) in sidecar["color_assignment_map"]
     record = _record(sidecar, VIEW_DWG)
-    assert record["classification"] == "unresolved"
+    assert record["classification"] == "model"
+    assert record["import_pass"] == {"state": "value", "owner_view_id": -1,
+                                     "pass": "model"}
     assert record["view_specific"]["state"] == "unavailable"
     assert all(VIEW_DWG not in h for h in hidden_at_export)
-    assert any(w.get("callsite") == "view_specific_import_classification"
-               for w in diag.warnings)
 
 
 def test_an_unreadable_hidden_state_is_left_visible_not_guessed(tmp_path, monkeypatch):
@@ -310,26 +315,42 @@ def test_a_failed_scan_fails_the_capture(tmp_path, monkeypatch):
     assert sentinel["scan"]["state"] == "unavailable"
 
 
-def test_an_unclassifiable_import_outside_the_paint_set_fails_the_capture(
+class _OwnerUnreadable(ImportInstance):
+    @property
+    def OwnerViewId(self):
+        raise RuntimeError("OwnerViewId unavailable")
+
+    @OwnerViewId.setter
+    def OwnerViewId(self, _value):
+        pass
+
+
+_OwnerUnreadable.__name__ = "ImportInstance"
+
+
+def test_an_unreadable_owner_outside_the_paint_set_is_recorded_as_model(
         tmp_path, monkeypatch):
-    """The scan finds an import the paint set never saw and cannot read its
-    ViewSpecific: if it is view-specific it draws unpainted, so the capture
-    cannot claim success (review, PR #218)."""
+    """D2: an import the paint set never saw, whose OwnerViewId cannot be
+    read, is MODEL -- left to the DWG setting like any model-placed import,
+    so it no longer fails the capture (under the ViewSpecific rule an
+    unreadable one did, review PR #218). The read failure is still in the
+    FILE."""
     results = []
-    doc, view, elements, imports = _world(
-        view_dwg=ImportInstance(VIEW_DWG, RuntimeError("no ViewSpecific")))
-    sidecar, _hidden = _run(tmp_path, monkeypatch, doc, view, elements, [],
-                            results=results)
+    doc, view, elements, imports = _world(view_dwg=_OwnerUnreadable(VIEW_DWG, True))
+    sidecar, hidden_at_export = _run(tmp_path, monkeypatch, doc, view, elements, [],
+                                     results=results)
     record = _record(sidecar, VIEW_DWG)
-    assert record["classification"] == "unresolved"
+    assert record["classification"] == "model"
     assert record["found_by"] == "view_scan"
-    assert results[0]["failure_reason"] == "view_specific_import_not_suppressed"
+    assert record["import_pass"]["state"] == "unavailable"
+    assert all(VIEW_DWG not in h for h in hidden_at_export)
+    assert results[0]["success"] is True
 
 
 def test_an_unclassifiable_import_in_the_paint_set_does_not_fail_it(
         tmp_path, monkeypatch):
     """The CONTROL: painted with its own palette colour, its pixels stay
-    identifiable -- the behaviour before the rule, and no failure."""
+    identifiable -- and no failure. (ViewSpecific unreadable, owner readable.)"""
     results = []
     doc, view, elements, imports = _world(
         view_dwg=ImportInstance(VIEW_DWG, RuntimeError("no ViewSpecific")))

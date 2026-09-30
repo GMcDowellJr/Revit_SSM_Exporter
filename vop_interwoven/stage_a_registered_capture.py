@@ -47,6 +47,7 @@ the ticks; the sidecars carry the marks' UV and colours for it.
 """
 
 import copy
+import hashlib
 import time
 
 from .revit.safe_api import element_id_value as _element_id_int
@@ -149,11 +150,21 @@ def annotation_avoid_rects(view, anno_elements, basis, diag=None, view_id=None):
     """``(avoid, record)``: each annotation element's view bbox in UV, for
     registration.relocate_marks_clear_of. An element whose bbox does not
     resolve is counted, not guessed; a read that raises is counted with its
-    first error. Bboxes only -- no geometry (the Stage A rule)."""
+    first error. Bboxes only -- no geometry (the Stage A rule).
+
+    T2: an ImportInstance is NOT avoided. A view-specific DWG's bbox spans
+    the plan, so every tick inside it was moved or marked "blocked" while
+    all twelve still registered (pipeline_0930_1133, Plan_DWG: 7 false
+    blocks). Excluded imports are counted as ``excluded_imports``; no other
+    element is excluded."""
+    from .color_id_buffer import _is_import_instance
     from .revit.collection import project_bbox_corners_uv
-    avoid, no_bbox, errors = [], 0, []
+    avoid, no_bbox, errors, excluded_imports = [], 0, [], 0
     t0 = time.time()
     for elem in anno_elements or []:
+        if _is_import_instance(elem):
+            excluded_imports += 1
+            continue
         try:
             bbox = elem.get_BoundingBox(view)
             corners = (project_bbox_corners_uv(bbox, basis, diag=diag, view_id=view_id)
@@ -170,6 +181,7 @@ def annotation_avoid_rects(view, anno_elements, basis, diag=None, view_id=None):
                       [min(us), min(vs), max(us), max(vs)]))
     return avoid, {"annotation_elements": len(anno_elements or []),
                    "avoid_rects": len(avoid), "no_bbox": no_bbox,
+                   "excluded_imports": excluded_imports,
                    "read_errors": len(errors), "first_error": errors[0] if errors else None,
                    "elapsed_ms": round((time.time() - t0) * 1000.0, 3)}
 
@@ -220,6 +232,56 @@ def mark_fpp_ft(view, raster, cfg):
             type(ex).__name__, ex)
 
 
+# P2: the phases that PARTITION ``total`` -- sequential, non-overlapping.
+# Every other key in timings_ms is nested inside one of these (model_export
+# and sidecar_write_model inside model_pass, ...), so it is not summed again.
+# What total holds beyond their sum -- the membership collection, detail-line
+# hide/show, link-category discovery, the view-state and mark read-backs --
+# is reported as ``unaccounted``, not hidden.
+TIMING_PARTITION = ("authored_override_scan", "mark_layout", "marks_create",
+                    "model_pass", "suppression", "annotation_pass", "rollback",
+                    "restore_element_overrides", "view_membership_readback")
+
+
+def unaccounted_ms(timings_ms):
+    """PURE. ``total`` minus the partition phases that were timed."""
+    total = timings_ms.get("total")
+    if total is None:
+        return None
+    return round(float(total) - sum(float(timings_ms[k]) for k in TIMING_PARTITION
+                                    if timings_ms.get(k) is not None), 3)
+
+
+def view_membership_ids(doc, view):
+    """Sorted ids FilteredElementCollector(doc, view) returns: the view's
+    element membership as Revit reports it. Raises when it cannot be read."""
+    from Autodesk.Revit.DB import FilteredElementCollector
+    ids = (_element_id_int(getattr(e, "Id", None))
+           for e in FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType())
+    return sorted(i for i in ids if i is not None)
+
+
+def membership_fingerprint(ids):
+    """PURE. ``{"count", "sha1"}`` of an id list (sorted here) -- written so one run's
+    view membership can be compared with the next run's."""
+    ids = sorted(int(i) for i in ids)
+    digest = hashlib.sha1(",".join(str(i) for i in ids).encode("ascii"))
+    return {"count": len(ids), "sha1": digest.hexdigest()}
+
+
+def view_membership_verdict(before, after, limit=200):
+    """PURE. What the view's membership read after the rollback adds to or
+    removes from the membership read before the capture."""
+    before_set, after_set = set(before), set(after)
+    added = sorted(after_set - before_set)
+    removed = sorted(before_set - after_set)
+    return {"status": "changed" if (added or removed) else "unchanged",
+            "before": membership_fingerprint(before),
+            "after": membership_fingerprint(after),
+            "added_count": len(added), "removed_count": len(removed),
+            "added": added[:limit], "removed": removed[:limit]}
+
+
 def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=None):
     marks = []
     for mark in (record.get("marks") or {}).get("created") or []:
@@ -251,6 +313,13 @@ def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=N
         "model_suppression": record.get("suppression_summary"),
         "restore": record.get("restore"),
         "faults": list(record.get("faults") or []),
+        # P2: filled since the registered capture shipped, never written
+        # (pipeline_0930_1133: {} on every sidecar). Complete here: the
+        # payload is built after total. What it cannot hold is the duration
+        # of the registration_marks / capture_integrity writes themselves,
+        # which happen after it is built.
+        "timings_ms": dict(record.get("timings_ms") or {}),
+        "timing_partition": list(TIMING_PARTITION),
     }
 
 
@@ -279,6 +348,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
     model_out = None
     anno_out = None
     model_member_ids = []
+    membership_before = None
     detail_lines = {"ids": [], "hidden": []}
 
     def _fault(fault, message, exc=None):
@@ -289,6 +359,15 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             diag.error(phase="color_id_buffer", callsite="registered_capture",
                        message="{0}: {1}".format(fault, message),
                        view_id=view_id, exc=exc)
+
+    def _pass_timings(name, out):
+        # The pass's export and its own sidecar write, measured inside the
+        # pass (nested in model_pass / annotation_pass, not additional).
+        timings = (out or {}).get("timings") or {}
+        for key, label in (("export_ms", "{0}_export"),
+                           ("sidecar_write_ms", "sidecar_write_{0}")):
+            if timings.get(key) is not None:
+                record["timings_ms"][label.format(name)] = timings[key]
 
     before = view_state(view)
     group = TransactionGroup(doc, "VOP Stage A registered capture")
@@ -302,6 +381,13 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         # ---- the model members, and what was authored on them BEFORE ------
         collected = list(FilteredElementCollector(doc, view.Id)
                          .WhereElementIsNotElementType())
+        # The view's membership BEFORE anything is written, for the
+        # read-back after the rollback (pipeline_0930_1133 -> 1249:
+        # Plan_RVTLink's collector returned 37 fewer elements at the start
+        # of the next run, and nothing measured whether a run changed it).
+        membership_before = sorted(
+            i for i in (_element_id_int(getattr(e, "Id", None)) for e in collected)
+            if i is not None)
         model_members, _anno, unresolved, _basis = split_stage_a_pass_membership(
             collected, capture_view_id_int=view_id, diag=diag)
         model_member_ids = [i for i in (_element_id_int(getattr(e, "Id", None))
@@ -321,6 +407,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             (time.time() - _t) * 1000.0, 3)
 
         # ---- 1: registration marks -----------------------------------------
+        _t = time.time()
         reference, source = mark_reference_rectangle(view, raster, diag=diag,
                                                      view_id=view_id)
         record["mark_reference_source"] = source
@@ -334,6 +421,9 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             view, _anno, getattr(raster, "view_basis", None), diag=diag,
             view_id=view_id)
         layout = registration.relocate_marks_clear_of(layout, avoid)
+        # P2: reference rectangle, sizing, segments and avoidance together.
+        record["timings_ms"]["mark_layout"] = round((time.time() - _t) * 1000.0, 3)
+        _t = time.time()
         tx = Transaction(doc, "VOP Stage A registration marks")
         tx.Start()
         try:
@@ -344,6 +434,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         except Exception:
             tx.RollBack()
             raise
+        record["timings_ms"]["marks_create"] = round((time.time() - _t) * 1000.0, 3)
         record["marks"] = marks
         if marks.get("created_count") != marks.get("expected_count") or not marks.get(
                 "expected_count"):
@@ -399,6 +490,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             doc, view, elements, model_cfg, diag=diag, raster=raster,
             elem_cache=elem_cache, geometry_out=geom)
         record["timings_ms"]["model_pass"] = round((time.time() - _t) * 1000.0, 3)
+        _pass_timings("model", model_out)
         if detail_lines["hidden"]:
             tx = Transaction(doc, "VOP Stage A show detail lines for the annotation pass")
             tx.Start()
@@ -463,8 +555,14 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         anno_cfg.color_id_buffer_anno_smooth_edges_off = True
         _t = time.time()
         try:
+            # The ticks are the capture's own lines, drawn with its own line
+            # style: not an AUTHORED override (1249: "12 of N" on every view
+            # was exactly the 12 ticks).
             anno_out = export_annotation_color_id_buffer_view(
-                doc, view, anno_cfg, geom, diag=diag, raster=raster)
+                doc, view, anno_cfg, geom, diag=diag, raster=raster,
+                authored_check_exclude_ids=[
+                    m.get("id") for m in (record.get("marks") or {}).get("created") or []
+                    if m.get("id") is not None])
         except Exception as ex:
             _fault("annotation_pass_raised", "the annotation pass raised", ex)
             anno_out = {"view_id": view_id, "success": False,
@@ -473,6 +571,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                         "stage": "color_id_buffer_stage_a_annotation",
                         "tiff_path": None, "sidecar_path": None}
         record["timings_ms"]["annotation_pass"] = round((time.time() - _t) * 1000.0, 3)
+        _pass_timings("annotation", anno_out)
     except Exception as ex:
         _fault("registered_capture_raised", "the registered capture stopped", ex)
     finally:
@@ -487,6 +586,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             except Exception as ex:
                 _fault("rollback_raised", "TransactionGroup.RollBack raised", ex)
             restore["rollback_ms"] = round((time.time() - _t) * 1000.0, 3)
+            record["timings_ms"]["rollback"] = restore["rollback_ms"]
             if not restore["rolled_back"]:
                 _fault("rollback_failed", "the capture's TransactionGroup did not "
                                           "roll back; the view may keep marks, "
@@ -531,6 +631,8 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                 "unreadable_after": len(authored_after[1]),
                 "elapsed_ms": round((time.time() - _t) * 1000.0, 3),
             }
+            record["timings_ms"]["restore_element_overrides"] = (
+                restore["element_overrides"]["elapsed_ms"])
             left = sorted(set(authored_after[0]) - set(authored_before[0]))
             restore["element_overrides"]["left_behind"] = left[:200]
             if left:
@@ -541,8 +643,36 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                 _fault("element_overrides_unverified",
                        "{0} model member override(s) could not be read back".format(
                            len(authored_after[1])))
+        # ---- 6b: the view's MEMBERSHIP, read back -----------------------
+        # A run must leave the view showing what it showed. None of the
+        # read-backs above looks at which elements the view collector
+        # returns; this does, against the list read at the start.
+        if membership_before is not None:
+            _t = time.time()
+            try:
+                restore["view_membership"] = view_membership_verdict(
+                    membership_before, view_membership_ids(doc, view))
+            except Exception as ex:
+                restore["view_membership"] = {
+                    "status": "unverified",
+                    "before": membership_fingerprint(membership_before),
+                    "reason": "{0}: {1}".format(type(ex).__name__, ex)}
+                _fault("view_membership_unverified",
+                       "the view's elements could not be read back after the "
+                       "rollback", ex)
+            record["timings_ms"]["view_membership_readback"] = round(
+                (time.time() - _t) * 1000.0, 3)
+            verdict = restore["view_membership"]
+            if verdict.get("status") == "changed":
+                _fault("view_membership_changed",
+                       "after the rollback the view returns {0} element(s) it did "
+                       "not before and lacks {1} it had; first added {2}, first "
+                       "removed {3}".format(
+                           verdict["added_count"], verdict["removed_count"],
+                           verdict["added"][:5], verdict["removed"][:5]))
         record["restore"] = restore
         record["timings_ms"]["total"] = round((time.time() - t_total) * 1000.0, 3)
+        record["timings_ms"]["unaccounted"] = unaccounted_ms(record["timings_ms"])
         record["success"] = bool(
             model_out and model_out.get("success")
             and anno_out and anno_out.get("success") and not record["faults"])

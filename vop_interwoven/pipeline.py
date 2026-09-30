@@ -2301,6 +2301,15 @@ def _reconstruct_areal_high_conf_loops(cached_entry, vb):
         return (None, None, 'failed')
 
 
+def exclude_dwg_from_geometry_path(expanded_elements):
+    """PURE. ``(entries without DWG, count dropped)``. G1: the geometry path
+    receives no DWG/DXF import; source identity is the normalized
+    ``source_type`` expand_host_link_import_model_elements() stamps."""
+    kept = [w for w in expanded_elements or []
+            if str(w.get("source_type") or "").upper() != "DWG"]
+    return kept, len(expanded_elements or []) - len(kept)
+
+
 def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geometry_cache=None, areal_cache=None, elem_cache=None, strategy_diag=None):
     """Render 3D model elements front-to-back with interwoven AreaL/Tiny/Linear handling.
 
@@ -2389,6 +2398,19 @@ def render_model_front_to_back(doc, view, raster, elements, cfg, diag=None, geom
     # Expand to include linked/imported elements
     _t0_expand = _perf_now()
     expanded_elements = expand_host_link_import_model_elements(doc, view, elements, cfg, diag=diag, elem_cache=elem_cache)
+    # G1 (Greg, 2026-09-30): DWG line work belongs to the colour analysis
+    # layer, not the geometry path. The expansion is shared with Stage A's
+    # own import enumeration, so it is left whole and DWG entries are
+    # dropped HERE, for this path only -- and counted, not silently.
+    expanded_elements, _dwg_excluded = exclude_dwg_from_geometry_path(expanded_elements)
+    if _dwg_excluded and diag is not None:
+        diag.info(
+            phase="collection",
+            callsite="render_model_front_to_back.dwg_excluded",
+            message="DWG/DXF imports are not rendered by the geometry path (G1)",
+            view_id=getattr(getattr(view, "Id", None), "IntegerValue", None),
+            extra={"dwg_entries_excluded": _dwg_excluded},
+        )
     _sub_t["raster_expand_ms"] = _perf_ms(_t0_expand, _perf_now())
 
     # Occlusion diagnostics tracker (lightweight counters + aggregate timings)

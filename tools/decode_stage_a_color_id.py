@@ -59,6 +59,12 @@ For input sidecar ``<name>.json``, this tool writes a sibling
       "off_palette_foreground_pixel_count": <int>,
       "background_pixel_count": <int>,
       "distinct_ids_decoded": <int>,
+      "pixel_stats": {                     # S1: every pixel once; stats only
+        "total_px", "element_px", "registration_mark_px",
+        "background_white_px", "black_px",  # background = white ONLY here
+        "link_category_px": {<category>: <int>}, "link_category_px_total",
+        "off_palette_px"                    # the residual
+      },
       "element_count_in_palette": <int>,   # registration-mark ids excluded
       "element_count_with_geometry": <int>,
       "registration_marks": {"status": "absent"}
@@ -271,6 +277,64 @@ def decode_ids(rgb_array: np.ndarray, color_assignment_map: dict[str, list[int]]
         "distinct_ids_decoded": int(np.unique(id_array).size),
     }
     return id_array, stats
+
+
+def pixel_partition(
+    rgb_array: np.ndarray,
+    id_array: np.ndarray,
+    link_category_color_map: dict[str, list[int]] | None = None,
+    mark_mask: np.ndarray | None = None,
+) -> dict[str, Any]:
+    """S1: every pixel counted exactly once, by what it IS. STATS ONLY --
+    ``id_array`` is not touched.
+
+    ``decode_ids``' two legacy counts hide two populations: a LINK category's
+    filter colour is not in color_assignment_map, so link pixels counted as
+    off-palette (``link_category_color_map`` was never read), and pure black
+    counted as background, so black view-symbol text vanished from ink. Here,
+    in precedence order:
+
+      element_px            -- decoded to an element id
+      registration_mark_px  -- the capture's own ticks (mark mask)
+      background_white_px   -- (255,255,255): the ONLY background
+      black_px              -- (0,0,0)
+      link_category_px      -- {category: n}, a link category's filter colour
+      off_palette_px        -- the residual: none of the above
+
+    ``total_px`` equals width x height; the parts sum to it.
+    """
+    packed = (
+        rgb_array[:, :, 0].astype(np.int32) << 16
+        | rgb_array[:, :, 1].astype(np.int32) << 8
+        | rgb_array[:, :, 2].astype(np.int32)
+    )
+    rest = id_array == BACKGROUND_ELEMENT_ID
+    element_px = int(packed.size - np.count_nonzero(rest))
+    mark_px = 0
+    if mark_mask is not None:
+        marks = rest & mark_mask
+        mark_px = int(np.count_nonzero(marks))
+        rest = rest & ~mark_mask
+    white = rest & (packed == 0xFFFFFF)
+    black = rest & (packed == 0)
+    rest = rest & ~white & ~black
+    link_px = {}
+    for category, rgb in sorted((link_category_color_map or {}).items()):
+        r, g, b = (int(c) for c in rgb)
+        hit = rest & (packed == ((r << 16) | (g << 8) | b))
+        count = int(np.count_nonzero(hit))
+        rest = rest & ~hit
+        link_px[str(category)] = link_px.get(str(category), 0) + count
+    return {
+        "total_px": int(packed.size),
+        "element_px": element_px,
+        "registration_mark_px": mark_px,
+        "background_white_px": int(np.count_nonzero(white)),
+        "black_px": int(np.count_nonzero(black)),
+        "link_category_px": link_px,
+        "link_category_px_total": int(sum(link_px.values())),
+        "off_palette_px": int(np.count_nonzero(rest)),
+    }
 
 
 def _trace_loops_for_mask(mask: np.ndarray) -> list[list[tuple[int, int]]]:
@@ -704,6 +768,10 @@ def build_decoded_document(
         subtracted = int(np.count_nonzero(mark_mask & (id_array == BACKGROUND_ELEMENT_ID)))
         stats["off_palette_foreground_pixel_count"] -= subtracted
         marks_block["mark_pixels_subtracted"] = subtracted
+    # S1: the split the two legacy counts above hide. Added, not replacing:
+    # those keep their values so existing readers are unchanged.
+    pixel_stats = pixel_partition(
+        rgb, id_array, sidecar.get("link_category_color_map") or {}, mark_mask)
 
     feet_per_pixel = None
     feet_per_pixel_unreliable_reason = None
@@ -1051,6 +1119,7 @@ def build_decoded_document(
         "off_palette_foreground_pixel_count": stats["off_palette_foreground_pixel_count"],
         "background_pixel_count": stats["background_pixel_count"],
         "distinct_ids_decoded": stats["distinct_ids_decoded"],
+        "pixel_stats": pixel_stats,
         "element_count_in_palette": len(color_assignment_map),
         "registration_marks": marks_block,
         "element_count_with_geometry": len(elements),

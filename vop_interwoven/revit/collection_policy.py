@@ -209,8 +209,58 @@ _ANNOTATION_INCLUDED_BIC_NAMES: Tuple[str, ...] = (
 )
 
 
+IMPORT_PASS_ANNOTATION = "annotation"
+IMPORT_PASS_MODEL = "model"
+
+
+def import_pass(elem, view_id_int) -> Dict[str, object]:
+    """THE import predicate (D2, Greg 2026-09-30): which Stage A pass a
+    DWG/DXF ImportInstance belongs to, decided by OwnerViewId alone.
+
+    OwnerViewId IS ``view_id_int`` -> ``"annotation"``. Anything else -> 
+    ``"model"``: model-placed (InvalidElementId), owned by another view, or
+    an OwnerViewId that cannot be read -- the last with ``reason`` set, so a
+    failed read is recorded, never silent. It replaces ViewSpecific as the
+    predicate; both passes decide through this one function (the model pass
+    in color_id_buffer._partition_view_specific_imports /
+    _scan_view_specific_imports, the annotation pass in
+    revit.annotation.stage_a_pass_membership), so an import cannot be
+    claimed by both, or by neither.
+
+    Returns:
+      {"state": "not_applicable", "reason": ...}           -- not an import
+      {"state": "value", "pass": ..., "owner_view_id": n}  -- read
+      {"state": "unavailable", "pass": "model", "reason": ...}
+
+    ImportInstance is matched by type NAME, as everywhere else here.
+    """
+    if type(elem).__name__ != "ImportInstance":
+        return {"state": "not_applicable", "reason": "not an ImportInstance"}
+    try:
+        owner = elem.OwnerViewId
+        if owner is None:
+            raise ValueError("OwnerViewId is None")
+        owner_int = int(owner.IntegerValue)
+    except Exception as ex:
+        return {"state": "unavailable", "pass": IMPORT_PASS_MODEL,
+                "reason": "OwnerViewId read failed ({0}: {1})".format(
+                    type(ex).__name__, ex)}
+    if view_id_int is None:
+        return {"state": "unavailable", "pass": IMPORT_PASS_MODEL,
+                "owner_view_id": owner_int,
+                "reason": "no capture view id to compare OwnerViewId with"}
+    return {"state": "value", "owner_view_id": owner_int,
+            "pass": (IMPORT_PASS_ANNOTATION if owner_int == int(view_id_int)
+                     else IMPORT_PASS_MODEL)}
+
+
 def view_specific_import_state(elem) -> Dict[str, object]:
-    """Which pass a DWG/DXF import belongs to, three-valued.
+    """ViewSpecific of a DWG/DXF import, three-valued. A RECORDED DIAGNOSTIC
+    ONLY since D2 (2026-09-30): it no longer decides the pass -- import_pass()
+    above does, on OwnerViewId. Kept so the sidecar's view_specific_imports
+    still shows whether the two ever disagree.
+
+    History:
 
     THE RULE (Greg, 2026-09-29): an import placed "in current view only" is
     ANNOTATION; an import placed in the model, as a 3D element, is MODEL. It
@@ -218,10 +268,12 @@ def view_specific_import_state(elem) -> Dict[str, object]:
     run pipeline_0928_0953 left Plan_DWG's view-specific import in BOTH
     captures' colour maps, drawn in both images -- counted twice.
 
-    This is the one place the classification is decided. The annotation
-    pass already agrees with it without reading it: a view-specific import is
-    owned by its view, so OwnerViewId membership claims it, and a model-placed
-    one has no owner view.
+    It WAS the one place the classification was decided, and the annotation
+    pass did not read it: it claimed imports by OwnerViewId. An import whose
+    OwnerViewId could not be read but whose ViewSpecific was True was
+    therefore dropped by the model pass and left unresolved by the
+    annotation pass -- painted by neither. D2 closes that by making
+    OwnerViewId the only predicate.
 
     Returns:
       {"state": "not_applicable", "reason": ...}  -- not an ImportInstance

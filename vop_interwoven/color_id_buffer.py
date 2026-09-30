@@ -422,39 +422,38 @@ def _is_import_instance(elem):
 
 def _partition_view_specific_imports(doc, resolved_ids, diag=None, view_id=None):
     """``(model paint set, import records)``: every DWG/DXF import in
-    ``resolved_ids`` classified by collection_policy.view_specific_import_
-    state(), and the view-specific ones taken OUT of the model pass.
+    ``resolved_ids`` classified by collection_policy.import_pass() -- the
+    predicate the annotation pass's membership uses too (D2) -- and the ones
+    the annotation pass claims taken OUT of the model pass.
 
-    A view-specific import is annotation (Greg, 2026-09-29): the annotation
-    pass claims it through OwnerViewId, so painting it here as well counted it
-    twice (pipeline_0928_0953, Plan_DWG). A model-placed import stays. One
-    whose ViewSpecific cannot be read also STAYS -- the behaviour before this
-    rule -- and is recorded as unresolved: dropping content on a failed read
-    would be the silent kind of wrong.
+    An import whose OwnerViewId is this view is annotation (Greg,
+    2026-09-30); anything else, INCLUDING an unreadable OwnerViewId, is
+    model and stays here. A failed read is recorded (``import_pass`` carries
+    the reason) and warned, never silent. ``view_specific`` is kept as a
+    recorded diagnostic; it no longer decides anything.
     """
-    from .revit.collection_policy import view_specific_import_state
+    from .revit.collection_policy import import_pass, view_specific_import_state
     kept, records = [], []
     for eid in resolved_ids:
-        state = view_specific_import_state(doc.GetElement(eid))
-        if state["state"] == "not_applicable":
+        elem = doc.GetElement(eid)
+        decided = import_pass(elem, view_id)
+        if decided["state"] == "not_applicable":
             kept.append(eid)
             continue
-        record = {"element_id": eid.IntegerValue, "view_specific": state,
-                  "found_by": "paint_set"}
-        if state["state"] == "value" and state["value"]:
-            record["classification"] = "annotation"
+        record = {"element_id": eid.IntegerValue, "import_pass": decided,
+                  "view_specific": view_specific_import_state(elem),
+                  "found_by": "paint_set", "classification": decided["pass"]}
+        if decided["pass"] == "annotation":
             record["in_model_paint_set"] = False
         else:
             kept.append(eid)
-            record["classification"] = ("model" if state["state"] == "value"
-                                        else "unresolved")
             record["in_model_paint_set"] = True
-            if state["state"] != "value" and diag is not None:
+            if decided["state"] != "value" and diag is not None:
                 diag.warn(
                     phase="color_id_buffer",
-                    callsite="view_specific_import_classification",
-                    message="an import's ViewSpecific could not be read; it stays "
-                            "in the model pass as before: {0}".format(state["reason"]),
+                    callsite="import_pass_classification",
+                    message="an import's OwnerViewId could not be read; it is model "
+                            "(D2) and stays in this pass: {0}".format(decided["reason"]),
                     view_id=view_id,
                     elem_id=eid.IntegerValue,
                 )
@@ -463,20 +462,25 @@ def _partition_view_specific_imports(doc, resolved_ids, diag=None, view_id=None)
 
 
 def _scan_view_specific_imports(doc, view, records, diag=None, view_id=None):
-    """Add every view-specific import IN THE VIEW that the paint set never saw.
+    """Add every import IN THE VIEW that the annotation pass claims and the
+    paint set never saw.
 
     The paint set reaches imports only through DWG collection, which
     ``cfg.include_dwg_imports`` can switch off -- and switching it off stops
-    collection, not Revit drawing the import. A view-specific import is
+    collection, not Revit drawing the import. An import owned by this view is
     annotation whatever that setting says, so it is found here, from the
-    view itself, and hidden with the rest (review, PR #218). Model-placed
-    imports the paint set did not collect stay as the setting left them.
+    view itself, and hidden with the rest (review, PR #218). Imports
+    import_pass() calls model -- model-placed, or with an unreadable
+    OwnerViewId -- stay as the DWG setting left them; an unreadable one is
+    RECORDED (classification "model", found_by "view_scan") so the read
+    failure is in the file, but it does not fail the capture: under D2 it is
+    model content, exactly like a model-placed import the setting skipped.
 
     A scan that fails appends a record with ``element_id`` None: the capture
     cannot then say no annotation import is drawn, and fails loudly.
     """
     from Autodesk.Revit.DB import FilteredElementCollector, ImportInstance
-    from .revit.collection_policy import view_specific_import_state
+    from .revit.collection_policy import import_pass, view_specific_import_state
     known = set(r["element_id"] for r in records if r.get("element_id") is not None)
     try:
         found = list(FilteredElementCollector(doc, view.Id).OfClass(ImportInstance))
@@ -488,43 +492,40 @@ def _scan_view_specific_imports(doc, view, records, diag=None, view_id=None):
                      "reason": "{0}: {1}".format(type(ex).__name__, ex)}})
         if diag is not None:
             diag.error(phase="color_id_buffer", callsite="scan_view_specific_imports",
-                       message="the view's imports could not be enumerated; a "
-                               "view-specific import may draw in this capture",
+                       message="the view's imports could not be enumerated; an "
+                               "annotation import may draw in this capture",
                        view_id=view_id, exc=ex)
         return
     for elem in found:
         eid = elem.Id.IntegerValue
         if eid in known:
             continue
-        state = view_specific_import_state(elem)
-        if state["state"] == "value" and state["value"]:
-            records.append({"element_id": eid, "view_specific": state,
+        decided = import_pass(elem, view_id)
+        if decided.get("pass") == "annotation":
+            records.append({"element_id": eid, "import_pass": decided,
+                            "view_specific": view_specific_import_state(elem),
                             "found_by": "view_scan", "classification": "annotation",
                             "in_model_paint_set": False})
-        elif state["state"] != "value":
-            # Unclassifiable AND outside the paint set: if it is view-specific
-            # it draws unpainted over model ids, and nothing here can say it
-            # is not. Recorded, and it fails the capture (review, PR #218).
-            records.append({"element_id": eid, "view_specific": state,
-                            "found_by": "view_scan", "classification": "unresolved",
-                            "in_model_paint_set": False, "suppressed": False})
+        elif decided["state"] == "unavailable":
+            records.append({"element_id": eid, "import_pass": decided,
+                            "view_specific": view_specific_import_state(elem),
+                            "found_by": "view_scan", "classification": "model",
+                            "in_model_paint_set": False})
             if diag is not None:
-                diag.error(phase="color_id_buffer",
-                           callsite="scan_view_specific_imports",
-                           message="an import outside the paint set could not be "
-                                   "classified: {0}".format(state.get("reason")),
-                           view_id=view_id, elem_id=eid)
+                diag.warn(phase="color_id_buffer",
+                          callsite="scan_view_specific_imports",
+                          message="an import outside the paint set has no readable "
+                                  "OwnerViewId; it is model (D2) and left to the DWG "
+                                  "setting: {0}".format(decided.get("reason")),
+                          view_id=view_id, elem_id=eid)
 
 
 def _unsuppressed_view_specific_imports(records):
     """The imports that may draw UNPAINTED in this capture: annotation ones it
-    could not hide, and unclassifiable ones outside the paint set. (An
-    unclassifiable import IN the paint set is painted with its own palette
-    colour, so its pixels stay identifiable; it does not fail the capture.)"""
+    could not hide. (Since D2 there is no "unresolved" import: import_pass()
+    places every one, an unreadable OwnerViewId in the model pass.)"""
     return [r for r in records
-            if (r.get("classification") == "annotation" and not r.get("suppressed"))
-            or (r.get("classification") == "unresolved"
-                and not r.get("in_model_paint_set"))]
+            if r.get("classification") == "annotation" and not r.get("suppressed")]
 
 
 def _hide_view_specific_imports(doc, view, records, diag=None, view_id=None):
@@ -1307,6 +1308,14 @@ SIDECAR_PROBE_ONLY_KEYS = (
 )
 
 
+# N1: written into every not_painted record, so the file states the
+# relationship rather than leaving a reader to infer it from equal sums.
+NOT_PAINTED_RELATIONSHIP = (
+    "not_visible_by_rule and not_visible_in_view count the SAME not_visible_total "
+    "elements: by_rule is the reason (one per element), not_visible_in_view the "
+    "per-category breakdown. visibility_unreadable is disjoint: those are painted.")
+
+
 def _drop_not_visible_in_view(doc, view, resolved_ids, diag=None, view_id=None):
     """M1: ``(ids the view shows, not_painted record)``.
 
@@ -1320,10 +1329,19 @@ def _drop_not_visible_in_view(doc, view, resolved_ids, diag=None, view_id=None):
     A visibility that cannot be READ keeps the element painted, as before
     this gate (dropping content on a failed read is the silent kind of
     wrong), and is counted separately under "visibility_unreadable".
+
+    N1: ``not_visible_by_rule`` and ``not_visible_in_view`` are the SAME set
+    of unpainted elements counted two ways -- each element gets exactly one
+    rule (the first that applies, in the order above) and one category, and
+    is counted once in each. by_rule is the reason, not_visible_in_view the
+    per-category breakdown; both sum to ``not_visible_total``.
+    ``visibility_unreadable`` is DISJOINT from them: those elements are
+    painted, not dropped.
     """
     from Autodesk.Revit.DB import CategoryType
     record = {"not_visible_in_view": {}, "not_visible_by_rule": {},
-              "visibility_unreadable": {}}
+              "visibility_unreadable": {}, "not_visible_total": 0,
+              "count_relationship": NOT_PAINTED_RELATIONSHIP}
     try:
         anno_hidden = bool(view.AreAnnotationCategoriesHidden)
         record["annotation_categories_hidden"] = anno_hidden
@@ -1360,6 +1378,7 @@ def _drop_not_visible_in_view(doc, view, resolved_ids, diag=None, view_id=None):
         record["not_visible_in_view"][cat_name] = (
             record["not_visible_in_view"].get(cat_name, 0) + 1)
         record["not_visible_by_rule"][rule] = record["not_visible_by_rule"].get(rule, 0) + 1
+        record["not_visible_total"] += 1
     if record["visibility_unreadable"] and diag is not None:
         diag.warn(phase="color_id_buffer", callsite="annotation_visibility",
                   message="visibility could not be read for {0} element(s); they are "
@@ -1492,7 +1511,11 @@ def _link_bbox_transform_or_state(proxy, diag=None, view_id=None, elem_id=None):
 def _new_rotation_stats():
     """R1: the per-capture cost of the rotation read, so its price at scale is
     measured rather than estimated. Written to the sidecar as "rotation_read"."""
-    return {"elements_read": 0, "rotated": 0, "unavailable": 0, "elapsed_ms": 0.0}
+    # R2: no_single_rotation (with its per-reason split) is neither rotated
+    # nor unavailable -- the element was read and has no one rotation.
+    return {"elements_read": 0, "rotated": 0, "unavailable": 0,
+            "no_single_rotation": 0, "no_single_rotation_by_reason": {},
+            "elapsed_ms": 0.0}
 
 
 def _round_rotation(record):
@@ -1530,7 +1553,12 @@ def _rotation_or_state(elem, outer_transform, stats, diag=None, view_id=None,
         if stats is not None:
             stats["unavailable"] += 1
     else:
-        if record is not None and stats is not None:
+        if (isinstance(record, dict) and record.get("state") == "no_single_rotation"
+                and stats is not None):
+            stats["no_single_rotation"] += 1
+            by_reason = stats["no_single_rotation_by_reason"]
+            by_reason[record["reason"]] = by_reason.get(record["reason"], 0) + 1
+        elif record is not None and stats is not None:
             stats["rotated"] += 1
     if stats is not None:
         stats["elements_read"] += 1
@@ -1753,7 +1781,7 @@ def _collect_near_face_w_data(
             # were probe-debug data. Whether an import is view-specific is a
             # capture decision, and it is recorded where it is made -- the
             # sidecar's "view_specific_imports", which keeps every import
-            # whose ViewSpecific could not be read (it stays in this pass).
+            # whose OwnerViewId could not be read (D2: model, in this pass).
         }
         if bbox_transform is not None:
             host_out[str(elem_id_int)]["bbox_transform"] = _round_geometry(bbox_transform)
@@ -4381,6 +4409,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "dim_check_ceiling_px": MAX_STAGE_A_AXIS_PX,
         "attempts": [],
     }
+    _export_t0 = time.time()
     try:
         _tiff_path, actual_pixel_size, dim_report = _export_tiff(
             doc, view, tiff_path, pixel_size, diag=diag, view_id=view_id,
@@ -4388,6 +4417,9 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             grid_axis_px=backoff_floor_px,
         )
     finally:
+        # P2: the export alone (every dimension-check attempt), for the
+        # registered capture's timings_ms. In memory only.
+        export_ms = round((time.time() - _export_t0) * 1000.0, 3)
         restore_tx = Transaction(doc, "VOP Stage A RESTORE color ID buffer")
         restore_tx.Start()
         model_restore_failures = []
@@ -4752,7 +4784,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # element_id None. See revit/linked_documents._collect_from_dwg_imports.
         "dwg_imports_omitted": dwg_imports_omitted,
         # Every DWG/DXF import this pass resolved and which pass it belongs to
-        # (revit/collection_policy.view_specific_import_state). "annotation"
+        # (revit/collection_policy.import_pass, D2). "annotation"
         # ones are NOT in color_assignment_map: hidden for this export and,
         # per "restore", shown again after. An EMPTY list means the pass
         # resolved no import at all.
@@ -4863,7 +4895,9 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     state_out["capture_integrity"] = _capture_integrity(
         "model_pass", model_faults, len(model_restore_failures), paint_failures)
     state_out["failure_reason"] = failure_reason
+    _write_t0 = time.time()
     _write_sidecar(json_path, out_dir, state_out)
+    sidecar_write_ms = round((time.time() - _write_t0) * 1000.0, 3)
 
     return {
         "view_id": view_id,
@@ -4876,7 +4910,10 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "output_dir": out_dir,
         "frame": state_out["frame"],
         "color_assignment_count": count_host + count_link_categories,
-        "timings": {"color_id_buffer_ms": round((time.time() - t0) * 1000.0, 3)},
+        # export_ms / sidecar_write_ms: P2, read by the registered capture
+        # into its timings_ms. The sidecar cannot carry its own write time.
+        "timings": {"color_id_buffer_ms": round((time.time() - t0) * 1000.0, 3),
+                    "export_ms": export_ms, "sidecar_write_ms": sidecar_write_ms},
         "metadata": state_out,
     }
 
@@ -5124,7 +5161,8 @@ def _verify_annotation_overrides_restored(view, painted_ids, diag=None, view_id=
 
 
 def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
-                                           raster=None, elements=None):
+                                           raster=None, elements=None,
+                                           authored_check_exclude_ids=None):
     """Export one view's ANNOTATION color ID buffer, over frame B.
 
     Args:
@@ -5348,12 +5386,15 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     # a grid or level reaches this pass by CATEGORY and has a model-space
     # extent, where a view-specific annotation does not.
     membership_basis_by_id = {}
+    unreadable_imports = []
     _model_members, anno_elements, unresolved, basis_counts = (
         split_stage_a_pass_membership(
             elements, capture_view_id_int=view_id, diag=diag,
-            basis_out=membership_basis_by_id))
+            basis_out=membership_basis_by_id,
+            unreadable_imports_out=unreadable_imports))
     membership = stage_a_pass_membership_summary(
-        _model_members, anno_elements, unresolved, basis_counts)
+        _model_members, anno_elements, unresolved, basis_counts,
+        unreadable_imports=unreadable_imports)
     if membership_error is not None:
         # The counts above are all zero, and a zero that means "the collection
         # failed" must not read like a zero that means "this view has no
@@ -5819,11 +5860,18 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
             "replaced_count": 0,
             "replaced_element_ids": [],
             "unreadable_count": 0,
+            # The registered capture's own ticks: drawn by it, in its line
+            # style, so not an authored override and not checked as one.
+            "registration_marks_excluded": 0,
             "note": "painting replaces these and restore writes a BLANK override, "
                     "not the authored one; they are not recoverable from this "
                     "capture",
         }
+        _not_authored = set(int(i) for i in (authored_check_exclude_ids or ()))
         for eid in resolved_ids:
+            if int(eid.IntegerValue) in _not_authored:
+                authored_overrides["registration_marks_excluded"] += 1
+                continue
             authored_overrides["checked_count"] += 1
             state, cleared, _reason = _override_is_cleared(view, eid.IntegerValue)
             if state != "value":
@@ -5924,6 +5972,7 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         "status": "unavailable",
         "reason": "the restore transaction did not run",
     }
+    _export_t0 = time.time()
     try:
         _tiff_path, actual_pixel_size, dim_report = _export_tiff(
             doc, view, tiff_path, pixel_size, diag=diag, view_id=view_id,
@@ -5931,6 +5980,8 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
             grid_axis_px=int(geom.get("min_axis_px") or _PIXEL_SIZE_BACKOFF_FLOOR),
         )
     finally:
+        # P2: the export alone, for the registered capture's timings_ms.
+        export_ms = round((time.time() - _export_t0) * 1000.0, 3)
         restore_tx = Transaction(doc, "VOP Stage A ANNO RESTORE color ID buffer")
         restore_tx.Start()
 
@@ -6369,7 +6420,9 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     # are in capture_integrity). They were not: capture_faults and
     # failure_reason were computed after the old write site and existed only
     # in memory.
+    _write_t0 = time.time()
     _write_sidecar(json_path, out_dir, state_out)
+    sidecar_write_ms = round((time.time() - _write_t0) * 1000.0, 3)
 
     return {
         "view_id": view_id,
@@ -6383,7 +6436,9 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         "frame": state_out["frame"],
         "color_assignment_count": count_anno,
         "timings": {
-            "annotation_color_id_buffer_ms": round((time.time() - t0) * 1000.0, 3)
+            "annotation_color_id_buffer_ms": round((time.time() - t0) * 1000.0, 3),
+            # P2, read by the registered capture into its timings_ms.
+            "export_ms": export_ms, "sidecar_write_ms": sidecar_write_ms,
         },
         "metadata": state_out,
     }

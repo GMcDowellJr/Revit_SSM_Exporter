@@ -71,12 +71,17 @@ def test_straight_location_line_gives_its_unit_direction():
     rec = element_rotation(_Located(1, Line((0, 0, 0), (3, 3, 0))))
     assert rec == {"source": "location_line",
                    "direction": pytest.approx([2 ** -0.5, 2 ** -0.5, 0.0])}
+    # None is AXIS-ALIGNED, and only that (R2).
     assert element_rotation(_Located(2, Line((0, 0, 0), (0, 7, 0)))) is None
-    # Zero length has no direction; an arc has no single one.
-    assert element_rotation(_Located(3, Line((1, 1, 0), (1, 1, 0)))) is None
-    assert element_rotation(_Located(4, Arc((0, 0, 0), (3, 3, 0)))) is None
-    # No Location, no GetTransform (a floor): nothing to record.
-    assert element_rotation(_Elem(5, _BBox((0, 0, 0), (1, 1, 1)))) is None
+    # Zero length has no direction; an arc has no single one; a floor (no
+    # Location, no GetTransform) has none: each SAYS so (R2), where it used to
+    # be None and indistinguishable from axis-aligned.
+    assert element_rotation(_Located(3, Line((1, 1, 0), (1, 1, 0)))) == {
+        "state": "no_single_rotation", "reason": "zero_length_line"}
+    assert element_rotation(_Located(4, Arc((0, 0, 0), (3, 3, 0)))) == {
+        "state": "no_single_rotation", "reason": "curve_not_line"}
+    assert element_rotation(_Elem(5, _BBox((0, 0, 0), (1, 1, 1)))) == {
+        "state": "no_single_rotation", "reason": "no_location"}
 
 
 def test_link_transform_composes_onto_both_sources_and_stands_alone():
@@ -93,9 +98,14 @@ def test_link_transform_composes_onto_both_sources_and_stands_alone():
     floor = element_rotation(_Elem(4, _BBox((0, 0, 0), (1, 1, 1))), outer_transform=link)
     assert floor["source"] == "link_transform"
     assert floor["origin"] == [50.0, 0.0, 0.0]
-    # A link that is not rotated gives an unrotated floor nothing.
+    # A curved element inside a rotated link keeps link_transform (R2).
+    arc = element_rotation(_Located(6, Arc((0, 0, 0), (3, 3, 0))), outer_transform=link)
+    assert arc["source"] == "link_transform"
+    # A link that is not rotated gives an unrotated floor no rotation: it
+    # has no single one (R2).
     assert element_rotation(_Elem(5, _BBox((0, 0, 0), (1, 1, 1))),
-                            outer_transform=_rot_z(180, origin=(9, 9, 0))) is None
+                            outer_transform=_rot_z(180, origin=(9, 9, 0))) == {
+        "state": "no_single_rotation", "reason": "no_location"}
 
 
 def test_an_unreadable_transform_raises_rather_than_reading_as_unrotated():
@@ -173,8 +183,34 @@ def test_the_sidecar_file_carries_rotation_read_and_the_entry(tmp_path):
         on_disk = json.load(f)
     host = on_disk["near_face_w_map"]["host"]
     assert host["1001"]["rotation"]["source"] == "instance_transform"
-    assert "rotation" not in host["1002"]
+    # R2: 1002 has no Location and no GetTransform -- no single rotation, said
+    # so in the file rather than left absent like an axis-aligned element.
+    assert host["1002"]["rotation"] == {"state": "no_single_rotation",
+                                        "reason": "no_location"}
     read = on_disk["rotation_read"]
     assert read["elements_read"] == 2 and read["rotated"] == 1
     assert read["unavailable"] == 0
+    assert read["no_single_rotation"] == 1
+    assert read["no_single_rotation_by_reason"] == {"no_location": 1}
     assert isinstance(read["elapsed_ms"], float)
+
+
+def test_r2_axis_aligned_and_no_single_rotation_differ_in_the_FILE(tmp_path):
+    """R2's gate: an axis-aligned instance writes NO rotation key (the
+    control), an arc-located element writes the state, counted by reason."""
+    from tests.test_color_id_buffer_view_graphics_state import (
+        FakeDiag, _cfg, _export, _furnished_world, _raster,
+    )
+    doc, view, elements = _furnished_world()
+    elements[0].GetTransform = lambda: _rot_z(90)
+    elements[1].Location = type("LocationCurve", (), {"Curve": Arc((0, 0, 0), (3, 3, 0))})()
+    result = _export(doc, view, elements, _cfg(tmp_path), FakeDiag(), _raster())
+    with open(result["sidecar_path"]) as f:
+        on_disk = json.load(f)
+    host = on_disk["near_face_w_map"]["host"]
+    assert "rotation" not in host["1001"]
+    assert host["1002"]["rotation"] == {"state": "no_single_rotation",
+                                        "reason": "curve_not_line"}
+    read = on_disk["rotation_read"]
+    assert read["rotated"] == 0 and read["no_single_rotation"] == 1
+    assert read["no_single_rotation_by_reason"] == {"curve_not_line": 1}
