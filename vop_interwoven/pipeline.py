@@ -1557,7 +1557,10 @@ def process_document_views(
                 )
     # The view-element map is THIS run's export (not a cross-run cache), so it
     # stays; the cache save and change detection that shared its block are
-    # retired (see the element cache note above).
+    # retired (see the element cache note above). Streaming calls this once
+    # per view, so each call merges into the file -- but only a file stamped
+    # with the same run id (StreamingExporter sets it); a prior run's map in
+    # the same folder and date is replaced, never merged.
     # Export view-element map JSON (view -> element ids)
     if (elem_cache is not None and getattr(cfg, "element_cache_export_csv", True)
             and output_dir is not None):
@@ -1567,6 +1570,7 @@ def process_document_views(
                 analysis_path,
                 view_elements=view_elements,
                 merge_existing=True,
+                run_id=getattr(cfg, "_view_element_map_run_id", None),
             )
             if exported and diag is not None:
                 diag.info(

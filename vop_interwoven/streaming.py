@@ -263,6 +263,10 @@ class StreamingExporter:
         # run_meta.
         if run_id:
             self.run_id = run_id
+        # The pipeline runs once per view and merges each view into the
+        # run's view-element map; this is what scopes that merge to THIS run
+        # (a prior run's map in the same folder/date is replaced, not merged).
+        cfg._view_element_map_run_id = self.run_id
 
         # Setup
         os.makedirs(output_dir, exist_ok=True)
