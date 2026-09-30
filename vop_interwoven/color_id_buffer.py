@@ -1307,6 +1307,14 @@ SIDECAR_PROBE_ONLY_KEYS = (
 )
 
 
+# N1: written into every not_painted record, so the file states the
+# relationship rather than leaving a reader to infer it from equal sums.
+NOT_PAINTED_RELATIONSHIP = (
+    "not_visible_by_rule and not_visible_in_view count the SAME not_visible_total "
+    "elements: by_rule is the reason (one per element), not_visible_in_view the "
+    "per-category breakdown. visibility_unreadable is disjoint: those are painted.")
+
+
 def _drop_not_visible_in_view(doc, view, resolved_ids, diag=None, view_id=None):
     """M1: ``(ids the view shows, not_painted record)``.
 
@@ -1320,10 +1328,19 @@ def _drop_not_visible_in_view(doc, view, resolved_ids, diag=None, view_id=None):
     A visibility that cannot be READ keeps the element painted, as before
     this gate (dropping content on a failed read is the silent kind of
     wrong), and is counted separately under "visibility_unreadable".
+
+    N1: ``not_visible_by_rule`` and ``not_visible_in_view`` are the SAME set
+    of unpainted elements counted two ways -- each element gets exactly one
+    rule (the first that applies, in the order above) and one category, and
+    is counted once in each. by_rule is the reason, not_visible_in_view the
+    per-category breakdown; both sum to ``not_visible_total``.
+    ``visibility_unreadable`` is DISJOINT from them: those elements are
+    painted, not dropped.
     """
     from Autodesk.Revit.DB import CategoryType
     record = {"not_visible_in_view": {}, "not_visible_by_rule": {},
-              "visibility_unreadable": {}}
+              "visibility_unreadable": {}, "not_visible_total": 0,
+              "count_relationship": NOT_PAINTED_RELATIONSHIP}
     try:
         anno_hidden = bool(view.AreAnnotationCategoriesHidden)
         record["annotation_categories_hidden"] = anno_hidden
@@ -1360,6 +1377,7 @@ def _drop_not_visible_in_view(doc, view, resolved_ids, diag=None, view_id=None):
         record["not_visible_in_view"][cat_name] = (
             record["not_visible_in_view"].get(cat_name, 0) + 1)
         record["not_visible_by_rule"][rule] = record["not_visible_by_rule"].get(rule, 0) + 1
+        record["not_visible_total"] += 1
     if record["visibility_unreadable"] and diag is not None:
         diag.warn(phase="color_id_buffer", callsite="annotation_visibility",
                   message="visibility could not be read for {0} element(s); they are "

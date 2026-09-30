@@ -117,3 +117,28 @@ def test_an_element_whose_reads_raise_is_kept_and_counted_not_fatal():
     assert [e.IntegerValue for e in shown] == [2001, 2005, 2009]
     assert record["visibility_unreadable"] == {"<unreadable category>": 2}
     assert record["not_visible_in_view"] == {}
+
+
+def test_n1_by_rule_and_by_category_are_one_set_with_a_total_in_the_FILE(tmp_path):
+    """N1 (pipeline_0930_1133 Plan_DWG/RVTLink: by_rule 71, by_category
+    40+14+17 = 71). The same elements counted two ways -- the file says so
+    and carries the total both sum to."""
+    view = FakeViewPlan(view_id=VIEW_ID)
+    view.AreAnnotationCategoriesHidden = True
+    view.hidden_elements.add(2003)  # a MODEL-typed line, dropped by another rule
+    _m, anno, _g, _d, _v, _diag = _run_both_passes(tmp_path, elements=_with_group(), view=view)
+    _painted_ids, not_painted = _painted(anno)
+    total = not_painted["not_visible_total"]
+    assert total == sum(not_painted["not_visible_by_rule"].values())
+    assert total == sum(not_painted["not_visible_in_view"].values())
+    assert set(not_painted["not_visible_by_rule"]) == {
+        "annotation_categories_hidden", "element_hidden"}
+    assert "SAME" in not_painted["count_relationship"]
+
+
+def test_n1_control_nothing_hidden_totals_zero_in_the_FILE(tmp_path):
+    view = FakeViewPlan(view_id=VIEW_ID)
+    _m, anno, _g, _d, _v, _diag = _run_both_passes(tmp_path, view=view)
+    _painted_ids, not_painted = _painted(anno)
+    assert not_painted["not_visible_total"] == 0
+    assert not_painted["not_visible_by_rule"] == {}
