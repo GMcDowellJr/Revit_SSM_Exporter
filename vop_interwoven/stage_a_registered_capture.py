@@ -145,6 +145,35 @@ def mark_reference_rectangle(view, raster, diag=None, view_id=None):
     return None, "no authored crop, model crop or raster frame to place marks in"
 
 
+def annotation_avoid_rects(view, anno_elements, basis, diag=None, view_id=None):
+    """``(avoid, record)``: each annotation element's view bbox in UV, for
+    registration.relocate_marks_clear_of. An element whose bbox does not
+    resolve is counted, not guessed; a read that raises is counted with its
+    first error. Bboxes only -- no geometry (the Stage A rule)."""
+    from .revit.collection import project_bbox_corners_uv
+    avoid, no_bbox, errors = [], 0, []
+    t0 = time.time()
+    for elem in anno_elements or []:
+        try:
+            bbox = elem.get_BoundingBox(view)
+            corners = (project_bbox_corners_uv(bbox, basis, diag=diag, view_id=view_id)
+                       if bbox is not None and basis is not None else None)
+        except Exception as ex:
+            errors.append("{0}: {1}".format(type(ex).__name__, ex))
+            continue
+        if not corners:
+            no_bbox += 1
+            continue
+        us = [float(c[0]) for c in corners]
+        vs = [float(c[1]) for c in corners]
+        avoid.append((_element_id_int(getattr(elem, "Id", None)),
+                      [min(us), min(vs), max(us), max(vs)]))
+    return avoid, {"annotation_elements": len(anno_elements or []),
+                   "avoid_rects": len(avoid), "no_bbox": no_bbox,
+                   "read_errors": len(errors), "first_error": errors[0] if errors else None,
+                   "elapsed_ms": round((time.time() - t0) * 1000.0, 3)}
+
+
 def nominal_fpp_ft(view, cfg):
     """Feet per pixel at the REQUESTED dpi: view scale / (12 in x dpi). The
     marks are sized in pixels at this; the achieved lattice can only be coarser
@@ -168,6 +197,9 @@ def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=N
         # Chosen in create_registration_marks but, until this, never written
         # to a sidecar (pipeline_0930_0739: absent from all 16).
         "line_style": (record.get("marks") or {}).get("line_style"),
+        # How many annotation bboxes the ticks were kept clear of, and the
+        # cost of reading them. Per-tick placement rides on each mark.
+        "mark_avoidance": record.get("mark_avoidance"),
         "reference_source": record.get("mark_reference_source"),
         "colour_source": ("MARK_COLOUR, one reserved colour for every tick; each "
                           "tick is its own connected component"
@@ -257,6 +289,12 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                       reference, nominal_fpp_ft(view, cfg))
                   if reference is not None else {"state": "unavailable",
                                                  "reason": source})
+        # Ticks clear of annotation (Greg, 2026-09-30): a tick under a tag or
+        # dimension does not show in the annotation capture.
+        avoid, record["mark_avoidance"] = annotation_avoid_rects(
+            view, _anno, getattr(raster, "view_basis", None), diag=diag,
+            view_id=view_id)
+        layout = registration.relocate_marks_clear_of(layout, avoid)
         tx = Transaction(doc, "VOP Stage A registration marks")
         tx.Start()
         try:

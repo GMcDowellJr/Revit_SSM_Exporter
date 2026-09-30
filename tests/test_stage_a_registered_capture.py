@@ -424,3 +424,25 @@ def test_the_annotation_capture_runs_with_anti_aliasing_off_in_the_FILE(tmp_path
     out, view, _doc, _exports, _diag = _run(tmp_path)
     assert _sidecar(out["annotation_sidecar_path"])["applied_smooth_edges"] is False
     assert _sidecar(out["sidecar_path"])["applied_smooth_edges"] is False
+
+
+def test_a_tick_under_an_annotation_element_is_moved_in_the_FILE(tmp_path):
+    """Greg (2026-09-30): ticks are kept clear of annotation bboxes. A tag
+    placed over a tick's default position moves that tick, and the sidecar
+    says so; the control run (no tag) moves nothing."""
+    out, _v, _d, _e, _diag = _run(tmp_path / "a")
+    marks = _sidecar(out["sidecar_path"])["registration_marks"]
+    assert all(m.get("placement") in (None, "original") for m in marks["marks"])
+    target = [m for m in marks["marks"] if m["key"] == "left_bottom_h"][0]
+    (ua, va), (ub, vb) = target["uv0"], target["uv1"]
+    tag = FakeElement(2009, ANNO_CAT, owner_view_id=VIEW_ID,
+                      bbox=_BBox((min(ua, ub) - 0.5, va - 0.5, 0), (max(ua, ub) + 0.5, va + 0.5, 0)))
+
+    out2, _v, _d, _e, _diag = _run(tmp_path / "b", extra_elements=[tag])
+    side = _sidecar(out2["sidecar_path"])["registration_marks"]
+    moved = [m for m in side["marks"] if m["key"] == "left_bottom_h"][0]
+    assert moved["placement"] == "moved" and moved["was_covered_by"] == [2009]
+    assert moved["uv0"] != target["uv0"]
+    assert side["layout"]["relocation"]["moved"] >= 1
+    assert side["mark_avoidance"]["avoid_rects"] >= 1
+    assert out2["registration"]["marks"]["created_count"] == 12

@@ -160,6 +160,148 @@ def registration_mark_segments(reference_uv, fpp_ft, inset_px=MARK_INSET_PX,
             "arm_px": arm, "colour": list(MARK_COLOUR)}
 
 
+# RELOCATION (Greg, 2026-09-30): a tick drawn under an annotation element is
+# invisible in the annotation capture -- pipeline_0930_0739 lost ModelCallout's
+# right_bottom_h under a tag and Plan_CropActive's mid_bottom_v under a
+# dimension. Nothing requires a tick to sit on the crop edge; what the fit and
+# the locator need is SPREAD: three levels per axis, each tick its own
+# component, and each tick classifiable by tools/registration_marks.py's
+# _locate -- horizontal ticks by left/right HALF and top/mid/bottom THIRD,
+# vertical ones by left/mid/right third and top/bottom half. So a covered
+# tick moves to the nearest clear position inside a window that keeps it in
+# its half and well inside its third. Visible in a sub-optimal place beats
+# invisible in the ideal one.
+#
+# Corner ticks stay in the outer SIXTH across their axis, mid ticks in the
+# central QUARTER band: a margin inside each third, because the locator
+# measures thirds on the ticks' OWN pixel extent, which moving a tick changes.
+_CORNER_BAND = 1.0 / 6.0
+_MID_BAND = (0.375, 0.625)
+_RELOCATION_PAD_PX = 2.0
+
+
+def _rects_overlap(a, b):
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+def _segment_rect(seg, pad_ft):
+    (ua, va), (ub, vb) = seg["uv0"], seg["uv1"]
+    return (min(ua, ub) - pad_ft, min(va, vb) - pad_ft,
+            max(ua, ub) + pad_ft, max(va, vb) + pad_ft)
+
+
+def _tick_window(seg, reference_uv, inset_ft):
+    """``((along_lo, along_hi), (across_lo, across_hi))`` in UV: where the
+    tick's SEGMENT may lie along its own axis, and where its LEVEL may lie
+    across it. See the relocation note above."""
+    u0, v0, u1, v1 = reference_uv
+    w, h = u1 - u0, v1 - v0
+    name = seg["corner"]
+    if seg["orientation"] == "horizontal":
+        um = u0 + w / 2.0
+        along = (u0 + inset_ft, um) if name.startswith("left") else (um, u1 - inset_ft)
+        if name.endswith("bottom"):
+            across = (v0 + inset_ft, v0 + _CORNER_BAND * h)
+        elif name.endswith("top"):
+            across = (v1 - _CORNER_BAND * h, v1 - inset_ft)
+        else:
+            across = (v0 + _MID_BAND[0] * h, v0 + _MID_BAND[1] * h)
+    else:
+        vm = v0 + h / 2.0
+        along = (v0 + inset_ft, vm) if name.endswith("bottom") else (vm, v1 - inset_ft)
+        if name.startswith("left"):
+            across = (u0 + inset_ft, u0 + _CORNER_BAND * w)
+        elif name.startswith("right"):
+            across = (u1 - _CORNER_BAND * w, u1 - inset_ft)
+        else:
+            across = (u0 + _MID_BAND[0] * w, u0 + _MID_BAND[1] * w)
+    return along, across
+
+
+def _placed(seg, along_lo, level):
+    """``seg`` moved so its span starts at ``along_lo`` and sits at ``level``."""
+    length = seg["span_uv"][1] - seg["span_uv"][0]
+    out = dict(seg)
+    out["span_uv"] = [along_lo, along_lo + length]
+    out["level_uv"] = level
+    if seg["orientation"] == "horizontal":
+        out["uv0"], out["uv1"] = [along_lo, level], [along_lo + length, level]
+    else:
+        out["uv0"], out["uv1"] = [level, along_lo], [level, along_lo + length]
+    return out
+
+
+def relocate_marks_clear_of(layout, avoid):
+    """Move every tick that overlaps an ``avoid`` rectangle to the nearest
+    clear position in its window. PURE.
+
+    ``avoid`` is ``[(element_id, [umin, vmin, umax, vmax]), ...]`` in view UV
+    (the annotation elements' view bboxes). Each segment gains ``placement``:
+    ``"original"`` (already clear), ``"moved"`` (with ``moved_px``) or
+    ``"blocked"`` (no clear position; left where it was, with
+    ``covered_by``). A layout that is not a value is returned unchanged.
+    """
+    if (layout or {}).get("state") != "value" or not avoid:
+        return layout
+    fpp = float(layout["fpp_ft"])
+    ref = layout["reference_uv"]
+    inset_ft = float(layout["inset_px"]) * fpp
+    gap_ft = float(layout["gap_px"]) * fpp
+    pad_ft = _RELOCATION_PAD_PX * fpp
+    step = max(float(layout["arm_px"]) / 4.0, 2.0) * fpp
+    rects = [(eid, tuple(r)) for eid, r in avoid if r and len(r) == 4]
+
+    def _covering(seg):
+        r = _segment_rect(seg, pad_ft)
+        return [eid for eid, box in rects if _rects_overlap(r, box)]
+
+    out = dict(layout)
+    placed = []
+    moved = blocked = 0
+    for seg in layout["segments"]:
+        covered = _covering(seg)
+        if not covered:
+            placed.append(dict(seg, placement="original"))
+            continue
+        (a_lo, a_hi), (c_lo, c_hi) = _tick_window(seg, ref, inset_ft)
+        length = seg["span_uv"][1] - seg["span_uv"][0]
+        start0, level0 = seg["span_uv"][0], seg["level_uv"]
+        n_along = int((a_hi - a_lo) / step) + 1
+        n_across = int((c_hi - c_lo) / step) + 1
+        candidates = []
+        for i in range(-n_along, n_along + 1):
+            for j in range(-n_across, n_across + 1):
+                start, level = start0 + i * step, level0 + j * step
+                if start < a_lo or start + length > a_hi or not c_lo <= level <= c_hi:
+                    continue
+                candidates.append((i * i + j * j, i, j, start, level))
+        candidates.sort()
+        choice = None
+        others = [p for p in placed] + [s for s in layout["segments"][len(placed) + 1:]]
+        for _d, i, j, start, level in candidates:
+            trial = _placed(seg, start, level)
+            if _covering(trial):
+                continue
+            box = _segment_rect(trial, gap_ft)
+            if any(_rects_overlap(box, _segment_rect(o, 0.0)) for o in others):
+                continue
+            choice = (trial, i, j)
+            break
+        if choice is None:
+            blocked += 1
+            placed.append(dict(seg, placement="blocked", covered_by=covered[:20]))
+        else:
+            moved += 1
+            trial, i, j = choice
+            placed.append(dict(trial, placement="moved", moved_from_uv=[seg["uv0"], seg["uv1"]],
+                               moved_px=[round((trial["uv0"][0] - seg["uv0"][0]) / fpp, 3),
+                                         round((trial["uv0"][1] - seg["uv0"][1]) / fpp, 3)],
+                               was_covered_by=covered[:20]))
+    out["segments"] = placed
+    out["relocation"] = {"avoid_rects": len(rects), "moved": moved, "blocked": blocked}
+    return out
+
+
 WHITE_OVERRIDE_SETTERS = (
     "SetProjectionLineColor", "SetCutLineColor",
     "SetSurfaceForegroundPatternId", "SetSurfaceForegroundPatternColor",
