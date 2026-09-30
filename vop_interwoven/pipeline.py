@@ -590,6 +590,33 @@ def _compute_manifest_metrics_payload(raster, cfg):
     }
 
 
+def _merge_prior_view_diagnostics(existing_payload, views, exporter_run_id):
+    """``views`` with the prior entries of an existing views_diagnostics file
+    merged in, when that file belongs to THIS run.
+
+    Streaming calls process_document_views once per view, so each call must
+    add to the file rather than replace it. But the file is named by date
+    only, and merging ANY file already there pulled an earlier run's views
+    into this one (the same leak the view-element map had; PR #221). Given
+    an exporter run id, only a file stamped with the same id is merged; any
+    other is replaced. With none (a caller without a StreamingExporter), the
+    file is merged as before, since replacing it would keep only the last
+    per-view call.
+    """
+    if not isinstance(existing_payload, dict):
+        return views
+    if exporter_run_id is not None and (
+            (existing_payload.get("metadata") or {}).get("exporter_run_id")
+            != exporter_run_id):
+        return views
+    existing_views = existing_payload.get("views", {})
+    if not isinstance(existing_views, dict):
+        return views
+    merged = dict(existing_views)
+    merged.update(views)
+    return merged
+
+
 def process_document_views(
     doc,
     view_ids,
@@ -1607,10 +1634,15 @@ def process_document_views(
             diag_filename = f"views_diagnostics_{date_str}.json"
             diag_path = os.path.join(diagnostics_output_dir, diag_filename)
 
+            exporter_run_id = getattr(cfg, "_view_element_map_run_id", None)
             payload = {
                 "metadata": {
                     "date": date_str,
                     "run_id": run_id,
+                    # The StreamingExporter's run id (the one views_core and
+                    # run_meta.json key on); run_id above is per CALL, and
+                    # streaming makes one call per view.
+                    "exporter_run_id": exporter_run_id,
                     "doc_title": getattr(doc, "Title", "Unknown"),
                     "doc_path": getattr(doc, "PathName", None),
                     "exporter_version": "vop_interwoven",
@@ -1618,16 +1650,15 @@ def process_document_views(
                 "views": all_view_diags,
             }
 
-            # Append behavior across multiple process_document_views() calls in the same run date:
-            # if diagnostics already exists for this day, merge prior views so entries are not lost.
+            # Append behavior across multiple process_document_views() calls in the same run:
+            # streaming makes one call per view, so prior views are merged -- but only from a
+            # file this run wrote (see _merge_prior_view_diagnostics).
             if os.path.exists(diag_path):
                 try:
                     with open(diag_path, "r") as f:
                         existing_payload = json.load(f)
-                    existing_views = existing_payload.get("views", {}) if isinstance(existing_payload, dict) else {}
-                    if isinstance(existing_views, dict):
-                        existing_views.update(payload["views"])
-                        payload["views"] = existing_views
+                    payload["views"] = _merge_prior_view_diagnostics(
+                        existing_payload, payload["views"], exporter_run_id)
                 except Exception:
                     # Best-effort merge only; fall back to writing current payload.
                     pass
