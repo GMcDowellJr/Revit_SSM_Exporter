@@ -64,8 +64,9 @@ def _report_run(tmp_path, statuses, extra_rows=()):
     out, _v, _d, _e, _diag = _run(tmp_path / "cap")
     run = tmp_path / "run"
     os.makedirs(str(run / "color_id_buffer"))
-    shutil.copy(out["sidecar_path"], str(run / "color_id_buffer" / "v.json"))
     view_id = _file(out["sidecar_path"])["view_id"]
+    shutil.copy(out["sidecar_path"],
+                str(run / "color_id_buffer" / "v_{0}.json".format(view_id)))
     # "v" is the captured view; any other key is a view id as written.
     views = [{"view_id": view_id, "capture_status": statuses.get("v", "success")}]
     views += [{"view_id": vid, "capture_status": st}
@@ -128,3 +129,37 @@ def test_p2_a_run_without_run_meta_is_refused(tmp_path):
     (run / "run_meta.json").unlink()
     with pytest.raises((OSError, IOError)):
         timing_rows(str(run))
+
+
+def test_p2_derived_json_beside_the_sidecar_is_never_read_as_it(tmp_path, monkeypatch):
+    """Codex, PR #222: the decoder's <x>_anno.decoded.json and the
+    registration tool's <x>_anno.registered.json carry the same view_id; a
+    "*.json" glob let whichever came last replace the model sidecar. Both
+    listing orders are exercised, since the real order is the filesystem's."""
+    import glob as _glob
+    import tools.stage_a_timing_report as report
+
+    out, run, view_id = _report_run(tmp_path, {})
+    for name in ("v_{0}.decoded.json", "v_{0}_anno.decoded.json",
+                 "v_{0}_anno.registered.json", "v_{0}_anno.json"):
+        with open(str(run / "color_id_buffer" / name.format(view_id)), "w") as handle:
+            json.dump({"view_id": view_id}, handle)
+    total = _file(out["sidecar_path"])["registration_marks"]["timings_ms"]["total"]
+    real_glob = _glob.glob
+    for reverse in (False, True):
+        monkeypatch.setattr(report.glob, "glob",
+                            lambda p, _r=reverse: sorted(real_glob(p), reverse=_r))
+        [row] = report.timing_rows(str(run))
+        assert row["capture_total_ms"] == total, reverse
+
+
+def test_p2_two_model_sidecars_for_one_view_are_not_guessed_between(tmp_path):
+    import shutil
+    from tools.stage_a_timing_report import timing_rows
+
+    out, run, view_id = _report_run(tmp_path, {})
+    shutil.copy(out["sidecar_path"],
+                str(run / "color_id_buffer" / "w_{0}.json".format(view_id)))
+    [row] = timing_rows(str(run))
+    assert row["capture_total_ms"] is None
+    assert "more than one model sidecar" in row["reason"]

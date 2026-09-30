@@ -32,13 +32,25 @@ import csv
 import glob
 import json
 import os
+import re
 import sys
 
 
+# The production MODEL sidecar's own name: "<view name>_<view id>.json".
+# Derived files beside it -- <x>.decoded.json, <x>_anno.registered.json -- and
+# the annotation sidecar (<x>_anno.json) carry the same view_id, so matching
+# on "*.json" let whichever the filesystem listed last win (Codex, PR #222).
+_MODEL_SIDECAR_NAME = re.compile(r"_(\d+)\.json$")
+
+
 def _model_sidecars(run_dir):
+    """``{view_id: sidecar}`` for the model sidecars only. A view id claimed
+    by two files is not guessed between: it maps to None, and the row says
+    so."""
     out = {}
-    for path in glob.glob(os.path.join(run_dir, "color_id_buffer", "*.json")):
-        if path.endswith("_anno.json"):
+    for path in sorted(glob.glob(os.path.join(run_dir, "color_id_buffer", "*.json"))):
+        match = _MODEL_SIDECAR_NAME.search(os.path.basename(path))
+        if match is None:
             continue
         try:
             with open(path) as handle:
@@ -47,8 +59,10 @@ def _model_sidecars(run_dir):
             out.setdefault("_unreadable", []).append("{0}: {1}".format(path, ex))
             continue
         view_id = sidecar.get("view_id")
-        if view_id is not None:
-            out[str(view_id)] = sidecar
+        if view_id is None or str(view_id) != match.group(1):
+            continue
+        key = str(view_id)
+        out[key] = None if key in out else sidecar
     return out
 
 
@@ -94,6 +108,11 @@ def timing_rows(run_dir):
                     row["reason"] = row["reason"] or (
                         "run_meta records capture_status {0!r}; a sidecar beside "
                         "it may be another run's, so it is not joined".format(status))
+                    rows.append(row)
+                    continue
+                if view_id in sidecars and sidecars[view_id] is None:
+                    row["reason"] = row["reason"] or (
+                        "more than one model sidecar claims this view; not guessed")
                     rows.append(row)
                     continue
                 timings = ((sidecars.get(view_id) or {}).get("registration_marks") or {}
