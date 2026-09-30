@@ -149,11 +149,21 @@ def annotation_avoid_rects(view, anno_elements, basis, diag=None, view_id=None):
     """``(avoid, record)``: each annotation element's view bbox in UV, for
     registration.relocate_marks_clear_of. An element whose bbox does not
     resolve is counted, not guessed; a read that raises is counted with its
-    first error. Bboxes only -- no geometry (the Stage A rule)."""
+    first error. Bboxes only -- no geometry (the Stage A rule).
+
+    T2: an ImportInstance is NOT avoided. A view-specific DWG's bbox spans
+    the plan, so every tick inside it was moved or marked "blocked" while
+    all twelve still registered (pipeline_0930_1133, Plan_DWG: 7 false
+    blocks). Excluded imports are counted as ``excluded_imports``; no other
+    element is excluded."""
+    from .color_id_buffer import _is_import_instance
     from .revit.collection import project_bbox_corners_uv
-    avoid, no_bbox, errors = [], 0, []
+    avoid, no_bbox, errors, excluded_imports = [], 0, [], 0
     t0 = time.time()
     for elem in anno_elements or []:
+        if _is_import_instance(elem):
+            excluded_imports += 1
+            continue
         try:
             bbox = elem.get_BoundingBox(view)
             corners = (project_bbox_corners_uv(bbox, basis, diag=diag, view_id=view_id)
@@ -170,6 +180,7 @@ def annotation_avoid_rects(view, anno_elements, basis, diag=None, view_id=None):
                       [min(us), min(vs), max(us), max(vs)]))
     return avoid, {"annotation_elements": len(anno_elements or []),
                    "avoid_rects": len(avoid), "no_bbox": no_bbox,
+                   "excluded_imports": excluded_imports,
                    "read_errors": len(errors), "first_error": errors[0] if errors else None,
                    "elapsed_ms": round((time.time() - t0) * 1000.0, 3)}
 
