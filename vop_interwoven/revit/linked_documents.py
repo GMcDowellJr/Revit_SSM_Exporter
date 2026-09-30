@@ -888,8 +888,11 @@ def _collect_from_dwg_imports(doc, view, cfg, omitted_out=None):
             # the Stage A model pass takes an owned one out of its paint set and
             # hides it for its export (color_id_buffer._partition_view_specific_
             # imports), and the annotation pass claims it through the same
-            # helper. The geometry
-            # path still receives it from here as model content.
+            # helper. The geometry path does NOT receive it (G1, Greg
+            # 2026-09-30): pipeline.render_model_front_to_back drops every
+            # DWG entry after expansion, since DWG line work belongs to the
+            # colour analysis layer. This collector still returns it, because
+            # Stage A enumerates imports through it.
             #
             # UNCONFIRMED: that get_BoundingBox(view) behaves the same for a
             # view-specific import as for a model-space one has not been run.
