@@ -198,3 +198,45 @@ def test_run_meta_is_replaced_atomically_and_survives_a_failed_write(tmp_path, m
     assert (tmp_path / "run_meta.json").read_text() == before
     assert json.loads(before)["finalized"] is False
     assert not [p for p in os.listdir(str(tmp_path)) if p.endswith(".tmp")]
+
+
+def test_merged_run_meta_is_written_per_batch_and_unfinalized_until_the_end(tmp_path):
+    """Codex, PR #221: the root run_meta.json was written only after the last
+    batch, so captures already moved into <output>/color_id_buffer by an
+    earlier batch had none if a later batch raised -- and find_run_meta()
+    then decoded crop-less sidecars at the default dpi."""
+    from tools.decode_stage_a_color_id import find_run_meta
+    from vop_interwoven.run_meta import write_merged_run_meta
+    a, _ = _exporter(tmp_path / "b1")
+    b, _ = _exporter(tmp_path / "b2", run_id=a.run_id)
+    paths = [str(tmp_path / d / "run_meta.json") for d in ("b1", "b2")]
+    for p in paths:     # each batch finished cleanly on its own
+        meta = json.loads(open(p).read())
+        meta["finalized"] = True
+        open(p, "w").write(json.dumps(meta))
+    out = tmp_path / "out"
+    (out / "color_id_buffer").mkdir(parents=True)
+
+    # After batch 1, before its captures move: the root record exists, and
+    # says the run is NOT finished although batch 1 is.
+    assert write_merged_run_meta(paths[:1], str(out), run_complete=False)
+    sidecar = out / "color_id_buffer" / "V_1.json"
+    found = find_run_meta(sidecar)
+    assert found is not None and found["finalized"] is False
+    assert found["run_id"] == a.run_id and found["batches"] == 1
+
+    write_merged_run_meta(paths, str(out), run_complete=True)
+    final = find_run_meta(sidecar)
+    assert final["finalized"] is True and final["batches"] == 2
+    assert write_merged_run_meta([], str(out), run_complete=True) is None
+
+
+def test_thinrunner_writes_the_root_run_meta_before_relocating_a_batch():
+    """The batch loop is top-level Dynamo script code, so its ORDER is pinned
+    on the source: the per-batch write must precede the relocation call."""
+    # Read as text: importing the module RUNS the Dynamo script.
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
+        __file__))), "vop_interwoven", "thinrunner_streaming.py")).read()
+    write = src.index("write_merged_run_meta(batch_meta_paths, output_dir, run_complete=False)")
+    move = src.index("_relocate_batch_stage_a_outputs(\n", src.index("for batch_index"))
+    assert write < move

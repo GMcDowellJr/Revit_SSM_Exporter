@@ -624,6 +624,11 @@ try:
                 # don't strand the only copies under a temp batch folder, and keep
                 # this batch's view_summaries entries pointed at the moved files.
                 if getattr(cfg, "enable_color_id_buffer_stage_a", False):
+                    # The root record FIRST, so a capture moved below always
+                    # has a run_meta.json above it, even if a later batch
+                    # raises (finalized stays false until the loop ends).
+                    from vop_interwoven.run_meta import write_merged_run_meta
+                    write_merged_run_meta(batch_meta_paths, output_dir, run_complete=False)
                     _relocate_batch_stage_a_outputs(
                         batch_output_dir, output_dir, batch_result.get("view_summaries", [])
                     )
@@ -631,13 +636,9 @@ try:
                 _run_gc_between_chunks()
 
             if batch_meta_paths:
-                import json as _json
-                from vop_interwoven.run_meta import merge_run_metas, write_run_meta
-                metas = []
-                for path in batch_meta_paths:
-                    with open(path) as handle:
-                        metas.append(_json.load(handle))
-                merged["run_meta_path"] = write_run_meta(merge_run_metas(metas), output_dir)
+                from vop_interwoven.run_meta import write_merged_run_meta
+                merged["run_meta_path"] = write_merged_run_meta(
+                    batch_meta_paths, output_dir, run_complete=True)
             merged["run_id"] = shared_run_id
 
             result = merged

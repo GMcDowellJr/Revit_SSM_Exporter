@@ -162,6 +162,29 @@ def merge_run_metas(metas):
     return first
 
 
+def write_merged_run_meta(batch_meta_paths, output_dir, run_complete):
+    """The run's root run_meta.json from the batch records written so far.
+
+    Called after EVERY batch, before its captures are moved into
+    ``output_dir``: written only at the end, a later batch that raised left
+    the already-relocated captures with no run_meta.json beside or above
+    them, so find_run_meta() could not restore their requested config and
+    the interrupted run had no record at all (Codex, PR #221). Until
+    ``run_complete`` the record says ``finalized: false`` whatever the
+    batches say -- the run is not finished while batches remain.
+    Returns the path, or None when no batch has written a record."""
+    metas = []
+    for path in batch_meta_paths:
+        with open(path) as handle:
+            metas.append(json.load(handle))
+    if not metas:
+        return None
+    merged = merge_run_metas(metas)
+    if not run_complete:
+        merged["finalized"] = False
+    return write_run_meta(merged, output_dir)
+
+
 def write_run_meta(meta, output_dir):
     """Write run_meta.json ATOMICALLY: to a sibling temporary file, then
     replace. Opening the final path with "w" truncated the readable
