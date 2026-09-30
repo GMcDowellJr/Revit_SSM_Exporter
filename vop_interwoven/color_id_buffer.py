@@ -5385,12 +5385,15 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     # a grid or level reaches this pass by CATEGORY and has a model-space
     # extent, where a view-specific annotation does not.
     membership_basis_by_id = {}
+    unreadable_imports = []
     _model_members, anno_elements, unresolved, basis_counts = (
         split_stage_a_pass_membership(
             elements, capture_view_id_int=view_id, diag=diag,
-            basis_out=membership_basis_by_id))
+            basis_out=membership_basis_by_id,
+            unreadable_imports_out=unreadable_imports))
     membership = stage_a_pass_membership_summary(
-        _model_members, anno_elements, unresolved, basis_counts)
+        _model_members, anno_elements, unresolved, basis_counts,
+        unreadable_imports=unreadable_imports)
     if membership_error is not None:
         # The counts above are all zero, and a zero that means "the collection
         # failed" must not read like a zero that means "this view has no

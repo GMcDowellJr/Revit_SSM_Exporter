@@ -97,7 +97,24 @@ def test_d2_an_unreadable_owner_is_only_in_the_model_map_never_twice(tmp_path, m
     with open(anno_result["sidecar_path"]) as handle:
         membership = json.load(handle)["membership"]
     assert membership["unresolved_count"] == 0
-    assert membership["basis_counts"]["import_not_owned_by_view"] == 1
+    # Placed in the model pass, but NOT reported as a clean read (Codex,
+    # PR #222): its own basis, and the failed read with its reason.
+    assert membership["basis_counts"]["import_owner_unreadable"] == 1
+    assert membership["basis_counts"]["import_not_owned_by_view"] == 0
+    [entry] = membership["import_owner_unreadable"]
+    assert entry["element_id"] == UNREADABLE
+    assert entry["state"] == "unavailable"
+    assert "RuntimeError" in entry["reason"]
+
+
+def test_d2_control_a_readable_import_is_not_listed_as_unreadable(tmp_path, monkeypatch):
+    _m, _a, _r, _model, anno_result = _both(
+        tmp_path, monkeypatch, [ImportInstance(OWNED, True, owner_view_id=VIEW_ID),
+                                ImportInstance(PLACED, False)])
+    with open(anno_result["sidecar_path"]) as handle:
+        membership = json.load(handle)["membership"]
+    assert membership["import_owner_unreadable"] == []
+    assert membership["basis_counts"]["import_owner_unreadable"] == 0
 
 
 def test_d2_one_predicate_all_three_together(tmp_path, monkeypatch):
