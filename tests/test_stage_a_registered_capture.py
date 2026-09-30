@@ -446,3 +446,60 @@ def test_a_tick_under_an_annotation_element_is_moved_in_the_FILE(tmp_path):
     assert side["layout"]["relocation"]["moved"] >= 1
     assert side["mark_avoidance"]["avoid_rects"] >= 1
     assert out2["registration"]["marks"]["created_count"] == 12
+
+
+# --- a write failure on one sidecar reaches the OTHER sidecar's FILE ---------
+
+def _write_faults(path):
+    return [f for f in _sidecar(path)["capture_integrity"]["capture_faults"]
+            if f.get("fault") == "registration_sidecar_write_failed"]
+
+
+def test_a_failed_registration_marks_write_is_in_the_peer_sidecars_integrity(tmp_path, monkeypatch):
+    """Codex, PR #221: when writing registration_marks into the ANNOTATION
+    sidecar failed, the MODEL sidecar's capture_integrity was completed before
+    the fault existed, so the surviving file called the capture clean."""
+    real = registration.annotate_sidecar
+
+    def _fail_annotation(path, key, payload):
+        if path.endswith("_anno.json"):
+            return "OSError: disk full"
+        return real(path, key, payload)
+    monkeypatch.setattr(registration, "annotate_sidecar", _fail_annotation)
+    out, _v, _d, _e, _diag = _run(tmp_path, monkeypatch=monkeypatch)
+    assert out["registration_success"] is False
+    faults = _write_faults(out["sidecar_path"])
+    assert len(faults) == 1 and "annotation sidecar" in faults[0]["message"]
+
+
+def test_a_failed_integrity_completion_is_in_the_already_completed_peer(tmp_path, monkeypatch):
+    """The model sidecar is completed FIRST; the annotation completion then
+    fails. The model's file must be re-completed with that fault -- once."""
+    real = registration.complete_capture_integrity
+
+    def _fail_annotation(path, record):
+        if path.endswith("_anno.json"):
+            return "OSError: read-only"
+        return real(path, record)
+    monkeypatch.setattr(registration, "complete_capture_integrity", _fail_annotation)
+    out, _v, _d, _e, _diag = _run(tmp_path, monkeypatch=monkeypatch)
+    assert out["registration_success"] is False
+    faults = _write_faults(out["sidecar_path"])
+    assert len(faults) == 1 and "annotation sidecar" in faults[0]["message"]
+    integrity = _sidecar(out["sidecar_path"])["capture_integrity"]
+    assert integrity["completed_by"].count("registered_capture") == 1
+
+
+def test_completing_an_integrity_record_twice_gives_the_second_faults_once(tmp_path):
+    path = tmp_path / "s.json"
+    path.write_text(json.dumps({"capture_integrity": {
+        "capture_faults": [{"fault": "pass_own", "source": "annotation_pass"}],
+        "completed_by": ["annotation_pass"]}}))
+    rec = {"restore": {"rolled_back": True, "marks_still_in_project": []},
+           "faults": [{"fault": "a"}]}
+    assert registration.complete_capture_integrity(str(path), rec) is None
+    rec["faults"].append({"fault": "b"})
+    assert registration.complete_capture_integrity(str(path), rec) is None
+    integrity = json.loads(path.read_text())["capture_integrity"]
+    assert [f["fault"] for f in integrity["capture_faults"]] == ["pass_own", "a", "b"]
+    assert integrity["completed_by"] == ["annotation_pass", "registered_capture"]

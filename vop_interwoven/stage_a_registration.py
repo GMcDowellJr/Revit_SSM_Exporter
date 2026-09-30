@@ -877,7 +877,8 @@ def complete_capture_integrity(path, record):
 
     Sets ``rolled_back`` (the verdict), ``marks_still_in_project`` (a COUNT),
     appends the registered capture's own faults to ``capture_faults`` and
-    itself to ``completed_by``. A sidecar with no integrity record to complete
+    itself to ``completed_by`` -- idempotently, so completing it twice gives
+    the second record's faults once. A sidecar with no integrity record to complete
     is refused, not given a fresh one: the pass that should have written it
     did not, and that is the fact. Returns ``None`` on success, else the reason.
     """
@@ -894,10 +895,16 @@ def complete_capture_integrity(path, record):
             len(marks_left) if isinstance(marks_left, (list, dict)) else
             {"state": "unavailable",
              "reason": "the mark read-back did not complete: {0!r}".format(marks_left)})
-        integrity["capture_faults"] = list(integrity.get("capture_faults") or []) + [
-            dict(f, source="registered_capture") for f in record.get("faults") or []]
-        integrity["completed_by"] = list(integrity.get("completed_by") or []) + [
-            "registered_capture"]
+        # Idempotent: a re-completion REPLACES this capture's faults rather
+        # than appending them twice, so a peer completed before a later write
+        # failed can be completed again with the final fault list.
+        integrity["capture_faults"] = [
+            f for f in integrity.get("capture_faults") or []
+            if not (isinstance(f, dict) and f.get("source") == "registered_capture")
+        ] + [dict(f, source="registered_capture") for f in record.get("faults") or []]
+        integrity["completed_by"] = [
+            c for c in integrity.get("completed_by") or [] if c != "registered_capture"
+        ] + ["registered_capture"]
         with open(path, "w") as handle:
             json.dump(sidecar, handle, indent=2, sort_keys=True, default=str)
         return None

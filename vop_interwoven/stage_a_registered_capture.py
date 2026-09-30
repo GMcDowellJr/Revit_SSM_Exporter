@@ -522,16 +522,37 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                 anno_out["sidecar_path"], "registration_marks",
                 _registration_payload("annotation", record, colours_by_id=colours))
         # P1: the integrity record, completed with the rollback verdict and
-        # the faults above -- still after the read-back, so it is final.
+        # the faults above -- still after the read-back, so it is final. A
+        # write failure (registration_marks above, or a completion here) is a
+        # fault of THIS capture, so every sidecar already completed is
+        # completed AGAIN once one is known (the write is idempotent).
+        # Otherwise the surviving sidecar called an incomplete registered
+        # capture clean (Codex, PR #221).
+        reported = set()
+
+        def _record_write_failures():
+            added = False
+            for name, error in sorted(record["sidecar_writes"].items()):
+                if error is not None and name not in reported:
+                    reported.add(name)
+                    _fault("registration_sidecar_write_failed",
+                           "{0} sidecar: {1}".format(name, error))
+                    record["success"] = False
+                    added = True
+            return added
+
+        completed = []
         for name, out in (("model", model_out), ("annotation", anno_out)):
             if out and out.get("sidecar_path") and record["sidecar_writes"].get(name) is None:
                 record["sidecar_writes"][name] = registration.complete_capture_integrity(
                     out["sidecar_path"], record)
-        for name, error in record["sidecar_writes"].items():
-            if error is not None:
-                _fault("registration_sidecar_write_failed",
-                       "{0} sidecar: {1}".format(name, error))
-                record["success"] = False
+                if record["sidecar_writes"][name] is None:
+                    completed.append((name, out))
+        if _record_write_failures():
+            for name, out in completed:
+                record["sidecar_writes"][name] = registration.complete_capture_integrity(
+                    out["sidecar_path"], record)
+            _record_write_failures()
 
     if not isinstance(model_out, dict):
         model_out = {"view_id": view_id, "view_name": getattr(view, "Name", None),
