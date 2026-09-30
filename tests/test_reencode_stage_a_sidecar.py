@@ -112,3 +112,22 @@ def test_an_old_near_face_w_entry_reencodes_to_the_c1_c4_shape():
     assert new == {"uv_rect": [1.234568, 2.0, 3.0, 4.0], "near_face_w": -1.0,
                    "category": "Walls", "source": "HOST",
                    "bbox_3d": {"min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 1.0]}}
+
+
+def test_the_cli_takes_a_tiff_a_folder_and_refuses_anything_else(tmp_path, capsys):
+    """Greg ran it on a capture's .tiff and got a UnicodeDecodeError: the
+    image was read as JSON text. A .tiff now resolves to its sidecar, a folder
+    re-encodes every capture sidecar in it, and anything else is refused."""
+    from tools import reencode_stage_a_sidecar as tool
+    old_anno, old_model, _c = pair._write_pair(tmp_path)
+    assert tool.main([str(old_model.with_suffix(".tiff"))]) == 0
+    assert (tmp_path / "V_1.reencoded.json").exists()
+
+    assert tool.main([str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "TOTAL 2 sidecars" in out     # V_1.json, V_1_anno.json; not the .reencoded one
+
+    stray = tmp_path / "notes.txt"
+    stray.write_text("x")
+    assert tool.main([str(stray)]) == 2
+    assert tool.main([str(tmp_path / "missing.tiff")]) == 2

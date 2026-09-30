@@ -14,6 +14,8 @@ exactly as the writer does for an axis-aligned bbox -- so a re-encoded file
 UNDER-reports rotation. It is a size/compatibility check, not a capture.
 
     python tools/reencode_stage_a_sidecar.py <old.json> [<out.json>]
+    python tools/reencode_stage_a_sidecar.py <capture.tiff>       # uses its .json
+    python tools/reencode_stage_a_sidecar.py <color_id_buffer folder>
 
 Uses the WRITER's own C2/C4 helpers (vop_interwoven.color_id_buffer), not a
 copy of them, so the re-encoded shape cannot drift from the real one.
@@ -106,21 +108,64 @@ def _dump(obj) -> str:
     return json.dumps(obj, indent=2, sort_keys=True)
 
 
+_SKIP_SUFFIXES = (".registered", ".decoded", ".reencoded", ".overlay")
+
+
+def resolve_sidecar(path: Path) -> Path:
+    """The JSON sidecar for ``path``: itself, or -- for a capture's .tiff --
+    the .json beside it. Anything else is refused with a reason rather than
+    decoded as text (a TIFF read as UTF-8 raised UnicodeDecodeError)."""
+    if path.suffix.lower() in (".tif", ".tiff"):
+        sibling = path.with_suffix(".json")
+        if not sibling.exists():
+            raise ValueError("{0} is a capture image; its sidecar {1} does not "
+                             "exist".format(path, sibling.name))
+        return sibling
+    if path.suffix.lower() != ".json":
+        raise ValueError("{0} is not a Stage A sidecar (.json) or capture "
+                         "(.tiff)".format(path))
+    return path
+
+
+def collect(arg: str) -> list[Path]:
+    """One sidecar, a capture's .tiff, or every capture sidecar in a folder
+    (tool outputs -- .registered/.decoded/.reencoded -- skipped)."""
+    p = Path(arg)
+    if p.is_dir():
+        return sorted(q for q in p.glob("*.json")
+                      if not any(q.stem.endswith(sfx) for sfx in _SKIP_SUFFIXES))
+    return [resolve_sidecar(p)]
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("sidecar")
-    ap.add_argument("out", nargs="?")
+    ap.add_argument("sidecar", help="a sidecar .json, a capture .tiff (its .json "
+                                    "is used), or a folder of them")
+    ap.add_argument("out", nargs="?", help="output path (single sidecar only)")
     args = ap.parse_args(argv)
-    src = Path(args.sidecar)
-    old = json.loads(src.read_text(encoding="utf-8"))
-    new = reencode(old)
-    dst = Path(args.out) if args.out else src.with_name(src.stem + ".reencoded.json")
-    dst.write_text(_dump(new), encoding="utf-8")
-    before, after = len(_dump(old).encode()), len(_dump(new).encode())
-    print("{0}: {1} B -> {2} B ({3:+.1f} %), written {4}".format(
-        src.name, before, after, 100.0 * (after - before) / before, dst))
+    try:
+        sources = collect(args.sidecar)
+    except ValueError as ex:
+        print("refused: {0}".format(ex))
+        return 2
+    if args.out and len(sources) != 1:
+        ap.error("an output path takes exactly one sidecar")
+    total_before = total_after = 0
+    for src in sources:
+        old = json.loads(src.read_text(encoding="utf-8"))
+        new = reencode(old)
+        dst = Path(args.out) if args.out else src.with_name(src.stem + ".reencoded.json")
+        dst.write_text(_dump(new), encoding="utf-8")
+        before, after = len(_dump(old).encode()), len(_dump(new).encode())
+        total_before += before
+        total_after += after
+        print("{0}: {1} B -> {2} B ({3:+.1f} %), written {4}".format(
+            src.name, before, after, 100.0 * (after - before) / before, dst))
+    if len(sources) > 1:
+        print("TOTAL {0} sidecars: {1} B -> {2} B ({3:+.1f} %)".format(
+            len(sources), total_before, total_after,
+            100.0 * (total_after - total_before) / max(1, total_before)))
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())
