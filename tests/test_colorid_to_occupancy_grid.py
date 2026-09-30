@@ -120,3 +120,17 @@ def test_coverage_origin_is_unchanged_when_the_offset_is_zero(tmp_path):
     # The blob may straddle two cells (cell is 0.8 ft here, the blob 1.0 ft);
     # what matters is that indexing starts at the shared origin, column 0.
     assert set(cols.tolist()) == {0}
+
+
+def test_a_current_frame_sidecar_is_refused_not_given_a_64_cell_grid():
+    """pipeline_0930_1453: the current sidecar's backoff_floor_px is the
+    capture's 64 px minimum, and reading it as raster W made every view 64
+    cells wide (Plan_CropActive: 4.40 ft cells for a 1.00 ft paper cell). A
+    frame-record sidecar is refused and pointed at tools/stage_a_grid.py; the
+    pre-frame sidecars above keep working (their control)."""
+    sc = {"view_id": 7, "color_assignment_map": {},
+          "frame": {"status": "value", "backoff_floor_px": 64, "min_axis_px": 64,
+                    "fit_direction": "horizontal", "crop_uv": list(CROP),
+                    "view_scale": 96.0}}
+    with pytest.raises(ValueError, match="stage_a_grid"):
+        c2o.grid_assumed(sc, GRID)
