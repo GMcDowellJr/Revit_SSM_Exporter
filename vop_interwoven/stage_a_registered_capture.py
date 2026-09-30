@@ -47,6 +47,7 @@ the ticks; the sidecars carry the marks' UV and colours for it.
 """
 
 import copy
+import hashlib
 import time
 
 from .revit.safe_api import element_id_value as _element_id_int
@@ -239,7 +240,7 @@ def mark_fpp_ft(view, raster, cfg):
 # is reported as ``unaccounted``, not hidden.
 TIMING_PARTITION = ("authored_override_scan", "mark_layout", "marks_create",
                     "model_pass", "suppression", "annotation_pass", "rollback",
-                    "restore_element_overrides")
+                    "restore_element_overrides", "view_membership_readback")
 
 
 def unaccounted_ms(timings_ms):
@@ -249,6 +250,36 @@ def unaccounted_ms(timings_ms):
         return None
     return round(float(total) - sum(float(timings_ms[k]) for k in TIMING_PARTITION
                                     if timings_ms.get(k) is not None), 3)
+
+
+def view_membership_ids(doc, view):
+    """Sorted ids FilteredElementCollector(doc, view) returns: the view's
+    element membership as Revit reports it. Raises when it cannot be read."""
+    from Autodesk.Revit.DB import FilteredElementCollector
+    ids = (_element_id_int(getattr(e, "Id", None))
+           for e in FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType())
+    return sorted(i for i in ids if i is not None)
+
+
+def membership_fingerprint(ids):
+    """PURE. ``{"count", "sha1"}`` of an id list (sorted here) -- written so one run's
+    view membership can be compared with the next run's."""
+    ids = sorted(int(i) for i in ids)
+    digest = hashlib.sha1(",".join(str(i) for i in ids).encode("ascii"))
+    return {"count": len(ids), "sha1": digest.hexdigest()}
+
+
+def view_membership_verdict(before, after, limit=200):
+    """PURE. What the view's membership read after the rollback adds to or
+    removes from the membership read before the capture."""
+    before_set, after_set = set(before), set(after)
+    added = sorted(after_set - before_set)
+    removed = sorted(before_set - after_set)
+    return {"status": "changed" if (added or removed) else "unchanged",
+            "before": membership_fingerprint(before),
+            "after": membership_fingerprint(after),
+            "added_count": len(added), "removed_count": len(removed),
+            "added": added[:limit], "removed": removed[:limit]}
 
 
 def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=None):
@@ -317,6 +348,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
     model_out = None
     anno_out = None
     model_member_ids = []
+    membership_before = None
     detail_lines = {"ids": [], "hidden": []}
 
     def _fault(fault, message, exc=None):
@@ -349,6 +381,13 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         # ---- the model members, and what was authored on them BEFORE ------
         collected = list(FilteredElementCollector(doc, view.Id)
                          .WhereElementIsNotElementType())
+        # The view's membership BEFORE anything is written, for the
+        # read-back after the rollback (pipeline_0930_1133 -> 1249:
+        # Plan_RVTLink's collector returned 37 fewer elements at the start
+        # of the next run, and nothing measured whether a run changed it).
+        membership_before = sorted(
+            i for i in (_element_id_int(getattr(e, "Id", None)) for e in collected)
+            if i is not None)
         model_members, _anno, unresolved, _basis = split_stage_a_pass_membership(
             collected, capture_view_id_int=view_id, diag=diag)
         model_member_ids = [i for i in (_element_id_int(getattr(e, "Id", None))
@@ -598,6 +637,33 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                 _fault("element_overrides_unverified",
                        "{0} model member override(s) could not be read back".format(
                            len(authored_after[1])))
+        # ---- 6b: the view's MEMBERSHIP, read back -----------------------
+        # A run must leave the view showing what it showed. None of the
+        # read-backs above looks at which elements the view collector
+        # returns; this does, against the list read at the start.
+        if membership_before is not None:
+            _t = time.time()
+            try:
+                restore["view_membership"] = view_membership_verdict(
+                    membership_before, view_membership_ids(doc, view))
+            except Exception as ex:
+                restore["view_membership"] = {
+                    "status": "unverified",
+                    "before": membership_fingerprint(membership_before),
+                    "reason": "{0}: {1}".format(type(ex).__name__, ex)}
+                _fault("view_membership_unverified",
+                       "the view's elements could not be read back after the "
+                       "rollback", ex)
+            record["timings_ms"]["view_membership_readback"] = round(
+                (time.time() - _t) * 1000.0, 3)
+            verdict = restore["view_membership"]
+            if verdict.get("status") == "changed":
+                _fault("view_membership_changed",
+                       "after the rollback the view returns {0} element(s) it did "
+                       "not before and lacks {1} it had; first added {2}, first "
+                       "removed {3}".format(
+                           verdict["added_count"], verdict["removed_count"],
+                           verdict["added"][:5], verdict["removed"][:5]))
         record["restore"] = restore
         record["timings_ms"]["total"] = round((time.time() - t_total) * 1000.0, 3)
         record["timings_ms"]["unaccounted"] = unaccounted_ms(record["timings_ms"])

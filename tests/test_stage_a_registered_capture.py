@@ -175,8 +175,9 @@ def test_a_rollback_that_undoes_nothing_is_a_fault_in_the_FILE(tmp_path):
     Mutation: read back before the rollback, or skip either check."""
     out, view, doc, exports, diag = _run(tmp_path, rollback_restores=())
     faults = [f["fault"] for f in out["registration"]["faults"]]
+    # The ticks left in the document also change what the view returns.
     assert faults == ["registration_marks_left_in_project",
-                      "element_overrides_left_behind"]
+                      "element_overrides_left_behind", "view_membership_changed"]
     assert out["registration_success"] is False
     persisted = _sidecar(out["annotation_sidecar_path"])["registration_marks"]["faults"]
     assert [f["fault"] for f in persisted] == faults
@@ -187,7 +188,7 @@ def test_marks_left_behind_alone_are_a_fault(tmp_path):
     """View restored, document not: only the marks' own check can see it."""
     out, view, doc, exports, diag = _run(tmp_path, rollback_restores=("view",))
     faults = [f["fault"] for f in out["registration"]["faults"]]
-    assert faults == ["registration_marks_left_in_project"]
+    assert faults == ["registration_marks_left_in_project", "view_membership_changed"]
 
 
 def test_a_failed_model_pass_skips_the_annotation_pass_and_still_rolls_back(
@@ -404,7 +405,8 @@ def test_p1_a_rollback_that_undoes_nothing_is_counted_in_the_FILE(tmp_path):
     assert integrity["marks_still_in_project"] == 12
     assert [f["fault"] for f in integrity["capture_faults"]
             if f.get("source") == "registered_capture"] == [
-        "registration_marks_left_in_project", "element_overrides_left_behind"]
+        "registration_marks_left_in_project", "element_overrides_left_behind",
+        "view_membership_changed"]
 
 
 def test_t1_the_tick_line_style_reaches_BOTH_sidecar_files(tmp_path):
