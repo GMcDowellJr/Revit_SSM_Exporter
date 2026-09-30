@@ -164,6 +164,10 @@ def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=N
         "pass": pass_name,
         "marks": marks,
         "layout": (record.get("marks") or {}).get("layout"),
+        # T1: the line style (and projection weight) the ticks were drawn at.
+        # Chosen in create_registration_marks but, until this, never written
+        # to a sidecar (pipeline_0930_0739: absent from all 16).
+        "line_style": (record.get("marks") or {}).get("line_style"),
         "reference_source": record.get("mark_reference_source"),
         "colour_source": ("MARK_COLOUR, one reserved colour for every tick; each "
                           "tick is its own connected component"

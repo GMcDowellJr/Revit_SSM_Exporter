@@ -403,3 +403,15 @@ def test_p1_a_rollback_that_undoes_nothing_is_counted_in_the_FILE(tmp_path):
     assert [f["fault"] for f in integrity["capture_faults"]
             if f.get("source") == "registered_capture"] == [
         "registration_marks_left_in_project", "element_overrides_left_behind"]
+
+
+def test_t1_the_tick_line_style_reaches_BOTH_sidecar_files(tmp_path):
+    """pipeline_0930_0739: the chosen line style was absent from all 16
+    sidecars -- recorded in memory, never carried into registration_marks.
+    The fake curve exposes no LineStyle, so here it is the explicit
+    "unavailable" record; what is pinned is that the FILE carries it."""
+    out, _view, _doc, _exports, _diag = _run(tmp_path)
+    for path in (out["sidecar_path"], out["annotation_sidecar_path"]):
+        rm = _sidecar(path)["registration_marks"]
+        assert rm.get("line_style") is not None, path
+        assert rm["line_style"] == out["registration"]["marks"]["line_style"]
