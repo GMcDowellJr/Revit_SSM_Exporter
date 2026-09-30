@@ -1106,8 +1106,29 @@ def _resolve_tiff_path(sidecar_path: Path, sidecar: dict[str, Any]) -> Path:
     )
 
 
+def find_run_meta(sidecar_path: Path):
+    """The run's run_meta.json (C9) for a capture sidecar, or None.
+
+    Since C6 the sidecar records only ACHIEVED values; the requested dpi lives
+    in run_meta.json's config. A sidecar with no crop (every annotation
+    sidecar) derives feet-per-pixel from the requested pixel size AND dpi, so
+    without run_meta it silently fell back to DEFAULT_COLOR_ID_EXPORT_DPI --
+    right only when the run used the default (found on pipeline_0928_0953's
+    re-encoded Elevation sidecar). Looked for beside the sidecar and one level
+    up (the run folder holds color_id_buffer/)."""
+    for folder in (sidecar_path.parent, sidecar_path.parent.parent):
+        candidate = folder / "run_meta.json"
+        if candidate.exists():
+            try:
+                return json.loads(candidate.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return None
+    return None
+
+
 def decode_one(sidecar_path: Path, bounds_uv=None) -> Path:
-    sidecar = legacy_view(json.loads(sidecar_path.read_text(encoding="utf-8")))
+    sidecar = legacy_view(json.loads(sidecar_path.read_text(encoding="utf-8")),
+                          run_config=find_run_meta(sidecar_path))
     model_crop_offset_uv = None
     if bounds_uv is None:
         sidecar_bounds = sidecar.get("bounds_xy")

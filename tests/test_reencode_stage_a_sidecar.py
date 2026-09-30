@@ -131,3 +131,31 @@ def test_the_cli_takes_a_tiff_a_folder_and_refuses_anything_else(tmp_path, capsy
     stray.write_text("x")
     assert tool.main([str(stray)]) == 2
     assert tool.main([str(tmp_path / "missing.tiff")]) == 2
+
+
+def test_a_crop_less_sidecar_decodes_at_the_runs_dpi_from_run_meta(tmp_path):
+    """pipeline_0928_0953, Elevation annotation sidecar: with no crop the
+    decoder derives feet-per-pixel from the requested px AND dpi. C6 moved
+    the dpi to run_meta.json, so a re-encoded sidecar decoded at the 150 dpi
+    DEFAULT -- identical only because that run used 150. With run_meta
+    present the decoder must use the run's dpi."""
+    old_anno, _m, _c = pair._write_pair(tmp_path)
+    old = json.loads(old_anno.read_text())
+    old["resolution"]["requested_export_dpi"] = 300.0
+    old_anno.write_text(json.dumps(old))
+    before = _decoded(old_anno)
+    assert before["feet_per_pixel_basis"]["numerator"].endswith("sidecar_requested_export_dpi")
+
+    new = reencode(old)
+    assert "requested_export_dpi" not in new["frame"]
+    old_anno.write_text(json.dumps(new))
+    # Without run_meta: the default, and the basis SAYS so.
+    no_meta = _decoded(old_anno)
+    assert no_meta["feet_per_pixel_basis"]["numerator"].endswith("default_export_dpi")
+    # With run_meta beside it: the run's dpi, and the same answer as before.
+    (tmp_path / "run_meta.json").write_text(json.dumps(
+        {"config": {"color_id_buffer_export_dpi": 300.0}}))
+    with_meta = _decoded(old_anno)
+    assert with_meta["feet_per_pixel"] == before["feet_per_pixel"]
+    assert with_meta["feet_per_pixel_basis"] == before["feet_per_pixel_basis"]
+    assert no_meta["feet_per_pixel"] != before["feet_per_pixel"]
