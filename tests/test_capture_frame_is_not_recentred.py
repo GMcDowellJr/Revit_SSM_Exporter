@@ -26,6 +26,7 @@ import math
 import types
 
 import pytest
+from tools.stage_a_sidecar_shapes import legacy_view
 
 import vop_interwoven.color_id_buffer as color_id_buffer
 from vop_interwoven.config import Config
@@ -194,7 +195,7 @@ def test_a_capped_view_is_captured_against_the_annotation_frame(tmp_path):
     capture frame is the annotation extent -- not the model-centred window
     the grid was left with."""
     md = _capture(tmp_path, _raster_from(_bounds_result()))
-    ef = md["export_frame"]
+    ef = legacy_view(md)["export_frame"]
 
     assert ef["status"] == "value"
     assert ef["frame_source"] == "anno_uncapped"
@@ -215,7 +216,7 @@ def test_the_annotation_extent_is_inside_the_captured_image(tmp_path):
     Against the shipped code the far corner falls outside, because the frame
     was re-centred on the model."""
     md = _capture(tmp_path, _raster_from(_bounds_result()))
-    ef = md["export_frame"]
+    ef = legacy_view(md)["export_frame"]
     fs = ef["frame_snapped_uv"]
     assert fs[0] <= ANNO_BOUNDS.xmin + 1e-9
     assert fs[1] <= ANNO_BOUNDS.ymin + 1e-9
@@ -229,7 +230,7 @@ def test_the_model_crop_is_not_narrowed_to_the_capped_window(tmp_path):
     back to that window -- reintroducing the re-centred rectangle through the
     back door on the exact views this fixes."""
     md = _capture(tmp_path, _raster_from(_bounds_result()))
-    ef = md["export_frame"]
+    ef = legacy_view(md)["export_frame"]
     # A is the model rectangle, intact, not the envelope window.
     assert ef["crop_snapped_uv"][0] <= MODEL_BOUNDS.xmin + 1e-9
     assert ef["crop_snapped_uv"][1] <= MODEL_BOUNDS.ymin + 1e-9
@@ -243,7 +244,7 @@ def test_the_narrowing_case_is_actually_reached(tmp_path):
     stops arriving, A collapses to B, crop_is_frame goes True and the
     narrowing assertions pass by testing nothing."""
     md = _capture(tmp_path, _raster_from(_bounds_result()))
-    ef = md["export_frame"]
+    ef = legacy_view(md)["export_frame"]
     assert ef["crop_is_frame"] is False
     assert ef["crop_px"][0] < ef["frame_px"][0]
     assert ef["crop_px"][1] < ef["frame_px"][1]
@@ -254,7 +255,7 @@ def test_without_a_model_clip_the_capture_spans_the_whole_frame(tmp_path):
     itself. This is production-reachable -- model_bounds_uv is None whenever
     the crop-box branch did not run -- so it is pinned rather than assumed."""
     md = _capture(tmp_path, _raster_from(_bounds_result(), model_clip_bounds=None))
-    ef = md["export_frame"]
+    ef = legacy_view(md)["export_frame"]
     assert ef["crop_is_frame"] is True
     assert ef["crop_px"] == ef["frame_px"]
     assert ef["crop_offset_px"] == [0, 0]
@@ -268,7 +269,7 @@ def test_an_uncapped_view_still_reports_its_own_frame(tmp_path):
     r = _bounds_result(max_W=10_000, max_H=10_000)
     assert r["anno_cap_envelope_applied"] is False
     md = _capture(tmp_path, _raster_from(r))
-    ef = md["export_frame"]
+    ef = legacy_view(md)["export_frame"]
     assert ef["anno_cap_envelope_applied"] is False
     assert ef["frame_uv"] == pytest.approx(
         [ANNO_BOUNDS.xmin, ANNO_BOUNDS.ymin, ANNO_BOUNDS.xmax, ANNO_BOUNDS.ymax])

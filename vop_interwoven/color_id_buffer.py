@@ -17,7 +17,6 @@ from .resolution_contract import (
     DEFAULT_COLOR_ID_EXPORT_DPI,
     MAX_STAGE_A_AXIS_PX,
     cap_axes,
-    effective_export_dpi as _effective_export_dpi,
     frame_export_geometry,
 )
 
@@ -1293,51 +1292,259 @@ def _near_face_w_category_name(elem):
     return getattr(cat, "Name", None)
 
 
-def _near_face_w_import_symbol_name(doc, elem):
-    """Reader (raises on failure) for a DWG import's SYMBOL (type) name.
+# P1 (Greg, 2026-09-29): probe/restore blocks are NOT written to the sidecar
+# file. They stay on the in-memory record (the "metadata" a pass returns,
+# which the Dynamo probes read); the FILE carries one capture_integrity
+# record in their place. restore_failures, capture_faults and paint_failures
+# are folded INTO that record.
+SIDECAR_PROBE_ONLY_KEYS = (
+    "categories_hidden", "filter_state", "phase_filter_state",
+    "phase_swap_element_set_audit", "category_halftone_state",
+    "category_halftone_outcomes", "unconfirmed_api_claims",
+    "authored_overrides_replaced", "override_restore_check",
+    "colorable_category_source", "palette_step",
+    "restore_failures", "capture_faults", "paint_failures",
+)
 
-    Recorded ALONGSIDE the ImportInstance's own category rather than instead
-    of it (Greg, 2026-09-21): which of the two is stable across Revit versions
-    is unverified, so both are captured and post decides. This is the same
-    GetTypeId() -> Name read revit/linked_documents.py already uses to build a
-    DWG proxy's source_label.
 
-    UNCONFIRMED: no Revit API call was run this session. In particular, that
-    the type element resolves and exposes Name for every import flavour
-    (linked CAD vs imported CAD) is assumed, not verified.
+def _drop_not_visible_in_view(doc, view, resolved_ids, diag=None, view_id=None):
+    """M1: ``(ids the view shows, not_painted record)``.
+
+    An element is NOT shown when the view hides all annotation categories
+    ("Show annotation categories in this view" off) and its category is an
+    annotation one, when its category is hidden in the view, or when the
+    element itself is hidden in the view. Those are left unpainted and
+    COUNTED per category under reason "not_visible_in_view" -- never listed
+    per element.
+
+    A visibility that cannot be READ keeps the element painted, as before
+    this gate (dropping content on a failed read is the silent kind of
+    wrong), and is counted separately under "visibility_unreadable".
     """
-    type_id = elem.GetTypeId()
-    if type_id is None:
+    from Autodesk.Revit.DB import CategoryType
+    record = {"not_visible_in_view": {}, "not_visible_by_rule": {},
+              "visibility_unreadable": {}}
+    try:
+        anno_hidden = bool(view.AreAnnotationCategoriesHidden)
+        record["annotation_categories_hidden"] = anno_hidden
+    except Exception as ex:
+        anno_hidden = None
+        record["annotation_categories_hidden"] = _gs_unavailable(
+            "{0}: {1}".format(type(ex).__name__, ex))
+    shown = []
+    for eid in resolved_ids:
+        # The element and category reads are inside the guard too: a stale
+        # element whose GetElement/Category/Name RAISES is a visibility that
+        # cannot be read, not a reason to abort the pass (Codex, PR #221).
+        cat_name = "<unreadable category>"
+        try:
+            elem = doc.GetElement(eid)
+            cat = getattr(elem, "Category", None)
+            cat_name = getattr(cat, "Name", None) or "<no category>"
+            rule = None
+            if cat is not None:
+                if anno_hidden and cat.CategoryType == CategoryType.Annotation:
+                    rule = "annotation_categories_hidden"
+                elif view.GetCategoryHidden(cat.Id):
+                    rule = "category_hidden"
+            if rule is None and elem is not None and elem.IsHidden(view):
+                rule = "element_hidden"
+        except Exception:
+            record["visibility_unreadable"][cat_name] = (
+                record["visibility_unreadable"].get(cat_name, 0) + 1)
+            shown.append(eid)
+            continue
+        if rule is None:
+            shown.append(eid)
+            continue
+        record["not_visible_in_view"][cat_name] = (
+            record["not_visible_in_view"].get(cat_name, 0) + 1)
+        record["not_visible_by_rule"][rule] = record["not_visible_by_rule"].get(rule, 0) + 1
+    if record["visibility_unreadable"] and diag is not None:
+        diag.warn(phase="color_id_buffer", callsite="annotation_visibility",
+                  message="visibility could not be read for {0} element(s); they are "
+                          "painted as before".format(
+                              sum(record["visibility_unreadable"].values())),
+                  view_id=view_id)
+    return shown, record
+
+
+def _capture_integrity(pass_name, capture_faults, restore_failure_count,
+                       paint_failure_count):
+    """P1: ONE per-view integrity record, always complete.
+
+    ``status: "value"`` and every field present, so a clean record (no
+    faults, zero counts) is never mistaken for an absent one. rolled_back and
+    marks_still_in_project are not this pass's to know: the registered capture
+    fills them in AFTER its rollback (stage_a_registration.complete_capture_
+    integrity) and appends itself to ``completed_by``; until then they read
+    "not_applicable" with the reason.
+    """
+    return {
+        "status": "value",
+        "completed_by": [pass_name],
+        "rolled_back": _gs_not_applicable(
+            "this pass restores the view step by step; a registered capture's "
+            "TransactionGroup rollback is recorded by the registered capture"),
+        "marks_still_in_project": _gs_not_applicable(
+            "registration marks are drawn and counted by the registered capture"),
+        "restore_failures": int(restore_failure_count),
+        "capture_faults": list(capture_faults),
+        "paint_failures": int(paint_failure_count),
+    }
+
+
+def _write_sidecar(json_path, out_dir, state_out):
+    """Write the sidecar FILE: the record minus SIDECAR_PROBE_ONLY_KEYS."""
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
+    record = dict((k, v) for k, v in state_out.items()
+                  if k not in SIDECAR_PROBE_ONLY_KEYS)
+    with open(json_path, "w") as f:
+        json.dump(record, f, indent=2, sort_keys=True)
+
+
+# C4: per-element geometry in near_face_w_map is rounded to this many decimal
+# places of a foot (1e-6 ft, ~0.3 micron) -- far under any pixel. Frame, fpp,
+# resolution and registration values are NEVER rounded; this is used only on
+# the per-element entries below.
+ELEMENT_GEOMETRY_DECIMALS = 6
+# A basis vector is dimensionless, so rounding it to 1e-6 would put an error
+# of |local coordinate| * 5e-7 ft on the recovered corners -- 5e-4 ft for a
+# bbox whose local coordinates reach 1000 ft. Rounded at the axis-alignment
+# tolerance instead, so the recovered box stays within the 1e-6 ft budget.
+BASIS_DECIMALS = 9
+
+
+def _round_ft(value, decimals=ELEMENT_GEOMETRY_DECIMALS):
+    """Round one per-element float; None passes through. ``+ 0.0`` turns a
+    rounded -0.0 into 0.0 so a json dump never writes "-0.0"."""
+    if value is None:
         return None
-    import_type = doc.GetElement(type_id)
-    if import_type is None:
-        return None
-    return getattr(import_type, "Name", None)
+    return round(float(value), decimals) + 0.0
 
 
-def _near_face_w_view_specific(elem):
-    """Reader (raises on failure) for whether an import is placed "this view
-    only".
+def _round_geometry(value):
+    """C4 rounding for a per-element geometry VALUE (a list, an {min, max}
+    dict, or a bbox_transform record). State objects pass through untouched."""
+    if isinstance(value, dict):
+        if "state" in value:
+            return value
+        return dict(
+            (k, [_round_ft(c, BASIS_DECIMALS if k.startswith("basis_") else
+                           ELEMENT_GEOMETRY_DECIMALS) for c in v])
+            for k, v in value.items())
+    if isinstance(value, list):
+        return [_round_ft(c) for c in value]
+    return value
 
-    A tag on the model pass's per-element record. Since 2026-09-29 a
-    view-specific import never reaches that record -- it is annotation, and
-    _partition_view_specific_imports takes it out of the model pass -- so on
-    a resolved import this reads False; the classification itself lives in
-    collection_policy.view_specific_import_state().
-    """
-    return bool(elem.ViewSpecific)
+
+def _uv_rect_or_state(corners_uv):
+    """C3: the UV AABB as ``[umin, vmin, umax, vmax]`` from
+    project_bbox_uv_and_near_face_w's four corners, or an "unavailable" state
+    when the projection failed (no view basis, or see diagnostics)."""
+    if corners_uv is None:
+        return _gs_unavailable(
+            "bbox present but it could not be projected to view UV (no view "
+            "basis, or see diagnostics for the failing transform)")
+    (u0, v0), _c1, (u1, v1), _c3 = corners_uv
+    return [u0, v0, u1, v1]
 
 
-def _dwg_only_state(elem, reader, diag=None, callsite=None, view_id=None):
-    """Three-valued wrapper for a field that exists only for a DWG import.
+def _bbox_transform_or_state(bbox, outer_transform, diag=None, view_id=None,
+                             elem_id=None, callsite="near_face_w.bbox_transform"):
+    """C3: None when the AABB is exact; the oriented-box record when the
+    transform rotates; an "unavailable" state when it could not be read."""
+    from .revit.collection import bbox_oriented_transform
+    try:
+        return bbox_oriented_transform(bbox, outer_transform=outer_transform)
+    except Exception as ex:
+        if diag is not None:
+            diag.warn(phase="collection", callsite=callsite,
+                      message="bbox transform could not be read; the AABB is kept "
+                              "and the oriented box is not recoverable: {0}".format(ex),
+                      view_id=view_id, elem_id=elem_id)
+        return _gs_unavailable("{0}: {1}".format(type(ex).__name__, ex))
 
-    Gated on the ELEMENT, not on the resolved source: source can itself be
-    "unavailable" (no expansion record), and a field's applicability must not
-    inherit another field's failure.
-    """
-    if not _is_import_instance(elem):
-        return _gs_not_applicable("not a DWG ImportInstance")
-    return _gs_capture(reader, diag=diag, callsite=callsite, view_id=view_id)
+
+def _link_bbox_transform_or_state(proxy, diag=None, view_id=None, elem_id=None):
+    """C3 for a LINK element: the linked element's own bbox under the link
+    transform. An element that cannot be re-read is recorded, not assumed
+    axis-aligned."""
+    elem = getattr(proxy, "element", None)
+    try:
+        link_bbox = elem.get_BoundingBox(None) if elem is not None else None
+    except Exception as ex:
+        link_bbox = None
+        reason = "linked element bbox read raised {0}: {1}".format(type(ex).__name__, ex)
+    else:
+        reason = "the linked element's own bbox could not be read"
+    if link_bbox is None:
+        if diag is not None:
+            diag.warn(phase="collection", callsite="near_face_w.link.bbox_transform",
+                      message=reason, view_id=view_id, elem_id=elem_id)
+        return _gs_unavailable(reason)
+    return _bbox_transform_or_state(
+        link_bbox, getattr(proxy, "transform", None), diag=diag, view_id=view_id,
+        elem_id=elem_id, callsite="near_face_w.link.bbox_transform")
+
+
+def _new_rotation_stats():
+    """R1: the per-capture cost of the rotation read, so its price at scale is
+    measured rather than estimated. Written to the sidecar as "rotation_read"."""
+    return {"elements_read": 0, "rotated": 0, "unavailable": 0, "elapsed_ms": 0.0}
+
+
+def _round_rotation(record):
+    """C4 rounding for an R1 record: origin at 1e-6 ft, dimensionless unit
+    vectors (basis_*, direction) at BASIS_DECIMALS. "source" passes through."""
+    if not isinstance(record, dict) or "state" in record:
+        return record
+    out = {}
+    for k, v in record.items():
+        if k == "source":
+            out[k] = v
+        elif k == "origin":
+            out[k] = [_round_ft(c) for c in v]
+        else:
+            out[k] = [_round_ft(c, BASIS_DECIMALS) for c in v]
+    return out
+
+
+def _rotation_or_state(elem, outer_transform, stats, diag=None, view_id=None,
+                       elem_id=None, callsite="near_face_w.rotation"):
+    """R1: the element's rotation record, None when it is not rotated, or an
+    "unavailable" state when the read failed -- never "not rotated" for a
+    read that did not happen. Times the read into ``stats``."""
+    from .revit.collection import element_rotation
+    t0 = time.time()
+    try:
+        record = element_rotation(elem, outer_transform=outer_transform)
+    except Exception as ex:
+        if diag is not None:
+            diag.warn(phase="collection", callsite=callsite,
+                      message="element rotation could not be read; recorded as "
+                              "unavailable: {0}".format(ex),
+                      view_id=view_id, elem_id=elem_id)
+        record = _gs_unavailable("{0}: {1}".format(type(ex).__name__, ex))
+        if stats is not None:
+            stats["unavailable"] += 1
+    else:
+        if record is not None and stats is not None:
+            stats["rotated"] += 1
+    if stats is not None:
+        stats["elements_read"] += 1
+        stats["elapsed_ms"] += (time.time() - t0) * 1000.0
+    return _round_rotation(record)
+
+
+def _plain_or_state(state):
+    """C2 writer shape for a field read three-valued: the bare value when the
+    read succeeded, the state object (with its reason) otherwise. Readers
+    that predate C2 get a state object for every entry; both are valid."""
+    if isinstance(state, dict) and state.get("state") == _GS_VALUE:
+        return state.get("value")
+    return state
 
 
 def _host_source_state(elem, elem_id_int, host_source_types):
@@ -1373,6 +1580,7 @@ def _host_source_state(elem, elem_id_int, host_source_types):
 def _collect_near_face_w_data(
     doc, view, raster, cfg, resolved_ids, link_category_color_map,
     diag=None, view_id=None, link_proxies=None, host_source_types=None,
+    rotation_stats=None,
 ):
     """Collect near-face-W (nearest projected depth) and a UV bbox footprint
     for every HOST and LINK element resolved by export_color_id_buffer_view,
@@ -1395,15 +1603,18 @@ def _collect_near_face_w_data(
     instances at all.
 
     Returns {"host": {"<elem_id>": entry}, "link": {"<link_inst_id>:<link_elem_id>": entry}}
-    where entry is {"bbox_corners_uv": [[u,v],...] | None, "near_face_w": float | None,
-    "category": str | None, "bbox_3d": <three-valued>}; LINK entries additionally
+    where entry is {"uv_rect": [umin, vmin, umax, vmax] | <unavailable state>,
+    "near_face_w": float | None, "category": str | None,
+    "bbox_3d": {"min": [x,y,z], "max": [x,y,z]} | <unavailable state>} plus
+    "bbox_transform" ONLY when the bbox's transform rotates it (C3: see
+    revit/collection.bbox_oriented_transform); LINK entries additionally
     carry "link_inst_id"/"link_elem_id" ints for the identity resolver's
     convenience. "bbox_3d" (Stage A step 4, decision B) is the element's
     model/host-space axis-aligned extent, three-valued, from the same
-    transformed corner set as bbox_corners_uv -- see bbox_world_aabb() for
+    transformed corner set as uv_rect -- see bbox_world_aabb() for
     why it is an upper bound rather than the element's oriented shape. A bbox or
-    view basis that cannot be resolved records near_face_w/bbox_corners_uv
-    as None rather than omitting the element entirely -- CLAUDE.md's "no
+    view basis that cannot be resolved records near_face_w None and uv_rect as
+    an "unavailable" state object rather than omitting the element entirely -- CLAUDE.md's "no
     silent failure": every element in the resolved set gets an entry.
 
     ``link_proxies`` lets the caller hand in an already-collected view-scoped
@@ -1420,12 +1631,19 @@ def _collect_near_face_w_data(
     their existing keys and values unchanged; the distinction is carried by
     the NEW three-valued "source" key on host entries only.
 
-    "source" is {"state": "value", "value": "HOST"|"DWG"} when it is known,
-    and {"state": "unavailable", "reason": ...} when it is not -- never a
-    guess and never a stand-in default, per the Stage A three-valued rule.
+    "source" is the plain string "HOST"|"DWG" when it is known (C2; sidecars
+    written before C2 carry {"state": "value", "value": ...}), and
+    {"state": "unavailable", "reason": ...} when it is not -- never a guess
+    and never a stand-in default, per the Stage A three-valued rule.
+    "category_state" is written only when the category read FAILED.
     Left None (the standalone/legacy call), every host entry records
     "unavailable" with that as the reason: this function cannot derive a top
     element's source from an element id alone.
+
+    R1: "rotation" is written ONLY when the element is rotated (see
+    revit/collection.element_rotation) or its rotation read failed (an
+    "unavailable" state). ``rotation_stats`` (a _new_rotation_stats() dict)
+    accumulates the read's count and time when supplied.
     """
     from .revit.collection import (
         resolve_element_bbox, project_bbox_uv_and_near_face_w, bbox_world_aabb,
@@ -1454,21 +1672,14 @@ def _collect_near_face_w_data(
             else None
         )
         source_state = _host_source_state(elem, elem_id_int, host_source_types)
-        import_symbol_state = _dwg_only_state(
-            elem, lambda e=elem: _near_face_w_import_symbol_name(doc, e),
-            diag=diag, callsite="near_face_w.host.import_symbol", view_id=view_id,
-        )
-        view_specific_state = _dwg_only_state(
-            elem, lambda e=elem: _near_face_w_view_specific(e),
-            diag=diag, callsite="near_face_w.host.view_specific", view_id=view_id,
-        )
         bbox, _src = resolve_element_bbox(
             elem, view=None, diag=diag,
             context={"view_id": view_id, "elem_id": elem_id_int, "source_type": "HOST"},
         )
         near_face_w = None
-        bbox_corners_uv = None
+        uv_rect = _gs_unavailable("no bbox resolvable for this element")
         bbox_3d = _gs_unavailable("no bbox resolvable for this element")
+        bbox_transform = None
         if bbox is not None:
             # Computed together (not via a separate estimate_nearest_depth_
             # from_bbox() call) so near_face_w and bbox_corners_uv are always
@@ -1480,6 +1691,7 @@ def _collect_near_face_w_data(
                 bbox, vb, diag=diag, view_id=view_id, elem_id=elem_id_int,
             )
             near_face_w = _finite_or_none(near_face_w)
+            uv_rect = _uv_rect_or_state(bbox_corners_uv)
             # Stage A step 4 / decision B: the 3D extent, from the SAME bbox
             # and the same transform ladder. bbox_world_aabb() shares
             # _bbox_world_corners() with the projection above precisely so
@@ -1487,22 +1699,28 @@ def _collect_near_face_w_data(
             aabb = bbox_world_aabb(
                 bbox, diag=diag, view_id=view_id, elem_id=elem_id_int)
             bbox_3d = (
-                _gs_value(aabb) if aabb is not None
+                aabb if aabb is not None
                 else _gs_unavailable(
                     "bbox present but its corners could not be resolved to "
                     "host space (see diagnostics for the failing transform)")
             )
+            bbox_transform = _bbox_transform_or_state(
+                bbox, None, diag=diag, view_id=view_id, elem_id=elem_id_int)
         elif diag is not None:
             diag.warn(
                 phase="collection",
                 callsite="near_face_w.host",
-                message="No bbox resolvable; near_face_w/bbox_corners_uv recorded as None",
+                message="No bbox resolvable; near_face_w/uv_rect recorded as unavailable",
                 view_id=view_id,
                 elem_id=elem_id_int,
             )
         host_out[str(elem_id_int)] = {
-            "bbox_corners_uv": bbox_corners_uv,
-            "near_face_w": near_face_w,
+            # C3: the UV AABB as [umin, vmin, umax, vmax] (pre-C3 sidecars:
+            # "bbox_corners_uv", its four corners -- exactly derivable).
+            "uv_rect": _round_geometry(uv_rect),
+            "near_face_w": _round_ft(near_face_w),
+            # C2: one plain string (None = the element has no Category, or
+            # the read failed -- "category_state" below says which).
             "category": category_name,
             # --- Stage A step 4, additive. Decision B (2026-09-21): the 3D
             # AABB is captured per view alongside the projection, so depth
@@ -1518,25 +1736,36 @@ def _collect_near_face_w_data(
             # in tools/notes/data/stage_a_excursion_byColor_20260917T104744
             # .csv, the only real multi-view Stage A run committed here --
             # costs +305.5 B/element, +40.1% of that map. Rounding the six
-            # coordinates to 1e-6 ft would make it +258.9 B (+34.0%); no
-            # rounding is applied, because precision is a decision nobody
-            # has taken. Storing the 3D once per RUN instead saves only the
+            # coordinates to 1e-6 ft would make it +258.9 B (+34.0%). C4
+            # (Greg, 2026-09-29) took that decision: per-element geometry is
+            # rounded to 1e-6 ft (_round_geometry). Storing the 3D once per RUN instead saves only the
             # duplication between views, which on that run is 1.17x (800
             # element slots, 683 distinct elements) = ~15%, and costs a
             # second artifact and a join -- so it is per-view here.
-            "bbox_3d": bbox_3d,
+            "bbox_3d": _round_geometry(bbox_3d),
             # --- Stage A step 1, additive. Pre-existing keys above are
             # untouched; a consumer that does not know these exist reads the
             # same record it always did.
-            "source": source_state,
-            "category_state": category_state,
-            # DWG-only; "not_applicable" for a true HOST element. Both of the
-            # DWG's candidate identifiers are recorded because which one is
-            # stable across Revit versions is unverified -- see
-            # _near_face_w_import_symbol_name.
-            "import_symbol_state": import_symbol_state,
-            "view_specific_state": view_specific_state,
+            # C2: plain "HOST"/"DWG" when read; the three-valued state object
+            # only when it was NOT, so a failure still carries its reason.
+            "source": _plain_or_state(source_state),
+            # No per-element import_symbol_state / view_specific_state: they
+            # were probe-debug data. Whether an import is view-specific is a
+            # capture decision, and it is recorded where it is made -- the
+            # sidecar's "view_specific_imports", which keeps every import
+            # whose ViewSpecific could not be read (it stays in this pass).
         }
+        if bbox_transform is not None:
+            host_out[str(elem_id_int)]["bbox_transform"] = _round_geometry(bbox_transform)
+        rotation = _rotation_or_state(
+            elem, None, rotation_stats, diag=diag, view_id=view_id, elem_id=elem_id_int)
+        if rotation is not None:
+            host_out[str(elem_id_int)]["rotation"] = rotation
+        # C2: a category that READ is exactly "category" above, so its state
+        # object is written only when the read failed (its reason is the only
+        # thing "category": None cannot carry).
+        if category_state.get("state") != _GS_VALUE:
+            host_out[str(elem_id_int)]["category_state"] = category_state
 
     link_out = {}
     colored_cat_names = set(link_category_color_map.keys())
@@ -1584,13 +1813,15 @@ def _collect_near_face_w_data(
                 context={"view_id": view_id, "elem_id": link_elem_id_int, "source_type": "LINK"},
             )
             near_face_w = None
-            bbox_corners_uv = None
+            uv_rect = _gs_unavailable("no bbox resolvable for this link element")
             bbox_3d = _gs_unavailable("no bbox resolvable for this link element")
+            bbox_transform = None
             if bbox_host is not None:
                 bbox_corners_uv, near_face_w = project_bbox_uv_and_near_face_w(
                     bbox_host, vb, diag=diag, view_id=view_id, elem_id=link_elem_id_int,
                 )
                 near_face_w = _finite_or_none(near_face_w)
+                uv_rect = _uv_rect_or_state(bbox_corners_uv)
                 # Already host-space (see the note above on
                 # LinkedElementProxy.get_BoundingBox), so no link transform
                 # is passed here either -- the 3D AABB and the UV footprint
@@ -1598,29 +1829,52 @@ def _collect_near_face_w_data(
                 aabb = bbox_world_aabb(
                     bbox_host, diag=diag, view_id=view_id, elem_id=link_elem_id_int)
                 bbox_3d = (
-                    _gs_value(aabb) if aabb is not None
+                    aabb if aabb is not None
                     else _gs_unavailable(
                         "bbox present but its corners could not be resolved to "
                         "host space (see diagnostics for the failing transform)")
                 )
+                # The proxy's bbox is ALREADY an AABB of the linked element's
+                # bbox under (link transform after bbox.Transform) -- see
+                # linked_documents._transform_bbox_to_host -- so its own
+                # Transform says nothing. The orientation is read from the
+                # linked element's bbox and the link transform, composed.
+                bbox_transform = _link_bbox_transform_or_state(
+                    proxy, diag=diag, view_id=view_id, elem_id=link_elem_id_int)
             elif diag is not None:
                 diag.warn(
                     phase="collection",
                     callsite="near_face_w.link",
-                    message="No bbox resolvable; near_face_w/bbox_corners_uv recorded as None",
+                    message="No bbox resolvable; near_face_w/uv_rect recorded as unavailable",
                     view_id=view_id,
                     elem_id=link_elem_id_int,
                 )
             key = "{0}:{1}".format(link_inst_id_int, link_elem_id_int)
             link_out[key] = {
-                "bbox_corners_uv": bbox_corners_uv,
-                "near_face_w": near_face_w,
+                "uv_rect": _round_geometry(uv_rect),
+                "near_face_w": _round_ft(near_face_w),
                 "category": cat_name,
                 # Stage A step 4, additive -- see the host entry's note.
-                "bbox_3d": bbox_3d,
+                "bbox_3d": _round_geometry(bbox_3d),
                 "link_inst_id": link_inst_id_int,
                 "link_elem_id": link_elem_id_int,
             }
+            if bbox_transform is not None:
+                link_out[key]["bbox_transform"] = _round_geometry(bbox_transform)
+            linked_elem = getattr(proxy, "element", None)
+            if linked_elem is None:
+                rotation = _gs_unavailable("the linked element could not be reached "
+                                           "from its proxy")
+                if rotation_stats is not None:
+                    rotation_stats["elements_read"] += 1
+                    rotation_stats["unavailable"] += 1
+            else:
+                rotation = _rotation_or_state(
+                    linked_elem, getattr(proxy, "transform", None), rotation_stats,
+                    diag=diag, view_id=view_id, elem_id=link_elem_id_int,
+                    callsite="near_face_w.link.rotation")
+            if rotation is not None:
+                link_out[key]["rotation"] = rotation
     return {"host": host_out, "link": link_out}
 
 
@@ -2997,6 +3251,10 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     geom = None
     frame_uv = None
     frame_source = "unavailable"
+    # C7: "crop_a" (the registered capture) sizes this pass from the model
+    # crop A alone -- frame B is neither computed into the lattice nor
+    # recorded. "frame_b" is the two-pass fallback's sizing, unchanged.
+    sizing_frame = str(getattr(cfg, "color_id_buffer_model_frame", "frame_b") or "frame_b")
     if raster is not None and getattr(raster, "bounds_xy", None) is not None:
         # FRAME B IS THE ANNOTATION FRAME AS COMPUTED, not as the cap envelope
         # left it. view_basis clips the annotation-expanded bounds to a sheet
@@ -3044,7 +3302,17 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                             "sizing the export from the frame alone".format(ex),
                     view_id=view_id,
                 )
+        if sizing_frame == "crop_a":
+            # A is still clamped into the rectangle above (compute_model_crop
+            # needs one to clamp into); with no narrower model clip it IS that
+            # rectangle, exactly as before. What changes is that the lattice
+            # is A's own: fpp and the cap are decided on A's axes.
+            frame_uv = crop_uv
+            frame_source = "crop_a"
         try:
+            if frame_uv is None:
+                raise ValueError("crop A could not be resolved, and the "
+                                 "registered capture does not size from frame B")
             geom = frame_export_geometry(
                 frame_uv, crop_uv, scale, export_dpi,
                 fit_direction=fit_direction, max_axis_px=cap_axis_px,
@@ -3164,6 +3432,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     # same object this pass sized itself from rather than a later copy.
     if geometry_out is not None and geom is not None:
         geometry_out.update(geom)
+        geometry_out["sizing_frame"] = sizing_frame
 
     # The floor on the dimension-mismatch backoff.
     #
@@ -3990,9 +4259,16 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             try:
                 cat_id = ElementId(int(cat_id_int))
                 cat_ogs = view.GetCategoryOverrides(cat_id)
-                category_halftone_state[cat_id_int] = cat_ogs.Halftone
+                was_halftone = cat_ogs.Halftone
                 cat_ogs.SetHalftone(False)
                 view.SetCategoryOverrides(cat_id, cat_ogs)
+                # Recorded only AFTER the write lands -- the annotation pass's
+                # fix, ported. Recorded before it, a category Revit refuses
+                # ("Category cannot be overridden") entered the restore loop,
+                # which then raised undoing a change that never happened:
+                # every view of pipeline_0930_0739 carried a false
+                # model_view_state_not_restored fault from exactly this.
+                category_halftone_state[cat_id_int] = was_halftone
             except Exception as ex:
                 if diag is not None:
                     diag.warn(
@@ -4047,11 +4323,13 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             link_proxies, _link_status = _collect_view_scoped_link_proxies(
                 doc, view, cfg, diag=diag, view_id=view_id,
             )
+        rotation_stats = _new_rotation_stats()
         near_face_w_map = _collect_near_face_w_data(
             doc, view, raster, cfg, resolved_ids, link_category_color_map,
             diag=diag, view_id=view_id, link_proxies=link_proxies,
-            host_source_types=host_source_types,
+            host_source_types=host_source_types, rotation_stats=rotation_stats,
         )
+        rotation_stats["elapsed_ms"] = round(rotation_stats["elapsed_ms"], 3)
 
         # Paint per-element, but never let one element's failure (some categories/
         # nested sub-components legitimately reject graphic overrides) roll back
@@ -4112,6 +4390,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     finally:
         restore_tx = Transaction(doc, "VOP Stage A RESTORE color ID buffer")
         restore_tx.Start()
+        model_restore_failures = []
 
         # Best-effort restore: every step below is independently guarded. Revit
         # transactions are all-or-nothing on RollBack, so a single failing step
@@ -4124,6 +4403,11 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             try:
                 fn()
             except Exception as ex:
+                # A category Revit REFUSES was left unchanged, so it is not a
+                # restore failure (same classifier as the annotation pass).
+                if not (callsite == "restore_category_halftone"
+                        and _category_override_refused(ex)):
+                    model_restore_failures.append(callsite)
                 if diag is not None:
                     diag.error(
                         phase="color_id_buffer",
@@ -4298,17 +4582,6 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         _read_back_view_specific_imports(doc, view, view_specific_imports,
                                          diag=diag, view_id=view_id)
 
-    # The dpi this capture ACHIEVED, as opposed to the dpi that was asked
-    # for. They come apart three ways, all in the sizing path above: the
-    # max(64, ...) floor on pre_cap_px, the two-axis cap, and the
-    # dimension-mismatch backoff.
-    #
-    # The arithmetic lives in resolution_contract.effective_export_dpi() and is
-    # CALLED, not replicated: a test that reimplements the formula binds itself
-    # to its own copy, so production could regress to the fitted-axis or
-    # grid-extent form with the test still green. That is a review finding on
-    # PR #202, not a hypothetical. See that function for why the denominator is
-    # the rendered crop and why BOTH axes are used with the smaller winning.
     # Stage A step 3. The lattice this pass PUBLISHED is a request; what
     # Revit accepted is a measurement, and only the second one tells the
     # annotation pass whether the model image is actually on that lattice.
@@ -4320,182 +4593,142 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         geometry_out["model_accepted_px"] = int(actual_pixel_size)
         geometry_out["model_dim_check"] = dim_report.get("dim_check")
 
-    effective_export_dpi = _effective_export_dpi(
-        crop_bounds_xy, dim_report.get("actual_w"), dim_report.get("actual_h"), scale)
+    # C5: ONE frame record. What used to be two blocks ("resolution" and
+    # "export_frame") plus the top-level "bounds_xy" is folded into "frame",
+    # with the exact duplicates between them written once:
+    #   export_dpi          == requested_export_dpi        (dropped)
+    #   requested_px (both) == requested_pixel_size        (dropped)
+    #   export_frame's pre_cap_px / cap_applied / max_axis_px /
+    #     requested_export_dpi == the resolution copies    (written once)
+    #   bounds_xy           -> "crop_uv", same value
+    #   crop_snapped_uv     written only when != crop_uv
+    #   raster_bounds_uv    written only when != frame_uv
+    # Readers fall back to the old keys (tools/stage_a_sidecar_shapes.py).
+    #
+    # C6: ACHIEVED values only. Not written, each derivable:
+    #   requested_export_dpi  -> the run config snapshot (C9),
+    #                            color_id_buffer_export_dpi
+    #   requested_pixel_size  == dim_check_attempts[0]["requested_px"]
+    #   requested_axis        == "height" if fit_direction == "vertical"
+    #                            else "width"
+    #   requested_fpp_ft      == view_scale / (12 * requested_export_dpi)
+    #   effective_export_dpi  == resolution_contract.effective_export_dpi(
+    #                            crop_uv, actual_w, actual_h, view_scale)
+    frame_record = {
+        "view_scale": scale,
+        # Which axis pixel_size set (the sizing input, normalised).
+        "fit_direction": fit_direction,
+        # The pixel size the FINAL export attempt used.
+        "pixel_size": actual_pixel_size,
+        # The two-axis cap: pre_cap_px is the uncapped request.
+        "pre_cap_px": cap["pre_cap_px"],
+        "cap_applied": bool(cap["cap_applied"]),
+        "max_axis_px": cap["max_axis_px"],
+        "predicted_derived_px": cap["accepted_derived_px"],
+        # MEASURED. dim_check is "pass" only when the fitted axis came back
+        # within 1 px of the request and neither axis exceeds the ceiling;
+        # "read_failed" is NOT a pass.
+        "actual_w": dim_report.get("actual_w"),
+        "actual_h": dim_report.get("actual_h"),
+        "dim_check": dim_report.get("dim_check"),
+        "dim_check_ceiling_px": dim_report.get("dim_check_ceiling_px"),
+        "dim_read_error": dim_report.get("dim_read_error"),
+        "dim_check_attempts": dim_report.get("attempts"),
+        "backoff_stop_reason": dim_report.get("backoff_stop_reason"),
+        "backoff_floor_px": backoff_floor_px,
+        "backoff_max_retries": MAX_MISMATCH_RETRIES,
+        # The rectangle actually set as view.CropBox (pre-C5 "bounds_xy").
+        # None when no crop could be applied: the TIFF's extent is then
+        # FitToPage's and must not be read from this record.
+        "crop_uv": list(crop_bounds_xy) if crop_bounds_xy is not None else None,
+    }
+    if sizing_frame != "crop_a":
+        # Frame B's paper extent (the frame-B fallback only; C7).
+        frame_record.update({"paper_fit_in": paper_fit_in,
+                             "paper_width_in": paper_width_in,
+                             "paper_height_in": paper_height_in})
+    if geom is not None and frame_uv is not None and sizing_frame == "crop_a":
+        # C7: the lattice is crop A's own. No frame B: no frame_uv,
+        # frame_source, frame_extent_ft, frame_snapped_uv, frame_px,
+        # raster_bounds_uv, crop_offset_px or crop_is_frame -- every one of
+        # them described B or A-within-B.
+        frame_record.update({
+            "status": "value",
+            "sizing_frame": "crop_a",
+            "crop_px": [int(v) for v in geom["crop_px"]],
+            "achieved_export_dpi": float(geom["achieved_export_dpi"]),
+            "achieved_fpp_ft": float(geom["achieved_fpp_ft"]),
+            "min_axis_px": int(geom["min_axis_px"]),
+            "floor_applied_to_crop": bool(geom["floor_applied_to_crop"]),
+            "cap_applied_by_cap_axes": bool(geom["cap_applied_by_cap_axes"]),
+            "lattice_corrections": int(geom["lattice_corrections"]),
+            "verified_against_revit": False,
+        })
+        crop_snapped_uv = [float(v) for v in geom["crop_snapped_uv"]]
+        if crop_snapped_uv != frame_record["crop_uv"]:
+            frame_record["crop_snapped_uv"] = crop_snapped_uv
+    elif geom is not None and frame_uv is not None:
+        # Stage A step 2's frame-derived lattice. THREE-VALUED as a block: a
+        # capture with no usable frame writes status "unavailable" + reason.
+        raster_bounds_uv = (
+            [float(raster.bounds_xy.xmin), float(raster.bounds_xy.ymin),
+             float(raster.bounds_xy.xmax), float(raster.bounds_xy.ymax)]
+            if raster is not None and getattr(raster, "bounds_xy", None) is not None
+            else None)
+        frame_record.update({
+            "status": "value",
+            # B as resolved, unclipped and un-re-centred.
+            "frame_uv": [float(v) for v in frame_uv],
+            # "anno_uncapped" or "raster_bounds" (then the grid IS the frame).
+            "frame_source": frame_source,
+            "anno_cap_envelope_applied": bool(
+                getattr(raster, "anno_cap_envelope_applied", False)),
+            "frame_extent_ft": [float(v) for v in geom["frame_extent_ft"]],
+            # B rounded OUT to the pixel lattice; B.min does not move.
+            "frame_snapped_uv": [float(v) for v in geom["frame_snapped_uv"]],
+            "frame_px": [int(v) for v in geom["frame_px"]],
+            # A snapped onto B's lattice, and its whole-pixel offset from B.min.
+            "crop_px": [int(v) for v in geom["crop_px"]],
+            "crop_offset_px": [int(v) for v in geom["crop_offset_px"]],
+            # True when no narrower model crop applied, so A IS B.
+            "crop_is_frame": bool(geom["crop_is_frame"]),
+            "achieved_export_dpi": float(geom["achieved_export_dpi"]),
+            "achieved_fpp_ft": float(geom["achieved_fpp_ft"]),
+            "min_axis_px": int(geom["min_axis_px"]),
+            "floor_applied_to_crop": bool(geom["floor_applied_to_crop"]),
+            "cap_applied_by_cap_axes": bool(geom["cap_applied_by_cap_axes"]),
+            "lattice_corrections": int(geom["lattice_corrections"]),
+            # The producer's intent; dim_check above is the measurement.
+            "verified_against_revit": False,
+        })
+        crop_snapped_uv = [float(v) for v in geom["crop_snapped_uv"]]
+        if crop_snapped_uv != frame_record["crop_uv"]:
+            # Only when the crop could not be applied (crop_uv None).
+            frame_record["crop_snapped_uv"] = crop_snapped_uv
+        if raster_bounds_uv != frame_record["frame_uv"]:
+            # The capped grid window, when it differs from B.
+            # model_crop_offset_uv is defined against THIS rectangle.
+            frame_record["raster_bounds_uv"] = raster_bounds_uv
+    if not frame_record["dim_check_attempts"]:
+        # Only then is the request not derivable from the attempts.
+        frame_record["requested_pixel_size"] = pixel_size
+    if "status" not in frame_record:
+        frame_record.update({
+            "status": "unavailable",
+            "reason": ("no usable frame bounds for this view; the export fell back "
+                       "to the 1 paper-inch minimum and is not frame-derived"),
+        })
 
     state_out = {
         "view_id": view_id,
-        "resolution": {
-            "pixel_size": actual_pixel_size,
-            "requested_pixel_size": pixel_size,
-            # The dpi that was REQUESTED. Named for that, because the old name
-            # ("export_dpi") reads as a property of the export and has already
-            # been consumed as a measurement once. Nothing here verifies that
-            # Revit delivered it; effective_export_dpi below is the measurement.
-            "requested_export_dpi": export_dpi,
-            # The dpi the exported file actually carries on its UNPADDED axis,
-            # measured against the RENDERED CROP (see above). Identically
-            # view_scale / (12 * feet_per_pixel) for the feet_per_pixel a
-            # decoder derives from this same sidecar's "bounds_xy", so the
-            # producer's figure and the decoder's cannot drift apart. None
-            # when the file's dimensions or the crop rectangle are unknown.
-            "effective_export_dpi": effective_export_dpi,
-            # RETAINED, not renamed away: every sidecar already written carries
-            # this name, and tools/decode_stage_a_color_id.py's pixel-space
-            # fallback reads it. Dropping it would orphan those captures. It is
-            # the request -- the same value as requested_export_dpi -- and new
-            # readers should prefer that name.
-            "export_dpi": export_dpi,
-            "view_scale": scale,
-            # Which axis pixel_size set. Without it a reader cannot tell
-            # whether the other dimension was requested or derived, and every
-            # size-derived metric downstream assumes one of the two.
-            "fit_direction": fit_direction,
-            # The paper dimension pixel_size was derived from, so a reader can
-            # reproduce the request instead of assuming it came from the width.
-            # This is the view's real paper extent along requested_axis, and
-            # it is the ONLY field that survives both the 64 px floor on
-            # pre_cap_px and the axis cap: a reader reconstructing physical
-            # scale should start here and fall back to pre_cap_px/export_dpi
-            # only for sidecars written before it existed.
-            "paper_fit_in": paper_fit_in,
-            # Both axes, so a reader never has to infer the other one from
-            # an aspect ratio it would have to derive from the pixels.
-            "paper_width_in": paper_width_in,
-            "paper_height_in": paper_height_in,
-            # The two-axis cap. pre_cap_px is the uncapped request, which is
-            # what makes a capped export reconstructable: before this field
-            # existed the pre-cap value was discarded and no consumer could
-            # recover the view's real paper extent from the sidecar.
-            "requested_axis": requested_axis,
-            "requested_px": pixel_size,
-            "pre_cap_px": cap["pre_cap_px"],
-            "cap_applied": bool(cap["cap_applied"]),
-            "max_axis_px": cap["max_axis_px"],
-            "predicted_derived_px": cap["accepted_derived_px"],
-            # What the exported file MEASURED, as opposed to everything above
-            # it, which is what was asked for. dim_check is "pass" only when
-            # the fitted axis came back within 1 px of the request and
-            # neither axis exceeds dim_check_ceiling_px; "read_failed" means
-            # the dimensions could not be read at all and is NOT a pass.
-            "actual_w": dim_report.get("actual_w"),
-            "actual_h": dim_report.get("actual_h"),
-            "dim_check": dim_report.get("dim_check"),
-            "dim_check_ceiling_px": dim_report.get("dim_check_ceiling_px"),
-            "dim_read_error": dim_report.get("dim_read_error"),
-            "dim_check_attempts": dim_report.get("attempts"),
-            "backoff_stop_reason": dim_report.get("backoff_stop_reason"),
-            "backoff_floor_px": backoff_floor_px,
-            "backoff_max_retries": MAX_MISMATCH_RETRIES,
-        },
-        # Stage A step 2. ADDITIVE: every key above keeps its meaning and its
-        # name; this records what the frame-derived sizing did, which the
-        # shipped keys have no place for.
-        #
-        # THREE-VALUED, per the standing rule. A capture that could not resolve
-        # a frame carries {"status": "unavailable", "reason": ...} rather than
-        # zeros or a silently absent key -- a zero here would read as "the
-        # frame is degenerate" and an absent key as "written before step 2".
-        #
-        # requested vs achieved is spelled out for dpi, px AND fpp because
-        # this project has misread that distinction four times (dpi, CellSize,
-        # IsOnSheet, cap) and treats it as a class, not as three incidents.
-        "export_frame": (
-            {
-                "status": "value",
-                # B as resolved, unclipped and un-re-centred.
-                "frame_uv": [float(v) for v in frame_uv],
-                # Which rectangle B came from. "anno_uncapped" is the
-                # annotation frame as computed; "raster_bounds" means no
-                # annotation expansion applied, so the grid's own rectangle
-                # already IS the frame. Recorded rather than inferable,
-                # because the two are equal whenever the cap envelope did not
-                # fire and a reader cannot otherwise tell which path ran.
-                "frame_source": frame_source,
-                # True when view_basis' cap envelope clipped and re-centred
-                # the grid's bounds. On those views raster.bounds_xy is a
-                # model-centred window rather than the annotation extent, and
-                # the capture is deliberately NOT sized against it.
-                "anno_cap_envelope_applied": bool(
-                    getattr(raster, "anno_cap_envelope_applied", False)),
-                # The grid's own rectangle, for the capped case where it
-                # differs from the frame. model_crop_offset_uv is defined
-                # against THIS rectangle, not against frame_uv.
-                "raster_bounds_uv": (
-                    [float(raster.bounds_xy.xmin), float(raster.bounds_xy.ymin),
-                     float(raster.bounds_xy.xmax), float(raster.bounds_xy.ymax)]
-                    if raster is not None and getattr(raster, "bounds_xy", None) is not None
-                    else None),
-                "frame_extent_ft": [float(v) for v in geom["frame_extent_ft"]],
-                # B rounded OUT to the pixel lattice: what the capture
-                # realises. Grows only at the max corner, so B.min -- the
-                # single origin the frame-reconciliation invariant rests on --
-                # does not move.
-                "frame_snapped_uv": [float(v) for v in geom["frame_snapped_uv"]],
-                "frame_px": [int(v) for v in geom["frame_px"]],
-                # A snapped onto B's lattice, and its whole-pixel offset from
-                # B.min. This is decision A's registration data: B overlays A
-                # by translating this many pixels, with no resampling.
-                "crop_snapped_uv": [float(v) for v in geom["crop_snapped_uv"]],
-                "crop_px": [int(v) for v in geom["crop_px"]],
-                "crop_offset_px": [int(v) for v in geom["crop_offset_px"]],
-                # True when no narrower model crop applied, so A IS B. Kept
-                # separate from crop_offset_px == [0, 0], which a crop that
-                # starts at B's own corner also produces.
-                "crop_is_frame": bool(geom["crop_is_frame"]),
-                "requested_export_dpi": float(geom["requested_export_dpi"]),
-                "achieved_export_dpi": float(geom["achieved_export_dpi"]),
-                "requested_fpp_ft": float(geom["requested_fpp_ft"]),
-                "achieved_fpp_ft": float(geom["achieved_fpp_ft"]),
-                "requested_px": int(geom["requested_px"]),
-                "pre_cap_px": int(geom["pre_cap_px"]),
-                "cap_applied": bool(geom["cap_applied"]),
-                "max_axis_px": geom["max_axis_px"],
-                "min_axis_px": int(geom["min_axis_px"]),
-                # True when the crop fell below the floor and feet-per-pixel
-                # was re-derived from it, putting achieved dpi ABOVE the
-                # request. False both when the floor was not needed and when
-                # the ceiling refused it -- requested_px below min_axis_px
-                # with this False is the refused case.
-                "floor_applied_to_crop": bool(geom["floor_applied_to_crop"]),
-                # Whether the ceiling moved the request through cap_axes
-                # itself, as opposed to through the lattice correction. Both
-                # set cap_applied; this says which.
-                "cap_applied_by_cap_axes": bool(geom["cap_applied_by_cap_axes"]),
-                # How many times the lattice had to step down to keep both of
-                # B's axes inside the ceiling. Normally 0. Non-zero is not an
-                # error, but it means the achieved figures above are a step or
-                # more below what the cap alone would predict.
-                "lattice_corrections": int(geom["lattice_corrections"]),
-                # UNCONFIRMED (no Revit run in this session): that Revit
-                # renders the snapped rectangle at exactly crop_px pixels. The
-                # post-export dim_check above is what measures it; these are
-                # the producer's intent, not a measurement.
-                "verified_against_revit": False,
-            }
-            if geom is not None and frame_uv is not None else
-            {
-                "status": "unavailable",
-                "reason": ("no usable frame bounds for this view; the export fell back "
-                           "to the 1 paper-inch minimum and is not frame-derived"),
-            }
-        ),
-        # View-local UV rectangle (min_u, min_v, max_u, max_v) the export
-        # was cropped to -- the same tuple set as view.CropBox above, not
-        # recomputed here. None when the crop could not be applied (no
-        # raster/bounds_xy provided, or the view has no CropBox), in which
-        # case the TIFF's extent is whatever FitToPage auto-computed and a
-        # decode step cannot assume this field describes it. May now be
-        # narrower than the raster's own bounds_xy (see compute_model_crop()
-        # above) -- model_crop_offset_uv below records that relationship.
-        "bounds_xy": list(crop_bounds_xy) if crop_bounds_xy is not None else None,
+        "frame": frame_record,
         # (dxmin, dymin, dxmax, dymax) such that ADDING this to raster.
         # bounds_xy's own corners reconstructs this capture's actual crop
-        # (the "bounds_xy" rectangle above): render.xmin = raster.bounds_xy.
+        # (frame["crop_uv"] above): render.xmin = raster.bounds_xy.
         # xmin + dxmin, etc. Always (0.0, 0.0, 0.0, 0.0) when this capture's
         # crop IS raster.bounds_xy unchanged (no narrower model_clip_bounds
         # was available, or the crop could not be applied at all -- in which
-        # case "bounds_xy" above is also None). Diagnostic/reconstruction
+        # case frame["crop_uv"] is None). Diagnostic/reconstruction
         # data only -- see compute_model_crop()'s docstring and tools/
         # decode_stage_a_color_id.py for why decoded UV points must not be
         # shifted by this a second time.
@@ -4510,6 +4743,8 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # color_id.py and never modifies color_assignment_map/
         # link_category_color_map above.
         "near_face_w_map": near_face_w_map,
+        # R1: what the per-element rotation read cost on this capture.
+        "rotation_read": rotation_stats,
         # Stage A step 1, additive: DWG ImportInstances the collector found
         # but did not paint, each with the reason. An EMPTY list means every
         # import found was collected; it never means "no imports exist" and
@@ -4570,10 +4805,6 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             orig_view_template_id.IntegerValue if orig_view_template_id is not None else None
         ),
     }
-    if not os.path.exists(out_dir):
-        os.makedirs(out_dir)
-    with open(json_path, "w") as f:
-        json.dump(state_out, f, indent=2, sort_keys=True)
 
     # A dimension mismatch that survived the halving backoff is a failed
     # view, not a successful one with a note attached. The TIFF and sidecar
@@ -4615,6 +4846,25 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                 view_id=view_id,
             )
 
+    # P1: the integrity record, then THE WRITE -- after failure_reason is
+    # known, so the file carries the faults (defect class 4; the model
+    # sidecar used to be written before they were computed).
+    model_faults = []
+    if unsuppressed_imports:
+        model_faults.append({"fault": "view_specific_import_not_suppressed",
+                             "detail": [r.get("element_id") for r in unsuppressed_imports]})
+    if dim_report.get("dim_check") == "mismatch":
+        model_faults.append({"fault": "export_dim_mismatch",
+                             "detail": dim_report.get("dim_read_error")})
+    if model_restore_failures:
+        model_faults.append({"fault": "model_view_state_not_restored",
+                             "detail": "{0} restore step(s) raised: {1}".format(
+                                 len(model_restore_failures), model_restore_failures)})
+    state_out["capture_integrity"] = _capture_integrity(
+        "model_pass", model_faults, len(model_restore_failures), paint_failures)
+    state_out["failure_reason"] = failure_reason
+    _write_sidecar(json_path, out_dir, state_out)
+
     return {
         "view_id": view_id,
         "view_name": getattr(view, "Name", None),
@@ -4624,7 +4874,7 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "tiff_path": tiff_path,
         "sidecar_path": json_path,
         "output_dir": out_dir,
-        "resolution": state_out["resolution"],
+        "frame": state_out["frame"],
         "color_assignment_count": count_host + count_link_categories,
         "timings": {"color_id_buffer_ms": round((time.time() - t0) * 1000.0, 3)},
         "metadata": state_out,
@@ -4951,8 +5201,9 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     # color_id_buffer_anno_model_suppression and color_id_buffer_anno_crop_mode
     # are Config parameters (config.py), defaulted to the shipped frame-B
     # behaviour; the registered capture sets the values it needs on its own
-    # copy. color_id_buffer_anno_smooth_edges_off is still probe-only and
-    # absent from Config. All three are read with getattr, so a caller's
+    # copy. color_id_buffer_anno_smooth_edges_off is absent from Config; the
+    # registered capture sets it True on its copy (AA off, 2026-09-30) and the
+    # frame-B fallback leaves it off. All three are read with getattr, so a caller's
     # partial config object reaches the shipped default. They exist because
     # the behaviour they change happens INSIDE this function's suppress
     # transaction, where a caller has no window to do it itself:
@@ -5111,6 +5362,15 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         membership["reason"] = membership_error
 
     resolved_ids = resolve_all(doc, anno_elements)
+    # M1: elements the view does not SHOW are not painted. The route that
+    # admitted them: the view-scoped collector above applies no category
+    # visibility, split_stage_a_pass_membership decides on ownership only,
+    # and resolve_all then expands Group members / FamilyInstance
+    # sub-components with no check at all (those arrive with no membership
+    # basis -- pipeline_0928_0953's 71 on Plan_DWG and Plan_RVTLink). So the
+    # gate runs HERE, after expansion, over every id about to be painted.
+    resolved_ids, not_painted = _drop_not_visible_in_view(
+        doc, view, resolved_ids, diag=diag, view_id=view_id)
     count_anno = len(resolved_ids)
 
     # ---- this pass's OWN palette (see the section comment) -------------
@@ -5824,9 +6084,6 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
                 view_id=view_id,
             )
 
-    effective_export_dpi = _effective_export_dpi(
-        crop_bounds_xy, dim_report.get("actual_w"), dim_report.get("actual_h"), scale)
-
     state_out = {
         "schema": ANNOTATION_PASS_SCHEMA,
         "view_id": view_id,
@@ -5835,15 +6092,14 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         # "_anno" suffix, so a reader never has to reconstruct a path.
         "model_pass_tiff_path": os.path.join(
             out_dir, "{0}_{1}.tiff".format(safe_name, view_id)),
-        "resolution": {
+        # C5: one frame record per sidecar (pre-C5: "resolution").
+        # C6: achieved values only -- see the model pass's frame record for
+        # where each dropped request is derived from.
+        "frame": {
             "pixel_size": actual_pixel_size,
-            "requested_pixel_size": pixel_size,
-            "requested_export_dpi": float(geom["requested_export_dpi"]),
             "achieved_export_dpi": float(geom["achieved_export_dpi"]),
-            "effective_export_dpi": effective_export_dpi,
             "view_scale": scale,
             "fit_direction": fit_direction,
-            "requested_axis": requested_axis,
             "actual_w": dim_report.get("actual_w"),
             "actual_h": dim_report.get("actual_h"),
             "dim_check": dim_report.get("dim_check"),
@@ -5898,6 +6154,9 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
             str(eid): list(color_map[eid]) for eid in color_map
         },
         "color_assignment_count": count_anno,
+        # M1: what this pass collected and did NOT paint because the view
+        # does not show it -- counts per category, never per element.
+        "not_painted": not_painted,
         # --- Stage A step 4, additive -------------------------------------
         # Per-annotation bbox in ABSOLUTE view UV, so a cap re-centre of B
         # cannot change these numbers. bbox_3d is "not_applicable" on every
@@ -6089,20 +6348,28 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
                "{0} restore step(s) raised".format(len(restore_failures)))
 
     failure_reason = capture_faults[0]["fault"] if capture_faults else None
+    if geom.get("sizing_frame") == "crop_a":
+        # C7: the model pass was sized from crop A, so there is no frame B to
+        # copy: these four described B, or A's place inside it.
+        for key in ("frame_snapped_uv", "frame_px", "model_crop_offset_px",
+                    "crop_is_frame"):
+            state_out["registration"].pop(key, None)
+        state_out["registration"]["sizing_frame"] = "crop_a"
     state_out["capture_faults"] = capture_faults
     # The single documented contract string, persisted beside the list it is
     # derived from. A consumer reading the file should not have to re-derive
     # "which fault is reported" from an ordering rule stated only in a comment.
     state_out["failure_reason"] = failure_reason
+    state_out["capture_integrity"] = _capture_integrity(
+        "annotation_pass", capture_faults, len(restore_failures), paint_failures)
 
     # THE WRITE, AFTER THE RECORD IS COMPLETE. Everything state_out carries is
     # assigned by this point, so the file and the returned metadata are the same
-    # facts. They were not: capture_faults and failure_reason were computed
-    # after the old write site and existed only in memory.
-    if not os.path.exists(out_dir):
-        os.makedirs(out_dir)
-    with open(json_path, "w") as f:
-        json.dump(state_out, f, indent=2, sort_keys=True)
+    # facts (P1: the file minus SIDECAR_PROBE_ONLY_KEYS, whose integrity facts
+    # are in capture_integrity). They were not: capture_faults and
+    # failure_reason were computed after the old write site and existed only
+    # in memory.
+    _write_sidecar(json_path, out_dir, state_out)
 
     return {
         "view_id": view_id,
@@ -6113,7 +6380,7 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         "tiff_path": tiff_path,
         "sidecar_path": json_path,
         "output_dir": out_dir,
-        "resolution": state_out["resolution"],
+        "frame": state_out["frame"],
         "color_assignment_count": count_anno,
         "timings": {
             "annotation_color_id_buffer_ms": round((time.time() - t0) * 1000.0, 3)

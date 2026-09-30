@@ -28,7 +28,7 @@ from tools import register_stage_a_annotation as reg
 from tools import registration_marks as rm
 from vop_interwoven.stage_a_registered_capture import _registration_payload
 from vop_interwoven.stage_a_registration import (
-    MARK_COLOUR, registration_mark_segments)
+    MARK_ARM_PX, MARK_COLOUR, registration_mark_segments)
 
 # Annotation capture: 12 px/ft, u origin at x = 30, v = 0 at y = 330.
 A_U, B_U, A_V, B_V = 12.0, 30.0, -12.0, 330.0
@@ -110,7 +110,7 @@ def _fill(img, rect_uv, colour, to_x, to_y):
 
 
 def _record(marks):
-    return {"marks": {"created": marks, "layout": {"arm_px": 96.0}},
+    return {"marks": {"created": marks, "layout": {"arm_px": MARK_ARM_PX}},
             "mark_reference_source": "test", "faults": [], "restore": {}}
 
 
@@ -195,11 +195,14 @@ def test_the_annotation_capture_lands_on_the_model_lattice(tmp_path):
     assert record["annotation_to_model_px"]["scale_x"] == pytest.approx(M / A_U, rel=1e-3)
     assert record["annotation_to_model_px"]["scale_y"] == pytest.approx(M / A_U, rel=1e-3)
     out = np.asarray(Image.open(record["registered_tiff"]).convert("RGB"))
-    assert out.shape == (MH, MW, 3)
+    lattice = record["lattice"]
+    assert out.shape == (lattice["canvas_h"], lattice["canvas_w"], 3)
+    ox, oy = lattice["model_image_origin_px"]
     for eid, (colour, (u0, v0, u1, v1)) in ELEMENTS.items():
         # Where the MODEL lattice puts this UV rectangle, from the drawing's
-        # constants. Half a source pixel of drawing rounding is 0.75 model px.
-        want = (mx(u0), my(v1), mx(u1), my(v0))
+        # constants, shifted by where the model image sits in the canvas.
+        # Half a source pixel of drawing rounding is 0.75 model px.
+        want = (mx(u0) + ox, my(v1) + oy, mx(u1) + ox, my(v0) + oy)
         got = _bbox_of(out, colour)
         assert got is not None, eid
         for g, w in zip(got, want):
@@ -487,45 +490,62 @@ def test_model_ticks_that_do_not_span_the_image_are_still_assigned():
     assert fit["px_per_ft_v"] == pytest.approx(12.0, abs=0.05)
 
 
-def test_the_canvas_covers_a_grid_wider_than_the_model_crop(tmp_path):
-    """Plan_CropActive: the model crop sits inside the grid. Annotation ink in
-    the grid but beyond the model image is kept, at the model's pixel phase."""
-    offset = (2.0, 1.0, -3.0, -2.0)     # grid = bounds_xy - offset: wider
-    outside = {61: ((120, 8, 16), (-2.5, 1.0, -1.5, 3.0))}   # u < bounds_xy u0
-    anno_path, _model, _c = _write_pair(tmp_path, model_crop_offset=offset,
-                                        extra_anno=outside)
+def test_the_canvas_is_the_union_of_crop_a_and_the_measured_annotation_rect(tmp_path):
+    """C7 (Greg, 2026-09-29). Ink beyond the model image -- here an element
+    left of crop A -- is kept, on the model's pixel phase, and nothing is
+    off the canvas."""
+    outside = {61: ((120, 8, 16), (-2.5, 1.0, -1.5, 3.0))}   # u < crop A's u0
+    anno_path, _model, _c = _write_pair(tmp_path, extra_anno=outside)
     reg.register(anno_path)
     record = _persisted(anno_path)
     assert record["status"] == "registered", record["refusals"]
     lattice = record["lattice"]
-    ox, oy = lattice["model_image_origin_px"]
-    assert (ox, oy) == (int(round(offset[0] * M)), int(round(-offset[3] * M)))
-    assert lattice["canvas_w"] == MW + ox + int(round(-offset[2] * M))
+    ax0, ay0, ax1, ay1 = lattice["annotation_rect_model_px"]
+    x0, y0 = min(0, ax0), min(0, ay0)
+    x1, y1 = max(MW, ax1), max(MH, ay1)
+    # The fixture must make the union differ from crop A on both axes.
+    assert x0 < 0 and y0 < 0 and y1 > MH
+    assert lattice["model_image_origin_px"] == [-x0, -y0]
+    assert (lattice["canvas_w"], lattice["canvas_h"]) == (x1 - x0, y1 - y0)
+    assert lattice["canvas_origin_model_px"] == [x0, y0]
+    # The measured rect is where the drawing's own constants put the
+    # annotation image, to within a pixel (the fit is not exact).
+    for got, want in zip((ax0, ay0, ax1, ay1),
+                         (mx((0 - B_U) / A_U), my((0 - B_V) / A_V),
+                          mx((AW - B_U) / A_U), my((AH - B_V) / A_V))):
+        assert abs(got - want) <= 1.5, (got, want)
+    # The canvas origin in view UV is the model lattice's inverse at (x0, y0).
+    assert lattice["canvas_origin_uv"] == pytest.approx(
+        [MODEL_BOUNDS[0] + x0 / M, MODEL_BOUNDS[3] - y0 / M], abs=0.05)
+    assert record["losses"]["ink_pixels_off_canvas"] == 0
     out = np.asarray(Image.open(record["registered_tiff"]).convert("RGB"))
+    ox, oy = lattice["model_image_origin_px"]
     colour, (u0, v0, u1, v1) = outside[61]
     got = _bbox_of(out, colour)
     want = (mx(u0) + ox, my(v1) + oy, mx(u1) + ox, my(v0) + oy)
     assert got is not None
     for g, w in zip(got, want):
         assert abs(g - w) <= 1.5, (got, want)
-    # And the model image's own content keeps its place, shifted by the origin.
+    # The model image's own content keeps its place, shifted by the origin.
     colour, (u0, v0, u1, v1) = ELEMENTS[50]
     assert abs(_bbox_of(out, colour)[0] - (mx(u0) + ox)) <= 1.5
 
 
-def test_without_the_offset_that_ink_is_off_canvas_and_counted(tmp_path):
-    """The CONTROL: the same ink with the grid equal to the model crop is off
-    the canvas -- and said so, not silently dropped."""
-    outside = {61: ((120, 8, 16), (-2.5, 1.0, -1.5, 3.0))}
-    anno_path, _model, _c = _write_pair(tmp_path, extra_anno=outside)
-    reg.register(anno_path)
-    record = _persisted(anno_path)
-    assert record["lattice"]["model_image_origin_px"] == [0, 0]
-    assert record["losses"]["ink_pixels_off_canvas"] > 0
-    # Off the canvas is its own loss, not a colour the RESAMPLE lost.
-    assert record["losses"]["colours_lost_in_resample"] == []
-    out = np.asarray(Image.open(record["registered_tiff"]).convert("RGB"))
-    assert _bbox_of(out, outside[61][0]) is None
+def test_the_grid_is_no_longer_a_term_of_the_canvas(tmp_path):
+    """The CONTROL that discriminates the new rule from the old one: the old
+    canvas grew with model_crop_offset_uv (the grid, frame B); the new one
+    must not move when it changes."""
+    a_dir, b_dir = tmp_path / "a", tmp_path / "b"
+    a_dir.mkdir()
+    b_dir.mkdir()
+    anno_a, _m, _c = _write_pair(a_dir)
+    anno_b, _m, _c = _write_pair(b_dir, model_crop_offset=(2.0, 1.0, -3.0, -2.0))
+    reg.register(anno_a)
+    reg.register(anno_b)
+    la, lb = _persisted(anno_a)["lattice"], _persisted(anno_b)["lattice"]
+    for key in ("canvas_w", "canvas_h", "model_image_origin_px",
+                "annotation_rect_model_px"):
+        assert la[key] == lb[key], key
 
 
 def test_a_fringe_pulls_the_centre_line_by_its_coverage():
@@ -725,3 +745,92 @@ def test_a_link_category_colour_near_the_mark_colour_is_not_a_tick(tmp_path):
     assert max(fit["residual_max_px"].values()) < 0.6
     mask = rm.mark_ink_mask(img, side["registration_marks"], rm.palette_colours(side))
     assert not mask[y - 1:y + 1, 150:250].any()
+
+
+# ======================================================================
+# T1: minimum-size ticks at ModelCallout's annotation scale
+# ======================================================================
+
+@pytest.mark.parametrize("thickness", [1, 2])
+def test_32px_ticks_register_at_0_63x_annotation_scale(tmp_path, monkeypatch, thickness):
+    """T1 shrinks the ticks to MARK_ARM_PX = 32 px on the MODEL lattice.
+    pipeline_0928_0953's ModelCallout drew its annotation capture at
+    1/1.587 = 0.63x the model lattice, so there each tick is ~20 px long --
+    the smallest this run will see. Drawn at 1 px (the thinnest lineweight
+    T1 selects) and at 2 px, registration_marks must still find all twelve
+    and register at the known scale."""
+    assert MARK_ARM_PX == 32.0
+    scale = 0.63
+    import sys as _sys
+    mod = _sys.modules[__name__]
+    monkeypatch.setattr(mod, "A_U", scale * M)
+    monkeypatch.setattr(mod, "A_V", -scale * M)
+    # Marks are laid out in MODEL-lattice pixels, as production lays them.
+    layout = registration_mark_segments(CROP_UV, 1.0 / M)
+    assert layout["state"] == "value" and layout["arm_px"] == 32.0, layout
+    marks = [dict(seg, id=9000 + i) for i, seg in enumerate(layout["segments"])]
+    tick_len_anno = 32.0 * scale
+    assert 19.0 < tick_len_anno < 21.0
+
+    def _tick(img, seg, colour, to_x, to_y):
+        # Exactly ``thickness`` rows/columns, starting at the pixel holding the
+        # tick's level (_draw_tick's rounded slice can come out EMPTY at 1 px).
+        if seg["orientation"] == "horizontal":
+            y0 = int(np.floor(to_y(seg["level_uv"])))
+            xs = sorted(to_x(u) for u in seg["span_uv"])
+            img[y0:y0 + thickness, int(round(xs[0])):int(round(xs[1]))] = colour
+        else:
+            x0 = int(np.floor(to_x(seg["level_uv"])))
+            ys = sorted(to_y(v) for v in seg["span_uv"])
+            img[int(round(ys[0])):int(round(ys[1])), x0:x0 + thickness] = colour
+
+    monkeypatch.setattr(mod, "_draw_tick", _tick)
+    anno_path, _model, _c = _write_pair(tmp_path, marks=marks)
+    reg.register(anno_path)
+    record = _persisted(anno_path)
+    assert record["status"] == "registered", record.get("refusals")
+    for name in ("annotation_fit", "model_fit"):
+        assert record[name]["found_count"] == 12, record[name]
+        assert max(record[name]["residual_max_px"].values()) <= 2.0, record[name]
+    t = record["annotation_to_model_px"]
+    # 0.5 %: the fixture's ticks sit on whole pixels, so a 1 px tick's level
+    # is quantised by up to half a pixel over a ~200 px baseline (measured
+    # here at 0.22 %). pipeline_0928_0953's ModelCallout itself fitted
+    # 1.587381 / 1.591730 on x / y.
+    assert t["scale_x"] == pytest.approx(1.0 / scale, rel=5e-3)
+    assert t["scale_y"] == pytest.approx(1.0 / scale, rel=5e-3)
+
+
+@pytest.mark.parametrize("scale,offset", [(2.0, -10.0), (1.5, -40.3), (1.0, -7.0),
+                                          (0.63, -12.4), (1.1516, 3.2)])
+def test_the_canvas_holds_exactly_what_the_resampler_draws(scale, offset):
+    """Composed with resample_onto, not restated (review, PR #221): at scale
+    2, offset -10 the old centre-based bound started the canvas at -9 while
+    the resampler also fills -10 from source column 0, clipping it.
+
+    A source row with a distinct colour per column is resampled onto the
+    canvas output_canvas() returns. Every column the resampler would draw
+    must land on the canvas, and the canvas must not add a column the
+    resampler leaves white beyond the model image."""
+    src_w, model_w = 40, 60
+    source = np.zeros((1, src_w, 3), dtype=np.uint8)
+    source[0, :, 0] = np.arange(src_w)
+    source[0, :, 1] = 7
+    transform = {"scale_x": scale, "offset_x": offset, "scale_y": 1.0, "offset_y": 0.0}
+    canvas = reg.output_canvas(None, model_w, 1, transform, src_w, 1)
+    on_canvas = dict(transform, offset_x=offset + canvas["shift_x"])
+    out, _uncovered = reg.resample_onto(source, on_canvas, canvas["canvas_w"], 1)
+    drawn = out[0][out[0][:, 1] == 7]
+    # What an UNBOUNDED resample would draw: every column in its support.
+    wide = 10 * (src_w + model_w)
+    ref, _u = reg.resample_onto(source, dict(transform, offset_x=offset + wide),
+                                3 * wide, 1)
+    want = set(ref[0][ref[0][:, 1] == 7][:, 0].tolist())
+    assert set(drawn[:, 0].tolist()) == want
+    assert int((ref[0][:, 1] == 7).sum()) == len(drawn)   # no pixel clipped
+    # Tight: the canvas edges beyond the model image are drawn, not white.
+    ink = out[0][:, 1] == 7
+    if canvas["shift_x"] > 0:
+        assert ink[0]
+    if canvas["canvas_w"] - canvas["shift_x"] > model_w:
+        assert ink[-1]

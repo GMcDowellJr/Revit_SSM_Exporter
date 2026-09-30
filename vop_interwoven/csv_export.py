@@ -948,6 +948,88 @@ def extract_view_metadata(view, doc, diag=None):
     return metadata
 
 
+# --- C9: Stage A views_core -------------------------------------------------
+#
+# Under Stage A there is no in-memory raster: cell fill and occlusion are
+# analysis-layer outputs, derived later from the captures. So views_core
+# carries VIEW METADATA ONLY -- every field below is read off the View (or
+# the run's Config), none off a raster -- plus the capture's own outcome.
+# views_vop, views_occlusion and views_perf are not written at all.
+# RunId and ConfigHash are the KEYS into run_meta.json (vop_interwoven/
+# run_meta.py), which holds everything run-level -- the date, the exporter
+# version and commit, the document, the Config -- so no row repeats it.
+STAGE_A_CORE_CSV_HEADER = [
+    "RunId", "ConfigHash", "ViewId", "ViewUniqueId", "ViewName", "ViewType",
+    "Scale", "SheetNumber", "IsOnSheet", "Discipline", "Phase",
+    "ViewTemplate_Name", "CaptureStatus", "CaptureFailureReason", "ElapsedSec",
+]
+
+
+def get_stage_a_core_csv_header():
+    return list(STAGE_A_CORE_CSV_HEADER)
+
+
+def stage_a_capture_status(view_result):
+    """``(status, reason)`` for one Stage A view result.
+
+    "failed" -- the model capture failed; "annotation_failed" -- the model
+    capture stands but the annotation capture failed; "registration_failed"
+    -- the registered capture recorded faults; else "success". Each carries
+    the reason the result recorded, so a failure is never a bare flag.
+    """
+    if view_result.get("success") is False:
+        return "failed", view_result.get("failure_reason") or view_result.get("error") or ""
+    if view_result.get("annotation_pass_success") is False:
+        return "annotation_failed", view_result.get("annotation_pass_failure_reason") or ""
+    if view_result.get("registration_success") is False:
+        faults = (view_result.get("registration") or {}).get("faults") or []
+        return "registration_failed", ";".join(
+            str(f.get("fault")) for f in faults if isinstance(f, dict))
+    return "success", ""
+
+
+def stage_a_view_result_to_core_row(view_result, config, doc, run_id,
+                                    config_hash=None):
+    """One Stage A views_core row: view metadata + capture status + elapsed.
+
+    Written for FAILED captures too -- the row is the inventory of what was
+    attempted, and CaptureStatus says how it went.
+    """
+    view = view_result.get("view")
+    if view is None and doc is not None:
+        try:
+            from Autodesk.Revit.DB import ElementId  # type: ignore
+            vid = _coerce_view_id_int(view_result.get("view_id", None))
+            if vid is not None:
+                view = doc.GetElement(ElementId(vid))
+        except Exception:
+            view = None
+    view_metadata = extract_view_metadata(view, doc) if view is not None else {}
+    status, reason = stage_a_capture_status(view_result)
+    try:
+        elapsed_sec = float(view_result.get("elapsed_sec") or 0.0)
+    except (TypeError, ValueError):
+        elapsed_sec = 0.0
+    return {
+        "RunId": run_id,
+        "ConfigHash": config_hash if config_hash is not None else compute_config_hash(config),
+        "ViewId": view_metadata.get("ViewId", view_result.get("view_id", 0)),
+        "ViewUniqueId": _extract_view_unique_id(view_result=view_result, view=view,
+                                                metadata=view_metadata),
+        "ViewName": view_metadata.get("ViewName", view_result.get("view_name", "")),
+        "ViewType": view_metadata.get("ViewType", ""),
+        "Scale": view_metadata.get("Scale", 0),
+        "SheetNumber": view_metadata.get("SheetNumber", ""),
+        "IsOnSheet": view_metadata.get("IsOnSheet", "N"),
+        "Discipline": view_metadata.get("Discipline", ""),
+        "Phase": view_metadata.get("Phase", ""),
+        "ViewTemplate_Name": view_metadata.get("ViewTemplate_Name", ""),
+        "CaptureStatus": status,
+        "CaptureFailureReason": reason,
+        "ElapsedSec": "{0:.3f}".format(elapsed_sec),
+    }
+
+
 def compute_config_hash(config):
     """Compute stable hash of config for reproducibility tracking.
 

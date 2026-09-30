@@ -15,6 +15,7 @@ from .resolution_contract import DEFAULT_COLOR_ID_EXPORT_DPI
 # Their meaning is documented at export_annotation_color_id_buffer_view.
 ANNO_CROP_MODES = ("frame_b", "untouched", "authored_else_crop_a")
 ANNO_MODEL_SUPPRESSION_MODES = ("hide_categories", "external")
+MODEL_FRAME_MODES = ("frame_b", "crop_a")
 
 
 class Config:
@@ -149,10 +150,15 @@ class Config:
         signature_bbox_precision=2,
 
         # Phase 2.5: Persistent element cache for cross-run reuse
-        element_cache_persist=True,  # Save/load cache between runs
-        element_cache_export_csv=True,  # Export analysis CSV
-        element_cache_detect_changes=True,  # Compare with previous run
-        element_cache_change_tolerance=1.0 * 10**-2,  # 0.01 ft position/size tolerance (~3mm)
+        # RETIRED (Greg, 2026-09-29): the element cache no longer crosses runs
+        # -- no vop_element_cache_<date>.json load/save, no detect_changes.
+        # Change detection is the analysis layer's, from sidecar bbox_3d +
+        # bbox_transform. These two are kept, defaulting False and read by
+        # nothing, only so configs written before still load.
+        element_cache_persist=False,
+        element_cache_export_csv=True,  # Export the view-element map JSON
+        element_cache_detect_changes=False,
+        element_cache_change_tolerance=1.0 * 10**-2,  # retired with detect_changes
 
         # Strategy diagnostics: track geometry extraction performance
         export_strategy_diagnostics=False,  # Export strategy diagnostics CSV and print summary
@@ -216,6 +222,12 @@ class Config:
         color_id_buffer_anno_crop_mode="frame_b",
         color_id_buffer_anno_model_suppression="hide_categories",
         color_id_buffer_model_lines_visible=False,
+        # Stage A (C7): what the MODEL pass is sized from. "frame_b" (the
+        # frame-B two-pass capture) fixes feet-per-pixel from the annotation
+        # frame B; "crop_a" sizes from the model crop A alone, and frame B is
+        # neither computed nor recorded. The registered capture sets "crop_a"
+        # on its own copy.
+        color_id_buffer_model_frame="frame_b",
         # Stage A: swap the view onto a neutral phase filter for the capture.
         # Default OFF -- the swap shows phase-hidden content the view as
         # authored does not show, so the ID buffer would describe a phase
@@ -426,6 +438,10 @@ class Config:
                                  ANNO_MODEL_SUPPRESSION_MODES,
                                  self.color_id_buffer_anno_model_suppression))
         self.color_id_buffer_model_lines_visible = bool(color_id_buffer_model_lines_visible)
+        if color_id_buffer_model_frame not in MODEL_FRAME_MODES:
+            raise ValueError("color_id_buffer_model_frame must be one of {0}, got {1!r}".format(
+                MODEL_FRAME_MODES, color_id_buffer_model_frame))
+        self.color_id_buffer_model_frame = color_id_buffer_model_frame
         # Which axis ImageExportOptions.PixelSize sets. "horizontal" is the
         # shipped behaviour and the default; nothing changes unless a caller
         # asks for "vertical".
@@ -697,6 +713,7 @@ class Config:
             "color_id_buffer_anno_model_suppression": (
                 self.color_id_buffer_anno_model_suppression),
             "color_id_buffer_model_lines_visible": self.color_id_buffer_model_lines_visible,
+            "color_id_buffer_model_frame": self.color_id_buffer_model_frame,
             "color_id_buffer_global_assignment_threshold": (
                 self.color_id_buffer_global_assignment_threshold
             ),
@@ -753,9 +770,9 @@ class Config:
             signature_bbox_precision=d.get("signature_bbox_precision", 2),
 
             # Phase 2.5: Persistent element cache
-            element_cache_persist=d.get("element_cache_persist", True),
+            element_cache_persist=d.get("element_cache_persist", False),
             element_cache_export_csv=d.get("element_cache_export_csv", True),
-            element_cache_detect_changes=d.get("element_cache_detect_changes", True),
+            element_cache_detect_changes=d.get("element_cache_detect_changes", False),
             element_cache_change_tolerance=d.get("element_cache_change_tolerance", 1.0 * 10**-2),
 
             # Strategy diagnostics
@@ -785,6 +802,7 @@ class Config:
                 "color_id_buffer_anno_model_suppression", "hide_categories"),
             color_id_buffer_model_lines_visible=d.get(
                 "color_id_buffer_model_lines_visible", False),
+            color_id_buffer_model_frame=d.get("color_id_buffer_model_frame", "frame_b"),
             color_id_buffer_cap_axis_px=d.get("color_id_buffer_cap_axis_px"),
             color_id_buffer_fit_direction=d.get("color_id_buffer_fit_direction", "horizontal"),
             color_id_neutral_phase_swap=d.get("color_id_neutral_phase_swap", False),

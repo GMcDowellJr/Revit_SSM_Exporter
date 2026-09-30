@@ -137,8 +137,14 @@ def test_color_id_buffer_calls_the_shared_function_and_does_not_recompute():
 
     src = (Path(__file__).resolve().parent.parent
            / "vop_interwoven" / "color_id_buffer.py").read_text(encoding="utf-8")
-    assert "_effective_export_dpi(" in src, (
-        "color_id_buffer must call resolution_contract.effective_export_dpi")
+    # C6 (2026-09-29): the capture no longer RECORDS the achieved dpi; it is
+    # derived by the reader from the recorded crop_uv and actual_w/h through
+    # this same function (tests/test_effective_dpi_call_site.py). So the
+    # guarantee is now that color_id_buffer computes no dpi of its own at all.
+    code = "\n".join(line.split("#", 1)[0] for line in src.splitlines())
+    assert "effective_export_dpi(" not in code, (
+        "color_id_buffer computes an achieved dpi again; C6 derives it from "
+        "the sidecar with resolution_contract.effective_export_dpi")
     assert "effective_export_dpi = min(" not in src, (
         "dpi recomputed inline; there must be one implementation, not two")
 

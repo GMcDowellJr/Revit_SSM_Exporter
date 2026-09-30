@@ -27,9 +27,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from tools import decode_stage_a_color_id as dsc  # noqa: E402
+from tools.stage_a_sidecar_shapes import legacy_view  # noqa: E402
 
 
 def _image_dims(sidecar, sidecar_path):
+    sidecar = legacy_view(sidecar)
     res = sidecar.get("resolution") or {}
     if res.get("actual_w") and res.get("actual_h"):
         return int(res["actual_w"]), int(res["actual_h"]), "sidecar_actual_dims"
@@ -69,7 +71,7 @@ def main(argv=None):
     g7_disagree = []
     for sp in paths:
         try:
-            sidecar = json.loads(sp.read_text(encoding="utf-8"))
+            sidecar = legacy_view(json.loads(sp.read_text(encoding="utf-8")))
         except (OSError, ValueError) as ex:
             print("%-26s  unreadable: %s" % (sp.stem[:26], ex))
             continue

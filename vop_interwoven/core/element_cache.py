@@ -496,13 +496,21 @@ class ElementCache:
             # Never raise - graceful degradation
             return False
 
-    def export_view_element_map_json(self, file_path, view_elements=None, merge_existing=False):
+    def export_view_element_map_json(self, file_path, view_elements=None, merge_existing=False,
+                                     run_id=None):
         """Export view -> element ID map as JSON for cross-reference analysis.
 
         Args:
             file_path: Path to JSON file
             view_elements: Dict mapping view_id -> list of (elem_id, source_id)
-            merge_existing: If True and file exists, merge previous view/element ids
+            merge_existing: If True and file exists, merge previous view/element ids.
+                Given a ``run_id``, only from a file stamped with the SAME
+                run_id: any other file is a prior run's and is replaced, since
+                merging it leaked removed elements and unrequested views into
+                this run's map (Codex, PR #221). With no run_id (a caller
+                without a StreamingExporter) the file is merged as before,
+                because replacing it would keep only the last per-view call.
+            run_id: The run this map belongs to; written as "run_id".
 
         JSON schema (v1):
             {
@@ -526,6 +534,9 @@ class ElementCache:
                 try:
                     with open(file_path, "r") as f:
                         existing_payload = json.load(f)
+                    if (run_id is not None and not (isinstance(existing_payload, dict)
+                                                    and existing_payload.get("run_id") == run_id)):
+                        existing_payload = {}
                     for item in (existing_payload.get("views", []) if isinstance(existing_payload, dict) else []):
                         if not isinstance(item, dict):
                             continue
@@ -563,6 +574,7 @@ class ElementCache:
             payload = {
                 "schema": "vop.view_element_map.v1",
                 "generated_utc": time.time(),
+                "run_id": run_id,
                 "views": views,
             }
 

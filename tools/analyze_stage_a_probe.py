@@ -7,6 +7,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from tools.stage_a_sidecar_shapes import legacy_view  # noqa: E402
+
 try:
     import numpy as np
 except ImportError:  # Reported as an analysis limitation by the public API.
@@ -1255,6 +1258,7 @@ def _native_resolution(sidecar: dict[str, Any], width_px: int, height_px: int,
     null the crop never applied, so native density is not derivable and every
     field below stays None rather than being guessed from pixel dimensions.
     """
+    sidecar = legacy_view(sidecar)
     res = sidecar.get('resolution') or {}
     bounds = sidecar.get('bounds_xy')
     # The canvas can be wider than the model content: Revit pads the short
@@ -1323,6 +1327,7 @@ def _frame_geometry(sidecar: dict[str, Any], width_px: int, height_px: int) -> d
     behaviour -- ``clamp_matches_actual_height`` is the field that says whether
     the correction predicted this capture's real height.
     """
+    sidecar = legacy_view(sidecar)
     bounds = sidecar.get('bounds_xy')
     out: dict[str, Any] = {'aspect': None, 'clamped_aspect': None, 'clamp_applied': None,
                            'pad_x_px': 0.0, 'pad_y_px': 0.0,

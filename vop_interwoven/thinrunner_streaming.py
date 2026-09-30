@@ -404,7 +404,12 @@ def _summarize_stage_a_sidecar(sidecar_path):
     link_count = len((near_face_w.get("link") or {}))
     lines.append("    Near-face-W collected: host={} link={}".format(host_count, link_count))
 
-    paint_failures = meta.get("paint_failures")
+    # P1 moved the count into capture_integrity; an archived (pre-P1)
+    # sidecar still carries it top-level (review, PR #221).
+    integrity = meta.get("capture_integrity")
+    paint_failures = (integrity.get("paint_failures")
+                      if isinstance(integrity, dict) and "paint_failures" in integrity
+                      else meta.get("paint_failures"))
     if paint_failures:
         lines.append("    HOST paint failures: {}".format(paint_failures))
 
@@ -564,6 +569,11 @@ try:
                 "perf_csv_path": None,
             }
 
+            # C9: one run, one RunId, one run_meta.json -- the first batch's
+            # id is handed to every later batch, and their run_meta files are
+            # merged into output_dir at the end.
+            shared_run_id = None
+            batch_meta_paths = []
             for batch_index, batch_view_ids in enumerate(batches):
                 start_idx = batch_index * batch_size + 1
                 end_idx = start_idx + len(batch_view_ids) - 1
@@ -585,7 +595,11 @@ try:
                     export_view_raster=export_view_raster,
                     pixels_per_cell=10,
                     date_override=tag_override,
+                    run_id=shared_run_id,
                 )
+                shared_run_id = shared_run_id or batch_result.get("run_id")
+                if batch_result.get("run_meta_path"):
+                    batch_meta_paths.append(batch_result["run_meta_path"])
 
                 merged["views_processed"] += batch_result.get("views_processed", 0)
                 merged["views_failed"] += batch_result.get("views_failed", 0)
@@ -610,11 +624,22 @@ try:
                 # don't strand the only copies under a temp batch folder, and keep
                 # this batch's view_summaries entries pointed at the moved files.
                 if getattr(cfg, "enable_color_id_buffer_stage_a", False):
+                    # The root record FIRST, so a capture moved below always
+                    # has a run_meta.json above it, even if a later batch
+                    # raises (finalized stays false until the loop ends).
+                    from vop_interwoven.run_meta import write_merged_run_meta
+                    write_merged_run_meta(batch_meta_paths, output_dir, run_complete=False)
                     _relocate_batch_stage_a_outputs(
                         batch_output_dir, output_dir, batch_result.get("view_summaries", [])
                     )
 
                 _run_gc_between_chunks()
+
+            if batch_meta_paths:
+                from vop_interwoven.run_meta import write_merged_run_meta
+                merged["run_meta_path"] = write_merged_run_meta(
+                    batch_meta_paths, output_dir, run_complete=True)
+            merged["run_id"] = shared_run_id
 
             result = merged
 

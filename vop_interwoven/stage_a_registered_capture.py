@@ -145,11 +145,79 @@ def mark_reference_rectangle(view, raster, diag=None, view_id=None):
     return None, "no authored crop, model crop or raster frame to place marks in"
 
 
+def annotation_avoid_rects(view, anno_elements, basis, diag=None, view_id=None):
+    """``(avoid, record)``: each annotation element's view bbox in UV, for
+    registration.relocate_marks_clear_of. An element whose bbox does not
+    resolve is counted, not guessed; a read that raises is counted with its
+    first error. Bboxes only -- no geometry (the Stage A rule)."""
+    from .revit.collection import project_bbox_corners_uv
+    avoid, no_bbox, errors = [], 0, []
+    t0 = time.time()
+    for elem in anno_elements or []:
+        try:
+            bbox = elem.get_BoundingBox(view)
+            corners = (project_bbox_corners_uv(bbox, basis, diag=diag, view_id=view_id)
+                       if bbox is not None and basis is not None else None)
+        except Exception as ex:
+            errors.append("{0}: {1}".format(type(ex).__name__, ex))
+            continue
+        if not corners:
+            no_bbox += 1
+            continue
+        us = [float(c[0]) for c in corners]
+        vs = [float(c[1]) for c in corners]
+        avoid.append((_element_id_int(getattr(elem, "Id", None)),
+                      [min(us), min(vs), max(us), max(vs)]))
+    return avoid, {"annotation_elements": len(anno_elements or []),
+                   "avoid_rects": len(avoid), "no_bbox": no_bbox,
+                   "read_errors": len(errors), "first_error": errors[0] if errors else None,
+                   "elapsed_ms": round((time.time() - t0) * 1000.0, 3)}
+
+
 def nominal_fpp_ft(view, cfg):
     """Feet per pixel at the REQUESTED dpi: view scale / (12 in x dpi). The
     marks are sized in pixels at this; the achieved lattice can only be coarser
     (a capped export), which makes the ticks shorter in pixels, not wrong."""
     return float(view.Scale) / (12.0 * float(getattr(cfg, "color_id_buffer_export_dpi")))
+
+
+def mark_fpp_ft(view, raster, cfg):
+    """``(fpp_ft, basis)`` the registration ticks are sized at: the MODEL
+    lattice's achieved feet-per-pixel.
+
+    The ticks are drawn before the model pass sizes itself, and were sized at
+    the requested dpi (nominal_fpp_ft). When the axis cap fires, the achieved
+    lattice is coarser, so a 32 px arm came out 32 * achieved/requested px --
+    below the minimum registration_marks is proven to locate (Codex, PR #221).
+    This is the model pass's own sizing, composed rather than copied: crop A
+    from compute_model_crop() against the same frame, then
+    resolution_contract.frame_export_geometry() on crop A with the same scale,
+    dpi, fit direction and cap (export_color_id_buffer_view, sizing_frame
+    "crop_a"). tests/test_stage_a_registered_capture.py asserts the two agree
+    on a capped view. Unresolvable -> the requested dpi, with the reason as
+    the basis.
+    """
+    from .color_id_buffer import MAX_STAGE_A_AXIS_PX, compute_model_crop
+    from .core.math_utils import Bounds2D
+    from .resolution_contract import frame_export_geometry
+    try:
+        frame = getattr(raster, "anno_frame_bounds", None) or raster.bounds_xy
+        crop, _offset = compute_model_crop(
+            getattr(raster, "model_clip_bounds", None),
+            Bounds2D(float(frame.xmin), float(frame.ymin),
+                     float(frame.xmax), float(frame.ymax)))
+        crop_uv = (float(crop.xmin), float(crop.ymin), float(crop.xmax), float(crop.ymax))
+        geom = frame_export_geometry(
+            crop_uv, crop_uv, float(view.Scale),
+            float(getattr(cfg, "color_id_buffer_export_dpi")),
+            fit_direction=str(getattr(cfg, "color_id_buffer_fit_direction", "horizontal")
+                              or "horizontal"),
+            max_axis_px=(getattr(cfg, "color_id_buffer_cap_axis_px", None)
+                         or MAX_STAGE_A_AXIS_PX))
+        return float(geom["achieved_fpp_ft"]), "model_lattice"
+    except (AttributeError, TypeError, ValueError) as ex:
+        return nominal_fpp_ft(view, cfg), "requested_dpi ({0}: {1})".format(
+            type(ex).__name__, ex)
 
 
 def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=None):
@@ -164,6 +232,13 @@ def _registration_payload(pass_name, record, colours_by_id=None, shared_colour=N
         "pass": pass_name,
         "marks": marks,
         "layout": (record.get("marks") or {}).get("layout"),
+        # T1: the line style (and projection weight) the ticks were drawn at.
+        # Chosen in create_registration_marks but, until this, never written
+        # to a sidecar (pipeline_0930_0739: absent from all 16).
+        "line_style": (record.get("marks") or {}).get("line_style"),
+        # How many annotation bboxes the ticks were kept clear of, and the
+        # cost of reading them. Per-tick placement rides on each mark.
+        "mark_avoidance": record.get("mark_avoidance"),
         "reference_source": record.get("mark_reference_source"),
         "colour_source": ("MARK_COLOUR, one reserved colour for every tick; each "
                           "tick is its own connected component"
@@ -249,10 +324,16 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         reference, source = mark_reference_rectangle(view, raster, diag=diag,
                                                      view_id=view_id)
         record["mark_reference_source"] = source
-        layout = (registration.registration_mark_segments(
-                      reference, nominal_fpp_ft(view, cfg))
+        mark_fpp, record["mark_fpp_basis"] = mark_fpp_ft(view, raster, cfg)
+        layout = (registration.registration_mark_segments(reference, mark_fpp)
                   if reference is not None else {"state": "unavailable",
                                                  "reason": source})
+        # Ticks clear of annotation (Greg, 2026-09-30): a tick under a tag or
+        # dimension does not show in the annotation capture.
+        avoid, record["mark_avoidance"] = annotation_avoid_rects(
+            view, _anno, getattr(raster, "view_basis", None), diag=diag,
+            view_id=view_id)
+        layout = registration.relocate_marks_clear_of(layout, avoid)
         tx = Transaction(doc, "VOP Stage A registration marks")
         tx.Start()
         try:
@@ -310,6 +391,8 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         # ---- 2: MODEL pass, OST_Lines visible so the marks draw ------------
         model_cfg = copy.copy(cfg)
         model_cfg.color_id_buffer_model_lines_visible = True
+        # C7: sized from crop A alone; frame B is not computed or recorded.
+        model_cfg.color_id_buffer_model_frame = "crop_a"
         geom = {}
         _t = time.time()
         model_out = export_color_id_buffer_view(
@@ -372,6 +455,12 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         anno_cfg = copy.copy(cfg)
         anno_cfg.color_id_buffer_anno_model_suppression = "external"
         anno_cfg.color_id_buffer_anno_crop_mode = "authored_else_crop_a"
+        # Anti-aliasing OFF, as the model pass already runs (Greg,
+        # 2026-09-30): a colour-ID capture should not be blended, and the
+        # registration tool's tick-blend handling is the FALLBACK for a host
+        # that cannot turn it off, not the plan. pipeline_0930_0739's
+        # annotation sidecars read applied_smooth_edges "not_attempted".
+        anno_cfg.color_id_buffer_anno_smooth_edges_off = True
         _t = time.time()
         try:
             anno_out = export_annotation_color_id_buffer_view(
@@ -471,11 +560,38 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             record["sidecar_writes"]["annotation"] = registration.annotate_sidecar(
                 anno_out["sidecar_path"], "registration_marks",
                 _registration_payload("annotation", record, colours_by_id=colours))
-        for name, error in record["sidecar_writes"].items():
-            if error is not None:
-                _fault("registration_sidecar_write_failed",
-                       "{0} sidecar: {1}".format(name, error))
-                record["success"] = False
+        # P1: the integrity record, completed with the rollback verdict and
+        # the faults above -- still after the read-back, so it is final. A
+        # write failure (registration_marks above, or a completion here) is a
+        # fault of THIS capture, so every sidecar already completed is
+        # completed AGAIN once one is known (the write is idempotent).
+        # Otherwise the surviving sidecar called an incomplete registered
+        # capture clean (Codex, PR #221).
+        reported = set()
+
+        def _record_write_failures():
+            added = False
+            for name, error in sorted(record["sidecar_writes"].items()):
+                if error is not None and name not in reported:
+                    reported.add(name)
+                    _fault("registration_sidecar_write_failed",
+                           "{0} sidecar: {1}".format(name, error))
+                    record["success"] = False
+                    added = True
+            return added
+
+        completed = []
+        for name, out in (("model", model_out), ("annotation", anno_out)):
+            if out and out.get("sidecar_path") and record["sidecar_writes"].get(name) is None:
+                record["sidecar_writes"][name] = registration.complete_capture_integrity(
+                    out["sidecar_path"], record)
+                if record["sidecar_writes"][name] is None:
+                    completed.append((name, out))
+        if _record_write_failures():
+            for name, out in completed:
+                record["sidecar_writes"][name] = registration.complete_capture_integrity(
+                    out["sidecar_path"], record)
+            _record_write_failures()
 
     if not isinstance(model_out, dict):
         model_out = {"view_id": view_id, "view_name": getattr(view, "Name", None),

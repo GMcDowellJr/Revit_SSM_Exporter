@@ -194,6 +194,32 @@ def _diagnose_link_geometry_transform(elem, link_trf, basis, stage_name):
     print("="*80 + "\n")
 
 
+def _stage_a_view_diagnostics(view_id_int, out, diag):
+    """C9: a Stage A view's views_diagnostics entry.
+
+    The raster path's entry comes from render_model_front_to_back, which
+    Stage A never runs, so under Stage A views_diagnostics.views used to be
+    empty. This one carries the capture outcome and the view's own
+    Diagnostics record (every warning and error the capture raised).
+    """
+    from .csv_export import stage_a_capture_status
+    status, reason = stage_a_capture_status(out)
+    try:
+        diag_record = diag.to_dict() if diag is not None else None
+    except Exception as ex:
+        diag_record = {"status": "unavailable",
+                       "reason": "{0}: {1}".format(type(ex).__name__, ex)}
+    return {
+        "view_id": view_id_int,
+        "view_name": out.get("view_name"),
+        "stage": out.get("stage"),
+        "capture_status": status,
+        "capture_failure_reason": reason,
+        "elapsed_sec": out.get("elapsed_sec"),
+        "diagnostics": diag_record,
+    }
+
+
 def _perf_now():
     # perf_counter is monotonic and high-resolution where available.
     return time.perf_counter()
@@ -564,6 +590,33 @@ def _compute_manifest_metrics_payload(raster, cfg):
     }
 
 
+def _merge_prior_view_diagnostics(existing_payload, views, exporter_run_id):
+    """``views`` with the prior entries of an existing views_diagnostics file
+    merged in, when that file belongs to THIS run.
+
+    Streaming calls process_document_views once per view, so each call must
+    add to the file rather than replace it. But the file is named by date
+    only, and merging ANY file already there pulled an earlier run's views
+    into this one (the same leak the view-element map had; PR #221). Given
+    an exporter run id, only a file stamped with the same id is merged; any
+    other is replaced. With none (a caller without a StreamingExporter), the
+    file is merged as before, since replacing it would keep only the last
+    per-view call.
+    """
+    if not isinstance(existing_payload, dict):
+        return views
+    if exporter_run_id is not None and (
+            (existing_payload.get("metadata") or {}).get("exporter_run_id")
+            != exporter_run_id):
+        return views
+    existing_views = existing_payload.get("views", {})
+    if not isinstance(existing_views, dict):
+        return views
+    merged = dict(existing_views)
+    merged.update(views)
+    return merged
+
+
 def process_document_views(
     doc,
     view_ids,
@@ -787,61 +840,22 @@ def process_document_views(
                 )
             areal_cache = None
 
-    # PR13: Document-scoped element cache for bbox reuse across views
-    elem_cache_prev = None  # Previous run cache (for change detection)
-    elem_cache_path = None
-    if output_dir is not None:
-        cache_date = date_str
-        elem_cache_path = os.path.join(output_dir, f"vop_element_cache_{cache_date}.json")
-
+    # PR13: Document-scoped element cache for bbox reuse across views -- IN
+    # THIS RUN ONLY. Its cross-run role (loading and saving
+    # vop_element_cache_<date>.json, and detect_changes against the previous
+    # run) is RETIRED (Greg, 2026-09-29): change detection belongs to the
+    # analysis layer, from the sidecar's bbox_3d and bbox_transform.
     if elem_cache is None and getattr(cfg, "use_element_cache", True):
         try:
             from .core.element_cache import ElementCache
-            max_items = int(getattr(cfg, "element_cache_max_items", 10000))
-
-            # Load previous cache if persistence enabled
-            if getattr(cfg, "element_cache_persist", True) and elem_cache_path is not None:
-                try:
-                    elem_cache_prev = ElementCache.load_from_json(elem_cache_path, max_elements=max_items)
-                    # Start with previous cache (pre-populated) and keep prev ref for change detection.
-                    elem_cache = elem_cache_prev
-                    if diag is not None:
-                        try:
-                            prev_size = len(elem_cache.cache)
-                            diag.info(
-                                phase="pipeline",
-                                callsite="process_document_views.element_cache_load",
-                                message=f"Loaded element cache from previous run ({prev_size} elements)",
-                                extra={"cache_path": elem_cache_path, "prev_size": prev_size}
-                            )
-                        except Exception as e:
-                            if diag is not None:
-                                diag.error(
-                                    phase="pipeline",
-                                    callsite="_save_cached_view",
-                                    message="Exception in _save_cached_view: {}".format(e),
-                                    exc=e,
-                                )
-                except Exception as e:
-                    if diag is not None:
-                        diag.error(
-                            phase="pipeline",
-                            callsite="_save_cached_view",
-                            message="Exception in _save_cached_view: {}".format(e),
-                            exc=e,
-                        )
-                    # Failed to load - start fresh
-                    elem_cache = ElementCache(max_elements=max_items)
-            else:
-                # No persistence - start fresh
-                elem_cache = ElementCache(max_elements=max_items)
-
+            elem_cache = ElementCache(
+                max_elements=int(getattr(cfg, "element_cache_max_items", 10000)))
         except Exception as e:
             if diag is not None:
                 diag.error(
                     phase="pipeline",
-                    callsite="_save_cached_view",
-                    message="Exception in _save_cached_view: {}".format(e),
+                    callsite="process_document_views.element_cache_init",
+                    message="Exception creating the in-run element cache: {}".format(e),
                     exc=e,
                 )
             elem_cache = None  # Graceful degradation
@@ -1252,6 +1266,14 @@ def process_document_views(
                             out["annotation_tiff_path"] = anno_out.get("tiff_path")
                             out["annotation_sidecar_path"] = anno_out.get(
                                 "sidecar_path")
+                    # C9: what views_core and views_diagnostics need from a
+                    # Stage A view, set AFTER both passes so the elapsed time
+                    # covers the annotation capture too.
+                    if isinstance(out, dict):
+                        out["elapsed_sec"] = round(
+                            _perf_ms(t_view0, _perf_now()) / 1000.0, 3)
+                        out["diagnostics"] = _stage_a_view_diagnostics(
+                            view_id_int, out, diag)
                     continue
 
                 t0 = _perf_now()
@@ -1560,118 +1582,30 @@ def process_document_views(
                     message="Exception in _tmark: {}".format(e),
                     exc=e,
                 )
-    # Phase 2.5: Persistent element cache - save/export/detect changes
-    if elem_cache is not None and getattr(cfg, "element_cache_persist", True):
+    # The view-element map is THIS run's export (not a cross-run cache), so it
+    # stays; the cache save and change detection that shared its block are
+    # retired (see the element cache note above). Streaming calls this once
+    # per view, so each call merges into the file -- but only a file stamped
+    # with the same run id (StreamingExporter sets it); a prior run's map in
+    # the same folder and date is replaced, never merged.
+    # Export view-element map JSON (view -> element ids)
+    if (elem_cache is not None and getattr(cfg, "element_cache_export_csv", True)
+            and output_dir is not None):
         try:
-            # Save cache to JSON for next run
-            if elem_cache_path is not None:
-                try:
-                    metadata = {
-                        "timestamp": time.time(),
-                        "date": cache_date,
-                        "doc_path": getattr(doc, "PathName", None),
-                        "doc_title": getattr(doc, "Title", None),
-                    }
-                    saved = elem_cache.save_to_json(elem_cache_path, metadata=metadata)
-                    if saved and diag is not None:
-                        diag.info(
-                            phase="pipeline",
-                            callsite="process_document_views.element_cache_save",
-                            message="Saved element cache for next run",
-                            extra={"cache_path": elem_cache_path, "size": len(elem_cache.cache)}
-                        )
-                except Exception as e:
-                    if diag is not None:
-                        diag.error(
-                            phase="pipeline",
-                            callsite="_tmark",
-                            message="Exception in _tmark: {}".format(e),
-                            exc=e,
-                        )
-            # Export view-element map JSON (view -> element ids)
-            if getattr(cfg, "element_cache_export_csv", True) and output_dir is not None:
-                try:
-                    analysis_path = os.path.join(output_dir, f"vop_view_element_map_{date_str}.json")
-                    exported = elem_cache.export_view_element_map_json(
-                        analysis_path,
-                        view_elements=view_elements,
-                        merge_existing=True,
-                    )
-                    if exported and diag is not None:
-                        diag.info(
-                            phase="pipeline",
-                            callsite="process_document_views.element_cache_export_view_element_map_json",
-                            message="Exported view-element map JSON",
-                            extra={"analysis_path": analysis_path, "elements": len(elem_cache.cache), "views": len(view_elements)}
-                        )
-                except Exception as e:
-                    if diag is not None:
-                        diag.error(
-                            phase="pipeline",
-                            callsite="_tmark",
-                            message="Exception in _tmark: {}".format(e),
-                            exc=e,
-                        )
-            # Detect changes from previous run
-            if getattr(cfg, "element_cache_detect_changes", True) and elem_cache_prev is not None:
-                try:
-                    tolerance = float(getattr(cfg, "element_cache_change_tolerance", 0.01))
-                    changes = elem_cache.detect_changes(elem_cache_prev, tolerance=tolerance)
-
-                    if diag is not None:
-                        diag.info(
-                            phase="pipeline",
-                            callsite="process_document_views.element_cache_changes",
-                            message="Element changes detected since last run",
-                            extra=changes
-                        )
-
-                    # Also export changes CSV if significant changes detected
-                    if output_dir is not None and (changes["added"] or changes["moved"] or changes["resized"]):
-                        try:
-                            import csv as csv_module
-                            changes_csv_path = os.path.join(output_dir, "element_changes.csv")
-                            with open(changes_csv_path, "w", newline="") as f:
-                                writer = csv_module.writer(f)
-                                writer.writerow(["change_type", "elem_id", "source_id", "distance_or_size_change"])
-
-                                for elem_id, source_id in changes["added"]:
-                                    writer.writerow(["ADDED", elem_id, source_id, ""])
-
-                                for elem_id, source_id in changes["removed"]:
-                                    writer.writerow(["REMOVED", elem_id, source_id, ""])
-
-                                for elem_id, source_id, distance in changes["moved"]:
-                                    writer.writerow(["MOVED", elem_id, source_id, f"{distance:.3f}"])
-
-                                for elem_id, source_id, size_change in changes["resized"]:
-                                    writer.writerow(["RESIZED", elem_id, source_id, f"{size_change:.3f}"])
-
-                            if diag is not None:
-                                diag.info(
-                                    phase="pipeline",
-                                    callsite="process_document_views.element_changes_export",
-                                    message="Exported element changes CSV",
-                                    extra={"csv_path": changes_csv_path}
-                                )
-                        except Exception as e:
-                            if diag is not None:
-                                diag.error(
-                                    phase="pipeline",
-                                    callsite="_tmark",
-                                    message="Exception in _tmark: {}".format(e),
-                                    exc=e,
-                                )
-                except Exception as e:
-                    if diag is not None:
-                        diag.error(
-                            phase="pipeline",
-                            callsite="_tmark",
-                            message="Exception in _tmark: {}".format(e),
-                            exc=e,
-                        )
-            # Release prev cache — no longer needed after change detection.
-            elem_cache_prev = None
+            analysis_path = os.path.join(output_dir, f"vop_view_element_map_{date_str}.json")
+            exported = elem_cache.export_view_element_map_json(
+                analysis_path,
+                view_elements=view_elements,
+                merge_existing=True,
+                run_id=getattr(cfg, "_view_element_map_run_id", None),
+            )
+            if exported and diag is not None:
+                diag.info(
+                    phase="pipeline",
+                    callsite="process_document_views.element_cache_export_view_element_map_json",
+                    message="Exported view-element map JSON",
+                    extra={"analysis_path": analysis_path, "elements": len(elem_cache.cache), "views": len(view_elements)}
+                )
         except Exception as e:
             if diag is not None:
                 diag.error(
@@ -1700,10 +1634,15 @@ def process_document_views(
             diag_filename = f"views_diagnostics_{date_str}.json"
             diag_path = os.path.join(diagnostics_output_dir, diag_filename)
 
+            exporter_run_id = getattr(cfg, "_view_element_map_run_id", None)
             payload = {
                 "metadata": {
                     "date": date_str,
                     "run_id": run_id,
+                    # The StreamingExporter's run id (the one views_core and
+                    # run_meta.json key on); run_id above is per CALL, and
+                    # streaming makes one call per view.
+                    "exporter_run_id": exporter_run_id,
                     "doc_title": getattr(doc, "Title", "Unknown"),
                     "doc_path": getattr(doc, "PathName", None),
                     "exporter_version": "vop_interwoven",
@@ -1711,16 +1650,15 @@ def process_document_views(
                 "views": all_view_diags,
             }
 
-            # Append behavior across multiple process_document_views() calls in the same run date:
-            # if diagnostics already exists for this day, merge prior views so entries are not lost.
+            # Append behavior across multiple process_document_views() calls in the same run:
+            # streaming makes one call per view, so prior views are merged -- but only from a
+            # file this run wrote (see _merge_prior_view_diagnostics).
             if os.path.exists(diag_path):
                 try:
                     with open(diag_path, "r") as f:
                         existing_payload = json.load(f)
-                    existing_views = existing_payload.get("views", {}) if isinstance(existing_payload, dict) else {}
-                    if isinstance(existing_views, dict):
-                        existing_views.update(payload["views"])
-                        payload["views"] = existing_views
+                    payload["views"] = _merge_prior_view_diagnostics(
+                        existing_payload, payload["views"], exporter_run_id)
                 except Exception:
                     # Best-effort merge only; fall back to writing current payload.
                     pass

@@ -13,6 +13,8 @@ genuinely rolls view and document state back), so the probe and production
 are held to the same harness.
 """
 import json
+
+import pytest
 import types
 
 import vop_interwoven.stage_a_registration as registration
@@ -33,7 +35,7 @@ WHITE = (255, 255, 255)
 
 def _run(tmp_path, rollback_restores=("view", "doc"), break_model_pass=False,
          monkeypatch=None, leave_view_changed=False, crop_active=True,
-         extra_elements=(), view_setup=None):
+         extra_elements=(), view_setup=None, cfg_setup=None):
     del world._LOG[:]
     elements = _elements()
     elements[0].bbox = _BBox((25, 18, 0), (26, 19, 0))
@@ -71,6 +73,8 @@ def _run(tmp_path, rollback_restores=("view", "doc"), break_model_pass=False,
                  color_id_buffer_export_dpi=150.0)
     cfg.include_linked_rvt = False
     cfg.debug_dump_path = str(tmp_path)
+    if cfg_setup is not None:
+        cfg_setup(cfg)
     diag = FakeDiag()
     with install_fake_revit_db() as fake_db:
         fake_db.Transaction = world._Tx
@@ -333,3 +337,213 @@ def test_a_line_the_rollback_left_hidden_is_a_fault(tmp_path):
     faults = [f["fault"] for f in out["registration"]["faults"]]
     assert "detail_lines_left_hidden" in faults
     assert out["registration"]["restore"]["detail_lines"]["left_hidden"] == [DETAIL_LINE]
+
+
+# --- C7: the registered capture neither computes nor records frame B ---------
+
+_FRAME_B_KEYS = ("frame_uv", "frame_source", "frame_extent_ft", "frame_snapped_uv",
+                 "frame_px", "raster_bounds_uv", "crop_offset_px", "crop_is_frame",
+                 "paper_fit_in", "paper_width_in", "paper_height_in",
+                 "anno_cap_envelope_applied")
+
+
+def test_c7_the_model_lattice_is_crop_As_own_and_frame_B_is_not_recorded(tmp_path):
+    from tests.test_stage_a_annotation_pass_probe_switches import MODEL_BOUNDS
+    from vop_interwoven.resolution_contract import frame_export_geometry
+    out, _view, _doc, _exports, _diag = _run(tmp_path)
+    frame = _sidecar(out["sidecar_path"])["frame"]
+    assert frame["status"] == "value" and frame["sizing_frame"] == "crop_a"
+    assert not (set(_FRAME_B_KEYS) & set(frame)), set(_FRAME_B_KEYS) & set(frame)
+    # The lattice is A's: exactly what frame_export_geometry gives with A as
+    # its own frame -- and NOT what it gives with the wider raster frame.
+    a = (MODEL_BOUNDS.xmin, MODEL_BOUNDS.ymin, MODEL_BOUNDS.xmax, MODEL_BOUNDS.ymax)
+    own = frame_export_geometry(a, a, 96.0, 150.0)
+    assert frame["crop_px"] == list(own["crop_px"])
+    assert frame["crop_uv"] == pytest.approx(list(own["crop_snapped_uv"]))
+    assert frame["achieved_fpp_ft"] == pytest.approx(own["achieved_fpp_ft"])
+    anno_reg = _sidecar(out["annotation_sidecar_path"])["registration"]
+    assert anno_reg["sizing_frame"] == "crop_a"
+    for key in ("frame_snapped_uv", "frame_px", "model_crop_offset_px", "crop_is_frame"):
+        assert key not in anno_reg, key
+
+
+def test_c7_control_the_frame_b_fallback_still_records_frame_B(tmp_path):
+    """Without it a writer that dropped frame B everywhere would pass above."""
+    from tests.test_frame_export_geometry_call_site import _export, _raster_at
+    from vop_interwoven.core.math_utils import Bounds2D
+    frame = _export(tmp_path, _raster_at(1.0, Bounds2D(12.0, 9.0, 40.0, 30.0)))[
+        "metadata"]["frame"]
+    assert "sizing_frame" not in frame
+    for key in ("frame_uv", "frame_px", "frame_source", "paper_fit_in", "crop_offset_px"):
+        assert key in frame, key
+
+
+# --- P1: one capture_integrity record per view, completed after the rollback -
+
+def test_p1_a_clean_registered_capture_files_a_complete_clean_integrity_record(tmp_path):
+    from vop_interwoven.color_id_buffer import SIDECAR_PROBE_ONLY_KEYS
+    out, _view, _doc, _exports, _diag = _run(tmp_path)
+    for path in (out["sidecar_path"], out["annotation_sidecar_path"]):
+        side = _sidecar(path)
+        integrity = side["capture_integrity"]
+        assert integrity["status"] == "value"
+        assert integrity["completed_by"][-1] == "registered_capture"
+        assert integrity["rolled_back"] is True
+        assert integrity["marks_still_in_project"] == 0
+        assert integrity["restore_failures"] == 0
+        assert integrity["capture_faults"] == []
+        assert integrity["paint_failures"] == 0
+        assert not (set(SIDECAR_PROBE_ONLY_KEYS) & set(side)), path
+        assert "view_graphics_state" in side or path == out["annotation_sidecar_path"]
+
+
+def test_p1_a_rollback_that_undoes_nothing_is_counted_in_the_FILE(tmp_path):
+    """The CONTROL for the clean record: the same fields, not clean."""
+    out, _view, _doc, _exports, _diag = _run(tmp_path, rollback_restores=())
+    integrity = _sidecar(out["annotation_sidecar_path"])["capture_integrity"]
+    assert integrity["marks_still_in_project"] == 12
+    assert [f["fault"] for f in integrity["capture_faults"]
+            if f.get("source") == "registered_capture"] == [
+        "registration_marks_left_in_project", "element_overrides_left_behind"]
+
+
+def test_t1_the_tick_line_style_reaches_BOTH_sidecar_files(tmp_path):
+    """pipeline_0930_0739: the chosen line style was absent from all 16
+    sidecars -- recorded in memory, never carried into registration_marks.
+    The fake curve exposes no LineStyle, so here it is the explicit
+    "unavailable" record; what is pinned is that the FILE carries it."""
+    out, _view, _doc, _exports, _diag = _run(tmp_path)
+    for path in (out["sidecar_path"], out["annotation_sidecar_path"]):
+        rm = _sidecar(path)["registration_marks"]
+        assert rm.get("line_style") is not None, path
+        assert rm["line_style"] == out["registration"]["marks"]["line_style"]
+
+
+def test_the_annotation_capture_runs_with_anti_aliasing_off_in_the_FILE(tmp_path):
+    """Greg (2026-09-30): AA off in BOTH passes; the tick-blend handling in
+    tools/registration_marks.py is a fallback. pipeline_0930_0739's annotation
+    sidecars read "not_attempted" because the registered capture never set it."""
+    out, view, _doc, _exports, _diag = _run(tmp_path)
+    assert _sidecar(out["annotation_sidecar_path"])["applied_smooth_edges"] is False
+    assert _sidecar(out["sidecar_path"])["applied_smooth_edges"] is False
+
+
+def test_a_tick_under_an_annotation_element_is_moved_in_the_FILE(tmp_path):
+    """Greg (2026-09-30): ticks are kept clear of annotation bboxes. A tag
+    placed over a tick's default position moves that tick, and the sidecar
+    says so; the control run (no tag) moves nothing."""
+    out, _v, _d, _e, _diag = _run(tmp_path / "a")
+    marks = _sidecar(out["sidecar_path"])["registration_marks"]
+    assert all(m.get("placement") in (None, "original") for m in marks["marks"])
+    target = [m for m in marks["marks"] if m["key"] == "left_bottom_h"][0]
+    (ua, va), (ub, vb) = target["uv0"], target["uv1"]
+    tag = FakeElement(2009, ANNO_CAT, owner_view_id=VIEW_ID,
+                      bbox=_BBox((min(ua, ub) - 0.5, va - 0.5, 0), (max(ua, ub) + 0.5, va + 0.5, 0)))
+
+    out2, _v, _d, _e, _diag = _run(tmp_path / "b", extra_elements=[tag])
+    side = _sidecar(out2["sidecar_path"])["registration_marks"]
+    moved = [m for m in side["marks"] if m["key"] == "left_bottom_h"][0]
+    assert moved["placement"] == "moved" and moved["was_covered_by"] == [2009]
+    assert moved["uv0"] != target["uv0"]
+    assert side["layout"]["relocation"]["moved"] >= 1
+    assert side["mark_avoidance"]["avoid_rects"] >= 1
+    assert out2["registration"]["marks"]["created_count"] == 12
+
+
+# --- a write failure on one sidecar reaches the OTHER sidecar's FILE ---------
+
+def _write_faults(path):
+    return [f for f in _sidecar(path)["capture_integrity"]["capture_faults"]
+            if f.get("fault") == "registration_sidecar_write_failed"]
+
+
+def test_a_failed_registration_marks_write_is_in_the_peer_sidecars_integrity(tmp_path, monkeypatch):
+    """Codex, PR #221: when writing registration_marks into the ANNOTATION
+    sidecar failed, the MODEL sidecar's capture_integrity was completed before
+    the fault existed, so the surviving file called the capture clean."""
+    real = registration.annotate_sidecar
+
+    def _fail_annotation(path, key, payload):
+        if path.endswith("_anno.json"):
+            return "OSError: disk full"
+        return real(path, key, payload)
+    monkeypatch.setattr(registration, "annotate_sidecar", _fail_annotation)
+    out, _v, _d, _e, _diag = _run(tmp_path, monkeypatch=monkeypatch)
+    assert out["registration_success"] is False
+    faults = _write_faults(out["sidecar_path"])
+    assert len(faults) == 1 and "annotation sidecar" in faults[0]["message"]
+
+
+def test_a_failed_integrity_completion_is_in_the_already_completed_peer(tmp_path, monkeypatch):
+    """The model sidecar is completed FIRST; the annotation completion then
+    fails. The model's file must be re-completed with that fault -- once."""
+    real = registration.complete_capture_integrity
+
+    def _fail_annotation(path, record):
+        if path.endswith("_anno.json"):
+            return "OSError: read-only"
+        return real(path, record)
+    monkeypatch.setattr(registration, "complete_capture_integrity", _fail_annotation)
+    out, _v, _d, _e, _diag = _run(tmp_path, monkeypatch=monkeypatch)
+    assert out["registration_success"] is False
+    faults = _write_faults(out["sidecar_path"])
+    assert len(faults) == 1 and "annotation sidecar" in faults[0]["message"]
+    integrity = _sidecar(out["sidecar_path"])["capture_integrity"]
+    assert integrity["completed_by"].count("registered_capture") == 1
+
+
+def test_completing_an_integrity_record_twice_gives_the_second_faults_once(tmp_path):
+    path = tmp_path / "s.json"
+    path.write_text(json.dumps({"capture_integrity": {
+        "capture_faults": [{"fault": "pass_own", "source": "annotation_pass"}],
+        "completed_by": ["annotation_pass"]}}))
+    rec = {"restore": {"rolled_back": True, "marks_still_in_project": []},
+           "faults": [{"fault": "a"}]}
+    assert registration.complete_capture_integrity(str(path), rec) is None
+    rec["faults"].append({"fault": "b"})
+    assert registration.complete_capture_integrity(str(path), rec) is None
+    integrity = json.loads(path.read_text())["capture_integrity"]
+    assert [f["fault"] for f in integrity["capture_faults"]] == ["pass_own", "a", "b"]
+    assert integrity["completed_by"] == ["annotation_pass", "registered_capture"]
+
+
+
+# --- ticks sized on the ACHIEVED model lattice ------------------------------
+
+def _arm_px(out):
+    frame = _sidecar(out["sidecar_path"])["frame"]
+    fpp = frame["achieved_fpp_ft"]
+    arms = []
+    for seg in out["registration"]["marks"]["created"]:
+        lo, hi = sorted(seg["span_uv"])
+        arms.append((hi - lo) / fpp)
+    return fpp, arms
+
+
+def test_ticks_are_sized_on_the_capped_model_lattice(tmp_path):
+    """Codex, PR #221: the ticks were sized at the REQUESTED dpi, so when the
+    axis cap coarsened the model lattice a 32 px arm came out
+    32 * achieved/requested px. They are now sized with the model pass's own
+    lattice (composed, not copied), so the prediction must EQUAL what the
+    model sidecar records, and every arm is >= 32 px on it."""
+    def _cap(cfg):
+        cfg.color_id_buffer_cap_axis_px = 400
+    out, _v, _d, _e, _diag = _run(tmp_path, cfg_setup=_cap)
+    frame = _sidecar(out["sidecar_path"])["frame"]
+    assert frame["cap_applied"] is True, frame          # the cap really fired
+    assert out["registration"]["mark_fpp_basis"] == "model_lattice"
+    fpp, arms = _arm_px(out)
+    # The prediction IS the model pass's lattice, and it is coarser than the
+    # requested dpi's (96 / (12 * 150)), which is what the ticks used to use.
+    assert out["registration"]["marks"]["layout"]["fpp_ft"] == frame["achieved_fpp_ft"]
+    assert frame["achieved_fpp_ft"] > 96.0 / (12.0 * 150.0)
+    assert min(arms) >= registration.MARK_MIN_ARM_PX - 1e-6, arms
+
+
+def test_control_uncapped_ticks_are_unchanged(tmp_path):
+    out, _v, _d, _e, _diag = _run(tmp_path)
+    frame = _sidecar(out["sidecar_path"])["frame"]
+    assert frame["cap_applied"] is False
+    _fpp, arms = _arm_px(out)
+    assert out["registration"]["marks"]["layout"]["fpp_ft"] == frame["achieved_fpp_ft"]
+    assert min(arms) >= registration.MARK_MIN_ARM_PX - 1e-6, arms

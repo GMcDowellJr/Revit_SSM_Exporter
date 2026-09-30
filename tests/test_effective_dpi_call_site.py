@@ -36,6 +36,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tools.stage_a_sidecar_shapes import legacy_view
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -128,7 +129,7 @@ def test_the_crop_path_is_actually_reached(tmp_path):
     with _install_fake_revit_db():
         _install_geometry_types()
         result = _run(tmp_path)
-    bounds = result["metadata"].get("bounds_xy")
+    bounds = legacy_view(result["metadata"]).get("bounds_xy")
     assert bounds is not None, (
         "the crop was not applied, so this file proves nothing; check that "
         "XYZ/BoundingBoxXYZ reached the fake Autodesk.Revit.DB")
@@ -147,8 +148,15 @@ def test_reported_dpi_describes_the_rendered_crop_not_the_grid(tmp_path):
         _install_geometry_types()
         result = _run(tmp_path)
 
-    res = result["metadata"]["resolution"]
-    reported = res["effective_export_dpi"]
+    # C6: the sidecar records no dpi of its own. The achieved dpi is DERIVED
+    # from what it records -- crop_uv and the measured size -- through the one
+    # implementation, so the binding is now on the recorded crop: it must be
+    # the rendered crop, not the grid.
+    frame = result["metadata"]["frame"]
+    assert "effective_export_dpi" not in frame
+    res = legacy_view(result["metadata"])["resolution"]
+    reported = effective_export_dpi(frame["crop_uv"], frame["actual_w"],
+                                    frame["actual_h"], float(frame["view_scale"]))
     assert reported is not None
 
     aw, ah = res["actual_w"], res["actual_h"]
@@ -176,8 +184,8 @@ def test_reported_dpi_matches_what_a_decoder_derives_from_the_sidecar(tmp_path):
         result = _run(tmp_path)
 
     meta = result["metadata"]
-    res = meta["resolution"]
-    bounds = meta["bounds_xy"]
+    res = legacy_view(meta)["resolution"]
+    bounds = legacy_view(meta)["bounds_xy"]
     aw, ah = res["actual_w"], res["actual_h"]
     scale = float(res["view_scale"])
 
@@ -185,5 +193,7 @@ def test_reported_dpi_matches_what_a_decoder_derives_from_the_sidecar(tmp_path):
     from clamp_pad_geometry import clamp_pad_geometry
 
     fpp, _px, _py = clamp_pad_geometry(bounds, aw, ah, measured_w=aw, measured_h=ah)
-    assert res["effective_export_dpi"] == pytest.approx(
-        scale / (12.0 * fpp), rel=1e-9)
+    # C6: composed -- the dpi resolution_contract derives from the sidecar and
+    # the fpp the decoder's clamp model derives from it are one statement.
+    derived = effective_export_dpi(bounds, aw, ah, scale)
+    assert derived == pytest.approx(scale / (12.0 * fpp), rel=1e-9)

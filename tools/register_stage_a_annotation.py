@@ -67,6 +67,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools import registration_marks as rm  # noqa: E402
+from tools.stage_a_sidecar_shapes import legacy_view  # noqa: E402
 
 Image.MAX_IMAGE_PIXELS = None
 
@@ -156,50 +157,55 @@ def _ink_off_canvas(ink, transform, out_w, out_h):
     return off
 
 
-def grid_bounds_uv(model_sidecar):
-    """``(grid rectangle, source)``: the pipeline's grid, which the model crop
-    may be NARROWER than. ``bounds_xy`` is the rectangle the model TIFF was
-    cropped to; ``model_crop_offset_uv`` is how far each side sits inside the
-    raster's own bounds (the decoder's ``grid_bounds_uv``, same arithmetic)."""
-    bounds = model_sidecar.get("bounds_xy")
-    if not bounds or len(bounds) != 4:
-        return None, "the model sidecar records no bounds_xy"
-    offset = model_sidecar.get("model_crop_offset_uv")
-    if not offset or len(offset) != 4:
-        return [float(v) for v in bounds], "bounds_xy"
-    return ([float(b) - float(o) for b, o in zip(bounds, offset)],
-            "bounds_xy - model_crop_offset_uv")
+def _resample_support(scale, offset, src_n):
+    """``[lo, hi)``: the output pixels resample_onto() fills from a source axis
+    of ``src_n`` pixels. It samples output pixel j at source
+    ``floor((j + 0.5 - offset) / scale)``, which lies in ``[0, src_n)`` iff
+    ``offset - 0.5 <= j < offset + scale * src_n - 0.5`` (scale > 0; a
+    non-positive scale is refused before this is reached). Derived from the
+    resampler's own inequality, not from the forward map of pixel centres: at
+    scale 2, offset -10 the centre of source column 0 maps to -9, but the
+    resampler also fills -10 from it (review, PR #221)."""
+    lo = int(np.ceil(offset - 0.5))
+    hi = int(np.ceil(offset + scale * src_n - 0.5))
+    return lo, hi
 
 
-def output_canvas(model_mapping, model_w, model_h, model_sidecar):
-    """The model lattice, extended to cover the pipeline's grid.
+def output_canvas(model_mapping, model_w, model_h, transform, anno_w, anno_h):
+    """C7 (Greg, 2026-09-29): union(model crop A, measured annotation rect).
 
-    The model image alone is not enough: pipeline_0928_0953's
-    Plan_CropActive has a model crop narrower than its grid, and 26 % of its
-    annotation ink sat inside the grid but outside the model image. The
-    canvas keeps the model's pixel PHASE -- it is the model image with whole
-    pixels added on each side -- so the model image sits in it at an integer
-    offset, ``model_image_origin_px``, and overlaying the two needs no
-    resample of the model capture. Grid corners go through the model's MARK
-    fit, the same map the annotation is placed by.
+    Crop A is the model image itself -- the model capture renders exactly A
+    -- so it is ``[0, model_w] x [0, model_h]`` on the model lattice. The
+    annotation rect is MEASURED: the annotation capture's own pixel extent
+    carried onto the model lattice by the fitted mark transform, bounded by
+    exactly the output pixels resample_onto() fills from it -- see
+    _resample_support(). So nothing the resample would draw falls off the
+    canvas, and no row or column is added that it would leave white.
+
+    The canvas keeps the model's pixel PHASE: it is the model image with
+    whole pixels added on each side, so the model image sits in it at the
+    integer ``model_image_origin_px``. Its origin is recorded both as that
+    offset and in view UV (``canvas_origin_uv``, the canvas's top-left
+    corner, through the model's mark fit).
+
+    Replaces the grid-extended canvas (frame B), which the registered
+    capture no longer records.
     """
-    grid, source = grid_bounds_uv(model_sidecar)
-    x0, y0, x1, y1 = 0, 0, int(model_w), int(model_h)
-    if grid is not None:
-        gx = sorted(model_mapping["a_u"] * u + model_mapping["b_u"]
-                    for u in (grid[0], grid[2]))
-        gy = sorted(model_mapping["a_v"] * v + model_mapping["b_v"]
-                    for v in (grid[1], grid[3]))
-        # To the NEAREST pixel boundary: the mark fit and the recorded crop
-        # disagree by a fraction of a pixel on every real capture (0.4-1.6 px
-        # at the corners on pipeline_0928_0953), and ceil/floor would turn
-        # that disagreement into a spurious extra row or column.
-        x0, x1 = min(x0, int(np.round(gx[0]))), max(x1, int(np.round(gx[1])))
-        y0, y1 = min(y0, int(np.round(gy[0]))), max(y1, int(np.round(gy[1])))
+    ax0, ax1 = _resample_support(transform["scale_x"], transform["offset_x"], anno_w)
+    ay0, ay1 = _resample_support(transform["scale_y"], transform["offset_y"], anno_h)
+    x0, y0 = min(0, ax0), min(0, ay0)
+    x1, y1 = max(int(model_w), ax1), max(int(model_h), ay1)
+    origin_uv = None
+    if model_mapping and model_mapping.get("a_u") and model_mapping.get("a_v"):
+        origin_uv = [(x0 - model_mapping["b_u"]) / model_mapping["a_u"],
+                     (y0 - model_mapping["b_v"]) / model_mapping["a_v"]]
     return {"canvas_w": x1 - x0, "canvas_h": y1 - y0,
             "model_image_origin_px": [-x0, -y0], "shift_x": -x0, "shift_y": -y0,
-            "grid_bounds_uv": grid, "grid_source": source,
-            "covers": "the model image and the grid, on the model's pixel phase"}
+            "canvas_origin_model_px": [x0, y0],
+            "canvas_origin_uv": origin_uv,
+            "annotation_rect_model_px": [ax0, ay0, ax1, ay1],
+            "covers": "union(model crop A, measured annotation rect), on the "
+                      "model's pixel phase"}
 
 
 def _fit_summary(fit):
@@ -215,14 +221,14 @@ def register(anno_sidecar_path, model_sidecar_path=None):
     t0 = time.time()
     anno_sidecar_path = Path(anno_sidecar_path)
     tiff_out, json_out = output_paths(anno_sidecar_path)
-    anno_sidecar = json.loads(anno_sidecar_path.read_text(encoding="utf-8"))
+    anno_sidecar = legacy_view(json.loads(anno_sidecar_path.read_text(encoding="utf-8")))
     if model_sidecar_path is None:
         model_sidecar_path = model_sidecar_for(anno_sidecar_path, anno_sidecar)
     if model_sidecar_path is None or not Path(model_sidecar_path).exists():
         raise FileNotFoundError("no model sidecar for {0} (tried {1})".format(
             anno_sidecar_path, model_sidecar_path))
     model_sidecar_path = Path(model_sidecar_path)
-    model_sidecar = json.loads(model_sidecar_path.read_text(encoding="utf-8"))
+    model_sidecar = legacy_view(json.loads(model_sidecar_path.read_text(encoding="utf-8")))
     anno_tiff = resolve_tiff(anno_sidecar_path, anno_sidecar)
     model_tiff = resolve_tiff(model_sidecar_path, model_sidecar)
 
@@ -303,7 +309,8 @@ def register(anno_sidecar_path, model_sidecar_path=None):
             mask = rm.mark_ink_mask(anno_px, anno_marks, anno_palette)
             cleaned = anno_px.copy()
             cleaned[mask] = 255
-            canvas = output_canvas(model_fit["mapping"], out_w, out_h, model_sidecar)
+            canvas = output_canvas(model_fit["mapping"], out_w, out_h, transform,
+                                   anno_px.shape[1], anno_px.shape[0])
             on_canvas = dict(transform, offset_x=transform["offset_x"] + canvas["shift_x"],
                              offset_y=transform["offset_y"] + canvas["shift_y"])
             ink_before = _ink(cleaned)

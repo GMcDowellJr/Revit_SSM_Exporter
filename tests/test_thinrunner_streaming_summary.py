@@ -281,3 +281,20 @@ def test_a_non_stage_a_failure_summary_is_unchanged():
     exporter.on_view_complete({"view_id": 7, "view_name": "V", "success": False})
     assert exporter.view_summaries[0] == {
         "view_id": 7, "view_name": "V", "success": False}
+
+
+def test_summary_reads_paint_failures_from_capture_integrity(helpers, tmp_path):
+    """P1 moved paint_failures into capture_integrity; the summary read only
+    the old top-level key, so a new sidecar's paint failures went unreported
+    (review, PR #221). The archived shape still reads."""
+    import json
+    new = tmp_path / "new.json"
+    new.write_text(json.dumps({"capture_integrity": {"status": "value", "paint_failures": 3}}))
+    old = tmp_path / "old.json"
+    old.write_text(json.dumps({"paint_failures": 2}))
+    clean = tmp_path / "clean.json"
+    clean.write_text(json.dumps({"capture_integrity": {"status": "value", "paint_failures": 0}}))
+    summary = helpers["_summarize_stage_a_sidecar"]
+    assert "HOST paint failures: 3" in [ln.strip() for ln in summary(str(new))]
+    assert "HOST paint failures: 2" in [ln.strip() for ln in summary(str(old))]
+    assert not any("paint failures" in ln for ln in summary(str(clean)))

@@ -79,6 +79,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools.clamp_pad_geometry import clamp_pad_geometry  # noqa: E402
+from tools.stage_a_sidecar_shapes import legacy_view, model_entry_uv_corners  # noqa: E402
 
 TOOL_VERSION = "1.0.0"
 SCHEMA_VERSION = "1.0"
@@ -411,7 +412,7 @@ def resolve_category(rgb, link_candidates, rgb_array, bounds_uv, image_w, image_
             "link_inst_id": cand.get("link_inst_id"),
             "link_elem_id": cand.get("link_elem_id"),
             "near_face_w": cand.get("near_face_w"),
-            "pixel_bbox": _uv_rect_to_pixel_bbox(cand.get("bbox_corners_uv"), bounds_uv, image_w, image_h),
+            "pixel_bbox": _uv_rect_to_pixel_bbox(model_entry_uv_corners(cand), bounds_uv, image_w, image_h),
         }
         for cand in link_candidates
     ]
@@ -482,7 +483,7 @@ def resolve_category(rgb, link_candidates, rgb_array, bounds_uv, image_w, image_
 
 def resolve_sidecar(sidecar_path: Path) -> dict[str, Any]:
     t0 = time.time()
-    sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    sidecar = legacy_view(json.loads(sidecar_path.read_text(encoding="utf-8")))
     near_face_w_map = sidecar.get("near_face_w_map")
     if near_face_w_map is None:
         raise ValueError(

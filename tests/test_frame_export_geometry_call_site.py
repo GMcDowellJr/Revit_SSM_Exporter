@@ -29,6 +29,7 @@ is the trap the effective-dpi call-site test was written to avoid.
 import types
 
 import pytest
+from tools.stage_a_sidecar_shapes import legacy_view
 
 import vop_interwoven.color_id_buffer as color_id_buffer
 from vop_interwoven.config import Config
@@ -122,7 +123,7 @@ def test_the_export_record_is_present_for_every_case(tmp_path):
     true. CLAUDE.md: a test that cannot reach the code it names is worth less
     than no test."""
     for _cell, _r, md in _frames(tmp_path):
-        assert md["export_frame"]["status"] == "value", md["export_frame"]
+        assert legacy_view(md)["export_frame"]["status"] == "value", legacy_view(md)["export_frame"]
 
 
 @pytest.mark.parametrize("model_clip_bounds", [
@@ -139,15 +140,15 @@ def test_export_pixels_and_fpp_do_not_move_with_the_analysis_grid(tmp_path, mode
     """
     rows = _frames(tmp_path, model_clip_bounds)
     first_cell, _first_raster, first = rows[0]
-    ef = first["export_frame"]
+    ef = legacy_view(first)["export_frame"]
 
     for cell, _raster, md in rows[1:]:
-        other = md["export_frame"]
+        other = legacy_view(md)["export_frame"]
         why = "cell_size_ft {0} vs {1}".format(first_cell, cell)
         # what Revit is asked for
         assert other["requested_px"] == ef["requested_px"], why
-        assert md["resolution"]["requested_pixel_size"] == \
-            first["resolution"]["requested_pixel_size"], why
+        assert legacy_view(md)["resolution"]["requested_pixel_size"] == \
+            legacy_view(first)["resolution"]["requested_pixel_size"], why
         # the resolution the capture carries
         assert other["achieved_fpp_ft"] == pytest.approx(ef["achieved_fpp_ft"], rel=1e-12), why
         assert other["achieved_export_dpi"] == pytest.approx(
@@ -158,7 +159,7 @@ def test_export_pixels_and_fpp_do_not_move_with_the_analysis_grid(tmp_path, mode
         assert other["crop_offset_px"] == ef["crop_offset_px"], why
         assert other["crop_snapped_uv"] == pytest.approx(ef["crop_snapped_uv"]), why
         # and the rectangle recorded for the decoder
-        assert md["bounds_xy"] == pytest.approx(first["bounds_xy"]), why
+        assert legacy_view(md)["bounds_xy"] == pytest.approx(legacy_view(first)["bounds_xy"]), why
 
 
 def test_the_recorded_crop_is_the_rectangle_that_was_rendered(tmp_path):
@@ -167,8 +168,8 @@ def test_the_recorded_crop_is_the_rectangle_that_was_rendered(tmp_path):
     while rendering the unsnapped one would leave every decoded UV off by up
     to a pixel per edge, with every test above still green."""
     md = _export(tmp_path, _raster_at(1.0, Bounds2D(12.0, 9.0, 40.0, 30.0)))["metadata"]
-    ef = md["export_frame"]
-    assert md["bounds_xy"] == pytest.approx(list(ef["crop_snapped_uv"]))
+    ef = legacy_view(md)["export_frame"]
+    assert legacy_view(md)["bounds_xy"] == pytest.approx(list(ef["crop_snapped_uv"]))
     # and the recorded offset reconstructs it from the frame's own corners,
     # which is that field's documented contract
     off = md["model_crop_offset_uv"]
@@ -182,9 +183,9 @@ def test_a_narrowed_crop_is_smaller_than_the_frame_in_pixels(tmp_path):
     """Discrimination check for the parametrised gate above: the narrowed
     case must actually produce a different rectangle from the A-is-B case, or
     both parameters would be testing the same path."""
-    wide = _export(tmp_path, _raster_at(1.0, None))["metadata"]["export_frame"]
-    narrow = _export(tmp_path, _raster_at(
-        1.0, Bounds2D(12.0, 9.0, 40.0, 30.0)))["metadata"]["export_frame"]
+    wide = legacy_view(_export(tmp_path, _raster_at(1.0, None))["metadata"])["export_frame"]
+    narrow = legacy_view(_export(tmp_path, _raster_at(
+        1.0, Bounds2D(12.0, 9.0, 40.0, 30.0)))["metadata"])["export_frame"]
     assert narrow["crop_px"][0] < wide["crop_px"][0]
     assert narrow["crop_px"][1] < wide["crop_px"][1]
     assert narrow["crop_offset_px"] != [0, 0]
@@ -223,7 +224,7 @@ def test_production_hands_revit_exactly_the_geometrys_pixel_count(tmp_path):
         view_basis=_PLAN_BASIS,
     )
     md = _export(tmp_path, raster)["metadata"]
-    ef = md["export_frame"]
+    ef = legacy_view(md)["export_frame"]
 
     # The fixture must actually reach the refused-floor branch, or this
     # proves nothing about the call site.
@@ -231,8 +232,8 @@ def test_production_hands_revit_exactly_the_geometrys_pixel_count(tmp_path):
     assert ef["requested_px"] < ef["min_axis_px"]
 
     # ... and production passed that number through untouched.
-    assert md["resolution"]["requested_pixel_size"] == ef["requested_px"]
-    assert md["resolution"]["requested_px"] == ef["requested_px"]
+    assert legacy_view(md)["resolution"]["requested_pixel_size"] == ef["requested_px"]
+    assert legacy_view(md)["resolution"]["requested_px"] == ef["requested_px"]
 
 
 def test_the_floor_case_reaches_revit_at_the_rebuilt_count(tmp_path):
@@ -253,10 +254,10 @@ def test_the_floor_case_reaches_revit_at_the_rebuilt_count(tmp_path):
         view_basis=_PLAN_BASIS,
     )
     md = _export(tmp_path, raster)["metadata"]
-    ef = md["export_frame"]
+    ef = legacy_view(md)["export_frame"]
 
     assert ef["floor_applied_to_crop"] is True
-    assert md["resolution"]["requested_pixel_size"] == ef["requested_px"]
+    assert legacy_view(md)["resolution"]["requested_pixel_size"] == ef["requested_px"]
     assert ef["requested_px"] >= ef["min_axis_px"]
     # the recorded rectangle spans exactly that many pixels at the recorded fpp
     s = ef["crop_snapped_uv"]

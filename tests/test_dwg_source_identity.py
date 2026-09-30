@@ -97,6 +97,11 @@ class _FakeLinkedElementProxy:
         self.Category = category
         self.source_type = source_type
         self._bbox = bbox
+        # C3 reads the linked element's own bbox and the link transform.
+        # This proxy's bbox is already host-space and untransformed, so the
+        # element is itself and the link transform is the identity.
+        self.element = self
+        self.transform = None
 
     def get_BoundingBox(self, _view):
         return self._bbox
@@ -236,11 +241,12 @@ def test_dwg_entry_has_source_dwg_category_and_bbox():
     result = _collect(doc, [dwg_elem.Id], {2002: "DWG"}, diag=diag)
 
     entry = result["host"]["2002"]
-    assert entry["source"] == {"state": "value", "value": "DWG"}
-    assert entry["category_state"] == {"state": "value", "value": "site-plan.dwg"}
+    assert entry["source"] == "DWG"
+    # C2: a category that read is the plain string; no state object.
     assert entry["category"] == "site-plan.dwg"
+    assert "category_state" not in entry
     # Same bbox shape as a host record, from the same projection call.
-    assert entry["bbox_corners_uv"] == [[5, 5], [9, 5], [9, 9], [5, 9]]
+    assert entry["uv_rect"] == [5, 5, 9, 9]
     assert entry["near_face_w"] is not None
     assert not diag.errors
 
@@ -254,8 +260,8 @@ def test_host_entry_alongside_dwg_is_labelled_host():
 
     result = _collect(doc, [host_elem.Id, dwg_elem.Id], {1001: "HOST", 2002: "DWG"})
 
-    assert result["host"]["1001"]["source"] == {"state": "value", "value": "HOST"}
-    assert result["host"]["2002"]["source"] == {"state": "value", "value": "DWG"}
+    assert result["host"]["1001"]["source"] == "HOST"
+    assert result["host"]["2002"]["source"] == "DWG"
 
 
 def test_source_is_unavailable_with_a_reason_not_a_default():
@@ -303,7 +309,10 @@ def test_category_state_records_a_missing_category_as_a_value_not_a_failure():
 
     result = _collect(doc, [elem.Id], {1001: "HOST"})
     entry = result["host"]["1001"]
-    assert entry["category_state"] == {"state": "value", "value": None}
+    # C2: a successful read writes no state object -- so "category": None
+    # WITHOUT "category_state" is the answer "no Category", and the failure
+    # case above is told apart by the state object's presence.
+    assert "category_state" not in entry
     assert entry["category"] is None
 
 
@@ -325,8 +334,8 @@ def test_grouped_dwg_import_is_still_labelled_dwg():
     # resolve_all's Group expansion.
     result = _collect(doc, [group_elem.Id, grouped_dwg.Id], {1001: "HOST"})
 
-    assert result["host"]["1001"]["source"] == {"state": "value", "value": "HOST"}
-    assert result["host"]["2002"]["source"] == {"state": "value", "value": "DWG"}
+    assert result["host"]["1001"]["source"] == "HOST"
+    assert result["host"]["2002"]["source"] == "DWG"
 
 
 def test_expanded_subcomponent_of_a_host_element_is_labelled_host():
@@ -338,7 +347,7 @@ def test_expanded_subcomponent_of_a_host_element_is_labelled_host():
 
     result = _collect(doc, [parent.Id, sub.Id], {1001: "HOST"})
 
-    assert result["host"]["1002"]["source"] == {"state": "value", "value": "HOST"}
+    assert result["host"]["1002"]["source"] == "HOST"
 
 
 # --- compose the two ImportInstance detectors -------------------------------
@@ -368,12 +377,16 @@ def test_import_instance_detection_agrees_with_collection_policy():
 
 # --- HOST/LINK records are untouched ----------------------------------------
 
-_PRE_CHANGE_HOST_KEYS = ("bbox_corners_uv", "near_face_w", "category")
+# C3: "bbox_corners_uv" became "uv_rect" ([umin, vmin, umax, vmax]).
+_PRE_CHANGE_HOST_KEYS = ("uv_rect", "near_face_w", "category")
 _PRE_CHANGE_LINK_KEYS = (
-    "bbox_corners_uv", "near_face_w", "category", "link_inst_id", "link_elem_id",
+    "uv_rect", "near_face_w", "category", "link_inst_id", "link_elem_id",
 )
 # Stage A step 1: source identity, host entries only.
-_NEW_HOST_KEYS = {"source", "category_state", "import_symbol_state", "view_specific_state"}
+# C1 (2026-09-29): import_symbol_state / view_specific_state are no longer
+# emitted per element -- probe-debug data. See test_dwg_entry_carries_no_probe_debug_states.
+# C2: "category_state" only when the category read failed.
+_NEW_HOST_KEYS = {"source"}
 # Stage A step 4 (decision B, 2026-09-21): the 3D AABB, on host AND link.
 _STEP4_NEW_KEYS = {"bbox_3d"}
 
@@ -398,7 +411,7 @@ def test_fixture_without_dwg_is_unchanged_under_the_pre_change_keys(monkeypatch)
 
     host_entry = result["host"]["1001"]
     assert {k: host_entry[k] for k in _PRE_CHANGE_HOST_KEYS} == {
-        "bbox_corners_uv": [[0, 0], [2, 0], [2, 2], [0, 2]],
+        "uv_rect": [0, 0, 2, 2],
         "near_face_w": host_entry["near_face_w"],
         "category": "Walls",
     }
@@ -414,7 +427,7 @@ def test_fixture_without_dwg_is_unchanged_under_the_pre_change_keys(monkeypatch)
     assert link_entry["category"] == "Walls"
     assert link_entry["link_inst_id"] == 9001
     assert link_entry["link_elem_id"] == 501
-    assert link_entry["bbox_corners_uv"] == [[10, 10], [12, 10], [12, 12], [10, 12]]
+    assert link_entry["uv_rect"] == [10, 10, 12, 12]
 
 
 def test_host_record_gains_exactly_the_reviewed_new_keys():
@@ -427,42 +440,32 @@ def test_host_record_gains_exactly_the_reviewed_new_keys():
         set(_PRE_CHANGE_HOST_KEYS) | _NEW_HOST_KEYS | _STEP4_NEW_KEYS)
 
 
-# --- both DWG identifiers are recorded, neither chosen ----------------------
+# --- C1: the per-element DWG probe states are gone ------------------------
 
-def test_dwg_records_both_category_and_import_symbol_name():
-    """Which of the two is stable across Revit versions is unverified, so both
-    are captured and post decides (Greg, 2026-09-21). A test that only checked
-    one would let the other rot unnoticed."""
+_DROPPED_PROBE_KEYS = {"import_symbol_state", "view_specific_state"}
+
+
+def test_dwg_entry_carries_no_probe_debug_states():
+    """C1: neither probe field is written, for a DWG or for a true HOST
+    element. The DWG fixture has a readable symbol AND ViewSpecific True, so
+    a writer that still emitted either would have a value to emit."""
     import_type = _FakeImportType(4004, "site-plan.dwg")
     dwg = ImportInstance(2002, _FakeCategory("Imports in Families", 99),
-                         _FakeBBox((5, 5, 0), (9, 9, 1)), type_id=import_type.Id)
-    doc = _FakeDoc([dwg, import_type])
-
-    entry = _collect(doc, [dwg.Id], {2002: "DWG"})["host"]["2002"]
-
-    assert entry["category_state"] == {"state": "value", "value": "Imports in Families"}
-    assert entry["import_symbol_state"] == {"state": "value", "value": "site-plan.dwg"}
-    # The two are DIFFERENT strings in this fixture on purpose: a fixture where
-    # they coincide could not tell the readers apart.
-    assert entry["category_state"]["value"] != entry["import_symbol_state"]["value"]
-
-
-def test_import_symbol_is_not_applicable_for_a_true_host_element():
+                         _FakeBBox((5, 5, 0), (9, 9, 1)), type_id=import_type.Id,
+                         view_specific=True)
     host = _FakeElement(1001, _FakeCategory("Walls", 10), _FakeBBox((0, 0, 0), (2, 2, 2)))
-    doc = _FakeDoc([host])
+    doc = _FakeDoc([dwg, import_type, host])
 
-    entry = _collect(doc, [host.Id], {1001: "HOST"})["host"]["1001"]
-    assert entry["import_symbol_state"]["state"] == "not_applicable"
-    assert entry["view_specific_state"]["state"] == "not_applicable"
-    assert entry["import_symbol_state"]["reason"]
+    out = _collect(doc, [dwg.Id, host.Id], {2002: "DWG", 1001: "HOST"})["host"]
+    for key in ("2002", "1001"):
+        assert not (_DROPPED_PROBE_KEYS & set(out[key])), out[key]
+    # The DWG is still identifiable as one -- that was never the probe fields' job.
+    assert out["2002"]["source"] == "DWG"
 
 
-def test_import_symbol_unavailable_does_not_infect_the_other_fields():
-    """A failing symbol read must not take the category, the source, or the
-    bbox down with it -- each field carries its own state."""
-    # Named ImportInstance, not a SUBCLASS of it: both detectors match on
-    # type(elem).__name__, so a subclass would answer "not a DWG" and this
-    # test would pass for the wrong reason. See _is_import_instance.
+def test_a_failing_type_or_view_specific_read_no_longer_warns_per_element():
+    """The readers are gone, so a DWG whose GetTypeId raises is recorded like
+    any other element -- no per-element warning for a field nobody reads."""
     class ImportInstance(_FakeElement):  # noqa: F811 - deliberate shadow
         def GetTypeId(self):
             raise RuntimeError("type lookup failed")
@@ -472,44 +475,34 @@ def test_import_symbol_unavailable_does_not_infect_the_other_fields():
     diag = _FakeDiag()
 
     entry = _collect(doc, [dwg.Id], {2002: "DWG"}, diag=diag)["host"]["2002"]
-    assert entry["import_symbol_state"]["state"] == "unavailable"
-    assert "RuntimeError" in entry["import_symbol_state"]["reason"]
-    assert entry["category_state"] == {"state": "value", "value": "site-plan.dwg"}
-    assert entry["source"] == {"state": "value", "value": "DWG"}
-    assert entry["bbox_corners_uv"] == [[5, 5], [9, 5], [9, 9], [5, 9]]
-    assert any(w["callsite"] == "near_face_w.host.import_symbol" for w in diag.warnings)
+    assert entry["uv_rect"] == [5, 5, 9, 9]
+    assert not any(w["callsite"].startswith("near_face_w.host.import_symbol")
+                   or w["callsite"].startswith("near_face_w.host.view_specific")
+                   for w in diag.warnings)
 
 
-def test_dwg_applicability_is_gated_on_the_element_not_on_the_source_field():
-    """source can itself be "unavailable" (no expansion record). The DWG-only
-    fields must still answer, or one field's failure would silently become
-    another's "not_applicable"."""
-    dwg = ImportInstance(2002, _FakeCategory("site-plan.dwg", 99),
-                         _FakeBBox((5, 5, 0), (9, 9, 1)), view_specific=True)
-    doc = _FakeDoc([dwg])
+# --- C2: the writer's plain-string shape, composed with a real reader --------
 
-    entry = _collect(doc, [dwg.Id], None)["host"]["2002"]
-    assert entry["source"]["state"] == "unavailable"
-    assert entry["view_specific_state"] == {"state": "value", "value": True}
+def test_c2_plain_source_composes_with_capture_overlays_reader():
+    """C2 writes "source" as a bare string. Composed, not asserted apart: the
+    overlay tool's reader must classify the WRITER's output, for both a read
+    that succeeded (plain string) and one that failed (state object), and
+    must still read a pre-C2 state object the same way."""
+    from tools import capture_overlay as co
 
+    host = _FakeElement(1001, _FakeCategory("Walls", 10), _FakeBBox((0, 0, 0), (2, 2, 2)))
+    dwg = ImportInstance(2002, _FakeCategory("site-plan.dwg", 99), _FakeBBox((5, 5, 0), (9, 9, 1)))
+    doc = _FakeDoc([host, dwg])
 
-# --- view-specific DWG is tagged, not dropped -------------------------------
+    new = _collect(doc, [host.Id, dwg.Id], {1001: "HOST", 2002: "DWG"})["host"]
+    assert new["1001"]["source"] == "HOST"
+    assert co._source_class_for_host_entry(new["1001"]) == (co.CLASS_HOST, None)
+    assert co._source_class_for_host_entry(new["2002"]) == (co.CLASS_DWG, None)
 
-def test_view_specific_dwg_is_recorded_and_tagged():
-    dwg = ImportInstance(2002, _FakeCategory("site-plan.dwg", 99),
-                         _FakeBBox((5, 5, 0), (9, 9, 1)), view_specific=True)
-    doc = _FakeDoc([dwg])
+    failed = _collect(doc, [host.Id], None)["host"]["1001"]
+    cls, reason = co._source_class_for_host_entry(failed)
+    assert cls == co.CLASS_UNKNOWN_SOURCE and reason == failed["source"]["reason"]
 
-    entry = _collect(doc, [dwg.Id], {2002: "DWG"})["host"]["2002"]
-    assert entry["source"] == {"state": "value", "value": "DWG"}
-    assert entry["view_specific_state"] == {"state": "value", "value": True}
-
-
-def test_model_space_dwg_is_tagged_not_view_specific():
-    """Control: the tag must discriminate, not report True for everything."""
-    dwg = ImportInstance(2002, _FakeCategory("site-plan.dwg", 99),
-                         _FakeBBox((5, 5, 0), (9, 9, 1)), view_specific=False)
-    doc = _FakeDoc([dwg])
-
-    entry = _collect(doc, [dwg.Id], {2002: "DWG"})["host"]["2002"]
-    assert entry["view_specific_state"] == {"state": "value", "value": False}
+    # An archive (pre-C2) entry reads identically.
+    old = dict(new["2002"], source={"state": "value", "value": "DWG"})
+    assert co._source_class_for_host_entry(old) == (co.CLASS_DWG, None)

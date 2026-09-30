@@ -169,7 +169,9 @@ class StreamingExporter:
                  export_view_raster=False,
                  pixels_per_cell=4,
                  date_override=None,
-                 root_cache=None):
+                 root_cache=None,
+                 view_ids=None,
+                 run_id=None):
         """Initialize streaming exporter.
 
         Args:
@@ -219,7 +221,17 @@ class StreamingExporter:
         self.csv_vop_file = None
         self.perf_writer = None
         self.perf_file = None
-        
+        self.csv_occlusion_file = None
+
+        # C9: under Stage A the CSV set is views_core only (view metadata +
+        # capture status), and the run writes ONE run_meta.json holding
+        # everything that is not per-view; views_core rows carry RunId +
+        # ConfigHash as its keys.
+        self.stage_a = bool(getattr(cfg, "enable_color_id_buffer_stage_a", False))
+        self.run_meta = None
+        self.run_meta_path = None
+        self.config_hash = None
+
         # Lightweight view summaries (no raster data)
         self.view_summaries = []
 
@@ -246,9 +258,33 @@ class StreamingExporter:
 
         base_run_id = run_dt.strftime("%Y%m%dT%H%M%S")
         self.run_id = f"{base_run_id}_{tag}" if tag else base_run_id
+        # A caller running one run in several batches (thinrunner) passes the
+        # first batch's id, so every views_core row of the run keys into ONE
+        # run_meta.
+        if run_id:
+            self.run_id = run_id
+        # The pipeline runs once per view and merges each view into the
+        # run's view-element map and views_diagnostics file; this is what
+        # scopes those merges to THIS run (a prior run's file in the same
+        # folder/date is replaced, not merged).
+        cfg._view_element_map_run_id = self.run_id
 
         # Setup
         os.makedirs(output_dir, exist_ok=True)
+        if self.stage_a:
+            from vop_interwoven.csv_export import compute_config_hash
+            from vop_interwoven.run_meta import build_run_meta, write_run_meta
+            self.config_hash = compute_config_hash(cfg)
+            # run_dt is the override when it parsed as a date and now()
+            # otherwise; ``tag`` is the override when it did NOT parse (e.g.
+            # "PR_221"). The date is always a date -- pipeline_0930_0739
+            # wrote the tag into it -- and the tag is recorded beside it.
+            is_dt = isinstance(date_override, datetime)
+            self.run_meta = build_run_meta(
+                cfg, doc, self.run_id,
+                (date_override if is_dt else run_dt).strftime("%Y-%m-%d"),
+                view_ids, self.config_hash, run_tag=None if is_dt else tag)
+            self.run_meta_path = write_run_meta(self.run_meta, output_dir)
         if export_png:
             self.png_dir = os.path.join(output_dir, "vop_raster")
             os.makedirs(self.png_dir, exist_ok=True)
@@ -283,9 +319,19 @@ class StreamingExporter:
         else:
             date_str = datetime.now().strftime("%Y-%m-%d")
             
+        self.date_str = date_str
         core_filename = f"views_core_{date_str}.csv"
         self.core_csv_path = os.path.join(csv_output_dir, core_filename)
         self.csv_core_file = open(self.core_csv_path, 'w', newline='', encoding='utf-8')
+        if self.stage_a:
+            # C9: views_core only. No views_vop / views_occlusion / views_perf
+            # file is opened, so none is left behind holding only a header.
+            from vop_interwoven.csv_export import get_stage_a_core_csv_header
+            self.csv_core_writer = csv.DictWriter(
+                self.csv_core_file, fieldnames=get_stage_a_core_csv_header(),
+                extrasaction='ignore')
+            self.csv_core_writer.writeheader()
+            return
         self.csv_core_writer = csv.DictWriter(
             self.csv_core_file, 
             fieldnames=get_core_csv_header(),
@@ -370,6 +416,7 @@ class StreamingExporter:
                 })
                 summary.update(_stage_a_annotation_summary(view_result))
                 summary.update(_stage_a_registration_summary(view_result))
+                self._write_stage_a_core_row(view_result)
             self.view_summaries.append(summary)
             return
 
@@ -395,6 +442,7 @@ class StreamingExporter:
             stage_a_summary.update(_stage_a_registration_summary(view_result))
             if stage_a_summary.get("annotation_pass_success") is False:
                 self.annotation_passes_failed += 1
+            self._write_stage_a_core_row(view_result)
             self.view_summaries.append(stage_a_summary)
             if self.full_results is not None:
                 self.full_results.append({
@@ -567,6 +615,20 @@ class StreamingExporter:
 
         return png_path
 
+    def _write_stage_a_core_row(self, view_result):
+        """C9: the Stage A views_core row -- success or failure alike."""
+        # getattr: callers that build a bare exporter (no CSV set-up) skip it.
+        if not getattr(self, "export_csv", False) or getattr(
+                self, "csv_core_writer", None) is None:
+            return
+        from vop_interwoven.csv_export import stage_a_view_result_to_core_row
+        row = stage_a_view_result_to_core_row(
+            view_result, self.cfg, self.doc, run_id=self.run_id,
+            config_hash=getattr(self, "config_hash", None))
+        self.csv_core_writer.writerow(row)
+        self.csv_core_file.flush()
+        self.csv_rows_written += 1
+
     def _write_csv_rows(self, view_result):
         """Write CSV rows for a single view result."""
 
@@ -719,12 +781,42 @@ class StreamingExporter:
             "timings": view_result.get("timings")
         }
     
+    def _backfill_missing_outcomes(self):
+        """Every requested view that reported nothing gets a failed outcome:
+        a views_core row, a summary and a views_failed count."""
+        def _vid(v):
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return v
+        seen = set(_vid(s.get("view_id")) for s in self.view_summaries)
+        for vid in (self.run_meta or {}).get("views_requested") or []:
+            if _vid(vid) in seen:
+                continue
+            seen.add(_vid(vid))
+            self.on_view_complete({
+                "view_id": vid, "success": False,
+                "stage": "color_id_buffer_stage_a",
+                "failure_reason": "no_outcome_reported: the view never reached the "
+                                  "exporter (see the streaming log for its error)"})
+
     def finalize(self):
         """Finalize export and return results.
         
         Returns:
             Dict with export summary and file paths
         """
+        # C9: the run's per-view outcomes, and finalized: true -- LAST write
+        # of run_meta, after every view has reported. A requested view with no
+        # outcome at all (its failure never reached this exporter) is recorded
+        # as failed FIRST, so a finalized record is never short a view it
+        # lists in views_requested (Codex, PR #221).
+        if self.run_meta is not None:
+            self._backfill_missing_outcomes()
+            from vop_interwoven.run_meta import finalize_run_meta, write_run_meta
+            finalize_run_meta(self.run_meta, self.view_summaries)
+            self.run_meta_path = write_run_meta(self.run_meta, self.output_dir)
+
         # Close CSV files
         if self.csv_core_file:
             self.csv_core_file.close()
@@ -773,6 +865,9 @@ class StreamingExporter:
             "vop_csv_path": getattr(self, 'vop_csv_path', None),
             "occlusion_csv_path": getattr(self, 'occlusion_csv_path', None),
             "perf_csv_path": getattr(self, 'perf_csv_path', None),
+            "run_id": self.run_id,
+            "run_meta_path": self.run_meta_path,
+            "config_hash": self.config_hash,
             "csv_rows_written": self.csv_rows_written,
             "json_path": json_path,
             "view_summaries": self.view_summaries
@@ -855,6 +950,10 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
         print("[Streaming] memory mark run_start failed: {}".format(e))
 
     for view_id in view_ids:
+        # Whether this view's result has been handed to the exporter. A view
+        # that raises BEFORE that still owes the exporter an outcome under
+        # Stage A (see the outer except below).
+        callback_entered = False
         try:
             try:
                 mem_tracker.mark("view_start_{}".format(view_id))
@@ -917,6 +1016,19 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                         except Exception:
                             err = None
                     print(f"[Streaming] WARNING: View {view_id} failed in pipeline; skipping exports. error={err}")
+                    if getattr(cfg, "enable_color_id_buffer_stage_a", False):
+                        # A failed Stage A view still goes to the exporter: its
+                        # views_core row, run_meta entry and views_failed count
+                        # are the inventory of what was attempted. Skipping the
+                        # callback here made a failed capture (export_dim_
+                        # mismatch, or a pipeline exception) vanish from all
+                        # three (Codex, PR #221). An exception stub carries no
+                        # stage, so it is stamped, with its error as the reason.
+                        view_result.setdefault("stage", "color_id_buffer_stage_a")
+                        if not view_result.get("failure_reason"):
+                            view_result["failure_reason"] = err or "pipeline_view_failure"
+                        callback_entered = True
+                        on_view_complete(view_result)
                     summaries.append({
                         "view_id": view_id,
                         "view_name": view_result.get("view_name"),
@@ -990,6 +1102,7 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                     print("[Streaming] memory mark after_raster failed: {}".format(e))
 
                 # Call user callback
+                callback_entered = True
                 on_view_complete(view_result)
 
                 # Retain only lightweight summary
@@ -1021,6 +1134,21 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
                 "success": False,
                 "error": str(e)
             })
+            if getattr(cfg, "enable_color_id_buffer_stage_a", False) and not callback_entered:
+                # The view raised before its result reached the exporter, so
+                # the exporter would finalize without it (Codex, PR #221).
+                # A failure INSIDE the callback is not re-sent (it may already
+                # be recorded); StreamingExporter.finalize() backfills any
+                # requested view that still has no outcome.
+                try:
+                    on_view_complete({
+                        "view_id": view_id, "success": False,
+                        "stage": "color_id_buffer_stage_a",
+                        "failure_reason": "view_processing_raised: {0}: {1}".format(
+                            type(e).__name__, e)})
+                except Exception as cb_ex:
+                    print("[Streaming] could not record the failure of view {0}: "
+                          "{1}".format(view_id, cb_ex))
     
     # Persist geometry cache to disk (only writes if new entries were added)
     try:
@@ -1073,7 +1201,7 @@ def process_document_views_streaming(doc, view_ids, cfg, on_view_complete=None, 
 def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
                                 export_png=True, export_csv=True, export_json=False,
                                 pixels_per_cell=4, date_override=None,
-                                export_view_raster=False):
+                                export_view_raster=False, run_id=None):
     """Run VOP pipeline with streaming export to minimize memory usage.
     
     This is the recommended entry point for large view sets where memory
@@ -1163,7 +1291,9 @@ def run_vop_pipeline_streaming(doc, view_ids, cfg=None, output_dir=None,
         export_view_raster=export_view_raster,
         pixels_per_cell=pixels_per_cell,
         date_override=date_override,
-        root_cache=root_cache
+        root_cache=root_cache,
+        view_ids=view_ids,
+        run_id=run_id,
     )
     
     # Process with streaming callback

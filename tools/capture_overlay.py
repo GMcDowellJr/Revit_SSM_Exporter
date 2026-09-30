@@ -64,8 +64,8 @@ USAGE
 
 LEAF MODULE
 -----------
-Standard library + PIL + ``tools/clamp_pad_geometry.py`` (which is
-standard-library-only). NumPy is not needed: nothing here reads the
+Standard library + PIL + ``tools/clamp_pad_geometry.py`` and
+``tools/stage_a_sidecar_shapes.py`` (both standard-library-only). NumPy is not needed: nothing here reads the
 capture's pixels, it only draws on top of them. Imports nothing from
 ``vop_interwoven`` and nothing
 from ``tools/decode_stage_a_color_id.py``, which would put the package on
@@ -94,6 +94,7 @@ from PIL import Image, ImageDraw, ImageFont
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools.clamp_pad_geometry import clamp_pad_geometry, uv_to_pixel  # noqa: E402
+from tools.stage_a_sidecar_shapes import legacy_view, model_entry_uv  # noqa: E402
 
 TOOL_VERSION = "1.0.0"
 
@@ -309,7 +310,7 @@ def _read_model_records(sidecar: dict[str, Any]) -> list[dict[str, Any]]:
 
     for key, entry in sorted((near_face_w_map.get("host") or {}).items()):
         cls, class_reason = _source_class_for_host_entry(entry)
-        state, payload = _gs_read(entry.get("bbox_corners_uv"))
+        state, payload = model_entry_uv(entry)
         near_w = _number(entry.get("near_face_w"))
         records.append({
             "key": str(key),
@@ -323,7 +324,7 @@ def _read_model_records(sidecar: dict[str, Any]) -> list[dict[str, Any]]:
         })
 
     for key, entry in sorted((near_face_w_map.get("link") or {}).items()):
-        state, payload = _gs_read(entry.get("bbox_corners_uv"))
+        state, payload = model_entry_uv(entry)
         near_w = _number(entry.get("near_face_w"))
         records.append({
             "key": str(key),
@@ -418,6 +419,7 @@ def frame_for(sidecar: dict[str, Any], pass_kind: str) -> tuple[tuple[float, ...
     ``registration.rendered_uv``. Reading one pass's key on the other would
     place every box against the wrong rectangle.
     """
+    sidecar = legacy_view(sidecar)
     if pass_kind == PASS_ANNOTATION:
         registration = sidecar.get("registration")
         if not isinstance(registration, dict):
@@ -438,6 +440,7 @@ def frame_for(sidecar: dict[str, Any], pass_kind: str) -> tuple[tuple[float, ...
 
 
 def _recorded_dims(sidecar: dict[str, Any]) -> tuple[int | None, int | None]:
+    sidecar = legacy_view(sidecar)
     resolution = sidecar.get("resolution")
     if not isinstance(resolution, dict):
         return (None, None)
@@ -928,7 +931,7 @@ def overlay_one(
     max_panel_lines: int = DEFAULT_MAX_PANEL_LINES,
     out_path: Path | None = None,
 ) -> Path:
-    sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    sidecar = legacy_view(json.loads(sidecar_path.read_text(encoding="utf-8")))
     tiff_path = _resolve_tiff_path(sidecar_path, sidecar)
     with Image.open(tiff_path) as img:
         base = img.convert("RGB")

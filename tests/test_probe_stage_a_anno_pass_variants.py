@@ -2062,13 +2062,21 @@ def test_every_corner_tick_stays_in_the_outer_third_and_mid_ticks_do_not():
                 assert u0 + third_u < us[0] < u1 - third_u, seg
 
 
-def test_the_arm_shrinks_for_a_small_crop_and_a_tiny_one_is_refused():
-    full = _layout(uv=(0.0, 0.0, 100.0, 100.0), fpp=0.1)
-    assert full["arm_px"] == registration.MARK_ARM_PX
-    small = _layout(uv=(0.0, 0.0, 20.0, 20.0), fpp=0.1)   # 200 px square
-    assert registration.MARK_MIN_ARM_PX <= small["arm_px"] < registration.MARK_ARM_PX
-    tiny = _layout(uv=(0.0, 0.0, 10.0, 10.0), fpp=0.1)    # 100 px square
-    assert tiny["state"] == "unavailable" and "too small" in tiny["reason"]
+def test_the_arm_is_the_minimum_and_a_crop_too_small_for_it_is_refused():
+    """T1 (2026-09-29): MARK_ARM_PX == MARK_MIN_ARM_PX, so the arm no longer
+    shrinks -- the premise "a small crop gets a shorter arm" is gone. What
+    remains: every accepted crop draws 32 px ticks, and the smallest crop is
+    the one whose outer third holds inset + gap + 32 px exactly."""
+    assert registration.MARK_ARM_PX == registration.MARK_MIN_ARM_PX == 32.0
+    for side_ft in (100.0, 20.0):                          # 1000 and 200 px
+        layout = _layout(uv=(0.0, 0.0, side_ft, side_ft), fpp=0.1)
+        assert layout["arm_px"] == registration.MARK_ARM_PX, layout
+    need_px = 3.0 * (registration.MARK_INSET_PX + registration.MARK_GAP_PX
+                     + registration.MARK_MIN_ARM_PX)       # 192 px
+    edge = _layout(uv=(0.0, 0.0, need_px * 0.1, need_px * 0.1), fpp=0.1)
+    assert edge["state"] == "value" and edge["arm_px"] == 32.0
+    below = _layout(uv=(0.0, 0.0, (need_px - 1) * 0.1, (need_px - 1) * 0.1), fpp=0.1)
+    assert below["state"] == "unavailable" and "too small" in below["reason"]
 
 
 def test_marks_without_a_reference_or_lattice_are_unavailable_not_guessed():

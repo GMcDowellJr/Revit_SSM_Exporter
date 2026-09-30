@@ -204,6 +204,7 @@ from vop_interwoven.resolution_contract import DEFAULT_COLOR_ID_EXPORT_DPI
 # standard library only, so tools/link_identity_resolver.py shares it without
 # taking on this module's vop_interwoven dependency.
 from tools.clamp_pad_geometry import clamp_pad_geometry as _shared_clamp_pad_geometry
+from tools.stage_a_sidecar_shapes import legacy_view  # noqa: E402
 
 # The ONE registration-mark implementation, shared with
 # tools/register_stage_a_annotation.py and the probe analyzer.
@@ -534,6 +535,7 @@ def _capture_reliability(sidecar: dict[str, Any]) -> tuple[bool, str | None]:
     authority it has not earned (AREAL HIGH is the only elem_class/confidence
     combination that gates occlusion, pipeline.py:2443-2444).
     """
+    sidecar = legacy_view(sidecar)
     display_style = sidecar.get("applied_display_style")
     # A sidecar written before "read_failed" existed records a failed AA read
     # as "unchanged". Both are the same fact -- the AA state was never
@@ -688,6 +690,7 @@ def build_decoded_document(
     bounds_uv: tuple[float, float, float, float] | None,
     model_crop_offset_uv: tuple[float, float, float, float] | None = None,
 ) -> dict[str, Any]:
+    sidecar = legacy_view(sidecar)
     t0 = time.time()
     rgb = _load_rgb_array(tiff_path)
     h, w = rgb.shape[:2]
@@ -860,6 +863,15 @@ def build_decoded_document(
             # for -- which is why the basis string below says "requested".
             export_dpi = resolution.get("requested_export_dpi")
             dpi_basis = "sidecar_requested_export_dpi"
+            if not resolution.get("pre_cap_px") and resolution.get("achieved_export_dpi"):
+                # Without pre_cap_px the count is "requested_pixel_size": the
+                # lattice's pixels AFTER the axis cap / minimum-pixel floor,
+                # so it is on the ACHIEVED dpi, not the requested one. Divided
+                # by the requested dpi, a capped or floored view reported an
+                # extent off by requested/achieved (Codex, PR #221). pre_cap_px
+                # is the uncapped request and stays on the requested dpi.
+                export_dpi = resolution.get("achieved_export_dpi")
+                dpi_basis = "sidecar_achieved_export_dpi"
             if not export_dpi:
                 export_dpi = resolution.get("export_dpi")
                 dpi_basis = "sidecar_legacy_export_dpi"
@@ -867,7 +879,30 @@ def build_decoded_document(
                 export_dpi = DEFAULT_COLOR_ID_EXPORT_DPI
                 dpi_basis = "default_export_dpi"
 
-            if paper_fit_in and view_scale and measured_fit_px:
+            # A REGISTERED capture's annotation image is NOT on the model
+            # lattice: it renders the authored crop at the model pass's pixel
+            # count, so every formula below -- all of them the model's extent
+            # over this image's pixels -- understated its feet-per-pixel by
+            # the registration scale (0.63x on pipeline_0930_0919's
+            # ModelCallout). Its own ticks measure it directly: the decoder's
+            # fit of them gives pixels per foot on each axis (Greg,
+            # 2026-09-30). A fit that is not a value reports NO scale rather
+            # than falling back to a formula known to be wrong here.
+            ticks_drawn = marks_block.get("status") == "subtracted"
+            if ticks_drawn and marks_block.get("fit_status") == "value":
+                px_per_ft = marks_block.get(
+                    "px_per_ft_v" if fitted_axis == "height" else "px_per_ft_u")
+                feet_per_pixel = 1.0 / float(px_per_ft)
+                feet_per_pixel_numerator_basis = "registration_tick_fit"
+                feet_per_pixel_denominator_basis = "registration_tick_fit"
+            elif ticks_drawn:
+                feet_per_pixel_unreliable_reason = (
+                    "registered capture: this image is not on the model lattice, "
+                    "so its scale comes from its registration ticks, and their fit "
+                    "is {0}: {1}. The .registered output carries this capture on "
+                    "the model lattice".format(marks_block.get("fit_status"),
+                                               marks_block.get("fit_reason")))
+            elif paper_fit_in and view_scale and measured_fit_px:
                 model_fit_ft = float(paper_fit_in) * float(view_scale) / 12.0
                 feet_per_pixel = model_fit_ft / measured_fit_px
                 feet_per_pixel_numerator_basis = "sidecar_paper_fit_in"
@@ -1067,6 +1102,10 @@ def _registration_mark_exclusion(rgb, sidecar):
         "expected_count": fit.get("expected_count"),
         "missing": [m.get("key") for m in fit.get("missing") or []],
         "residual_max_px": fit.get("residual_max_px"),
+        # The image's own scale, measured by the ticks: a crop-less capture's
+        # feet_per_pixel comes from here (build_decoded_document).
+        "px_per_ft_u": fit.get("px_per_ft_u"),
+        "px_per_ft_v": fit.get("px_per_ft_v"),
         "capture_faults": list(payload.get("faults") or []),
     }
     decode_map = dict((k, v) for k, v in colour_map.items() if k not in set(mark_ids))
@@ -1103,8 +1142,29 @@ def _resolve_tiff_path(sidecar_path: Path, sidecar: dict[str, Any]) -> Path:
     )
 
 
+def find_run_meta(sidecar_path: Path):
+    """The run's run_meta.json (C9) for a capture sidecar, or None.
+
+    Since C6 the sidecar records only ACHIEVED values; the requested dpi lives
+    in run_meta.json's config. A sidecar with no crop (every annotation
+    sidecar) derives feet-per-pixel from the requested pixel size AND dpi, so
+    without run_meta it silently fell back to DEFAULT_COLOR_ID_EXPORT_DPI --
+    right only when the run used the default (found on pipeline_0928_0953's
+    re-encoded Elevation sidecar). Looked for beside the sidecar and one level
+    up (the run folder holds color_id_buffer/)."""
+    for folder in (sidecar_path.parent, sidecar_path.parent.parent):
+        candidate = folder / "run_meta.json"
+        if candidate.exists():
+            try:
+                return json.loads(candidate.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return None
+    return None
+
+
 def decode_one(sidecar_path: Path, bounds_uv=None) -> Path:
-    sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    sidecar = legacy_view(json.loads(sidecar_path.read_text(encoding="utf-8")),
+                          run_config=find_run_meta(sidecar_path))
     model_crop_offset_uv = None
     if bounds_uv is None:
         sidecar_bounds = sidecar.get("bounds_xy")

@@ -137,6 +137,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from tools.clamp_pad_geometry import clamp_pad_geometry  # noqa: E402
+from tools.stage_a_sidecar_shapes import legacy_view, model_entry_uv_corners  # noqa: E402
 
 
 # A summary statistic is printed only for a cell with at least this many
@@ -260,6 +261,7 @@ def capture_fields(sidecar, fpp):
     max(64, ...) floor on pre_cap_px, the two-axis cap, and the dimension-
     mismatch backoff.
     """
+    sidecar = legacy_view(sidecar)
     res = sidecar.get("resolution") or {}
     view_scale = res.get("view_scale")
     effective_dpi = None
@@ -281,7 +283,13 @@ def capture_fields(sidecar, fpp):
 
 
 def measure_view(sidecar_path, mappings):
-    sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    # Since C6 the requested dpi lives in the run's run_meta.json, not the
+    # sidecar; without it every current capture reported
+    # requested_export_dpi n/a (Codex, PR #221). capture_fields() below
+    # re-applies legacy_view, which keeps what this call rebuilt.
+    from tools.decode_stage_a_color_id import find_run_meta
+    sidecar = legacy_view(json.loads(sidecar_path.read_text(encoding="utf-8")),
+                          run_config=find_run_meta(sidecar_path))
     bounds = sidecar.get("bounds_xy")
     if not bounds or len(bounds) != 4:
         return {"view": sidecar_path.stem, "skip": "no bounds_xy (crop did not apply)"}
@@ -318,7 +326,7 @@ def measure_view(sidecar_path, mappings):
     no_ref = 0
     for elem_id_str, (c0, r0, c1, r1, npx) in extents.items():
         entry = host_ref.get(elem_id_str) or {}
-        corners = entry.get("bbox_corners_uv")
+        corners = model_entry_uv_corners(entry)
         if not corners:
             no_ref += 1
             continue
