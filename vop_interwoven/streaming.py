@@ -270,14 +270,15 @@ class StreamingExporter:
             from vop_interwoven.csv_export import compute_config_hash
             from vop_interwoven.run_meta import build_run_meta, write_run_meta
             self.config_hash = compute_config_hash(cfg)
-            if isinstance(date_override, datetime):
-                meta_date = date_override.strftime("%Y-%m-%d")
-            elif isinstance(date_override, str) and date_override.strip():
-                meta_date = date_override.strip()
-            else:
-                meta_date = run_dt.strftime("%Y-%m-%d")
-            self.run_meta = build_run_meta(cfg, doc, self.run_id, meta_date,
-                                           view_ids, self.config_hash)
+            # run_dt is the override when it parsed as a date and now()
+            # otherwise; ``tag`` is the override when it did NOT parse (e.g.
+            # "PR_221"). The date is always a date -- pipeline_0930_0739
+            # wrote the tag into it -- and the tag is recorded beside it.
+            is_dt = isinstance(date_override, datetime)
+            self.run_meta = build_run_meta(
+                cfg, doc, self.run_id,
+                (date_override if is_dt else run_dt).strftime("%Y-%m-%d"),
+                view_ids, self.config_hash, run_tag=None if is_dt else tag)
             self.run_meta_path = write_run_meta(self.run_meta, output_dir)
         if export_png:
             self.png_dir = os.path.join(output_dir, "vop_raster")

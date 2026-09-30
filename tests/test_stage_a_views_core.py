@@ -156,3 +156,21 @@ def test_a_deployed_copy_without_git_says_so(tmp_path):
     got = git_commit(str(tmp_path))
     assert got["state"] in ("unavailable", "value")   # tmp may sit under a repo
     assert revit_version(None) == {"state": "unavailable", "reason": "no document"}
+
+
+def test_a_tag_override_is_recorded_as_the_tag_not_as_the_date(tmp_path):
+    """pipeline_0930_0739 wrote run_meta.date = "PR_221" (thinrunner's tag)."""
+    import datetime as _dt
+    cfg = Config(enable_color_id_buffer_stage_a=True)
+    exp = StreamingExporter(str(tmp_path), cfg, doc=_Doc(), export_png=False,
+                            export_csv=False, date_override="PR_221", view_ids=[1])
+    meta = json.loads((tmp_path / "run_meta.json").read_text())
+    _dt.datetime.strptime(meta["date"], "%Y-%m-%d")     # a real date
+    assert meta["run_tag"] == "PR_221"
+    assert exp.run_id.endswith("_PR_221")
+
+
+def test_control_a_date_override_is_the_date_and_no_tag(tmp_path):
+    _exporter(tmp_path)          # date_override="2026-09-29"
+    meta = json.loads((tmp_path / "run_meta.json").read_text())
+    assert meta["date"] == "2026-09-29" and meta["run_tag"] is None

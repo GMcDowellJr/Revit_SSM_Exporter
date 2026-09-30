@@ -87,7 +87,7 @@ def revit_version(doc):
     return _read(_v)
 
 
-def build_run_meta(cfg, doc, run_id, date_str, view_ids, config_hash):
+def build_run_meta(cfg, doc, run_id, date_str, view_ids, config_hash, run_tag=None):
     """The run's record at its start. ``config_hash`` is csv_export's
     compute_config_hash(cfg) -- the value views_core.ConfigHash carries."""
     return {
@@ -95,6 +95,9 @@ def build_run_meta(cfg, doc, run_id, date_str, view_ids, config_hash):
         "finalized": False,
         "run_id": run_id,
         "date": date_str,
+        # The caller's non-date override (thinrunner's tag, e.g. "PR_221"),
+        # or None. Never written into "date".
+        "run_tag": run_tag,
         "doc_title": _read(lambda: doc.Title) if doc is not None else _unavailable("no document"),
         "doc_path": _read(lambda: doc.PathName) if doc is not None else _unavailable("no document"),
         "exporter_version": EXPORTER_VERSION,
