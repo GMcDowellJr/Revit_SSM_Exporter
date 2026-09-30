@@ -1485,6 +1485,55 @@ def _link_bbox_transform_or_state(proxy, diag=None, view_id=None, elem_id=None):
         elem_id=elem_id, callsite="near_face_w.link.bbox_transform")
 
 
+def _new_rotation_stats():
+    """R1: the per-capture cost of the rotation read, so its price at scale is
+    measured rather than estimated. Written to the sidecar as "rotation_read"."""
+    return {"elements_read": 0, "rotated": 0, "unavailable": 0, "elapsed_ms": 0.0}
+
+
+def _round_rotation(record):
+    """C4 rounding for an R1 record: origin at 1e-6 ft, dimensionless unit
+    vectors (basis_*, direction) at BASIS_DECIMALS. "source" passes through."""
+    if not isinstance(record, dict) or "state" in record:
+        return record
+    out = {}
+    for k, v in record.items():
+        if k == "source":
+            out[k] = v
+        elif k == "origin":
+            out[k] = [_round_ft(c) for c in v]
+        else:
+            out[k] = [_round_ft(c, BASIS_DECIMALS) for c in v]
+    return out
+
+
+def _rotation_or_state(elem, outer_transform, stats, diag=None, view_id=None,
+                       elem_id=None, callsite="near_face_w.rotation"):
+    """R1: the element's rotation record, None when it is not rotated, or an
+    "unavailable" state when the read failed -- never "not rotated" for a
+    read that did not happen. Times the read into ``stats``."""
+    from .revit.collection import element_rotation
+    t0 = time.time()
+    try:
+        record = element_rotation(elem, outer_transform=outer_transform)
+    except Exception as ex:
+        if diag is not None:
+            diag.warn(phase="collection", callsite=callsite,
+                      message="element rotation could not be read; recorded as "
+                              "unavailable: {0}".format(ex),
+                      view_id=view_id, elem_id=elem_id)
+        record = _gs_unavailable("{0}: {1}".format(type(ex).__name__, ex))
+        if stats is not None:
+            stats["unavailable"] += 1
+    else:
+        if record is not None and stats is not None:
+            stats["rotated"] += 1
+    if stats is not None:
+        stats["elements_read"] += 1
+        stats["elapsed_ms"] += (time.time() - t0) * 1000.0
+    return _round_rotation(record)
+
+
 def _plain_or_state(state):
     """C2 writer shape for a field read three-valued: the bare value when the
     read succeeded, the state object (with its reason) otherwise. Readers
@@ -1527,6 +1576,7 @@ def _host_source_state(elem, elem_id_int, host_source_types):
 def _collect_near_face_w_data(
     doc, view, raster, cfg, resolved_ids, link_category_color_map,
     diag=None, view_id=None, link_proxies=None, host_source_types=None,
+    rotation_stats=None,
 ):
     """Collect near-face-W (nearest projected depth) and a UV bbox footprint
     for every HOST and LINK element resolved by export_color_id_buffer_view,
@@ -1585,6 +1635,11 @@ def _collect_near_face_w_data(
     Left None (the standalone/legacy call), every host entry records
     "unavailable" with that as the reason: this function cannot derive a top
     element's source from an element id alone.
+
+    R1: "rotation" is written ONLY when the element is rotated (see
+    revit/collection.element_rotation) or its rotation read failed (an
+    "unavailable" state). ``rotation_stats`` (a _new_rotation_stats() dict)
+    accumulates the read's count and time when supplied.
     """
     from .revit.collection import (
         resolve_element_bbox, project_bbox_uv_and_near_face_w, bbox_world_aabb,
@@ -1698,6 +1753,10 @@ def _collect_near_face_w_data(
         }
         if bbox_transform is not None:
             host_out[str(elem_id_int)]["bbox_transform"] = _round_geometry(bbox_transform)
+        rotation = _rotation_or_state(
+            elem, None, rotation_stats, diag=diag, view_id=view_id, elem_id=elem_id_int)
+        if rotation is not None:
+            host_out[str(elem_id_int)]["rotation"] = rotation
         # C2: a category that READ is exactly "category" above, so its state
         # object is written only when the read failed (its reason is the only
         # thing "category": None cannot carry).
@@ -1798,6 +1857,20 @@ def _collect_near_face_w_data(
             }
             if bbox_transform is not None:
                 link_out[key]["bbox_transform"] = _round_geometry(bbox_transform)
+            linked_elem = getattr(proxy, "element", None)
+            if linked_elem is None:
+                rotation = _gs_unavailable("the linked element could not be reached "
+                                           "from its proxy")
+                if rotation_stats is not None:
+                    rotation_stats["elements_read"] += 1
+                    rotation_stats["unavailable"] += 1
+            else:
+                rotation = _rotation_or_state(
+                    linked_elem, getattr(proxy, "transform", None), rotation_stats,
+                    diag=diag, view_id=view_id, elem_id=link_elem_id_int,
+                    callsite="near_face_w.link.rotation")
+            if rotation is not None:
+                link_out[key]["rotation"] = rotation
     return {"host": host_out, "link": link_out}
 
 
@@ -4246,11 +4319,13 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             link_proxies, _link_status = _collect_view_scoped_link_proxies(
                 doc, view, cfg, diag=diag, view_id=view_id,
             )
+        rotation_stats = _new_rotation_stats()
         near_face_w_map = _collect_near_face_w_data(
             doc, view, raster, cfg, resolved_ids, link_category_color_map,
             diag=diag, view_id=view_id, link_proxies=link_proxies,
-            host_source_types=host_source_types,
+            host_source_types=host_source_types, rotation_stats=rotation_stats,
         )
+        rotation_stats["elapsed_ms"] = round(rotation_stats["elapsed_ms"], 3)
 
         # Paint per-element, but never let one element's failure (some categories/
         # nested sub-components legitimately reject graphic overrides) roll back
@@ -4664,6 +4739,8 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # color_id.py and never modifies color_assignment_map/
         # link_category_color_map above.
         "near_face_w_map": near_face_w_map,
+        # R1: what the per-element rotation read cost on this capture.
+        "rotation_read": rotation_stats,
         # Stage A step 1, additive: DWG ImportInstances the collector found
         # but did not paint, each with the reason. An EMPTY list means every
         # import found was collected; it never means "no imports exist" and

@@ -1102,6 +1102,71 @@ def bbox_oriented_transform(bbox, outer_transform=None):
     }
 
 
+def _vector_is_axis_aligned(vec, tol=BBOX_AXIS_ALIGNED_TOL):
+    return sum(1 for c in vec if abs(c) > tol) <= 1
+
+
+def element_rotation(elem, outer_transform=None):
+    """R1: an element's ORIENTATION in model space, when it has one that the
+    AABB cannot show. None when it is axis-aligned or has no single rotation.
+
+    Why this exists: an element's get_BoundingBox() comes back aligned to the
+    model axes with an identity Transform, so bbox_oriented_transform() (C3)
+    almost never fires -- on pipeline_0930_0739 it recorded nothing across
+    ~26,000 entries. The orientation lives on the element instead:
+
+      - a FamilyInstance: ``GetTransform()`` -- origin + three basis vectors
+        (``source: "instance_transform"``);
+      - an element located by a straight LocationCurve (walls, beams):
+        the line's unit direction (``source: "location_line"``);
+      - anything else (floors, roofs, sketch-based elements): no single
+        rotation, so None -- unless it sits in a rotated LINK, when the link's
+        own transform is its rotation (``source: "link_transform"``).
+
+    ``outer_transform`` is a LINK's transform (link -> host), composed on so
+    the record is in host model space. One read per element, no geometry.
+    The record is VIEW-INDEPENDENT: the analysis layer projects it through
+    each view's own basis (in plan a rotation about Z is an in-plane angle;
+    in an elevation it shows as a foreshortened width, not a rotation).
+
+    Raises when a property that exists cannot be read; the caller records
+    that as unavailable, never as "not rotated".
+    """
+    outer = _transform_parts(outer_transform) if outer_transform is not None else None
+    get_transform = getattr(elem, "GetTransform", None)
+    if callable(get_transform):
+        parts = _transform_parts(get_transform())
+        if outer is not None:
+            parts = _compose_parts(outer, parts)
+        origin, bx, by, bz = parts
+        if _basis_is_axis_aligned((bx, by, bz)):
+            return None
+        return {"source": "instance_transform", "origin": list(origin),
+                "basis_x": list(bx), "basis_y": list(by), "basis_z": list(bz)}
+    location = getattr(elem, "Location", None)
+    curve = getattr(location, "Curve", None) if location is not None else None
+    if curve is None or type(curve).__name__ != "Line":
+        # No rotation of its own. Inside a rotated LINK it still turns with
+        # the link, and that is the only rotation it has.
+        if outer is not None and not _basis_is_axis_aligned(outer[1:]):
+            origin, bx, by, bz = outer
+            return {"source": "link_transform", "origin": list(origin),
+                    "basis_x": list(bx), "basis_y": list(by), "basis_z": list(bz)}
+        return None
+    p0, p1 = curve.GetEndPoint(0), curve.GetEndPoint(1)
+    d = (float(p1.X) - float(p0.X), float(p1.Y) - float(p0.Y), float(p1.Z) - float(p0.Z))
+    if outer is not None:
+        _o, ox, oy, oz = outer
+        d = tuple(d[0] * ox[k] + d[1] * oy[k] + d[2] * oz[k] for k in range(3))
+    length = (d[0] ** 2 + d[1] ** 2 + d[2] ** 2) ** 0.5
+    if length <= 0.0:
+        return None
+    d = tuple(c / length for c in d)
+    if _vector_is_axis_aligned(d):
+        return None
+    return {"source": "location_line", "direction": list(d)}
+
+
 def _project_element_bbox_to_cell_rect(elem, vb, raster, bbox=None, diag=None, view=None, transform=None, bbox_is_link_space=False):
     """Project element bounding box to cell rectangle using OBB (oriented bounds).
 

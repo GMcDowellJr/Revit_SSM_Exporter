@@ -601,6 +601,9 @@ def test_sidecar_top_level_keys_are_additive_only(tmp_path):
         # A view-specific DWG is annotation (Greg, 2026-09-29): every import
         # the model pass resolved, classified, and the restore of any it hid.
         "view_specific_imports",
+        # R1 (Greg, 2026-09-30): the per-capture cost of the element
+        # rotation read -- count, rotated, unavailable, elapsed_ms.
+        "rotation_read",
     }
 
 

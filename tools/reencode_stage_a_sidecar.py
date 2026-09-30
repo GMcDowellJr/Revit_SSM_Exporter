@@ -11,7 +11,9 @@ every dropped field is exactly derivable from what remains
 What it cannot add: ``bbox_transform`` (C3) needs the bbox's Transform,
 which an archive sidecar never recorded. Every entry is written without it,
 exactly as the writer does for an axis-aligned bbox -- so a re-encoded file
-UNDER-reports rotation. It is a size/compatibility check, not a capture.
+UNDER-reports rotation. R1's per-element ``rotation`` and the capture's
+``rotation_read`` are likewise absent: they need the live element. It is a
+size/compatibility check, not a capture.
 
     python tools/reencode_stage_a_sidecar.py <old.json> [<out.json>]
     python tools/reencode_stage_a_sidecar.py <capture.tiff>       # uses its .json
