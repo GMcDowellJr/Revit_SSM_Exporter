@@ -4182,9 +4182,16 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             try:
                 cat_id = ElementId(int(cat_id_int))
                 cat_ogs = view.GetCategoryOverrides(cat_id)
-                category_halftone_state[cat_id_int] = cat_ogs.Halftone
+                was_halftone = cat_ogs.Halftone
                 cat_ogs.SetHalftone(False)
                 view.SetCategoryOverrides(cat_id, cat_ogs)
+                # Recorded only AFTER the write lands -- the annotation pass's
+                # fix, ported. Recorded before it, a category Revit refuses
+                # ("Category cannot be overridden") entered the restore loop,
+                # which then raised undoing a change that never happened:
+                # every view of pipeline_0930_0739 carried a false
+                # model_view_state_not_restored fault from exactly this.
+                category_halftone_state[cat_id_int] = was_halftone
             except Exception as ex:
                 if diag is not None:
                     diag.warn(
@@ -4317,7 +4324,11 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             try:
                 fn()
             except Exception as ex:
-                model_restore_failures.append(callsite)
+                # A category Revit REFUSES was left unchanged, so it is not a
+                # restore failure (same classifier as the annotation pass).
+                if not (callsite == "restore_category_halftone"
+                        and _category_override_refused(ex)):
+                    model_restore_failures.append(callsite)
                 if diag is not None:
                     diag.error(
                         phase="color_id_buffer",

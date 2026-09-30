@@ -1082,3 +1082,58 @@ def test_authored_else_crop_a_refuses_an_unreadable_crop_state(tmp_path):
                 view, cfg, geom, diag=FakeDiag(), raster=_raster(),
                 elements=elements)
     assert "CropBoxActive" in str(excinfo.value)
+
+
+# --- the MODEL pass, same defect (pipeline_0930_0739) ------------------------
+
+def _run_model_pass_with_view(tmp_path, view):
+    elements = _elements()
+    doc = _SizedDoc(elements=elements, link_instances=[],
+                    categories=[MODEL_CAT, OTHER_MODEL_CAT, ANNO_CAT])
+    cfg = Config()
+    cfg.include_linked_rvt = False
+    cfg.debug_dump_path = str(tmp_path)
+    with install_fake_revit_db():
+        return color_id_buffer.export_color_id_buffer_view(
+            doc, view, elements=_model_pass_elements(elements), cfg=cfg,
+            diag=FakeDiag(), raster=_raster(), elem_cache=None, geometry_out={})
+
+
+def test_a_refused_category_is_not_a_model_restore_failure_in_the_FILE(tmp_path):
+    """pipeline_0930_0739: every model sidecar carried
+    model_view_state_not_restored, and every one was Revit refusing a
+    category override ("Category cannot be overridden"). The model pass
+    recorded halftone state BEFORE the write, so the restore tried to undo a
+    change that never happened. Asserted on the FILE (defect class 4)."""
+    import json
+    view = _RefusingView(VIEW_ID, refuse_ids=[MODEL_CAT.Id.IntegerValue])
+    result = _run_model_pass_with_view(tmp_path, view)
+    with open(result["sidecar_path"]) as handle:
+        integrity = json.load(handle)["capture_integrity"]
+    assert integrity["restore_failures"] == 0
+    assert integrity["capture_faults"] == []
+    assert MODEL_CAT.Id.IntegerValue not in result["metadata"]["category_halftone_state"]
+    # The write WAS attempted -- the fixture really refused something.
+    assert MODEL_CAT.Id.IntegerValue in view.category_override_writes
+
+
+def test_control_a_real_model_restore_failure_is_still_counted(tmp_path):
+    """Accepted going in, and a NON-refusal error coming out: a failure."""
+    class _AcceptsThenBreaks(FakeViewPlan):
+        def __init__(self, view_id, target_id):
+            FakeViewPlan.__init__(self, view_id)
+            self._target, self._seen = int(target_id), set()
+
+        def SetCategoryOverrides(self, cat_id, ogs):
+            value = int(cat_id.IntegerValue)
+            if value == self._target and value in self._seen:
+                raise Exception("the document is read-only")
+            self._seen.add(value)
+            FakeViewPlan.SetCategoryOverrides(self, cat_id, ogs)
+
+    import json
+    result = _run_model_pass_with_view(tmp_path, _AcceptsThenBreaks(VIEW_ID, MODEL_CAT.Id.IntegerValue))
+    with open(result["sidecar_path"]) as handle:
+        integrity = json.load(handle)["capture_integrity"]
+    assert integrity["restore_failures"] == 1
+    assert [f["fault"] for f in integrity["capture_faults"]] == ["model_view_state_not_restored"]
