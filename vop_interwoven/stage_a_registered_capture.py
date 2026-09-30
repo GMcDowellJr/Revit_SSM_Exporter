@@ -378,6 +378,12 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
         anno_cfg = copy.copy(cfg)
         anno_cfg.color_id_buffer_anno_model_suppression = "external"
         anno_cfg.color_id_buffer_anno_crop_mode = "authored_else_crop_a"
+        # Anti-aliasing OFF, as the model pass already runs (Greg,
+        # 2026-09-30): a colour-ID capture should not be blended, and the
+        # registration tool's tick-blend handling is the FALLBACK for a host
+        # that cannot turn it off, not the plan. pipeline_0930_0739's
+        # annotation sidecars read applied_smooth_edges "not_attempted".
+        anno_cfg.color_id_buffer_anno_smooth_edges_off = True
         _t = time.time()
         try:
             anno_out = export_annotation_color_id_buffer_view(

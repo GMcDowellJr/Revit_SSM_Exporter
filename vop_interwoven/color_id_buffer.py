@@ -5120,8 +5120,9 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
     # color_id_buffer_anno_model_suppression and color_id_buffer_anno_crop_mode
     # are Config parameters (config.py), defaulted to the shipped frame-B
     # behaviour; the registered capture sets the values it needs on its own
-    # copy. color_id_buffer_anno_smooth_edges_off is still probe-only and
-    # absent from Config. All three are read with getattr, so a caller's
+    # copy. color_id_buffer_anno_smooth_edges_off is absent from Config; the
+    # registered capture sets it True on its copy (AA off, 2026-09-30) and the
+    # frame-B fallback leaves it off. All three are read with getattr, so a caller's
     # partial config object reaches the shipped default. They exist because
     # the behaviour they change happens INSIDE this function's suppress
     # transaction, where a caller has no window to do it itself:

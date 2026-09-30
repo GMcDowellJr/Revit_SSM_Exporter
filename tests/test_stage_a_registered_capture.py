@@ -415,3 +415,12 @@ def test_t1_the_tick_line_style_reaches_BOTH_sidecar_files(tmp_path):
         rm = _sidecar(path)["registration_marks"]
         assert rm.get("line_style") is not None, path
         assert rm["line_style"] == out["registration"]["marks"]["line_style"]
+
+
+def test_the_annotation_capture_runs_with_anti_aliasing_off_in_the_FILE(tmp_path):
+    """Greg (2026-09-30): AA off in BOTH passes; the tick-blend handling in
+    tools/registration_marks.py is a fallback. pipeline_0930_0739's annotation
+    sidecars read "not_attempted" because the registered capture never set it."""
+    out, view, _doc, _exports, _diag = _run(tmp_path)
+    assert _sidecar(out["annotation_sidecar_path"])["applied_smooth_edges"] is False
+    assert _sidecar(out["sidecar_path"])["applied_smooth_edges"] is False
