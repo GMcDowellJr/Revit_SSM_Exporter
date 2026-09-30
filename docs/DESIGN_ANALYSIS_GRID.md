@@ -1,9 +1,9 @@
 # Design note: the analysis grid (analysis layer, item 2)
 
-Status: **proposal for review**, 2026-09-30. Nothing here is implemented yet.
-Evidence: runs `pipeline_0930_1249` (74320d7) and `pipeline_0930_1453` (99c7c44,
-main after PR #222). Their 16 captures are byte-identical, so every figure
-below holds for both.
+Status: **decided and implemented** in `tools/stage_a_grid.py`, 2026-09-30.
+The decisions below were reviewed by Greg the same day. Evidence: runs
+`pipeline_0930_1249` (74320d7) and `pipeline_0930_1453` (99c7c44, main after
+PR #222). Their 16 captures are byte-identical.
 
 ## Why this comes first
 
@@ -11,181 +11,175 @@ The Stage A capture no longer knows about cells. Occupancy (empty /
 model-only / annotation-only / overlap), comparison against the geometry path,
 and the per-cell metrics all need one answer to: *which cell does each pixel of
 each capture fall in?* Everything else in the analysis layer consumes that
-answer, so it has to be defined once, in one function, and tested by
-composition (CLAUDE.md, defect class 1).
+answer, so it is defined once, in one function, and tested by composition
+(CLAUDE.md, defect class 1).
 
-## What exists today, and what it gets wrong on the current sidecars
+## What the existing tool got wrong
 
-`tools/colorid_to_occupancy.py` is the only grid builder. Run on 1453:
+`tools/colorid_to_occupancy.py` was the only grid builder. Run on 1453:
 
 | Symptom | Cause |
 |---|---|
-| **Every model view gets a 64-cell-wide grid.** Plan_CropActive: 64 × 26 cells of **4.40 ft**, where 1/8" at 1:96 is **1.00 ft**. Plan_CropInActive: 6.0 ft cells. It is labelled `basis: "assumed"` and not refused. | Without a geometry run, `grid_assumed()` reads `backoff_floor_px` as "raster W". Since the registered capture, that field is the capture's own **64 px minimum**. `color_id_buffer._export_tiff` says so ("THE FLOOR IS NO LONGER THE CELL GRID"); the tool was never updated. |
-| **All 8 annotation sidecars fail** ("no usable bounds_xy"). | The annotation pass records no crop. Its pixels only mean something after `register_stage_a_annotation` puts them on the model lattice, and the tool never reads the registered output. |
-| **Link-model pixels count as empty.** | "Model" means `color_assignment_map` only; `link_category_color_map` is not read. That is about 210k px on Plan_RVTLink and RCP (S1). |
-| **The pixel→UV mapping is the nominal crop's.** | It uses `crop_uv` and the clamp/pad model. The next section shows this disagrees with the measured ticks by up to 59 % of a cell. |
+| **Every model view got a 64-cell-wide grid.** Plan_CropActive: 64 × 26 cells of **4.40 ft**, where 1/8" at 1:96 is **1.00 ft**. Plan_CropInActive: 6.0 ft cells. It was labelled `basis: "assumed"`, not refused. | Without a geometry run, `grid_assumed()` read `backoff_floor_px` as "raster W". Since the registered capture, that field is the capture's own **64 px minimum** (`color_id_buffer._export_tiff`: "THE FLOOR IS NO LONGER THE CELL GRID"). **Now refused** for a frame-record sidecar, pointing at `stage_a_grid.py`. |
+| **All 8 annotation sidecars failed** ("no usable bounds_xy"). | The annotation pass records no crop; its pixels only mean something after `register_stage_a_annotation`. |
+| **Link-model pixels counted as empty.** | `link_category_color_map` was not read (about 210k px on Plan_RVTLink and RCP). |
 
-## Measured geometry of the 8 test views
+Moving `colorid_to_occupancy.py` fully onto the new grid is left for later.
+Until then it refuses rather than mis-grids.
 
-Cell = `cell_size_paper_in` (0.125, from `run_meta.json`) × view scale / 12.
-"Tick vs crop" is the largest `model_marks_vs_lattice` corner deviation in the
-`.registered.json` record: where the ticks were measured in the model image,
-against where the nominal crop mapping predicts them.
+## Decisions
 
-| View | Scale | Cell (ft) | px/cell | Model image (px) | Cells over crop A | Anno canvas (px) | Cells over union | Tick vs crop (px) | % of a cell |
-|---|---|---|---|---|---|---|---|---|---|
-| Elevation_CropActive | 1:96 | 1.000 | 18.75 | 5164 × 1267 | 276 × 68 | 5490 × 1817 | 294 × 98 | 0.40 | 2 % |
-| ModelCallout_CropActive | 1:8 | 0.083 | 18.76 | 665 × 368 | 36 × 20 | 1061 × 445 | 58 × 25 | 0.69 | 4 % |
-| Plan_CropActive | 1:96 | 1.000 | 18.75 | 4818 × 1623 | 257 × 87 | 5548 × 2366 | 297 × 127 | 1.29 | 7 % |
-| Plan_CropInActive | 1:96 | 1.000 | **4.15** | 4285 × 10000 | 1034 × 2412 | 4285 × 10000 | 1034 × 2412 | **2.43** | **59 %** |
-| Plan_DWG | 1:96 | 1.000 | 18.75 | 4818 × 1623 | 257 × 87 | 4818 × 1623 | 257 × 87 | 1.52 | 8 % |
-| Plan_RVTLink | 1:96 | 1.000 | 18.75 | 4818 × 1623 | 257 × 87 | 4818 × 1623 | 257 × 87 | 1.23 | 7 % |
-| RCP_CropActive | 1:96 | 1.000 | 18.75 | 5166 × 1749 | 276 × 94 | 5577 × 2366 | 299 × 127 | 1.57 | 8 % |
-| Section_CropActive | 1:48 | 0.500 | 18.75 | 884 × 3045 | 48 × 163 | 1072 × 3420 | 58 × 183 | 0.40 | 2 % |
-
-Four facts the design has to absorb:
-
-1. **Cell edges fall mid-pixel.** At 150 dpi a 1/8" cell is 18.75 px, so
-   cells are alternately 18 and 19 px wide. On a capped view (Plan_CropInActive,
-   33 dpi achieved) a cell is only 4.15 px.
-2. **The nominal crop mapping is not the image.** Plan_CropActive's lattice
-   predicted 1624 rows and Revit produced 1623 (`predicted_derived_px` vs
-   `actual_h`; the unresolved F4 note in `_export_tiff`). Its ticks sit 1.29 px
-   off the prediction at the top and 0.38 px at the bottom. On the capped view
-   the vertical scale is off by about 4.8 px over 10,000 rows. The registration
-   tool already maps through the **measured** tick fit, so its
-   `canvas_origin_uv` disagrees with the crop mapping by the same 1–2.4 px.
-   Two derivations of one quantity, disagreeing: defect class 1, before any
-   code is written.
-3. **Annotation ink extends beyond crop A.** On 5 of 8 views the registered
-   annotation canvas is larger than the model image (Plan_CropActive: 297 × 127
-   cells vs 257 × 87). This is content outside the model crop: dimensions,
-   tags and grid heads.
-4. **The geometry path's grid is sheet-capped.** 48" × 36" at 1/8" is 384 ×
-   288 cells. Plan_CropInActive's native grid (1034 × 2412) exceeds it, so the
-   geometry path widens its cells there, to about 8.4 ft (`resolve_view_bounds`,
-   the "ADAPTIVE CELL SIZE" branch).
-
-## Proposed decisions
-
-**G-1. Cell size is the requested paper cell, never adaptive.**
+**G-1. Cell size is the requested paper cell.**
 `cell_ft = cell_size_paper_in × view_scale / 12`, with `cell_size_paper_in`
 taken from the run's `run_meta.json` config and `view_scale` from the `frame`
-record. If either is missing the tool **refuses**; it never guesses (the 64-cell
-grid above is what guessing produced). The sheet cap is a geometry-path
-limitation, not a property of the view. Comparison against a capped geometry
-run is handled in G-8.
+record. If either is missing, the grid is **refused**, never guessed.
 
-**G-2. The origin is crop A's lower-left corner.** Cell `(i, j)` covers
-`u ∈ [xmin + i·cell, xmin + (i+1)·cell)` and `v ∈ [ymin + j·cell, ymin +
-(j+1)·cell)`, where `(xmin, ymin)` is `frame.crop_uv`'s minimum. `i` runs along
-+u and `j` along +v (up), the same convention as the geometry path's
-`i = int((u − bounds_xy.xmin) / cell)`. In the current configuration
-(`bounds_buffer_in = 0`, `anno_expand_cap_cells = 0`) crop A's minimum is the
+Pixels per cell follow from that. Uncapped, a cell is 1/8" of paper and the
+export is 150 dpi of paper, so every uncapped view is 18.75 px per cell
+whatever its scale (1453: 1:8, 1:48 and 1:96 alike). Only a Revit-capped
+export differs (Plan_CropInActive, 4.15 px). The grid never assumes a whole
+number: cell edges fall mid-pixel (G-5).
+
+**G-2. The origin is crop A's lower-left corner, and indices are signed.**
+Cell `(i, j)` covers `u ∈ [u0 + i·cell, u0 + (i+1)·cell)`, `v ∈ [v0 + j·cell,
+v0 + (j+1)·cell)`, where `(u0, v0)` is `frame.crop_uv`'s minimum. `i` runs
+along +u and `j` up +v, the geometry path's convention. Annotation ink left of
+or below crop A takes **negative** `i`, `j`. That is expected and kept; the
+record gives `i_range` and `j_range`. In the current configuration
+(`bounds_buffer_in = 0`, `anno_expand_cap_cells = 0`), crop A's minimum is the
 geometry path's `raster.bounds_xy` minimum, so the two grids share their cell
-phase. `test_view_raster_grid_origin.py` lists the three ways they can differ
-under other configurations; those are recorded, not silently absorbed (G-8).
+phase.
 
-**G-3. The extent is the union of crop A and the registered annotation
-canvas, snapped outward to whole cells.** Cells may have negative indices
-before re-indexing, so the grid records `origin_cell = (i0, j0)`. Each cell
-records whether it lies inside crop A. That keeps "annotation outside the model
-crop" a measured fact rather than a clipped one. Where there is no registered
-annotation capture, the extent is crop A alone, and the record says so.
+**G-3. The extent is the union of the model image and the registered
+annotation canvas.** The canvas is usually larger, but not always (it equals
+the model image on Plan_DWG, Plan_RVTLink and Plan_CropInActive). The record
+keeps crop A's own cell range (`crop_a_cells`), and the arrays carry an
+`inside_crop_a` mask, so ink outside the model crop is a measured fact. With
+no registered annotation capture, the extent is the model image alone and the
+view is flagged `no_registered_annotation`.
 
-**G-4. Pixel→UV comes from one source: the model capture's tick fit.**
-`registration_marks.fit_recorded_marks` on the model TIFF gives the measured
-per-axis scale and offset. The registered annotation TIFF is already on the
-same lattice, so the same mapping serves both images. That is one derivation
-for both captures, and the same one the registration tool uses.
-- If the fit is unusable (fewer than the required ticks, refused), fall back to
-  the nominal crop mapping. The record then says `uv_basis: "nominal_crop"`
-  with the reason, and gives the expected error: the tick-vs-crop deviation
-  class above, up to about 2.4 px.
-- The grid record carries `uv_basis` and the fit residual, so every downstream
-  number knows which mapping produced it.
+**G-4. Pixel→UV: whichever of the two mappings lands closer to the measured
+ticks.** The model capture carries its crop, so a nominal mapping exists (the
+decoder's, with its aspect-clamp pad). The ticks give a second, measured
+mapping (the registration tool's model fit). Both are evaluated at the tick
+positions, the closer one is used, and both residuals are recorded, together
+with their largest disagreement anywhere in the image. The registered
+annotation canvas is on the model lattice, so the same mapping serves both
+images. With no usable tick fit, the crop is used and the uncertainty is
+recorded as **unmeasured** (flag), never as zero.
 
 **G-5. A pixel belongs to the cell containing its centre.** Each pixel lands
 in exactly one cell, so counts are exact and no fractional weights exist.
-Cells hold 18 or 19 px per axis at 150 dpi; every channel is reported as
-counts plus the cell's own pixel total, so a threshold can be applied later as
-a fraction (item 3).
+Every channel is reported as a count alongside the cell's own pixel total, so
+a threshold can be applied later as a fraction (item 3).
 
-**G-6. Refuse below a resolution floor.** A cell narrower than a small number
-of pixels cannot be measured meaningfully. Proposed floor: **2 px per cell**
-per axis. Below it the view's grid is refused with the figure, not produced.
-Plan_CropInActive (4.15 px) passes. It is flagged `coarse` below 8 px per cell,
-because a 2.4 px mapping uncertainty is then more than a quarter of a cell.
+**G-6. Resolution is judged per view, from cell size against pixel count.**
+- **Refused** below `MIN_PX_PER_CELL = 2` pixels per cell.
+- **Flagged `coarse`** when the mapping uncertainty exceeds
+  `COARSE_UNCERTAINTY_CELLS = 0.25` of a cell. That is the "8 px" starting
+  figure (2 px of uncertainty in an 8 px cell), expressed as what it
+  measures.
+- **Capped exports are analysed and flagged `capped`.** The cap is Revit's.
+  Such views are never on sheets and will play a different role in the final
+  analysis.
+
+Both thresholds are starting values, to be revisited with experience.
 
 **G-7. Channels are counted separately; interpreting them is items 3 and 4.**
 Per cell, as integer counts:
-- `host_px` (by element id, from `color_assignment_map`);
-- `link_px` (by category);
-- `dwg_px` (host ids whose `source` is DWG);
-- `anno_px` (by annotation element id, from the registered TIFF);
-- `black_px`;
-- `residual_px`;
-- `white_px`;
-- `tick_px` (subtracted, but counted so its loss is visible);
-- `total_px`.
+- model image: `host`, `dwg` (host ids whose `source` is DWG), `link` (any
+  linked-category colour), `tick`, `white`, `black`, `residual`, `total`;
+- registered annotation canvas: `element`, `white`, `black`, `residual`,
+  `total`.
 
-This mirrors the decoder's S1 `pixel_stats` partition, so the per-cell counts
-must sum to the image-level counts. That gives a composition test for free.
+The model channels use the decoder's S1 precedence, so their image totals
+equal its `pixel_stats` exactly. Per-element counts per cell are not produced
+yet.
 
-**G-8. Comparing with the geometry path is a separate, explicit step.** The
-native grid (G-1…G-3) is the product. To compare with a geometry run, a second
-function maps native cells onto that run's grid, using its recorded origin,
-cell size and W × H. It records the relation (`same_grid`, `aggregated k × k`,
-or `incommensurate` with the reason). A sheet-capped view is therefore
-compared by aggregation, never by re-gridding the capture.
+**G-8. Checking the result.** No geometry-path run of these views exists.
+Each view gets a `<view>.grid.png` in vop_raster's colours, for checking by
+eye as the geometry version was checked:
+- green: model only;
+- cornflower blue: annotation only;
+- orange: overlap;
+- grey outline: crop A.
 
-**G-9. One module, one record, written last.** A new
-`tools/stage_a_grid.py` (standard library and NumPy only) owns:
-- `grid_for_view(model_sidecar, registered_record, run_config) -> GridSpec`;
-- `pixel_to_cell(GridSpec, col, row)`;
-- `cell_to_uv(GridSpec, i, j)`.
+The picture's rule, any pixel, is **provisional**; item 3 decides what
+"occupied" means. Comparison with a geometry run (aggregating onto its grid,
+including sheet-capped views) is deferred until one exists.
 
-`colorid_to_occupancy.py` and the decoder's `grid_bounds_uv` both move onto
-it. Its per-view output is one `<view>.grid.npz` (the counts) and one
-`<view>.grid.json` (the GridSpec, `uv_basis`, source file hashes and
-`run_id`). The JSON is written after the arrays and names their hash, the same
-ordering rule as `register_stage_a_annotation` (defect class 4).
+**G-9. One module, one record, written last.** `tools/stage_a_grid.py`
+(NumPy and Pillow; the decoder's and registration tool's own functions, not
+copies of them) writes per view:
+- `<view>.grid.npz`: arrays `(cells_h, cells_w)`, with row 0 = the lowest `j`;
+- `<view>.grid.png`;
+- `<view>.grid.json`, written **last**, naming the npz's hash, the source
+  files' hashes, `run_id`, the GridSpec and `uv_basis` (defect class 4).
 
-## Tests that make this trustworthy
+A refusal is a record too.
 
-- **Composition, not reimplementation:**
-  - `pixel_to_cell ∘ cell_to_uv` round-trips against the decoder's
-    `_pixel_corner_to_uv` under the nominal basis;
-  - the tick-fit basis reproduces the registration tool's `canvas_origin_uv`
-    exactly (today they disagree by construction);
-  - the per-cell channel sums equal the image's S1 `pixel_stats`.
-- **Discriminating fixture for G-2:** a view whose crop A minimum differs from
-  a stand-in `bounds_xy` minimum, so the wrong anchor visibly shifts every cell.
-- **Refusals, each with a control:** missing `cell_size_paper_in`, missing
-  `view_scale`, below the resolution floor, an unusable tick fit (falls back
-  and says so).
-- **Golden on 1453:** the W × H figures in the table above, per view, and the
-  per-channel totals.
-- **Regression for today's defect:** the current `grid_assumed()` produces the
-  64-cell grid. The new code must refuse, or produce 257 × 87, on the same
-  sidecar.
+```
+python tools/stage_a_grid.py <run dir | color_id_buffer dir> [--out DIR]
+```
 
-## Open questions for Greg
+It reads `<view>_anno.registered.json`, so run `register_stage_a_annotation`
+first. The default output is `<run>/analysis_grid/`.
 
-1. **Grid extent.** Union with the annotation canvas (G-3), or crop A only
-   with the outside ink counted per view? The union changes W × H on 5 of 8
-   views.
-2. **Pixel→UV basis.** Tick fit first (G-4), accepting that the model pass's
-   own crop record becomes secondary? Or nominal crop first, with the fit as a
-   check?
-3. **Resolution floor.** 2 px per cell to refuse and 8 px per cell to flag?
-   And should capped captures like Plan_CropInActive be re-exported uncapped
-   for analysis, or accepted at 4.15 px per cell?
-4. **Integer cells in pixels.** At 144 dpi a 1/8" cell is exactly 18 px (at
-   160 dpi, 20 px), which removes the mid-pixel edges entirely. That is a
-   capture-config change, so outside this item, but cheap if wanted.
-5. **Geometry-run comparison.** Is a geometry-path run of these 8 views
-   available, or should one be made, for G-8 and item 3's threshold?
+## Results on pipeline_0930_1453
+
+| View | Cells (W × H) | Signed range i / j | px/cell | Basis | Crop at ticks (px) | Crop at corners (px) | Fit (px) | Uncertainty (cells) | Flags |
+|---|---|---|---|---|---|---|---|---|---|
+| Elevation_CropActive | 294 × 98 | -9…284 / -15…82 | 18.74 | tick fit | 0.40 | 0.40 | 0.26 | 0.014 | — |
+| ModelCallout_CropActive | 58 × 25 | -13…44 / -5…19 | 18.70 | tick fit | 0.66 | 0.69 | 0.40 | 0.021 | — |
+| Plan_CropActive | 297 × 127 | -19…277 / -18…108 | 18.75 | tick fit | 1.14 | 1.29 | 0.26 | 0.014 | — |
+| Plan_CropInActive | 1035 × 2413 | -1…1033 / -1…2411 | 4.15 | tick fit | 0.41 | 2.43 | 0.26 | 0.063 | capped |
+| Plan_DWG | 259 × 87 | -1…257 / 0…86 | 18.74 | tick fit | 0.56 | 0.57 | 0.13 | 0.007 | — |
+| Plan_RVTLink | 258 × 87 | -1…256 / 0…86 | 18.75 | tick fit | 1.21 | 1.23 | 0.26 | 0.014 | — |
+| RCP_CropActive | 299 × 127 | -8…290 / -13…113 | 18.74 | tick fit | 0.36 | 0.39 | 0.26 | 0.014 | — |
+| Section_CropActive | 58 × 183 | 0…57 / -8…174 | 18.75 | tick fit | 0.40 | 0.40 | 0.39 | 0.021 | — |
+
+- **The tick fit is closer on all 8 views.** The recorded crop misses the
+  ticks by 0.36–1.21 px, and by up to 2.43 px at the image corners on the
+  capped view; the fit by 0.13–0.40 px. On an 18.75 px cell that is at most
+  2 % of a cell; on the capped view 6 %. No view is `coarse`.
+- **The corner figures reproduce the registration tool's own
+  `model_marks_vs_lattice`** (2.43 px on Plan_CropInActive, 1.29 on
+  Plan_CropActive). The two tools agree from independent code.
+- **Sliver cells at index −1 where the canvas equals the model image.** Under
+  the measured fit, the image's first pixel column lies a fraction of a pixel
+  outside the recorded crop, so a sliver cell appears at i = −1 (Plan_DWG,
+  Plan_RVTLink, Plan_CropInActive). It is kept, not clipped: it is what the
+  measurement says, and its `total_px` shows how thin it is.
+- **The model channel totals equal the decoder's S1 `pixel_stats` on all 8
+  views.**
+
+## Tests (`tests/test_stage_a_grid.py`)
+
+- **Composition:**
+  - the nominal mapping is the decoder's `_pixel_corner_to_uv`;
+  - the channel totals are the decoder's `pixel_stats`;
+  - the fit mapping reproduces the registration tool's `canvas_origin_uv`, and
+    the corner disagreement its `model_marks_vs_lattice`.
+- **Cells:**
+  - cells from crop A's lower-left, at the paper cell, where the fixture's
+    constants put them;
+  - negative indices for annotation ink below and left of crop A;
+  - linked-category pixels in the `link` channel, in their cells.
+- **Basis:**
+  - the closer mapping is chosen and both are recorded;
+  - a recorded crop moved 2 px loses to the fit;
+  - no ticks gives the crop, with the uncertainty unmeasured.
+- **Refusals:**
+  - no `cell_size_paper_in`;
+  - under 2 px per cell;
+  - `coarse` follows cell size against pixel count (a fixed 1 px uncertainty
+    is fine at 18 px per cell and coarse at 2.25).
+- **The record:** written last, it names the arrays' hash and shapes.
+
+Three mutations of production each turn the suite red:
+- origin moved off crop A;
+- annotation offset sign flipped;
+- link channel dropped.
 
 ## Out of scope here
 
@@ -193,3 +187,5 @@ ordering rule as `register_stage_a_annotation` (defect class 4).
 - Attributing black and residual pixels: item 4.
 - Link-model element identity: item 6, needs a capture change.
 - Change detection: item 7.
+- Moving `colorid_to_occupancy.py` onto this grid, and comparing with a
+  geometry run once one exists.
