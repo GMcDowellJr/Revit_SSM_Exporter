@@ -259,10 +259,13 @@ def frame_check(frame):
         return _unavailable("the frame records no crop_px ({0!r})".format(crop_px))
     predicted, actual = crop_px[index], frame.get(actual_key)
     for name, value in (("crop_px[{0}]".format(index), predicted), (actual_key, actual)):
+        # A pixel count is a finite whole number. NaN, an infinity (json
+        # reads "Infinity") and a fraction are unmeasured, never converted:
+        # int() raises on an infinity and would silently truncate 729.6.
         if isinstance(value, bool) or not isinstance(value, (int, float)) \
-                or value != value:
-            return _unavailable("the frame's {0} is not a number ({1!r})".format(
-                name, value))
+                or not math.isfinite(value) or value != int(value):
+            return _unavailable("the frame's {0} is not a whole pixel count "
+                                "({1!r})".format(name, value))
     record.update(predicted_px=int(predicted), actual_px=int(actual),
                   delta_px=int(actual) - int(predicted), state="value")
     return record

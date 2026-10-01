@@ -157,6 +157,21 @@ def test_a_non_numeric_actual_is_unmeasured():
         assert grid.frame_check_flag(check) == "frame_unmeasured", bad
 
 
+def test_an_infinite_or_fractional_size_is_unmeasured_and_the_run_survives(tmp_path):
+    """Codex, PR #225: json reads ``Infinity``, and int(inf) raised
+    OverflowError out of grid_view, ending the whole run. A fraction would
+    have been truncated silently. Each is unmeasured, on either input, and
+    the view is still gridded. The whole-number float is the control."""
+    for key, bad in (("actual_h", float("inf")), ("actual_h", float("-inf")),
+                     ("actual_h", MH + 0.6), ("crop_px", [MW, float("inf")])):
+        rec = _gridded(tmp_path / "{0}_{1}".format(key, bad), _frame(**{key: bad}))
+        assert rec["status"] == "value", (key, bad)
+        assert rec["grid"]["frame_check"]["state"] == "unavailable", (key, bad)
+        assert "frame_unmeasured" in rec["grid"]["flags"], (key, bad)
+    control = grid.frame_check(_frame(actual_h=float(MH)))
+    assert (control["state"], control["delta_px"]) == ("value", 0)
+
+
 # --- the roll-up -------------------------------------------------------------
 
 def _rollup_view(run, n, frame):
