@@ -725,6 +725,11 @@ def tx_write(doc, name, fn, attempted, read_back, matches=None):
                            write that commits but does not take effect is a
                            finding (``took_effect: false``), not an error.
                            None only when the read-back itself is unreadable.
+      ``before`` / ``attempted_differs_from_before`` -- the same read taken
+                           BEFORE the write. A write that asks for the value
+                           already there reads back "took effect" whether or
+                           not Revit honoured it, so it cannot show a silent
+                           no-op; False here says so.
 
     ``state`` / ``value`` / ``error`` still say whether the call raised. A
     raise, a raising Commit and a Commit that does not return Committed
@@ -734,7 +739,10 @@ def tx_write(doc, name, fn, attempted, read_back, matches=None):
     record, after the read-back."""
     from Autodesk.Revit.DB import Transaction, TransactionStatus
     matches = matches or _equal
-    rec = {"attempted": attempted, "commit_status": None}
+    rec = {"attempted": attempted, "commit_status": None, "before": read(read_back)}
+    rec["attempted_differs_from_before"] = (
+        not matches(attempted, rec["before"]["value"]) if rec["before"]["state"] == "value"
+        else None)
     tx = Transaction(doc, "VOP capture-state probe: " + name)
     try:
         started = tx.Start()
@@ -1505,7 +1513,7 @@ def _production_refusal(ctx):
         rec.get("state"), rec.get("error"))
 
 
-def production_crop_box(ctx, view):
+def production_crop_box(ctx, view, shrink=None):
     """``(box, uv_extents)``: the crop the capture would write for S0's own
     extents -- crop_box_from_uv_bounds (color_id_buffer's crop writes) on the
     view's crop projected by xy_bounds_from_crop_box_all_corners, both
@@ -1520,17 +1528,23 @@ def production_crop_box(ctx, view):
     basis = vb.make_view_basis(view)
     b = vb.xy_bounds_from_crop_box_all_corners(view, basis)
     uv = [float(b.xmin), float(b.ymin), float(b.xmax), float(b.ymax)]
+    if shrink is not None:
+        cu, cv = (uv[0] + uv[2]) / 2.0, (uv[1] + uv[3]) / 2.0
+        hu, hv = (uv[2] - uv[0]) * shrink / 2.0, (uv[3] - uv[1]) * shrink / 2.0
+        uv = [cu - hu, cv - hv, cu + hu, cv + hv]
     box = vb.crop_box_from_uv_bounds(view, basis, uv[0], uv[1], uv[2], uv[3])
     if box is None:
         raise ValueError("crop_box_from_uv_bounds returned None (the view has no CropBox)")
     return box, uv
 
 
-def write_production_crop(ctx, view, name):
+def write_production_crop(ctx, view, name, shrink=None):
     """Production's crop write: CropBox = crop_box_from_uv_bounds(S0 extents),
     then CropBoxActive = True, as color_id_buffer does. attempted is the box
-    production built; took_effect from the read-back."""
-    built = read(production_crop_box, ctx, view)
+    production built; took_effect from the read-back. With ``shrink`` the UV
+    rectangle is first scaled about its centre by that factor, so the write
+    asks for something other than the box already there."""
+    built = read(production_crop_box, ctx, view, shrink)
     if built["state"] != "value":
         return {"state": "raised", "error": built["error"], "attempted": None,
                 "commit_status": None, "read_back": rec_unavailable("no box was built"),
@@ -1548,6 +1562,7 @@ def write_production_crop(ctx, view, name):
                    crop_boxes_match)
     rec["uv_extents"] = uv
     rec["snapped"] = False
+    rec["shrink"] = shrink
     return rec
 
 
@@ -1699,20 +1714,28 @@ def run_q3b_view(ctx, view, baseline, role):
         rec["s0_extent_ft"] = box_extent_ft(box0)
         out["steps"].append(rec)
 
-    def _s2():
-        # Scope box LEFT SET; production's crop for S0's extents.
-        if ctx.production is None:
-            out["steps"].append({"step": "S2", "refused": "production_unavailable",
-                                 "refused_reason": _production_refusal(ctx)})
-            return
-        writes = {"production_crop": write_production_crop(ctx, view, "Q3b S2 production crop")}
-        rec, _ids = _step(ctx, view, "q3b", "S2", writes)
-        rec["at_export"] = _at_export(rec["common"])
-        rec["scope_box_set_at_write"] = baseline.get("scope_box") not in (None, -1, UNREADABLE)
-        out["steps"].append(rec)
+    def _production_step(step, shrink):
+        # Scope box LEFT SET; production's crop. S2: for S0's own extents --
+        # the box already there, so its took_effect cannot show an override
+        # (attempted_differs_from_before is False). S3: those extents shrunk
+        # by Q3_SHRINK, which can.
+        def _body():
+            if ctx.production is None:
+                out["steps"].append({"step": step, "refused": "production_unavailable",
+                                     "refused_reason": _production_refusal(ctx)})
+                return
+            writes = {"production_crop": write_production_crop(
+                ctx, view, "Q3b {0} production crop".format(step), shrink)}
+            rec, _ids = _step(ctx, view, "q3b", step, writes)
+            rec["at_export"] = _at_export(rec["common"])
+            rec["scope_box_set_at_write"] = baseline.get("scope_box") not in (None, -1, UNREADABLE)
+            out["steps"].append(rec)
+        return _body
 
     run_gated(ctx, [(view, baseline)], Q3_REQUIRED, out,
-              (("S0", ("S0",), _s0), ("S1", ("S1",), _s1), ("S2", ("S2",), _s2)),
+              (("S0", ("S0",), _s0), ("S1", ("S1",), _s1),
+               ("S2", ("S2",), _production_step("S2", None)),
+               ("S3", ("S3",), _production_step("S3", Q3_SHRINK))),
               "Q3b {0}".format(out["view_id"]))
     return out
 
