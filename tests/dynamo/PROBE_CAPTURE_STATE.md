@@ -148,11 +148,23 @@ How to read Q3:
 
 **Q5 (13663964, 11999340).** No exports.
 - **S0:** sets `DisplayStyle = FlatColors` with the template attached. Records
-  the set (value or raised) and the read-back. `took_effect` is the read-back
-  being FlatColors: a set that does not raise but does not take effect is
-  possible.
+  the set (value or raised), the read-back, and an `outcome`:
+  - `took_effect`: the write committed and the style went from another style
+    to FlatColors
+  - `no_effect`: the write committed but the style is not FlatColors
+  - `raised`: the write raised or did not commit
+  - `already_target`: inconclusive, see below
+
+  `took_effect` is the matching True or False, or null when inconclusive. The
+  read-back alone is never the evidence: a view that was already FlatColors
+  would read FlatColors after a blocked write too. So a view that starts as
+  FlatColors is first switched to Hidden Line in the same step
+  (`pre_switch_to_hidden_line`). If that switch doesn't take effect, the
+  outcome is `already_target`, with the reason, and no FlatColors write is
+  attempted.
 - **S1:** a separate nested group. Detaches the template
-  (`ViewTemplateId = InvalidElementId`), then sets FlatColors again.
+  (`ViewTemplateId = InvalidElementId`), then makes the same FlatColors
+  attempt, with the same `outcome`.
 - **Also recorded:** `GetPrimaryViewId` and whether it is valid; the template's
   `GetNonControlledTemplateParameterIds()` count; and whether
   `MODEL_GRAPHICS_STYLE` (Visual Style) is among the controlled parameters.

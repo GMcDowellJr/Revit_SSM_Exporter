@@ -1191,6 +1191,58 @@ def template_record(doc, view):
     return out
 
 
+FLAT = "FlatColors"
+
+
+def flat_colors_attempt(ctx, view, label):
+    """Try to set DisplayStyle = FlatColors, and say whether THAT write did
+    it -- not whether the view happens to read FlatColors afterwards.
+
+    ``outcome``:
+      * ``took_effect`` -- the write committed and the style went from
+        something else to FlatColors;
+      * ``no_effect``   -- the write committed and the style is not FlatColors;
+      * ``raised``      -- the write raised or did not commit;
+      * ``already_target`` -- the view was already FlatColors and could not
+        be moved off it first, so the write proves nothing (inconclusive).
+
+    A view already FlatColors is first switched to Hidden Line in the same
+    step, so the FlatColors write is a real test when that switch works.
+    ``took_effect`` is True / False, or None when inconclusive."""
+    from Autodesk.Revit.DB import DisplayStyle
+    rec = {"display_style_before": read_attr(view, "DisplayStyle", enum_text)}
+    before = value_of(rec["display_style_before"])
+    if before == FLAT:
+        rec["pre_switch_to_hidden_line"] = tx_write(
+            ctx.doc, label + " pre-switch to Hidden Line",
+            lambda: setattr(view, "DisplayStyle", DisplayStyle.HLR) or True)
+        rec["display_style_after_pre_switch"] = read_attr(view, "DisplayStyle", enum_text)
+        before = value_of(rec["display_style_after_pre_switch"])
+        if before == FLAT or before is None:
+            rec.update(outcome="already_target", took_effect=None,
+                       outcome_reason="the view was already FlatColors and the switch "
+                                      "to Hidden Line did not take effect (write {0}, "
+                                      "read-back {1!r}), so a FlatColors write would "
+                                      "prove nothing".format(
+                                          rec["pre_switch_to_hidden_line"]["state"], before))
+            return rec
+
+    def _set_flat():
+        view.DisplayStyle = DisplayStyle.FlatColors
+        return True
+    rec["set_flat_colors"] = tx_write(ctx.doc, label + " flat colors", _set_flat)
+    rec["display_style_after"] = read_attr(view, "DisplayStyle", enum_text)
+    after = value_of(rec["display_style_after"])
+    if rec["set_flat_colors"]["state"] != "value":
+        outcome = "raised"
+    elif after == FLAT and before != FLAT:
+        outcome = "took_effect"
+    else:
+        outcome = "no_effect"
+    rec.update(outcome=outcome, took_effect=outcome == "took_effect")
+    return rec
+
+
 def run_q5_view(ctx, view, baseline):
     from Autodesk.Revit.DB import DisplayStyle, ElementId
     out = {"view_id": element_id_int(view.Id), "template": template_record(ctx.doc, view),
@@ -1202,16 +1254,9 @@ def run_q5_view(ctx, view, baseline):
     attached = None if template_id == UNREADABLE else template_id not in (None, -1)
     out["template_attached"] = attached
 
-    def _set_flat():
-        view.DisplayStyle = DisplayStyle.FlatColors
-        return True
-
     def _s0():
-        rec = {"step": "S0", "template_attached": attached,
-               "display_style_before": read_attr(view, "DisplayStyle", enum_text),
-               "set_flat_colors": tx_write(ctx.doc, "Q5 S0 flat colors", _set_flat)}
-        rec["display_style_after"] = read_attr(view, "DisplayStyle", enum_text)
-        rec["took_effect"] = value_of(rec["display_style_after"]) == "FlatColors"
+        rec = {"step": "S0", "template_attached": attached}
+        rec.update(flat_colors_attempt(ctx, view, "Q5 S0"))
         out["steps"].append(rec)
 
     def _s1():
@@ -1220,10 +1265,7 @@ def run_q5_view(ctx, view, baseline):
                    ctx.doc, "Q5 S1 detach",
                    lambda: setattr(view, "ViewTemplateId", ElementId.InvalidElementId) or True)}
         rec["template_id_after_detach"] = read(lambda: element_id_int(view.ViewTemplateId))
-        rec["display_style_before"] = read_attr(view, "DisplayStyle", enum_text)
-        rec["set_flat_colors"] = tx_write(ctx.doc, "Q5 S1 flat colors", _set_flat)
-        rec["display_style_after"] = read_attr(view, "DisplayStyle", enum_text)
-        rec["took_effect"] = value_of(rec["display_style_after"]) == "FlatColors"
+        rec.update(flat_colors_attempt(ctx, view, "Q5 S1"))
         out["steps"].append(rec)
 
     plan = [("S0", ("S0",), _s0)]
