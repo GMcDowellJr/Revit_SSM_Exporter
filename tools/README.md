@@ -186,16 +186,17 @@ NOT gridded is a row like any other:
 
 | `row_status` | meaning |
 |---|---|
+| `not_this_run` | the sidecar cannot be tied to the run: `run_meta.json` (finalized) does not record this view's capture as `success`, so the sidecar may be a previous run's |
 | `gridded` | `<view>.grid.json` with status `value`, still matching the files on disk |
 | `grid_refused` | the grid's own refusal, with its reason |
 | `not_gridded` | no `<view>.grid.json` in `<run>/analysis_grid/` |
-| `grid_stale` | a hash the grid recorded (model sidecar, model TIFF, registration record) no longer matches, or a registration appeared or became usable after the grid was made |
+| `grid_stale` | a hash the grid recorded (model sidecar, model TIFF, registration record, registered TIFF) no longer matches, the grid was made under another run id, or a registration appeared or became usable after the grid was made |
 | `unreadable` | the grid JSON cannot be parsed; the exception |
 
 `registration_state` is `registered`, `refused` (its refusals), `absent` or
 `unusable`; a gridded row that is not `registered` is counted as model-only
 and keeps the grid's `no_registered_annotation` flag. View name, type, scale
-and on-sheet come from the run's `views_core_*.csv` on `ViewId`, with
+and on-sheet come from the run's `views_core_*.csv` on (`RunId`, `ViewId`), with
 `views_core_state` saying whether that join had exactly one file and one row.
 An empty cell means "not applicable for this row", never zero.
 

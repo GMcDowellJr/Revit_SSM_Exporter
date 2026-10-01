@@ -13,14 +13,20 @@ A grid JSON is looked for where ``stage_a_grid.py`` writes it by default,
 ``<run>/analysis_grid/<view>.grid.json``.
 
 ROW STATUS (never blank):
+  * ``not_this_run``  -- the sidecar cannot be tied to the run: a sidecar
+    carries no run id, so it is this run's only when run_meta.json records
+    that view's capture as "success" (the rule of stage_a_timing_report.py).
+    A failed capture leaves an older sidecar in place; a run_meta that is
+    missing, unfinalized or lists the view otherwise ties nothing;
   * ``gridded``       -- grid.json status "value", and not stale;
   * ``grid_refused``  -- grid.json status other than "value"; its reason;
   * ``not_gridded``   -- no grid.json for this sidecar;
   * ``grid_stale``    -- grid.json no longer describes the files on disk:
-    its model_sidecar_sha256 / model_tiff_sha256 or its
-    registered_annotation.record_sha256 does not match (hashed with the
-    grid's own ``sha256_file``), or a registration record appeared or became
-    usable after a ``value`` grid was made without one;
+    its model_sidecar_sha256 / model_tiff_sha256, its
+    registered_annotation.record_sha256 / tiff_sha256 does not match (hashed
+    with the grid's own ``sha256_file``), it was made under another run_id,
+    or a registration record appeared or became usable after a ``value``
+    grid was made without one;
   * ``unreadable``    -- grid.json cannot be parsed; the exception.
 
 REGISTRATION STATE (never blank): ``registered``, ``refused`` (its refusals
@@ -64,7 +70,8 @@ TOOL_VERSION = "1.0.0"
 CSV_NAME = "grid_rollup.csv"
 SUMMARY_NAME = "grid_rollup.summary.json"
 
-ROW_STATUSES = ("gridded", "grid_refused", "not_gridded", "grid_stale", "unreadable")
+ROW_STATUSES = ("gridded", "grid_refused", "not_gridded", "grid_stale", "unreadable",
+                "not_this_run")
 REGISTRATION_STATES = ("registered", "refused", "absent", "unusable")
 VIEWS_CORE_STATES = ("value", "absent", "ambiguous", "unreadable")
 
@@ -73,7 +80,8 @@ COLUMNS = [
     "run_id", "view_stem", "view_id",
     "view_name", "view_type", "scale", "is_on_sheet", "views_core_state",
     # status
-    "row_status", "reason", "registration_state", "registration_reason",
+    "row_status", "reason", "run_capture_status",
+    "registration_state", "registration_reason",
     # grid
     "cells_w", "cells_h", "cell_ft", "view_scale", "px_per_cell_min",
     "uv_basis_chosen", "uncertainty_px", "uncertainty_cells", "flags",
@@ -132,8 +140,11 @@ def registration_record_path(model_sidecar_path):
 
 # --- views_core ------------------------------------------------------------------
 
-def load_views_core(run_dir):
-    """``(state, reason, {ViewId: [rows]})`` from the run's views_core_*.csv."""
+def load_views_core(run_dir, run_id):
+    """``(state, reason, {ViewId: [rows]})`` from the run's views_core_*.csv,
+    holding only rows whose RunId is ``run_id``: a views_core row is
+    identified by (RunId, ViewId), and ViewId alone can select another run's
+    row. With no run_id, no row is joined."""
     found = sorted(Path(run_dir).glob("views_core_*.csv"))
     if not found:
         return "absent", "no views_core_*.csv in {0}".format(run_dir), {}
@@ -144,6 +155,8 @@ def load_views_core(run_dir):
     try:
         with open(found[0], encoding="utf-8", newline="") as handle:
             for row in csv.DictReader(handle):
+                if run_id is None or str(row.get("RunId", "")).strip() != str(run_id):
+                    continue
                 by_id.setdefault(str(row.get("ViewId", "")).strip(), []).append(row)
     except (OSError, ValueError, csv.Error) as ex:
         return "unreadable", "{0}: {1}".format(found[0].name, _err(ex)), {}
@@ -167,12 +180,48 @@ def views_core_columns(state, by_id, view_id):
             "views_core_state": "value"}
 
 
+# --- the run ----------------------------------------------------------------------
+
+def run_capture_statuses(meta):
+    """``(reason, {view_id: capture_status})`` from run_meta.json's per-view
+    outcomes. A view listed more than once with different outcomes maps to
+    None (not guessed); ``reason`` is set when the run records no outcomes."""
+    if not meta:
+        return "no readable run_meta.json", {}
+    if not meta.get("finalized"):
+        return "run_meta.json is not finalized (an interrupted run)", {}
+    out = {}
+    for v in meta.get("views") or []:
+        if not isinstance(v, dict):
+            continue
+        key = str(v.get("view_id"))
+        status = v.get("capture_status")
+        out[key] = status if out.get(key, status) == status else None
+    return "", out
+
+
+def run_capture_status(statuses, view_id):
+    reason, by_id = statuses
+    if reason:
+        return "unrecorded", reason
+    key = str(view_id)
+    if key not in by_id:
+        return "unrecorded", "run_meta.json lists no outcome for view {0}".format(view_id)
+    if by_id[key] is None:
+        return "ambiguous", "run_meta.json lists view {0} with differing outcomes".format(
+            view_id)
+    return by_id[key], ""
+
+
 # --- one view --------------------------------------------------------------------
 
-def staleness(model_sidecar_path, record, reg_path):
+def staleness(model_sidecar_path, record, reg_path, run_id=None):
     """Why ``record`` (a parsed grid.json) no longer describes the files on
     disk; empty when every hash it names still matches."""
     reasons = []
+    if run_id is not None and record.get("run_id") != run_id:
+        reasons.append("the grid was made under run_id {0!r}, not {1!r}".format(
+            record.get("run_id"), run_id))
     if record.get("model_sidecar_sha256") != grid.sha256_file(model_sidecar_path):
         reasons.append("model_sidecar_sha256 does not match the model sidecar on disk")
     if "model_tiff_sha256" in record:
@@ -192,6 +241,21 @@ def staleness(model_sidecar_path, record, reg_path):
             reasons.append("registered_annotation.record_sha256 does not match the "
                            "registration record on disk" if reg_now else
                            "the registration record the grid used is gone")
+        elif "tiff_sha256" in ra:
+            # The grid's annotation numbers come from the registered TIFF, so
+            # it is checked too, resolved the way the grid resolves it.
+            try:
+                tiff = grid._resolve_recorded(_load_json(reg_path).get("registered_tiff"),
+                                              reg_path.parent,
+                                              "the registered annotation TIFF")
+                now = grid.sha256_file(tiff)
+            except (OSError, ValueError, AttributeError, grid.GridRefusal) as ex:
+                now = None
+                reasons.append("the registered annotation TIFF cannot be hashed now "
+                               "({0})".format(_err(ex)))
+            if now is not None and now != ra.get("tiff_sha256"):
+                reasons.append("registered_annotation.tiff_sha256 does not match the "
+                               "registered annotation TIFF on disk")
     elif isinstance(ra, dict) and ra.get("status") == "unusable":
         if reg_now is None:
             reasons.append("the registration record the grid found unusable is gone")
@@ -290,7 +354,7 @@ def grid_columns(record):
     return cols
 
 
-def view_row(model_sidecar_path, grid_dir, run_id, views_core):
+def view_row(model_sidecar_path, grid_dir, run_id, views_core, statuses=("", {})):
     """One row for one model sidecar. Every key of COLUMNS is present."""
     model_sidecar_path = Path(model_sidecar_path)
     stem = model_sidecar_path.stem
@@ -304,7 +368,13 @@ def view_row(model_sidecar_path, grid_dir, run_id, views_core):
     reg_path = registration_record_path(model_sidecar_path)
     grid_json = Path(grid_dir) / (stem + ".grid.json")
     record = None
-    if not grid_json.exists():
+    row["run_capture_status"], why_not = run_capture_status(statuses, row["view_id"])
+    if row["run_capture_status"] != "success":
+        row["row_status"] = "not_this_run"
+        row["reason"] = ("{0}; the sidecar cannot be tied to run {1!r}".format(
+            why_not or "run_meta.json records capture_status {0!r} for view {1}".format(
+                row["run_capture_status"], row["view_id"]), run_id))
+    elif not grid_json.exists():
         row["row_status"] = "not_gridded"
         row["reason"] = "no {0} in {1}".format(grid_json.name, grid_dir)
     else:
@@ -320,7 +390,7 @@ def view_row(model_sidecar_path, grid_dir, run_id, views_core):
     if record is not None:
         if row["view_id"] is None:
             row["view_id"] = record.get("view_id")
-        stale = staleness(model_sidecar_path, record, reg_path)
+        stale = staleness(model_sidecar_path, record, reg_path, run_id)
         if stale:
             row["row_status"] = "grid_stale"
             row["reason"] = "; ".join(stale)
@@ -414,16 +484,20 @@ def rollup(layouts, out_dir):
     for sidecars, folder, run_dir, grid_dir in layouts:
         meta = dsc.find_run_meta(sidecars[0]) or {}
         run_id = meta.get("run_id")
-        core_state, core_reason, core_by_id = load_views_core(run_dir)
+        core_state, core_reason, core_by_id = load_views_core(run_dir, run_id)
+        statuses = run_capture_statuses(meta)
         runs.append({"run_dir": str(run_dir), "capture_dir": str(folder),
                      "grid_dir": str(grid_dir), "run_id": run_id,
                      "git_commit": meta.get("git_commit"),
                      "run_meta_found": bool(meta),
+                     "run_meta_finalized": bool(meta.get("finalized")),
+                     "run_capture_statuses_reason": statuses[0],
                      "model_sidecars": len(sidecars),
                      "views_core_state": core_state,
                      "views_core_reason": core_reason})
         for path in sidecars:
-            rows.append(view_row(path, grid_dir, run_id, (core_state, core_by_id)))
+            rows.append(view_row(path, grid_dir, run_id, (core_state, core_by_id),
+                                 statuses))
     out_dir.mkdir(parents=True, exist_ok=True)
     csv_path = out_dir / CSV_NAME
     with open(csv_path, "w", encoding="utf-8", newline="") as handle:

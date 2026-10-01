@@ -37,9 +37,21 @@ def _run(tmp_path, name="run_a", run_id="RUN_A", commit="c0ffee"):
     run = tmp_path / name
     (run / "color_id_buffer").mkdir(parents=True)
     (run / "run_meta.json").write_text(json.dumps(
-        {"run_id": run_id, "git_commit": commit,
+        {"run_id": run_id, "git_commit": commit, "finalized": True, "views": [],
          "config": {"cell_size_paper_in": 0.125}}))
     return run
+
+
+def _outcome(run, n, status="success", **meta):
+    """Record view ``n``'s capture outcome in run_meta.json, as
+    run_meta.finalize_run_meta writes it."""
+    path = run / "run_meta.json"
+    doc = json.loads(path.read_text())
+    doc["views"] = [v for v in doc["views"] if v["view_id"] != n] + [
+        {"view_id": n, "view_name": "V {0}".format(n), "capture_status": status,
+         "capture_failure_reason": ""}]
+    doc.update(meta)
+    path.write_text(json.dumps(doc))
 
 
 def _capture(run, n, register=True, gridded=True, model_faults=None,
@@ -69,6 +81,7 @@ def _capture(run, n, register=True, gridded=True, model_faults=None,
     model_path, anno_path = cap / "V_{0}.json".format(n), cap / "V_{0}_anno.json".format(n)
     model_path.write_text(json.dumps(model))
     anno_path.write_text(json.dumps(anno))
+    _outcome(run, n)
     if register:
         reg.register(anno_path)
     if gridded:
@@ -453,3 +466,99 @@ def test_the_summary_carries_the_written_csvs_sha256(tmp_path):
         (out / rollup.CSV_NAME).read_bytes()).hexdigest()
     assert (out / rollup.SUMMARY_NAME).stat().st_mtime_ns >= \
         (out / rollup.CSV_NAME).stat().st_mtime_ns
+
+
+# --- review (Codex, PR #224) -----------------------------------------------------------
+
+def test_a_registered_tiff_changed_after_gridding_is_stale(tmp_path):
+    """The grid's annotation numbers come from the registered TIFF; the
+    registration JSON left untouched does not vouch for it."""
+    run = _run(tmp_path)
+    _capture(run, 1)
+    _m, anno = _capture(run, 2)
+    tiff = reg.output_paths(anno)[0]
+    tiff.write_bytes(tiff.read_bytes() + b"\0")
+    _main(run)
+    by_stem, _rows, _s = _read(run / "analysis_grid")
+    assert by_stem["V_1"]["row_status"] == "gridded"
+    assert by_stem["V_2"]["row_status"] == "grid_stale"
+    assert by_stem["V_2"]["reason"] == ("registered_annotation.tiff_sha256 does not "
+                                        "match the registered annotation TIFF on disk")
+
+
+def test_a_sidecar_whose_capture_failed_in_this_run_is_not_this_runs(tmp_path):
+    """A failed capture leaves the previous run's sidecar and grid in place.
+    They are reported as not this run's, never as a clean gridded view."""
+    run = _run(tmp_path)
+    _capture(run, 1)
+    _capture(run, 2)
+    _outcome(run, 2, status="failed")
+    assert _main(run) == 1
+    by_stem, _rows, summary = _read(run / "analysis_grid")
+    assert (by_stem["V_1"]["row_status"], by_stem["V_1"]["run_capture_status"]) == (
+        "gridded", "success")
+    r = by_stem["V_2"]
+    assert (r["row_status"], r["run_capture_status"]) == ("not_this_run", "failed")
+    assert "cannot be tied to run 'RUN_A'" in r["reason"]
+    assert all(r[c] == "" for c in GRID_COLUMNS)
+    assert summary["row_status"]["counts"]["not_this_run"] == 1
+
+
+def test_a_view_run_meta_does_not_list_is_not_this_runs(tmp_path):
+    run = _run(tmp_path)
+    _capture(run, 1)
+    _capture(run, 2)
+    doc = json.loads((run / "run_meta.json").read_text())
+    doc["views"] = [v for v in doc["views"] if v["view_id"] != 2]
+    (run / "run_meta.json").write_text(json.dumps(doc))
+    _main(run)
+    by_stem, _rows, _s = _read(run / "analysis_grid")
+    assert by_stem["V_1"]["row_status"] == "gridded"
+    assert (by_stem["V_2"]["row_status"], by_stem["V_2"]["run_capture_status"]) == (
+        "not_this_run", "unrecorded")
+
+
+def test_an_unfinalized_run_ties_no_sidecar(tmp_path):
+    run = _run(tmp_path)
+    _capture(run, 1)
+    _outcome(run, 1, finalized=False)
+    assert _main(run) == 1
+    by_stem, _rows, summary = _read(run / "analysis_grid")
+    assert by_stem["V_1"]["row_status"] == "not_this_run"
+    assert "not finalized" in by_stem["V_1"]["reason"]
+    assert summary["runs"][0]["run_meta_finalized"] is False
+
+
+def test_a_grid_made_under_another_run_id_is_stale(tmp_path):
+    """The run folder reused: run_meta now names a new run that captured the
+    view successfully, but the grid on disk was made under the old one."""
+    run = _run(tmp_path)
+    _capture(run, 1)
+    _capture(run, 2)
+    for n in (1, 2):
+        grid.grid_view(run / "color_id_buffer" / "V_{0}.json".format(n),
+                       run / "analysis_grid")
+    _outcome(run, 2, run_id="RUN_NEW")
+    grid.grid_view(run / "color_id_buffer" / "V_1.json", run / "analysis_grid")
+    _main(run)
+    by_stem, _rows, _s = _read(run / "analysis_grid")
+    assert by_stem["V_1"]["row_status"] == "gridded"                 # control
+    assert by_stem["V_2"]["row_status"] == "grid_stale"
+    assert "made under run_id 'RUN_A', not 'RUN_NEW'" in by_stem["V_2"]["reason"]
+
+
+def test_views_core_rows_of_another_run_are_not_joined(tmp_path):
+    run = _run(tmp_path)
+    _capture(run, 1)
+    _capture(run, 2)
+    (run / "views_core_2026-10-01.csv").write_text(
+        "RunId,ViewId,ViewName,ViewType,Scale,IsOnSheet\n"
+        "RUN_OLD,1,Old Name,FloorPlan,48,N\n"
+        "RUN_A,1,Plan One,FloorPlan,96,Y\n"
+        "RUN_OLD,2,Old Two,FloorPlan,48,N\n")
+    _main(run)
+    by_stem, _rows, _s = _read(run / "analysis_grid")
+    assert (by_stem["V_1"]["view_name"], by_stem["V_1"]["views_core_state"]) == (
+        "Plan One", "value")
+    assert (by_stem["V_2"]["view_name"], by_stem["V_2"]["views_core_state"]) == (
+        "", "absent")
