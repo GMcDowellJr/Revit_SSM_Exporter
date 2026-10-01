@@ -1,14 +1,38 @@
 # Stage A capture-state probe
 
-`probe_capture_state.py` answers five questions about view state, in Revit and
-with evidence, **before** any capture code changes. The offline half is
+`probe_capture_state.py` answers questions about view state, in Revit and with
+evidence, **before** any capture code changes. The offline half is
 `tools/analyze_capture_state_probe.py`.
 
-**UNVERIFIED.** No one has run this probe in Revit yet. It was smoke-run only
-against a throwaway fake of the Revit API, which checks that the Python runs
-end to end and that the post-rollback verify reports a field left changed. It
-does not show that any Revit call behaves as assumed. Treat its first run as
-the test of the probe itself.
+- **Round 1** (probe `2026-10-01.1`): Q1–Q5, run in Revit on 2026-10-01.
+- **Round 2** (probe `2026-10-02.1`, analyzer `1.1.0`): Q1b, Q3b, Q5b and Q6,
+  described under [Round 2](#round-2-probe-2026-10-021). Round 2 is the
+  default question set.
+
+**Round 2 is UNVERIFIED in Revit.** It has been smoke-run only against a
+throwaway fake of the Revit API, including the production code Q3b and Q6
+call. That checks that the Python runs end to end, that the gates refuse
+after a field left changed, and that the verify reports it. It does not show
+that any Revit call behaves as assumed. Treat its first run as the test of the
+probe itself.
+
+### Every write obeys one invariant
+
+Every write records `{attempted, commit_status, read_back, took_effect}`:
+- `read_back` is a fresh read after the transaction closed. It is a required
+  argument, so a write without one cannot be written.
+- `took_effect` compares the read-back with `attempted`, never with the commit
+  status. A write that commits but does not take effect is a finding
+  (`took_effect: false`), not an error. Round 1 found two: CropBox under a
+  scope box, and a template detach on a dependent view.
+- Each write also records `before` (the same read, taken before the write)
+  and `attempted_differs_from_before`. When that is false, the write asked
+  for the value already there, so its `took_effect` cannot show a silent
+  no-op.
+- Statuses and enums are recorded by name (`Committed`, `FlatColors`). Round
+  1 recorded them with `str()`, which under Python.NET 3 gives the number
+  (`3`, `7`). DisplayStyle comparisons go through the same conversion of the
+  `DisplayStyle` member, so they hold either way.
 
 **It changes nothing persistently.** Every write runs inside ONE outer
 `TransactionGroup` that is rolled back. A step that has to start from the
@@ -203,11 +227,147 @@ one that throws is `raised`.
 
 ---
 
+## Round 2 (probe 2026-10-02.1)
+
+### Round 1, as reported (run 20261001T144424)
+
+Treated as evidence, not as settled:
+- **Q1 (Plaza 6112047, Elevation, template 7249248).** Writing back the
+  IDENTICAL CropBox changed membership (+80 / −3) and 8.8 % of pixels. The
+  shape manager reports `Split = false`, `NumberOfSplitRegions = 1` and
+  `ShapeSet = false`. The id lists were truncated at 50.
+- **Q3.** `ShapeSet` is false on 11999340, 5823803 and 9948, so the crop shape
+  is excluded as the cause.
+  - With a scope box set, CropBox writes commit but read back unchanged: a
+    silent no-op.
+  - With the scope box cleared, writes stick, and MOHAVE's export matches the
+    implied size to 1 px.
+  - Slab 5823803 (0 of 12 ticks in production) and control 9948 (registered)
+    share scope box 3626881 and their CropBox. They differ in template
+    (5823949 vs 2812885).
+- **Q3 probe defect, fixed.** MOHAVE's S0 crop transform is rotated 180° and
+  S2/S4 wrote S0's local Min/Max in the identity transform. They cropped a
+  mirrored, empty region (white TIFFs), so content with the scope box cleared
+  was untested. Every crop write now carries its own transform.
+- **Q4 (2888380).** ShadowIntensity 20 → 0 removes cast shadows; a white
+  background removes the sky. The export ran in display style 7, not
+  FlatColors.
+- **Q5.** 13663964 and 11999340 are DEPENDENT views (primaries 12172722 and
+  11998677). The template detach committed, but the template id after it is
+  unchanged, and DisplayStyle then raises: a silent no-op.
+
+### The questions
+
+**Q1b: what the identity crop write changes.** Views 6112047 and 6207878
+(WEST - EAST SECTION).
+- **S0:** export.
+- **S1:** inside one group:
+  - read the members and **every** view parameter
+  - write back the identical CropBox (in its own transform)
+  - read members and parameters again, then export
+- **Records:**
+  - the FULL added and removed id lists, untruncated, each with its category,
+    class and `OwnerViewId`
+  - whether **15846537** and **15809670** are in the before/after sets or were
+    added/removed
+  - every parameter whose value or value string changed
+- **Answers it:** the categories and owners of the +80 / −3. View-owned
+  elements (OwnerViewId = the view) point at annotation the crop clips. Model
+  categories point at the crop's depth or far clip. Any changed parameter
+  names what the write touched beyond the box.
+
+**Q3b: scope-box clear with the original frame.** View 11999340, with 5823803
+as the control.
+- **S1:** clear the scope box (a refused step if it does not take effect),
+  then write S0's box in S0's own transform. Read back the transform and
+  extents, then export.
+- **S2:** scope box LEFT SET. Write production's crop:
+  `crop_box_from_uv_bounds` on S0's extents, which come from
+  `xy_bounds_from_crop_box_all_corners`. **This is the box already there**
+  (`attempted_differs_from_before: false`), so it cannot show an override.
+  It is kept because it was asked for.
+- **S3:** as S2, but on S0's extents shrunk 10 %. That write can show whether
+  the scope box overrides production's own write.
+- **Answers it:**
+  - S1's non-white pixel count against S0 says whether content survives the
+    scope-box clear, once the frame is right.
+  - `took_effect` on S3 says whether production's crop write is silently
+    overridden by the scope box. `false` with `commit_status: Committed` is
+    the scope-box override.
+- Production snaps the rectangle to its pixel lattice first, which needs the
+  pipeline raster and moves each edge by under a pixel. These are unsnapped
+  rectangles (`snapped: false`).
+
+**Q5b: DisplayStyle on dependent views.** Views 13663964 and 11999340. Each
+view's primary is read with `GetPrimaryViewId` and snapshotted before the
+group. Both views are gated together.
+- **A:** detach the PRIMARY's template, read the dependent's template id,
+  then try FlatColors on the dependent.
+- **B:** detach the primary's template, try FlatColors on the primary, and
+  read the dependent's DisplayStyle before and after
+  (`dependent_followed_primary`).
+- Each variant runs in its own group, with every write's `took_effect`
+  recorded.
+- **Answers it:**
+  - A dependent template id that follows the primary's detach, plus
+    `took_effect` on the dependent, says the capture must detach on the
+    primary.
+  - B says whether a dependent view's style simply follows its primary.
+
+**Q6: why ticks do not render.** Views 5823803, 9948 and 11999340, plus
+`q6_extra_views`.
+- **Layout, built as the capture builds it** (production functions only):
+  - `mark_reference_rectangle`
+  - `mark_fpp_ft`
+  - `registration_mark_segments`
+  - `annotation_avoid_rects` on `split_stage_a_pass_membership`
+  - `relocate_marks_clear_of`
+  - then `create_registration_marks` in its own transaction
+- **What could not be built outside the capture:**
+  - the pipeline raster. Its only fields these functions read are stood in
+    for by the view basis (`_LayoutRaster`).
+  - `mark_fpp_ft` therefore takes its own documented fallback, the
+    requested dpi, recorded as `fpp_basis`. With a raster it would use the
+    achieved lattice, which matches on an uncapped view.
+  - a view whose crop is inactive has no reference rectangle outside the
+    pipeline (production would use the model crop A), so its layout is
+    recorded unavailable with the reason.
+- **Two variants, each in its own group:**
+  - S0 unmarked / S1 marked, with the crop as authored
+  - S2 unmarked / S3 marked, after production's crop write
+- **Per mark:**
+  - line style id/name and its `GraphicsStyleCategory` id/name
+  - `GetCategoryHidden(OST_Lines)`
+  - `GetCategoryHidden(<line-style subcategory>)`
+  - `IsHidden(view)`
+  - whether `FilteredElementCollector(doc, view.Id)` returns it
+- **Per view:**
+  - each filter (enabled, visible, and whether its categories include
+    OST_Lines)
+  - whether the template controls V/G model categories, annotation
+    categories and filters
+- **The pixel test, in the analyzer:**
+  - Each mark's expected window comes from the crop at export (production's
+    projection), through the grid's own nominal mapping, padded 3 px.
+  - `rendered` compares pixels against the unmarked twin of the same state,
+    then falls back to the mark colour.
+  - It is `unmeasured`, with the reason, when the crop is inactive or
+    unreadable, the window falls outside the image, or the export failed.
+    It is never guessed.
+- **Answers it:** a row with `rendered: false` next to the field that
+  differs from 9948's. A hidden line-style subcategory, a filter on
+  OST_Lines, or the template controlling V/G would each show there.
+
 ## How to run
 
 1. Open the model with the views below. Dynamo 3.x, CPython3 Python node.
 2. Paste `tests/dynamo/probe_capture_state.py` into the node, or load it with
-   `exec(open(path).read())`. It imports nothing from the repository.
+   `exec(open(path).read())`. Rounds 1 and Q1b/Q5b import nothing from the
+   repository. **Q3b and Q6 import production code** from it, so the repository
+   must be findable: set `repo_root` in `IN[9]`, set the
+   `REVIT_SSM_EXPORTER_ROOT` environment variable, or put `IN[0]` inside the
+   checkout. If it isn't found, `production_imports` says where it looked,
+   and those steps are refused.
 3. Set the node inputs:
 
 | Input | Meaning | Default | Greg sets |
@@ -220,7 +380,21 @@ one that throws is `raised`.
 | `IN[5]` | Q4 elevation id | `2888380` | only if different |
 | `IN[6]` | Q5 view ids, a list | `[13663964, 11999340]` | only if different |
 | `IN[7]` | export pixel width | `2000` | optional |
-| `IN[8]` | questions: `"all"` or a comma list of `q1_q2,q3,q4,q5` | `"all"` | optional |
+| `IN[8]` | questions: `"round2"`, `"round1"`, `"all"`, or a comma list of `q1_q2,q3,q4,q5,q1b,q3b,q5b,q6` | `"round2"` (empty means round 2) | optional |
+| `IN[9]` | round-2 options: a Dictionary or a JSON object (keys below). An unknown key is refused. | `{}` | `repo_root` |
+
+   `IN[9]` keys:
+
+   | Key | Meaning | Default |
+   |---|---|---|
+   | `repo_root` | the Revit_SSM_Exporter checkout, for Q3b/Q6's production imports | searched, see step 2 |
+   | `q1b_views` | Q1b views | `[6112047, 6207878]` |
+   | `q3b_views` | Q3b views: the first is the test, the rest are controls | `[11999340, 5823803]` |
+   | `q5b_views` | Q5b dependent views | `[13663964, 11999340]` |
+   | `q6_views` | Q6 views | `[5823803, 9948, 11999340]` |
+   | `q6_extra_views` | more Q6 views, appended | `[]` |
+
+   For example: `{"repo_root": "C:\\Users\\gmcdowell\\Documents\\Revit_SSM_Exporter", "q6_extra_views": [12345]}`
 
    An id may be an integer, a string, or a Dynamo-wrapped view.
 4. Run. `OUT` is the JSON's path. If the probe could not start at all, `OUT`
@@ -254,8 +428,11 @@ Everything is written to `<IN[0]>/capture_state_<timestamp>/`.
 - **`probe_capture_state_<timestamp>.json`**, written last:
   - `inputs`: the resolved inputs
   - `views`: each id's roles and whether it resolved
-  - `questions.q1_q2 / q3 / q4 / q5`: the steps above, each with its writes,
-    common reads and export record
+  - `questions.q1_q2 / q3 / q4 / q5 / q1b / q3b / q5b / q6`: the steps above,
+    each with its writes, common reads and export record
+  - `production_imports`: where the production code was found (Q3b/Q6), or
+    why not
+  - `q5b_primaries`: each Q5b view's primary
   - `exports`: every export with its step, file, requested pixel size, fit
     direction, and `dims_px` read back from the TIFF header (stdlib `struct`)
   - `transaction_group`: whether the outer group started and rolled back
@@ -265,7 +442,8 @@ Everything is written to `<IN[0]>/capture_state_<timestamp>/`.
     `unreadable_both`, with before and after
   - `verify_changed`, `verify_unreadable_both` and `VERIFY_SUMMARY`
   - `exceptions`: every exception, with its stage and traceback
-- **`<step>_<viewid>.tiff`**, e.g. `Q1_S2_6112047.tiff`, `Q3_S4_11999340.tiff`
+- **`<step>_<viewid>.tiff`**, e.g. `Q1_S2_6112047.tiff`, `Q3B_S1_11999340.tiff`,
+  `Q6_S3_9948.tiff`
 - **`probe_capture_state_analysis.json`**, written by the analyzer. It carries
   the probe JSON's sha256, and its contents are:
   - per TIFF: size, distinct colours, the non-white fraction of a 2 % border
@@ -279,6 +457,24 @@ Everything is written to `<IN[0]>/capture_state_<timestamp>/`.
     `restored_after`: whether that step's rollback restored the view. A step
     the probe refused is a `refused` row with its reason and no numbers, so it
     can never read as a match or a mismatch.
+
+  - since analyzer 1.1.0:
+    - `writes`: every write record
+    - `commit_without_effect`: the writes that committed and did not take
+      effect
+    - `q1b`: every member change with category and owner, the watch ids,
+      the changed parameters
+    - `q3b`: per step, the writes, the scope box at export, whether S0's
+      transform was kept, and non-white and changed pixels against S0
+    - `q5b`: per variant, the detach, the template read and the FlatColors
+      outcomes
+    - `q6`: one row per (view, marked step, mark), with every visibility
+      field and `rendered: true | false | unmeasured`
+    - `non_white_pixels` per image
+
+    A recorded value that is missing or unreadable is shown as unavailable,
+    with the reason, never as a default. A round-1 probe JSON analyzes under
+    1.1.0 with these sections empty.
 
   The analyzer refuses, with `status: "refused"`, its reasons, and exit 2,
   when:
@@ -294,8 +490,12 @@ the written box and the export settings, so the arithmetic exists in one place.
 
 ## What is reimplemented, not imported
 
-The probe imports nothing from `vop_interwoven`, so it can be pasted into a
-node with no repository path set up. The minimum it needs is reimplemented:
+Round 1, Q1b and Q5b import nothing from `vop_interwoven`, so they run in a
+node with no repository path set up. Q3b and Q6 import production code
+(`revit.view_basis`, `stage_a_registration`, `stage_a_registered_capture`,
+`revit.annotation.split_stage_a_pass_membership`, `config.Config`), because
+the question is what production does. Nothing from those modules is copied.
+The minimum the rest needs is reimplemented:
 - the TIFF header reader (`color_id_buffer.read_image_dimensions`)
 - the ElementId reader (`stage_a_probe_contract.element_id_value`)
 - `_export_tiff`'s ImageExportOptions set, minus its pixel-size backoff and
@@ -316,4 +516,18 @@ instead, as described above.
 - Q3 — test views vs control, S1–S4:
 - Q4 — shadow (grey count) and background (border fraction) per step:
 - Q5 — FlatColors with the template attached / after detach, per view:
+- Verify — any field changed after the rollback?
+
+### Round 2
+
+- Run timestamp / probe JSON sha256 / `production_imports`:
+- Q1b — the added/removed members by category and owner; 15846537 and
+  15809670; changed parameters; 6207878 vs 6112047:
+- Q3b — S1 non-white vs S0 (content once the frame is right); S3
+  `took_effect` under the scope box; 5823803 vs 11999340:
+- Q5b — A: dependent template after the primary's detach, dependent
+  FlatColors; B: did the dependent follow the primary:
+- Q6 — `rendered` per mark, and the field that differs between 5823803 and
+  9948; with vs without the crop write:
+- `commit_without_effect`:
 - Verify — any field changed after the rollback?
