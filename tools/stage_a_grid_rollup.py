@@ -6,18 +6,38 @@ folder. It reads what ``register_stage_a_annotation.py`` and ``stage_a_grid.py``
 already wrote and reports, per view, the state it OBSERVED -- including every
 view that was NOT gridded and why. Absence of output is never a clean result.
 
-DENOMINATOR. Rows are enumerated from the model sidecars, by
+DENOMINATOR. Rows come from what the run REQUESTED: one row per unique
+view_id in run_meta.json's ``views_requested``, matched to its ``views``
+outcome and to its model sidecar by view_id, plus one row per model sidecar
+whose view_id the run did not request. A view that produced no Stage A
+sidecar (one that went the geometry path, or was rejected by capability
+gating) is therefore a row, never an absence. Model sidecars are found by
 ``stage_a_grid.model_sidecars`` -- the grid's own selector, imported, not
-copied. Each model sidecar is exactly one row; grid JSONs are never counted.
-A grid JSON is looked for where ``stage_a_grid.py`` writes it by default,
+copied. Grid JSONs are never counted. A grid JSON is looked for where
+``stage_a_grid.py`` writes it by default,
 ``<run>/analysis_grid/<view>.grid.json``.
 
+A RUN IS REFUSED -- no rows, listed under ``refused_runs`` with the reason --
+when its run_meta.json is absent or unreadable, is not ``finalized: true``,
+carries no run_id, requests no views, or when the view_id sets of
+``views_requested`` and ``views`` differ. Duplicate ids in
+``views_requested`` are reported, never merged silently, and give one row.
+
+The summary records the count invariant: the row_status counts sum to the
+requested count plus the orphan-sidecar count. If they do not, the tool
+exits 2 and says by how much.
+
 ROW STATUS (never blank):
+  * ``no_stage_a_capture`` -- requested, but no model sidecar has its
+    view_id; run_meta's capture_status and failure reason are carried;
+  * ``orphan_sidecar`` -- a model sidecar whose view_id is not requested
+    (or cannot be read);
+  * ``sidecar_ambiguous`` -- more than one model sidecar claims the view_id;
+    not guessed between;
   * ``not_this_run``  -- the sidecar cannot be tied to the run: a sidecar
     carries no run id, so it is this run's only when run_meta.json records
     that view's capture as "success" (the rule of stage_a_timing_report.py).
-    A failed capture leaves an older sidecar in place; a run_meta that is
-    missing, unfinalized or lists the view otherwise ties nothing;
+    A failed capture leaves an older sidecar in place;
   * ``gridded``       -- grid.json status "value", and not stale;
   * ``grid_refused``  -- grid.json status other than "value"; its reason;
   * ``not_gridded``   -- no grid.json for this sidecar;
@@ -47,8 +67,9 @@ summary sits beside its denominator.
 
     python tools/stage_a_grid_rollup.py <run> [<run> ...] [--out DIR]
 
-Exit 0 when every row is ``gridded`` with registration ``registered``; 1 for
-any other row; 2 when a run has no model sidecars, or on bad arguments.
+Exit 0 when no run is refused and every row is ``gridded`` with registration
+``registered``; 1 for any other row or a refused run; 2 when every run is
+refused, when the count invariant does not hold, or on bad arguments.
 """
 from __future__ import annotations
 
@@ -71,16 +92,18 @@ CSV_NAME = "grid_rollup.csv"
 SUMMARY_NAME = "grid_rollup.summary.json"
 
 ROW_STATUSES = ("gridded", "grid_refused", "not_gridded", "grid_stale", "unreadable",
-                "not_this_run")
+                "not_this_run", "no_stage_a_capture", "orphan_sidecar",
+                "sidecar_ambiguous")
 REGISTRATION_STATES = ("registered", "refused", "absent", "unusable")
-VIEWS_CORE_STATES = ("value", "absent", "ambiguous", "unreadable")
+VIEWS_CORE_STATES = ("value", "absent", "ambiguous", "unreadable", "duplicate_rows",
+                     "conflicting")
 
 COLUMNS = [
     # identity
     "run_id", "view_stem", "view_id",
     "view_name", "view_type", "scale", "is_on_sheet", "views_core_state",
     # status
-    "row_status", "reason", "run_capture_status",
+    "row_status", "reason", "run_meta_capture_status", "run_meta_failure_reason",
     "registration_state", "registration_reason",
     # grid
     "cells_w", "cells_h", "cell_ft", "view_scale", "px_per_cell_min",
@@ -163,56 +186,125 @@ def load_views_core(run_dir, run_id):
     return "value", "", by_id
 
 
+VIEWS_CORE_FIELDS = (("view_name", "ViewName"), ("view_type", "ViewType"),
+                     ("scale", "Scale"), ("is_on_sheet", "IsOnSheet"))
+
+
 def views_core_columns(state, by_id, view_id):
-    """The joined columns for one view: ``value`` only when exactly one row of
-    the single views_core file carries its ViewId."""
-    blank = {"view_name": None, "view_type": None, "scale": None, "is_on_sheet": None}
+    """The joined columns for one view. ``value``: exactly one row of the
+    single views_core file carries its (RunId, ViewId). More than one row is
+    REPORTED, not hidden (a geometry-path row beside a backfilled
+    "no_outcome_reported" row is a known producer defect): each field is
+    filled only when every row agrees on it, and the state is
+    ``duplicate_rows`` when the rows agree on ViewType, else ``conflicting``."""
+    blank = dict((k, None) for k, _c in VIEWS_CORE_FIELDS)
     if state != "value":
         return dict(blank, views_core_state=state)
     rows = by_id.get(str(view_id)) if view_id is not None else None
     if not rows:
         return dict(blank, views_core_state="absent")
-    if len(rows) > 1:
-        return dict(blank, views_core_state="ambiguous")
-    row = rows[0]
-    return {"view_name": row.get("ViewName"), "view_type": row.get("ViewType"),
-            "scale": row.get("Scale"), "is_on_sheet": row.get("IsOnSheet"),
-            "views_core_state": "value"}
+    out = {}
+    for key, column in VIEWS_CORE_FIELDS:
+        values = set(r.get(column) for r in rows)
+        out[key] = values.pop() if len(values) == 1 else None
+    if len(rows) == 1:
+        out["views_core_state"] = "value"
+    elif len(set(r.get("ViewType") for r in rows)) == 1:
+        out["views_core_state"] = "duplicate_rows"
+    else:
+        out["views_core_state"] = "conflicting"
+    return out
 
 
 # --- the run ----------------------------------------------------------------------
 
-def run_capture_statuses(meta):
-    """``(reason, {view_id: capture_status})`` from run_meta.json's per-view
-    outcomes. A view listed more than once with different outcomes maps to
-    None (not guessed); ``reason`` is set when the run records no outcomes."""
+def _vid(value):
+    """A view id as one key: an integer's digits where it is one (run_meta
+    writes ints; streaming's backfill compares them as int), else its text."""
+    try:
+        return str(int(value))
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def unique_requested(requested_ids):
+    """The requested view ids, each once, in request order."""
+    seen, out = set(), []
+    for vid in requested_ids:
+        if vid not in seen:
+            seen.add(vid)
+            out.append(vid)
+    return out
+
+
+def run_identity(meta):
+    """What run_meta.json says the run requested and how each view ended.
+
+    Returns ``{"refused": reason or None, "requested": [ids in order, with
+    repeats], "duplicates": {id: times}, "outcomes": {id: entry or None}}``;
+    an id listed in ``views`` with differing outcomes maps to None."""
+    ident = {"refused": None, "requested": [], "duplicates": {}, "outcomes": {}}
     if not meta:
-        return "no readable run_meta.json", {}
-    if not meta.get("finalized"):
-        return "run_meta.json is not finalized (an interrupted run)", {}
+        ident["refused"] = "run_meta.json is absent or unreadable"
+        return ident
+    if meta.get("finalized") is not True:
+        ident["refused"] = "run_meta.json finalized is {0!r}, not true (an interrupted " \
+                           "run)".format(meta.get("finalized"))
+        return ident
     if not meta.get("run_id"):
-        return "run_meta.json carries no run_id, so no sidecar can be tied to it", {}
-    out = {}
-    for v in meta.get("views") or []:
-        if not isinstance(v, dict):
+        ident["refused"] = "run_meta.json carries no run_id, so nothing can be tied to it"
+        return ident
+    requested, views = meta.get("views_requested"), meta.get("views")
+    if not isinstance(requested, list) or not isinstance(views, list):
+        ident["refused"] = "run_meta.json views_requested / views are not both lists"
+        return ident
+    if not all(isinstance(v, dict) for v in views):
+        ident["refused"] = "run_meta.json views holds an entry that is not a record"
+        return ident
+    req_ids = [_vid(v) for v in requested]
+    out_ids = [_vid(v.get("view_id")) for v in views]
+    if not req_ids:
+        ident["refused"] = "run_meta.json requests no views"
+        return ident
+    only_req = sorted(set(req_ids) - set(out_ids))
+    only_out = sorted(set(out_ids) - set(req_ids))
+    if only_req or only_out:
+        ident["refused"] = ("the view_id sets of views_requested and views differ: "
+                            "{0} requested with no outcome {1}, {2} outcomes never "
+                            "requested {3}".format(len(only_req), only_req[:10],
+                                                   len(only_out), only_out[:10]))
+        return ident
+    ident["requested"] = req_ids
+    for vid in req_ids:
+        ident["duplicates"][vid] = ident["duplicates"].get(vid, 0) + 1
+    ident["duplicates"] = dict((k, n) for k, n in ident["duplicates"].items() if n > 1)
+    for v, vid in zip(views, out_ids):
+        key = (v.get("capture_status"), v.get("capture_failure_reason"))
+        if vid in ident["outcomes"]:
+            prior = ident["outcomes"][vid]
+            if prior is None or (prior.get("capture_status"),
+                                 prior.get("capture_failure_reason")) != key:
+                ident["outcomes"][vid] = None
+        else:
+            ident["outcomes"][vid] = v
+    return ident
+
+
+def sidecars_by_view(sidecars):
+    """``({view_id: [paths]}, [(path, reason)])``: model sidecars by the
+    view_id they carry, and those whose view_id cannot be read."""
+    by_vid, unreadable = {}, []
+    for path in sidecars:
+        try:
+            vid = _load_json(path).get("view_id")
+        except (OSError, ValueError, AttributeError) as ex:
+            unreadable.append((path, "the model sidecar cannot be read: " + _err(ex)))
             continue
-        key = str(v.get("view_id"))
-        status = v.get("capture_status")
-        out[key] = status if out.get(key, status) == status else None
-    return "", out
-
-
-def run_capture_status(statuses, view_id):
-    reason, by_id = statuses
-    if reason:
-        return "unrecorded", reason
-    key = str(view_id)
-    if key not in by_id:
-        return "unrecorded", "run_meta.json lists no outcome for view {0}".format(view_id)
-    if by_id[key] is None:
-        return "ambiguous", "run_meta.json lists view {0} with differing outcomes".format(
-            view_id)
-    return by_id[key], ""
+        if vid is None:
+            unreadable.append((path, "the model sidecar carries no view_id"))
+            continue
+        by_vid.setdefault(_vid(vid), []).append(path)
+    return by_vid, unreadable
 
 
 # --- one view --------------------------------------------------------------------
@@ -365,8 +457,51 @@ def grid_columns(record):
     return cols
 
 
-def view_row(model_sidecar_path, grid_dir, run_id, views_core, statuses=("", {})):
-    """One row for one model sidecar. Every key of COLUMNS is present."""
+def _blank_row(run_id, view_id, views_core, outcome):
+    row = dict((c, None) for c in COLUMNS)
+    row.update(run_id=run_id, view_id=view_id)
+    if outcome is not None:
+        row["run_meta_capture_status"] = outcome.get("capture_status")
+        row["run_meta_failure_reason"] = outcome.get("capture_failure_reason")
+    state, by_id = views_core
+    row.update(views_core_columns(state, by_id, view_id))
+    return row
+
+
+def requested_row(vid, paths, grid_dir, run_id, views_core, outcome):
+    """The row for one requested view id (``outcome`` None: run_meta lists it
+    with conflicting outcomes)."""
+    if len(paths) == 1:
+        return view_row(paths[0], grid_dir, run_id, views_core, outcome)
+    row = _blank_row(run_id, vid, views_core, outcome)
+    if outcome is None:
+        row["run_meta_capture_status"] = "ambiguous"
+    row["registration_state"], row["registration_reason"] = "absent", "no model sidecar"
+    if not paths:
+        row["row_status"] = "no_stage_a_capture"
+        row["reason"] = "requested, but no model sidecar carries view_id {0}".format(vid)
+    else:
+        row["row_status"] = "sidecar_ambiguous"
+        row["view_stem"] = "|".join(p.stem for p in paths)
+        row["reason"] = "{0} model sidecars carry view_id {1}; not guessed".format(
+            len(paths), vid)
+        row["registration_reason"] = "not read: the sidecar is ambiguous"
+    return row
+
+
+def orphan_row(path, vid, run_id, views_core, why):
+    """A model sidecar the run did not request (``vid`` None: its view_id
+    could not be read)."""
+    row = _blank_row(run_id, vid, views_core, None)
+    row.update(view_stem=Path(path).stem, row_status="orphan_sidecar", reason=why)
+    row["registration_state"], row["registration_reason"] = registration_state(
+        registration_record_path(path))
+    return row
+
+
+def view_row(model_sidecar_path, grid_dir, run_id, views_core, outcome):
+    """One row for the one model sidecar of a requested view. Every key of
+    COLUMNS is present."""
     model_sidecar_path = Path(model_sidecar_path)
     stem = model_sidecar_path.stem
     row = dict((c, None) for c in COLUMNS)
@@ -379,12 +514,16 @@ def view_row(model_sidecar_path, grid_dir, run_id, views_core, statuses=("", {})
     reg_path = registration_record_path(model_sidecar_path)
     grid_json = Path(grid_dir) / (stem + ".grid.json")
     record = None
-    row["run_capture_status"], why_not = run_capture_status(statuses, row["view_id"])
-    if row["run_capture_status"] != "success":
+    if outcome is None:
+        row["run_meta_capture_status"] = "ambiguous"
+    else:
+        row["run_meta_capture_status"] = outcome.get("capture_status")
+        row["run_meta_failure_reason"] = outcome.get("capture_failure_reason")
+    if row["run_meta_capture_status"] != "success":
         row["row_status"] = "not_this_run"
-        row["reason"] = ("{0}; the sidecar cannot be tied to run {1!r}".format(
-            why_not or "run_meta.json records capture_status {0!r} for view {1}".format(
-                row["run_capture_status"], row["view_id"]), run_id))
+        row["reason"] = ("run_meta.json records capture_status {0!r} for view {1}; the "
+                         "sidecar cannot be tied to run {2!r}".format(
+                             row["run_meta_capture_status"], row["view_id"], run_id))
     elif not grid_json.exists():
         row["row_status"] = "not_gridded"
         row["reason"] = "no {0} in {1}".format(grid_json.name, grid_dir)
@@ -434,8 +573,34 @@ def _view_ref(r):
             "view_name": r["view_name"]}
 
 
+def count_invariant(runs, rows):
+    """The row_status counts against requested + orphans, each counted on
+    its own: requested from run_meta.json directly, not from the rows."""
+    requested = sum(r["requested_count"] for r in runs if not r["refused"])
+    orphans = sum(1 for r in rows if r["row_status"] == "orphan_sidecar")
+    total = sum(_counts(rows, "row_status", ROW_STATUSES).values())
+    return {"rule": "sum of row_status counts == requested_count + orphan_sidecar_count",
+            "row_status_total": total, "requested_count": requested,
+            "orphan_sidecar_count": orphans,
+            "difference": total - (requested + orphans)}
+
+
 def summarise(runs, rows, csv_path):
     n = len(rows)
+    invariant = count_invariant(runs, rows)
+    requested_rows = [r for r in rows if r["row_status"] != "orphan_sidecar"]
+    capture = {}
+    for r in requested_rows:
+        key = str(r["run_meta_capture_status"])
+        capture[key] = capture.get(key, 0) + 1
+    crosstab = {}
+    for r in rows:
+        vt = r["view_type"] if r["view_type"] not in (None, "") else "(not joined)"
+        crosstab.setdefault(vt, {})
+        crosstab[vt][r["row_status"]] = crosstab[vt].get(r["row_status"], 0) + 1
+    duplicates = [{"run_id": run["run_id"], "view_id": vid, "times": times}
+                  for run in runs for vid, times in sorted(run["duplicate_requested_ids"].items())]
+    core_dupes = [r for r in rows if r["views_core_state"] in ("duplicate_rows", "conflicting")]
     gridded = [r for r in rows if r["row_status"] == "gridded"]
     model_only = [r for r in gridded if r["registration_state"] != "registered"]
     flags = {}
@@ -449,7 +614,28 @@ def summarise(runs, rows, csv_path):
         "schema": SCHEMA, "tool_version": TOOL_VERSION,
         "runs": runs,
         "denominator": n,
-        "denominator_rule": "one row per model sidecar (stage_a_grid.model_sidecars)",
+        "denominator_rule": ("one row per unique view_id in run_meta.json "
+                             "views_requested, plus one per orphan model sidecar"),
+        "requested_count": invariant["requested_count"],
+        "count_invariant": invariant,
+        "refused_runs": {
+            "denominator": len(runs), "count": sum(1 for r in runs if r["refused"]),
+            "runs": [{"run_dir": r["run_dir"], "run_id": r["run_id"], "reason": r["refused"]}
+                     for r in runs if r["refused"]]},
+        "duplicate_requested_ids": {
+            "denominator": invariant["requested_count"],
+            "denominator_rule": "unique requested view ids",
+            "count": len(duplicates), "ids": duplicates},
+        "views_core_duplicate_count": {
+            "denominator": n, "count": len(core_dupes),
+            "rule": "rows whose views_core_state is duplicate_rows or conflicting",
+            "views": [_view_ref(r) for r in core_dupes]},
+        "run_meta_capture_status": {
+            "denominator": len(requested_rows), "denominator_rule": "requested rows",
+            "counts": capture},
+        "view_type_by_row_status": {
+            "denominator": n, "counts": crosstab,
+            "rule": "views_core ViewType (\"(not joined)\" when absent) x row_status"},
         "row_status": {"denominator": n,
                        "counts": _counts(rows, "row_status", ROW_STATUSES)},
         "registration_state": {"denominator": n,
@@ -488,27 +674,50 @@ def summarise(runs, rows, csv_path):
     }
 
 
+def run_rows(sidecars, grid_dir, run_id, views_core, ident):
+    """Every row of one run that was not refused: the requested views, then
+    the orphan sidecars."""
+    by_vid, unreadable = sidecars_by_view(sidecars)
+    rows = []
+    for vid in unique_requested(ident["requested"]):
+        rows.append(requested_row(vid, by_vid.get(vid, []), grid_dir, run_id, views_core,
+                                  ident["outcomes"].get(vid)))
+    requested = set(ident["requested"])
+    for vid, paths in sorted(by_vid.items()):
+        if vid not in requested:
+            for path in paths:
+                rows.append(orphan_row(path, vid, run_id, views_core,
+                                       "view_id {0} is not in views_requested".format(vid)))
+    for path, why in unreadable:
+        rows.append(orphan_row(path, None, run_id, views_core, why))
+    return rows
+
+
 def rollup(layouts, out_dir):
     """Write the CSV, then the summary; return the summary."""
     out_dir = Path(out_dir)
     rows, runs = [], []
     for sidecars, folder, run_dir, grid_dir in layouts:
-        meta = dsc.find_run_meta(sidecars[0]) or {}
+        # The decoder's own search: beside the capture folder, then one up.
+        meta = dsc.find_run_meta(folder / "run_meta.json") or {}
         run_id = meta.get("run_id")
+        ident = run_identity(meta)
         core_state, core_reason, core_by_id = load_views_core(run_dir, run_id)
-        statuses = run_capture_statuses(meta)
         runs.append({"run_dir": str(run_dir), "capture_dir": str(folder),
                      "grid_dir": str(grid_dir), "run_id": run_id,
                      "git_commit": meta.get("git_commit"),
                      "run_meta_found": bool(meta),
-                     "run_meta_finalized": bool(meta.get("finalized")),
-                     "run_capture_statuses_reason": statuses[0],
+                     "run_meta_finalized": meta.get("finalized"),
+                     "refused": ident["refused"],
+                     "requested_count": (0 if ident["refused"] else len(set(
+                         _vid(v) for v in meta.get("views_requested") or []))),
+                     "duplicate_requested_ids": ident["duplicates"],
                      "model_sidecars": len(sidecars),
                      "views_core_state": core_state,
                      "views_core_reason": core_reason})
-        for path in sidecars:
-            rows.append(view_row(path, grid_dir, run_id, (core_state, core_by_id),
-                                 statuses))
+        if not ident["refused"]:
+            rows.extend(run_rows(sidecars, grid_dir, run_id, (core_state, core_by_id),
+                                 ident))
     out_dir.mkdir(parents=True, exist_ok=True)
     csv_path = out_dir / CSV_NAME
     with open(csv_path, "w", encoding="utf-8", newline="") as handle:
@@ -536,13 +745,7 @@ def main(argv=None):
     args = ap.parse_args(argv)
     if len(args.runs) > 1 and not args.out:
         ap.error("--out is required with more than one run")
-    layouts = []
-    for run in args.runs:
-        layout = run_layout(run)
-        if not layout[0]:
-            print("no model sidecars under {0}".format(layout[1]))
-            return 2
-        layouts.append(layout)
+    layouts = [run_layout(run) for run in args.runs]
     out = Path(args.out) if args.out else layouts[0][3]
     for _s, folder, _r, _g in layouts:
         if _inside(out, folder):
@@ -550,18 +753,34 @@ def main(argv=None):
                      "writes there".format(out, folder))
     summary, rows = rollup(layouts, out)
     n = summary["denominator"]
-    print("{0} model sidecars: ".format(n) + ", ".join(
+    print("{0} rows ({1} requested + {2} orphan sidecars): ".format(
+        n, summary["requested_count"], summary["count_invariant"]["orphan_sidecar_count"])
+        + ", ".join(
         "{0} {1}".format(k, v) for k, v in summary["row_status"]["counts"].items())
         + " | registration: " + ", ".join(
         "{0} {1}".format(k, v) for k, v in summary["registration_state"]["counts"].items()))
     for r in rows:
         if r["row_status"] != "gridded":
-            print("{0:<12} {1} {2}: {3}".format(r["row_status"], r["run_id"],
-                                                r["view_stem"], r["reason"]))
+            print("{0:<12} {1} {2}: {3}".format(
+                r["row_status"], r["run_id"],
+                r["view_stem"] or "view {0}".format(r["view_id"]), r["reason"]))
+    for r in summary["refused_runs"]["runs"]:
+        print("REFUSED run {0}: {1}".format(r["run_dir"], r["reason"]))
     print("wrote {0} and {1}".format(out / CSV_NAME, out / SUMMARY_NAME))
+    diff = summary["count_invariant"]["difference"]
+    if diff:
+        print("COUNT INVARIANT BROKEN: {0} rows, but {1} requested + {2} orphan sidecars "
+              "(difference {3:+d})".format(n, summary["requested_count"],
+                                           summary["count_invariant"]["orphan_sidecar_count"],
+                                           diff))
+        return 2
+    refused = summary["refused_runs"]["count"]
+    if refused == len(layouts):
+        print("every run was refused; nothing was rolled up")
+        return 2
     every = all(r["row_status"] == "gridded" and r["registration_state"] == "registered"
                 for r in rows)
-    return 0 if every else 1
+    return 0 if every and not refused else 1
 
 
 if __name__ == "__main__":
