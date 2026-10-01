@@ -104,8 +104,21 @@ refused.
 - **S2:** sets `VIEWER_VOLUME_OF_INTEREST_CROP` to `InvalidElementId` (clears
   the scope box), then does the S1 write.
 - **S3:** if `ShapeSet`, calls `RemoveCropRegionShape()`, then does the S1
-  write. If no shape is set, the removal is recorded as `unavailable`.
+  write.
 - **S4:** S2 and S3 together.
+- **A discriminator that did not apply refuses its step.** The scope-box
+  clear counts as applied only if:
+  - the write committed
+  - `Set` returned True
+  - the read-back shows no scope box
+
+  The crop-shape removal counts as applied only if it committed and
+  `ShapeSet` reads false afterwards. Otherwise the step writes no crop,
+  exports nothing, and is refused as `discriminator_not_applied`, with the
+  write and the read-back. If `ShapeSet` was already false, S3/S4 are refused
+  as `no_crop_shape`, since they would repeat the step without the removal.
+  These refusals are about one step, not the view's state, so later steps
+  still run.
 
 Each Q3 step records:
 - `written_box`, in the crop transform the view carried at the write. If

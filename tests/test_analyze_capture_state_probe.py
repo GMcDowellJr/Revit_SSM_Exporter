@@ -321,6 +321,28 @@ def test_q3_a_view_refused_at_question_start_has_only_refused_rows(tmp_path):
     assert all(r["non_fit_mismatch"] is None for r in view["rows"])
 
 
+def test_q3_a_discriminator_that_did_not_apply_is_refused_not_a_mismatch(tmp_path):
+    """Codex, PR #225: S2's scope-box clear did not apply (Set returned
+    False, the read-back still shows the scope box), so the probe wrote no
+    crop and exported nothing. The row is refused with the reason -- not a
+    mismatch that would read as "clearing the scope box did not help" --
+    while its rollback still restored the view, so later steps ran."""
+    e1 = _export("Q3_S1", 11, w=200)
+    s1 = _q3_step("S1", e1, written=_box(20, 10), read_back=_box(20, 10))
+    reason = "the scope box was not cleared: write value (value False), read-back 900"
+    s2 = {"step": "S2", "refused": "discriminator_not_applied", "refused_reason": reason,
+          "writes": {"scope_box_cleared": {"state": "value", "value": False}}}
+    q3 = [{"view_id": 11, "role": "test", "steps": [s1, s2],
+           "restore_checks": {"S1": {"restored": True}, "S2": {"restored": True}}}]
+    _probe(tmp_path, [e1], {"Q3_S1_11.tiff": _flat(200, 150)}, q3=q3)
+    r1, r2 = _run(tmp_path)["q3"][0]["rows"]
+    assert r1["non_fit_mismatch"] is True
+    assert (r2["box_source"], r2["refused"], r2["refused_reason"]) == (
+        "refused", "discriminator_not_applied", reason)
+    assert r2["restored_after"] is True
+    assert (r2["exported_px"], r2["implied_px"], r2["non_fit_mismatch"]) == (None, None, None)
+
+
 def test_q3_two_pixels_off_is_a_mismatch(tmp_path):
     e1 = _export("Q3_S1", 11, w=200)
     q3 = [{"view_id": 11, "role": "test",

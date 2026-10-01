@@ -993,6 +993,13 @@ def run_q1_q2(ctx, view, baseline):
     return out
 
 
+def _discriminator_refusal(step, writes, why, reason):
+    """A Q3 step whose discriminator (scope-box clear, crop-shape removal)
+    did not apply: no crop write, no export, so no row that looks like
+    evidence about a removal that never happened."""
+    return {"step": step, "refused": why, "refused_reason": reason, "writes": writes}
+
+
 def _q3_step(ctx, view, step, box0, remove_scope_box, remove_shape):
     """One Q3 step from S0's state: optional scope-box clear, optional
     crop-shape removal, then the S1 write (S0's box scaled by Q3_SHRINK)."""
@@ -1005,16 +1012,42 @@ def _q3_step(ctx, view, step, box0, remove_scope_box, remove_shape):
                 raise ValueError("VIEWER_VOLUME_OF_INTEREST_CROP is not on this view")
             return bool(p.Set(ElementId.InvalidElementId))
         writes["scope_box_cleared"] = tx_write(ctx.doc, "Q3 {0} clear scope box".format(step), _clear)
+        # Applied only if the write committed, Set returned True AND the
+        # read-back shows no scope box. Otherwise the step would export with
+        # the scope box still attached and read as "clearing it did not help".
+        after = read(lambda: element_id_int(view.get_Parameter(
+            BuiltInParameter.VIEWER_VOLUME_OF_INTEREST_CROP).AsElementId()))
+        writes["scope_box_after_clear"] = after
+        if not (writes["scope_box_cleared"]["state"] == "value"
+                and writes["scope_box_cleared"]["value"] is True
+                and value_of(after) == -1):
+            return _discriminator_refusal(
+                step, writes, "discriminator_not_applied",
+                "the scope box was not cleared: write {0} (value {1!r}), read-back "
+                "{2}".format(writes["scope_box_cleared"]["state"],
+                             writes["scope_box_cleared"]["value"], after))
     if remove_shape:
         manager = value_of(call_method(view, "GetCropRegionShapeManager"))
-        shape_set = value_of(read_attr(manager, "ShapeSet", bool))
-        if shape_set:
-            writes["crop_shape_removed"] = tx_write(
-                ctx.doc, "Q3 {0} remove crop shape".format(step),
-                lambda: manager.RemoveCropRegionShape() or True)
-        else:
-            writes["crop_shape_removed"] = rec_unavailable(
-                "ShapeSet is {0!r}; nothing to remove".format(shape_set))
+        shape_set = read_attr(manager, "ShapeSet", bool)
+        writes["shape_set_before_removal"] = shape_set
+        if value_of(shape_set) is False:
+            # Nothing to remove: the step would only repeat S1 (or S2).
+            return _discriminator_refusal(
+                step, writes, "no_crop_shape",
+                "ShapeSet is false: there is no crop shape to remove, so this step "
+                "would repeat the step without the removal")
+        writes["crop_shape_removed"] = tx_write(
+            ctx.doc, "Q3 {0} remove crop shape".format(step),
+            lambda: manager.RemoveCropRegionShape() or True)
+        after = read(lambda: bool(view.GetCropRegionShapeManager().ShapeSet))
+        writes["shape_set_after_removal"] = after
+        if not (writes["crop_shape_removed"]["state"] == "value"
+                and value_of(after) is False):
+            return _discriminator_refusal(
+                step, writes, "discriminator_not_applied",
+                "the crop shape was not removed: write {0}, ShapeSet before {1}, "
+                "after {2}".format(writes["crop_shape_removed"]["state"],
+                                   shape_set, after))
     target = scaled_box(box0, Q3_SHRINK)
     writes["crop_box"] = write_crop_box(ctx.doc, view, target, "Q3 {0} crop".format(step))
     rec, _ids = _step(ctx, view, "q3", step, writes)
@@ -1060,7 +1093,8 @@ def run_q3_view(ctx, view, role, baseline):
             if box0 is None:
                 raise ValueError("the baseline crop box is unreadable; no crop write attempted")
             rec = _q3_step(ctx, view, step, box0, scope, shape)
-            rec["at_export"] = _at_export(rec["common"])
+            if not rec.get("refused"):
+                rec["at_export"] = _at_export(rec["common"])
             out["steps"].append(rec)
         return _body
 
