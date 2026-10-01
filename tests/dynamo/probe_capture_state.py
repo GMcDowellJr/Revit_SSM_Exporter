@@ -2030,6 +2030,8 @@ def parse_inputs(inputs):
     options = parse_options(_at(9))
     params.update({
         "repo_root": options.get("repo_root"),
+        "repo_root_source": options.get("repo_root_source",
+                                        "IN[9] key" if options.get("repo_root") else None),
         "q1b_views": parse_view_ids(options.get("q1b_views"), DEFAULT_Q1B_VIEWS),
         "q3b_views": parse_view_ids(options.get("q3b_views"), DEFAULT_Q3B_VIEWS),
         "q5b_views": parse_view_ids(options.get("q5b_views"), DEFAULT_Q5B_VIEWS),
@@ -2039,14 +2041,37 @@ def parse_inputs(inputs):
     return params
 
 
+OPTIONS_HELP = ('IN[9] takes a Dictionary (keys: {0}), a JSON object such as '
+                '{{"repo_root": "C:/Users/you/Documents/Revit_SSM_Exporter"}} '
+                '(forward slashes, or every backslash doubled), or just the '
+                'repository folder as a string.'.format(", ".join(OPTION_KEYS)))
+
+
+def _is_repo_dir(text):
+    return os.path.isfile(os.path.join(os.path.expanduser(text), "vop_interwoven", "__init__.py"))
+
+
 def parse_options(value):
     """IN[9]: a dict (a Dynamo Dictionary, or a JSON string) of round-2 keys,
-    OPTION_KEYS. An unknown key is refused: a misspelt key silently ignored
-    would run the defaults while looking configured."""
+    OPTION_KEYS -- or a bare string that IS the repository folder (checked on
+    disk: it must hold vop_interwoven/__init__.py), taken as repo_root. Any
+    other string that is not a JSON object is refused with what was received
+    and the accepted forms. An unknown key is refused: a misspelt key
+    silently ignored would run the defaults while looking configured."""
     if value is None or (isinstance(value, str) and not value.strip()):
         return {}
     if isinstance(value, str):
-        value = json.loads(value)
+        text = value.strip()
+        if not text.startswith("{"):
+            if _is_repo_dir(text):
+                return {"repo_root": text, "repo_root_source": "IN[9] string"}
+            raise ValueError("IN[9] is the string {0!r}, which is neither a JSON object nor "
+                             "a folder holding vop_interwoven. {1}".format(text, OPTIONS_HELP))
+        try:
+            value = json.loads(text)
+        except ValueError as ex:
+            raise ValueError("IN[9] is not valid JSON ({0}): {1!r}. {2}".format(
+                ex, text, OPTIONS_HELP))
     if not isinstance(value, dict):
         if hasattr(value, "Keys"):
             value = dict((str(k), value[k]) for k in value.Keys)

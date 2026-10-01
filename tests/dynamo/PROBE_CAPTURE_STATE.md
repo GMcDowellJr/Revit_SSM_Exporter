@@ -394,7 +394,12 @@ group. Both views are gated together.
    | `q6_views` | Q6 views | `[5823803, 9948, 11999340]` |
    | `q6_extra_views` | more Q6 views, appended | `[]` |
 
-   For example: `{"repo_root": "C:\\Users\\gmcdowell\\Documents\\Revit_SSM_Exporter", "q6_extra_views": [12345]}`
+   The simplest `IN[9]` is just the repository folder as a string, which is
+   taken as `repo_root` once it is confirmed to hold `vop_interwoven`. For
+   other keys, use a Dictionary node, or a JSON string with forward slashes
+   (JSON rejects a single backslash):
+   `{"repo_root": "C:/Users/gmcdowell/Documents/Revit_SSM_Exporter", "q6_extra_views": [12345]}`.
+   Anything else is refused with what was received and the accepted forms.
 
    An id may be an integer, a string, or a Dynamo-wrapped view.
 4. Run. `OUT` is the JSON's path. If the probe could not start at all, `OUT`
