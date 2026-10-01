@@ -143,6 +143,11 @@ How to read Q3:
 - **Also recorded:** `GetPrimaryViewId` and whether it is valid; the template's
   `GetNonControlledTemplateParameterIds()` count; and whether
   `MODEL_GRAPHICS_STYLE` (Visual Style) is among the controlled parameters.
+- **A view with no template.** `template_attached` comes from the baseline
+  template id, not from an assumption. With no template, S0 still runs: it
+  shows whether DisplayStyle can be set at all, and records
+  `template_attached: false`. S1 is refused as `no_template`, because there is
+  nothing to detach and it would only repeat S0.
 
 ### Common reads (every step, every view)
 

@@ -1161,13 +1161,19 @@ def run_q5_view(ctx, view, baseline):
     from Autodesk.Revit.DB import DisplayStyle, ElementId
     out = {"view_id": element_id_int(view.Id), "template": template_record(ctx.doc, view),
            "steps": [], "groups": []}
+    # Read from the baseline, not assumed: a view with no template cannot
+    # answer "attached vs detached". Its S0 still says whether DisplayStyle
+    # can be set at all; S1 would repeat S0 and is refused.
+    template_id = baseline.get("template_id")
+    attached = None if template_id == UNREADABLE else template_id not in (None, -1)
+    out["template_attached"] = attached
 
     def _set_flat():
         view.DisplayStyle = DisplayStyle.FlatColors
         return True
 
     def _s0():
-        rec = {"step": "S0", "template_attached": True,
+        rec = {"step": "S0", "template_attached": attached,
                "display_style_before": read_attr(view, "DisplayStyle", enum_text),
                "set_flat_colors": tx_write(ctx.doc, "Q5 S0 flat colors", _set_flat)}
         rec["display_style_after"] = read_attr(view, "DisplayStyle", enum_text)
@@ -1186,8 +1192,16 @@ def run_q5_view(ctx, view, baseline):
         rec["took_effect"] = value_of(rec["display_style_after"]) == "FlatColors"
         out["steps"].append(rec)
 
-    run_gated(ctx, view, baseline, Q5_REQUIRED, out,
-              (("S0", ("S0",), _s0), ("S1", ("S1",), _s1)), "Q5 {0}".format(out["view_id"]))
+    plan = [("S0", ("S0",), _s0)]
+    if attached:
+        plan.append(("S1", ("S1",), _s1))
+    run_gated(ctx, view, baseline, Q5_REQUIRED, out, plan, "Q5 {0}".format(out["view_id"]))
+    if not attached:
+        out["steps"].append({
+            "step": "S1", "refused": "no_template",
+            "refused_reason": ("no template is attached (template id {0!r}): there "
+                               "is nothing to detach, so S1 would repeat S0".format(
+                                   template_id))})
     return out
 
 
