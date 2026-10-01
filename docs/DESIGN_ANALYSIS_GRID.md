@@ -55,9 +55,18 @@ phase.
 annotation canvas.** The canvas is usually larger, but not always (it equals
 the model image on Plan_DWG, Plan_RVTLink and Plan_CropInActive). The record
 keeps crop A's own cell range (`crop_a_cells`), and the arrays carry an
-`inside_crop_a` mask, so ink outside the model crop is a measured fact. With
-no registered annotation capture, the extent is the model image alone and the
-view is flagged `no_registered_annotation`.
+`inside_crop_a` mask, so ink outside the model crop is a measured fact.
+`crop_a_cells` is the cells holding a model pixel centre that lies inside
+`crop_uv`, not the model image's own extent: a clamped capture pads the image
+outside the crop. On 1453 crop A's ranges now start at 0 on all 8 views (the
+image's edge pixels had put six of them at −1). With no registered annotation
+capture, the extent is the model image alone and the view is flagged
+`no_registered_annotation`.
+
+A registration is used only if every source it records (model and annotation
+sidecars and TIFFs) still hashes to the file on disk. A stale registration,
+from a view recaptured without re-registering, refuses the view rather than
+pairing today's model with yesterday's lattice.
 
 **G-4. Pixel→UV: whichever of the two mappings lands closer to the measured
 ticks.** The model capture carries its crop, so a nominal mapping exists (the

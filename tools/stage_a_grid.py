@@ -242,6 +242,26 @@ def pixel_to_uv(spec, model_x, model_y):
     return ((model_x - m["b_u"]) / m["a_u"], (model_y - m["b_v"]) / m["a_v"])
 
 
+def crop_a_cell_ranges(spec, crop, w, h):
+    """The cells crop A covers: those holding a model pixel CENTRE that lies
+    inside ``crop`` -- the same pixel-centre rule every count uses. Not the
+    image's own extent: an aspect-clamped capture pads the image outside the
+    crop, and those pad pixels are not inside crop A."""
+    m = spec["mapping"]
+    cols = np.arange(w, dtype=np.float64)
+    rows = np.arange(h, dtype=np.float64)
+    u = (cols + 0.5 - m["b_u"]) / m["a_u"]
+    v = (rows + 0.5 - m["b_v"]) / m["a_v"]
+    in_u = cols[(u >= crop[0]) & (u <= crop[2])]
+    in_v = rows[(v >= crop[1]) & (v <= crop[3])]
+    if not len(in_u) or not len(in_v):
+        raise GridRefusal("no model pixel centre lies inside crop A")
+    mi = cells_of_columns(spec, in_u)
+    mj = cells_of_rows(spec, in_v)
+    return {"i_range": [int(mi.min()), int(mi.max()) + 1],
+            "j_range": [int(mj.min()), int(mj.max()) + 1]}
+
+
 def build_spec(sidecar, rgb, run_config, lattice=None):
     """The GridSpec for one view, or raises GridRefusal."""
     frame = frame_record(sidecar)
@@ -284,10 +304,7 @@ def build_spec(sidecar, rgb, run_config, lattice=None):
     j_ends = cells_of_rows(spec, [y0, y1 - 1])
     spec["i_range"] = [int(i_ends.min()), int(i_ends.max()) + 1]
     spec["j_range"] = [int(j_ends.min()), int(j_ends.max()) + 1]
-    mi = cells_of_columns(spec, [0, w - 1])
-    mj = cells_of_rows(spec, [0, h - 1])
-    spec["crop_a_cells"] = {"i_range": [int(mi.min()), int(mi.max()) + 1],
-                            "j_range": [int(mj.min()), int(mj.max()) + 1]}
+    spec["crop_a_cells"] = crop_a_cell_ranges(spec, crop, w, h)
     spec["cells_w"] = spec["i_range"][1] - spec["i_range"][0]
     spec["cells_h"] = spec["j_range"][1] - spec["j_range"][0]
     unc = basis.get("uncertainty_px")
@@ -560,12 +577,42 @@ def _resolve_recorded(recorded, base_dir, what):
     working directory it was written from), else relative to the record's
     folder, else its file name beside the record. A path that resolves
     nowhere is refused, naming what was tried."""
+    if not recorded:
+        raise GridRefusal("the record names no path for {0}".format(what))
     p = Path(recorded)
     for candidate in (p, Path(base_dir) / p, Path(base_dir) / p.name):
         if candidate.exists():
             return candidate
     raise GridRefusal("{0} {1!r} was found neither as recorded nor beside the "
                       "record in {2}".format(what, str(recorded), base_dir))
+
+
+def _check_registration_sources(registered, reg_path, model_sidecar_path,
+                                model_tiff_sha256):
+    """The annotation sidecar's path, once every source the registration
+    record names is shown to be the capture now on disk. A view recaptured
+    without re-registering would otherwise pair today's model with
+    yesterday's lattice and registered pixels, and look like a clean result."""
+    anno_sidecar = _resolve_recorded(registered.get("source_annotation_sidecar"),
+                                     reg_path.parent, "the annotation sidecar")
+    anno_tiff = _resolve_recorded(registered.get("source_annotation_tiff"),
+                                  reg_path.parent, "the source annotation TIFF")
+    current = {
+        "source_model_sidecar_sha256": sha256_file(model_sidecar_path),
+        "source_model_tiff_sha256": model_tiff_sha256,
+        "source_annotation_sidecar_sha256": sha256_file(anno_sidecar),
+        "source_annotation_tiff_sha256": sha256_file(anno_tiff),
+    }
+    for key, now in sorted(current.items()):
+        recorded = registered.get(key)
+        if not recorded:
+            raise GridRefusal("the registration record carries no {0}; its "
+                              "sources cannot be verified".format(key))
+        if recorded != now:
+            raise GridRefusal("the registration is stale: {0} does not match the "
+                              "file now on disk (re-run "
+                              "register_stage_a_annotation)".format(key))
+    return anno_sidecar
 
 
 def _load_json(path):
@@ -604,6 +651,9 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
                 registered = None
             else:
                 lattice = registered["lattice"]
+                anno_sidecar_path = _check_registration_sources(
+                    registered, reg_path, model_sidecar_path,
+                    record["model_tiff_sha256"])
         spec = build_spec(sidecar, rgb, run_config, lattice=lattice)
         model_masks = model_channel_masks(sidecar, rgb)
         h, w = rgb.shape[:2]
@@ -617,9 +667,7 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
             if sha256_file(anno_tiff) != registered.get("registered_tiff_sha256"):
                 raise GridRefusal("the registered annotation TIFF does not match "
                                   "the hash its record names")
-            anno_sidecar = _load_json(_resolve_recorded(
-                registered["source_annotation_sidecar"], reg_path.parent,
-                "the annotation sidecar"))
+            anno_sidecar = _load_json(anno_sidecar_path)
             anno_rgb = dsc._load_rgb_array(anno_tiff)
             ox, oy = (int(v) for v in lattice["canvas_origin_model_px"])
             anno_masks, anno_info = anno_channel_masks(

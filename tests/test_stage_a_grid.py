@@ -503,3 +503,59 @@ def test_both_mappings_are_scored_against_the_measured_ticks(tmp_path):
     other = "tick_fit" if chosen == "nominal_crop" else "nominal_crop"
     assert basis[chosen]["residual_px"] <= basis[other]["residual_px"]
     assert basis["uncertainty_px"] == basis[chosen]["residual_px"]
+
+
+def test_crop_A_cells_come_from_the_crop_not_the_padded_image(tmp_path, monkeypatch):
+    """Codex P2: an aspect-clamped capture pads the image outside crop A, so
+    the image's end pixels are not inside the crop. Composed with production's
+    own mapping, shifted by the pad a clamp would add; the control is the same
+    view unpadded, where crop and image agree."""
+    _r, control, _m = _view(tmp_path / "control")
+    expected = control["grid"]["crop_a_cells"]
+    pad = 40.0                       # > 2 cells of 18 px each side
+    _write_pair(tmp_path)
+    sidecar = json.loads((tmp_path / "V_1.json").read_text())
+    rgb = dsc._load_rgb_array(tmp_path / "V_1.tiff")
+    real = grid.choose_mapping
+
+    def padded(sidecar, _padded_rgb, crop_uv):
+        # Production's mapping of the unpadded capture, moved by the pad.
+        mapping, basis = real(sidecar, rgb, crop_uv)
+        mapping = dict(mapping, b_u=mapping["b_u"] + pad,
+                       b_v=mapping["b_v"] + pad)
+        return mapping, basis
+    monkeypatch.setattr(grid, "choose_mapping", padded)
+    big = np.full((rgb.shape[0] + 80, rgb.shape[1] + 80, 3), 255, dtype=np.uint8)
+    spec = grid.build_spec(sidecar, big, {"cell_size_paper_in": CELL_IN})
+    image_i = grid.cells_of_columns(spec, [0, big.shape[1] - 1])
+    assert image_i.min() < expected["i_range"][0]       # the pad reaches outside
+    assert spec["crop_a_cells"] == expected
+
+
+def test_a_stale_registration_is_refused_not_consumed(tmp_path):
+    """Codex P1: a view recaptured without re-registering must not pair the
+    new capture with the old lattice. Each recorded source hash is checked;
+    the control is the same view untouched."""
+    _r, control, _m = _view(tmp_path / "control")
+    assert control["status"] == "value"
+    for victim in ("V_1.json", "V_1.tiff", "V_1_anno.json", "V_1_anno.tiff"):
+        folder = tmp_path / victim.replace(".", "_")
+        folder.mkdir()
+        anno_path, model_path, _c = _write_pair(folder)
+        reg.register(anno_path)
+        _run_meta(folder)
+        target = folder / victim
+        if victim.endswith(".json"):
+            side = json.loads(target.read_text())
+            side["recaptured"] = True
+            target.write_text(json.dumps(side))
+        else:
+            from PIL import Image
+            img = np.asarray(Image.open(str(target)).convert("RGB")).copy()
+            img[0, 0] = (1, 2, 3)
+            Image.fromarray(img).save(str(target), format="TIFF")
+        rec = grid.grid_view(model_path, folder / "out")
+        on_disk = json.loads((folder / "out" / "V_1.grid.json").read_text())
+        assert on_disk["status"] == "refused", victim
+        assert "stale" in on_disk["reason"], (victim, on_disk["reason"])
+        assert rec == on_disk
