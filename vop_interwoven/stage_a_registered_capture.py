@@ -224,23 +224,19 @@ def mark_fpp_ft(view, raster, cfg):
     lattice is coarser, so a 32 px arm came out 32 * achieved/requested px --
     below the minimum registration_marks is proven to locate (Codex, PR #221).
     This is the model pass's own sizing, composed rather than copied: crop A
-    from compute_model_crop() against the same frame, then
-    resolution_contract.frame_export_geometry() on crop A with the same scale,
-    dpi, fit direction and cap (export_color_id_buffer_view, sizing_frame
-    "crop_a"). tests/test_stage_a_registered_capture.py asserts the two agree
-    on a capped view. Unresolvable -> the requested dpi, with the reason as
-    the basis.
+    from color_id_buffer.resolve_crop_a() -- the one resolution the model
+    pass sizes from (D: an active authored crop AS READ, else the model crop
+    in the frame) -- then resolution_contract.frame_export_geometry() on
+    crop A with the same scale, dpi, fit direction and cap
+    (export_color_id_buffer_view, sizing_frame "crop_a").
+    tests/test_stage_a_registered_capture.py asserts the two agree on a
+    capped view. Unresolvable -> the requested dpi, with the reason as the
+    basis.
     """
-    from .color_id_buffer import MAX_STAGE_A_AXIS_PX, compute_model_crop
-    from .core.math_utils import Bounds2D
+    from .color_id_buffer import MAX_STAGE_A_AXIS_PX, resolve_crop_a
     from .resolution_contract import frame_export_geometry
     try:
-        frame = getattr(raster, "anno_frame_bounds", None) or raster.bounds_xy
-        crop, _offset = compute_model_crop(
-            getattr(raster, "model_clip_bounds", None),
-            Bounds2D(float(frame.xmin), float(frame.ymin),
-                     float(frame.xmax), float(frame.ymax)))
-        crop_uv = (float(crop.xmin), float(crop.ymin), float(crop.xmax), float(crop.ymax))
+        crop_uv, _record = resolve_crop_a(view, raster)
         geom = frame_export_geometry(
             crop_uv, crop_uv, float(view.Scale),
             float(getattr(cfg, "color_id_buffer_export_dpi")),

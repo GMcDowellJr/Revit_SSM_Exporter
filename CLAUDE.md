@@ -129,7 +129,12 @@ Revit-rendered colour-ID captures. With it on, the **registered capture**
   Its canvas is union(model crop A, measured annotation rect) on the model's
   pixel phase, origin recorded; the model pass is sized from crop A alone and
   frame B is not recorded (`color_id_buffer_model_frame="crop_a"`).
-  It refuses rather than guesses. `tools/decode_stage_a_color_id.py` removes the
+  It refuses rather than guesses. **An active authored crop is never
+  written** (D, 2026-10-01: an identical CropBox write changed 8.8 % of a split
+  elevation's pixels; under a scope box writes do not take): crop A is then
+  that crop as read, unsnapped. Every crop write that remains (crop-inactive
+  views) is read back, and `frame.crop_write` records which happened;
+  `crop_write_not_applied` fails the capture. `tools/decode_stage_a_color_id.py` removes the
   ticks from either capture. Accuracy on the nine test views is recorded in
   `tools/notes/RUN_pipeline_0928_0953_REGISTRATION.md`: at most 0.39 px of fit
   residual, about 8 % of a 1/8" cell.

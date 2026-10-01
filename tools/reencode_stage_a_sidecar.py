@@ -32,7 +32,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tools.stage_a_sidecar_shapes import capture_integrity, frame_record  # noqa: E402
+from tools.stage_a_sidecar_shapes import capture_integrity, crop_write, frame_record  # noqa: E402
 from vop_interwoven.color_id_buffer import (  # noqa: E402
     SIDECAR_PROBE_ONLY_KEYS, _plain_or_state, _round_ft, _round_geometry,
 )
@@ -79,6 +79,10 @@ def reencode_frame(sidecar: dict[str, Any]) -> dict[str, Any]:
         frame.pop("crop_snapped_uv", None)
     if "frame_uv" in frame and frame.get("raster_bounds_uv") == frame.get("frame_uv"):
         frame.pop("raster_bounds_uv", None)
+    # D: the crop record the old writer never wrote, rebuilt and marked so.
+    rebuilt = crop_write(frame)
+    if rebuilt is not None:
+        frame["crop_write"] = rebuilt
     return frame
 
 

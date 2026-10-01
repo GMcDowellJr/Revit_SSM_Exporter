@@ -184,6 +184,30 @@ def legacy_view(sidecar: dict[str, Any], run_config: dict[str, Any] | None = Non
     return out
 
 
+# --- D: the crop the export rendered, and whether it was written -----------
+
+def crop_write(frame: dict[str, Any]) -> dict[str, Any] | None:
+    """The frame's ``crop_write`` record, or one rebuilt for a pre-D frame.
+
+    Since D (2026-10-01) the model pass records whether it WROTE the crop
+    (never, on an active authored crop) and the crop READ BACK. Before it the
+    model pass always wrote ``crop_uv`` as the requested rectangle and never
+    read it back: rebuilt as ``written: True`` with the read-back
+    ``unavailable``, marked ``status: "rebuilt_from_pre_d_frame"`` so a
+    reader never mistakes "not measured" for "matched". None when the frame
+    carries no crop at all (an annotation frame, or ``crop_uv`` null).
+    """
+    if "crop_write" in frame:
+        return frame["crop_write"]
+    if frame.get("crop_uv") is None:
+        return None
+    return {"status": "rebuilt_from_pre_d_frame", "written": True,
+            "source": None,
+            "read_back": {"state": UNAVAILABLE,
+                          "reason": "the pre-D model pass never read the crop back; "
+                                    "crop_uv is the rectangle it requested"}}
+
+
 # --- P1: one capture_integrity record ---------------------------------------
 
 def capture_integrity(sidecar: dict[str, Any]) -> dict[str, Any] | None:

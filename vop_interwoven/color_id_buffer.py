@@ -3194,6 +3194,127 @@ def compute_model_crop(model_clip_bounds, bounds_xy):
     return render_bounds, offset
 
 
+def read_crop_uv(view, basis, diag=None, view_id=None):
+    """``(uv, error)``: the view's CropBox as READ, projected to view UV
+    through production's own projection (view_basis.xy_bounds_from_crop_
+    box_all_corners). ``uv`` is None with the reason when it will not read."""
+    try:
+        if basis is None:
+            from .revit.view_basis import make_view_basis as _make_view_basis
+            basis = _make_view_basis(view, diag=diag)
+        from .revit.view_basis import xy_bounds_from_crop_box_all_corners
+        b = xy_bounds_from_crop_box_all_corners(view, basis, diag=diag, view_id=view_id)
+        return (float(b.xmin), float(b.ymin), float(b.xmax), float(b.ymax)), None
+    except Exception as ex:
+        return None, "{0}: {1}".format(type(ex).__name__, ex)
+
+
+# A crop read back within this fraction of a pixel of the rectangle written
+# is the rectangle written. Read-backs are exact to float precision; a write
+# Revit ignores (a scope box) leaves the crop where it was, far outside this.
+CROP_READ_BACK_TOLERANCE_PX = 0.05
+
+
+def crop_read_back_record(requested_uv, read_uv, read_error, fpp_ft):
+    """PURE. Whether the crop read back is the one asked for.
+
+    ``matches_request`` is None (unmeasured) when either rectangle is
+    missing, never True by default."""
+    record = {"requested_uv": (None if requested_uv is None
+                               else [float(v) for v in requested_uv]),
+              "read_back_uv": None if read_uv is None else [float(v) for v in read_uv],
+              "tolerance_ft": None, "max_deviation_ft": None,
+              "matches_request": None}
+    if read_error is not None:
+        record["read_error"] = read_error
+    if requested_uv is None or read_uv is None:
+        return record
+    tol = CROP_READ_BACK_TOLERANCE_PX * float(fpp_ft) if fpp_ft else 1.0e-4
+    dev = max(abs(float(a) - float(b)) for a, b in zip(requested_uv, read_uv))
+    record.update(tolerance_ft=tol, max_deviation_ft=dev, matches_request=dev <= tol)
+    return record
+
+
+def crop_write_fault(crop_write):
+    """PURE. The capture fault a crop record earns, or None.
+
+    * ``crop_write_not_applied`` -- written, and the crop read back is not
+      the rectangle written (a scope box: the write commits and the crop
+      stays where it was);
+    * ``crop_write_unverified`` -- written, and the read-back did not read;
+    * ``authored_crop_unreadable`` -- an active authored crop that would not
+      read, so the export renders a crop nothing recorded;
+    * ``authored_crop_changed`` -- not written, and the crop read at the
+      export is not the one the lattice was sized on.
+    """
+    if not crop_write:
+        return None
+    read_back = crop_write.get("read_back") or {}
+    if crop_write.get("written"):
+        if read_back.get("matches_request") is False:
+            return "crop_write_not_applied"
+        if read_back.get("matches_request") is None:
+            return "crop_write_unverified"
+        return None
+    if crop_write.get("source") == "authored_unreadable" or read_back.get(
+            "read_back_uv") is None:
+        return "authored_crop_unreadable"
+    if read_back.get("matches_request") is False:
+        return "authored_crop_changed"
+    return None
+
+
+def resolve_crop_a(view, raster, diag=None, view_id=None):
+    """``(crop_uv, record)``: crop A, the rectangle the registered capture's
+    model pass is sized on (C7), and whether that pass may WRITE it.
+
+    D (capture-state probe, runs 20261001T145758 / 153207): writing back the
+    IDENTICAL CropBox on Plaza 6112047 (a split elevation line the API does
+    not report) added 80 model elements and removed 3 rooms -- 8.8 % of the
+    pixels -- and under a scope box every CropBox write commits and reads
+    back unchanged. So a view whose authored crop is ACTIVE is never
+    written: crop A is that crop AS READ (``source`` "authored_read",
+    ``write`` False), not clamped and not snapped -- the export renders it
+    as it is. Only a crop-INACTIVE view gets the model crop
+    (compute_model_crop of raster.model_clip_bounds in the frame, ``source``
+    "model_crop_a", ``write`` True), as before.
+
+    An active crop that will not READ is not written either (``source``
+    "authored_unreadable"); crop A is then the model crop for sizing only,
+    and the caller faults. An unreadable CropBoxActive keeps the shipped
+    behaviour (write, then read back) and is recorded.
+
+    The one resolution of crop A: the model pass sizes from it and
+    stage_a_registered_capture.mark_fpp_ft sizes the ticks from it, so the
+    two cannot drift apart (CLAUDE.md, defect class 1). Raises ValueError
+    when there is no raster frame to resolve anything in.
+    """
+    from .core.math_utils import Bounds2D
+    frame = getattr(raster, "anno_frame_bounds", None) or getattr(raster, "bounds_xy", None)
+    if frame is None:
+        raise ValueError("no raster frame to resolve crop A in")
+    record = {"authored_crop_active": None}
+    try:
+        record["authored_crop_active"] = bool(view.CropBoxActive)
+    except Exception as ex:
+        record["authored_crop_active_error"] = "{0}: {1}".format(type(ex).__name__, ex)
+    if record["authored_crop_active"] is True:
+        uv, error = read_crop_uv(view, getattr(raster, "view_basis", None),
+                                 diag=diag, view_id=view_id)
+        if uv is not None and uv[2] > uv[0] and uv[3] > uv[1]:
+            record.update(source="authored_read", write=False)
+            return uv, record
+        record["read_error"] = error or "the authored crop reads as empty: {0!r}".format(uv)
+        record.update(source="authored_unreadable", write=False)
+    else:
+        record.update(source="model_crop_a", write=True)
+    render, _offset = compute_model_crop(
+        getattr(raster, "model_clip_bounds", None),
+        Bounds2D(float(frame.xmin), float(frame.ymin), float(frame.xmax), float(frame.ymax)))
+    return (float(render.xmin), float(render.ymin),
+            float(render.xmax), float(render.ymax)), record
+
+
 def _id_int(element_id):
     """An ElementId as an int, or None when it is absent or will not read."""
     try:
@@ -3411,6 +3532,9 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     geom = None
     frame_uv = None
     frame_source = "unavailable"
+    # D: crop A's resolution under "crop_a" sizing (resolve_crop_a), which
+    # also decides whether this pass may WRITE the crop. None otherwise.
+    crop_a_record = None
     # C7: "crop_a" (the registered capture) sizes this pass from the model
     # crop A alone -- frame B is neither computed into the lattice nor
     # recorded. "frame_b" is the two-pass fallback's sizing, unchanged.
@@ -3463,10 +3587,20 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                     view_id=view_id,
                 )
         if sizing_frame == "crop_a":
-            # A is still clamped into the rectangle above (compute_model_crop
-            # needs one to clamp into); with no narrower model clip it IS that
-            # rectangle, exactly as before. What changes is that the lattice
-            # is A's own: fpp and the cap are decided on A's axes.
+            # The lattice is A's own: fpp and the cap are decided on A's
+            # axes. D: A is the authored crop AS READ when it is active (not
+            # written, not clamped), else the model crop clamped into the
+            # rectangle above -- resolve_crop_a, the same resolution the
+            # registration ticks are sized from.
+            try:
+                crop_uv, crop_a_record = resolve_crop_a(
+                    view, raster, diag=diag, view_id=view_id)
+            except ValueError as ex:
+                crop_uv = None
+                if diag is not None:
+                    diag.warn(phase="color_id_buffer", callsite="pixel_size_crop",
+                              message="crop A could not be resolved: {0}".format(ex),
+                              view_id=view_id)
             frame_uv = crop_uv
             frame_source = "crop_a"
         try:
@@ -3926,8 +4060,34 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # applied a second time to already-decoded UV points.
         crop_bounds_xy = None
         model_crop_offset_uv = (0.0, 0.0, 0.0, 0.0)
+        # D: what this pass did with the crop, and the crop READ BACK.
+        crop_write = None
+        _crop_fpp = geom["achieved_fpp_ft"] if geom is not None else None
         try:
-            if raster is not None and getattr(raster, "bounds_xy", None) is not None:
+            if crop_a_record is not None and not crop_a_record.get("write", True):
+                # D: an ACTIVE authored crop is never written -- not even with
+                # the identical box (Plaza 6112047: 8.8 % of pixels changed).
+                # The export renders it as it is; crop_uv is what it reads.
+                read_uv, read_error = read_crop_uv(
+                    view, getattr(raster, "view_basis", None), diag=diag, view_id=view_id)
+                crop_write = {
+                    "written": False, "source": crop_a_record.get("source"),
+                    "authored_crop_active": crop_a_record.get("authored_crop_active"),
+                    "read_back": crop_read_back_record(
+                        crop_uv, read_uv, read_error, _crop_fpp),
+                }
+                if crop_a_record.get("read_error"):
+                    crop_write["sizing_read_error"] = crop_a_record["read_error"]
+                if read_uv is not None and crop_a_record.get("source") == "authored_read":
+                    crop_bounds_xy = tuple(read_uv)
+                    if getattr(raster, "bounds_xy", None) is not None:
+                        model_crop_offset_uv = (
+                            read_uv[0] - float(raster.bounds_xy.xmin),
+                            read_uv[1] - float(raster.bounds_xy.ymin),
+                            read_uv[2] - float(raster.bounds_xy.xmax),
+                            read_uv[3] - float(raster.bounds_xy.ymax),
+                        )
+            elif raster is not None and getattr(raster, "bounds_xy", None) is not None:
                 render_bounds, model_crop_offset_uv = compute_model_crop(
                     getattr(raster, "model_clip_bounds", None), raster.bounds_xy
                 )
@@ -3970,6 +4130,24 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                     view.CropBox = new_crop_box
                     view.CropBoxActive = True
                     crop_bounds_xy = (float(b.xmin), float(b.ymin), float(b.xmax), float(b.ymax))
+                    # D: READ BACK. Under a scope box the write commits and
+                    # the crop does not move; that is a fault, not a crop.
+                    read_uv, read_error = read_crop_uv(view, basis, diag=diag,
+                                                       view_id=view_id)
+                    crop_write = {
+                        "written": True,
+                        "source": (crop_a_record or {}).get("source", "model_crop"),
+                        "authored_crop_active": (crop_a_record or {}).get(
+                            "authored_crop_active", orig_crop_box_active),
+                        "read_back": crop_read_back_record(
+                            crop_bounds_xy, read_uv, read_error, _crop_fpp),
+                    }
+                    try:
+                        crop_write["crop_box_active_read_back"] = bool(view.CropBoxActive)
+                    except Exception as ex:
+                        crop_write["crop_box_active_read_back"] = None
+                        crop_write["crop_box_active_read_error"] = "{0}: {1}".format(
+                            type(ex).__name__, ex)
                 else:
                     model_crop_offset_uv = (0.0, 0.0, 0.0, 0.0)
                     if diag is not None:
@@ -4602,7 +4780,9 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                             )
             _restore_step("restore_show_shadows", _restore_show_shadows)
 
-        if orig_crop_box is not None:
+        # Only a crop this pass WROTE is put back: restoring one it did not
+        # write would be the identity write D exists to avoid.
+        if orig_crop_box is not None and (crop_write or {}).get("written"):
             def _restore_crop_box():
                 view.CropBox = orig_crop_box
                 view.CropBoxActive = orig_crop_box_active
@@ -4774,10 +4954,13 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "backoff_stop_reason": dim_report.get("backoff_stop_reason"),
         "backoff_floor_px": backoff_floor_px,
         "backoff_max_retries": MAX_MISMATCH_RETRIES,
-        # The rectangle actually set as view.CropBox (pre-C5 "bounds_xy").
-        # None when no crop could be applied: the TIFF's extent is then
-        # FitToPage's and must not be read from this record.
+        # The crop the export renders by (pre-C5 "bounds_xy"): the rectangle
+        # this pass set as view.CropBox, or -- D, an active authored crop,
+        # never written -- the crop as READ. None when neither applies: the
+        # TIFF's extent is then FitToPage's and must not be read from this
+        # record. Which one, and the read-back, is "crop_write".
         "crop_uv": list(crop_bounds_xy) if crop_bounds_xy is not None else None,
+        "crop_write": crop_write,
     }
     if sizing_frame != "crop_a":
         # Frame B's paper extent (the frame-B fallback only; C7).
@@ -4802,7 +4985,11 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
             "verified_against_revit": False,
         })
         crop_snapped_uv = [float(v) for v in geom["crop_snapped_uv"]]
-        if crop_snapped_uv != frame_record["crop_uv"]:
+        # Only a crop this pass wrote was snapped: an authored crop left as
+        # found (D) renders unsnapped, so its snapped lattice rectangle is
+        # not something the export rendered and is not recorded as one.
+        if crop_snapped_uv != frame_record["crop_uv"] and (
+                (crop_write or {}).get("written") is not False):
             frame_record["crop_snapped_uv"] = crop_snapped_uv
     elif geom is not None and frame_uv is not None:
         # Stage A step 2's frame-derived lattice. THREE-VALUED as a block: a
@@ -4996,6 +5183,15 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
                              "detail": view_template_detach})
         if failure_reason is None:
             failure_reason = view_template_detach["fault"]
+    crop_fault = crop_write_fault(crop_write)
+    if crop_fault is not None:
+        model_faults.append({"fault": crop_fault, "detail": crop_write})
+        if failure_reason is None:
+            failure_reason = crop_fault
+        if diag is not None:
+            diag.error(phase="color_id_buffer", callsite="crop_read_back",
+                       message="view failed: {0}: {1}".format(crop_fault, crop_write),
+                       view_id=view_id)
     if unsuppressed_imports:
         model_faults.append({"fault": "view_specific_import_not_suppressed",
                              "detail": [r.get("element_id") for r in unsuppressed_imports]})
@@ -5752,6 +5948,8 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         "reason": "the suppression transaction did not reach the override scan",
     }
     crop_bounds_xy = None
+    # D: the crop write's read-back (None when this pass writes no crop).
+    crop_write = None
     applied_display_style = "unchanged"
     # "not_attempted" is this pass's shipped state: it has never touched
     # SmoothEdges. It is NOT "read_failed" and NOT False, and a reader that
@@ -5798,6 +5996,13 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
                     view.CropBox = new_crop_box
                     view.CropBoxActive = True
                     crop_bounds_xy = tuple(float(v) for v in crop_to_write_uv)
+                    # D: READ BACK; a write that does not take is a fault.
+                    read_uv, read_error = read_crop_uv(view, basis, diag=diag,
+                                                       view_id=view_id)
+                    crop_write = {"written": True, "source": crop_applied,
+                                  "read_back": crop_read_back_record(
+                                      crop_bounds_xy, read_uv, read_error,
+                                      geom.get("achieved_fpp_ft"))}
                 elif diag is not None:
                     diag.warn(
                         phase="color_id_buffer",
@@ -6275,6 +6480,8 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
             # view, so the mode alone does not say what this capture did.
             "crop_applied": crop_applied,
             "authored_crop_active": authored_crop_active,
+            # D: the crop this pass wrote, READ BACK; None when it wrote none.
+            "crop_write": crop_write,
             "rendered_uv_reason": (
                 None if crop_bounds_xy is not None else (
                     "the view's authored crop was left as found and no rectangle "
@@ -6421,6 +6628,12 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         # indistinguishable, downstream, from a view that genuinely has no
         # annotations. It is not the same fact.
         _fault("annotation_collection_failed", membership_error)
+
+    anno_crop_fault = crop_write_fault(crop_write)
+    if anno_crop_fault is not None:
+        # The crop handed to Revit is not the crop the view has: the export
+        # renders whatever the view kept (a scope box), not this lattice.
+        _fault(anno_crop_fault, crop_write)
 
     if write_crop_here and crop_bounds_xy is None:
         # Under "untouched" there is no frame to have failed to apply: the

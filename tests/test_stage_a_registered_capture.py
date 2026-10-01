@@ -360,7 +360,12 @@ def test_c7_the_model_lattice_is_crop_As_own_and_frame_B_is_not_recorded(tmp_pat
     a = (MODEL_BOUNDS.xmin, MODEL_BOUNDS.ymin, MODEL_BOUNDS.xmax, MODEL_BOUNDS.ymax)
     own = frame_export_geometry(a, a, 96.0, 150.0)
     assert frame["crop_px"] == list(own["crop_px"])
-    assert frame["crop_uv"] == pytest.approx(list(own["crop_snapped_uv"]))
+    # D: the view's crop is ACTIVE, so it is not written; crop_uv is the
+    # authored crop as read -- not the snapped lattice rectangle, which the
+    # export does not render and the frame does not record.
+    assert frame["crop_uv"] == pytest.approx(list(a))
+    assert "crop_snapped_uv" not in frame
+    assert frame["crop_write"]["written"] is False
     assert frame["achieved_fpp_ft"] == pytest.approx(own["achieved_fpp_ft"])
     anno_reg = _sidecar(out["annotation_sidecar_path"])["registration"]
     assert anno_reg["sizing_frame"] == "crop_a"
