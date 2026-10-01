@@ -38,19 +38,22 @@ def _run(tmp_path, name="run_a", run_id="RUN_A", commit="c0ffee"):
     run = tmp_path / name
     (run / "color_id_buffer").mkdir(parents=True)
     (run / "run_meta.json").write_text(json.dumps(
-        {"run_id": run_id, "git_commit": commit, "finalized": True, "views": [],
+        {"schema": "vop.run_meta.v1", "run_id": run_id, "git_commit": commit,
+         "finalized": True, "views_requested": [], "views": [],
          "config": {"cell_size_paper_in": 0.125}}))
     return run
 
 
-def _outcome(run, n, status="success", **meta):
-    """Record view ``n``'s capture outcome in run_meta.json, as
-    run_meta.finalize_run_meta writes it."""
+def _outcome(run, n, status="success", reason="", **meta):
+    """Request view ``n`` and record its capture outcome in run_meta.json, as
+    run_meta.finalize_run_meta writes it (views_requested holds ints)."""
     path = run / "run_meta.json"
     doc = json.loads(path.read_text())
+    if n not in doc["views_requested"]:
+        doc["views_requested"].append(n)
     doc["views"] = [v for v in doc["views"] if v["view_id"] != n] + [
         {"view_id": n, "view_name": "V {0}".format(n), "capture_status": status,
-         "capture_failure_reason": ""}]
+         "capture_failure_reason": reason}]
     doc.update(meta)
     path.write_text(json.dumps(doc))
 
@@ -153,9 +156,13 @@ def test_the_summary_states_states_not_a_verdict(tmp_path):
     _b, _r, summary = _read(run / "analysis_grid")
 
     def keys(obj):
+        # The keys of a "counts" map are observed state names (run_meta's
+        # own "success" among them), not fields the roll-up asserts.
         if isinstance(obj, dict):
             for k, v in obj.items():
                 yield k
+                if k == "counts":
+                    continue
                 for kk in keys(v):
                     yield kk
         elif isinstance(obj, list):
@@ -437,10 +444,15 @@ def test_two_runs_without_out_exit_2_and_write_nothing(tmp_path):
     assert (a / "analysis_grid" / rollup.SUMMARY_NAME).exists()
 
 
-def test_a_run_with_no_model_sidecars_exits_2(tmp_path):
+def test_a_run_that_requests_nothing_is_refused_and_exits_2(tmp_path):
+    """Nothing requested, nothing captured: refused, never an empty clean
+    roll-up. The only run refused, so exit 2."""
     empty = _run(tmp_path, "empty")
     assert _main(empty) == 2
-    assert not (empty / "analysis_grid").exists()
+    _b, rows, summary = _read(empty / "analysis_grid")
+    assert rows == []
+    assert [r["reason"] for r in summary["refused_runs"]["runs"]] == [
+        "run_meta.json requests no views"]
 
 
 def test_it_never_writes_into_the_capture_folder(tmp_path):
@@ -498,38 +510,54 @@ def test_a_sidecar_whose_capture_failed_in_this_run_is_not_this_runs(tmp_path):
     _outcome(run, 2, status="failed")
     assert _main(run) == 1
     by_stem, _rows, summary = _read(run / "analysis_grid")
-    assert (by_stem["V_1"]["row_status"], by_stem["V_1"]["run_capture_status"]) == (
+    assert (by_stem["V_1"]["row_status"], by_stem["V_1"]["run_meta_capture_status"]) == (
         "gridded", "success")
     r = by_stem["V_2"]
-    assert (r["row_status"], r["run_capture_status"]) == ("not_this_run", "failed")
+    assert (r["row_status"], r["run_meta_capture_status"]) == ("not_this_run", "failed")
     assert "cannot be tied to run 'RUN_A'" in r["reason"]
     assert all(r[c] == "" for c in GRID_COLUMNS)
     assert summary["row_status"]["counts"]["not_this_run"] == 1
 
 
-def test_a_view_run_meta_does_not_list_is_not_this_runs(tmp_path):
+def test_a_sidecar_the_run_did_not_request_is_an_orphan(tmp_path):
+    """Required case 2: a model sidecar whose view_id is in neither
+    views_requested nor views (the sets agree, so the run is not refused)."""
     run = _run(tmp_path)
     _capture(run, 1)
     _capture(run, 2)
     doc = json.loads((run / "run_meta.json").read_text())
     doc["views"] = [v for v in doc["views"] if v["view_id"] != 2]
+    doc["views_requested"] = [v for v in doc["views_requested"] if v != 2]
     (run / "run_meta.json").write_text(json.dumps(doc))
-    _main(run)
-    by_stem, _rows, _s = _read(run / "analysis_grid")
-    assert by_stem["V_1"]["row_status"] == "gridded"
-    assert (by_stem["V_2"]["row_status"], by_stem["V_2"]["run_capture_status"]) == (
-        "not_this_run", "unrecorded")
-
-
-def test_an_unfinalized_run_ties_no_sidecar(tmp_path):
-    run = _run(tmp_path)
-    _capture(run, 1)
-    _outcome(run, 1, finalized=False)
     assert _main(run) == 1
-    by_stem, _rows, summary = _read(run / "analysis_grid")
-    assert by_stem["V_1"]["row_status"] == "not_this_run"
-    assert "not finalized" in by_stem["V_1"]["reason"]
-    assert summary["runs"][0]["run_meta_finalized"] is False
+    by_stem, rows, summary = _read(run / "analysis_grid")
+    assert by_stem["V_1"]["row_status"] == "gridded"                 # control
+    r = by_stem["V_2"]
+    assert (r["row_status"], r["view_id"]) == ("orphan_sidecar", "2")
+    assert "not in views_requested" in r["reason"]
+    assert r["run_meta_capture_status"] == "" and r["cells_w"] == ""
+    inv = summary["count_invariant"]
+    assert (inv["requested_count"], inv["orphan_sidecar_count"], inv["difference"]) == (
+        1, 1, 0)
+
+
+def test_an_unfinalized_run_is_refused_with_no_rows(tmp_path):
+    """Required case 3."""
+    a = _run(tmp_path, "run_a", "RUN_A")
+    b = _run(tmp_path, "run_b", "RUN_B")
+    _capture(a, 1)
+    _capture(b, 1)
+    _outcome(b, 1, finalized=False)
+    out = tmp_path / "rollup"
+    assert _main(a, b, "--out", out) == 1
+    _by, rows, summary = _read(out)
+    assert [(r["run_id"], r["row_status"]) for r in rows] == [("RUN_A", "gridded")]
+    refused = summary["refused_runs"]
+    assert refused["count"] == 1 and refused["denominator"] == 2
+    assert refused["runs"][0]["run_id"] == "RUN_B"
+    assert "finalized is False, not true" in refused["runs"][0]["reason"]
+    assert summary["requested_count"] == 1
+    assert summary["count_invariant"]["difference"] == 0
 
 
 def test_a_grid_made_under_another_run_id_is_stale(tmp_path):
@@ -569,14 +597,14 @@ def test_views_core_rows_of_another_run_are_not_joined(tmp_path):
 
 # --- review round 2 (Codex, PR #224) -------------------------------------------------------
 
-def test_a_finalized_run_meta_with_no_run_id_ties_no_sidecar(tmp_path):
+def test_a_finalized_run_meta_with_no_run_id_is_refused(tmp_path):
     run = _run(tmp_path)
     _capture(run, 1)
     _outcome(run, 1, run_id=None)
-    assert _main(run) == 1
-    by_stem, _rows, _s = _read(run / "analysis_grid")
-    assert by_stem["V_1"]["row_status"] == "not_this_run"
-    assert "no run_id" in by_stem["V_1"]["reason"]
+    assert _main(run) == 2
+    _by, rows, summary = _read(run / "analysis_grid")
+    assert rows == []
+    assert "no run_id" in summary["refused_runs"]["runs"][0]["reason"]
 
 
 def test_a_refusal_repaired_by_re_registering_is_stale(tmp_path):
@@ -604,3 +632,210 @@ def test_a_refusal_repaired_by_re_registering_is_stale(tmp_path):
     assert by_stem["V_1"]["row_status"] == "grid_refused"
     assert by_stem["V_2"]["row_status"] == "grid_stale"
     assert "rewritten after this refusal" in by_stem["V_2"]["reason"]
+
+
+# --- the denominator is what the run requested --------------------------------------------
+
+def test_a_requested_view_with_no_sidecar_is_no_stage_a_capture(tmp_path):
+    """Required case 1: a drafting view that went the geometry path leaves no
+    Stage A sidecar; its row carries run_meta's own status and reason."""
+    run = _run(tmp_path)
+    _capture(run, 1)
+    _outcome(run, 7, status="failed",
+             reason="no_outcome_reported: the view never reached the exporter")
+    assert _main(run) == 1
+    _by, rows, summary = _read(run / "analysis_grid")
+    by_id = dict((r["view_id"], r) for r in rows)
+    assert by_id["1"]["row_status"] == "gridded"                     # control
+    r = by_id["7"]
+    assert (r["row_status"], r["view_stem"]) == ("no_stage_a_capture", "")
+    assert (r["run_meta_capture_status"], r["run_meta_failure_reason"]) == (
+        "failed", "no_outcome_reported: the view never reached the exporter")
+    assert r["registration_state"] == "absent"
+    assert all(r[c] == "" for c in GRID_COLUMNS)
+    assert summary["run_meta_capture_status"] == {
+        "denominator": 2, "denominator_rule": "requested rows",
+        "counts": {"success": 1, "failed": 1}}
+
+
+def test_requested_and_outcome_sets_that_differ_refuse_the_run(tmp_path):
+    """Required case 4, both directions; the control run beside it rolls up."""
+    a = _run(tmp_path, "run_a", "RUN_A")
+    b = _run(tmp_path, "run_b", "RUN_B")
+    c = _run(tmp_path, "run_c", "RUN_C")
+    for run in (a, b, c):
+        _capture(run, 1)
+    doc = json.loads((b / "run_meta.json").read_text())
+    doc["views_requested"].append(9)            # requested, no outcome
+    (b / "run_meta.json").write_text(json.dumps(doc))
+    doc = json.loads((c / "run_meta.json").read_text())
+    doc["views"].append({"view_id": 9, "view_name": "x", "capture_status": "success",
+                         "capture_failure_reason": ""})   # outcome, never requested
+    (c / "run_meta.json").write_text(json.dumps(doc))
+    out = tmp_path / "rollup"
+    assert _main(a, b, c, "--out", out) == 1
+    _by, rows, summary = _read(out)
+    assert [r["run_id"] for r in rows] == ["RUN_A"]
+    reasons = dict((r["run_id"], r["reason"]) for r in summary["refused_runs"]["runs"])
+    assert set(reasons) == {"RUN_B", "RUN_C"}
+    assert "1 requested with no outcome ['9']" in reasons["RUN_B"]
+    assert "1 outcomes never requested ['9']" in reasons["RUN_C"]
+
+
+def test_duplicate_requested_ids_are_reported_and_give_one_row(tmp_path):
+    run = _run(tmp_path)
+    _capture(run, 1)
+    _capture(run, 2)
+    doc = json.loads((run / "run_meta.json").read_text())
+    doc["views_requested"].append(2)
+    (run / "run_meta.json").write_text(json.dumps(doc))
+    _main(run)
+    _by, rows, summary = _read(run / "analysis_grid")
+    assert sorted(r["view_id"] for r in rows) == ["1", "2"]
+    assert summary["duplicate_requested_ids"]["ids"] == [
+        {"run_id": "RUN_A", "view_id": "2", "times": 2}]
+    assert summary["duplicate_requested_ids"]["denominator"] == 2
+    assert summary["count_invariant"]["difference"] == 0
+
+
+CORE_HEADER = "RunId,ViewId,ViewName,ViewType,Scale,IsOnSheet,CaptureStatus,CaptureFailureReason\n"
+
+
+def test_two_views_core_rows_for_one_view_are_duplicate_rows(tmp_path):
+    """Required case 5: the geometry-path row (blank CaptureStatus) beside the
+    backfilled no_outcome_reported row. Reported, with the agreed fields
+    filled; rows that disagree on ViewType are conflicting."""
+    run = _run(tmp_path)
+    _capture(run, 1)
+    _outcome(run, 7, status="failed", reason="no_outcome_reported: x")
+    _outcome(run, 8, status="failed", reason="no_outcome_reported: x")
+    (run / "views_core_2026-10-01.csv").write_text(
+        CORE_HEADER
+        + "RUN_A,1,Plan One,FloorPlan,96,Y,success,\n"
+        + "RUN_A,7,Detail A,DraftingView,1,N,,\n"
+        + "RUN_A,7,Detail A,DraftingView,1,N,failed,no_outcome_reported: x\n"
+        + "RUN_A,8,Legend B,Legend,1,N,,\n"
+        + "RUN_A,8,Legend B,,0,N,failed,no_outcome_reported: x\n")
+    _main(run)
+    _by, rows, summary = _read(run / "analysis_grid")
+    by_id = dict((r["view_id"], r) for r in rows)
+    assert by_id["1"]["views_core_state"] == "value"                 # control
+    r7 = by_id["7"]
+    assert (r7["views_core_state"], r7["view_type"], r7["view_name"]) == (
+        "duplicate_rows", "DraftingView", "Detail A")
+    r8 = by_id["8"]
+    assert (r8["views_core_state"], r8["view_type"], r8["scale"], r8["view_name"]) == (
+        "conflicting", "", "", "Legend B")
+    dup = summary["views_core_duplicate_count"]
+    assert (dup["count"], dup["denominator"]) == (2, 3)
+    assert sorted(v["view_id"] for v in dup["views"]) == ["7", "8"]
+
+
+def test_one_duplicated_view_counts_once(tmp_path):
+    run = _run(tmp_path)
+    _capture(run, 1)
+    _outcome(run, 7, status="failed", reason="no_outcome_reported: x")
+    (run / "views_core_2026-10-01.csv").write_text(
+        CORE_HEADER
+        + "RUN_A,1,Plan One,FloorPlan,96,Y,success,\n"
+        + "RUN_A,7,Detail A,DraftingView,1,N,,\n"
+        + "RUN_A,7,Detail A,DraftingView,1,N,failed,no_outcome_reported: x\n")
+    _main(run)
+    _by, _rows, summary = _read(run / "analysis_grid")
+    assert summary["views_core_duplicate_count"]["count"] == 1
+
+
+def _project_shaped(tmp_path):
+    """A small run shaped like 20261001T084840: plans with sidecars (gridded,
+    one not gridded), drafting views and legends that went the geometry path
+    (no sidecar; views_core carries both rows), a 3D view rejected by
+    capability gating, and one stray sidecar from an earlier run."""
+    run = _run(tmp_path)
+    _capture(run, 1)
+    _capture(run, 2)
+    _capture(run, 3, gridded=False)
+    for n in (10, 11):
+        _outcome(run, n, status="failed", reason="no_outcome_reported: x")
+    _outcome(run, 20, status="failed", reason="no_outcome_reported: x")
+    _outcome(run, 30, status="failed", reason="capability: 3D view rejected")
+    _capture(run, 40)
+    doc = json.loads((run / "run_meta.json").read_text())
+    doc["views"] = [v for v in doc["views"] if v["view_id"] != 40]
+    doc["views_requested"] = [v for v in doc["views_requested"] if v != 40]
+    (run / "run_meta.json").write_text(json.dumps(doc))
+    lines = [CORE_HEADER]
+    for n in (1, 2, 3):
+        lines.append("RUN_A,{0},Plan {0},FloorPlan,96,Y,success,\n".format(n))
+    for n, vt in ((10, "DraftingView"), (11, "DraftingView"), (20, "Legend")):
+        lines.append("RUN_A,{0},D{0},{1},1,N,,\n".format(n, vt))
+        lines.append("RUN_A,{0},D{0},{1},1,N,failed,no_outcome_reported: x\n".format(n, vt))
+    lines.append("RUN_A,30,3D,ThreeD,1,N,failed,capability: 3D view rejected\n")
+    (run / "views_core_2026-10-01.csv").write_text("".join(lines))
+    return run
+
+
+def test_every_requested_view_appears_once_and_the_invariant_holds(tmp_path):
+    """Required case 6 (holds), on a project-shaped fixture; and the
+    (view_type, row_status) crosstab makes drafting views and legends seen."""
+    run = _project_shaped(tmp_path)
+    assert _main(run) == 1
+    _by, rows, summary = _read(run / "analysis_grid")
+    requested = json.loads((run / "run_meta.json").read_text())["views_requested"]
+    requested_rows = [r for r in rows if r["row_status"] != "orphan_sidecar"]
+    assert sorted(int(r["view_id"]) for r in requested_rows) == sorted(requested)
+    assert summary["requested_count"] == len(requested) == 7
+    inv = summary["count_invariant"]
+    assert (inv["row_status_total"], inv["orphan_sidecar_count"], inv["difference"]) == (
+        8, 1, 0)
+    assert summary["row_status"]["counts"]["no_stage_a_capture"] == 4
+    xt = summary["view_type_by_row_status"]["counts"]
+    assert xt["DraftingView"] == {"no_stage_a_capture": 2}
+    assert xt["Legend"] == {"no_stage_a_capture": 1}
+    assert xt["ThreeD"] == {"no_stage_a_capture": 1}
+    assert xt["FloorPlan"] == {"gridded": 2, "not_gridded": 1}
+    assert xt["(not joined)"] == {"orphan_sidecar": 1}
+    assert summary["views_core_duplicate_count"]["count"] == 3
+
+
+def test_a_broken_count_invariant_exits_2(tmp_path, monkeypatch):
+    """Required case 6 (broken): a mutant row builder that drops a requested
+    view. requested_count is read from run_meta.json on its own, so the
+    shortfall shows, and the tool exits 2 and says why."""
+    run = _project_shaped(tmp_path)
+    real = rollup.unique_requested
+    monkeypatch.setattr(rollup, "unique_requested", lambda ids: real(ids)[:-1])
+    assert _main(run) == 2
+    _by, _rows, summary = _read(run / "analysis_grid")
+    assert summary["count_invariant"]["difference"] == -1
+
+
+def test_a_run_with_no_run_meta_is_refused_as_absent(tmp_path):
+    """Absent is its own reason, not "unfinalized": a missing file and an
+    interrupted run are different facts to whoever reads refused_runs."""
+    a = _run(tmp_path, "run_a", "RUN_A")
+    b = _run(tmp_path, "run_b", "RUN_B")
+    _capture(a, 1)
+    _capture(b, 1)
+    (b / "run_meta.json").unlink()
+    out = tmp_path / "rollup"
+    assert _main(a, b, "--out", out) == 1
+    _by, rows, summary = _read(out)
+    assert [r["run_id"] for r in rows] == ["RUN_A"]
+    assert [r["reason"] for r in summary["refused_runs"]["runs"]] == [
+        "run_meta.json is absent or unreadable"]
+
+
+def test_two_sidecars_claiming_one_view_are_not_guessed_between(tmp_path):
+    run = _run(tmp_path)
+    _capture(run, 1)
+    model, _a = _capture(run, 2)
+    shutil.copy(str(model), str(run / "color_id_buffer" / "Copy_2.json"))
+    _main(run)
+    _by, rows, summary = _read(run / "analysis_grid")
+    by_id = dict((r["view_id"], r) for r in rows)
+    assert len(rows) == 2 and by_id["1"]["row_status"] == "gridded"      # control
+    r = by_id["2"]
+    assert (r["row_status"], r["view_stem"]) == ("sidecar_ambiguous", "Copy_2|V_2")
+    assert "2 model sidecars carry view_id 2" in r["reason"]
+    assert r["cells_w"] == ""
+    assert summary["count_invariant"]["difference"] == 0
