@@ -108,6 +108,7 @@ COLUMNS = [
     # grid
     "cells_w", "cells_h", "cell_ft", "view_scale", "px_per_cell_min",
     "uv_basis_chosen", "uncertainty_px", "uncertainty_cells", "flags",
+    "frame_predicted_px", "frame_actual_px", "frame_delta_px",
     # faults
     "capture_faults_model_n", "capture_faults_annotation_n", "capture_faults_detail",
     # occupancy
@@ -417,6 +418,7 @@ def grid_columns(record):
     black = record.get("black")
     filled = record.get("filled_region")
     over = record.get("model_ink_under_annotation")
+    frame = g.get("frame_check") or {}
     cols = {
         "cells_w": g.get("cells_w"), "cells_h": g.get("cells_h"),
         "cell_ft": g.get("cell_ft"), "view_scale": g.get("view_scale"),
@@ -426,6 +428,10 @@ def grid_columns(record):
         "uncertainty_px": basis.get("uncertainty_px"),
         "uncertainty_cells": g.get("uncertainty_cells"),
         "flags": "|".join(str(f) for f in g.get("flags") or []),
+        # The non-fit axis (stage_a_grid.frame_check); blank when unmeasured.
+        "frame_predicted_px": frame.get("predicted_px"),
+        "frame_actual_px": frame.get("actual_px"),
+        "frame_delta_px": frame.get("delta_px"),
         "capture_faults_model_n": (len(faults["model"]) if "model" in faults else None),
         "capture_faults_annotation_n": (len(faults["annotation"])
                                         if "annotation" in faults else None),
