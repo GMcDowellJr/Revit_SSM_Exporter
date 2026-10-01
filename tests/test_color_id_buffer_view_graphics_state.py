@@ -604,6 +604,10 @@ def test_sidecar_top_level_keys_are_additive_only(tmp_path):
         # R1 (Greg, 2026-09-30): the per-capture cost of the element
         # rotation read -- count, rotated, unavailable, elapsed_ms.
         "rotation_read",
+        # C (capture-state probe, 2026-10-01): the template detach as READ
+        # BACK -- on which view it was cleared (the primary for a dependent
+        # view) and what ViewTemplateId then read.
+        "view_template_detach",
     }
 
 

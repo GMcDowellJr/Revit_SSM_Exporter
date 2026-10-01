@@ -69,18 +69,40 @@ def _xyz(point):
             round(float(point.Z), 9)]
 
 
-def view_state(view):
-    """What the capture writes and the rollback must put back, read."""
+def primary_view(doc, view):
+    """``(primary, reason)``: the PRIMARY of a dependent view, else None with
+    the reason. The passes detach a dependent view's template on its primary,
+    so that is a view the capture writes and must read back."""
+    try:
+        primary_id = view.GetPrimaryViewId()
+        if _element_id_int(primary_id) in (None, -1):
+            return None, "not a dependent view"
+        primary = doc.GetElement(primary_id)
+        return primary, (None if primary is not None else
+                         "the primary view {0} did not resolve".format(
+                             _element_id_int(primary_id)))
+    except Exception as ex:
+        return None, "{0}: {1}".format(type(ex).__name__, ex)
+
+
+def view_state(view, primary=None):
+    """What the capture writes and the rollback must put back, read. With a
+    ``primary`` (a dependent view's), its template too: the passes detach
+    a dependent view's template there."""
     def _crop_box():
         box = view.CropBox
         return {"min": _xyz(box.Min), "max": _xyz(box.Max)}
-    return {
+    state = {
         "view_template_id": _read(lambda: _element_id_int(view.ViewTemplateId)),
         "display_style": _read(lambda: str(view.DisplayStyle)),
         "crop_box_active": _read(lambda: bool(view.CropBoxActive)),
         "crop_box_visible": _read(lambda: bool(view.CropBoxVisible)),
         "crop_box": _read(_crop_box),
     }
+    if primary is not None:
+        state["primary_view_template_id"] = _read(
+            lambda: _element_id_int(primary.ViewTemplateId))
+    return state
 
 
 def view_state_verdict(before, after):
@@ -369,7 +391,10 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             if timings.get(key) is not None:
                 record["timings_ms"][label.format(name)] = timings[key]
 
-    before = view_state(view)
+    primary, record["primary_view"] = primary_view(doc, view)
+    if primary is not None:
+        record["primary_view"] = _element_id_int(getattr(primary, "Id", None))
+    before = view_state(view, primary)
     group = TransactionGroup(doc, "VOP Stage A registered capture")
     started = False
     t_total = time.time()
@@ -603,7 +628,7 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
                                           "roll back; the view may keep marks, "
                                           "white overrides and filters")
         # ---- 6: READ BACK what the rollback left --------------------------
-        restore["view_state"] = view_state_verdict(before, view_state(view))
+        restore["view_state"] = view_state_verdict(before, view_state(view, primary))
         bad = sorted(k for k, v in restore["view_state"].items()
                      if v["status"] != "restored")
         if bad:

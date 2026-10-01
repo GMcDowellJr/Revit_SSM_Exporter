@@ -3194,6 +3194,131 @@ def compute_model_crop(model_clip_bounds, bounds_xy):
     return render_bounds, offset
 
 
+def _id_int(element_id):
+    """An ElementId as an int, or None when it is absent or will not read."""
+    try:
+        return None if element_id is None else int(element_id.IntegerValue)
+    except Exception:
+        return None
+
+
+def _detach_view_template(doc, view, tx_name, diag=None, view_id=None,
+                          callsite="detach_view_template"):
+    """Detach the view's template for a capture, and READ BACK whether it took.
+
+    ``(record, handle)``. ``record`` goes into the sidecar; ``handle`` is what
+    _reattach_view_template puts back (None when nothing was written).
+
+    DEPENDENT VIEWS (capture-state probe, runs 20261001T145758 / 153207). A
+    dependent view's template is its PRIMARY's: clearing ViewTemplateId on
+    the dependent (13663964, 11999340) COMMITS and changes nothing, and
+    DisplayStyle then raises "cannot be modified". Clearing it on the primary
+    takes effect at once -- the dependent reads -1 -- so when
+    ``view.GetPrimaryViewId()`` is valid the PRIMARY is detached, and the
+    primary is what the restore reattaches.
+
+    The shipped detach ignored Commit()'s status, never read ViewTemplateId
+    back and recorded ``view_template_detached: true`` regardless. Here
+    ``detached`` is the READ-BACK on the view being captured
+    (``read_back_view_template_id == -1``); ``commit_status`` is recorded
+    beside it, not trusted instead of it. ``fault`` is
+    ``view_template_not_detached`` when a template was attached and the
+    read-back does not say it is gone -- the caller makes that a capture
+    fault, because every template-controlled write after it (display style,
+    category visibility, filters) may not take.
+    """
+    from Autodesk.Revit.DB import ElementId, Transaction
+    record = {"orig_view_template_id": None, "primary_view_id": None,
+              "detached_on": None, "target_view_id": None,
+              "target_orig_view_template_id": None, "commit_status": None,
+              "read_back_view_template_id": None, "detached": False, "fault": None}
+    try:
+        orig_id = view.ViewTemplateId
+        record["orig_view_template_id"] = _id_int(orig_id)
+    except Exception as ex:
+        record["orig_view_template_id"] = {
+            "state": "unavailable", "reason": "{0}: {1}".format(type(ex).__name__, ex)}
+        if diag is not None:
+            diag.warn(phase="color_id_buffer", callsite=callsite,
+                      message="ViewTemplateId would not read; no detach attempted: "
+                              "{0}".format(ex), view_id=view_id)
+        return record, None
+    target = view
+    try:
+        primary_id = view.GetPrimaryViewId()
+        primary_int = _id_int(primary_id)
+        record["primary_view_id"] = primary_int
+        if primary_int is not None and primary_int != -1:
+            primary = doc.GetElement(primary_id)
+            if primary is None:
+                raise RuntimeError("the primary view {0} did not resolve".format(
+                    primary_int))
+            target = primary
+    except AttributeError as ex:
+        # No GetPrimaryViewId on this object: not a dependent view as far as
+        # the API can say. Recorded, not guessed.
+        record["primary_view_id"] = {"state": "unavailable",
+                                     "reason": "{0}: {1}".format(type(ex).__name__, ex)}
+    except Exception as ex:
+        record["primary_view_id"] = {"state": "unavailable",
+                                     "reason": "{0}: {1}".format(type(ex).__name__, ex)}
+        if diag is not None:
+            diag.warn(phase="color_id_buffer", callsite=callsite,
+                      message="the primary view could not be read; the template is "
+                              "detached on the view itself: {0}".format(ex),
+                      view_id=view_id)
+    record["detached_on"] = "primary" if target is not view else "view"
+    record["target_view_id"] = _id_int(getattr(target, "Id", None))
+    try:
+        target_orig = target.ViewTemplateId
+    except Exception as ex:
+        target_orig = orig_id
+        record["target_orig_view_template_id"] = {
+            "state": "unavailable", "reason": "{0}: {1}".format(type(ex).__name__, ex)}
+    else:
+        record["target_orig_view_template_id"] = _id_int(target_orig)
+    if record["orig_view_template_id"] in (None, -1) and (
+            target is view or _id_int(target_orig) in (None, -1)):
+        record["detached_on"] = None
+        record["read_back_view_template_id"] = record["orig_view_template_id"]
+        return record, None
+
+    handle = None
+    detach_tx = Transaction(doc, tx_name)
+    detach_tx.Start()
+    try:
+        target.ViewTemplateId = ElementId.InvalidElementId
+        record["commit_status"] = str(detach_tx.Commit())
+        handle = {"target": target, "orig": target_orig}
+    except Exception as ex:
+        detach_tx.RollBack()
+        record["error"] = "{0}: {1}".format(type(ex).__name__, ex)
+    try:
+        record["read_back_view_template_id"] = _id_int(view.ViewTemplateId)
+    except Exception as ex:
+        record["read_back_view_template_id"] = {
+            "state": "unavailable", "reason": "{0}: {1}".format(type(ex).__name__, ex)}
+    record["detached"] = record["read_back_view_template_id"] == -1
+    if not record["detached"]:
+        record["fault"] = "view_template_not_detached"
+        if diag is not None:
+            diag.error(phase="color_id_buffer", callsite=callsite,
+                       message="the view template was not detached: ViewTemplateId reads "
+                               "{0} after clearing it on the {1} ({2}); template-"
+                               "controlled settings may stay locked for this "
+                               "capture".format(record["read_back_view_template_id"],
+                                                record["detached_on"],
+                                                record.get("error") or "committed"),
+                       view_id=view_id)
+    return record, handle
+
+
+def _reattach_view_template(handle):
+    """Put back what _detach_view_template cleared, on the view it cleared
+    it on (the PRIMARY for a dependent view). Inside an open Transaction."""
+    handle["target"].ViewTemplateId = handle["orig"]
+
+
 def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None,
                                 elem_cache=None, geometry_out=None):
     """Export one view as a streamed Stage-A color ID buffer and sidecar.
@@ -3488,18 +3613,6 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     backoff_floor_px = (
         int(geom["min_axis_px"]) if geom is not None else _PIXEL_SIZE_BACKOFF_FLOOR)
 
-    orig_view_template_id = None
-    try:
-        orig_view_template_id = view.ViewTemplateId
-    except Exception as ex:
-        if diag is not None:
-            diag.warn(
-                phase="color_id_buffer",
-                callsite="capture_view_template",
-                message=str(ex),
-                view_id=view_id,
-            )
-
     # The per-view graphics-state record is read HERE, before the detach below
     # and before any suppression, because it is evidence about the view as
     # authored -- template-applied phase filter, category overrides, filters,
@@ -3532,26 +3645,12 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     # restore everything on this view anyway. Detaching first, and reattaching
     # as the very last restore step, means every capture below reads (and
     # every restore step writes back) the view's real instance-level state.
-    view_template_detached = False
-    if orig_view_template_id is not None and orig_view_template_id != ElementId.InvalidElementId:
-        detach_tx = Transaction(doc, "VOP Stage A DETACH view template")
-        detach_tx.Start()
-        try:
-            view.ViewTemplateId = ElementId.InvalidElementId
-            detach_tx.Commit()
-            view_template_detached = True
-        except Exception as ex:
-            detach_tx.RollBack()
-            if diag is not None:
-                diag.warn(
-                    phase="color_id_buffer",
-                    callsite="detach_view_template",
-                    message="Could not detach view template before Stage A capture; "
-                            "template-controlled settings (phase filter, category "
-                            "visibility, filters, display style) may remain locked "
-                            "for this view: {0}".format(ex),
-                    view_id=view_id,
-                )
+    # C: the primary's template for a dependent view, and the read-back is
+    # the record (_detach_view_template).
+    view_template_detach, view_template_handle = _detach_view_template(
+        doc, view, "VOP Stage A DETACH view template", diag=diag, view_id=view_id,
+        callsite="detach_view_template")
+    view_template_detached = bool(view_template_detach["detached"])
 
     filter_state = {}
     for fid in view.GetFilters():
@@ -4608,10 +4707,9 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         # as the detach at the top of this function), and once reattached
         # Revit reasserts whatever the template dictates for the settings it
         # controls anyway.
-        if view_template_detached and orig_view_template_id is not None:
-            def _restore_view_template():
-                view.ViewTemplateId = orig_view_template_id
-            _restore_step("restore_view_template", _restore_view_template)
+        if view_template_handle is not None:
+            _restore_step("restore_view_template",
+                          lambda: _reattach_view_template(view_template_handle))
 
         try:
             restore_tx.Commit()
@@ -4839,10 +4937,14 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
         "category_halftone_state": category_halftone_state,
         "palette_step": step,
         "tiff_path": tiff_path,
+        # The READ-BACK (C), not the attempt; view_template_detach says on
+        # which view it was cleared and what Revit then reported.
         "view_template_detached": view_template_detached,
         "orig_view_template_id": (
-            orig_view_template_id.IntegerValue if orig_view_template_id is not None else None
-        ),
+            view_template_detach["orig_view_template_id"]
+            if not isinstance(view_template_detach["orig_view_template_id"], dict)
+            else None),
+        "view_template_detach": view_template_detach,
     }
 
     # A dimension mismatch that survived the halving backoff is a failed
@@ -4889,6 +4991,11 @@ def export_color_id_buffer_view(doc, view, elements, cfg, diag=None, raster=None
     # known, so the file carries the faults (defect class 4; the model
     # sidecar used to be written before they were computed).
     model_faults = []
+    if view_template_detach.get("fault"):
+        model_faults.append({"fault": view_template_detach["fault"],
+                             "detail": view_template_detach})
+        if failure_reason is None:
+            failure_reason = view_template_detach["fault"]
     if unsuppressed_imports:
         model_faults.append({"fault": "view_specific_import_not_suppressed",
                              "detail": [r.get("element_id") for r in unsuppressed_imports]})
@@ -5519,36 +5626,12 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         raise RuntimeError("No solid drafting fill pattern found in project")
 
     # ---- captured state, for restore -----------------------------------
-    orig_view_template_id = None
-    try:
-        orig_view_template_id = view.ViewTemplateId
-    except Exception as ex:
-        if diag is not None:
-            diag.warn(
-                phase="color_id_buffer",
-                callsite="annotation_capture_view_template",
-                message=str(ex),
-                view_id=view_id,
-            )
-
-    view_template_detached = False
-    if orig_view_template_id is not None and orig_view_template_id != ElementId.InvalidElementId:
-        detach_tx = Transaction(doc, "VOP Stage A ANNO DETACH view template")
-        detach_tx.Start()
-        try:
-            view.ViewTemplateId = ElementId.InvalidElementId
-            detach_tx.Commit()
-            view_template_detached = True
-        except Exception as ex:
-            detach_tx.RollBack()
-            if diag is not None:
-                diag.warn(
-                    phase="color_id_buffer",
-                    callsite="annotation_detach_view_template",
-                    message="Could not detach view template before the annotation pass; "
-                            "template-controlled settings may remain locked: {0}".format(ex),
-                    view_id=view_id,
-                )
+    # C: the primary's template for a dependent view; the read-back is the
+    # record (_detach_view_template).
+    view_template_detach, view_template_handle = _detach_view_template(
+        doc, view, "VOP Stage A ANNO DETACH view template", diag=diag,
+        view_id=view_id, callsite="annotation_detach_view_template")
+    view_template_detached = bool(view_template_detach["detached"])
 
     filter_state = {}
     try:
@@ -5942,11 +6025,11 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         # ONLY committed state at this point, which is why re-attaching it is
         # the whole recovery rather than a partial one.
         suppress_tx.RollBack()
-        if view_template_detached and orig_view_template_id is not None:
+        if view_template_handle is not None:
             reattach_tx = Transaction(doc, "VOP Stage A ANNO REATTACH view template")
             reattach_tx.Start()
             try:
-                view.ViewTemplateId = orig_view_template_id
+                _reattach_view_template(view_template_handle)
                 reattach_tx.Commit()
             except Exception as ex:
                 reattach_tx.RollBack()
@@ -6113,10 +6196,9 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
                     view.SetIsFilterEnabled(ElementId(int(fid_int)), fstate["was_enabled"])
                 _restore_step("annotation_restore_filter_enabled", _restore_filter)
 
-        if view_template_detached and orig_view_template_id is not None:
-            def _restore_view_template():
-                view.ViewTemplateId = orig_view_template_id
-            _restore_step("annotation_restore_view_template", _restore_view_template)
+        if view_template_handle is not None:
+            _restore_step("annotation_restore_view_template",
+                          lambda: _reattach_view_template(view_template_handle))
 
         try:
             restore_tx.Commit()
@@ -6267,11 +6349,13 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
         # is a failed capture however good the TIFF is.
         "restore_failures": restore_failures,
         "tiff_path": tiff_path,
+        # The READ-BACK (C), not the attempt.
         "view_template_detached": view_template_detached,
         "orig_view_template_id": (
-            orig_view_template_id.IntegerValue
-            if orig_view_template_id is not None else None
-        ),
+            view_template_detach["orig_view_template_id"]
+            if not isinstance(view_template_detach["orig_view_template_id"], dict)
+            else None),
+        "view_template_detach": view_template_detach,
         # UNCONFIRMED (no Revit run in this session), and load-bearing for
         # this pass specifically:
         #  - Element color overrides are confirmed to work on SOME annotation
@@ -6325,6 +6409,12 @@ def export_annotation_color_id_buffer_view(doc, view, cfg, geom, diag=None,
 
     def _fault(name, detail):
         capture_faults.append({"fault": name, "detail": detail})
+
+    if view_template_detach.get("fault"):
+        # Most upstream of all: every template-controlled write after the
+        # detach (display style, category visibility, filters) may not have
+        # taken (probe: DisplayStyle "cannot be modified" on a dependent).
+        _fault(view_template_detach["fault"], view_template_detach)
 
     if membership_error is not None:
         # An empty annotation TIFF from a collector that threw is
