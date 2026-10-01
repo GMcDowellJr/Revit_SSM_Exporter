@@ -129,43 +129,32 @@ def nominal_mapping(crop_uv, image_w, image_h):
             "a_v": -1.0 / fpp, "b_v": ymax / fpp + pad_y}
 
 
-def tick_points(payload):
-    """``(u_points, v_points)`` the ticks pin: a horizontal tick pins its v
-    level and its u ends, a vertical one the reverse."""
-    us, vs = [], []
-    for mark in payload.get("marks") or []:
-        level = float(mark["level_uv"])
-        span = [float(s) for s in mark["span_uv"]]
-        if mark.get("orientation") == "horizontal":
-            vs.append(level)
-            us.extend(span)
-        else:
-            us.append(level)
-            vs.extend(span)
-    return us, vs
-
-
-def disagreement_px(first, second, payload):
-    """Largest pixel distance between two mappings over the tick points."""
-    us, vs = tick_points(payload)
+def residual_at_measured_ticks(mapping, ticks):
+    """Largest pixel distance between where ``mapping`` puts each tick's
+    centre line and where the fit MEASURED it (``ticks`` from
+    registration_marks.fit_marks_in_pixels: a horizontal tick pins a row
+    from its v level, a vertical one a column from its u level). The fit's
+    own ``residual_max_px`` is this quantity for the fit's mapping, so both
+    candidates are scored against the same observations."""
     worst = 0.0
-    for u in us:
-        worst = max(worst, abs((first["a_u"] - second["a_u"]) * u
-                               + (first["b_u"] - second["b_u"])))
-    for v in vs:
-        worst = max(worst, abs((first["a_v"] - second["a_v"]) * v
-                               + (first["b_v"] - second["b_v"])))
+    for tick in ticks:
+        level = float(tick["level_uv"])
+        if tick["orientation"] == "horizontal":
+            predicted = mapping["a_v"] * level + mapping["b_v"]
+        else:
+            predicted = mapping["a_u"] * level + mapping["b_u"]
+        worst = max(worst, abs(predicted - float(tick["centre_px"])))
     return worst
 
 
 def choose_mapping(sidecar, rgb, crop_uv):
     """``(mapping, basis_record)``: the mapping closer to the measured ticks.
 
-    The tick fit's own residual is ``residual_max_px``. The nominal mapping's
-    is its disagreement with the fit at the tick points -- an estimate, good to
-    within the fit's residual, which is recorded beside it. With no usable fit
-    there is nothing to measure against: the nominal mapping is used and the
-    uncertainty is recorded as unmeasured, not as zero.
+    Both mappings are scored the same way: the largest distance between where
+    each puts a tick's centre line and where the fit MEASURED it
+    (residual_at_measured_ticks). With no usable fit there is nothing to
+    measure against: the nominal mapping is used and the uncertainty is
+    recorded as unmeasured, not as zero.
     """
     h, w = rgb.shape[:2]
     nominal = nominal_mapping(crop_uv, w, h)
@@ -188,8 +177,9 @@ def choose_mapping(sidecar, rgb, crop_uv):
                 "reason": why_not, "mapping": fit["mapping"],
                 "found_count": fit.get("found_count"),
                 "expected_count": fit.get("expected_count"),
-                "residual_px": max(v for v in fit["residual_max_px"].values()
-                                   if v is not None)}
+                "residual_px": residual_at_measured_ticks(fit["mapping"],
+                                                          fit.get("ticks") or []),
+                "measured_ticks": len(fit.get("ticks") or [])}
             if why_not is not None:
                 fit = None
     if fit is None:
@@ -197,7 +187,7 @@ def choose_mapping(sidecar, rgb, crop_uv):
                        "reason": "no usable tick fit to measure the crop against"})
         return nominal, record
     fit_residual = record["tick_fit"]["residual_px"]
-    nominal_residual = disagreement_px(nominal, fit["mapping"], payload)
+    nominal_residual = residual_at_measured_ticks(nominal, fit.get("ticks") or [])
     record["nominal_crop"]["residual_px"] = nominal_residual
     # The ticks sit inset from the image edges; the two mappings can disagree
     # far more at the corners (Plan_CropInActive, 1453: 0.41 px at the ticks,
@@ -214,8 +204,8 @@ def choose_mapping(sidecar, rgb, crop_uv):
                       (h - fit["mapping"]["b_v"]) / fit["mapping"]["a_v"])))
     if nominal_residual <= fit_residual:
         record.update({"chosen": "nominal_crop", "uncertainty_px": nominal_residual,
-                       "reason": "the recorded crop lands within the fit's own "
-                                 "residual of the ticks"})
+                       "reason": "the recorded crop lands at least as close to "
+                                 "the measured ticks as the fit"})
         return nominal, record
     record.update({"chosen": "tick_fit", "uncertainty_px": fit_residual,
                    "reason": "the recorded crop misses the measured ticks by "
@@ -565,6 +555,19 @@ def render_png(spec, arrays, path, px_per_cell=4):
 
 # --- one view ------------------------------------------------------------------
 
+def _resolve_recorded(recorded, base_dir, what):
+    """A path a record wrote: as recorded (absolute, or relative to the
+    working directory it was written from), else relative to the record's
+    folder, else its file name beside the record. A path that resolves
+    nowhere is refused, naming what was tried."""
+    p = Path(recorded)
+    for candidate in (p, Path(base_dir) / p, Path(base_dir) / p.name):
+        if candidate.exists():
+            return candidate
+    raise GridRefusal("{0} {1!r} was found neither as recorded nor beside the "
+                      "record in {2}".format(what, str(recorded), base_dir))
+
+
 def _load_json(path):
     with open(path, encoding="utf-8") as handle:
         return json.load(handle)
@@ -609,15 +612,14 @@ def grid_view(model_sidecar_path, out_dir, run_meta=None, png_px_per_cell=4):
         model_ink = model_masks["host_ink"] | model_masks["dwg_ink"] | model_masks["link_ink"]
         del model_masks
         if registered is not None:
-            anno_tiff = Path(registered["registered_tiff"])
-            if not anno_tiff.is_absolute():
-                anno_tiff = reg_path.parent / anno_tiff
+            anno_tiff = _resolve_recorded(registered["registered_tiff"], reg_path.parent,
+                                          "the registered annotation TIFF")
             if sha256_file(anno_tiff) != registered.get("registered_tiff_sha256"):
                 raise GridRefusal("the registered annotation TIFF does not match "
                                   "the hash its record names")
-            anno_sidecar = _load_json(Path(registered["source_annotation_sidecar"])) \
-                if Path(registered["source_annotation_sidecar"]).exists() else \
-                _load_json(model_sidecar_path.with_name(stem + "_anno.json"))
+            anno_sidecar = _load_json(_resolve_recorded(
+                registered["source_annotation_sidecar"], reg_path.parent,
+                "the annotation sidecar"))
             anno_rgb = dsc._load_rgb_array(anno_tiff)
             ox, oy = (int(v) for v in lattice["canvas_origin_model_px"])
             anno_masks, anno_info = anno_channel_masks(

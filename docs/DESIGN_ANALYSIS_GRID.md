@@ -62,9 +62,12 @@ view is flagged `no_registered_annotation`.
 **G-4. Pixel→UV: whichever of the two mappings lands closer to the measured
 ticks.** The model capture carries its crop, so a nominal mapping exists (the
 decoder's, with its aspect-clamp pad). The ticks give a second, measured
-mapping (the registration tool's model fit). Both are evaluated at the tick
-positions, the closer one is used, and both residuals are recorded, together
-with their largest disagreement anywhere in the image. The registered
+mapping (the registration tool's model fit). Both are scored the same way,
+against the tick centre lines the fit MEASURED in the image (not against
+each other): the closer one is used. Both residuals are recorded, together
+with the two mappings' largest disagreement anywhere in the image. (Review,
+PR #223: an earlier version scored the crop by its disagreement with the fit,
+which can understate its error by up to the fit's own residual.) The registered
 annotation canvas is on the model lattice, so the same mapping serves both
 images. With no usable tick fit, the crop is used and the uncertainty is
 recorded as **unmeasured** (flag), never as zero.
@@ -132,18 +135,19 @@ first. The default output is `<run>/analysis_grid/`.
 
 | View | Cells (W × H) | Signed range i / j | px/cell | Basis | Crop at ticks (px) | Crop at corners (px) | Fit (px) | Uncertainty (cells) | Flags |
 |---|---|---|---|---|---|---|---|---|---|
-| Elevation_CropActive | 294 × 98 | -9…284 / -15…82 | 18.74 | tick fit | 0.40 | 0.40 | 0.26 | 0.014 | — |
-| ModelCallout_CropActive | 58 × 25 | -13…44 / -5…19 | 18.70 | tick fit | 0.66 | 0.69 | 0.40 | 0.021 | — |
-| Plan_CropActive | 297 × 127 | -19…277 / -18…108 | 18.75 | tick fit | 1.14 | 1.29 | 0.26 | 0.014 | — |
-| Plan_CropInActive | 1035 × 2413 | -1…1033 / -1…2411 | 4.15 | tick fit | 0.41 | 2.43 | 0.26 | 0.063 | capped |
-| Plan_DWG | 259 × 87 | -1…257 / 0…86 | 18.74 | tick fit | 0.56 | 0.57 | 0.13 | 0.007 | — |
-| Plan_RVTLink | 258 × 87 | -1…256 / 0…86 | 18.75 | tick fit | 1.21 | 1.23 | 0.26 | 0.014 | — |
-| RCP_CropActive | 299 × 127 | -8…290 / -13…113 | 18.74 | tick fit | 0.36 | 0.39 | 0.26 | 0.014 | — |
-| Section_CropActive | 58 × 183 | 0…57 / -8…174 | 18.75 | tick fit | 0.40 | 0.40 | 0.39 | 0.021 | — |
+| Elevation_CropActive | 294 × 98 | -9…284 / -15…82 | 18.74 | tick fit | 0.50 | 0.40 | 0.26 | 0.014 | — |
+| ModelCallout_CropActive | 58 × 25 | -13…44 / -5…19 | 18.70 | tick fit | 0.50 | 0.69 | 0.40 | 0.021 | — |
+| Plan_CropActive | 297 × 127 | -19…277 / -18…108 | 18.75 | tick fit | 1.03 | 1.29 | 0.26 | 0.014 | — |
+| Plan_CropInActive | 1035 × 2413 | -1…1033 / -1…2411 | 4.15 | tick fit | 0.35 | 2.43 | 0.26 | 0.063 | capped |
+| Plan_DWG | 259 × 87 | -1…257 / 0…86 | 18.74 | tick fit | 0.49 | 0.57 | 0.13 | 0.007 | — |
+| Plan_RVTLink | 258 × 87 | -1…256 / 0…86 | 18.75 | tick fit | 1.10 | 1.23 | 0.26 | 0.014 | — |
+| RCP_CropActive | 299 × 127 | -8…290 / -13…113 | 18.74 | tick fit | 0.49 | 0.39 | 0.26 | 0.014 | — |
+| Section_CropActive | 58 × 183 | 0…57 / -8…174 | 18.75 | tick fit | 0.50 | 0.40 | 0.39 | 0.021 | — |
 
-- **The tick fit is closer on all 8 views.** The recorded crop misses the
-  ticks by 0.36–1.21 px, and by up to 2.43 px at the image corners on the
-  capped view; the fit by 0.13–0.40 px. On an 18.75 px cell that is at most
+- **The tick fit is closer on all 8 views.** Measured against the ticks'
+  observed centre lines, the recorded crop misses them by 0.35–1.10 px, and
+  by up to 2.43 px at the image corners on the capped view; the fit by
+  0.13–0.40 px. On an 18.75 px cell that is at most
   2 % of a cell; on the capped view 6 %. No view is `coarse`.
 - **The corner figures reproduce the registration tool's own
   `model_marks_vs_lattice`** (2.43 px on Plan_CropInActive, 1.29 on

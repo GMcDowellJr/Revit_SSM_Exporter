@@ -431,3 +431,75 @@ def test_assign_black_takes_the_smallest_containing_box():
     assert rec["by_element"] == {"2": 1, "1": 2}
     assert rec["ambiguous"] == 1          # (5, 5) is in boxes 1 and 2
     assert rec["unassigned"] == 0 and mask.sum() == 3
+
+
+# --- review, PR #223 ------------------------------------------------------------
+
+def test_a_relative_run_directory_resolves_the_recorded_paths(tmp_path, monkeypatch):
+    """Codex P1: registration run from the parent folder records
+    "run/color_id_buffer/V_1_anno.registered.tiff"; joining that to the
+    record's folder doubled it and the grid raised FileNotFoundError."""
+    run = tmp_path / "run" / "color_id_buffer"
+    run.mkdir(parents=True)
+    _write_pair(run)
+    _run_meta(run.parent)
+    monkeypatch.chdir(tmp_path)
+    from pathlib import Path
+    reg.register(Path("run/color_id_buffer/V_1_anno.json"))
+    recorded = json.loads(Path("run/color_id_buffer/V_1_anno.registered.json")
+                          .read_text())["registered_tiff"]
+    assert not Path(recorded).is_absolute()
+    rec = grid.grid_view(Path("run/color_id_buffer/V_1.json"), Path("run/analysis_grid"))
+    assert rec["status"] == "value"
+    assert "anno_element" in np.load("run/analysis_grid/" + rec["npz"])
+
+
+def test_both_mappings_are_scored_against_the_measured_ticks(tmp_path):
+    """Codex P2: the crop mapping's residual is its distance to the ticks the
+    fit MEASURED, not its disagreement with the fitted mapping. Composed with
+    the fitter: its own residual_max_px is the same quantity for its mapping."""
+    from tools import registration_marks as rm
+    from PIL import Image
+    _anno, model_path, _c = _write_pair(tmp_path)
+    side = json.loads(model_path.read_text())
+    side["bounds_xy"] = [v + 0.7 / 18.0 for v in side["bounds_xy"]]
+    model_path.write_text(json.dumps(side))
+    # Move ONE horizontal tick down a pixel, so the measured ticks no longer
+    # sit on the fitted line: "distance to the fit" and "distance to the
+    # measured ticks" then differ, and only the second is right.
+    tiff = tmp_path / "V_1.tiff"
+    img = np.asarray(Image.open(str(tiff)).convert("RGB")).copy()
+    first = rm.fit_recorded_marks(
+        img, dsc.legacy_view(side)["registration_marks"],
+        reserved_colours=rm.palette_colours(side))
+    tick = [t for t in first["ticks"] if t["orientation"] == "horizontal"][0]
+    x0, y0, x1, y1 = tick["pixel_bbox"]
+    block = img[y0:y1 + 1, x0:x1 + 1].copy()
+    img[y0:y1 + 1, x0:x1 + 1] = 255
+    img[y0 + 1:y1 + 2, x0:x1 + 1] = block
+    Image.fromarray(img).save(str(tiff), format="TIFF")
+    _run_meta(tmp_path)
+    rec = grid.grid_view(model_path, tmp_path / "out")
+    basis = rec["grid"]["uv_basis"]
+    pixels = rm.load_rgb(tmp_path / "V_1.tiff")
+    payload = dsc.legacy_view(json.loads(model_path.read_text()))["registration_marks"]
+    fit = rm.fit_recorded_marks(pixels, payload, reserved_colours=rm.palette_colours(side))
+    measured = [(t["orientation"], float(t["level_uv"]), float(t["centre_px"]))
+                for t in fit["ticks"]]
+
+    def worst(m):
+        """Distance to the measured centre lines: a horizontal tick pins a
+        row (v), a vertical one a column (u)."""
+        def predicted(orientation, level):
+            if orientation == "horizontal":
+                return m["a_v"] * level + m["b_v"]
+            return m["a_u"] * level + m["b_u"]
+        return max(abs(predicted(o, lvl) - c) for o, lvl, c in measured)
+    assert basis["tick_fit"]["residual_px"] == pytest.approx(
+        max(fit["residual_max_px"].values()), abs=1e-9)
+    assert basis["nominal_crop"]["residual_px"] == pytest.approx(
+        worst(basis["nominal_crop"]["mapping"]), abs=1e-9)
+    chosen = basis["chosen"]
+    other = "tick_fit" if chosen == "nominal_crop" else "nominal_crop"
+    assert basis[chosen]["residual_px"] <= basis[other]["residual_px"]
+    assert basis["uncertainty_px"] == basis[chosen]["residual_px"]
