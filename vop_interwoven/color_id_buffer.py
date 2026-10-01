@@ -2114,6 +2114,13 @@ def _collect_annotation_bbox_data(doc, view, resolved_ids, raster, diag=None, vi
             "bbox_source": bbox_source,
             "membership_basis": membership_basis,
             "category": category_name,
+            # The element's API class name (e.g. "FilledRegion", "TextNote",
+            # "FamilyInstance"). Category alone cannot tell a filled or
+            # masking region from a detail component -- both are Detail
+            # Items -- and the analysis counts a filled region by AREA
+            # (it masks the model) where everything else counts by ink.
+            # The Python type of the object already in hand: no Revit read.
+            "element_class": type(elem).__name__,
         }
 
     return out, source_counts, basis_counts

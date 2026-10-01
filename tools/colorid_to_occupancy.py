@@ -194,6 +194,15 @@ def grid_assumed(sidecar, grid_bounds):
     difference, and the other dimension then comes out wrong too. Take both
     extents from the grid's own rectangle.
     """
+    if isinstance(sidecar.get("frame"), dict):
+        # Since the registered capture, backoff_floor_px is the capture's own
+        # 64 px minimum, not raster W: reading it as the grid made every view
+        # 64 cells wide (pipeline_0930_1453, Plan_CropActive: 4.40 ft cells
+        # for a 1.00 ft paper cell). Refused, never guessed; the grid for a
+        # current sidecar is tools/stage_a_grid.py's.
+        raise ValueError("this sidecar's frame record carries no grid size "
+                         "(backoff_floor_px is the capture minimum, not raster W); "
+                         "use tools/stage_a_grid.py, or pass --geom-run")
     sidecar = legacy_view(sidecar)
     res = sidecar.get("resolution") or {}
     axis = res.get("requested_axis") or "width"
