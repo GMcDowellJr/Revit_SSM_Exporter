@@ -680,8 +680,9 @@ def _lines_category_hidden(view):
         return None, "{0}: {1}".format(type(ex).__name__, ex)
 
 
-def _thinnest_line_style(doc, curve):
-    """``(style, record)``: the thinnest line style this detail curve may take.
+def _thinnest_line_style(doc, curve, view=None):
+    """``(style, record)``: the thinnest line style this detail curve may take
+    THAT THE VIEW DRAWS.
 
     No override in either pass sets a line weight (both paint colour and
     patterns only), so a tick draws at its LINE STYLE's projection weight --
@@ -689,9 +690,20 @@ def _thinnest_line_style(doc, curve):
     line style. T1 picks the minimum over ``curve.GetLineStyleIds()``, keeping
     the current style on a tie. A style whose weight will not read is skipped
     and named; ``style`` is None when nothing could be chosen.
+
+    VISIBILITY (capture-state probe Q6, 2026-10-01). A line style is a
+    SUBCATEGORY of OST_Lines, and a view can hide it while the parent stays
+    visible: in 5823803 and 11999340 the view template hides "<Thin Lines>",
+    the weight-1 style T1 always picked, so no tick drew in 31 views and
+    nothing said so -- the only check was the parent category. With ``view``,
+    a style whose own subcategory the view hides is NOT a candidate, and one
+    whose hidden state will not read is not either (it is named under
+    ``hidden_unreadable``); ``hidden`` lists the ones refused. ``view=None``
+    is T1's unconditional choice, kept for callers with no view.
     """
     from Autodesk.Revit.DB import GraphicsStyleType
-    record = {"state": "value", "unreadable": []}
+    record = {"state": "value", "unreadable": [], "hidden": [],
+              "hidden_unreadable": []}
     current = curve.LineStyle
     current_id = _element_id_int(getattr(current, "Id", None))
     candidates = []
@@ -706,20 +718,125 @@ def _thinnest_line_style(doc, curve):
                 "error": "{0}: {1}".format(type(ex).__name__, ex)})
             continue
         style_int = _element_id_int(getattr(style, "Id", None))
-        candidates.append((weight, 0 if style_int == current_id else 1,
-                           style_int, style))
         if style_int == current_id:
             record["default_style"] = {"id": style_int,
                                        "name": getattr(style, "Name", None),
                                        "projection_line_weight": weight}
+        if view is not None:
+            hidden, error = _style_subcategory_hidden(view, style)
+            if hidden is not False:
+                entry = {"id": style_int, "name": getattr(style, "Name", None),
+                         "projection_line_weight": weight}
+                if error is not None:
+                    entry["error"] = error
+                    record["hidden_unreadable"].append(entry)
+                else:
+                    record["hidden"].append(entry)
+                continue
+        candidates.append((weight, 0 if style_int == current_id else 1,
+                           style_int, style))
     if not candidates:
         record["state"] = "unavailable"
-        record["reason"] = "no line style of the detail curve had a readable weight"
+        record["reason"] = (
+            "no line style of the detail curve had a readable weight"
+            if not (record["hidden"] or record["hidden_unreadable"]) else
+            "every line style with a readable weight is hidden in this view, or "
+            "its hidden state would not read")
         return None, record
     weight, _pref, style_int, style = min(candidates, key=lambda c: c[:3])
     record.update({"id": style_int, "name": getattr(style, "Name", None),
                    "projection_line_weight": weight,
                    "candidates": len(candidates)})
+    return style, record
+
+
+def _style_subcategory_hidden(view, style):
+    """``(hidden, error)``: whether ``view`` hides the line style's OWN
+    subcategory (``style.GraphicsStyleCategory``), three-valued."""
+    try:
+        return bool(view.GetCategoryHidden(style.GraphicsStyleCategory.Id)), None
+    except Exception as ex:
+        return None, "{0}: {1}".format(type(ex).__name__, ex)
+
+
+# A Lines subcategory created for the ticks when the view hides every line
+# style the curve could take. Created inside the marks' Transaction, so the
+# capture's TransactionGroup rollback removes it with the ticks.
+TEMPORARY_TICK_SUBCATEGORY = "VOP Stage A registration ticks"
+
+
+def _temporary_tick_style(doc, view):
+    """``(style, record)``: a weight-1 OST_Lines subcategory made for the
+    ticks, and its projection GraphicsStyle. Inside an open Transaction.
+
+    Whether the view DRAWS it is read back, never assumed: a template that
+    controls V/G may hide a subcategory it has never seen (capture-state probe
+    Q6 asks; until a Revit run answers, the read is the answer). ``style`` is
+    None when it could not be made; the record says why.
+    """
+    from Autodesk.Revit.DB import BuiltInCategory, GraphicsStyleType
+    record = {"state": "value", "subcategory_name": TEMPORARY_TICK_SUBCATEGORY}
+    try:
+        categories = doc.Settings.Categories
+        lines = categories.get_Item(BuiltInCategory.OST_Lines)
+        existing = None
+        for sub in lines.SubCategories:
+            if str(getattr(sub, "Name", "")) == TEMPORARY_TICK_SUBCATEGORY:
+                existing = sub
+                break
+        # One left behind by a capture whose rollback failed is REUSED and
+        # said so, rather than refused: NewSubcategory would raise on the name.
+        record["created"] = existing is None
+        sub = existing if existing is not None else categories.NewSubcategory(
+            lines, TEMPORARY_TICK_SUBCATEGORY)
+        sub.SetLineWeight(1, GraphicsStyleType.Projection)
+        style = sub.GetGraphicsStyle(GraphicsStyleType.Projection)
+        record.update({
+            "id": _element_id_int(getattr(style, "Id", None)),
+            "name": getattr(style, "Name", None),
+            "subcategory_id": _element_id_int(getattr(sub, "Id", None)),
+            "projection_line_weight": int(sub.GetLineWeight(
+                GraphicsStyleType.Projection)),
+        })
+    except Exception as ex:
+        return None, {"state": "unavailable",
+                      "subcategory_name": TEMPORARY_TICK_SUBCATEGORY,
+                      "reason": "the temporary Lines subcategory could not be "
+                                "made: {0}: {1}".format(type(ex).__name__, ex)}
+    return style, record
+
+
+def tick_line_style(doc, view, curve):
+    """``(style, record)``: the style every tick is drawn in, and WHICH PATH
+    chose it -- ``record["path"]``:
+
+    * ``"visible_existing"`` -- the thinnest of the curve's own styles whose
+      subcategory the view does not hide;
+    * ``"temporary"`` -- none is visible, so a weight-1 subcategory made for
+      the capture (rolled back with it);
+    * ``"none"`` -- neither; ``style`` is None and the ticks keep the default.
+
+    ``subcategory_hidden_in_view`` is the chosen style's own subcategory,
+    READ (three-valued): the capture faults ``registration_marks_may_not_draw``
+    on anything but False. ``existing`` keeps the existing-style search's
+    record whichever path won.
+    """
+    style, existing = _thinnest_line_style(doc, curve, view=view)
+    if style is not None:
+        record = dict(existing, path="visible_existing")
+    else:
+        style, temporary = _temporary_tick_style(doc, view)
+        if style is None:
+            return None, {"state": "unavailable", "path": "none",
+                          "subcategory_hidden_in_view": None,
+                          "reason": "{0}; {1}".format(existing.get("reason"),
+                                                      temporary.get("reason")),
+                          "existing": existing, "temporary": temporary}
+        record = dict(temporary, path="temporary", existing=existing)
+    hidden, error = _style_subcategory_hidden(view, style)
+    record["subcategory_hidden_in_view"] = hidden
+    if error is not None:
+        record["subcategory_hidden_error"] = error
     return style, record
 
 
@@ -789,12 +906,13 @@ def create_registration_marks(doc, view, view_basis, layout):
                 type(ex).__name__, ex)
             record["failed"].append(entry)
             continue
-        # T1: the thinnest line style, chosen once and applied to every tick.
-        # The style is the element's own, so it holds in BOTH passes; the
-        # record says which style and weight the ticks were drawn at.
+        # T1: the thinnest line style THE VIEW DRAWS, chosen once and applied
+        # to every tick (tick_line_style: an existing visible style, else a
+        # temporary subcategory). The style is the element's own, so it holds
+        # in BOTH passes; the record says which path, style and weight.
         try:
             if "line_style" not in record:
-                thinnest, record["line_style"] = _thinnest_line_style(doc, curve)
+                thinnest, record["line_style"] = tick_line_style(doc, view, curve)
             if thinnest is not None:
                 curve.LineStyle = thinnest
             entry["line_style_applied"] = thinnest is not None

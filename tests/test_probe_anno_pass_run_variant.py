@@ -58,13 +58,102 @@ class _Line(object):
         return self._ends[index]
 
 
+# LINE STYLES, as far as tick_line_style reads them: each a GraphicsStyle
+# whose GraphicsStyleCategory is an OST_Lines SUBCATEGORY with its own id, so a
+# view can hide the subcategory while OST_Lines stays visible (capture-state
+# probe Q6). (name, style id, subcategory id, projection weight).
+LINE_STYLES = (("Lines", 7001, 7101, 3), ("<Thin Lines>", 7002, 7102, 1),
+               ("<Wide Lines>", 7003, 7103, 5))
+THIN_LINES_SUBCAT_ID = 7102
+TEMP_SUBCAT_ID = 7199
+
+
+class _Subcategory(object):
+    def __init__(self, name, sub_id, style_id, weight):
+        from tests.stage_a_capture_fakes import FakeElementId
+        self.Name = name
+        self.Id = FakeElementId(sub_id)
+        self._weight = weight
+        self._style = _LineStyle(name, style_id, self)
+
+    def GetLineWeight(self, _kind):
+        return self._weight
+
+    def SetLineWeight(self, weight, _kind):
+        self._weight = int(weight)
+
+    def GetGraphicsStyle(self, _kind):
+        return self._style
+
+
+class _LineStyle(object):
+    def __init__(self, name, style_id, subcategory):
+        from tests.stage_a_capture_fakes import FakeElementId
+        self.Name = name
+        self.Id = FakeElementId(style_id)
+        self.GraphicsStyleCategory = subcategory
+
+
+class _LinesCategory(object):
+    def __init__(self, doc):
+        self._doc = doc
+        self.Id = LINES_CAT.Id
+        self.Name = LINES_CAT.Name
+
+    @property
+    def SubCategories(self):
+        return list(self._doc._fake_subcategories.values())
+
+
+class _Categories(list):
+    """doc.Settings.Categories: still the iterable of categories the fake doc
+    had, plus get_Item(OST_Lines) and NewSubcategory. A subcategory made here
+    lives in the doc's own dict, so the group's rollback removes it as Revit's
+    would. ``refuse_new`` makes NewSubcategory raise."""
+
+    def __init__(self, doc, categories):
+        list.__init__(self, categories)
+        self._doc = doc
+        self.refuse_new = False
+
+    def get_Item(self, _bic):
+        return _LinesCategory(self._doc)
+
+    def NewSubcategory(self, parent, name):
+        if self.refuse_new:
+            raise RuntimeError("NewSubcategory refused (fake)")
+        sub = _Subcategory(name, TEMP_SUBCAT_ID, TEMP_SUBCAT_ID + 1000, 3)
+        subs = dict(self._doc._fake_subcategories)
+        subs[name] = sub
+        self._doc._fake_subcategories = subs
+        return sub
+
+
+def _install_line_styles(doc):
+    doc._fake_subcategories = dict(
+        (name, _Subcategory(name, sub_id, style_id, weight))
+        for name, style_id, sub_id, weight in LINE_STYLES)
+    doc.Settings.Categories = _Categories(doc, doc.Settings.Categories)
+    real_get = doc.GetElement
+
+    def _get(eid):
+        for sub in doc._fake_subcategories.values():
+            if int(eid.IntegerValue) == sub._style.Id.IntegerValue:
+                return sub._style
+        return real_get(eid)
+    doc.GetElement = _get
+
+
 class _Create(object):
     """doc.Create.NewDetailCurve: a view-owned OST_Lines element, registered in
-    the document -- so the group's rollback removes it, as Revit's would."""
+    the document -- so the group's rollback removes it, as Revit's would. Each
+    curve offers the existing LINE_STYLES (plus any temporary subcategory),
+    defaulting to "Lines", as a detail curve in Revit does."""
 
     def __init__(self, doc):
         self._doc = doc
         self.calls = 0
+        _install_line_styles(doc)
 
     def NewDetailCurve(self, view, line):
         self.calls += 1
@@ -75,6 +164,10 @@ class _Create(object):
         elem = FakeElement(MARK_ID_BASE + self.calls, LINES_CAT,
                            owner_view_id=view.Id.IntegerValue, bbox=box)
         elem.GeometryCurve = line
+        doc = self._doc
+        elem.LineStyle = doc._fake_subcategories["Lines"]._style
+        elem.GetLineStyleIds = lambda: [
+            sub._style.Id for sub in doc._fake_subcategories.values()]
         return self._doc.register(elem)
 
 

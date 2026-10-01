@@ -412,13 +412,82 @@ def test_p1_a_rollback_that_undoes_nothing_is_counted_in_the_FILE(tmp_path):
 def test_t1_the_tick_line_style_reaches_BOTH_sidecar_files(tmp_path):
     """pipeline_0930_0739: the chosen line style was absent from all 16
     sidecars -- recorded in memory, never carried into registration_marks.
-    The fake curve exposes no LineStyle, so here it is the explicit
-    "unavailable" record; what is pinned is that the FILE carries it."""
+    What is pinned is that the FILE carries it, with the path that chose it."""
     out, _view, _doc, _exports, _diag = _run(tmp_path)
     for path in (out["sidecar_path"], out["annotation_sidecar_path"]):
         rm = _sidecar(path)["registration_marks"]
         assert rm.get("line_style") is not None, path
         assert rm["line_style"] == out["registration"]["marks"]["line_style"]
+        assert rm["line_style"]["path"] == "visible_existing"
+        assert rm["line_style"]["name"] == "<Thin Lines>"
+        assert rm["line_style"]["subcategory_hidden_in_view"] is False
+
+
+# --- capture-state probe Q6: a hidden line-style SUBCATEGORY -----------------
+#
+# The template of 5823803 / 11999340 hides "<Thin Lines>" with OST_Lines
+# visible. T1 picked it anyway, no tick drew, and _lines_category_hidden (the
+# parent) said all was well. Mutations: tick_line_style calling
+# _thinnest_line_style WITHOUT view= turns the first test red; deleting the
+# subcategory fault in export_registered_stage_a_view turns the last two red.
+
+def _hide(*cat_ids):
+    def _setup(view):
+        for cat_id in cat_ids:
+            view.category_hidden[int(cat_id)] = True
+    return _setup
+
+
+def _may_not_draw(path):
+    return [f for f in _sidecar(path)["capture_integrity"]["capture_faults"]
+            if f.get("fault") == "registration_marks_may_not_draw"]
+
+
+def test_q6_a_hidden_thin_lines_subcategory_is_passed_over_in_the_FILE(tmp_path):
+    out, view, _d, _e, _diag = _run(tmp_path, view_setup=_hide(world.THIN_LINES_SUBCAT_ID))
+    style = _sidecar(out["sidecar_path"])["registration_marks"]["line_style"]
+    assert style["path"] == "visible_existing" and style["name"] == "Lines"
+    assert [h["name"] for h in style["hidden"]] == ["<Thin Lines>"]
+    assert _may_not_draw(out["sidecar_path"]) == []
+    assert out["registration"]["success"] is True
+
+
+def test_q6_every_existing_style_hidden_makes_a_temporary_subcategory(tmp_path):
+    subs = [sub_id for _n, _s, sub_id, _w in world.LINE_STYLES]
+    out, _view, doc, _e, _diag = _run(tmp_path, view_setup=_hide(*subs))
+    style = _sidecar(out["annotation_sidecar_path"])["registration_marks"]["line_style"]
+    assert style["path"] == "temporary" and style["created"] is True
+    assert style["projection_line_weight"] == 1
+    assert style["subcategory_id"] == world.TEMP_SUBCAT_ID
+    assert style["subcategory_hidden_in_view"] is False
+    assert _may_not_draw(out["sidecar_path"]) == []
+    # Made inside the capture's group, so its rollback removed it.
+    assert registration.TEMPORARY_TICK_SUBCATEGORY not in doc._fake_subcategories
+
+
+def test_q6_no_visible_style_and_no_temporary_one_is_a_fault_in_the_FILE(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(world._Categories, "NewSubcategory",
+                        lambda self, parent, name: (_ for _ in ()).throw(
+                            RuntimeError("NewSubcategory refused")))
+    subs = [sub_id for _n, _s, sub_id, _w in world.LINE_STYLES]
+    out, _view, _doc, _e, _diag = _run(tmp_path, view_setup=_hide(*subs))
+    style = _sidecar(out["sidecar_path"])["registration_marks"]["line_style"]
+    assert style["path"] == "none" and "NewSubcategory refused" in style["reason"]
+    for path in (out["sidecar_path"], out["annotation_sidecar_path"]):
+        assert len(_may_not_draw(path)) == 1, path
+    assert out["registration"]["success"] is False
+
+
+def test_q6_a_temporary_subcategory_the_view_hides_is_a_fault(tmp_path):
+    """Whether a template that controls V/G draws a subcategory it has never
+    seen is probe Q6b's question; production READS it, and faults."""
+    subs = [sub_id for _n, _s, sub_id, _w in world.LINE_STYLES]
+    out, _view, _doc, _e, _diag = _run(
+        tmp_path, view_setup=_hide(world.TEMP_SUBCAT_ID, *subs))
+    style = out["registration"]["marks"]["line_style"]
+    assert style["path"] == "temporary" and style["subcategory_hidden_in_view"] is True
+    assert len(_may_not_draw(out["sidecar_path"])) == 1
 
 
 def test_the_annotation_capture_runs_with_anti_aliasing_off_in_the_FILE(tmp_path):

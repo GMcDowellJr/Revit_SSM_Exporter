@@ -88,3 +88,62 @@ def test_nothing_readable_is_unavailable():
     bad = _Style(1, "Bad", RuntimeError("no weight"))
     style, rec = _pick([bad], current=bad)
     assert style is None and rec["state"] == "unavailable" and rec["reason"]
+
+
+# --- capture-state probe Q6: the style's OWN subcategory must be visible -----
+#
+# In 5823803 and 11999340 the view template hides "<Thin Lines>" -- the
+# weight-1 style T1 always picked -- while OST_Lines stays visible. No tick
+# drew in 31 views, and nothing said so: the only check was the parent.
+
+class _View:
+    def __init__(self, hidden=(), unreadable=()):
+        self._hidden, self._unreadable = set(hidden), set(unreadable)
+
+    def GetCategoryHidden(self, cat_id):
+        if cat_id.IntegerValue in self._unreadable:
+            raise RuntimeError("cannot read")
+        return cat_id.IntegerValue in self._hidden
+
+
+class _SubStyle(_Style):
+    """A style whose GraphicsStyleCategory has its OWN id (sid + 100)."""
+
+    def __init__(self, sid, name, weight):
+        _Style.__init__(self, sid, name, weight)
+        self.GraphicsStyleCategory = types.SimpleNamespace(
+            Id=_Id(sid + 100), GetLineWeight=self.GetLineWeight)
+
+
+def _pick_in(view, styles, current):
+    with _db():
+        return _thinnest_line_style(_Doc(styles), _Curve(styles, current), view=view)
+
+
+def test_a_hidden_thinnest_style_is_passed_over_for_the_thinnest_VISIBLE_one():
+    lines, thin, wide = (_SubStyle(1, "Lines", 3), _SubStyle(2, "<Thin Lines>", 1),
+                         _SubStyle(3, "Wide", 6))
+    style, rec = _pick_in(_View(hidden={102}), [lines, thin, wide], current=lines)
+    assert style is lines and rec["name"] == "Lines"
+    assert rec["hidden"] == [{"id": 2, "name": "<Thin Lines>", "projection_line_weight": 1}]
+
+
+def test_control_nothing_hidden_still_picks_thin_lines():
+    lines, thin = _SubStyle(1, "Lines", 3), _SubStyle(2, "<Thin Lines>", 1)
+    style, rec = _pick_in(_View(), [lines, thin], current=lines)
+    assert style is thin and rec["hidden"] == []
+
+
+def test_a_style_whose_hidden_state_will_not_read_is_not_a_candidate():
+    lines, thin = _SubStyle(1, "Lines", 3), _SubStyle(2, "<Thin Lines>", 1)
+    style, rec = _pick_in(_View(unreadable={102}), [lines, thin], current=lines)
+    assert style is lines
+    assert rec["hidden_unreadable"][0]["id"] == 2 and "cannot read" in rec[
+        "hidden_unreadable"][0]["error"]
+
+
+def test_every_style_hidden_is_unavailable_and_says_so():
+    lines, thin = _SubStyle(1, "Lines", 3), _SubStyle(2, "<Thin Lines>", 1)
+    style, rec = _pick_in(_View(hidden={101, 102}), [lines, thin], current=lines)
+    assert style is None and rec["state"] == "unavailable"
+    assert "hidden" in rec["reason"]

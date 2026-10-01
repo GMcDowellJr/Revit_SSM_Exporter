@@ -111,7 +111,9 @@ Revit-rendered colour-ID captures. With it on, the **registered capture**
   rollback is the restore, and the view is read back afterwards.
 - **Twelve registration ticks are drawn as detail lines, into both captures.**
   The view's other detail lines are hidden for the model pass only. Ticks are
-  32 px arms in the thinnest line style the curve allows, sized on the model
+  32 px arms in the thinnest line style the curve allows whose own
+  subcategory the view does not hide (else a temporary weight-1 Lines
+  subcategory, rolled back; `line_style.path` records which), sized on the model
   pass's own achieved lattice (`mark_fpp_ft()`, so a capped view keeps 32 px),
   and moved within their corner/edge band to clear annotation bboxes; each
   segment records `placement` (original / moved / blocked). The annotation

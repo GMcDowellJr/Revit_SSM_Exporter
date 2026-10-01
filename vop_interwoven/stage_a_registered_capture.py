@@ -446,6 +446,17 @@ def export_registered_stage_a_view(doc, view, elements, cfg, diag=None,
             _fault("registration_marks_may_not_draw",
                    "the view hides OST_Lines, or its state could not be read "
                    "({0})".format(marks.get("lines_category_hidden_in_view")))
+        # The parent is not enough: a view can hide the ticks' own line-style
+        # subcategory with OST_Lines visible (probe Q6: <Thin Lines> hidden by
+        # the template, 31 views without a tick and no fault).
+        style = marks.get("line_style") or {}
+        if marks.get("expected_count") and style.get("subcategory_hidden_in_view") is not False:
+            _fault("registration_marks_may_not_draw",
+                   "the ticks' line style ({0}, path {1}) has its subcategory hidden "
+                   "in the view, or its state could not be read ({2}): {3}".format(
+                       style.get("name"), style.get("path"),
+                       style.get("subcategory_hidden_in_view"),
+                       style.get("subcategory_hidden_error") or style.get("reason")))
 
         # ---- 1b: the view's OTHER detail lines, hidden for the model pass --
         # OST_Lines stays visible there so the marks draw; without this every

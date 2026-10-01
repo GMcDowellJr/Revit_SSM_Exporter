@@ -620,6 +620,8 @@ def install_fake_revit_db():
     fake_db.CategoryType = FakeCategoryType
     fake_db.BuiltInParameter = FakeBuiltInParameter
     fake_db.BuiltInCategory = FakeBuiltInCategory
+    fake_db.GraphicsStyleType = types.SimpleNamespace(Projection="Projection",
+                                                      Cut="Cut")
     fake_db.ImageFileType = FakeImageFileType
     fake_db.ImageExportOptions = FakeImageExportOptions
     fake_db.ExportRange = FakeExportRange
