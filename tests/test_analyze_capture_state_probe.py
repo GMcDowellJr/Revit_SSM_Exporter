@@ -607,6 +607,7 @@ def _q6_case(tmp_path, draw=True, twin=True, crop_active=True, crop_uv=(0, 0, 40
 def test_q6_a_mark_that_drew_is_rendered_by_its_changed_pixels(tmp_path):
     rows = _q6_case(tmp_path)
     r = rows[0]
+    assert r["changed_anywhere_px"] == 21 and r["export_vs_crop"]["matches"] is True
     assert (r["view_id"], r["step"], r["variant"], r["key"]) == (9948, "S1", "no_crop_write", "left_bottom_h")
     assert r["window_px"] == WINDOW
     assert (r["changed_vs_unmarked_px"], r["mark_colour_px"], r["non_white_px"]) == (21, 21, 21)
@@ -630,9 +631,34 @@ def test_q6_a_pixel_that_differs_in_one_channel_counts_as_changed(tmp_path):
 
 
 def test_q6_a_mark_that_did_not_draw_is_not_rendered(tmp_path):
+    """No pixel changed anywhere against the unmarked twin: false, without
+    needing a window."""
     r = _q6_case(tmp_path, draw=False)[0]
-    assert (r["changed_vs_unmarked_px"], r["rendered"]) == (0, False)
+    assert (r["changed_anywhere_px"], r["rendered"], r["rendered_basis"]) == (
+        0, False, "no_pixel_changed_anywhere")
     assert r["line_style_subcategory_hidden"] is True
+
+
+def test_q6_an_export_that_is_not_the_crop_is_unmeasured_not_false(tmp_path):
+    """Round 2, 9948: the plan exported taller than its crop, so windows
+    placed through the crop missed the 137 px the marks changed and read
+    false. Crop [0, 0, 40, 25] implies 400 x 250; the image is 400 x 300."""
+    r = _q6_case(tmp_path, crop_uv=(0, 0, 40, 25))[0]
+    assert r["rendered"] == "unmeasured"
+    assert "export is not the crop" in r["unmeasured_reason"]
+    assert r["changed_anywhere_px"] == 21
+    assert r["export_vs_crop"]["matches"] is False
+    assert (r["export_vs_crop"]["implied_px"], r["export_vs_crop"]["non_fit_delta_px"]) == (
+        [400, 250], 50)
+    assert r["window_px"] is None
+
+
+def test_q6_nothing_changed_anywhere_is_false_even_when_the_export_is_not_the_crop(tmp_path):
+    """Round 2, 5823803 and 11999340: no pixel changed anywhere, so the marks
+    did not render -- the mapping does not matter."""
+    r = _q6_case(tmp_path, draw=False, crop_uv=(0, 0, 40, 25))[0]
+    assert (r["rendered"], r["rendered_basis"]) == (False, "no_pixel_changed_anywhere")
+    assert r["export_vs_crop"]["matches"] is False
 
 
 def test_q6_without_a_same_size_twin_falls_back_to_the_mark_colour(tmp_path):

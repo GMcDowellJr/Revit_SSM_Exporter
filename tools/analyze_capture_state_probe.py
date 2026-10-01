@@ -453,6 +453,31 @@ def mark_window(uv0, uv1, crop_uv, w, h, pad=WINDOW_PAD_PX):
     return [cx0, cy0, cx1, cy1], None
 
 
+def export_matches_crop(crop_uv, export, shape):
+    """Whether the exported image IS the crop: on the axis Revit did not fit
+    to, the image is within NON_FIT_TOLERANCE_PX of what the crop's aspect
+    implies at the requested pixel size (implied_px, the Q3 table's own
+    arithmetic). Plans in round 2 exported ~190 px taller than their crop;
+    the nominal mapping does not hold there."""
+    if shape is None:
+        return {"matches": None, "reason": "no marked export"}
+    if is_unavailable(crop_uv) or not crop_uv:
+        return {"matches": None, "reason": "the crop at export is unavailable"}
+    h, w = shape
+    fit = (export or {}).get("fit_direction") or "horizontal"
+    implied = implied_px([float(crop_uv[2]) - float(crop_uv[0]),
+                          float(crop_uv[3]) - float(crop_uv[1])],
+                         (export or {}).get("requested_pixel_size"), fit)
+    if implied is None:
+        return {"matches": None, "reason": "no requested pixel size to imply from"}
+    axis, index = non_fit_axis(fit)
+    delta = [w, h][index] - implied[index]
+    return {"matches": abs(delta) <= NON_FIT_TOLERANCE_PX, "implied_px": implied,
+            "exported_px": [w, h], "non_fit_axis": axis, "non_fit_delta_px": delta,
+            "reason": "{0} {1} px exported against {2} px implied by the crop".format(
+                axis, [w, h][index], implied[index])}
+
+
 def rendered_verdict(window_counts, twin_same_size, mark_colour_known):
     """PURE. ``(rendered, basis)``: true / false / "unmeasured".
 
@@ -500,6 +525,14 @@ def q6_rows(report, pixels, images_by_file):
             twin = pixels.get((twin_step.get("export") or {}).get("file"))
             crop_uv = recorded(step, "crop_uv_at_export")
             crop_active = recorded(step, "crop_box_active_at_export")
+            # Per marked export, before any window: did the marks change ANY
+            # pixel against the unmarked twin, and is the image the crop?
+            # (Round 2, 9948: 137 px changed in the image, 0 inside windows
+            # placed through a crop the export did not match.)
+            twin_same = marked is not None and twin is not None and twin.shape == marked.shape
+            changed_anywhere = (int(np.any(twin != marked, axis=2).sum()) if twin_same else None)
+            export_vs_crop = export_matches_crop(
+                crop_uv, export, marked.shape[:2] if marked is not None else None)
             for mark in step.get("mark_rows") or []:
                 row = dict(base, mark_id=mark.get("id"), key=mark.get("key"),
                            orientation=mark.get("orientation"), placement=mark.get("placement"),
@@ -519,8 +552,17 @@ def q6_rows(report, pixels, images_by_file):
                                                     else {"unavailable": "not recorded"})
                                                    for k in ("state", "template_id", "model_categories",
                                                              "annotation_categories", "filters")))
+                row.update(changed_anywhere_px=changed_anywhere, export_vs_crop=export_vs_crop)
                 if marked is None:
                     rows.append(_unmeasured(row, "the marked export is missing or failed"))
+                    continue
+                if changed_anywhere == 0:
+                    # Nothing the marks drew reached the image at all, so no
+                    # mark rendered -- whatever the mapping, no window needed.
+                    _unmeasured(row, None)
+                    row.update(rendered=False, rendered_basis="no_pixel_changed_anywhere",
+                               unmeasured_reason=None)
+                    rows.append(row)
                     continue
                 if is_unavailable(crop_uv) or not crop_uv:
                     rows.append(_unmeasured(row, "the crop at export is unavailable ({0})".format(
@@ -529,6 +571,12 @@ def q6_rows(report, pixels, images_by_file):
                 if crop_active is not True:
                     rows.append(_unmeasured(row, "the crop was not active at export ({0}), so "
                                                  "the image extent is not the crop".format(crop_active)))
+                    continue
+                if export_vs_crop.get("matches") is not True:
+                    rows.append(_unmeasured(row, "the export is not the crop ({0}), so a window "
+                                                 "placed through the crop would miss; the marks "
+                                                 "changed {1} px somewhere in the image".format(
+                                                     export_vs_crop.get("reason"), changed_anywhere)))
                     continue
                 if not mark.get("uv0") or not mark.get("uv1"):
                     rows.append(_unmeasured(row, "the mark's UV is not recorded"))
@@ -546,7 +594,6 @@ def q6_rows(report, pixels, images_by_file):
                                                           | int(colour[2]))).sum())
                                           if colour else None),
                           "changed_vs_unmarked": None}
-                twin_same = twin is not None and twin.shape == marked.shape
                 if twin_same:
                     counts["changed_vs_unmarked"] = int(
                         np.any(twin[y0:y1, x0:x1] != cut, axis=2).sum())
