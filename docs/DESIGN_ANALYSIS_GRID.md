@@ -107,6 +107,18 @@ a threshold can be applied later as a fraction (item 3).
 - **Capped exports are analysed and flagged `capped`.** The cap is Revit's.
   Such views are never on sheets and will play a different role in the final
   analysis.
+- **Flagged `frame_mismatch`** when the export's size on the axis Revit did
+  NOT fit to differs from the frame's prediction (`crop_px` on that axis) by
+  more than `FRAME_MISMATCH_TOLERANCE_PX = 1`; **flagged `frame_unmeasured`**
+  when the frame cannot be compared (no `fit_direction`, no `crop_px`, no
+  `actual_w`/`actual_h`, or a capture not sized on crop A). Never refused,
+  and an unmeasured frame is never read as a match (Greg, 2026-10-01). The
+  grid record carries `grid.frame_check` = `{fit_direction, axis,
+  predicted_px, actual_px, delta_px, state}`. Why: in run
+  20261001T084840_1d0b0c1, 31 views found no ticks, gridded on the nominal
+  crop mapping, and came back the wrong size on the non-fit axis (MOHAVE
+  11999340: 639 px against 729). `dim_check` passed them, because it measures
+  the fit axis only.
 
 Both thresholds are starting values, to be revisited with experience.
 

@@ -212,7 +212,10 @@ What was NOT gridded is a row like any other:
 
 `registration_state` is `registered`, `refused` (its refusals), `absent` or
 `unusable`; a gridded row that is not `registered` is counted as model-only
-and keeps the grid's `no_registered_annotation` flag. View name, type, scale
+and keeps the grid's `no_registered_annotation` flag. `frame_predicted_px`,
+`frame_actual_px` and `frame_delta_px` are the grid's non-fit-axis frame
+check (blank when unmeasured); `frame_mismatch` and `frame_unmeasured`
+arrive through `flags` and are counted in `flag_counts`. View name, type, scale
 and on-sheet come from the run's `views_core_*.csv` on (`RunId`, `ViewId`), with
 `views_core_state` saying how the join went. A view with more than one
 views_core row is reported, not hidden: `duplicate_rows` when the rows agree
