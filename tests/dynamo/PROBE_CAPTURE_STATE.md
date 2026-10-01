@@ -18,6 +18,52 @@ again and compared with the read taken before the group started. A changed
 field is listed under `verify_changed`, and `VERIFY_SUMMARY` says so in
 capitals. The probe does not try to fix it.
 
+### Restore checks, and the refusals they cause
+
+Every view is read once, before the outer group starts, into a **state
+snapshot**. That snapshot is the **baseline** for every question on that view.
+It holds:
+- crop box, `CropBoxActive`
+- scope box id, `ShapeSet`
+- template id
+- `DisplayStyle`, `ShadowIntensity`
+- background type and colours
+- the members' sha1
+
+Each question runs its steps through one gated sequence (`run_gated`):
+- **At the question's start,** the view is judged against the baseline. That
+  catches an earlier question that left the view changed, such as Q3 leaving
+  11999340 changed before Q5 runs on it.
+- **After every nested group's rollback,** the view is judged again.
+- **Not restored** means:
+  - any field changed, or
+  - a field is readable on one side only, or
+  - a field the question itself writes cannot be read on either side, so its
+    restore cannot be shown:
+
+    | Question | Fields it writes (`Q*_REQUIRED`) |
+    |---|---|
+    | Q1 | crop box, `CropBoxActive`, members |
+    | Q3 | crop box, scope box, `ShapeSet` |
+    | Q4 | `ShadowIntensity`, background |
+    | Q5 | template id, `DisplayStyle` |
+
+  A field unreadable on both sides that the question does not write is
+  recorded and does not refuse: a plan view, for example, has no readable
+  background.
+- **Once a check fails, every later step of that question on that view is
+  REFUSED, not run.** Its record says `refused: "state_not_restored"`, why, and
+  which check blocked it (`blocked_by`). A step run from state the previous one
+  left behind would be evidence about the wrong cause. A check that fails at
+  the start refuses the whole question for that view (`refused` on the view).
+- **Verdicts** are under `restore_checks[<label>]`: `question_start`, then each
+  step or group label. Each verdict lists `changed`, `unverifiable` and
+  `required_unreadable`, plus every field's before and after.
+
+The verify after the outer rollback compares the same snapshot. Fields
+unreadable before and after are listed under `verify_unreadable_both`, so
+their absence from `verify_changed` is not read as a verified match.
+
 ---
 
 ## The questions
@@ -47,10 +93,11 @@ rolled-back nested group.
   S1 and S2 against S0, first 50 of each. The split properties at every step.
   Q2's answer is `report.q2_api_sees_split_at_s0`.
 
-**Q3 (test views and the control).** Each S1–S4 step starts from S0's state.
-The **restore mechanism is a nested TransactionGroup per step, rolled back
-before the next.** After each rollback the crop box is read again and compared
-with S0's (`restore_check`).
+**Q3 (test views and the control).** Each S1–S4 step starts from the
+baseline state. The **restore mechanism is a nested TransactionGroup per step,
+rolled back before the next**, with the restore checks above after each one.
+If S2's rollback leaves the scope box changed, for example, S3 and S4 are
+refused.
 - **S0:** common reads, then an export.
 - **S1:** writes a crop box 10 % smaller than S0's, centred. Reads it back,
   then exports.
@@ -170,9 +217,11 @@ Everything is written to `<IN[0]>/capture_state_<timestamp>/`.
   - `exports`: every export with its step, file, requested pixel size, fit
     direction, and `dims_px` read back from the TIFF header (stdlib `struct`)
   - `transaction_group`: whether the outer group started and rolled back
-  - `verify`: per view and field, `equal`, `changed` or `unverifiable`, with
-    before and after
-  - `verify_changed` and `VERIFY_SUMMARY`
+  - `restore_checks` per question (per view for Q3 and Q5), and refused steps
+    with `refused`, `refused_reason` and `blocked_by`
+  - `verify`: per view and field, `equal`, `changed`, `unverifiable` or
+    `unreadable_both`, with before and after
+  - `verify_changed`, `verify_unreadable_both` and `VERIFY_SUMMARY`
   - `exceptions`: every exception, with its stage and traceback
 - **`<step>_<viewid>.tiff`**, e.g. `Q1_S2_6112047.tiff`, `Q3_S4_11999340.tiff`
 - **`probe_capture_state_analysis.json`**, written by the analyzer. It carries
@@ -184,7 +233,10 @@ Everything is written to `<IN[0]>/capture_state_<timestamp>/`.
     fraction, or `size_differs` (never resized)
   - the per-view Q3 table: step, written box, read-back box, exported px,
     the px the box implies at the same fit direction and pixel width, and the
-    difference on the non-fit axis (a mismatch when it exceeds 1 px)
+    difference on the non-fit axis (a mismatch when it exceeds 1 px), and
+    `restored_after`: whether that step's rollback restored the view. A step
+    the probe refused is a `refused` row with its reason and no numbers, so it
+    can never read as a match or a mismatch.
 
   The analyzer refuses, with `status: "refused"`, its reasons, and exit 2,
   when:

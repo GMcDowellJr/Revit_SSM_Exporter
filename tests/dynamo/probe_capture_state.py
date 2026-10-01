@@ -541,27 +541,65 @@ def common_reads(doc, view):
     return record, ids
 
 
-def verify_fields(doc, view):
-    """The fields compared after the outer rollback."""
+UNREADABLE = "unreadable"
+
+
+def _snap(record):
+    """A read's value for a state snapshot, or UNREADABLE."""
+    if isinstance(record, dict) and record.get("state") == "value":
+        return record.get("value")
+    return UNREADABLE
+
+
+def background_fingerprint(view):
+    """The background's type and colours, each colour UNREADABLE on its own
+    when its getter raises, so one unreadable colour does not hide the rest."""
+    bg = view.GetBackground()
+    if bg is None:
+        return None
+    out = {"type": _snap(read(lambda: str(bg.GetType().Name)))}
+    for name in ("SkyColor", "HorizonColor", "GroundColor", "BackgroundColor"):
+        out[name] = _snap(read_attr(bg, name, colour_list))
+    return out
+
+
+def state_snapshot(doc, view):
+    """Everything a probe step can change on a view, as plain values. The
+    ONE snapshot used for the pre-group baseline, for the restore check after
+    every nested rollback, and for the verify after the outer rollback."""
+    from Autodesk.Revit.DB import BuiltInParameter
+
+    def _scope_box():
+        p = view.get_Parameter(BuiltInParameter.VIEWER_VOLUME_OF_INTEREST_CROP)
+        return None if p is None else element_id_int(p.AsElementId())
+
+    def _shape_set():
+        return bool(view.GetCropRegionShapeManager().ShapeSet)
+
     ids = value_of(read(member_ids, doc, view))
-    crop = read(crop_box_record, view)
     return {
-        "template_id": value_of(read(lambda: element_id_int(view.ViewTemplateId)), "unreadable"),
-        "crop_box": value_of(crop, "unreadable"),
-        "crop_box_active": value_of(read_attr(view, "CropBoxActive", bool), "unreadable"),
-        "display_style": value_of(read_attr(view, "DisplayStyle", enum_text), "unreadable"),
-        "shadow_intensity": value_of(read_attr(view, "ShadowIntensity", jsonable), "unreadable"),
-        "members_sha1": ids_fingerprint(ids)["sha1"] if ids is not None else "unreadable",
+        "template_id": _snap(read(lambda: element_id_int(view.ViewTemplateId))),
+        "crop_box": _snap(read(crop_box_record, view)),
+        "crop_box_active": _snap(read_attr(view, "CropBoxActive", bool)),
+        "scope_box": _snap(read(_scope_box)),
+        "shape_set": _snap(read(_shape_set)),
+        "display_style": _snap(read_attr(view, "DisplayStyle", enum_text)),
+        "shadow_intensity": _snap(read_attr(view, "ShadowIntensity", jsonable)),
+        "background": _snap(read(background_fingerprint, view)),
+        "members_sha1": ids_fingerprint(ids)["sha1"] if ids is not None else UNREADABLE,
     }
 
 
 def compare_fields(before, after):
-    """Per field: equal / changed / unverifiable (either side unreadable).
-    Crop boxes compare to CROP_TOLERANCE_FT, not bit for bit."""
+    """PURE. Per field: ``equal``, ``changed``, ``unverifiable`` (readable on
+    one side only) or ``unreadable_both``. Crop boxes compare to
+    CROP_TOLERANCE_FT, not bit for bit."""
     out = {}
     for key in sorted(set(before) | set(after)):
-        b, a = before.get(key, "unreadable"), after.get(key, "unreadable")
-        if b == "unreadable" or a == "unreadable":
+        b, a = before.get(key, UNREADABLE), after.get(key, UNREADABLE)
+        if b == UNREADABLE and a == UNREADABLE:
+            verdict = "unreadable_both"
+        elif b == UNREADABLE or a == UNREADABLE:
             verdict = "unverifiable"
         elif key == "crop_box":
             eq = boxes_equal(b, a)
@@ -570,6 +608,37 @@ def compare_fields(before, after):
             verdict = "equal" if b == a else "changed"
         out[key] = {"verdict": verdict, "before": b, "after": a}
     return out
+
+
+def restore_verdict(baseline, after, required):
+    """PURE. Whether ``after`` is the baseline state again.
+
+    Not restored when any field changed, when any field is readable on one
+    side only, or when a field in ``required`` -- the state the question
+    itself writes -- cannot be read on either side, since then its restore
+    cannot be shown. A field unreadable on both sides that the question does
+    not write is recorded but does not refuse: Revit does not expose every
+    field on every view type (a plan view has no settable background)."""
+    fields = compare_fields(baseline, after)
+    changed = [k for k, v in sorted(fields.items()) if v["verdict"] == "changed"]
+    one_sided = [k for k, v in sorted(fields.items()) if v["verdict"] == "unverifiable"]
+    required_unreadable = [k for k in required
+                           if fields.get(k, {}).get("verdict", "unreadable_both")
+                           == "unreadable_both"]
+    return {"restored": not (changed or one_sided or required_unreadable),
+            "changed": changed, "unverifiable": one_sided,
+            "required": list(required), "required_unreadable": required_unreadable,
+            "fields": fields}
+
+
+def refusal_text(verdict):
+    if verdict.get("error"):
+        return "state could not be read after {0}: {1}".format(
+            verdict.get("checked_after"), verdict["error"])
+    return ("state not restored after {0}: changed {1}, readable on one side "
+            "only {2}, written but unreadable {3}".format(
+                verdict.get("checked_after"), verdict.get("changed"),
+                verdict.get("unverifiable"), verdict.get("required_unreadable")))
 
 
 # ======================================================================
@@ -661,6 +730,52 @@ def nested_group(ctx, name, body):
     return rec
 
 
+def restore_gate(ctx, view, baseline, required, checked_after):
+    """Snapshot the view and judge it against the baseline."""
+    snap = read(state_snapshot, ctx.doc, view)
+    if snap["state"] != "value":
+        verdict = {"restored": False, "error": snap["error"], "required": list(required)}
+    else:
+        verdict = restore_verdict(baseline, snap["value"], required)
+    verdict["checked_after"] = checked_after
+    return verdict
+
+
+def run_gated(ctx, view, baseline, required, out, plan, prefix):
+    """Run ``plan`` -- ``(label, step names, body)`` in order -- each body in
+    its own rolled-back nested group, judging the view against ``baseline``
+    at the start and after every rollback.
+
+    Once a check fails, every later step is recorded REFUSED rather than run:
+    a step run from a state the previous one left behind is evidence about
+    the wrong cause. The check at the start also catches an EARLIER question
+    that left this view changed. Verdicts land in
+    ``out["restore_checks"][label]``; the start's under ``question_start``."""
+    checks = out.setdefault("restore_checks", {})
+    checks["question_start"] = restore_gate(ctx, view, baseline, required, "question_start")
+    blocked = None if checks["question_start"]["restored"] else checks["question_start"]
+    for label, steps, body in plan:
+        if blocked is not None:
+            for name in steps:
+                out["steps"].append({"step": name, "refused": "state_not_restored",
+                                     "refused_reason": refusal_text(blocked),
+                                     "blocked_by": blocked["checked_after"]})
+            continue
+        group = nested_group(ctx, "{0} {1}".format(prefix, label), body)
+        out["groups"].append(group)
+        present = set(r.get("step") for r in out["steps"])
+        for name in steps:
+            if name not in present:
+                out["steps"].append({"step": name, "refused": "raised",
+                                     "exception": group.get("body_error")})
+        checks[label] = restore_gate(ctx, view, baseline, required, label)
+        if not checks[label]["restored"]:
+            blocked = checks[label]
+    if checks["question_start"]["restored"] is False:
+        out["refused"] = refusal_text(checks["question_start"])
+    return blocked
+
+
 def export_view(ctx, view, step):
     """One TIFF export with _export_tiff's option set (SetOfViews,
     FitToPage, horizontal fit, fixed pixel width, TIFF for both view kinds),
@@ -745,14 +860,30 @@ def _split_summary(common):
 # THE QUESTIONS
 # ======================================================================
 
-def run_q1_q2(ctx, view):
+# The state each question WRITES. Its restore must be shown, so a field here
+# that cannot be read on either side refuses the question's remaining steps.
+Q1_REQUIRED = ("crop_box", "crop_box_active", "members_sha1")
+Q3_REQUIRED = ("crop_box", "scope_box", "shape_set")
+Q4_REQUIRED = ("shadow_intensity", "background")
+Q5_REQUIRED = ("template_id", "display_style")
+
+
+def _baseline_box(baseline):
+    box = baseline.get("crop_box")
+    return None if box == UNREADABLE else box
+
+
+def run_q1_q2(ctx, view, baseline):
     """S0, then S1 (identity CropBox write) and S2 (the capture's write),
-    each from S0's state in its own rolled-back nested group."""
+    each from the baseline state in its own rolled-back nested group."""
     out = {"view_id": element_id_int(view.Id), "steps": [], "groups": []}
-    s0, ids0 = _step(ctx, view, "q1", "S0")
-    out["steps"].append(s0)
-    box0 = value_of(s0["common"]["crop_box"])
-    member_ids_by_step = {"S0": ids0}
+    box0 = _baseline_box(baseline)
+    member_ids_by_step = {}
+
+    def _s0():
+        rec, ids = _step(ctx, view, "q1", "S0")
+        out["steps"].append(rec)
+        member_ids_by_step["S0"] = ids
 
     def _s1():
         writes = {"crop_box_identity": rec_unavailable("S0 crop box unreadable")}
@@ -761,7 +892,6 @@ def run_q1_q2(ctx, view):
         rec, ids = _step(ctx, view, "q1", "S1", writes)
         out["steps"].append(rec)
         member_ids_by_step["S1"] = ids
-    out["groups"].append(nested_group(ctx, "Q1 S1", _s1))
 
     # The capture's own crop (color_id_buffer: crop_box_from_uv_bounds of the
     # snapped crop-A rectangle) needs the full raster and frame geometry, so
@@ -785,11 +915,16 @@ def run_q1_q2(ctx, view):
         rec, ids = _step(ctx, view, "q1", "S2", writes)
         out["steps"].append(rec)
         member_ids_by_step["S2"] = ids
-    out["groups"].append(nested_group(ctx, "Q1 S2", _s2))
 
+    run_gated(ctx, view, baseline, Q1_REQUIRED, out,
+              (("S0", ("S0",), _s0), ("S1", ("S1",), _s1), ("S2", ("S2",), _s2)), "Q1")
+    ids0 = member_ids_by_step.get("S0")
     report = {"members": {}, "split": {}, "diff_vs_s0": {}}
     for step in out["steps"]:
         name = step["step"]
+        if step.get("refused"):
+            report["members"][name] = rec_unavailable("step refused: {0}".format(step["refused"]))
+            continue
         report["members"][name] = step["common"]["members"]
         report["split"][name] = _split_summary(step["common"])
         ids = member_ids_by_step.get(name)
@@ -850,32 +985,34 @@ def _at_export(common):
             "scope_box": scope.get("value"), "scope_box_is_set": scope.get("is_set")}
 
 
-def run_q3_view(ctx, view, role):
+def run_q3_view(ctx, view, role, baseline):
     out = {"view_id": element_id_int(view.Id), "role": role, "steps": [], "groups": [],
            "restore_mechanism": "nested TransactionGroup per step, rolled back "
-                                "before the next; the crop box is read after each "
-                                "rollback and compared with S0's"}
-    s0, _ids = _step(ctx, view, "q3", "S0")
-    s0["at_export"] = _at_export(s0["common"])
-    out["steps"].append(s0)
-    box0 = value_of(s0["common"]["crop_box"])
-    if box0 is None:
-        out["refused"] = "S0 crop box unreadable; no crop write attempted"
-        return out
-    plan = (("S1", False, False), ("S2", True, False), ("S3", False, True), ("S4", True, True))
-    for step, scope, shape in plan:
-        holder = {}
+                                "before the next; after each rollback the view's "
+                                "full state snapshot is judged against the "
+                                "pre-group baseline, and every later step is "
+                                "refused once it is not restored"}
+    box0 = _baseline_box(baseline)
 
-        def _body(step=step, scope=scope, shape=shape, holder=holder):
-            holder["rec"] = _q3_step(ctx, view, step, box0, scope, shape)
-            holder["rec"]["at_export"] = _at_export(holder["rec"]["common"])
-        group = nested_group(ctx, "Q3 {0} {1}".format(out["view_id"], step), _body)
-        rec = holder.get("rec") or {"step": step, "refused": group.get("body_error")}
-        rec["group"] = group
-        after = read(crop_box_record, view)
-        rec["restore_check"] = {"crop_box_after_rollback": after,
-                                "equal_to_s0": boxes_equal(box0, value_of(after))}
+    def _s0():
+        rec, _ids = _step(ctx, view, "q3", "S0")
+        rec["at_export"] = _at_export(rec["common"])
         out["steps"].append(rec)
+
+    def _body_for(step, scope, shape):
+        def _body():
+            if box0 is None:
+                raise ValueError("the baseline crop box is unreadable; no crop write attempted")
+            rec = _q3_step(ctx, view, step, box0, scope, shape)
+            rec["at_export"] = _at_export(rec["common"])
+            out["steps"].append(rec)
+        return _body
+
+    plan = [("S0", ("S0",), _s0)]
+    for step, scope, shape in (("S1", False, False), ("S2", True, False),
+                               ("S3", False, True), ("S4", True, True)):
+        plan.append((step, (step,), _body_for(step, scope, shape)))
+    run_gated(ctx, view, baseline, Q3_REQUIRED, out, plan, "Q3 {0}".format(out["view_id"]))
     return out
 
 
@@ -892,13 +1029,15 @@ def background_record(view):
     return out
 
 
-def run_q4(ctx, view):
+def run_q4(ctx, view, baseline):
     from Autodesk.Revit.DB import Color, ViewDisplayBackground
     out = {"view_id": element_id_int(view.Id), "steps": [], "groups": []}
-    s0, _ids = _step(ctx, view, "q4", "S0")
-    s0["background"] = background_record(view)
-    out["steps"].append(s0)
-    shadow0 = value_of(s0["common"]["shadow_intensity"])
+    shadow0 = baseline.get("shadow_intensity")
+
+    def _s0():
+        rec, _ids = _step(ctx, view, "q4", "S0")
+        rec["background"] = background_record(view)
+        out["steps"].append(rec)
 
     def _white_background():
         white = Color(255, 255, 255)
@@ -919,7 +1058,6 @@ def run_q4(ctx, view):
         writes2["background_after"] = background_record(view)
         rec2, _i = _step(ctx, view, "q4", "S2", writes2)
         out["steps"].append(rec2)
-    out["groups"].append(nested_group(ctx, "Q4 S1+S2", _s1_s2))
 
     def _s3():
         writes = {"shadow_intensity_at_s3": read_attr(view, "ShadowIntensity", jsonable),
@@ -930,7 +1068,10 @@ def run_q4(ctx, view):
         writes["background_after"] = background_record(view)
         rec, _i = _step(ctx, view, "q4", "S3", writes)
         out["steps"].append(rec)
-    out["groups"].append(nested_group(ctx, "Q4 S3", _s3))
+
+    run_gated(ctx, view, baseline, Q4_REQUIRED, out,
+              (("S0", ("S0",), _s0), ("S1+S2", ("S1", "S2"), _s1_s2),
+               ("S3", ("S3",), _s3)), "Q4")
     return out
 
 
@@ -960,7 +1101,7 @@ def template_record(doc, view):
     return out
 
 
-def run_q5_view(ctx, view):
+def run_q5_view(ctx, view, baseline):
     from Autodesk.Revit.DB import DisplayStyle, ElementId
     out = {"view_id": element_id_int(view.Id), "template": template_record(ctx.doc, view),
            "steps": [], "groups": []}
@@ -976,7 +1117,6 @@ def run_q5_view(ctx, view):
         rec["display_style_after"] = read_attr(view, "DisplayStyle", enum_text)
         rec["took_effect"] = value_of(rec["display_style_after"]) == "FlatColors"
         out["steps"].append(rec)
-    out["groups"].append(nested_group(ctx, "Q5 {0} S0".format(out["view_id"]), _s0))
 
     def _s1():
         rec = {"step": "S1",
@@ -989,7 +1129,9 @@ def run_q5_view(ctx, view):
         rec["display_style_after"] = read_attr(view, "DisplayStyle", enum_text)
         rec["took_effect"] = value_of(rec["display_style_after"]) == "FlatColors"
         out["steps"].append(rec)
-    out["groups"].append(nested_group(ctx, "Q5 {0} S1".format(out["view_id"]), _s1))
+
+    run_gated(ctx, view, baseline, Q5_REQUIRED, out,
+              (("S0", ("S0",), _s0), ("S1", ("S1",), _s1)), "Q5 {0}".format(out["view_id"]))
     return out
 
 
@@ -1080,7 +1222,7 @@ def run_probe(inputs):
         if resolved["state"] == "value":
             views[vid] = resolved["value"]
             entry["name"] = read_attr(views[vid], "Name", str)
-            before[vid] = verify_fields(doc, views[vid])
+            before[vid] = state_snapshot(doc, views[vid])
 
     group = None
     tg = report["transaction_group"]
@@ -1094,7 +1236,7 @@ def run_probe(inputs):
         q = report["questions"]
         if "q1_q2" in params["questions"]:
             q["q1_q2"] = _guarded(ctx, "q1_q2", views.get(params["q1_view"]),
-                                  lambda v: run_q1_q2(ctx, v))
+                                  lambda v: run_q1_q2(ctx, v, before[params["q1_view"]]))
         if "q3" in params["questions"]:
             q["q3"] = {"views": []}
             for key, role in (("q3_test_view", "test"), ("q3_slab_view", "test_slab"),
@@ -1103,14 +1245,15 @@ def run_probe(inputs):
                 if vid is None:
                     q["q3"]["views"].append({"role": role, "refused": "not_provided"})
                     continue
-                q["q3"]["views"].append(_guarded(ctx, "q3 " + role, views.get(vid),
-                                                 lambda v, r=role: run_q3_view(ctx, v, r)))
+                q["q3"]["views"].append(_guarded(
+                    ctx, "q3 " + role, views.get(vid),
+                    lambda v, r=role, b=before.get(vid): run_q3_view(ctx, v, r, b)))
         if "q4" in params["questions"]:
             q["q4"] = _guarded(ctx, "q4", views.get(params["q4_view"]),
-                               lambda v: run_q4(ctx, v))
+                               lambda v: run_q4(ctx, v, before[params["q4_view"]]))
         if "q5" in params["questions"]:
             q["q5"] = {"views": [_guarded(ctx, "q5", views.get(vid),
-                                          lambda v: run_q5_view(ctx, v))
+                                          lambda v, b=before.get(vid): run_q5_view(ctx, v, b))
                                  for vid in params["q5_views"]]}
     except Exception as ex:
         ctx.exceptions.append(exception_record("outer", ex))
@@ -1125,18 +1268,31 @@ def run_probe(inputs):
                 ctx.exceptions.append(exception_record("outer rollback", ex))
 
     # Read back AFTER the rollback; report every changed field, fix nothing.
-    changed = []
+    # The same snapshot as the baseline and every restore check.
+    changed, unreadable = [], []
     for vid, view in sorted(views.items()):
-        cmp_rec = read(lambda: compare_fields(before[vid], verify_fields(doc, view)))
+        cmp_rec = read(lambda: compare_fields(before[vid], state_snapshot(doc, view)))
         report["verify"][str(vid)] = cmp_rec
         for field, entry in sorted((value_of(cmp_rec) or {}).items()):
-            if entry["verdict"] != "equal":
+            if entry["verdict"] == "unreadable_both":
+                unreadable.append({"view_id": vid, "field": field})
+            elif entry["verdict"] != "equal":
                 changed.append({"view_id": vid, "field": field, "verdict": entry["verdict"]})
         if cmp_rec["state"] != "value":
             changed.append({"view_id": vid, "field": "*", "verdict": "unverifiable"})
     report["verify_changed"] = changed
-    report["VERIFY_SUMMARY"] = ("ALL PROBED VIEWS RESTORED" if not changed and tg["rolled_back"]
-                                else "STATE CHANGED OR UNVERIFIED -- see verify_changed")
+    # Fields Revit would not read before OR after (e.g. a plan view's
+    # background): listed so their absence from verify_changed is not read
+    # as a verified match.
+    report["verify_unreadable_both"] = unreadable
+    if changed or not tg["rolled_back"]:
+        summary = "STATE CHANGED OR UNVERIFIED -- see verify_changed"
+    elif unreadable:
+        summary = ("ALL READABLE FIELDS RESTORED; {0} field(s) unreadable before and "
+                   "after -- see verify_unreadable_both".format(len(unreadable)))
+    else:
+        summary = "ALL PROBED VIEWS RESTORED"
+    report["VERIFY_SUMMARY"] = summary
     report["finished_at"] = time.strftime("%Y%m%dT%H%M%S")
     # Written LAST, once every field above is final (CLAUDE.md, defect class 4).
     _write_json(json_path, report)

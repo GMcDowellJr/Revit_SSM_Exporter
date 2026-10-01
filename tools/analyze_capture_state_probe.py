@@ -160,15 +160,37 @@ def non_fit_axis(fit_direction):
     return ("width", 0) if str(fit_direction).lower() == "vertical" else ("height", 1)
 
 
+def _refused_row(step, restored_after):
+    """A step the probe did not run (or that raised): no numbers at all, so
+    it can never read as a match or a mismatch."""
+    return {"step": step.get("step"), "box_source": "refused",
+            "refused": step.get("refused"), "refused_reason": step.get("refused_reason"),
+            "blocked_by": step.get("blocked_by"), "restored_after": restored_after,
+            "written_extent_ft": None, "read_back_extent_ft": None,
+            "read_back_equal": None, "crop_write_state": None,
+            "exported_px": None, "implied_px": None, "fit_direction": None,
+            "non_fit_axis": None, "non_fit_delta_px": None, "non_fit_mismatch": None,
+            "at_export": None}
+
+
 def q3_rows(report, measured_by_file):
     """One row per Q3 step per view. ``measured_by_file`` maps a TIFF file
-    name to its measured ``[w, h]``."""
+    name to its measured ``[w, h]``.
+
+    ``restored_after`` is the probe's restore check after that step's
+    rollback (``restore_checks[step]["restored"]``): False means the view did
+    not return to its baseline, and the probe refused every later step."""
     views = []
     for view in ((report.get("questions") or {}).get("q3") or {}).get("views") or []:
         entry = {"view_id": view.get("view_id"), "role": view.get("role"), "rows": []}
         if view.get("refused"):
             entry["refused"] = view["refused"]
+        checks = view.get("restore_checks") or {}
         for step in view.get("steps") or []:
+            restored_after = (checks.get(step.get("step")) or {}).get("restored")
+            if step.get("refused"):
+                entry["rows"].append(_refused_row(step, restored_after))
+                continue
             export = step.get("export") or {}
             common = step.get("common") or {}
             written = step.get("written_box")
@@ -188,6 +210,7 @@ def q3_rows(report, measured_by_file):
             exported = measured_by_file.get(export.get("file"))
             axis, index = non_fit_axis(fit)
             row = {"step": step.get("step"), "box_source": box_source,
+                   "restored_after": restored_after,
                    "written_extent_ft": _extent(written),
                    "read_back_extent_ft": _extent(read_back),
                    "read_back_equal": step.get("read_back_equal"),
@@ -342,15 +365,17 @@ def print_tables(record):
         print("Q3 view {0} ({1}){2}".format(view["view_id"], view["role"],
                                             "  REFUSED: {0}".format(view["refused"])
                                             if view.get("refused") else ""))
-        print("  {0:<4} {1:<12} {2:>15} {3:>15} {4:>11} {5:>11} {6:>8} {7}".format(
+        print("  {0:<4} {1:<12} {2:>15} {3:>15} {4:>11} {5:>11} {6:>8} {7:<8} {8}".format(
             "step", "box", "written ft", "read-back ft", "exported", "implied",
-            "non-fit", "mismatch"))
+            "non-fit", "mismatch", "restored"))
         for row in view["rows"]:
-            print("  {0:<4} {1:<12} {2:>15} {3:>15} {4:>11} {5:>11} {6:>8} {7}".format(
+            print("  {0:<4} {1:<12} {2:>15} {3:>15} {4:>11} {5:>11} {6:>8} {7:<8} {8}".format(
                 row["step"], row["box_source"], _fmt(row["written_extent_ft"]),
                 _fmt(row["read_back_extent_ft"]), _fmt(row["exported_px"]),
                 _fmt(row["implied_px"]), _fmt(row["non_fit_delta_px"]),
-                _fmt(row["non_fit_mismatch"])))
+                _fmt(row["non_fit_mismatch"]), _fmt(row["restored_after"])))
+            if row.get("refused"):
+                print("       refused: {0}".format(row.get("refused_reason") or row["refused"]))
     if record.get("failed_exports"):
         print()
         print("failed exports: {0}".format(", ".join(

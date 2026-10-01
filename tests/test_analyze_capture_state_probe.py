@@ -276,6 +276,51 @@ def test_q3_a_rejected_crop_write_implies_nothing(tmp_path):
         None, None, None)
 
 
+def test_q3_steps_after_an_unrestored_rollback_are_refused_not_mismatches(tmp_path):
+    """Codex, PR #225: S2's rollback left the scope box changed, so the probe
+    refused S3 and S4. Their rows are refused with no numbers -- never a
+    mismatch, never a match -- and S2's row says its rollback did not
+    restore. S1, restored and run, is the control."""
+    e1, e2 = _export("Q3_S1", 11, w=200), _export("Q3_S2", 11, w=200)
+    s1 = _q3_step("S1", e1, written=_box(20, 10), read_back=_box(20, 10))
+    s2 = _q3_step("S2", e2, written=_box(20, 10), read_back=_box(20, 10))
+    reason = "state not restored after S2: changed ['scope_box']"
+    refused = [{"step": name, "refused": "state_not_restored",
+                "refused_reason": reason, "blocked_by": "S2"} for name in ("S3", "S4")]
+    q3 = [{"view_id": 11, "role": "test", "steps": [s1, s2] + refused,
+           "restore_checks": {"question_start": {"restored": True},
+                              "S1": {"restored": True}, "S2": {"restored": False}}}]
+    _probe(tmp_path, [e1, e2], {"Q3_S1_11.tiff": _flat(200, 150),
+                                "Q3_S2_11.tiff": _flat(200, 150)}, q3=q3)
+    rows = _run(tmp_path)["q3"][0]["rows"]
+    assert [r["step"] for r in rows] == ["S1", "S2", "S3", "S4"]
+    r1, r2, r3, r4 = rows
+    assert (r1["restored_after"], r1["non_fit_mismatch"]) == (True, True)
+    assert (r2["restored_after"], r2["box_source"], r2["non_fit_delta_px"]) == (False, "written", 50)
+    for row in (r3, r4):
+        assert row["box_source"] == "refused"
+        assert row["refused"] == "state_not_restored"
+        assert row["refused_reason"] == reason and row["blocked_by"] == "S2"
+        assert row["restored_after"] is None
+        assert (row["exported_px"], row["implied_px"], row["non_fit_delta_px"],
+                row["non_fit_mismatch"]) == (None, None, None, None)
+
+
+def test_q3_a_view_refused_at_question_start_has_only_refused_rows(tmp_path):
+    """An earlier question left the view changed: the probe refused the whole
+    question for it, S0 included."""
+    reason = "state not restored after question_start: changed ['display_style']"
+    q3 = [{"view_id": 11, "role": "test", "refused": reason,
+           "steps": [{"step": s, "refused": "state_not_restored", "refused_reason": reason,
+                      "blocked_by": "question_start"} for s in ("S0", "S1", "S2", "S3", "S4")],
+           "restore_checks": {"question_start": {"restored": False}}}]
+    _probe(tmp_path, [], {}, q3=q3)
+    view = _run(tmp_path)["q3"][0]
+    assert view["refused"] == reason
+    assert [r["box_source"] for r in view["rows"]] == ["refused"] * 5
+    assert all(r["non_fit_mismatch"] is None for r in view["rows"])
+
+
 def test_q3_two_pixels_off_is_a_mismatch(tmp_path):
     e1 = _export("Q3_S1", 11, w=200)
     q3 = [{"view_id": 11, "role": "test",
