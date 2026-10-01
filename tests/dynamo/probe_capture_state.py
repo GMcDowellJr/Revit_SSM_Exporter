@@ -50,12 +50,13 @@ import hashlib
 import json
 import os
 import struct
+import sys
 import time
 import traceback
 
 
 PROBE_NAME = "capture_state"
-PROBE_VERSION = "2026-10-01.1"
+PROBE_VERSION = "2026-10-02.1"
 SCHEMA = "vop.probe.capture_state.v1"
 
 DEFAULT_Q1_VIEW = 6112047
@@ -63,7 +64,21 @@ DEFAULT_Q3_TEST_VIEW = 11999340
 DEFAULT_Q4_VIEW = 2888380
 DEFAULT_Q5_VIEWS = (13663964, 11999340)
 DEFAULT_PIXEL_WIDTH = 2000
-QUESTIONS = ("q1_q2", "q3", "q4", "q5")
+QUESTIONS = ("q1_q2", "q3", "q4", "q5", "q1b", "q3b", "q5b", "q6")
+ROUND1_QUESTIONS = ("q1_q2", "q3", "q4", "q5")
+# The default since 2026-10-02.1: round 2 only. "round1" and "all" select
+# the others.
+ROUND2_QUESTIONS = ("q1b", "q3b", "q5b", "q6")
+
+# Round 2 view defaults (IN[9] keys override them).
+DEFAULT_Q1B_VIEWS = (6112047, 6207878)       # Plaza elevation; WEST - EAST SECTION
+DEFAULT_Q3B_VIEWS = (11999340, 5823803)      # MOHAVE; slab plan as the control
+DEFAULT_Q5B_VIEWS = (13663964, 11999340)     # dependent views
+DEFAULT_Q6_VIEWS = (5823803, 9948, 11999340)
+# Ids round 1 saw enter or leave Plaza's membership on the identity write.
+Q1B_WATCH_IDS = (15846537, 15809670)
+OPTION_KEYS = ("repo_root", "q1b_views", "q3b_views", "q5b_views", "q6_views",
+               "q6_extra_views")
 
 # Case-insensitive substrings of a parameter's definition name that put it in
 # the per-view parameter dump.
@@ -290,7 +305,14 @@ def parse_view_ids(value, default):
 
 
 def select_questions(value):
-    if value is None or (isinstance(value, str) and value.strip().lower() in ("", "all")):
+    """None or "" -> round 2; "round1", "round2" or "all" -> that set; else a
+    comma list of names, refused when one is unknown."""
+    text = value.strip().lower() if isinstance(value, str) else None
+    if value is None or text in ("", "round2"):
+        return list(ROUND2_QUESTIONS)
+    if text == "round1":
+        return list(ROUND1_QUESTIONS)
+    if text == "all":
         return list(QUESTIONS)
     parts = value if isinstance(value, (list, tuple)) else str(value).split(",")
     chosen = [str(p).strip().lower() for p in parts if str(p).strip()]
@@ -884,10 +906,28 @@ def restore_gate(ctx, view, baseline, required, checked_after):
     return verdict
 
 
-def run_gated(ctx, view, baseline, required, out, plan, prefix):
+def gate_subjects(ctx, subjects, required, checked_after):
+    """restore_gate over ``subjects`` -- ``[(view, baseline), ...]``. One
+    subject gives its own verdict unchanged; several give
+    ``{"restored": all, "views": {id: verdict}}`` (Q5b judges a dependent view
+    and its primary together)."""
+    if len(subjects) == 1:
+        view, baseline = subjects[0]
+        return restore_gate(ctx, view, baseline, required, checked_after)
+    verdicts = dict((str(element_id_int(v.Id)), restore_gate(ctx, v, b, required, checked_after))
+                    for v, b in subjects)
+    failing = sorted(k for k, v in verdicts.items() if not v["restored"])
+    out = {"restored": not failing, "views": verdicts, "checked_after": checked_after}
+    if failing:
+        out["error"] = "; ".join("view {0}: {1}".format(k, refusal_text(verdicts[k]))
+                                 for k in failing)
+    return out
+
+
+def run_gated(ctx, subjects, required, out, plan, prefix):
     """Run ``plan`` -- ``(label, step names, body)`` in order -- each body in
-    its own rolled-back nested group, judging the view against ``baseline``
-    at the start and after every rollback.
+    its own rolled-back nested group, judging every ``(view, baseline)`` in
+    ``subjects`` against its baseline at the start and after every rollback.
 
     Once a check fails, every later step is recorded REFUSED rather than run:
     a step run from a state the previous one left behind is evidence about
@@ -906,7 +946,7 @@ def run_gated(ctx, view, baseline, required, out, plan, prefix):
             _refuse_halted(steps)
         out["refused"] = "probe halted before this question: {0}".format(ctx.halted)
         return None
-    checks["question_start"] = restore_gate(ctx, view, baseline, required, "question_start")
+    checks["question_start"] = gate_subjects(ctx, subjects, required, "question_start")
     blocked = None if checks["question_start"]["restored"] else checks["question_start"]
     for label, steps, body in plan:
         if ctx.halted:
@@ -927,7 +967,7 @@ def run_gated(ctx, view, baseline, required, out, plan, prefix):
                                      "exception": group.get("body_error")})
         if ctx.halted:
             continue
-        checks[label] = restore_gate(ctx, view, baseline, required, label)
+        checks[label] = gate_subjects(ctx, subjects, required, label)
         if not checks[label]["restored"]:
             blocked = checks[label]
     if checks["question_start"]["restored"] is False:
@@ -999,6 +1039,10 @@ class Context(object):
         self.exceptions = []
         # Set when a transaction could not be closed; nothing runs after.
         self.halted = None
+        # Round 2: production modules (None when not importable) and the
+        # import record that says why.
+        self.production = None
+        self.production_record = None
 
 
 def _step(ctx, view, question, step, writes=None, export=True):
@@ -1080,7 +1124,7 @@ def run_q1_q2(ctx, view, baseline):
         out["steps"].append(rec)
         member_ids_by_step["S2"] = ids
 
-    run_gated(ctx, view, baseline, Q1_REQUIRED, out,
+    run_gated(ctx, [(view, baseline)], Q1_REQUIRED, out,
               (("S0", ("S0",), _s0), ("S1", ("S1",), _s1), ("S2", ("S2",), _s2)), "Q1")
     ids0 = member_ids_by_step.get("S0")
     report = {"members": {}, "split": {}, "diff_vs_s0": {}}
@@ -1204,7 +1248,7 @@ def run_q3_view(ctx, view, role, baseline):
     for step, scope, shape in (("S1", False, False), ("S2", True, False),
                                ("S3", False, True), ("S4", True, True)):
         plan.append((step, (step,), _body_for(step, scope, shape)))
-    run_gated(ctx, view, baseline, Q3_REQUIRED, out, plan, "Q3 {0}".format(out["view_id"]))
+    run_gated(ctx, [(view, baseline)], Q3_REQUIRED, out, plan, "Q3 {0}".format(out["view_id"]))
     return out
 
 
@@ -1262,7 +1306,7 @@ def run_q4(ctx, view, baseline):
         rec, _i = _step(ctx, view, "q4", "S3", writes)
         out["steps"].append(rec)
 
-    run_gated(ctx, view, baseline, Q4_REQUIRED, out,
+    run_gated(ctx, [(view, baseline)], Q4_REQUIRED, out,
               (("S0", ("S0",), _s0), ("S1+S2", ("S1", "S2"), _s1_s2),
                ("S3", ("S3",), _s3)), "Q4")
     return out
@@ -1374,13 +1418,541 @@ def run_q5_view(ctx, view, baseline):
     plan = [("S0", ("S0",), _s0)]
     if attached:
         plan.append(("S1", ("S1",), _s1))
-    run_gated(ctx, view, baseline, Q5_REQUIRED, out, plan, "Q5 {0}".format(out["view_id"]))
+    run_gated(ctx, [(view, baseline)], Q5_REQUIRED, out, plan, "Q5 {0}".format(out["view_id"]))
     if not attached:
         out["steps"].append({
             "step": "S1", "refused": "no_template",
             "refused_reason": ("no template is attached (template id {0!r}): there "
                                "is nothing to detach, so S1 would repeat S0".format(
                                    template_id))})
+    return out
+
+
+# ======================================================================
+# ROUND 2 (2026-10-02.1): production imports
+# ======================================================================
+
+def _repo_root_candidates(params):
+    seeds = [params.get("repo_root"), os.environ.get("REVIT_SSM_EXPORTER_ROOT"),
+             os.environ.get("VOP_REPO_ROOT"), params.get("output_directory"), os.getcwd()]
+    if "__file__" in globals():
+        seeds.append(os.path.dirname(os.path.abspath(__file__)))
+    out = []
+    for seed in seeds:
+        if not seed:
+            continue
+        current = os.path.abspath(os.path.expanduser(str(seed)))
+        for _ in range(8):
+            if current not in out:
+                out.append(current)
+            parent = os.path.dirname(current)
+            if parent == current:
+                break
+            current = parent
+    return out
+
+
+def import_production(params):
+    """``(record, modules)``. Q3b and Q6 call PRODUCTION code -- the crop
+    helper and the registration-mark functions -- rather than copies, so the
+    probe measures what the capture runs. These are imported from the
+    repository: found from IN[9] ``repo_root``, the REVIT_SSM_EXPORTER_ROOT
+    / VOP_REPO_ROOT environment variables, the output directory or the
+    working directory, walking up. Not found is recorded, and the steps that
+    need it are refused; nothing is reimplemented in its place."""
+    searched = []
+    for root in _repo_root_candidates(params):
+        searched.append(root)
+        if not os.path.isfile(os.path.join(root, "vop_interwoven", "__init__.py")):
+            continue
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        try:
+            from vop_interwoven.revit import view_basis
+            from vop_interwoven import stage_a_registration, stage_a_registered_capture
+            from vop_interwoven.revit.annotation import split_stage_a_pass_membership
+            from vop_interwoven.config import Config
+        except Exception as ex:
+            return ({"state": "raised", "root": root,
+                     "error": "{0}: {1}".format(type(ex).__name__, ex)}, None)
+        return ({"state": "value", "root": root},
+                {"view_basis": view_basis, "registration": stage_a_registration,
+                 "capture": stage_a_registered_capture,
+                 "split_membership": split_stage_a_pass_membership, "Config": Config})
+    return ({"state": "unavailable",
+             "error": "no vop_interwoven package found; set IN[9] repo_root",
+             "searched": searched[:40]}, None)
+
+
+def _production_refusal(ctx):
+    rec = ctx.production_record or {}
+    return "production code not importable ({0}: {1})".format(
+        rec.get("state"), rec.get("error"))
+
+
+def production_crop_box(ctx, view):
+    """``(box, uv_extents)``: the crop the capture would write for S0's own
+    extents -- crop_box_from_uv_bounds (color_id_buffer's crop writes) on the
+    view's crop projected by xy_bounds_from_crop_box_all_corners, both
+    production. The capture snaps the rectangle to its pixel lattice first,
+    which needs the pipeline raster and moves each edge by under a pixel;
+    this is the unsnapped rectangle, and the record says so."""
+    vb = ctx.production["view_basis"]
+    # Read the crop first: xy_bounds_from_crop_box_all_corners answers an
+    # AttributeError with a made-up +/-100 ft rectangle (view_basis.py), which
+    # must never stand in for a measured crop here.
+    crop_box_record(view)
+    basis = vb.make_view_basis(view)
+    b = vb.xy_bounds_from_crop_box_all_corners(view, basis)
+    uv = [float(b.xmin), float(b.ymin), float(b.xmax), float(b.ymax)]
+    box = vb.crop_box_from_uv_bounds(view, basis, uv[0], uv[1], uv[2], uv[3])
+    if box is None:
+        raise ValueError("crop_box_from_uv_bounds returned None (the view has no CropBox)")
+    return box, uv
+
+
+def write_production_crop(ctx, view, name):
+    """Production's crop write: CropBox = crop_box_from_uv_bounds(S0 extents),
+    then CropBoxActive = True, as color_id_buffer does. attempted is the box
+    production built; took_effect from the read-back."""
+    built = read(production_crop_box, ctx, view)
+    if built["state"] != "value":
+        return {"state": "raised", "error": built["error"], "attempted": None,
+                "commit_status": None, "read_back": rec_unavailable("no box was built"),
+                "took_effect": None}
+    box, uv = built["value"]
+    attempted = {"min": xyz_list(box.Min), "max": xyz_list(box.Max),
+                 "transform": transform_record(box.Transform),
+                 "transform_source": "crop_box_from_uv_bounds"}
+
+    def _apply():
+        view.CropBox = box
+        view.CropBoxActive = True
+        return True
+    rec = tx_write(ctx.doc, name, _apply, attempted, lambda: crop_box_record(view),
+                   crop_boxes_match)
+    rec["uv_extents"] = uv
+    rec["snapped"] = False
+    return rec
+
+
+def crop_uv_at(ctx, view):
+    """The crop's UV rectangle as production projects it, for Q6's pixel
+    windows. None-free: raises when it cannot be read, and the caller records
+    that as unavailable."""
+    vb = ctx.production["view_basis"]
+    crop_box_record(view)  # raises rather than let the +/-100 ft fallback through
+    b = vb.xy_bounds_from_crop_box_all_corners(view, vb.make_view_basis(view))
+    return [float(b.xmin), float(b.ymin), float(b.xmax), float(b.ymax)]
+
+
+# ======================================================================
+# Q1b -- what the identity crop write changes
+# ======================================================================
+
+def element_detail(doc, element_id):
+    """Category and OwnerViewId of one element (three-valued per field)."""
+    from Autodesk.Revit.DB import ElementId
+    elem = doc.GetElement(ElementId(int(element_id)))
+    if elem is None:
+        return {"exists": False}
+    cat = read(lambda: elem.Category)
+    cat_value = value_of(cat)
+    return {"exists": True, "class": type(elem).__name__,
+            "category": (read(lambda: str(cat_value.Name)) if cat_value is not None
+                         else (rec_value(None) if cat["state"] == "value" else cat)),
+            "category_id": (read(lambda: element_id_int(cat_value.Id))
+                            if cat_value is not None else rec_value(None)),
+            "owner_view_id": read(lambda: element_id_int(elem.OwnerViewId))}
+
+
+def full_parameter_dump(view):
+    """Every parameter on the view, keyed by its parameter id."""
+    out = {}
+    for p in view.Parameters:
+        key = value_of(read(lambda: element_id_int(p.Id)))
+        name = value_of(read(lambda: str(p.Definition.Name)))
+        out[str(key if key is not None else "name:{0}".format(name))] = {
+            "name": name,
+            "built_in": value_of(read_attr(p.Definition, "BuiltInParameter", enum_text)),
+            "storage_type": value_of(read(lambda: str(p.StorageType))),
+            "value": read(_parameter_value, p),
+            "value_string": call_method(p, "AsValueString"),
+            "read_only": value_of(read_attr(p, "IsReadOnly", bool))}
+    return out
+
+
+def parameter_diff(before, after):
+    """PURE. Which parameters changed between two full_parameter_dump()s:
+    value or value string differs, or the parameter appeared or vanished. A
+    parameter unreadable on either side is listed as unreadable, never as
+    unchanged."""
+    changed, unreadable = [], []
+    for key in sorted(set(before) | set(after)):
+        b, a = before.get(key), after.get(key)
+        if b is None or a is None:
+            changed.append({"key": key, "name": (a or b).get("name"),
+                            "built_in": (a or b).get("built_in"),
+                            "change": "added" if b is None else "removed"})
+            continue
+        if b["value"]["state"] != "value" or a["value"]["state"] != "value":
+            unreadable.append({"key": key, "name": b.get("name"),
+                               "before": b["value"]["state"], "after": a["value"]["state"]})
+            continue
+        bs, as_ = value_of(b["value_string"]), value_of(a["value_string"])
+        if b["value"]["value"] != a["value"]["value"] or bs != as_:
+            changed.append({"key": key, "name": b.get("name"), "built_in": b.get("built_in"),
+                            "change": "value", "before": b["value"]["value"],
+                            "after": a["value"]["value"], "value_string_before": bs,
+                            "value_string_after": as_})
+    return {"compared": len(set(before) & set(after)), "changed_count": len(changed),
+            "changed": changed, "unreadable": unreadable}
+
+
+def run_q1b_view(ctx, view, baseline):
+    out = {"view_id": element_id_int(view.Id), "steps": [], "groups": [],
+           "watch_ids": list(Q1B_WATCH_IDS)}
+    box0 = _baseline_box(baseline)
+
+    def _s0():
+        rec, _ids = _step(ctx, view, "q1b", "S0")
+        out["steps"].append(rec)
+
+    def _s1():
+        if box0 is None:
+            raise ValueError("the baseline crop box is unreadable; no identity write")
+        ids_before = member_ids(ctx.doc, view)
+        params_before = full_parameter_dump(view)
+        write = write_crop_box(ctx.doc, view, box0, "Q1b identity crop write")
+        ids_after = member_ids(ctx.doc, view)
+        params_after = full_parameter_dump(view)
+        rec, _ids = _step(ctx, view, "q1b", "S1", {"crop_box_identity": write})
+        added = sorted(set(ids_after) - set(ids_before))
+        removed = sorted(set(ids_before) - set(ids_after))
+        detail_ids = sorted(set(added) | set(removed) | set(Q1B_WATCH_IDS))
+        details = dict((str(i), read(element_detail, ctx.doc, i)) for i in detail_ids)
+        rec["membership"] = {"before": ids_fingerprint(ids_before),
+                             "after": ids_fingerprint(ids_after),
+                             "added_count": len(added), "removed_count": len(removed),
+                             "added": added, "removed": removed,
+                             "truncated": False, "details": details}
+        rec["watch_ids"] = dict((str(i), {"in_before": i in ids_before, "in_after": i in ids_after,
+                                          "added": i in added, "removed": i in removed,
+                                          "detail": details[str(i)]})
+                                for i in Q1B_WATCH_IDS)
+        rec["parameter_diff"] = parameter_diff(params_before, params_after)
+        out["steps"].append(rec)
+
+    run_gated(ctx, [(view, baseline)], Q1_REQUIRED, out,
+              (("S0", ("S0",), _s0), ("S1", ("S1",), _s1)), "Q1b {0}".format(out["view_id"]))
+    return out
+
+
+# ======================================================================
+# Q3b -- scope-box clear with the original frame; production crop under it
+# ======================================================================
+
+def run_q3b_view(ctx, view, baseline, role):
+    out = {"view_id": element_id_int(view.Id), "role": role, "steps": [], "groups": [],
+           "baseline_scope_box": baseline.get("scope_box")}
+    box0 = _baseline_box(baseline)
+
+    def _s0():
+        rec, _ids = _step(ctx, view, "q3b", "S0")
+        rec["at_export"] = _at_export(rec["common"])
+        out["steps"].append(rec)
+
+    def _s1():
+        # Scope box cleared, then S0's OWN box -- its transform and Min/Max.
+        if box0 is None:
+            raise ValueError("the baseline crop box is unreadable")
+        writes = {"scope_box_cleared": clear_scope_box(ctx.doc, view, "Q3b S1 clear scope box")}
+        if not scope_box_cleared(writes["scope_box_cleared"]):
+            out["steps"].append(_discriminator_refusal(
+                "S1", writes, "discriminator_not_applied",
+                "the scope box was not cleared: write {0}, read-back {1}".format(
+                    writes["scope_box_cleared"]["state"],
+                    writes["scope_box_cleared"]["read_back"])))
+            return
+        writes["crop_box_s0_frame"] = write_crop_box(ctx.doc, view, box0, "Q3b S1 S0 crop")
+        rec, _ids = _step(ctx, view, "q3b", "S1", writes)
+        rec["at_export"] = _at_export(rec["common"])
+        read_back = value_of(rec["common"]["crop_box"])
+        rec["read_back_transform"] = (read_back or {}).get("transform")
+        rec["read_back_extent_ft"] = box_extent_ft(read_back) if read_back else None
+        rec["s0_transform"] = box0.get("transform")
+        rec["s0_extent_ft"] = box_extent_ft(box0)
+        out["steps"].append(rec)
+
+    def _s2():
+        # Scope box LEFT SET; production's crop for S0's extents.
+        if ctx.production is None:
+            out["steps"].append({"step": "S2", "refused": "production_unavailable",
+                                 "refused_reason": _production_refusal(ctx)})
+            return
+        writes = {"production_crop": write_production_crop(ctx, view, "Q3b S2 production crop")}
+        rec, _ids = _step(ctx, view, "q3b", "S2", writes)
+        rec["at_export"] = _at_export(rec["common"])
+        rec["scope_box_set_at_write"] = baseline.get("scope_box") not in (None, -1, UNREADABLE)
+        out["steps"].append(rec)
+
+    run_gated(ctx, [(view, baseline)], Q3_REQUIRED, out,
+              (("S0", ("S0",), _s0), ("S1", ("S1",), _s1), ("S2", ("S2",), _s2)),
+              "Q3b {0}".format(out["view_id"]))
+    return out
+
+
+# ======================================================================
+# Q5b -- DisplayStyle on dependent views, through the primary
+# ======================================================================
+
+def run_q5b_view(ctx, dependent, dep_baseline, primary, primary_baseline, primary_id=None):
+    out = {"view_id": element_id_int(dependent.Id), "steps": [], "groups": [],
+           "primary_view_id": element_id_int(primary.Id) if primary is not None else None,
+           "dependent_template_id": dep_baseline.get("template_id"),
+           "primary_template_id": (primary_baseline or {}).get("template_id")}
+    if primary is None:
+        out["refused"] = ("not a dependent view: GetPrimaryViewId gave no view"
+                          if primary_id is None else
+                          "primary view {0} could not be resolved (see views)".format(primary_id))
+        out["steps"] = [{"step": s, "refused": "not_dependent",
+                         "refused_reason": out["refused"]} for s in ("A", "B")]
+        return out
+    if out["primary_template_id"] in (None, -1):
+        out["note"] = ("the primary has no template, so both variants' detach is "
+                       "vacuous: attempted -1, read back -1")
+
+    def _a():
+        rec = {"step": "A",
+               "detach_primary_template": detach_template(ctx.doc, primary,
+                                                          "Q5b A detach primary template")}
+        rec["dependent_template_id_after"] = read(lambda: element_id_int(dependent.ViewTemplateId))
+        rec["dependent_flat_colors"] = flat_colors_attempt(ctx, dependent, "Q5b A dependent")
+        out["steps"].append(rec)
+
+    def _b():
+        rec = {"step": "B",
+               "detach_primary_template": detach_template(ctx.doc, primary,
+                                                          "Q5b B detach primary template"),
+               "dependent_display_style_before": read_attr(dependent, "DisplayStyle", enum_text)}
+        rec["primary_flat_colors"] = flat_colors_attempt(ctx, primary, "Q5b B primary")
+        rec["dependent_display_style_after"] = read_attr(dependent, "DisplayStyle", enum_text)
+        before = value_of(rec["dependent_display_style_before"])
+        after = value_of(rec["dependent_display_style_after"])
+        rec["dependent_followed_primary"] = (
+            None if before is None or after is None
+            else bool(after == FLAT and before != FLAT))
+        out["steps"].append(rec)
+
+    run_gated(ctx, [(dependent, dep_baseline), (primary, primary_baseline)], Q5_REQUIRED,
+              out, (("A", ("A",), _a), ("B", ("B",), _b)), "Q5b {0}".format(out["view_id"]))
+    return out
+
+
+# ======================================================================
+# Q6 -- why registration ticks do not render
+# ======================================================================
+
+Q6_REQUIRED = ("crop_box", "crop_box_active", "members_sha1")
+
+
+class _LayoutRaster(object):
+    """What mark_reference_rectangle / mark_fpp_ft read off the pipeline's
+    raster, and nothing else: the view basis. With no model crop or frame
+    they take their own documented fallbacks (an inactive crop has no
+    reference; the tick size falls back to the requested dpi). The record
+    names which source each used."""
+
+    def __init__(self, view_basis):
+        self.view_basis = view_basis
+        self.model_clip_bounds = None
+        self.bounds_xy = None
+
+
+def mark_layout(ctx, view):
+    """``(basis, layout, record)`` built the way the capture builds it
+    (stage_a_registered_capture: reference rectangle, tick size, segments,
+    annotation avoidance) -- production functions only."""
+    from Autodesk.Revit.DB import FilteredElementCollector
+    prod = ctx.production
+    basis = prod["view_basis"].make_view_basis(view)
+    raster = _LayoutRaster(basis)
+    capture, registration = prod["capture"], prod["registration"]
+    reference, source = capture.mark_reference_rectangle(view, raster)
+    fpp, fpp_basis = capture.mark_fpp_ft(view, raster, prod["Config"]())
+    layout = (registration.registration_mark_segments(reference, fpp)
+              if reference is not None else {"state": "unavailable", "reason": source})
+    collected = list(FilteredElementCollector(ctx.doc, view.Id).WhereElementIsNotElementType())
+    _model, anno, _unresolved, _b = prod["split_membership"](
+        collected, capture_view_id_int=element_id_int(view.Id))
+    avoid, avoidance = capture.annotation_avoid_rects(view, anno, basis)
+    layout = registration.relocate_marks_clear_of(layout, avoid)
+    record = {"reference_uv": list(reference) if reference is not None else None,
+              "reference_source": source, "fpp_ft": fpp, "fpp_basis": fpp_basis,
+              "avoidance": avoidance, "layout_state": layout.get("state"),
+              "layout_reason": layout.get("reason"),
+              "segment_count": len(layout.get("segments") or [])}
+    return basis, layout, record
+
+
+def create_marks(ctx, view, basis, layout, name):
+    """create_registration_marks inside its own transaction, as the capture
+    runs it. attempted = the segment count; read back = how many of the
+    created marks exist afterwards."""
+    from Autodesk.Revit.DB import ElementId
+    holder = {}
+
+    def _apply():
+        holder["record"] = ctx.production["registration"].create_registration_marks(
+            ctx.doc, view, basis, layout)
+        return holder["record"].get("created_count")
+
+    def _read_back():
+        created = (holder.get("record") or {}).get("created") or []
+        return sum(1 for m in created
+                   if ctx.doc.GetElement(ElementId(int(m["id"]))) is not None)
+    write = tx_write(ctx.doc, name, _apply, len(layout.get("segments") or []), _read_back)
+    return write, holder.get("record")
+
+
+def lines_category_id():
+    from Autodesk.Revit.DB import BuiltInCategory, ElementId
+    return element_id_int(ElementId(BuiltInCategory.OST_Lines))
+
+
+def view_filter_records(doc, view):
+    """Each view filter: name, kind, enabled, visible, and whether its
+    categories include OST_Lines (a selection filter has none to read)."""
+    lines_id = value_of(read(lines_category_id))
+    out = []
+    for fid in view.GetFilters():
+        f = doc.GetElement(fid)
+        rec = {"id": element_id_int(fid), "name": read(lambda: str(f.Name)),
+               "kind": type(f).__name__ if f is not None else None,
+               "enabled": read(lambda: bool(view.GetIsFilterEnabled(fid))),
+               "visible": read(lambda: bool(view.GetFilterVisibility(fid)))}
+        if f is not None and hasattr(f, "GetCategories"):
+            rec["includes_ost_lines"] = read(
+                lambda: lines_id in [element_id_int(c) for c in f.GetCategories()])
+        else:
+            rec["includes_ost_lines"] = rec_unavailable(
+                "{0} has no GetCategories (not a parameter filter)".format(rec["kind"]))
+        out.append(rec)
+    return out
+
+
+def template_vg_control(doc, view):
+    """Whether the view's template controls V/G model categories, annotation
+    categories and filters: each controlled when its parameter is NOT in the
+    template's non-controlled set."""
+    from Autodesk.Revit.DB import BuiltInParameter, ElementId
+    tid = element_id_int(view.ViewTemplateId)
+    if tid in (None, -1):
+        return {"template_id": tid, "state": "no_template"}
+    template = doc.GetElement(view.ViewTemplateId)
+    free = [element_id_int(i) for i in template.GetNonControlledTemplateParameterIds()]
+    out = {"template_id": tid, "state": "value"}
+    for key, name in (("model_categories", "VIS_GRAPHICS_MODEL"),
+                      ("annotation_categories", "VIS_GRAPHICS_ANNOTATION"),
+                      ("filters", "VIS_GRAPHICS_FILTERS")):
+        bip = getattr(BuiltInParameter, name, None)
+        out[key] = (rec_unavailable("BuiltInParameter.{0} did not resolve".format(name))
+                    if bip is None else
+                    read(lambda: element_id_int(ElementId(bip)) not in free))
+    return out
+
+
+def mark_rows(doc, view, marks_record, collector_ids):
+    """Per mark: line style and its category, the category/subcategory/element
+    hidden states, and whether the view collector returns it."""
+    from Autodesk.Revit.DB import ElementId
+    lines_id = read(lines_category_id)
+
+    def _lines_hidden():
+        if value_of(lines_id) is None:
+            raise ValueError("the OST_Lines id is unreadable: {0}".format(lines_id["error"]))
+        return bool(view.GetCategoryHidden(ElementId(int(value_of(lines_id)))))
+    lines_hidden = read(_lines_hidden)
+    rows = []
+    for m in (marks_record or {}).get("created") or []:
+        elem = doc.GetElement(ElementId(int(m["id"])))
+        style = value_of(read(lambda: elem.LineStyle))
+        style_cat = value_of(read(lambda: style.GraphicsStyleCategory)) if style is not None else None
+        rows.append({
+            "id": m["id"], "key": m.get("key"), "orientation": m.get("orientation"),
+            "placement": m.get("placement"),
+            "uv0": (m.get("readback_uv") or [m.get("uv0"), m.get("uv1")])[0],
+            "uv1": (m.get("readback_uv") or [m.get("uv0"), m.get("uv1")])[1],
+            "uv_source": "readback" if m.get("readback_uv") else "requested",
+            "painted": m.get("painted"), "line_style_applied": m.get("line_style_applied"),
+            "line_style_id": read(lambda: element_id_int(style.Id)),
+            "line_style_name": read(lambda: str(style.Name)),
+            "line_style_category_id": read(lambda: element_id_int(style_cat.Id)),
+            "line_style_category_name": read(lambda: str(style_cat.Name)),
+            "lines_category_hidden": lines_hidden,
+            "line_style_subcategory_hidden": read(lambda: bool(view.GetCategoryHidden(style_cat.Id))),
+            "element_hidden": read(lambda: bool(elem.IsHidden(view))),
+            "in_view_collector": (rec_value(int(m["id"]) in collector_ids)
+                                  if collector_ids is not None
+                                  else rec_unavailable("the view collector could not be read")),
+        })
+    return rows
+
+
+def _q6_export(ctx, view, step, extra=None):
+    rec, _ids = _step(ctx, view, "q6", step, extra)
+    rec["crop_uv_at_export"] = read(crop_uv_at, ctx, view)
+    rec["crop_box_active_at_export"] = read_attr(view, "CropBoxActive", bool)
+    return rec
+
+
+def _q6_marked(ctx, view, step, prefix):
+    """Layout, marks, per-mark records, then the marked export."""
+    built = read(mark_layout, ctx, view)
+    if built["state"] != "value":
+        return {"step": step, "refused": "layout_unavailable",
+                "refused_reason": "the capture's layout raised: {0}".format(built["error"])}
+    basis, layout, layout_record = built["value"]
+    if layout.get("state") != "value":
+        return {"step": step, "refused": "layout_unavailable", "layout": layout_record,
+                "refused_reason": "the capture's layout is unavailable: {0}".format(
+                    layout.get("reason"))}
+    write, marks = create_marks(ctx, view, basis, layout, "{0} marks".format(prefix))
+    ids = value_of(read(member_ids, ctx.doc, view))
+    rec = _q6_export(ctx, view, step, {"marks": write})
+    rec["layout"] = layout_record
+    rec["marks_record"] = dict((k, v) for k, v in (marks or {}).items() if k != "created")
+    rec["mark_rows"] = mark_rows(ctx.doc, view, marks, set(ids) if ids is not None else None)
+    rec["view_filters"] = read(view_filter_records, ctx.doc, view)
+    rec["template_vg_control"] = read(template_vg_control, ctx.doc, view)
+    return rec
+
+
+def run_q6_view(ctx, view, baseline):
+    """Two variants, each in its own rolled-back group: marks with the crop
+    as authored (S0 unmarked, S1 marked), and marks after production's crop
+    write (S2 unmarked, S3 marked). Each marked export has an unmarked twin
+    from the same state, so the analyzer can see which pixels the marks
+    changed."""
+    out = {"view_id": element_id_int(view.Id), "steps": [], "groups": []}
+    if ctx.production is None:
+        out["refused"] = _production_refusal(ctx)
+        out["steps"] = [{"step": s, "refused": "production_unavailable",
+                         "refused_reason": out["refused"]} for s in ("S0", "S1", "S2", "S3")]
+        return out
+
+    def _no_crop():
+        out["steps"].append(_q6_export(ctx, view, "S0"))
+        out["steps"].append(_q6_marked(ctx, view, "S1", "Q6 S1"))
+
+    def _crop():
+        write = write_production_crop(ctx, view, "Q6 S2 production crop")
+        out["steps"].append(_q6_export(ctx, view, "S2", {"production_crop": write}))
+        out["steps"].append(_q6_marked(ctx, view, "S3", "Q6 S3"))
+
+    run_gated(ctx, [(view, baseline)], Q6_REQUIRED, out,
+              (("no_crop_write", ("S0", "S1"), _no_crop),
+               ("crop_write", ("S2", "S3"), _crop)), "Q6 {0}".format(out["view_id"]))
     return out
 
 
@@ -1405,7 +1977,7 @@ def parse_inputs(inputs):
     if not out_dir:
         raise ValueError("IN[0] output directory is required")
     width = _at(7)
-    return {
+    params = {
         "output_directory": os.path.abspath(str(out_dir)),
         "q1_view": parse_view_id(_at(1), DEFAULT_Q1_VIEW),
         "q3_test_view": parse_view_id(_at(2), DEFAULT_Q3_TEST_VIEW),
@@ -1416,6 +1988,36 @@ def parse_inputs(inputs):
         "pixel_width": int(width) if width not in (None, "") else DEFAULT_PIXEL_WIDTH,
         "questions": select_questions(_at(8)),
     }
+    options = parse_options(_at(9))
+    params.update({
+        "repo_root": options.get("repo_root"),
+        "q1b_views": parse_view_ids(options.get("q1b_views"), DEFAULT_Q1B_VIEWS),
+        "q3b_views": parse_view_ids(options.get("q3b_views"), DEFAULT_Q3B_VIEWS),
+        "q5b_views": parse_view_ids(options.get("q5b_views"), DEFAULT_Q5B_VIEWS),
+        "q6_views": (parse_view_ids(options.get("q6_views"), DEFAULT_Q6_VIEWS)
+                     + parse_view_ids(options.get("q6_extra_views"), ())),
+    })
+    return params
+
+
+def parse_options(value):
+    """IN[9]: a dict (a Dynamo Dictionary, or a JSON string) of round-2 keys,
+    OPTION_KEYS. An unknown key is refused: a misspelt key silently ignored
+    would run the defaults while looking configured."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return {}
+    if isinstance(value, str):
+        value = json.loads(value)
+    if not isinstance(value, dict):
+        if hasattr(value, "Keys"):
+            value = dict((str(k), value[k]) for k in value.Keys)
+        else:
+            raise ValueError("IN[9] must be a dictionary or a JSON object, not {0}".format(
+                type(value).__name__))
+    unknown = sorted(str(k) for k in value if str(k) not in OPTION_KEYS)
+    if unknown:
+        raise ValueError("IN[9] has unknown key(s) {0}; known: {1}".format(unknown, OPTION_KEYS))
+    return dict((str(k), v) for k, v in value.items())
 
 
 def _write_json(path, report):
@@ -1456,22 +2058,48 @@ def run_probe(inputs):
     if "q5" in params["questions"]:
         for vid in params["q5_views"]:
             wanted.append(("q5", vid, "display_style"))
+    for question, key, role in (("q1b", "q1b_views", "identity_write"),
+                                ("q3b", "q3b_views", "scope_box"),
+                                ("q5b", "q5b_views", "dependent"),
+                                ("q6", "q6_views", "ticks")):
+        if question in params["questions"]:
+            for vid in params[key]:
+                wanted.append((question, vid, role))
     views, before = {}, {}
-    for question, vid, role in wanted:
+
+    def _want(question, vid, role):
         if vid is None:
             report["views"].setdefault("not_provided", []).append(
                 {"question": question, "role": role})
-            continue
+            return
         entry = report["views"].setdefault(str(vid), {"roles": [], "resolved": None})
         entry["roles"].append("{0}:{1}".format(question, role))
         if vid in views or entry["resolved"] is not None:
-            continue
+            return
         resolved = read(_resolve_view, doc, vid)
         entry["resolved"] = {"state": resolved["state"], "error": resolved["error"]}
         if resolved["state"] == "value":
             views[vid] = resolved["value"]
             entry["name"] = read_attr(views[vid], "Name", str)
             before[vid] = state_snapshot(doc, views[vid])
+
+    for question, vid, role in wanted:
+        _want(question, vid, role)
+    # Q5b's primaries, resolved and snapshotted BEFORE the group too, so the
+    # restore checks and the verify cover the view Q5b writes to.
+    primary_of = {}
+    if "q5b" in params["questions"]:
+        for vid in params["q5b_views"]:
+            if vid not in views:
+                continue
+            pid = value_of(call_method(views[vid], "GetPrimaryViewId", conv=element_id_int))
+            primary_of[vid] = pid if pid not in (None, -1) else None
+            if primary_of[vid] is not None:
+                _want("q5b", primary_of[vid], "primary_of_{0}".format(vid))
+    report["q5b_primaries"] = dict((str(k), v) for k, v in primary_of.items())
+    if set(params["questions"]) & {"q3b", "q6"}:
+        ctx.production_record, ctx.production = import_production(params)
+        report["production_imports"] = ctx.production_record
 
     group = None
     tg = report["transaction_group"]
@@ -1504,6 +2132,29 @@ def run_probe(inputs):
             q["q5"] = {"views": [_guarded(ctx, "q5", views.get(vid),
                                           lambda v, b=before.get(vid): run_q5_view(ctx, v, b))
                                  for vid in params["q5_views"]]}
+        if "q1b" in params["questions"]:
+            q["q1b"] = {"views": [_guarded(ctx, "q1b", views.get(vid),
+                                           lambda v, b=before.get(vid): run_q1b_view(ctx, v, b))
+                                  for vid in params["q1b_views"]]}
+        if "q3b" in params["questions"]:
+            roles = ["test"] + ["control"] * (len(params["q3b_views"]) - 1)
+            q["q3b"] = {"views": [_guarded(
+                ctx, "q3b", views.get(vid),
+                lambda v, b=before.get(vid), r=role: run_q3b_view(ctx, v, b, r))
+                for vid, role in zip(params["q3b_views"], roles)]}
+        if "q5b" in params["questions"]:
+            q["q5b"] = {"views": []}
+            for vid in params["q5b_views"]:
+                pid = primary_of.get(vid)
+                q["q5b"]["views"].append(_guarded(
+                    ctx, "q5b", views.get(vid),
+                    lambda v, b=before.get(vid), p=pid: run_q5b_view(
+                        ctx, v, b, views.get(p) if p is not None else None,
+                        before.get(p) if p is not None else None, p)))
+        if "q6" in params["questions"]:
+            q["q6"] = {"views": [_guarded(ctx, "q6", views.get(vid),
+                                          lambda v, b=before.get(vid): run_q6_view(ctx, v, b))
+                                 for vid in params["q6_views"]]}
     except Exception as ex:
         ctx.exceptions.append(exception_record("outer", ex))
     finally:
